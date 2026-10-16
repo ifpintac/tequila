@@ -1409,6 +1409,34 @@ mod tests {
         assert!((cycles / tequila - 1.0).abs() < 0.35, "occlusion darkened Tequila's render by {tequila:.2} and Cycles' by {cycles:.2}");
     }
 
+    /// A floor kept for its reflection, with Ground's Catch shadows unticked,
+    /// catches no shadow: the lamp's shadow on or off leaves it the same, in
+    /// Tequila's renderer and in Cycles, where the same floor catching
+    /// shadows darkens. It was a full catcher all the same, and the shadow
+    /// switched off showed under the reflection, in the viewport and the
+    /// render. Cycles where it is installed.
+    #[test]
+    fn a_floor_kept_for_its_reflection_catches_no_shadow() {
+        use tequila_render_core::scene::ShadowCatcher;
+        use tequila_scene::render::RenderEngine;
+        let reflecting = ShadowCatcher { reflections: 0.3, ..ShadowCatcher::default() };
+        let shadowless = ShadowCatcher { shadows: false, ..reflecting };
+        let brightness = |c: [f64; 3]| c[0] + c[1] + c[2];
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            // How much the lamp's shadow darkens the picture.
+            let shadow = |catcher, name| brightness(caught(engine, catcher, false, name)) - brightness(caught(engine, catcher, true, name));
+            let catching = shadow(reflecting, "reflecting");
+            let left = shadow(shadowless, "reflecting-shadowless");
+            assert!(catching > 2.0, "{engine:?}: the lamp's shadow darkened a catching floor by only {catching:.2}");
+            assert!(left.abs() < 1.0, "{engine:?}: a floor that catches no shadow darkened by {left:.2} under the lamp's shadow");
+        }
+    }
+
     /// The demo scene through Cycles, lit by a plain grey sky it also shows,
     /// with `change` made to it: the developed image, and where `point` lands
     /// in it. For comparing the ground's effects with and without it.

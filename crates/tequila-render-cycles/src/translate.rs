@@ -372,7 +372,7 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         .instances
         .iter()
         .filter_map(|i| i.shadow_catcher.as_ref())
-        .find(|c| !c.occlusion_only)
+        .find(|c| c.shadows && !c.occlusion_only)
         .map_or(Spectrum::ZERO, |c| c.shadow_color);
     builder.session.set_shadow_tint(rgb(tint));
 
@@ -392,11 +392,11 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             continue;
         }
         let (material, shader) = match &instance.shadow_catcher {
-            Some(catcher) if catcher.occlusion_only => {
+            Some(catcher) if catcher.shadows && catcher.occlusion_only => {
                 (usize::MAX - 1, builder.occlusion_shader(catcher.shadow_color, catcher.occlusion_radius)?)
             }
             Some(catcher) => {
-                if catcher.shadow_color != tint {
+                if catcher.shadows && catcher.shadow_color != tint {
                     builder.out.warn("ground shadows of different colours all take the first one's colour in Cycles");
                 }
                 let shader = match catcher_shader {
@@ -439,14 +439,23 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         if instance.shadow_catcher.is_some() && !view.ground_illumination {
             visibility &= ffi::VISIBLE_CAMERA | ffi::VISIBLE_SHADOW;
         }
+        // A floor that catches no shadow, there only for the reflection the
+        // caller lays over the image, is no catcher and nothing the camera
+        // sees; it still stops light from below, as one that catches does.
+        // As a catcher, the shadow switched off showed under the reflection.
+        let shadowless = instance.shadow_catcher.is_some_and(|c| !c.shadows);
+        if shadowless {
+            visibility &= !ffi::VISIBLE_CAMERA;
+        }
         // An occlusion-only floor is no catcher to Cycles but a picture laid
         // over the background, and only the camera sees it.
-        let occlusion = instance.shadow_catcher.is_some_and(|c| c.occlusion_only);
+        let occlusion = instance.shadow_catcher.is_some_and(|c| c.shadows && c.occlusion_only);
         if occlusion {
             visibility = ffi::VISIBLE_CAMERA;
         }
         let matrix = Y_UP_TO_Z_UP * instance.transform.matrix;
-        let object = builder.session.object(cycles_mesh, &rows(&matrix), visibility, instance.shadow_catcher.is_some() && !occlusion)?;
+        let catches = instance.shadow_catcher.is_some_and(|c| c.shadows) && !occlusion;
+        let object = builder.session.object(cycles_mesh, &rows(&matrix), visibility, catches)?;
         // One more than the instance's id, so a live frame's object pass
         // names it (0 being nothing).
         let pass_id = instance.id.0.saturating_add(1) as i32;
@@ -469,7 +478,7 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             builder.out.floor_reflection = true;
         }
     }
-    let catcher = scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| !c.occlusion_only));
+    let catcher = scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows && !c.occlusion_only));
     if catcher {
         // The catcher's shadow in the image's alpha, as Blender has it
         // whenever the shadow catcher pass itself is not asked for.

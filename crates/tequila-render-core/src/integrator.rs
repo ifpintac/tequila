@@ -1553,7 +1553,10 @@ fn catch_shadow(
         -hit.geometric_normal
     };
 
-    let coverage = if catcher.occlusion_only {
+    // A floor there only for its reflection darkens by nothing.
+    let coverage = if !catcher.shadows {
+        0.0
+    } else if catcher.occlusion_only {
         occlusion_at(intersector, hit, normal, catcher.occlusion_radius, sampler)
     } else {
         shadow_at(intersector, config, hit, normal, sampler)
