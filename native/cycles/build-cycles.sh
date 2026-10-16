@@ -38,29 +38,38 @@ fi
 
 # 2. Only the precompiled libraries Cycles needs, at the commit it pins.
 #    Their files are in Git LFS. The folders are the ones the Windows build
-#    takes, matched without regard to case: the Mac's are named in lower
-#    case (openimageio), Windows' not always (OpenImageIO). Set
+#    takes, matched without regard to case - the Mac's are named in lower
+#    case (openimageio), Windows' not always (OpenImageIO) - and sse2neon,
+#    which Cycles translates its SSE code to Apple's NEON with. A folder
+#    added to the list is fetched on the next run. Set
 #    TEQUILA_CYCLES_ALL_LIBS=1 to take every folder (several GB) if CMake
 #    asks for one not in the list.
 git lfs version >/dev/null 2>&1 || { echo "Git LFS is needed: brew install git-lfs && git lfs install" >&2; exit 1; }
 lib="$work/lib/macos_arm64"
-if [ ! -f "$lib/.tequila-fetched" ]; then
-    commit="$(git -C cycles ls-tree HEAD lib/macos_arm64 | awk '{print $3}')"
-    [ -n "$commit" ] || { echo "Cycles does not pin lib/macos_arm64 at this tag" >&2; exit 1; }
+commit="$(git -C cycles ls-tree HEAD lib/macos_arm64 | awk '{print $3}')"
+[ -n "$commit" ] || { echo "Cycles does not pin lib/macos_arm64 at this tag" >&2; exit 1; }
+if [ "$(git -C "$lib" rev-parse -q --verify "$commit^{commit}" 2>/dev/null)" != "$commit" ]; then
     rm -rf "$lib"
     mkdir -p "$lib"
     git -C "$lib" init -q
     git -C "$lib" remote add origin https://projects.blender.org/blender/lib-macos_arm64.git
     git -C "$lib" fetch -q --depth 1 --filter=blob:none origin "$commit"
-    if [ "${TEQUILA_CYCLES_ALL_LIBS:-}" != "1" ]; then
-        wanted='^(openimageio|pugixml|openjpeg|jpeg|tiff|webp|png|zlib|openexr|imath|tbb|embree|openimagedenoise|zstd|opencolorio|openpgl|deflate|libdeflate)$'
-        folders="$(git -C "$lib" ls-tree --name-only -d FETCH_HEAD | grep -i -E "$wanted" | sed 's|.*|/&/|' | tr '\n' ' ')"
-        echo "Library folders: $folders"
-        # shellcheck disable=SC2086
-        git -C "$lib" sparse-checkout set --no-cone $folders /.gitattributes
+fi
+if [ "${TEQUILA_CYCLES_ALL_LIBS:-}" = "1" ]; then
+    git -C "$lib" sparse-checkout disable
+else
+    wanted='^(openimageio|pugixml|openjpeg|jpeg|tiff|webp|png|zlib|openexr|imath|tbb|embree|openimagedenoise|zstd|opencolorio|openpgl|deflate|libdeflate|sse2neon)$'
+    folders="$(git -C "$lib" ls-tree --name-only -d "$commit" | grep -i -E "$wanted")"
+    echo "Library folders: $(echo $folders)"
+    missing=0
+    for folder in $folders; do
+        [ -d "$lib/$folder" ] || missing=1
+    done
+    if [ "$missing" = 1 ]; then
+        # shellcheck disable=SC2046
+        git -C "$lib" sparse-checkout set --no-cone $(printf '/%s/ ' $folders) /.gitattributes
+        git -C "$lib" checkout -q "$commit"
     fi
-    git -C "$lib" checkout -q FETCH_HEAD
-    touch "$lib/.tequila-fetched"
 fi
 if [ ! -L cycles/lib/macos_arm64 ]; then
     rm -rf cycles/lib/macos_arm64
