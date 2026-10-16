@@ -48,6 +48,7 @@
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <XCAFPrs_DocumentExplorer.hxx>
+#include <Standard_Version.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -58,6 +59,23 @@
 #include <map>
 #include <string>
 #include <vector>
+
+// OCCT 8 calls a handle occ::handle and makes Standard_Failure a
+// std::exception; Homebrew's, on a Mac, is OCCT 7.9, which has neither.
+#if OCC_VERSION_MAJOR < 8
+namespace occ {
+template <class T> using handle = opencascade::handle<T>;
+}
+#endif
+
+static const char *failure_text(const Standard_Failure &failure)
+{
+#if OCC_VERSION_MAJOR < 8
+  return failure.GetMessageString();
+#else
+  return failure.what();
+#endif
+}
 
 namespace {
 
@@ -662,7 +680,7 @@ int main(int argc, char** argv)
   }
   catch (const Standard_Failure& failure)
   {
-    std::fprintf(stderr, "OpenCASCADE failed: %s\n", failure.what());
+    std::fprintf(stderr, "OpenCASCADE failed: %s\n", failure_text(failure));
     return 1;
   }
 }

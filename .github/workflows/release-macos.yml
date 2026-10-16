@@ -12,6 +12,11 @@ name: Mac release
 
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "A release's tag (v2026.10.17.0122) to attach the disk image to, and take the version from; empty for neither"
+        required: false
+        default: ""
   release:
     types: [published]
 
@@ -66,9 +71,11 @@ jobs:
         run: bash native/cycles/build-cycles.sh "$CYCLES_WORK"
 
       - name: Package
+        env:
+          TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            export TEQUILA_VERSION="${GITHUB_REF_NAME#v}"
+          if [ -n "$TAG" ]; then
+            export TEQUILA_VERSION="${TAG#v}"
           fi
           TEQUILA_CYCLES_WORK="$CYCLES_WORK" bash scripts/package-macos.sh
 
@@ -79,7 +86,8 @@ jobs:
           path: dist/Tequila-*.dmg
 
       - name: Attach it to the release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || inputs.release != ''
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/Tequila-*.dmg --clobber
+          TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release }}
+        run: gh release upload "$TAG" dist/Tequila-*.dmg --clobber
