@@ -1740,6 +1740,90 @@ mod tests {
         assert!(changed > 20, "selecting the sphere drew no outline ({changed} pixels changed)");
     }
 
+    /// Orbiting a Cycles viewport shows Cycles' pictures as it goes, each a
+    /// picture of the view. It showed none until the mouse stopped: every
+    /// move restarted Cycles before its picture of the last was made, and the
+    /// first picture after a restart was thrown away as having no samples,
+    /// which it had. Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn the_cycles_viewport_shows_pictures_while_orbiting() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        // Big enough that Cycles, on the processor, navigates with pictures
+        // smaller than the view.
+        req.width = 640;
+        req.height = 480;
+        // The processor by default, as in the test above.
+        req.engine = if std::env::var_os("TEQUILA_TEST_CYCLES_GPU").is_some() {
+            tequila_scene::render::RenderEngine::CyclesGpu
+        } else {
+            tequila_scene::render::RenderEngine::CyclesCpu
+        };
+        let camera_at = |angle: f32| Camera::look_at(Vec3 { x: 4.0 * angle.sin(), y: 2.0, z: 4.0 * angle.cos() }, Vec3::ZERO, Vec3::Y);
+        req.camera = camera_at(0.0);
+        renderer.submit(req.clone());
+        let mut seen = 0;
+        // Cycles starting and the scene translated are not what is tested.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while renderer.take_image(&mut seen).is_none() {
+            assert!(Instant::now() < deadline, "Cycles never drew the viewport");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Three seconds of a mouse turning the view sixty times a second.
+        req.interacting = true;
+        let (started, mut moves, mut shown) = (Instant::now(), 0u32, Vec::new());
+        while started.elapsed() < Duration::from_secs(3) {
+            moves += 1;
+            req.camera = camera_at(moves as f32 * 0.01);
+            renderer.submit(req.clone());
+            let tick = Instant::now();
+            while tick.elapsed() < Duration::from_micros(16_667) {
+                if let Some(image) = renderer.take_image(&mut seen) {
+                    shown.push(image);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        assert!(shown.len() >= 5, "{} pictures in three seconds of orbiting", shown.len());
+
+        // Each a picture of the view at its own size, not a smaller picture
+        // read as a larger one: block by block, near a settled one of where
+        // the orbit ended.
+        req.interacting = false;
+        renderer.submit(req);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let settled = loop {
+            if let Some(image) = renderer.take_image(&mut seen) {
+                if image.width == 640 && image.samples >= 16 {
+                    break image;
+                }
+            }
+            assert!(Instant::now() < deadline, "the view never settled after the orbit");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let blocks = |image: &DisplayImage| -> Vec<f64> {
+            let (w, h) = (image.width, image.height);
+            let mut sums = vec![0.0; 8 * 6];
+            for y in 0..h {
+                for x in 0..w {
+                    let p = &image.pixels[(y * w + x) * 4..(y * w + x) * 4 + 3];
+                    sums[(y * 6 / h) * 8 + x * 8 / w] += (f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])) / 3.0;
+                }
+            }
+            sums.iter().map(|s| s / (w * h / 48) as f64).collect()
+        };
+        let reference = blocks(&settled);
+        for image in shown.iter().rev().take(3) {
+            let off = blocks(image).iter().zip(&reference).map(|(a, b)| (a - b).abs()).sum::<f64>() / 48.0;
+            assert!(off < 30.0, "a {}x{} picture from the orbit is {off:.0} away from the view", image.width, image.height);
+        }
+    }
+
     /// The core contract of §9.1: the UI must get an image without ever
     /// blocking on the renderer.
     #[test]

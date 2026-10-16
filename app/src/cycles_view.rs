@@ -21,6 +21,11 @@ use tequila_scene::render::RenderEngine;
 /// before this; the limit is for the few that never converge.
 const VIEW_SAMPLES: u32 = 1024;
 
+/// The longest a change waits for Cycles' picture of the one before
+/// (`CyclesView::sync`): long enough for a heavy scene's first picture, short
+/// enough that a view whose picture never came still follows the mouse.
+const HELD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(3);
+
 pub struct CyclesView {
     session: Session,
     engine: RenderEngine,
@@ -51,6 +56,10 @@ pub struct CyclesView {
     /// The scene's floor reflects, and Cycles draws none: the viewport lays
     /// Tequila's reflection over the frames (`tequila_render_cpu::floor`).
     floor_reflection: bool,
+    /// Whether Cycles has shown a picture since it last restarted, and when
+    /// it did: a change waits for the picture of the one before (`sync`).
+    answered: bool,
+    restarted: std::time::Instant,
 }
 
 impl CyclesView {
@@ -74,6 +83,8 @@ impl CyclesView {
             under: Vec::new(),
             under_size: (0, 0),
             floor_reflection: false,
+            answered: true,
+            restarted: std::time::Instant::now(),
         })
     }
 
@@ -103,6 +114,14 @@ impl CyclesView {
         let moved = moved && !relit;
         let recamera = self.camera != Some(request.camera) || self.size != size;
         if !rescene && !moved && !recamera {
+            return Ok(false);
+        }
+        // A change that comes before Cycles has shown its picture of the last
+        // one waits for it, as Blender's does (`Session::ready_to_reset`).
+        // Restarting at every move of the mouse cancelled each picture before
+        // it was made, and an orbit showed nothing until the mouse stopped.
+        // The caller asks again, so the newest change is the one that goes in.
+        if !self.answered && self.restarted.elapsed() < HELD_AT_MOST {
             return Ok(false);
         }
         let view = translate::View {
@@ -142,6 +161,8 @@ impl CyclesView {
         };
         // Ended whatever happened, so the scene lock is never left held.
         self.session.end_edit(size.0, size.1, VIEW_SAMPLES);
+        self.answered = false;
+        self.restarted = std::time::Instant::now();
         result?;
         self.scene = Some(request.scene.clone());
         self.lighting = lighting;
@@ -160,6 +181,7 @@ impl CyclesView {
     /// is nothing new.
     pub fn take_frame(&mut self, framebuffer: &mut Framebuffer) -> Option<tequila_render_cycles::Frame> {
         let frame = self.session.latest_frame(&mut self.frame, self.size, &mut self.seen)?;
+        self.answered = true;
         if framebuffer.width != frame.width || framebuffer.height != frame.height {
             framebuffer.resize(frame.width, frame.height);
         }

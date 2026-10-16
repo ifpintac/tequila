@@ -33,6 +33,7 @@
 #include "util/transform.h"
 #include "util/unique_ptr.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <map>
@@ -166,11 +167,14 @@ static void tint_shadow(const OutputDriver::Tile &tile, const ShadowTint *tint, 
   if (r == 0.0f && g == 0.0f && b == 0.0f) {
     return;
   }
-  std::vector<float> ratio(size_t(w) * h * 3);
+  /* Room for the whole tile: a navigating live view writes only the first
+   * w x h of it (LiveDriver::keep). */
+  const size_t room = size_t(tile.size.x) * tile.size.y;
+  std::vector<float> ratio(room * 3);
   if (!tile.get_pass_pixels("catcher", 3, ratio.data())) {
     return;
   }
-  std::vector<float> reached(size_t(w) * h, 1.0f);
+  std::vector<float> reached(room, 1.0f);
   tile.get_pass_pixels("catcher samples", 1, reached.data());
   const auto unit = [](const float x) { return std::min(std::max(x, 0.0f), 1.0f); };
   for (size_t i = 0; i < size_t(w) * h; i++) {
@@ -235,13 +239,43 @@ class LiveDriver : public OutputDriver {
   }
 
  private:
+  /* When trace output last told of a kept frame. */
+  double last_kept = 0.0;
+
   /* Cycles' rows run bottom to top; Tequila's top to bottom. */
   static void flip(const std::vector<float> &from, std::vector<float> &to, int w, int h, int c)
   {
-    to.resize(from.size());
+    to.resize(size_t(w) * h * c);
     const size_t row = size_t(w) * c;
     for (int y = 0; y < h; y++) {
       memcpy(to.data() + size_t(h - 1 - y) * row, from.data() + size_t(y) * row, row * sizeof(float));
+    }
+  }
+
+  /* The size of the picture Cycles rendered into a w x h tile, from the
+   * tile's sample counts. While it navigates, Cycles renders a smaller
+   * picture - the tile's size divided by its resolution divider
+   * (scale_buffer_params) - packed from the first pixel, and the rest of the
+   * tile, cleared when it restarted, has no samples; but it hands over every
+   * pass at the tile's size, with no word of the divider. Read at that size,
+   * the small picture came out as strips along the bottom of a black one.
+   * The divider is the one whose picture ends where the samples do. False
+   * when nothing has a sample. */
+  static bool rendered_size(const std::vector<float> &count, int w, int h, int &fw, int &fh)
+  {
+    const size_t all = size_t(w) * h;
+    const auto sampled = [&](const size_t i) { return count[i] > 0.0f; };
+    for (int d = 1;; d++) {
+      const int cw = std::max(1, w / d), ch = std::max(1, h / d);
+      const size_t n = size_t(cw) * ch;
+      if (sampled(n - 1) && (n == all || !sampled(n))) {
+        fw = cw;
+        fh = ch;
+        return true;
+      }
+      if (n == 1) {
+        return false;
+      }
     }
   }
 
@@ -252,13 +286,7 @@ class LiveDriver : public OutputDriver {
       return;
     }
     static const bool trace = getenv("TEQUILA_CYCLES_TRACE") != nullptr;
-    if (progress && progress->get_current_sample() == 0) {
-      /* Nothing rendered yet: an empty, black picture. */
-      if (trace) {
-        fprintf(stderr, "live: drop empty %dx%d\n", w, h);
-      }
-      return;
-    }
+    const double begun = time_dt();
     if (progress) {
       /* The session stamps its start time as it applies a reset, so a render
        * that started before the change was asked for is the old view. */
@@ -274,38 +302,57 @@ class LiveDriver : public OutputDriver {
         return;
       }
     }
+    /* The first picture after a change, the one Cycles navigates with, has
+     * its samples too: Cycles counts them after showing them, and judged by
+     * that count it was dropped as empty, so a view moving faster than
+     * Cycles shows its second picture (a tenth of a second) showed none. */
+    std::vector<float> count(size_t(w) * h, 0.0f);
+    int fw = w, fh = h;
+    if (tile.get_pass_pixels("sample count", 1, count.data()) && !rendered_size(count, w, h, fw, fh)) {
+      if (trace) {
+        fprintf(stderr, "live: drop empty %dx%d\n", w, h);
+      }
+      return;
+    }
+    const double read = time_dt();
     std::vector<float> rows(size_t(w) * h * 4);
     if (!tile.get_pass_pixels("combined", 4, rows.data())) {
       return;
     }
-    tint_shadow(tile, tint, rows, w, h);
+    tint_shadow(tile, tint, rows, fw, fh);
     std::vector<float> albedo_rows(size_t(w) * h * 3), normal_rows(size_t(w) * h * 3);
     const bool guides = tile.get_pass_pixels("albedo", 3, albedo_rows.data()) &&
                         tile.get_pass_pixels("normal", 3, normal_rows.data());
     std::vector<float> object_rows(size_t(w) * h, 0.0f);
     const bool objects = tile.get_pass_pixels("object", 1, object_rows.data());
     const std::lock_guard<std::mutex> lock(mutex);
-    flip(rows, pixels, w, h, 4);
+    flip(rows, pixels, fw, fh, 4);
     if (guides) {
-      flip(albedo_rows, albedo, w, h, 3);
-      flip(normal_rows, normal, w, h, 3);
+      flip(albedo_rows, albedo, fw, fh, 3);
+      flip(normal_rows, normal, fw, fh, 3);
     }
     else {
-      albedo.assign(size_t(w) * h * 3, 0.0f);
-      normal.assign(size_t(w) * h * 3, 0.0f);
+      albedo.assign(size_t(fw) * fh * 3, 0.0f);
+      normal.assign(size_t(fw) * fh * 3, 0.0f);
     }
     if (objects) {
-      flip(object_rows, object, w, h, 1);
+      flip(object_rows, object, fw, fh, 1);
     }
     else {
-      object.assign(size_t(w) * h, 0.0f);
+      object.assign(size_t(fw) * fh, 0.0f);
     }
-    width = w;
-    height = h;
-    samples = progress ? progress->get_current_sample() : 0;
+    width = fw;
+    height = fh;
+    /* Cycles counts a pass's samples after it shows them, so the count is a
+     * pass behind: the picture has at least one. */
+    samples = std::max(1, progress ? progress->get_current_sample() : 0);
     generation++;
     if (trace) {
-      fprintf(stderr, "live: keep %dx%d sample %d\n", w, h, samples);
+      const double now = time_dt();
+      fprintf(stderr, "live: keep %dx%d of %dx%d sample %d in %.1f ms (counts %.1f ms), %.0f ms since the last\n",
+              fw, fh, w, h, samples, (now - begun) * 1000.0, (read - begun) * 1000.0,
+              last_kept > 0.0 ? (begun - last_kept) * 1000.0 : 0.0);
+      last_kept = now;
     }
   }
 };
@@ -462,6 +509,13 @@ static bool start_session(FscSession *s)
     object->set_name(ustring("object"));
     object->set_type(PASS_OBJECT_ID);
     object->set_mode(PassMode::NOISY);
+    /* How many samples each pixel has, for the size of the picture
+     * (LiveDriver::rendered_size). Adaptive sampling keeps the same pass, so
+     * Cycles merges the two: nothing more is rendered or stored. */
+    Pass *count = s->scene()->create_node<Pass>();
+    count->set_name(ustring("sample count"));
+    count->set_type(PASS_SAMPLE_COUNT);
+    count->set_mode(PassMode::NOISY);
   }
   return true;
 }
