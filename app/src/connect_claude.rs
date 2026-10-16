@@ -108,7 +108,10 @@ pub fn connect(path: &Path, program: &Path) -> Result<(), String> {
     // Freeshot, as the application was called before, listed itself as
     // "freeshot": that entry starts a program the rename leaves behind.
     let older = servers.get("freeshot").and_then(|s| s.get("command")).and_then(Value::as_str).is_some_and(|command| {
-        let program = Path::new(command).file_stem().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        // The program's name, whichever system's separators the path uses:
+        // Path splits only at its own system's.
+        let file = command.rsplit(['/', '\\']).next().unwrap_or(command).to_ascii_lowercase();
+        let program = file.strip_suffix(".exe").unwrap_or(&file);
         program == "freeshot-cli" || program == "freeshot"
     });
     if older {
