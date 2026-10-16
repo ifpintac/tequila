@@ -16,7 +16,7 @@ Get the newest version from the **[Releases page](../../releases/latest)**:
 
 | | File | Needs |
 |---|---|---|
-| **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA RTX card renders on the graphics card; any other computer renders on the processor. |
+| **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) renders on the graphics card; any other computer renders on the processor. |
 | **Mac** | `Tequila-<version>.dmg` | A Mac with Apple's own chips (M1 or newer) and a recent macOS. |
 
 To update, download the newer one and install it over the old: your
