@@ -47,6 +47,22 @@ clang++ -std=c++17 -O2 -DNDEBUG \
 dylibbundler -od -b -cd -x "$out/tequila-occt" -d "$out/libs/" -p @executable_path/libs/ \
     -s "$occt/lib" -s "$(brew --prefix)/lib"
 
+# dylibbundler can leave a library with the same rpath twice, which macOS
+# 15's loader refuses outright ("duplicate LC_RPATH"): one of each is kept,
+# and what changed is signed again.
+for file in "$out/tequila-occt" "$out"/libs/*.dylib; do
+    rpaths="$(otool -l "$file" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }')"
+    changed=0
+    for rpath in $(printf '%s\n' "$rpaths" | sort | uniq -d); do
+        count="$(printf '%s\n' "$rpaths" | grep -cxF "$rpath")"
+        for _ in $(seq 2 "$count"); do
+            install_name_tool -delete_rpath "$rpath" "$file"
+            changed=1
+        done
+    done
+    if [ "$changed" = 1 ]; then codesign --force -s - "$file"; fi
+done
+
 # Their licence texts: OpenCASCADE's (LGPL 2.1 with its exception) and each
 # library's that came with it, by the Homebrew package it is from.
 for formula in opencascade $(brew deps --installed opencascade 2>/dev/null); do
