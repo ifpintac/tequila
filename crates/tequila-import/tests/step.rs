@@ -266,7 +266,9 @@ fn a_file_with_nothing_to_mesh_is_refused() {
     let error = read_format(b"solid cube\nendsolid\n", "step", "x", &|_| None).unwrap_err();
     assert!(matches!(error, ImportError::Malformed(_)), "{error}");
 
-    let text = String::from_utf8(TWO_BODIES.to_vec()).unwrap();
+    // In lines ending as a Unix checkout has them: a Windows checkout ends
+    // them \r\n, and the end of the data section went unfound there.
+    let text = String::from_utf8(TWO_BODIES.to_vec()).unwrap().replace("\r\n", "\n");
     let start = text.find("DATA;").unwrap() + "DATA;".len();
     let end = text.find("ENDSEC;\nEND-ISO").unwrap();
     let empty = format!("{}\n#1=APPLICATION_CONTEXT('automotive design');\n{}", &text[..start], &text[end..]);
