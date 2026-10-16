@@ -1,0 +1,14 @@
+{
+  "category": "Light",
+  "emission_color": [0.9026, 0.7919, 0.5584],
+  "emission_luminance": 30,
+  "name": "LED Warm White",
+  "tags": [
+    "led",
+    "light",
+    "warm",
+    "white"
+  ],
+  "type": "emissive"
+}
+

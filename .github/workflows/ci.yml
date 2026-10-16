@@ -1,0 +1,75 @@
+name: CI
+
+# Every push and pull request: the tests on Windows and on a Mac with Apple
+# silicon, and a picture rendered without a window. Cycles and the
+# OpenCASCADE reader are not built here (the release workflow builds them):
+# their tests skip themselves, and STEP is read by truck.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Embree and OIDN are prebuilt SDKs, not crates; they never change
+      # within a pinned version.
+      - name: Cache third-party SDKs
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-${{ runner.os }}-${{ runner.arch }}-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pwsh scripts/fetch-third-party.ps1
+          else
+            bash scripts/fetch-third-party.sh
+          fi
+
+      # Release mode is not optional: the analytic tests integrate hundreds
+      # of thousands of samples each, and take minutes in debug.
+      - name: Test
+        run: cargo test --workspace --release --no-fail-fast
+
+      # The whole pipeline producing a picture, from the built-in scene and
+      # through the import path.
+      - name: Headless renders
+        shell: bash
+        run: |
+          cargo run --release -p tequila-cli -- --width 320 --height 200 --samples 32 --output smoke.png
+          cargo run --release -p tequila-cli -- --input tests/fixtures/bracket.obj --width 320 --height 200 --samples 32 --output imported.png
+          test -s smoke.png && test -s imported.png
+
+      - name: Upload the renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renders-${{ runner.os }}
+          path: |
+            smoke.png
+            imported.png
+          if-no-files-found: ignore

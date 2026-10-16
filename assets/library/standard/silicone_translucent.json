@@ -1,0 +1,15 @@
+{
+  "base_color": [0.8201, 0.8082, 0.7804],
+  "category": "Plastic",
+  "name": "Silicone Translucent",
+  "specular_roughness": 0.3,
+  "subsurface_color": [0.9225, 0.8771, 0.8589],
+  "subsurface_radius": [0.647, 0.656, 0.662],
+  "tags": [
+    "silicone",
+    "soft",
+    "seal"
+  ],
+  "type": "translucent"
+}
+

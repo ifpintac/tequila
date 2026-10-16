@@ -1,0 +1,24 @@
+[package]
+name = "tequila-render-cycles"
+description = "Rendering through Cycles (Apache-2.0), loaded at runtime from tequila_cycles.dll"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+tequila-render-core.workspace = true
+# Loaded at runtime rather than linked: a build without Cycles beside it still
+# builds, runs and renders with Tequila's own renderer.
+libloading = "0.8"
+# Sending a 4K texture walks 67 million values; on every core, not one.
+rayon = "1"
+
+[dev-dependencies]
+# The demo scene, to test what counts as a scene change.
+tequila-scene.workspace = true

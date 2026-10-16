@@ -1,0 +1,17 @@
+{
+  "base_color": [0.8334548, 0.83069813, 0.7898523],
+  "category": "Plastic",
+  "name": "POM White",
+  "specular_roughness": 0.3,
+  "subsurface_radius": [0.03, 0.028, 0.025],
+  "tags": [
+    "pom",
+    "acetal",
+    "delrin",
+    "white",
+    "engineering",
+    "waxy"
+  ],
+  "type": "plastic_cloudy"
+}
+

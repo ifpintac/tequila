@@ -1,0 +1,15 @@
+{
+  "category": "Plastic",
+  "name": "Polycarbonate Red Lens",
+  "specular_ior": 1.585,
+  "tags": [
+    "polycarbonate",
+    "lens",
+    "tail light",
+    "red"
+  ],
+  "transmission_color": [0.86, 0.035, 0.02],
+  "transmission_depth": 0.003,
+  "type": "plastic_transparent"
+}
+

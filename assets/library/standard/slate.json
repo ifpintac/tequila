@@ -1,0 +1,399 @@
+{
+  "base_color": [0.06288564, 0.06462834, 0.06956336],
+  "base_diffuse_roughness": 0.4,
+  "category": "Stone",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:2",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 10,
+        "socket": "input:1",
+        "to": 13
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 12,
+        "socket": "input:2",
+        "to": 13
+      },
+      {
+        "from": 13,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 14,
+        "socket": "input:0",
+        "to": 15
+      },
+      {
+        "from": 15,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [1, 1, 0.12]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 60
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 5
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.35
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0004,
+        "id": 9,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "gradient": [
+          {
+            "at": 0,
+            "color": [0.031108852, 0.032906637, 0.03632359]
+          },
+          {
+            "at": 0.45,
+            "color": [0.06016735, 0.06274358, 0.06929594]
+          },
+          {
+            "at": 1,
+            "color": [0.11025592, 0.11401872, 0.12098311]
+          }
+        ],
+        "id": 10,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 25
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0,
+            "color": [0.07150006, 0.06572714, 0.0820221]
+          },
+          {
+            "at": 0.5,
+            "color": [0.06458596, 0.06642237, 0.06979943]
+          },
+          {
+            "at": 1,
+            "color": [0.06296372, 0.07113181, 0.06391755]
+          }
+        ],
+        "id": 12,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "overlay",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 14,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 2500
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 15,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.36
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Slate",
+  "specular_roughness": 0.5,
+  "tags": [
+    "slate",
+    "stone",
+    "dark",
+    "riven"
+  ],
+  "type": "generic"
+}
+

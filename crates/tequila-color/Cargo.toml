@@ -1,0 +1,16 @@
+[package]
+name = "tequila-color"
+description = "OpenColorIO pipeline, display transforms, image styles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+# The develop pass is the one piece of this crate that runs over two million
+# pixels on the interactive path, and it is embarrassingly parallel.
+rayon = "1"
+

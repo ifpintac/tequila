@@ -1,0 +1,11 @@
+# Companion to bracket.obj. Phong parameters, which the importer converts to
+# OpenPBR with the mapping of docs/03 §6.1 point 8.
+newmtl Steel
+Kd 0.55 0.56 0.58
+Ns 96
+Ni 1.5
+
+newmtl Anodized
+Kd 0.15 0.32 0.62
+Ns 12
+Ni 1.5

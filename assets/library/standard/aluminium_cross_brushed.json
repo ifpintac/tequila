@@ -1,0 +1,322 @@
+{
+  "base_color": [0.95, 0.95, 0.95],
+  "category": "Metal",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 6
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 7,
+        "output": 3,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 10,
+        "socket": "input:1",
+        "to": 11
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 13
+      },
+      {
+        "from": 12,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 13,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.016666668, 1, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1800
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.62
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 324
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "vector": [0, 0, 1.5707964]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.016666668, 1, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 10,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1800
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.62
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "maximum"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0000015,
+        "id": 12,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.4
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.8
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.27
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.34
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Aluminium Cross Brushed",
+  "specular_roughness": 0.3,
+  "tags": [
+    "aluminium",
+    "cross brushed",
+    "crosshatch",
+    "satin"
+  ],
+  "type": "metal"
+}
+

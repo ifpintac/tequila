@@ -1,0 +1,73 @@
+{
+  "base_color": [0.016623849, 0.023286643, 0.11819069],
+  "category": "Paint",
+  "flake_color": [0.35404205, 0.4279747, 0.75513166],
+  "flake_roughness": 0.18,
+  "flake_size": 0.000045,
+  "flake_weight": 0.45,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 520
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000005,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Automotive Blue Metallic",
+  "specular_roughness": 0.24,
+  "tags": [
+    "car",
+    "metallic",
+    "flake",
+    "blue"
+  ],
+  "type": "metallic_paint"
+}
+

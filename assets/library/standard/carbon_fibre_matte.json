@@ -1,0 +1,4408 @@
+{
+  "base_color": [0.18545118, 0.18475217, 0.2023964],
+  "base_metalness": 0.9,
+  "category": "Composite",
+  "coat_roughness": 0.38,
+  "coat_weight": 1,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "output": 1,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 64
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 115
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 17
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 116
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:0",
+        "to": 18
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:0",
+        "to": 65
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 5,
+        "output": 1,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 5,
+        "output": 2,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 14
+      },
+      {
+        "from": 8,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "input:1",
+        "to": 12
+      },
+      {
+        "from": 9,
+        "socket": "input:0",
+        "to": 15
+      },
+      {
+        "from": 10,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 11,
+        "socket": "input:1",
+        "to": 13
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 16
+      },
+      {
+        "from": 12,
+        "socket": "input:0",
+        "to": 13
+      },
+      {
+        "from": 13,
+        "socket": "input:1",
+        "to": 14
+      },
+      {
+        "from": 13,
+        "socket": "input:1",
+        "to": 15
+      },
+      {
+        "from": 13,
+        "socket": "input:1",
+        "to": 16
+      },
+      {
+        "from": 14,
+        "socket": "input:1",
+        "to": 60
+      },
+      {
+        "from": 14,
+        "socket": "input:1",
+        "to": 61
+      },
+      {
+        "from": 14,
+        "socket": "input:1",
+        "to": 62
+      },
+      {
+        "from": 14,
+        "socket": "input:1",
+        "to": 63
+      },
+      {
+        "from": 15,
+        "socket": "input:1",
+        "to": 107
+      },
+      {
+        "from": 15,
+        "socket": "input:1",
+        "to": 109
+      },
+      {
+        "from": 15,
+        "socket": "input:1",
+        "to": 111
+      },
+      {
+        "from": 15,
+        "socket": "input:1",
+        "to": 113
+      },
+      {
+        "from": 16,
+        "socket": "input:1",
+        "to": 158
+      },
+      {
+        "from": 16,
+        "socket": "input:1",
+        "to": 160
+      },
+      {
+        "from": 16,
+        "socket": "input:1",
+        "to": 162
+      },
+      {
+        "from": 16,
+        "socket": "input:1",
+        "to": 164
+      },
+      {
+        "from": 17,
+        "socket": "input:0",
+        "to": 19
+      },
+      {
+        "from": 17,
+        "socket": "input:0",
+        "to": 21
+      },
+      {
+        "from": 17,
+        "socket": "input:0",
+        "to": 49
+      },
+      {
+        "from": 18,
+        "socket": "input:0",
+        "to": 20
+      },
+      {
+        "from": 18,
+        "socket": "input:0",
+        "to": 22
+      },
+      {
+        "from": 18,
+        "socket": "input:1",
+        "to": 49
+      },
+      {
+        "from": 19,
+        "socket": "input:0",
+        "to": 23
+      },
+      {
+        "from": 19,
+        "socket": "input:0",
+        "to": 41
+      },
+      {
+        "from": 20,
+        "socket": "input:1",
+        "to": 23
+      },
+      {
+        "from": 20,
+        "socket": "input:0",
+        "to": 42
+      },
+      {
+        "from": 21,
+        "socket": "input:0",
+        "to": 26
+      },
+      {
+        "from": 21,
+        "socket": "input:0",
+        "to": 35
+      },
+      {
+        "from": 22,
+        "socket": "input:0",
+        "to": 29
+      },
+      {
+        "from": 22,
+        "socket": "input:0",
+        "to": 32
+      },
+      {
+        "from": 23,
+        "socket": "input:0",
+        "to": 24
+      },
+      {
+        "from": 24,
+        "socket": "input:0",
+        "to": 25
+      },
+      {
+        "from": 25,
+        "socket": "input:0",
+        "to": 40
+      },
+      {
+        "from": 25,
+        "socket": "input:0",
+        "to": 45
+      },
+      {
+        "from": 25,
+        "socket": "input:0",
+        "to": 47
+      },
+      {
+        "from": 25,
+        "socket": "input:0",
+        "to": 54
+      },
+      {
+        "from": 25,
+        "socket": "input:0",
+        "to": 60
+      },
+      {
+        "from": 26,
+        "socket": "input:0",
+        "to": 27
+      },
+      {
+        "from": 27,
+        "socket": "input:0",
+        "to": 28
+      },
+      {
+        "from": 28,
+        "socket": "input:0",
+        "to": 38
+      },
+      {
+        "from": 29,
+        "socket": "input:0",
+        "to": 30
+      },
+      {
+        "from": 30,
+        "socket": "input:0",
+        "to": 31
+      },
+      {
+        "from": 31,
+        "socket": "input:0",
+        "to": 39
+      },
+      {
+        "from": 32,
+        "socket": "input:0",
+        "to": 33
+      },
+      {
+        "from": 33,
+        "socket": "input:0",
+        "to": 34
+      },
+      {
+        "from": 34,
+        "socket": "input:1",
+        "to": 38
+      },
+      {
+        "from": 35,
+        "socket": "input:0",
+        "to": 36
+      },
+      {
+        "from": 36,
+        "socket": "input:0",
+        "to": 37
+      },
+      {
+        "from": 37,
+        "socket": "input:1",
+        "to": 39
+      },
+      {
+        "from": 38,
+        "socket": "input:2",
+        "to": 40
+      },
+      {
+        "from": 39,
+        "socket": "input:1",
+        "to": 40
+      },
+      {
+        "from": 40,
+        "socket": "input:0",
+        "to": 56
+      },
+      {
+        "from": 40,
+        "socket": "input:2",
+        "to": 59
+      },
+      {
+        "from": 41,
+        "socket": "input:0",
+        "to": 43
+      },
+      {
+        "from": 42,
+        "socket": "input:0",
+        "to": 44
+      },
+      {
+        "from": 43,
+        "socket": "input:2",
+        "to": 45
+      },
+      {
+        "from": 43,
+        "output": 1,
+        "socket": "input:2",
+        "to": 47
+      },
+      {
+        "from": 44,
+        "socket": "input:1",
+        "to": 45
+      },
+      {
+        "from": 44,
+        "output": 1,
+        "socket": "input:1",
+        "to": 47
+      },
+      {
+        "from": 45,
+        "socket": "input:0",
+        "to": 46
+      },
+      {
+        "from": 46,
+        "socket": "input:0",
+        "to": 57
+      },
+      {
+        "from": 47,
+        "socket": "input:0",
+        "to": 48
+      },
+      {
+        "from": 48,
+        "socket": "input:0",
+        "to": 63
+      },
+      {
+        "from": 49,
+        "socket": "input:0",
+        "to": 50
+      },
+      {
+        "from": 49,
+        "socket": "input:0",
+        "to": 51
+      },
+      {
+        "from": 50,
+        "socket": "input:0",
+        "to": 52
+      },
+      {
+        "from": 51,
+        "socket": "input:0",
+        "to": 53
+      },
+      {
+        "from": 52,
+        "socket": "input:2",
+        "to": 54
+      },
+      {
+        "from": 53,
+        "socket": "input:1",
+        "to": 54
+      },
+      {
+        "from": 54,
+        "socket": "input:0",
+        "to": 55
+      },
+      {
+        "from": 54,
+        "socket": "input:0",
+        "to": 59
+      },
+      {
+        "from": 55,
+        "socket": "input:1",
+        "to": 57
+      },
+      {
+        "from": 56,
+        "socket": "input:1",
+        "to": 58
+      },
+      {
+        "from": 57,
+        "socket": "input:0",
+        "to": 58
+      },
+      {
+        "from": 58,
+        "socket": "input:0",
+        "to": 62
+      },
+      {
+        "from": 59,
+        "socket": "input:0",
+        "to": 61
+      },
+      {
+        "from": 60,
+        "socket": "input:0",
+        "to": 108
+      },
+      {
+        "from": 61,
+        "socket": "input:0",
+        "to": 110
+      },
+      {
+        "from": 62,
+        "socket": "input:0",
+        "to": 112
+      },
+      {
+        "from": 63,
+        "socket": "input:0",
+        "to": 114
+      },
+      {
+        "from": 64,
+        "socket": "input:0",
+        "to": 66
+      },
+      {
+        "from": 64,
+        "socket": "input:0",
+        "to": 68
+      },
+      {
+        "from": 64,
+        "socket": "input:0",
+        "to": 96
+      },
+      {
+        "from": 65,
+        "socket": "input:0",
+        "to": 67
+      },
+      {
+        "from": 65,
+        "socket": "input:0",
+        "to": 69
+      },
+      {
+        "from": 65,
+        "socket": "input:1",
+        "to": 96
+      },
+      {
+        "from": 66,
+        "socket": "input:0",
+        "to": 70
+      },
+      {
+        "from": 66,
+        "socket": "input:0",
+        "to": 88
+      },
+      {
+        "from": 67,
+        "socket": "input:1",
+        "to": 70
+      },
+      {
+        "from": 67,
+        "socket": "input:0",
+        "to": 89
+      },
+      {
+        "from": 68,
+        "socket": "input:0",
+        "to": 73
+      },
+      {
+        "from": 68,
+        "socket": "input:0",
+        "to": 82
+      },
+      {
+        "from": 69,
+        "socket": "input:0",
+        "to": 76
+      },
+      {
+        "from": 69,
+        "socket": "input:0",
+        "to": 79
+      },
+      {
+        "from": 70,
+        "socket": "input:0",
+        "to": 71
+      },
+      {
+        "from": 71,
+        "socket": "input:0",
+        "to": 72
+      },
+      {
+        "from": 72,
+        "socket": "input:0",
+        "to": 87
+      },
+      {
+        "from": 72,
+        "socket": "input:0",
+        "to": 92
+      },
+      {
+        "from": 72,
+        "socket": "input:0",
+        "to": 94
+      },
+      {
+        "from": 72,
+        "socket": "input:0",
+        "to": 101
+      },
+      {
+        "from": 72,
+        "socket": "input:0",
+        "to": 107
+      },
+      {
+        "from": 73,
+        "socket": "input:0",
+        "to": 74
+      },
+      {
+        "from": 74,
+        "socket": "input:0",
+        "to": 75
+      },
+      {
+        "from": 75,
+        "socket": "input:0",
+        "to": 85
+      },
+      {
+        "from": 76,
+        "socket": "input:0",
+        "to": 77
+      },
+      {
+        "from": 77,
+        "socket": "input:0",
+        "to": 78
+      },
+      {
+        "from": 78,
+        "socket": "input:0",
+        "to": 86
+      },
+      {
+        "from": 79,
+        "socket": "input:0",
+        "to": 80
+      },
+      {
+        "from": 80,
+        "socket": "input:0",
+        "to": 81
+      },
+      {
+        "from": 81,
+        "socket": "input:1",
+        "to": 85
+      },
+      {
+        "from": 82,
+        "socket": "input:0",
+        "to": 83
+      },
+      {
+        "from": 83,
+        "socket": "input:0",
+        "to": 84
+      },
+      {
+        "from": 84,
+        "socket": "input:1",
+        "to": 86
+      },
+      {
+        "from": 85,
+        "socket": "input:2",
+        "to": 87
+      },
+      {
+        "from": 86,
+        "socket": "input:1",
+        "to": 87
+      },
+      {
+        "from": 87,
+        "socket": "input:0",
+        "to": 103
+      },
+      {
+        "from": 87,
+        "socket": "input:2",
+        "to": 106
+      },
+      {
+        "from": 88,
+        "socket": "input:0",
+        "to": 90
+      },
+      {
+        "from": 89,
+        "socket": "input:0",
+        "to": 91
+      },
+      {
+        "from": 90,
+        "socket": "input:2",
+        "to": 92
+      },
+      {
+        "from": 90,
+        "output": 1,
+        "socket": "input:2",
+        "to": 94
+      },
+      {
+        "from": 91,
+        "socket": "input:1",
+        "to": 92
+      },
+      {
+        "from": 91,
+        "output": 1,
+        "socket": "input:1",
+        "to": 94
+      },
+      {
+        "from": 92,
+        "socket": "input:0",
+        "to": 93
+      },
+      {
+        "from": 93,
+        "socket": "input:0",
+        "to": 104
+      },
+      {
+        "from": 94,
+        "socket": "input:0",
+        "to": 95
+      },
+      {
+        "from": 95,
+        "socket": "input:0",
+        "to": 113
+      },
+      {
+        "from": 96,
+        "socket": "input:0",
+        "to": 97
+      },
+      {
+        "from": 96,
+        "socket": "input:0",
+        "to": 98
+      },
+      {
+        "from": 97,
+        "socket": "input:0",
+        "to": 99
+      },
+      {
+        "from": 98,
+        "socket": "input:0",
+        "to": 100
+      },
+      {
+        "from": 99,
+        "socket": "input:2",
+        "to": 101
+      },
+      {
+        "from": 100,
+        "socket": "input:1",
+        "to": 101
+      },
+      {
+        "from": 101,
+        "socket": "input:0",
+        "to": 102
+      },
+      {
+        "from": 101,
+        "socket": "input:0",
+        "to": 106
+      },
+      {
+        "from": 102,
+        "socket": "input:1",
+        "to": 104
+      },
+      {
+        "from": 103,
+        "socket": "input:1",
+        "to": 105
+      },
+      {
+        "from": 104,
+        "socket": "input:0",
+        "to": 105
+      },
+      {
+        "from": 105,
+        "socket": "input:0",
+        "to": 111
+      },
+      {
+        "from": 106,
+        "socket": "input:0",
+        "to": 109
+      },
+      {
+        "from": 107,
+        "socket": "input:1",
+        "to": 108
+      },
+      {
+        "from": 108,
+        "socket": "input:0",
+        "to": 159
+      },
+      {
+        "from": 109,
+        "socket": "input:1",
+        "to": 110
+      },
+      {
+        "from": 110,
+        "socket": "input:0",
+        "to": 161
+      },
+      {
+        "from": 111,
+        "socket": "input:1",
+        "to": 112
+      },
+      {
+        "from": 112,
+        "socket": "input:0",
+        "to": 163
+      },
+      {
+        "from": 113,
+        "socket": "input:1",
+        "to": 114
+      },
+      {
+        "from": 114,
+        "socket": "input:0",
+        "to": 165
+      },
+      {
+        "from": 115,
+        "socket": "input:0",
+        "to": 117
+      },
+      {
+        "from": 115,
+        "socket": "input:0",
+        "to": 119
+      },
+      {
+        "from": 115,
+        "socket": "input:0",
+        "to": 147
+      },
+      {
+        "from": 116,
+        "socket": "input:0",
+        "to": 118
+      },
+      {
+        "from": 116,
+        "socket": "input:0",
+        "to": 120
+      },
+      {
+        "from": 116,
+        "socket": "input:1",
+        "to": 147
+      },
+      {
+        "from": 117,
+        "socket": "input:0",
+        "to": 121
+      },
+      {
+        "from": 117,
+        "socket": "input:0",
+        "to": 139
+      },
+      {
+        "from": 118,
+        "socket": "input:1",
+        "to": 121
+      },
+      {
+        "from": 118,
+        "socket": "input:0",
+        "to": 140
+      },
+      {
+        "from": 119,
+        "socket": "input:0",
+        "to": 124
+      },
+      {
+        "from": 119,
+        "socket": "input:0",
+        "to": 133
+      },
+      {
+        "from": 120,
+        "socket": "input:0",
+        "to": 127
+      },
+      {
+        "from": 120,
+        "socket": "input:0",
+        "to": 130
+      },
+      {
+        "from": 121,
+        "socket": "input:0",
+        "to": 122
+      },
+      {
+        "from": 122,
+        "socket": "input:0",
+        "to": 123
+      },
+      {
+        "from": 123,
+        "socket": "input:0",
+        "to": 138
+      },
+      {
+        "from": 123,
+        "socket": "input:0",
+        "to": 143
+      },
+      {
+        "from": 123,
+        "socket": "input:0",
+        "to": 145
+      },
+      {
+        "from": 123,
+        "socket": "input:0",
+        "to": 152
+      },
+      {
+        "from": 123,
+        "socket": "input:0",
+        "to": 158
+      },
+      {
+        "from": 124,
+        "socket": "input:0",
+        "to": 125
+      },
+      {
+        "from": 125,
+        "socket": "input:0",
+        "to": 126
+      },
+      {
+        "from": 126,
+        "socket": "input:0",
+        "to": 136
+      },
+      {
+        "from": 127,
+        "socket": "input:0",
+        "to": 128
+      },
+      {
+        "from": 128,
+        "socket": "input:0",
+        "to": 129
+      },
+      {
+        "from": 129,
+        "socket": "input:0",
+        "to": 137
+      },
+      {
+        "from": 130,
+        "socket": "input:0",
+        "to": 131
+      },
+      {
+        "from": 131,
+        "socket": "input:0",
+        "to": 132
+      },
+      {
+        "from": 132,
+        "socket": "input:1",
+        "to": 136
+      },
+      {
+        "from": 133,
+        "socket": "input:0",
+        "to": 134
+      },
+      {
+        "from": 134,
+        "socket": "input:0",
+        "to": 135
+      },
+      {
+        "from": 135,
+        "socket": "input:1",
+        "to": 137
+      },
+      {
+        "from": 136,
+        "socket": "input:2",
+        "to": 138
+      },
+      {
+        "from": 137,
+        "socket": "input:1",
+        "to": 138
+      },
+      {
+        "from": 138,
+        "socket": "input:0",
+        "to": 154
+      },
+      {
+        "from": 138,
+        "socket": "input:2",
+        "to": 157
+      },
+      {
+        "from": 139,
+        "socket": "input:0",
+        "to": 141
+      },
+      {
+        "from": 140,
+        "socket": "input:0",
+        "to": 142
+      },
+      {
+        "from": 141,
+        "socket": "input:2",
+        "to": 143
+      },
+      {
+        "from": 141,
+        "output": 1,
+        "socket": "input:2",
+        "to": 145
+      },
+      {
+        "from": 142,
+        "socket": "input:1",
+        "to": 143
+      },
+      {
+        "from": 142,
+        "output": 1,
+        "socket": "input:1",
+        "to": 145
+      },
+      {
+        "from": 143,
+        "socket": "input:0",
+        "to": 144
+      },
+      {
+        "from": 144,
+        "socket": "input:0",
+        "to": 155
+      },
+      {
+        "from": 145,
+        "socket": "input:0",
+        "to": 146
+      },
+      {
+        "from": 146,
+        "socket": "input:0",
+        "to": 164
+      },
+      {
+        "from": 147,
+        "socket": "input:0",
+        "to": 148
+      },
+      {
+        "from": 147,
+        "socket": "input:0",
+        "to": 149
+      },
+      {
+        "from": 148,
+        "socket": "input:0",
+        "to": 150
+      },
+      {
+        "from": 149,
+        "socket": "input:0",
+        "to": 151
+      },
+      {
+        "from": 150,
+        "socket": "input:2",
+        "to": 152
+      },
+      {
+        "from": 151,
+        "socket": "input:1",
+        "to": 152
+      },
+      {
+        "from": 152,
+        "socket": "input:0",
+        "to": 153
+      },
+      {
+        "from": 152,
+        "socket": "input:0",
+        "to": 157
+      },
+      {
+        "from": 153,
+        "socket": "input:1",
+        "to": 155
+      },
+      {
+        "from": 154,
+        "socket": "input:1",
+        "to": 156
+      },
+      {
+        "from": 155,
+        "socket": "input:0",
+        "to": 156
+      },
+      {
+        "from": 156,
+        "socket": "input:0",
+        "to": 162
+      },
+      {
+        "from": 157,
+        "socket": "input:0",
+        "to": 160
+      },
+      {
+        "from": 158,
+        "socket": "input:1",
+        "to": 159
+      },
+      {
+        "from": 159,
+        "socket": "input:0",
+        "to": 166
+      },
+      {
+        "from": 159,
+        "socket": "input:0",
+        "to": 168
+      },
+      {
+        "from": 159,
+        "socket": "input:0",
+        "to": 169
+      },
+      {
+        "from": 160,
+        "socket": "input:1",
+        "to": 161
+      },
+      {
+        "from": 161,
+        "socket": "input:0",
+        "to": 172
+      },
+      {
+        "from": 161,
+        "socket": "input:0",
+        "to": 173
+      },
+      {
+        "from": 162,
+        "socket": "input:1",
+        "to": 163
+      },
+      {
+        "from": 163,
+        "socket": "input:0",
+        "to": 170
+      },
+      {
+        "from": 164,
+        "socket": "input:1",
+        "to": 165
+      },
+      {
+        "from": 165,
+        "socket": "input:1",
+        "to": 167
+      },
+      {
+        "from": 166,
+        "socket": "input:0",
+        "to": 167
+      },
+      {
+        "from": 167,
+        "socket": "param:specular_rotation",
+        "to": 1
+      },
+      {
+        "from": 168,
+        "socket": "input:1",
+        "to": 171
+      },
+      {
+        "from": 169,
+        "socket": "input:1",
+        "to": 170
+      },
+      {
+        "from": 170,
+        "socket": "input:2",
+        "to": 171
+      },
+      {
+        "from": 171,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 172,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 173,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "separate_xyz"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "separate_xyz"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "power"
+        },
+        "type": "math"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "power"
+        },
+        "type": "math"
+      },
+      {
+        "id": 10,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "power"
+        },
+        "type": "math"
+      },
+      {
+        "id": 12,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 14,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 15,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 16,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 17,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 18,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 19,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 20,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 21,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 22,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 23,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 24,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floored_modulo"
+        },
+        "type": "math"
+      },
+      {
+        "id": 25,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "less_than"
+        },
+        "type": "math"
+      },
+      {
+        "id": 26,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 27,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 28,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 29,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 30,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 31,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 32,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 33,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 34,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 35,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 36,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 37,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 38,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 39,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 40,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 41,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 42,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 500
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 43,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 44,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 45,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 46,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.9
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.08
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 47,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 48,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": -0.012
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.012
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 49,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 50,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [24, 0.6, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 51,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.6, 24, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 52,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 53,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 54,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 55,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.89199996
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.072
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 56,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 57,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 58,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 59,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.036000002
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 60,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 61,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 62,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 63,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 64,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 65,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 66,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 67,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 68,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 69,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 70,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 71,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floored_modulo"
+        },
+        "type": "math"
+      },
+      {
+        "id": 72,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "less_than"
+        },
+        "type": "math"
+      },
+      {
+        "id": 73,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 74,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 75,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 76,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 77,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 78,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 79,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 80,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 81,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 82,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 83,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 84,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 85,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 86,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 87,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 88,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 17.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 89,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 517.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 90,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 91,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 92,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 93,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.9
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.08
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 94,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 95,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": -0.012
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.012
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 96,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 17.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 97,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [24, 0.6, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 98,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.6, 24, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 99,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 100,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 101,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 102,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.89199996
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.072
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 103,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 104,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 105,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 106,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.036000002
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 107,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 108,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 109,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 110,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 111,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 112,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 113,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 114,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 115,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 116,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 454.54547
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 117,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 118,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 119,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 120,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 121,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 122,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floored_modulo"
+        },
+        "type": "math"
+      },
+      {
+        "id": 123,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "less_than"
+        },
+        "type": "math"
+      },
+      {
+        "id": 124,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 125,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 126,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 127,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 128,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 129,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.43
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.25
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 130,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 131,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 132,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 133,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 134,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 135,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 136,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 137,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 138,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 139,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 34.6
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 140,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 534.6
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 141,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 142,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 143,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 144,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.9
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.08
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 145,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 146,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": -0.012
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.012
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 147,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 34.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 148,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [24, 0.6, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 149,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.6, 24, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 150,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 151,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 152,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 153,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.89199996
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.072
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 154,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 155,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 156,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 157,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.036000002
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 158,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 159,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 160,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 161,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 162,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 163,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 164,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 165,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 166,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 167,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 168,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.18545118, 0.18475217, 0.2023964]
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "color": [0.18545118, 0.18475217, 0.2023964]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 169,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.55
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 170,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 171,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "multiply",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 172,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.15
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "depth": 0.000012,
+        "id": 173,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Carbon Fibre Matte",
+  "specular_roughness_anisotropy": 0.8,
+  "tags": [
+    "carbon",
+    "composite",
+    "weave",
+    "twill",
+    "3k",
+    "matte",
+    "cfrp"
+  ],
+  "type": "generic"
+}
+

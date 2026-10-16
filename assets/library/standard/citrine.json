@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Citrine",
+  "specular_ior": 1.544,
+  "tags": [
+    "citrine",
+    "quartz",
+    "yellow",
+    "jewellery"
+  ],
+  "transmission_color": [0.7933, 0.6185, 0.2158],
+  "transmission_dispersion_abbe": 70,
+  "type": "gem"
+}
+

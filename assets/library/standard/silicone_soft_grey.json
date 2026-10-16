@@ -1,0 +1,18 @@
+{
+  "base_color": [0.20797613, 0.21510789, 0.23182258],
+  "category": "Plastic",
+  "name": "Silicone Soft Grey",
+  "specular_roughness": 0.46,
+  "subsurface_color": [0.331559, 0.34092423, 0.3626972],
+  "subsurface_radius": [0.002, 0.002, 0.002],
+  "subsurface_weight": 0.3,
+  "tags": [
+    "silicone",
+    "soft",
+    "rubber",
+    "grey",
+    "kitchen"
+  ],
+  "type": "translucent"
+}
+

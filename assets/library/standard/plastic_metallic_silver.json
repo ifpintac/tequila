@@ -1,0 +1,20 @@
+{
+  "base_color": [0.3, 0.31, 0.32],
+  "category": "Plastic",
+  "coat_roughness": 0.04,
+  "flake_color": [0.86, 0.86, 0.87],
+  "flake_size": 0.000045,
+  "flake_spread": 0.4,
+  "flake_weight": 0.6,
+  "name": "Plastic Metallic Silver",
+  "specular_roughness": 0.3,
+  "tags": [
+    "metallic",
+    "silver",
+    "flake",
+    "moulded",
+    "consumer"
+  ],
+  "type": "metallic_paint"
+}
+

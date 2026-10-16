@@ -1,0 +1,236 @@
+{
+  "base_color": [0.019868705, 0.020263493, 0.022761727],
+  "category": "Plastic",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 1,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 70
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 6
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:5",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "direction": "diagonal",
+          "profile": "sine",
+          "type": "bands"
+        },
+        "type": "wave_texture"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0,
+            "color": [0.019868705, 0.020263493, 0.022761727]
+          },
+          {
+            "at": 0.28,
+            "color": [0.035583157, 0.036783416, 0.041552987]
+          },
+          {
+            "at": 0.4,
+            "color": [0.6220709, 0.62342393, 0.58927053]
+          },
+          {
+            "at": 0.55,
+            "color": [0.75840056, 0.75992155, 0.72152996]
+          },
+          {
+            "at": 0.68,
+            "color": [0.26807544, 0.2740938, 0.29308823]
+          },
+          {
+            "at": 0.84,
+            "color": [0.023744151, 0.02414456, 0.02784965]
+          },
+          {
+            "at": 1,
+            "color": [0.019868705, 0.020263493, 0.022761727]
+          }
+        ],
+        "id": 3,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 20
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 5000
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000002,
+        "id": 7,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Recycled Plastic Swirl",
+  "specular_roughness": 0.34,
+  "tags": [
+    "recycled",
+    "swirl",
+    "marbled",
+    "sheet",
+    "sustainable"
+  ],
+  "type": "plastic"
+}
+

@@ -1,0 +1,64 @@
+{
+  "base_color": [0.025655542, 0.027176661, 0.032286573],
+  "category": "Paint",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1600
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "feature": "f1",
+          "metric": "euclidean",
+          "normalize": false
+        },
+        "type": "voronoi_texture"
+      },
+      {
+        "depth": 0.00003,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Paint Textured Charcoal",
+  "specular_roughness": 0.6,
+  "tags": [
+    "textured",
+    "wrinkle",
+    "industrial",
+    "charcoal"
+  ],
+  "type": "plastic"
+}
+

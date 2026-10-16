@@ -1,0 +1,15 @@
+{
+  "category": "Glass",
+  "name": "Glass Blue Tint",
+  "specular_ior": 1.52,
+  "tags": [
+    "glass",
+    "blue",
+    "tinted",
+    "decorative"
+  ],
+  "transmission_color": [0.23267812, 0.31482863, 0.5410092],
+  "transmission_depth": 0.02,
+  "type": "glass_solid"
+}
+

@@ -1,0 +1,16 @@
+{
+  "category": "Liquid",
+  "name": "Milk Whole",
+  "specular_ior": 1.35,
+  "tags": [
+    "milk",
+    "dairy",
+    "drink",
+    "cloudy"
+  ],
+  "transmission_color": [0.9791, 0.9757, 0.8835],
+  "transmission_depth": 0.01,
+  "transmission_scatter": [28.3189, 31.7121, 36.8349],
+  "type": "liquid"
+}
+

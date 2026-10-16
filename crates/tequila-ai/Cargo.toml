@@ -1,0 +1,13 @@
+[package]
+name = "tequila-ai"
+description = "The in-app assistant: AI providers, the conversation, and the tools it may use"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-format.workspace = true
+ureq = "3.2.1"

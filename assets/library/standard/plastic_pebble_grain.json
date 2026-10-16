@@ -1,0 +1,97 @@
+{
+  "base_color": [0.019561028, 0.019433092, 0.022662435],
+  "category": "Plastic",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "procedural",
+        "position": [0, 0],
+        "procedural": {
+          "crack_width": 0.14,
+          "frequency": 430,
+          "kind": "leather",
+          "wrinkle": 0.35
+        },
+        "seed": 7
+      },
+      {
+        "depth": 0.00007,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.2
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.9
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.44
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Plastic Pebble Grain",
+  "specular_roughness": 0.55,
+  "tags": [
+    "pebble grain",
+    "leatherette",
+    "automotive",
+    "luggage",
+    "grained"
+  ],
+  "type": "plastic"
+}
+

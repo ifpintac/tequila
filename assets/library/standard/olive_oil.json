@@ -1,0 +1,14 @@
+{
+  "category": "Liquid",
+  "name": "Olive Oil",
+  "specular_ior": 1.47,
+  "tags": [
+    "oil",
+    "olive",
+    "kitchen"
+  ],
+  "transmission_color": [0.7522, 0.7454, 0.2291],
+  "transmission_depth": 0.04,
+  "type": "liquid"
+}
+

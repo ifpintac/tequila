@@ -1,0 +1,40 @@
+{
+  "name": "Aluminium Anodised Teal",
+  "type": "metal",
+  "category": "Metal",
+  "metal_preset": "Aluminium",
+  "tags": [
+    "aluminium",
+    "anodised",
+    "colour",
+    "teal",
+    "turquoise"
+  ],
+  "base_color": [
+    0.115661,
+    0.245468,
+    0.257321
+  ],
+  "specular_roughness": 0.38,
+  "patterns": [
+    {
+      "param": "bump",
+      "procedural": {
+        "kind": "noise",
+        "frequency": 9000
+      },
+      "depth": 2.5e-06
+    },
+    {
+      "param": "specular_roughness",
+      "procedural": {
+        "kind": "noise",
+        "frequency": 12
+      },
+      "range": [
+        0.34,
+        0.44
+      ]
+    }
+  ]
+}

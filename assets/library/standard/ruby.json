@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Ruby",
+  "specular_ior": 1.77,
+  "tags": [
+    "ruby",
+    "corundum",
+    "red",
+    "jewellery"
+  ],
+  "transmission_color": [0.602, 0.1758, 0.2057],
+  "transmission_dispersion_abbe": 72,
+  "type": "gem"
+}
+

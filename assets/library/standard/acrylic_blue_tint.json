@@ -1,0 +1,14 @@
+{
+  "category": "Plastic",
+  "name": "Acrylic Blue Tint",
+  "tags": [
+    "acrylic",
+    "pmma",
+    "blue",
+    "tint"
+  ],
+  "transmission_color": [0.4609, 0.5865, 0.8558],
+  "transmission_depth": 0.01,
+  "type": "plastic_transparent"
+}
+

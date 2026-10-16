@@ -1,0 +1,162 @@
+{
+  "base_color": [0.013052244, 0.0130026825, 0.014253668],
+  "base_diffuse_roughness": 0.5,
+  "category": "Plastic",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 5,
+        "output": 1,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 6,
+        "output": 1,
+        "socket": "input:1",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "vector": [0, 0, 0.785]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "vector": [0, 0, -0.785]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 260
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "direction": "x",
+          "profile": "tri",
+          "type": "bands"
+        },
+        "type": "wave_texture"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 260
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "direction": "x",
+          "profile": "tri",
+          "type": "bands"
+        },
+        "type": "wave_texture"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "minimum"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0003,
+        "id": 8,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Rubber Grip",
+  "specular_roughness": 0.62,
+  "tags": [
+    "rubber",
+    "grip",
+    "knurled",
+    "handle"
+  ],
+  "type": "generic"
+}
+

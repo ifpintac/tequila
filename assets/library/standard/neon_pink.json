@@ -1,0 +1,14 @@
+{
+  "category": "Light",
+  "emission_color": [0.64727986, 0.11939784, 0.35317233],
+  "emission_luminance": 20,
+  "name": "Neon Pink",
+  "tags": [
+    "neon",
+    "light",
+    "pink",
+    "sign"
+  ],
+  "type": "emissive"
+}
+

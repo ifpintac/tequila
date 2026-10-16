@@ -1,0 +1,85 @@
+name: Mac release
+
+# Tequila.app in a disk image, built on a Mac with Apple silicon: with the
+# OpenCASCADE STEP reader (Homebrew's OpenCASCADE) and Cycles for Metal
+# (built from source, with Blender's libraries for macOS). Run it by hand
+# (Actions > Mac release > Run workflow), or it runs when a release is
+# published and attaches the disk image to it.
+#
+# Signed ad hoc: a Mac opens it with System Settings > Privacy & Security >
+# Open Anyway. scripts/package-macos.sh signs with a Developer ID and
+# notarizes when given one.
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  dmg:
+    runs-on: macos-15
+    timeout-minutes: 300
+    env:
+      CYCLES_WORK: ${{ github.workspace }}/../cycles-work
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target-package"
+
+      - name: Tools
+        run: |
+          brew install ninja git-lfs opencascade dylibbundler
+          git lfs install
+
+      - name: Cache third-party SDKs
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-macOS-arm64-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        run: bash scripts/fetch-third-party.sh
+
+      # Cycles takes most of the time: its sources, Blender's libraries and
+      # the build are kept between runs, keyed on what decides them.
+      - name: Cache Cycles
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CYCLES_WORK }}
+          key: cycles-macos-arm64-${{ hashFiles('native/cycles/**') }}
+          restore-keys: cycles-macos-arm64-
+
+      - name: STEP reader (OpenCASCADE)
+        run: bash native/occt/build-occt.sh
+
+      - name: Cycles for Metal
+        run: bash native/cycles/build-cycles.sh "$CYCLES_WORK"
+
+      - name: Package
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            export TEQUILA_VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          TEQUILA_CYCLES_WORK="$CYCLES_WORK" bash scripts/package-macos.sh
+
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-macOS
+          path: dist/Tequila-*.dmg
+
+      - name: Attach it to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/Tequila-*.dmg --clobber

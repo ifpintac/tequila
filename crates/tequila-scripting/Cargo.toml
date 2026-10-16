@@ -1,0 +1,21 @@
+[package]
+name = "tequila-scripting"
+description = "The scripting channel over the command bus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+tequila-scene.workspace = true
+tequila-format.workspace = true
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+tequila-render-core.workspace = true
+# For `material preview`: the library's ball, rendered, denoised and written.
+tequila-render-cpu.workspace = true
+tequila-denoise.workspace = true
+tequila-color.workspace = true

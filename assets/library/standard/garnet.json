@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Garnet",
+  "specular_ior": 1.79,
+  "tags": [
+    "garnet",
+    "almandine",
+    "red",
+    "jewellery"
+  ],
+  "transmission_color": [0.3575, 0.0854, 0.0777],
+  "transmission_dispersion_abbe": 56,
+  "type": "gem"
+}
+

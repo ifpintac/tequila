@@ -1,0 +1,11 @@
+[package]
+name = "tequila-core"
+description = "Core types: math, transforms, sampling, RNG, colour, IDs, units"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

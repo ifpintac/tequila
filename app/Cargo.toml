@@ -1,0 +1,44 @@
+[package]
+name = "tequila-app"
+description = "Tequila desktop application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tequila-app"
+path = "src/main.rs"
+
+[dependencies]
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+tequila-ai.workspace = true
+tequila-scene.workspace = true
+tequila-format.workspace = true
+tequila-import.workspace = true
+tequila-render-core.workspace = true
+tequila-render-cpu.workspace = true
+tequila-render-cycles.workspace = true
+tequila-scripting.workspace = true
+tequila-network.workspace = true
+tequila-denoise.workspace = true
+tequila-color.workspace = true
+eframe = "0.29.1"
+egui = "0.29.1"
+png = "0.17.16"
+rayon = "1"
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Quit through the window's close, which asks about unsaved work (`mac.rs`):
+# the versions winit and rfd already bring.
+objc2 = "0.6"
+raw-window-handle = "0.6"
+
+[dev-dependencies]
+# The batch tests read back the EXR they wrote.
+exr = "1"

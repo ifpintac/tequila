@@ -1,0 +1,11 @@
+[package]
+name = "tequila-xr"
+description = "Spin-viewer frame grids and JS viewer packaging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]

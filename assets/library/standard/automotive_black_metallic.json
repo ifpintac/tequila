@@ -1,0 +1,74 @@
+{
+  "base_color": [0.0081, 0.0081, 0.01],
+  "category": "Paint",
+  "flake_color": [0.5514, 0.5504, 0.5761],
+  "flake_roughness": 0.18,
+  "flake_size": 0.00004,
+  "flake_spread": 0.35,
+  "flake_weight": 0.3,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 520
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000005,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Automotive Black Metallic",
+  "specular_roughness": 0.24,
+  "tags": [
+    "car",
+    "metallic",
+    "flake",
+    "black"
+  ],
+  "type": "metallic_paint"
+}
+

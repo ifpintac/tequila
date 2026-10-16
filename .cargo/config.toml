@@ -1,0 +1,12 @@
+# Where the binaries look for the libraries they link at run time, on the
+# platforms that use an rpath. The build scripts of tequila-render-cpu and
+# tequila-denoise copy Embree's and OIDN's libraries beside every binary
+# they build, so `cargo run` and the tests find them there; an app bundle
+# carries them in Contents/Frameworks (`docs/MACOS_PORT.md`). Windows finds
+# DLLs beside the executable without being told.
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path", "-C", "link-arg=-Wl,-rpath,@executable_path/../Frameworks"]
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]

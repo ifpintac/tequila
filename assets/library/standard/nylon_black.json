@@ -1,0 +1,59 @@
+{
+  "base_color": [0.0131, 0.013, 0.0143],
+  "base_diffuse_roughness": 0.4,
+  "category": "Plastic",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 7000
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "feature": "f1",
+          "metric": "euclidean",
+          "normalize": false
+        },
+        "type": "voronoi_texture"
+      },
+      {
+        "depth": 0.000012,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Nylon Black",
+  "specular_roughness": 0.72,
+  "tags": [
+    "nylon",
+    "sintered",
+    "3d print",
+    "matte"
+  ],
+  "type": "generic"
+}
+

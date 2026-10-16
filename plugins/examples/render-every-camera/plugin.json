@@ -1,0 +1,26 @@
+{
+  "id": "tequila.render-every-camera",
+  "name": "Render Every Camera",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "Queues one render from each saved camera, named after it: every angle of the product in one go, into a folder of your choice.",
+  "tequila": 1,
+  "main": "main.py",
+  "commands": [
+    { "id": "open", "title": "Render every camera…", "panel": "cameras", "description": "One background render per saved camera" }
+  ],
+  "panels": [
+    {
+      "id": "cameras",
+      "title": "Render Every Camera",
+      "fields": [
+        { "id": "only", "type": "text", "label": "Only names with", "default": "" },
+        { "id": "samples", "type": "number", "label": "Samples (0: the render settings')", "min": 0, "max": 8192, "step": 16, "default": 0 },
+        { "id": "folder", "type": "folder", "label": "Into (empty: the render settings' folder)" },
+        { "id": "queue", "type": "button", "label": "Queue a render from each", "command": "queue" },
+        { "id": "status", "type": "label", "text": "" }
+      ]
+    }
+  ],
+  "events": ["panel_opened", "opened"]
+}

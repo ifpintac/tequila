@@ -1,0 +1,13 @@
+[package]
+name = "tequila-denoise"
+description = "Intel Open Image Denoise integration and guide-AOV preparation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[dependencies]
+tequila-core.workspace = true

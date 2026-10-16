@@ -1,0 +1,15 @@
+{
+  "category": "Glass",
+  "name": "Acrylic Smoked",
+  "specular_ior": 1.49,
+  "specular_roughness": 0.02,
+  "tags": [
+    "acrylic",
+    "smoked",
+    "tinted"
+  ],
+  "transmission_color": [0.1027, 0.1024, 0.1107],
+  "transmission_depth": 0.03,
+  "type": "glass_solid"
+}
+

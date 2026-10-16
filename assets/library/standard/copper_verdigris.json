@@ -1,0 +1,511 @@
+{
+  "base_metalness": 1,
+  "category": "Metal",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:2",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 14
+      },
+      {
+        "from": 6,
+        "socket": "input:2",
+        "to": 15
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 13
+      },
+      {
+        "from": 8,
+        "socket": "param:base_metalness",
+        "to": 1
+      },
+      {
+        "from": 9,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 9,
+        "socket": "input:0",
+        "to": 15
+      },
+      {
+        "from": 10,
+        "socket": "input:2",
+        "to": 12
+      },
+      {
+        "from": 11,
+        "socket": "input:1",
+        "to": 12
+      },
+      {
+        "from": 12,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 13,
+        "socket": "input:1",
+        "to": 14
+      },
+      {
+        "from": 14,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 15,
+        "socket": "input:0",
+        "to": 16
+      },
+      {
+        "from": 16,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 60
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 8
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 420
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 6
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.65
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.22
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.11
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.4
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.56
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.12
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.4
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1080
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0,
+            "color": [0.092167124, 0.12076652, 0.09421664]
+          },
+          {
+            "at": 0.35,
+            "color": [0.17626457, 0.2628513, 0.2109411]
+          },
+          {
+            "at": 0.7,
+            "color": [0.29364532, 0.41245657, 0.3405928]
+          },
+          {
+            "at": 1,
+            "color": [0.4550844, 0.5685157, 0.4938491]
+          }
+        ],
+        "id": 10,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.17, 0.19, 0.21]
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "color": [0.1, 0.11, 0.12]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 12,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.28
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.42
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 14,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.9
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 15,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.00006,
+        "id": 16,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Copper",
+  "name": "Copper Verdigris",
+  "specular_roughness": 0.4,
+  "tags": [
+    "copper",
+    "patina",
+    "verdigris",
+    "aged",
+    "green"
+  ],
+  "type": "generic"
+}
+

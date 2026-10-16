@@ -1,0 +1,21 @@
+[package]
+name = "tequila-scene"
+description = "Scene Document, command bus, undo/redo, dirty-state tracking"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-color.workspace = true
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-render-core.workspace = true
+tequila-texture.workspace = true
+rayon = "1"
+mikktspace = { version = "0.3", default-features = false, features = ["glam"] }
+
+[dev-dependencies]
+png = "0.17"

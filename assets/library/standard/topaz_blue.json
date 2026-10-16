@@ -1,0 +1,14 @@
+{
+  "category": "Gem",
+  "name": "Topaz Blue",
+  "specular_ior": 1.62,
+  "tags": [
+    "topaz",
+    "blue",
+    "jewellery"
+  ],
+  "transmission_color": [0.5755, 0.7316, 0.9178],
+  "transmission_dispersion_abbe": 75,
+  "type": "gem"
+}
+

@@ -1,0 +1,73 @@
+{
+  "id": "tequila.auto-materials",
+  "name": "Auto Materials",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "Puts library materials on parts by their names when a model comes in: screws get steel, lenses glass, grips rubber. Your own rules, or the whole scene at a click.",
+  "tequila": 1,
+  "main": "main.py",
+  "commands": [
+    {
+      "id": "open",
+      "title": "Auto Materials…",
+      "panel": "auto",
+      "description": "Edit the rules, and apply them"
+    },
+    {
+      "id": "apply",
+      "title": "Apply the rules to every part",
+      "description": "One undo step"
+    }
+  ],
+  "panels": [
+    {
+      "id": "auto",
+      "title": "Auto Materials",
+      "fields": [
+        {
+          "id": "rules",
+          "type": "text",
+          "label": "Rules, one a line - words in a part's name: library material",
+          "default": "screw, bolt, nut, washer, rivet, standoff: Stainless Brushed\nglass, lens, window: Glass Clear\nrubber, grip, foot, feet, gasket, seal, tyre, tire, o-ring: Rubber Black\nchrome: Chrome\nleather, strap: Leather Black\nscreen, display, lcd: Screen Glow",
+          "lines": 6
+        },
+        {
+          "id": "rules_file",
+          "type": "file",
+          "label": "Or rules from a CSV file (words, material)",
+          "extensions": [
+            "csv",
+            "txt"
+          ]
+        },
+        {
+          "id": "on_import",
+          "type": "toggle",
+          "label": "Apply them when a model is imported",
+          "default": true
+        },
+        {
+          "id": "apply",
+          "type": "button",
+          "label": "Apply to every part now",
+          "command": "apply"
+        },
+        {
+          "id": "keep",
+          "type": "button",
+          "label": "Keep these rules",
+          "command": "keep"
+        },
+        {
+          "id": "status",
+          "type": "label",
+          "text": ""
+        }
+      ]
+    }
+  ],
+  "events": [
+    "imported",
+    "panel_opened"
+  ]
+}

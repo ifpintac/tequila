@@ -1,0 +1,219 @@
+{
+  "base_color": [0.1844, 0.1875, 0.1996],
+  "category": "Fabric",
+  "fuzz_color": [0.4071, 0.4121, 0.4311],
+  "fuzz_roughness": 0.75,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:2",
+        "to": 4
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:2",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "param:base_color",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 2400
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 8
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 1.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 400
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0001,
+        "id": 5,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 60
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0.4,
+            "color": [0.13, 0.133, 0.142]
+          },
+          {
+            "at": 1,
+            "color": [0.24, 0.243, 0.256]
+          }
+        ],
+        "id": 8,
+        "kind": "gradient",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Felt Grey",
+  "tags": [
+    "felt",
+    "acoustic",
+    "soft",
+    "grey"
+  ],
+  "type": "velvet"
+}
+

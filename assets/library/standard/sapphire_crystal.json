@@ -1,0 +1,14 @@
+{
+  "category": "Glass",
+  "name": "Sapphire Crystal",
+  "specular_ior": 1.77,
+  "tags": [
+    "sapphire",
+    "watch",
+    "crystal",
+    "clear"
+  ],
+  "transmission_color": [0.964, 0.9726, 0.9962],
+  "type": "gem"
+}
+

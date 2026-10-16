@@ -1,0 +1,13 @@
+{
+  "base_color": [0.866278, 0.8631905, 0.82821083],
+  "category": "Paint",
+  "name": "Paint Satin White",
+  "specular_roughness": 0.45,
+  "tags": [
+    "satin",
+    "wall",
+    "white"
+  ],
+  "type": "plastic"
+}
+

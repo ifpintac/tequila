@@ -1,0 +1,23 @@
+# vdb-rs 0.6.0 (https://github.com/Traverse-Research/vdb-rs, MIT), vendored
+# with one fix; see TEQUILA-PATCH.md. Manifest trimmed to what the library
+# itself needs: the upstream dev-dependencies are a Bevy viewer.
+[package]
+name = "vdb-rs"
+version = "0.6.0"
+edition = "2021"
+license = "MIT"
+description = "OpenVDB manipulation library (vendored with a fix for half-float grids)."
+repository = "https://github.com/Traverse-Research/vdb-rs"
+publish = false
+
+[dependencies]
+bitflags = "2"
+bitvec = "1"
+blosc-src = { version = "0.3.0", features = ["lz4"] }
+bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
+byteorder = "1.4"
+flate2 = "1"
+glam = ">=0.18,<=0.24"
+half = { version = "2.2.1", features = ["bytemuck"] }
+log = "0.4"
+thiserror = "1"

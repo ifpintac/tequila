@@ -1,0 +1,20 @@
+{
+  "base_color": [0.024654474, 0.032938235, 0.119437486],
+  "category": "Plastic",
+  "coat_roughness": 0.04,
+  "flake_color": [0.42, 0.5, 0.78],
+  "flake_roughness": 0.25,
+  "flake_size": 0.000045,
+  "flake_weight": 0.5,
+  "name": "Plastic Metallic Blue",
+  "specular_roughness": 0.3,
+  "tags": [
+    "metallic",
+    "blue",
+    "flake",
+    "moulded",
+    "consumer"
+  ],
+  "type": "metallic_paint"
+}
+

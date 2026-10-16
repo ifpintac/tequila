@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Aquamarine",
+  "specular_ior": 1.577,
+  "tags": [
+    "aquamarine",
+    "beryl",
+    "blue",
+    "jewellery"
+  ],
+  "transmission_color": [0.4669485, 0.63068616, 0.6883506],
+  "transmission_dispersion_abbe": 70,
+  "type": "gem"
+}
+

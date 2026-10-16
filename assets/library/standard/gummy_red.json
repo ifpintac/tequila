@@ -1,0 +1,16 @@
+{
+  "base_color": [0.3571, 0.0471, 0.024],
+  "category": "Translucent",
+  "name": "Gummy Red",
+  "specular_roughness": 0.08,
+  "subsurface_color": [0.4939, 0.0754, 0.0464],
+  "subsurface_radius": [0.271, 0.042, 0.054],
+  "tags": [
+    "gummy",
+    "candy",
+    "jelly",
+    "red"
+  ],
+  "type": "translucent"
+}
+

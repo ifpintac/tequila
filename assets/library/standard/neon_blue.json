@@ -1,0 +1,14 @@
+{
+  "category": "Light",
+  "emission_color": [0.15316983, 0.25568503, 0.8991125],
+  "emission_luminance": 20,
+  "name": "Neon Blue",
+  "tags": [
+    "neon",
+    "light",
+    "blue",
+    "sign"
+  ],
+  "type": "emissive"
+}
+

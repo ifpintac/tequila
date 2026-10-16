@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Emerald",
+  "specular_ior": 1.577,
+  "tags": [
+    "emerald",
+    "beryl",
+    "green",
+    "jewellery"
+  ],
+  "transmission_color": [0.3632, 0.7025, 0.3897],
+  "transmission_dispersion_abbe": 70,
+  "type": "gem"
+}
+

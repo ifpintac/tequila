@@ -1,0 +1,14 @@
+{
+  "category": "Liquid",
+  "name": "Honey",
+  "specular_ior": 1.49,
+  "tags": [
+    "honey",
+    "syrup",
+    "kitchen"
+  ],
+  "transmission_color": [0.6763, 0.4727, 0.1103],
+  "transmission_depth": 0.015,
+  "type": "liquid"
+}
+

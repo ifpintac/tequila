@@ -1,0 +1,15 @@
+{
+  "category": "Glass",
+  "name": "Acrylic Clear",
+  "specular_ior": 1.49,
+  "specular_roughness": 0.01,
+  "tags": [
+    "acrylic",
+    "pmma",
+    "clear"
+  ],
+  "transmission_color": [0.9734, 0.9734, 0.9734],
+  "transmission_depth": 0.08,
+  "type": "glass_solid"
+}
+

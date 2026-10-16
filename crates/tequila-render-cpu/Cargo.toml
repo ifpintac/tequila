@@ -1,0 +1,27 @@
+[package]
+name = "tequila-render-cpu"
+description = "CPU rendering backend: Embree 4 + Rayon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[dependencies]
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+tequila-render-core.workspace = true
+rayon = "1"
+png = "0.17"
+
+[dev-dependencies]
+# The exit criterion is stated about a scene and a look, so the test needs the
+# document's studio environment and the colour pipeline. Dev-only: the backend
+# itself must not depend on either.
+tequila-color.workspace = true
+tequila-scene.workspace = true
+rayon = "1"
+png = "0.17"

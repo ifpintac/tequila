@@ -1,0 +1,73 @@
+{
+  "base_color": [0.8338225, 0.83080256, 0.7966022],
+  "category": "Paint",
+  "flake_color": [0.8978743, 0.8754347, 0.98394024],
+  "flake_roughness": 0.18,
+  "flake_size": 0.00003,
+  "flake_spread": 0.4,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 520
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000005,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Automotive Pearl White",
+  "specular_roughness": 0.2,
+  "tags": [
+    "car",
+    "pearl",
+    "flake",
+    "white"
+  ],
+  "type": "metallic_paint"
+}
+

@@ -1,0 +1,14 @@
+{
+  "category": "Glass",
+  "name": "Glass Clear",
+  "specular_ior": 1.52,
+  "tags": [
+    "glass",
+    "clear",
+    "window"
+  ],
+  "transmission_color": [0.9799, 0.9897, 0.983],
+  "transmission_depth": 0.05,
+  "type": "glass_solid"
+}
+

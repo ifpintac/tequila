@@ -1,0 +1,14 @@
+{
+  "category": "Plastic",
+  "name": "Polycarbonate Clear",
+  "specular_ior": 1.585,
+  "specular_roughness": 0.02,
+  "tags": [
+    "pc",
+    "clear",
+    "lens"
+  ],
+  "transmission_color": [0.9619, 0.972, 0.9579],
+  "type": "plastic_transparent"
+}
+

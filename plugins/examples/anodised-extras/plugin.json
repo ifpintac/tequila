@@ -1,0 +1,9 @@
+{
+  "id": "tequila.anodised-extras",
+  "name": "Anodised Extras",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "Four more anodised aluminium colours. An example of a material pack: a folder of presets, no code.",
+  "tequila": 1,
+  "materials": "materials"
+}

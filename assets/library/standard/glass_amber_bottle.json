@@ -1,0 +1,15 @@
+{
+  "category": "Glass",
+  "name": "Glass Amber Bottle",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.04,
+  "tags": [
+    "glass",
+    "bottle",
+    "amber"
+  ],
+  "transmission_color": [0.408, 0.2238, 0.0536],
+  "transmission_depth": 0.02,
+  "type": "glass_solid"
+}
+

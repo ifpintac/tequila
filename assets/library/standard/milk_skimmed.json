@@ -1,0 +1,16 @@
+{
+  "category": "Liquid",
+  "name": "Milk Skimmed",
+  "specular_ior": 1.35,
+  "tags": [
+    "milk",
+    "dairy",
+    "drink",
+    "cloudy"
+  ],
+  "transmission_color": [0.9768, 0.9746, 0.8819],
+  "transmission_depth": 0.01,
+  "transmission_scatter": [9.3341, 11.9265, 18.0075],
+  "type": "liquid"
+}
+

@@ -1,0 +1,28 @@
+{
+  "id": "tequila.vibes",
+  "name": "Vibes",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "One click turns the scene into a mood: Cyberpunk, Golden Hour, Keynote, Vaporwave, Noir and more. Lights, backdrop, floor and colour grade change; your materials don't. Back to my look puts everything as it was.",
+  "tequila": 1,
+  "main": "main.py",
+  "commands": [
+    { "id": "open", "title": "Vibes…", "panel": "vibes", "description": "Turn the scene into a mood" },
+    { "id": "shuffle", "title": "Shuffle a vibe", "description": "A random vibe, different from the last" },
+    { "id": "restore", "title": "Back to my look", "description": "The lights, backdrop, floor and grade as they were before the first vibe" }
+  ],
+  "panels": [
+    {
+      "id": "vibes",
+      "title": "Vibes",
+      "fields": [
+        { "id": "vibe", "type": "choice", "label": "Vibe", "options": ["Cyberpunk", "Golden Hour", "Keynote", "Vaporwave", "Noir", "Candy", "Lava", "Deep Space"], "default": "Cyberpunk" },
+        { "id": "drama", "type": "number", "label": "Drama %", "min": 0, "max": 200, "step": 5, "default": 100 },
+        { "id": "apply", "type": "button", "label": "Apply", "command": "apply" },
+        { "id": "shuffle", "type": "button", "label": "Shuffle", "command": "shuffle" },
+        { "id": "restore", "type": "button", "label": "Back to my look", "command": "restore" },
+        { "id": "status", "type": "label", "text": "Pick a vibe, or shuffle. Ctrl+Z undoes one; Back to my look undoes them all." }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "category": "Liquid",
+  "name": "Coffee Black",
+  "specular_ior": 1.34,
+  "tags": [
+    "coffee",
+    "drink",
+    "dark"
+  ],
+  "transmission_color": [0.2572, 0.1351, 0.0552],
+  "transmission_depth": 0.004,
+  "transmission_scatter": [0.3, 0.3, 0.3],
+  "type": "liquid"
+}
+

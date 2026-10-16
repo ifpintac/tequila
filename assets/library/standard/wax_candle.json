@@ -1,0 +1,15 @@
+{
+  "base_color": [0.8201, 0.7865, 0.6521],
+  "category": "Translucent",
+  "name": "Wax Candle",
+  "specular_roughness": 0.35,
+  "subsurface_color": [0.825, 0.7799, 0.6054],
+  "subsurface_radius": [0.13, 0.112, 0.128],
+  "tags": [
+    "wax",
+    "candle",
+    "paraffin"
+  ],
+  "type": "translucent"
+}
+

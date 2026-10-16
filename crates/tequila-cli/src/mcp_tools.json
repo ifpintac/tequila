@@ -1,0 +1,661 @@
+[
+ {
+  "name": "tequila_scene",
+  "description": "Counts, units, overall bounds and the file of the open scene.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_nodes",
+  "description": "Parts and groups: id, name, material and world size. Filter by a word in the name or material name to keep the answer short.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "filter": {
+     "type": "string",
+     "description": "Only nodes whose name or material name contains this (case-insensitive)."
+    },
+    "parts_only": {
+     "type": "boolean"
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_materials",
+  "description": "Every material: id, type, how many parts use it, parameters and texture maps.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_query",
+  "description": "Any read-only query.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "what": {
+     "type": "string",
+     "enum": [
+      "api",
+      "context",
+      "scene",
+      "nodes",
+      "materials",
+      "selection",
+      "camera",
+      "commands",
+      "ui",
+      "jobs",
+      "history",
+      "library"
+     ]
+    }
+   },
+   "required": [
+    "what"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_apply",
+  "description": "Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"}. tequila_query what=commands lists them; what=api describes material parameters and types. One undo step. Colours may be hex sRGB strings (\"value\": \"#c0392b\"), converted for you; arrays are linear ACEScg.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "command": {
+     "type": "object",
+     "description": "A journal command: {\"command\": \"<name>\", ...fields}."
+    }
+   },
+   "required": [
+    "command"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_guide",
+  "description": "How to make procedural materials: the recipe format, every pattern kind with what it looks like and its settings and defaults, the material types, rules of thumb, and 16 tested example recipes (terrazzo, marble, brushed aluminium, walnut, carbon fibre, leather, concrete, hammered copper, galaxy resin, worn paint...). Read it before writing a recipe.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_preview",
+  "description": "Show a material recipe (or an existing material by id) on a ball, without changing the scene. Returns an image. The fastest way to try an idea: preview, adjust, preview again, then tequila_material_create. Recipe: {\"name\": \"Speckled Stone\", \"type\": \"plastic\" (or metal, glass, paint, velvet... see the guide), any parameter as a value (\"specular_roughness\": 0.3, \"base_color\": \"#c0392b\" - hex sRGB is fine), \"patterns\": [{\"param\": \"base_color\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.01, \"colors\": [{\"at\": 0, \"color\": \"#d8d4cc\"}, {\"at\": 1, \"color\": \"#a9a59c\"}]}, {\"param\": \"specular_roughness\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.02, \"range\": [0.2, 0.4]}, {\"param\": \"bump\", \"procedural\": {\"kind\": \"leather\"}, \"size\": 0.002, \"depth\": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: \"blend\" mix/multiply/add, \"amount\" 0-1, \"mask\" {\"threshold\": 0.5, \"softness\": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "recipe": {
+     "type": "object",
+     "description": "The recipe to show."
+    },
+    "material": {
+     "type": "integer",
+     "description": "Or an existing material's id."
+    },
+    "radius": {
+     "type": "number",
+     "description": "The ball's radius in metres (default 0.025). Use the real part's size to judge pattern scale."
+    },
+    "shape": {
+     "type": "string",
+     "enum": [
+      "sphere",
+      "slab"
+     ]
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_create",
+  "description": "Make a new material from a recipe and put it on parts, as one undo step. Returns its id and a preview image. Recipe: {\"name\": \"Speckled Stone\", \"type\": \"plastic\" (or metal, glass, paint, velvet... see the guide), any parameter as a value (\"specular_roughness\": 0.3, \"base_color\": \"#c0392b\" - hex sRGB is fine), \"patterns\": [{\"param\": \"base_color\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.01, \"colors\": [{\"at\": 0, \"color\": \"#d8d4cc\"}, {\"at\": 1, \"color\": \"#a9a59c\"}]}, {\"param\": \"specular_roughness\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.02, \"range\": [0.2, 0.4]}, {\"param\": \"bump\", \"procedural\": {\"kind\": \"leather\"}, \"size\": 0.002, \"depth\": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: \"blend\" mix/multiply/add, \"amount\" 0-1, \"mask\" {\"threshold\": 0.5, \"softness\": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "recipe": {
+     "type": "object",
+     "description": "The recipe."
+    },
+    "nodes": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "description": "Part ids to put it on; the selection when left out."
+    },
+    "preview": {
+     "type": "boolean",
+     "description": "Return a preview image too (default true)."
+    }
+   },
+   "required": [
+    "recipe"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_update",
+  "description": "Remake an existing material from a recipe, where it is: every part using it changes. One undo step; returns a preview image. Use it to refine a material after looking at it on the product. Recipe: {\"name\": \"Speckled Stone\", \"type\": \"plastic\" (or metal, glass, paint, velvet... see the guide), any parameter as a value (\"specular_roughness\": 0.3, \"base_color\": \"#c0392b\" - hex sRGB is fine), \"patterns\": [{\"param\": \"base_color\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.01, \"colors\": [{\"at\": 0, \"color\": \"#d8d4cc\"}, {\"at\": 1, \"color\": \"#a9a59c\"}]}, {\"param\": \"specular_roughness\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.02, \"range\": [0.2, 0.4]}, {\"param\": \"bump\", \"procedural\": {\"kind\": \"leather\"}, \"size\": 0.002, \"depth\": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: \"blend\" mix/multiply/add, \"amount\" 0-1, \"mask\" {\"threshold\": 0.5, \"softness\": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer",
+     "description": "The material's id."
+    },
+    "recipe": {
+     "type": "object",
+     "description": "The new recipe. Without a name the material keeps its own."
+    },
+    "preview": {
+     "type": "boolean",
+     "description": "Return a preview image too (default true)."
+    }
+   },
+   "required": [
+    "material",
+    "recipe"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_recipe",
+  "description": "Read any material - one you made, or a library preset already on a part - back as a recipe, to change it and send it to tequila_material_update or tequila_material_create.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "material"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material_save",
+  "description": "Keep a material in the person's own material library, so it is in the Library tab for every project.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer"
+    },
+    "name": {
+     "type": "string"
+    },
+    "category": {
+     "type": "string",
+     "description": "Default: My materials."
+    },
+    "tags": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "material"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_batch",
+  "description": "Several operations as ONE undo step. Each is a request object with an \"op\": apply, select, frame, look, ui, import, save, screenshot, queue. If one fails the whole batch is taken back, unless atomic is false.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "ops": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     }
+    },
+    "atomic": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "ops"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_undo",
+  "description": "Take back the last step (a single edit or a whole batch).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_redo",
+  "description": "Put back the last undone step.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_select",
+  "description": "Replace the selection with these node ids.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "nodes": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     }
+    }
+   },
+   "required": [
+    "nodes"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_frame",
+  "description": "Point the camera at everything, or at the selection.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "all": {
+     "type": "boolean",
+     "description": "true for everything (default), false for the selection."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_look",
+  "description": "Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "view": {
+     "type": "string",
+     "enum": [
+      "front",
+      "back",
+      "left",
+      "right",
+      "top",
+      "bottom",
+      "iso"
+     ]
+    },
+    "at": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 3,
+     "maxItems": 3,
+     "description": "Target point [x, y, z]."
+    },
+    "from": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     },
+     "minItems": 3,
+     "maxItems": 3,
+     "description": "Eye position [x, y, z]; not with yaw/pitch/distance."
+    },
+    "yaw": {
+     "type": "number",
+     "description": "Degrees around +Y; 0 looks from the front."
+    },
+    "pitch": {
+     "type": "number",
+     "description": "Degrees above the horizon."
+    },
+    "distance": {
+     "type": "number"
+    },
+    "focal_length": {
+     "type": "number",
+     "description": "Millimetres."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_screenshot",
+  "description": "See the application as it is now. Returns an image.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "viewport": {
+     "type": "boolean",
+     "description": "true for just the 3D view, without panels (default true)."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_render",
+  "description": "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples).",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "width": {
+     "type": "integer"
+    },
+    "height": {
+     "type": "integer"
+    },
+    "samples": {
+     "type": "integer"
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_queue",
+  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "width": {
+     "type": "integer"
+    },
+    "height": {
+     "type": "integer"
+    },
+    "samples": {
+     "type": "integer"
+    },
+    "folder": {
+     "type": "string"
+    },
+    "filename": {
+     "type": "string"
+    },
+    "denoise": {
+     "type": "boolean"
+    },
+    "camera": {
+     "type": "integer"
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_jobs",
+  "description": "The background render queue: state, progress and output file of each job.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_stop",
+  "description": "Stop the running background render; it still writes its image.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_ui",
+  "description": "Open or close panels and switch the viewport shading.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "render_window": {
+     "type": "boolean"
+    },
+    "console": {
+     "type": "boolean"
+    },
+    "inspector": {
+     "type": "boolean"
+    },
+    "library": {
+     "type": "boolean"
+    },
+    "full_viewport": {
+     "type": "boolean"
+    },
+    "help": {
+     "type": "boolean"
+    },
+    "graph": {
+     "type": [
+      "integer",
+      "boolean"
+     ],
+     "description": "Open the Material Graph editor on this material number; false closes it."
+    },
+    "tab": {
+     "type": "string",
+     "enum": [
+      "scene",
+      "material",
+      "environment",
+      "lighting",
+      "camera",
+      "image",
+      "studios",
+      "scripting"
+     ]
+    },
+    "viewport": {
+     "type": "string",
+     "enum": [
+      "wireframe",
+      "solid",
+      "material",
+      "rendered"
+     ]
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_import",
+  "description": "Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), glTF/GLB, OBJ, STL, USD (.usda) or IFC. Not FBX: ask for glTF, OBJ or USD instead.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "path"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_save",
+  "description": "Save the project, to its own file or to a new path.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string"
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_guide",
+  "description": "How to write a Tequila plugin: the full reference (manifest, Python API, panels and their field types, events, material packs), a working template, and the way to work - write, ask the person to turn it on, run, read the log, fix. Read it once before writing a plugin.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_list",
+  "description": "Every installed plugin: id, name, version, whether it is on, running or failed (and why), its commands, panels and events, and its folder. Also whether Python was found, and the person's plugins folder.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_write",
+  "description": "Write a plugin's files into the person's plugins folder: a new plugin, or new versions of an existing one's files (others are kept). Give plugin.json (its id must be `id`) and main.py at least for a new one. Text files only (.py .json .md .txt .csv .toml .ini .cfg), paths inside the plugin's folder. A running plugin restarts with the new code; a new one must be turned on with tequila_plugin_enable.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "description": "The plugin id and folder name, e.g. \"my.batch-renamer\": letters, digits, . - _"
+    },
+    "files": {
+     "type": "object",
+     "description": "Path inside the plugin folder -> the file's full text, e.g. {\"plugin.json\": \"...\", \"main.py\": \"...\"}.",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "id",
+    "files"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_enable",
+  "description": "Turn a plugin on. A plugin with Python code runs as the person, so Tequila asks them in its Plugins window and only they can say yes: tell them to look at Tequila, then check tequila_plugin_list for \"enabled\". A material pack is turned on at once.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_run",
+  "description": "Run one of an enabled plugin's commands (or a panel button's command) with `values` as its panel would send them, wait a little, and return what it logged: its prints, status messages, `finished`, or the traceback if it failed. A command with a panel opens the panel instead.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "command": {
+     "type": "string"
+    },
+    "values": {
+     "type": "object",
+     "description": "Field id -> value, as the panel would send."
+    },
+    "wait": {
+     "type": "number",
+     "description": "Seconds to wait for it to finish (default 10, at most 120)."
+    }
+   },
+   "required": [
+    "id",
+    "command"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_plugin_log",
+  "description": "The last lines of a plugin's log: what it printed, its status messages, finished commands and tracebacks. Use it to debug.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "lines": {
+     "type": "integer",
+     "description": "How many (default 40)."
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_request",
+  "description": "Send any raw request object (with an \"op\") for anything the other tools do not cover.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "request": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "request"
+   ],
+   "additionalProperties": false
+  }
+ }
+]

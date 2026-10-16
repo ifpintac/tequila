@@ -1,0 +1,13 @@
+{
+  "category": "Light",
+  "emission_color": [0.9592, 0.969, 0.9957],
+  "emission_luminance": 5,
+  "name": "Screen Glow",
+  "tags": [
+    "screen",
+    "display",
+    "backlight"
+  ],
+  "type": "emissive"
+}
+

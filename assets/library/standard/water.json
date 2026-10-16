@@ -1,0 +1,13 @@
+{
+  "category": "Liquid",
+  "name": "Water",
+  "specular_ior": 1.333,
+  "tags": [
+    "water",
+    "liquid",
+    "fill"
+  ],
+  "transmission_color": [0.967, 0.9806, 0.9971],
+  "type": "liquid"
+}
+

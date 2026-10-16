@@ -1,0 +1,25 @@
+{
+  "id": "tequila.colourways",
+  "name": "Colourways",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "Render the selected part in a list of colours, or keep each colour as a material in your library.",
+  "tequila": 1,
+  "main": "main.py",
+  "commands": [
+    { "id": "open", "title": "Colourways…", "panel": "colourways", "description": "One render, or one library material, per colour" }
+  ],
+  "panels": [
+    {
+      "id": "colourways",
+      "title": "Colourways",
+      "fields": [
+        { "id": "colours", "type": "text", "label": "Colours", "default": "#C23B32, #2D5DA8, #3E8E5C, #F2F2EE, #1C1C1E" },
+        { "id": "render", "type": "button", "label": "Queue a render of each", "command": "render" },
+        { "id": "keep", "type": "button", "label": "Keep each in my library", "command": "keep" },
+        { "id": "status", "type": "label", "text": "Select a part, and list the colours to try." }
+      ]
+    }
+  ],
+  "events": ["selection"]
+}

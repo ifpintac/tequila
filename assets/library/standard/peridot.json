@@ -1,0 +1,14 @@
+{
+  "category": "Gem",
+  "name": "Peridot",
+  "specular_ior": 1.654,
+  "tags": [
+    "peridot",
+    "olivine",
+    "green",
+    "jewellery"
+  ],
+  "transmission_color": [0.6145, 0.7733, 0.2034],
+  "type": "gem"
+}
+

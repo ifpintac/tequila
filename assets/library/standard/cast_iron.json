@@ -1,0 +1,162 @@
+{
+  "base_color": [0.3012, 0.2966, 0.2888],
+  "category": "Metal",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 5,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1200
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 5
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.00006,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.35
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.36
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.35
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.74
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.58
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Iron",
+  "name": "Cast Iron",
+  "specular_roughness": 0.68,
+  "tags": [
+    "iron",
+    "cast",
+    "dark",
+    "rough"
+  ],
+  "type": "metal"
+}
+

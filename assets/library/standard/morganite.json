@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Morganite",
+  "specular_ior": 1.577,
+  "tags": [
+    "morganite",
+    "beryl",
+    "pink",
+    "jewellery"
+  ],
+  "transmission_color": [0.75677854, 0.57525545, 0.53728145],
+  "transmission_dispersion_abbe": 70,
+  "type": "gem"
+}
+

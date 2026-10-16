@@ -1,0 +1,13 @@
+/target/
+/target-package/
+/target-test/
+/target-audit/
+/dist/
+/python/__pycache__/
+__pycache__/
+/Tequila.lnk
+/Tequila (newest).lnk
+/third_party/
+**/*.rs.bk
+.DS_Store
+/native/occt/build/

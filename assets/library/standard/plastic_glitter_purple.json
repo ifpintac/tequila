@@ -1,0 +1,21 @@
+{
+  "base_color": [0.034732893, 0.014453081, 0.09516344],
+  "category": "Plastic",
+  "coat_roughness": 0.04,
+  "flake_color": [0.9, 0.9, 0.92],
+  "flake_roughness": 0.12,
+  "flake_size": 0.0003,
+  "flake_spread": 0.6,
+  "flake_weight": 0.16,
+  "name": "Plastic Glitter Purple",
+  "specular_roughness": 0.3,
+  "tags": [
+    "glitter",
+    "sparkle",
+    "purple",
+    "toy",
+    "case"
+  ],
+  "type": "metallic_paint"
+}
+

@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Amethyst",
+  "specular_ior": 1.544,
+  "tags": [
+    "amethyst",
+    "quartz",
+    "purple",
+    "jewellery"
+  ],
+  "transmission_color": [0.51, 0.3285, 0.7846],
+  "transmission_dispersion_abbe": 70,
+  "type": "gem"
+}
+

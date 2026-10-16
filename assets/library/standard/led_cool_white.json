@@ -1,0 +1,14 @@
+{
+  "category": "Light",
+  "emission_color": [0.9217, 0.9472, 0.9925],
+  "emission_luminance": 30,
+  "name": "LED Cool White",
+  "tags": [
+    "led",
+    "light",
+    "cool",
+    "white"
+  ],
+  "type": "emissive"
+}
+

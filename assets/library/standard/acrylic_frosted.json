@@ -1,0 +1,15 @@
+{
+  "category": "Plastic",
+  "name": "Acrylic Frosted",
+  "specular_roughness": 0.42,
+  "tags": [
+    "acrylic",
+    "pmma",
+    "frosted",
+    "sandblasted",
+    "diffuser"
+  ],
+  "transmission_color": [0.95, 0.96, 0.96],
+  "type": "plastic_transparent"
+}
+

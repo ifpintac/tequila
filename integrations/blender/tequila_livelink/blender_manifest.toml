@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "tequila_livelink"
+version = "1.0.0"
+name = "Tequila LiveLink"
+tagline = "Send the scene to a running Tequila as you model"
+maintainer = "Tequila"
+type = "add-on"
+tags = ["Import-Export"]
+blender_version_min = "4.2.0"
+license = ["SPDX:Apache-2.0"]
+
+[permissions]
+network = "Talks to Tequila on this computer only (127.0.0.1)"
+files = "Reads Tequila's ~/.tequila/channel.json to find it"

@@ -1,0 +1,20 @@
+{
+  "base_color": [0.7765764, 0.76188534, 0.7094724],
+  "category": "Plastic",
+  "coat_roughness": 0.04,
+  "flake_color": [0.8247127, 0.68890965, 0.5730019],
+  "flake_roughness": 0.2,
+  "flake_spread": 0.8,
+  "flake_weight": 0.7,
+  "name": "Plastic Pearl White",
+  "specular_roughness": 0.3,
+  "tags": [
+    "pearl",
+    "pearlescent",
+    "mica",
+    "white",
+    "cosmetic"
+  ],
+  "type": "metallic_paint"
+}
+

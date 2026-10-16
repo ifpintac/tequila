@@ -1,0 +1,76 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tequila-core",
+    "crates/tequila-scene",
+    "crates/tequila-format",
+    "crates/tequila-import",
+    "crates/tequila-materials",
+    "crates/tequila-texture",
+    "crates/tequila-render-core",
+    "crates/tequila-render-cpu",
+    "crates/tequila-render-gpu",
+    "crates/tequila-render-cycles",
+    "crates/tequila-denoise",
+    "crates/tequila-color",
+    "crates/tequila-animation",
+    "crates/tequila-studio",
+    "crates/tequila-xr",
+    "crates/tequila-network",
+    "crates/tequila-scripting",
+    "crates/tequila-ai",
+    "crates/tequila-cli",
+    "app",
+    "tests/analytic",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# 1.82 for `Option::is_none_or`. Bump deliberately: the clippy MSRV lint
+# is what keeps this honest.
+rust-version = "1.82"
+license = "Apache-2.0"
+repository = "https://github.com/tequila/tequila"
+authors = ["The Tequila Authors"]
+
+[workspace.dependencies]
+tequila-core = { path = "crates/tequila-core" }
+tequila-scene = { path = "crates/tequila-scene" }
+tequila-format = { path = "crates/tequila-format" }
+tequila-import = { path = "crates/tequila-import" }
+tequila-materials = { path = "crates/tequila-materials" }
+tequila-texture = { path = "crates/tequila-texture" }
+tequila-render-core = { path = "crates/tequila-render-core" }
+tequila-render-cycles = { path = "crates/tequila-render-cycles" }
+tequila-render-cpu = { path = "crates/tequila-render-cpu" }
+tequila-render-gpu = { path = "crates/tequila-render-gpu" }
+tequila-denoise = { path = "crates/tequila-denoise" }
+tequila-color = { path = "crates/tequila-color" }
+tequila-animation = { path = "crates/tequila-animation" }
+tequila-studio = { path = "crates/tequila-studio" }
+tequila-xr = { path = "crates/tequila-xr" }
+tequila-network = { path = "crates/tequila-network" }
+tequila-scripting = { path = "crates/tequila-scripting" }
+tequila-ai = { path = "crates/tequila-ai" }
+
+# Renderer inner loops are unusable without optimization, even in "debug" workflows.
+# Build our own crates and dependencies with opt-level 3 in dev profile; keep
+# debug assertions on so the invariants in the sampling code still fire.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+debug = 1
+
+# vdb-rs with a fix for half-float grids; see vendor/vdb-rs/TEQUILA-PATCH.md.
+# truck-stepio with a fix for placements that leave out their reference
+# direction; see vendor/truck-stepio/TEQUILA-PATCH.md.
+[patch.crates-io]
+vdb-rs = { path = "vendor/vdb-rs" }
+truck-stepio = { path = "vendor/truck-stepio" }

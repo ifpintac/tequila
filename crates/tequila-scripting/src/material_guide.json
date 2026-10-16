@@ -1,0 +1,1073 @@
+{
+ "summary": "Make a procedural material from a short JSON recipe: a type, the parameters it changes, and patterns that drive parameters, layered with masks. One request makes it and puts it on parts; another shows it on a ball; another changes it in place.",
+ "workflow": [
+  "1. Pick the closest example below (or `material recipe` of a library preset already on a part) and change it.",
+  "2. `material preview` with the recipe: a picture of it on a 5 cm ball, the scene untouched. Look, change, preview again until it is right. Give `radius` the part's size in metres when its pattern scale matters.",
+  "3. `material create` with the recipe and the part ids in `nodes`: made and assigned in one undo step. It answers with the material id.",
+  "4. Look at it on the product (screenshot or render), then `material update` that id with a changed recipe as often as needed.",
+  "5. `material save` it into the person's library when they like it."
+ ],
+ "recipe": {
+  "name": "What the material is called.",
+  "type": "One of `types` below; it decides which parameters matter and their defaults. plastic, metal, glass, paint, velvet... Start from the type closest to the real thing.",
+  "category, tags": "Optional; used when saved to the library.",
+  "<parameter key>": "Any material parameter by its key, as a fixed value: \"specular_roughness\": 0.3, \"base_color\": \"#c0392b\". Colours are hex sRGB strings, or [r, g, b] linear ACEScg.",
+  "metal_preset": "For type metal: Aluminium, Silver, Gold, Copper, Chromium, Iron, Nickel, Titanium, Tungsten or Platinum - measured reflectance.",
+  "patterns": "A list. Each drives one parameter with a procedural; later ones on the same parameter are layers over earlier ones."
+ },
+ "pattern": {
+  "param": "The parameter key it drives: base_color, specular_roughness, base_metalness, bump, coat_weight, transmission_weight, thin_film_thickness, geometry_opacity, emission_luminance...",
+  "procedural": "{\"kind\": <one of patterns below>, ...settings}. Settings left out take the defaults listed with each pattern.",
+  "size": "Feature size in metres, instead of `frequency` (repeats per metre). 0.01 = a 1 cm pattern. Patterns are in the part's own space at real-world size, so think about how big the feature is on the real object.",
+  "seed": "An integer: a different seed is a different random layout. Two patterns with the same kind, settings and seed line up exactly - use that to give scratches both a colour and a metalness.",
+  "colors": "For colour parameters: the ramp the pattern's 0-1 value is read through, [{\"at\": 0, \"color\": \"#...\"}, {\"at\": 1, \"color\": \"#...\"}], as many stops as wanted.",
+  "range": "For number parameters: what the pattern's 0 and 1 become, e.g. [0.2, 0.45] for a roughness.",
+  "depth": "For bump: how high the pattern's 1 stands, in metres. 0.00005-0.0005 is typical; more looks like plastic wrap.",
+  "blend": "For a layer: mix (default), multiply or add, over what the parameter already had.",
+  "amount": "For a layer: 0-1, how much of it shows.",
+  "mask": "For a layer: where it shows. {\"threshold\": 0.6, \"softness\": 0.03} shows it where its own pattern is above 0.6, with a soft edge; add \"procedural\" (and \"size\", \"seed\") to cut it from another pattern; \"invert\": true flips it."
+ },
+ "tips": [
+  "Real-world scale is everything: wood rings 2-5 mm apart (size 0.003), carbon weave 2 mm (size 0.002), terrazzo chips 3-15 mm, brushing 0.1 mm across. Preview with `radius` near the real part's size.",
+  "Value ranges: noise-like patterns and marble run 0-1 smoothly; spots, mesh and contour are 1 on the feature; scratches are 1 except in a scratch; weave and leather are heights. Pick ramps, ranges and mask thresholds accordingly.",
+  "Most realism comes from roughness variation and a little bump, not from the colour: give specular_roughness a subtle noise range and bump a fine low pattern.",
+  "Keep colour ramps close together for natural materials (a few shades of one hue); strong contrast reads as a print.",
+  "Layer, do not replace: base noise, then flecks or veins with a mask, then wear.",
+  "Clear coats (coat_weight 0.5-1, coat_roughness 0.02-0.1) make wood, carbon and paint read as finished.",
+  "If a preview is uniform the pattern is too small or too large for the ball: change `size`.",
+  "Errors name the field that is wrong; fix that field and send the recipe again."
+ ],
+ "parameters": {
+  "base_color": "The colour.",
+  "base_metalness": "0 dielectric, 1 metal. Usually fixed by the type; pattern it for worn paint over metal.",
+  "specular_roughness": "0 mirror to 1 matte. The most important realism parameter.",
+  "specular_roughness_anisotropy": "0-1: stretched highlights, for brushed metal.",
+  "specular_rotation": "Turns the anisotropy.",
+  "coat_weight": "0-1 clear coat on top.",
+  "coat_roughness": "The clear coat's roughness.",
+  "transmission_weight": "0-1 see-through (glass, clear plastic).",
+  "transmission_color": "The tint of see-through materials.",
+  "subsurface_weight": "0-1 light scattering under the surface (wax, skin, soap).",
+  "fuzz_weight": "0-1 soft sheen of fibres (velvet, felt).",
+  "thin_film_weight": "0-1 iridescent film, with thin_film_thickness in nanometres (200-900).",
+  "flake_weight": "0-1 metallic flakes in a paint, with flake_size in metres and flake_color.",
+  "emission_luminance": "Glow, in nits; emission_color its colour.",
+  "geometry_opacity": "0 hole to 1 solid: pattern it with mesh for perforated sheet.",
+  "bump": "Surface relief: pattern it with depth."
+ },
+ "patterns": [
+  {
+   "kind": "noise",
+   "looks_like": "Soft fractal clouds.",
+   "good_for": "Mottling, colour variation, roughness variation, dirt. The all-rounder.",
+   "settings": {
+    "frequency": "repeats per metre",
+    "octaves": "layers of detail, 1-8",
+    "lacunarity": "scale step between octaves (2)",
+    "gain": "how strong each finer octave is (0.5)",
+    "basis": "perlin or value"
+   }
+  },
+  {
+   "kind": "noise_texture",
+   "looks_like": "One octave of noise with contrast: soft blotches or, with high contrast, hard-edged patches.",
+   "good_for": "Masks: patches of wear, water stains, two-tone mottling.",
+   "settings": {
+    "frequency": "repeats per metre",
+    "contrast": "1 soft, 4+ near hard-edged",
+    "bias": "moves it up or down",
+    "basis": "perlin or value"
+   }
+  },
+  {
+   "kind": "ridged",
+   "looks_like": "Sharp crests and creases.",
+   "good_for": "Rock, concrete, hammered metal, crumpled foil (as bump).",
+   "settings": {
+    "frequency": "repeats per metre",
+    "octaves": "detail",
+    "gain": "roughness of detail"
+   }
+  },
+  {
+   "kind": "cellular",
+   "looks_like": "Voronoi cells: distance from the cell centre (dimples), the edges between cells (cracks), or a random 0-1 value per cell (id).",
+   "good_for": "Hammered dimples (distance, as bump), cracked glaze (edges), tiles or chips of random colour (id, through a stepped ramp).",
+   "settings": {
+    "frequency": "cells per metre",
+    "metric": "euclidean, manhattan or chebyshev",
+    "output": "distance, edges or id"
+   }
+  },
+  {
+   "kind": "spots",
+   "looks_like": "One round spot per cell: 1 in a spot, 0 between.",
+   "good_for": "Chips, dots, pores, stars, glitter - as a mask. For spots of different colours, colour a layer with cellular output id at the same size and seed, masked by the spots: they share their cells.",
+   "settings": {
+    "frequency": "spots per metre",
+    "coverage": "spot size 0-1",
+    "variance": "size variation 0-1",
+    "softness": "edge softness 0-1"
+   }
+  },
+  {
+   "kind": "granite",
+   "looks_like": "Cells at two scales, fine grain and flecks.",
+   "good_for": "Granite, speckled stone, sparkly composites (read through a ramp).",
+   "settings": {
+    "frequency": "per metre",
+    "speckle": "flecks 0-1",
+    "fine": "fine grain 0-1"
+   }
+  },
+  {
+   "kind": "marble",
+   "looks_like": "Bands bent by turbulence into veins. Its frequency is radians per metre (a band is 6.28 / frequency metres): give `size` instead and it is converted.",
+   "good_for": "Marble, onyx, agate, swirled resin. Put the vein colour at the ramp's 0 end and keep it narrow (0 to 0.06).",
+   "settings": {
+    "frequency": "bands per metre",
+    "axis": "x, y or z",
+    "distortion": "how much the bands bend (0 stripes, 2-4 marble)",
+    "octaves": "detail of the bending"
+   }
+  },
+  {
+   "kind": "wood",
+   "looks_like": "Growth rings with fine grain.",
+   "good_for": "Simple wood.",
+   "settings": {
+    "frequency": "rings per metre",
+    "axis": "the grain's direction",
+    "distortion": "ring wobble",
+    "grain": "streaking 0-1"
+   }
+  },
+  {
+   "kind": "wood_advanced",
+   "looks_like": "Real boards: varied ring widths, earlywood and latewood, ray flecks, knots, planks.",
+   "good_for": "Oak, walnut, ash, plywood, flooring. Read through a ramp of two to four browns.",
+   "settings": {
+    "frequency": "rings per metre",
+    "axis": "grain direction",
+    "ring_variation": "0-1",
+    "latewood": "dark share of a ring 0-1",
+    "contrast": "0-1",
+    "flecks": "ray flecks 0-1 (oak)",
+    "knots": "0-1",
+    "board_width": "plank width in metres, 0 for one piece"
+   }
+  },
+  {
+   "kind": "brushed",
+   "looks_like": "Fine parallel streaks.",
+   "good_for": "Brushed metal (on roughness, with specular_roughness_anisotropy), hairline finishes.",
+   "settings": {
+    "frequency": "per metre across the streaks (300-2000)",
+    "stretch": "how long the streaks are (10-60)"
+   }
+  },
+  {
+   "kind": "brushed_radial",
+   "looks_like": "Brushing in circles about an axis.",
+   "good_for": "Machined knobs, watch crowns, speaker caps, turned aluminium.",
+   "settings": {
+    "frequency": "per metre",
+    "axis": "the turning axis",
+    "stretch": "streak length"
+   }
+  },
+  {
+   "kind": "scratches",
+   "looks_like": "Sparse thin scratches: 1 on the untouched surface, 0 in a scratch.",
+   "good_for": "Wear: a roughness layer, a bump, or (inverted mask, range [1, 0]) a mask showing metal under paint. Flat: it lies in the part's x-z plane.",
+   "settings": {
+    "frequency": "per metre",
+    "width": "scratch width (fraction of a cell)",
+    "density": "how many 0-1",
+    "spread": "0 parallel to 0.25 random directions"
+   }
+  },
+  {
+   "kind": "leather",
+   "looks_like": "Pebbled grain with fine cracks and wrinkles (a height).",
+   "good_for": "Leather and leatherette, as bump; faint colour variation.",
+   "settings": {
+    "frequency": "pebbles per metre (300-1500)",
+    "crack_width": "0-1",
+    "wrinkle": "0-1"
+   }
+  },
+  {
+   "kind": "weave",
+   "looks_like": "Threads over and under: a height, 1 on top at a crossing, 0 in gaps. Flat: it lies in the part's x-z plane.",
+   "good_for": "Carbon fibre (twill, width 1, size 0.002), fabric, canvas, basket weave: as bump, through a ramp as colour, reversed in roughness.",
+   "settings": {
+    "frequency": "threads per metre",
+    "pattern": "plain, twill or satin",
+    "width": "thread fill 0-1",
+    "variance": "unevenness 0-1"
+   }
+  },
+  {
+   "kind": "camouflage",
+   "looks_like": "Stacked blotches in steps.",
+   "good_for": "Camo, with a ramp of as many hard colour stops as layers.",
+   "settings": {
+    "frequency": "per metre",
+    "layers": "2-5"
+   }
+  },
+  {
+   "kind": "contour",
+   "looks_like": "Lines at even heights, bent by noise.",
+   "good_for": "Topographic lines, wood-like technical looks, stripes.",
+   "settings": {
+    "frequency": "lines per metre",
+    "axis": "x, y or z",
+    "width": "line width",
+    "softness": "edge",
+    "distortion": "bend"
+   }
+  },
+  {
+   "kind": "mesh",
+   "looks_like": "A perforated sheet: 1 on the material, 0 in a hole. Flat: it lies in the part's x-z plane.",
+   "good_for": "Speaker grilles, perforated metal: on geometry_opacity, with geometry_thin_walled true.",
+   "settings": {
+    "frequency": "holes per metre",
+    "shape": "round, square or hex",
+    "size": "hole size, fraction of the pitch",
+    "softness": "edge"
+   }
+  }
+ ],
+ "examples": [
+  {
+   "idea": "Polished terrazzo: a mottled cement base with chips in four stone colours at two sizes. Chips get one colour each because a cellular `id` and spots of the same size and seed share their cells.",
+   "recipe": {
+    "name": "Terrazzo",
+    "type": "plastic",
+    "specular_roughness": 0.2,
+    "coat_weight": 0.3,
+    "coat_roughness": 0.06,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 4
+      },
+      "size": 0.03,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#d6d1c8"
+       },
+       {
+        "at": 1,
+        "color": "#e6e2da"
+       }
+      ]
+     },
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "cellular",
+       "output": "id"
+      },
+      "size": 0.007,
+      "seed": 3,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#3a3c3e"
+       },
+       {
+        "at": 0.15,
+        "color": "#3a3c3e"
+       },
+       {
+        "at": 0.16,
+        "color": "#b5603f"
+       },
+       {
+        "at": 0.35,
+        "color": "#b5603f"
+       },
+       {
+        "at": 0.36,
+        "color": "#f4f1ea"
+       },
+       {
+        "at": 0.7,
+        "color": "#f4f1ea"
+       },
+       {
+        "at": 0.71,
+        "color": "#8c9598"
+       },
+       {
+        "at": 1,
+        "color": "#8c9598"
+       }
+      ],
+      "mask": {
+       "procedural": {
+        "kind": "spots",
+        "coverage": 0.55,
+        "variance": 0.7,
+        "softness": 0.02
+       },
+       "size": 0.007,
+       "seed": 3,
+       "threshold": 0.5,
+       "softness": 0.02
+      }
+     },
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "cellular",
+       "output": "id"
+      },
+      "size": 0.0025,
+      "seed": 11,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#5a5d60"
+       },
+       {
+        "at": 0.4,
+        "color": "#5a5d60"
+       },
+       {
+        "at": 0.41,
+        "color": "#f6f4ef"
+       },
+       {
+        "at": 1,
+        "color": "#f6f4ef"
+       }
+      ],
+      "mask": {
+       "procedural": {
+        "kind": "spots",
+        "coverage": 0.5,
+        "variance": 0.8,
+        "softness": 0.02
+       },
+       "size": 0.0025,
+       "seed": 11,
+       "threshold": 0.5,
+       "softness": 0.02
+      }
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "noise"
+      },
+      "size": 0.02,
+      "range": [
+       0.16,
+       0.28
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Carrara marble: white with soft grey veins, polished, a little light under the surface.",
+   "recipe": {
+    "name": "Carrara Marble",
+    "type": "plastic",
+    "specular_roughness": 0.08,
+    "subsurface_weight": 0.25,
+    "subsurface_color": "#f4f2ee",
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "marble",
+       "distortion": 3.5,
+       "octaves": 6,
+       "axis": "x"
+      },
+      "size": 0.03,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#767a80"
+       },
+       {
+        "at": 0.06,
+        "color": "#b3b5b8"
+       },
+       {
+        "at": 0.2,
+        "color": "#e7e6e2"
+       },
+       {
+        "at": 1,
+        "color": "#f7f6f2"
+       }
+      ]
+     },
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 5
+      },
+      "size": 0.015,
+      "amount": 0.3,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#e3e1dc"
+       },
+       {
+        "at": 1,
+        "color": "#fbfaf7"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Black marble with sharp white veins: the same pattern with the ramp turned round.",
+   "recipe": {
+    "name": "Nero Marquina",
+    "type": "plastic",
+    "specular_roughness": 0.06,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "marble",
+       "distortion": 4.5,
+       "octaves": 7,
+       "axis": "y"
+      },
+      "size": 0.025,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#f2f0ea"
+       },
+       {
+        "at": 0.03,
+        "color": "#8a8a88"
+       },
+       {
+        "at": 0.1,
+        "color": "#1a1a1c"
+       },
+       {
+        "at": 1,
+        "color": "#0c0c0d"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Brushed aluminium: anisotropic streaks in the roughness.",
+   "recipe": {
+    "name": "Brushed Aluminium",
+    "type": "metal",
+    "metal_preset": "Aluminium",
+    "specular_roughness_anisotropy": 0.65,
+    "patterns": [
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "brushed",
+       "stretch": 40
+      },
+      "size": 0.0015,
+      "range": [
+       0.2,
+       0.34
+      ]
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "brushed",
+       "stretch": 40
+      },
+      "size": 0.0015,
+      "depth": 5e-06
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Walnut under a satin clear coat: rings 4 mm apart, a ramp of three browns, the same rings as a faint bump.",
+   "recipe": {
+    "name": "Walnut",
+    "type": "plastic",
+    "specular_roughness": 0.45,
+    "coat_weight": 0.6,
+    "coat_roughness": 0.12,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "wood",
+       "axis": "x",
+       "distortion": 0.1,
+       "grain": 0.5
+      },
+      "size": 0.004,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#80593a"
+       },
+       {
+        "at": 0.55,
+        "color": "#5a3a23"
+       },
+       {
+        "at": 1,
+        "color": "#36220f"
+       }
+      ]
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "wood",
+       "axis": "x",
+       "distortion": 0.1,
+       "grain": 0.5
+      },
+      "size": 0.004,
+      "depth": 2e-05
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Twill carbon fibre under a gloss clear coat: the weave in the colour and, reversed, in the roughness, so each tow catches the light in turn.",
+   "recipe": {
+    "name": "Carbon Fibre",
+    "type": "plastic",
+    "specular_roughness": 0.3,
+    "coat_weight": 1,
+    "coat_roughness": 0.02,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "weave",
+       "pattern": "twill",
+       "width": 1,
+       "variance": 0.05
+      },
+      "size": 0.002,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#101012"
+       },
+       {
+        "at": 0.5,
+        "color": "#26272a"
+       },
+       {
+        "at": 1,
+        "color": "#4c4e53"
+       }
+      ]
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "weave",
+       "pattern": "twill",
+       "width": 1,
+       "variance": 0.05
+      },
+      "size": 0.002,
+      "range": [
+       0.5,
+       0.2
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Pebbled black leather.",
+   "recipe": {
+    "name": "Pebbled Leather",
+    "type": "plastic",
+    "specular_roughness": 0.55,
+    "fuzz_weight": 0.15,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 3
+      },
+      "size": 0.01,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#171615"
+       },
+       {
+        "at": 1,
+        "color": "#26231f"
+       }
+      ]
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "leather",
+       "crack_width": 0.1,
+       "wrinkle": 0.4
+      },
+      "size": 0.0015,
+      "depth": 0.00012
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "leather",
+       "crack_width": 0.1,
+       "wrinkle": 0.4
+      },
+      "size": 0.0015,
+      "range": [
+       0.7,
+       0.45
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Raw concrete with pores and fine relief.",
+   "recipe": {
+    "name": "Concrete",
+    "type": "plastic",
+    "specular_roughness": 0.85,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 6
+      },
+      "size": 0.08,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#8c8a86"
+       },
+       {
+        "at": 1,
+        "color": "#a9a7a1"
+       }
+      ]
+     },
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "spots",
+       "coverage": 0.25,
+       "variance": 0.8
+      },
+      "size": 0.003,
+      "seed": 2,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#5d5b57"
+       },
+       {
+        "at": 1,
+        "color": "#4a4844"
+       }
+      ],
+      "mask": {
+       "threshold": 0.5,
+       "softness": 0.05
+      }
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "ridged",
+       "octaves": 5
+      },
+      "size": 0.01,
+      "depth": 0.00015
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "spots",
+       "coverage": 0.25,
+       "variance": 0.8
+      },
+      "size": 0.003,
+      "seed": 2,
+      "blend": "add",
+      "amount": 0.6
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Hand-hammered copper: cellular distance as a deep bump, with uneven polish.",
+   "recipe": {
+    "name": "Hammered Copper",
+    "type": "metal",
+    "metal_preset": "Copper",
+    "patterns": [
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "cellular",
+       "output": "distance"
+      },
+      "size": 0.006,
+      "depth": 0.0008
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 4
+      },
+      "size": 0.01,
+      "range": [
+       0.1,
+       0.28
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Galaxy resin: a nebula ramp in deep blue, violet, pink and cyan, tiny white stars masked from spots, and a few flakes under a gloss coat.",
+   "recipe": {
+    "name": "Galaxy Resin",
+    "type": "plastic",
+    "specular_roughness": 0.2,
+    "coat_weight": 1,
+    "coat_roughness": 0.01,
+    "flake_weight": 0.12,
+    "flake_size": 4e-05,
+    "flake_color": "#ffffff",
+    "flake_roughness": 0.15,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 6,
+       "gain": 0.6
+      },
+      "size": 0.02,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#03030f"
+       },
+       {
+        "at": 0.45,
+        "color": "#160d4a"
+       },
+       {
+        "at": 0.62,
+        "color": "#55218a"
+       },
+       {
+        "at": 0.78,
+        "color": "#c2449a"
+       },
+       {
+        "at": 1,
+        "color": "#20b6d8"
+       }
+      ]
+     },
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "spots",
+       "coverage": 0.12,
+       "variance": 0.9,
+       "softness": 0.3
+      },
+      "size": 0.0015,
+      "seed": 21,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#ffffff"
+       },
+       {
+        "at": 1,
+        "color": "#ffffff"
+       }
+      ],
+      "mask": {
+       "threshold": 0.5,
+       "softness": 0.2
+      }
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Soft-touch rubber grip with a fine stipple.",
+   "recipe": {
+    "name": "Soft-touch Rubber",
+    "type": "plastic",
+    "base_color": "#26282a",
+    "specular_roughness": 0.72,
+    "patterns": [
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "spots",
+       "coverage": 0.6,
+       "variance": 0.3,
+       "softness": 0.5
+      },
+      "size": 0.0008,
+      "depth": 3e-05
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "noise"
+      },
+      "size": 0.005,
+      "range": [
+       0.68,
+       0.78
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Desert camouflage plastic.",
+   "recipe": {
+    "name": "Desert Camo",
+    "type": "plastic",
+    "specular_roughness": 0.6,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "camouflage",
+       "layers": 4
+      },
+      "size": 0.03,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#c2b280"
+       },
+       {
+        "at": 0.25,
+        "color": "#c2b280"
+       },
+       {
+        "at": 0.26,
+        "color": "#a68b5b"
+       },
+       {
+        "at": 0.5,
+        "color": "#a68b5b"
+       },
+       {
+        "at": 0.51,
+        "color": "#7a6a4f"
+       },
+       {
+        "at": 0.75,
+        "color": "#7a6a4f"
+       },
+       {
+        "at": 0.76,
+        "color": "#4d4a3a"
+       },
+       {
+        "at": 1,
+        "color": "#4d4a3a"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Red paint worn to bare steel: scratches are 0 in a scratch, so the colour layer's mask is inverted and the metalness range runs 1 to 0 - the same seed puts both on the same scratches.",
+   "recipe": {
+    "name": "Worn Red Paint",
+    "type": "plastic",
+    "base_color": "#a3201b",
+    "specular_roughness": 0.35,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "scratches",
+       "width": 0.08,
+       "density": 0.7,
+       "spread": 0.25
+      },
+      "size": 0.008,
+      "seed": 5,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#b9bdc2"
+       },
+       {
+        "at": 1,
+        "color": "#9a9ea3"
+       }
+      ],
+      "mask": {
+       "threshold": 0.6,
+       "softness": 0.1,
+       "invert": true
+      }
+     },
+     {
+      "param": "base_metalness",
+      "procedural": {
+       "kind": "scratches",
+       "width": 0.08,
+       "density": 0.7,
+       "spread": 0.25
+      },
+      "size": 0.008,
+      "seed": 5,
+      "range": [
+       1,
+       0
+      ]
+     },
+     {
+      "param": "specular_roughness",
+      "procedural": {
+       "kind": "noise_texture",
+       "contrast": 2
+      },
+      "size": 0.02,
+      "range": [
+       0.3,
+       0.5
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "An oil-slick iridescent finish: a thin film whose thickness wanders with a noise, over near-black.",
+   "recipe": {
+    "name": "Oil-slick Iridescent",
+    "type": "plastic",
+    "base_color": "#232328",
+    "specular_roughness": 0.06,
+    "thin_film_weight": 1,
+    "patterns": [
+     {
+      "param": "thin_film_thickness",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 3
+      },
+      "size": 0.015,
+      "range": [
+       300,
+       650
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Soft grey felt: a fuzz sheen, a faint mottle, and a fine weave in the bump only.",
+   "recipe": {
+    "name": "Grey Felt",
+    "type": "plastic",
+    "specular_roughness": 0.85,
+    "fuzz_weight": 0.8,
+    "fuzz_color": "#b9babd",
+    "fuzz_roughness": 0.5,
+    "patterns": [
+     {
+      "param": "base_color",
+      "procedural": {
+       "kind": "noise",
+       "octaves": 4
+      },
+      "size": 0.004,
+      "colors": [
+       {
+        "at": 0,
+        "color": "#55565a"
+       },
+       {
+        "at": 1,
+        "color": "#76777b"
+       }
+      ]
+     },
+     {
+      "param": "bump",
+      "procedural": {
+       "kind": "weave",
+       "pattern": "plain",
+       "width": 1,
+       "variance": 0.6
+      },
+      "size": 0.0012,
+      "depth": 0.0001
+     }
+    ]
+   }
+  },
+  {
+   "idea": "Perforated black metal speaker grille.",
+   "recipe": {
+    "name": "Speaker Grille",
+    "type": "metal",
+    "metal_preset": "Iron",
+    "base_color": "#202224",
+    "specular_roughness": 0.5,
+    "geometry_thin_walled": true,
+    "patterns": [
+     {
+      "param": "geometry_opacity",
+      "procedural": {
+       "kind": "mesh",
+       "shape": "round",
+       "size": 0.55,
+       "softness": 0.05
+      },
+      "size": 0.002
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="Tequila">
+<title>{{title}}</title>
+<style>
+  :root {
+    --panel: rgba(255, 255, 255, 0.9);
+    --text: #1c1f23;
+    --dim: #5d6670;
+    --line: rgba(20, 30, 40, 0.12);
+    --accent: #0f8a7e;
+    --shadow: 0 10px 34px rgba(0, 0, 0, 0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --panel: rgba(28, 31, 35, 0.88); --text: #eef1f4; --dim: #a3abb4; --line: rgba(255, 255, 255, 0.12); --accent: #3cc6b6; }
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #d9dcdf; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas, #stage img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #stage img { object-fit: contain; transition: opacity 0.35s ease; }
+  canvas { touch-action: none; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .panel { position: fixed; background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 20px 22px; max-height: calc(100% - 48px); overflow: auto; box-sizing: border-box; }
+  .panel.right { right: 24px; top: 50%; transform: translateY(-50%); width: 320px; }
+  .panel.left { left: 24px; top: 50%; transform: translateY(-50%); width: 320px; }
+  .panel.bottom { left: 50%; bottom: 24px; transform: translateX(-50%); width: min(1100px, calc(100% - 48px)); display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: flex-start; }
+  .panel.bottom .head { flex-basis: 100%; }
+  @media (max-width: 720px) {
+    .panel.right, .panel.left, .panel.bottom { left: 12px; right: 12px; top: auto; bottom: 12px; transform: none; width: auto; max-height: 46%; }
+  }
+  h1 { font-size: 22px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 14px; margin-top: 3px; }
+  .head { margin-bottom: 14px; }
+  .option { margin: 0 0 14px; }
+  .option .name { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .option .name span { color: var(--dim); font-weight: 450; margin-left: 6px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .swatch { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); cursor: pointer; padding: 0; position: relative; outline-offset: 3px; }
+  .swatch.on { outline: 2px solid var(--accent); }
+  .swatch.off, .choice.off { opacity: 0.35; cursor: not-allowed; }
+  .swatch.off::after { content: ""; position: absolute; left: 4px; right: 4px; top: 50%; height: 2px; background: var(--text); transform: rotate(-45deg); }
+  .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+  .choice { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 9px; padding: 7px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  .choice.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .choice.off { text-decoration: line-through; }
+  select { font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--text); min-width: 180px; }
+  .tools { position: fixed; top: 16px; left: 16px; display: flex; gap: 8px; }
+  .tools button { font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; box-shadow: var(--shadow); }
+  .tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #message { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 15px; pointer-events: none; text-align: center; padding: 24px; }
+  .credit { position: fixed; right: 14px; bottom: 10px; font-size: 11px; color: var(--dim); opacity: 0.7; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="message">Loading…</div>
+<div class="credit">Made with Tequila</div>
+<script src="data.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+[package]
+name = "tequila-analytic-tests"
+description = "Analytic correctness tests: white furnace, chi-squared sampling, MIS validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+tequila-core.workspace = true
+
+[dev-dependencies]
+tequila-materials.workspace = true
+tequila-render-core.workspace = true
+tequila-texture.workspace = true

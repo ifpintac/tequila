@@ -1,0 +1,15 @@
+{
+  "category": "Gem",
+  "name": "Sapphire Blue",
+  "specular_ior": 1.77,
+  "tags": [
+    "sapphire",
+    "corundum",
+    "blue",
+    "jewellery"
+  ],
+  "transmission_color": [0.2011, 0.2496, 0.8127],
+  "transmission_dispersion_abbe": 72,
+  "type": "gem"
+}
+

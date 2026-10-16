@@ -1,0 +1,15 @@
+{
+  "base_color": [0.5872, 0.4205, 0.1124],
+  "category": "Translucent",
+  "name": "Beeswax",
+  "specular_roughness": 0.4,
+  "subsurface_color": [0.6672, 0.4774, 0.1204],
+  "subsurface_radius": [0.098, 0.067, 0.043],
+  "tags": [
+    "wax",
+    "beeswax",
+    "yellow"
+  ],
+  "type": "translucent"
+}
+

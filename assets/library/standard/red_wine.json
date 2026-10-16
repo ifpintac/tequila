@@ -1,0 +1,15 @@
+{
+  "category": "Liquid",
+  "name": "Red Wine",
+  "specular_ior": 1.345,
+  "tags": [
+    "wine",
+    "red",
+    "drink",
+    "alcohol"
+  ],
+  "transmission_color": [0.3123, 0.0449, 0.0549],
+  "transmission_depth": 0.03,
+  "type": "liquid"
+}
+

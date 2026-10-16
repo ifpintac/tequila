@@ -1,0 +1,35 @@
+[package]
+name = "tequila-import"
+description = "Geometry import: OBJ, STL, glTF/GLB, STEP, and the post-process pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+tequila-scene.workspace = true
+tequila-texture.workspace = true
+tequila-render-core.workspace = true
+tequila-materials.workspace = true
+tequila-format.workspace = true
+# Meshing a STEP file's bodies side by side.
+rayon = "1"
+# Texture packs: deflated ZIP downloads, and DirectX normal maps rewritten
+# as OpenGL ones.
+flate2 = "1"
+png = "0.17"
+# STEP: ruststep parses the exchange file, truck turns its B-rep into
+# triangles. Pure Rust, Apache-2.0; see src/step.rs for why not OCCT yet.
+ruststep = "0.4"
+truck-stepio = "0.3"
+truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation"] }
+# IFC profiles and faces with holes: constrained Delaunay, as truck uses.
+spade = "2"
+truck-topology = "0.6"
+
+[dev-dependencies]
+# Tests build B-spline surfaces of their own (step.rs, face_alone_tests).
+truck-geometry = "0.5"

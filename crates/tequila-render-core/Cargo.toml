@@ -1,0 +1,19 @@
+[package]
+name = "tequila-render-core"
+description = "Integrator, sampling, lights, media, camera, AOVs, orchestrator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+rayon = "1"
+
+[dev-dependencies]
+# The sky_levels example compares a generated sky against the built-in studio.
+tequila-scene.workspace = true

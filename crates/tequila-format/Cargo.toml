@@ -1,0 +1,35 @@
+[package]
+name = "tequila-format"
+description = "The .tequila container: read, write, schema validation, migration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-core.workspace = true
+tequila-scene.workspace = true
+tequila-color.workspace = true
+tequila-render-core.workspace = true
+# OpenEXR is a large format whose whole value is other people's tools
+# opening it; see `exr.rs` for why this one is not hand-written.
+exr = "1"
+half = "2"
+# Image formats whose value is other people's tools opening them, for the same
+# reason `exr.rs` gives. PSD is hand-written because no maintained Rust writer
+# exists and the part of it needed here is small and fully specified.
+png = "0.17"
+jpeg-encoder = "0.6"
+tiff = "0.9"
+tequila-materials.workspace = true
+tequila-texture.workspace = true
+# Baking materials for glTF export, a part's triangles in parallel.
+rayon = "1"
+
+[dev-dependencies]
+tequila-import.workspace = true
+# The exit criterion renders and then reads the file back. Dev-only: writing a
+# file must not require the renderer.
+tequila-render-cpu.workspace = true

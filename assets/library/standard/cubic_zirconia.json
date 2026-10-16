@@ -1,0 +1,14 @@
+{
+  "category": "Gem",
+  "name": "Cubic Zirconia",
+  "specular_ior": 2.16,
+  "tags": [
+    "zirconia",
+    "cz",
+    "jewellery",
+    "fire"
+  ],
+  "transmission_dispersion_abbe": 30,
+  "type": "gem"
+}
+

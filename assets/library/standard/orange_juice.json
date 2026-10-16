@@ -1,0 +1,17 @@
+{
+  "category": "Liquid",
+  "name": "Orange Juice",
+  "specular_ior": 1.35,
+  "tags": [
+    "orange",
+    "juice",
+    "drink",
+    "cloudy"
+  ],
+  "transmission_color": [0.86, 0.43, 0.05],
+  "transmission_depth": 0.01,
+  "transmission_scatter": [22, 20, 18],
+  "transmission_scatter_anisotropy": 0.5,
+  "type": "liquid"
+}
+

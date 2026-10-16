@@ -1,0 +1,16 @@
+{
+  "category": "Plastic",
+  "name": "Acrylic Smoke",
+  "specular_roughness": 0.02,
+  "tags": [
+    "acrylic",
+    "pmma",
+    "smoke",
+    "tinted",
+    "cover"
+  ],
+  "transmission_color": [0.3, 0.3, 0.31],
+  "transmission_depth": 0.004,
+  "type": "plastic_transparent"
+}
+

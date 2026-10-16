@@ -1,0 +1,346 @@
+{
+  "base_color": [0.2, 0.2, 0.22],
+  "base_metalness": 1,
+  "category": "Metal",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 10
+      },
+      {
+        "from": 6,
+        "socket": "input:2",
+        "to": 11
+      },
+      {
+        "from": 7,
+        "socket": "input:1",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 9,
+        "socket": "input:1",
+        "to": 10
+      },
+      {
+        "from": 10,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 12
+      },
+      {
+        "from": 12,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.08, 1, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 140
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 6
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 45
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 8
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.65
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.66
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0.25,
+            "color": [0.16335596, 0.1707572, 0.19731584]
+          },
+          {
+            "at": 0.5,
+            "color": [0.24391688, 0.25328237, 0.28646922]
+          },
+          {
+            "at": 0.75,
+            "color": [0.33227316, 0.341127, 0.3758083]
+          }
+        ],
+        "id": 7,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "color": [0.461634, 0.46721917, 0.4826547]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.42
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.58
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 10,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.36
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.000012,
+        "id": 12,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Iron",
+  "name": "Steel Hot Rolled",
+  "specular_roughness": 0.5,
+  "tags": [
+    "steel",
+    "hot rolled",
+    "mill scale",
+    "raw",
+    "industrial"
+  ],
+  "type": "generic"
+}
+

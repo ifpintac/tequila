@@ -1,0 +1,19 @@
+[package]
+name = "tequila-network"
+description = "Job queue, worker protocol, network render dispatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+tequila-scene.workspace = true
+tequila-format.workspace = true
+# HMAC-SHA256 and the system random source, for the farm's handshake
+# and signed messages (already built for rustls in tequila-ai).
+ring = "0.17"
+
+[dev-dependencies]
+tequila-texture.workspace = true

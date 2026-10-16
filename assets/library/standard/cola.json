@@ -1,0 +1,14 @@
+{
+  "category": "Liquid",
+  "name": "Cola",
+  "specular_ior": 1.34,
+  "tags": [
+    "cola",
+    "soda",
+    "drink"
+  ],
+  "transmission_color": [0.2874, 0.1384, 0.0475],
+  "transmission_depth": 0.012,
+  "type": "liquid"
+}
+

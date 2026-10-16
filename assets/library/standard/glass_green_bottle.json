@@ -1,0 +1,15 @@
+{
+  "category": "Glass",
+  "name": "Glass Green Bottle",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.03,
+  "tags": [
+    "glass",
+    "bottle",
+    "green"
+  ],
+  "transmission_color": [0.241, 0.3818, 0.2106],
+  "transmission_depth": 0.02,
+  "type": "glass_solid"
+}
+

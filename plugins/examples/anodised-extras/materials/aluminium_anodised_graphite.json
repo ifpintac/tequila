@@ -1,0 +1,41 @@
+{
+  "name": "Aluminium Anodised Graphite",
+  "type": "metal",
+  "category": "Metal",
+  "metal_preset": "Aluminium",
+  "tags": [
+    "aluminium",
+    "anodised",
+    "colour",
+    "graphite",
+    "dark",
+    "grey"
+  ],
+  "base_color": [
+    0.070519,
+    0.072168,
+    0.082722
+  ],
+  "specular_roughness": 0.38,
+  "patterns": [
+    {
+      "param": "bump",
+      "procedural": {
+        "kind": "noise",
+        "frequency": 9000
+      },
+      "depth": 2.5e-06
+    },
+    {
+      "param": "specular_roughness",
+      "procedural": {
+        "kind": "noise",
+        "frequency": 12
+      },
+      "range": [
+        0.34,
+        0.44
+      ]
+    }
+  ]
+}

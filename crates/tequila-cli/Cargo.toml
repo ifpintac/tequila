@@ -1,0 +1,37 @@
+[package]
+name = "tequila-cli"
+description = "Headless Tequila renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tequila"
+path = "src/main.rs"
+
+[dependencies]
+tequila-core.workspace = true
+tequila-materials.workspace = true
+tequila-scene.workspace = true
+tequila-format.workspace = true
+tequila-import.workspace = true
+tequila-render-core.workspace = true
+tequila-render-cpu.workspace = true
+tequila-denoise.workspace = true
+tequila-color.workspace = true
+tequila-render-cycles.workspace = true
+tequila-scripting.workspace = true
+tequila-network.workspace = true
+png = "0.17"
+jpeg-encoder = "0.6"
+
+[dev-dependencies]
+# The headless-lighting test builds a project on disk and renders it, which
+# needs the same pieces the binary uses.
+tequila-import.workspace = true
+tequila-format.workspace = true
+tequila-scene.workspace = true
+tequila-render-core.workspace = true

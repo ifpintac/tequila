@@ -1,0 +1,536 @@
+//! Printed artwork over a material, ordered from bottom to top.
+//!
+//! ## Placement
+//!
+//! A label has to be told where on the part it sits, and there are two honest
+//! answers. If the mesh was authored with UV coordinates, the artist already
+//! decided, and the label follows that layout. If it was not — and an STL never
+//! is, nor most exported OBJ meshes — there is nothing to follow and the label
+//! is *projected* onto the part instead, like a slide onto a wall.
+//!
+//! The section used to offer only the first, on every part, with the hint "select
+//! a part with UV coordinates". On a part without them the label was added, the
+//! list showed it, and the render did not change. The controls below name the
+//! choice and default to the one that works for the part in hand.
+
+use crate::project::Project;
+use eframe::egui;
+use tequila_scene::{decal_fit, textures::TextureSource, tree::MaterialKey, Command};
+use tequila_texture::projection::{Axis, Mapping, Projection};
+use tequila_texture::{texture::MapRole, Image};
+
+/// Draw the Labels section.
+///
+/// Returns the index of a label whose viewport placement the user asked to
+/// start or stop. Reported upwards rather than acted on here, because the mode
+/// lives in the viewport and this panel has no reach into it.
+pub fn show(
+    ui: &mut egui::Ui,
+    project: &mut Project,
+    key: MaterialKey,
+    placing: Option<(MaterialKey, usize)>,
+) -> Option<usize> {
+    let mut place_request = None;
+    // What the added artwork says it prints at, in metres.
+    let mut printed: Option<(f32, f32)> = None;
+    let definition = project.document().materials.get(key)?;
+    let original = definition.graph.decals.clone();
+    let mut decals = original.clone();
+    let mut action = None;
+
+    // Read once, before anything borrows the document mutably.
+    let part_has_uvs = decal_fit::has_uvs(project.document(), key);
+    let fitted = decal_fit::fit_projected(project.document(), key);
+
+    crate::field::Fold::new(format!("Labels · {}", decals.len()))
+        .id_salt(("labels", key.0))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.small(
+                "Printed artwork. Transparency reveals the material below; a file \
+                 that says its print resolution arrives at its printed size.",
+            );
+            if ui.button("+ Add label…").clicked() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Artwork", &["png", "jpg", "jpeg", "psd", "psb"])
+                    .pick_file()
+                {
+                    printed = tequila_texture::print_size::print_size(&path);
+                    match Image::load(&path) {
+                        Ok(_) => {
+                            let name = path
+                                .file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            action = Some(Command::AddDecal {
+                                material: key,
+                                source: TextureSource::new(path, MapRole::Color),
+                                name,
+                            });
+                        }
+                        Err(error) => project.status = format!("Cannot load label: {error}"),
+                    }
+                }
+            }
+            if decals.is_empty() {
+                ui.weak(if part_has_uvs {
+                    "Add your logo or packaging artwork. It will follow the \
+                     part's own UV layout."
+                } else {
+                    "Add your logo or packaging artwork. This part has no UV \
+                     layout, so the label will be projected onto its widest \
+                     face — you can change the face below."
+                });
+            }
+
+            let mut reorder = None;
+            let mut remove = None;
+            let count = decals.len();
+            for index in (0..count).rev() {
+                ui.push_id(index, |ui| {
+                    let label = &mut decals[index];
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.add(crate::field::Checkbox::new(&mut label.enabled, ""))
+                            .on_hover_text("Show label");
+                        ui.add(egui::TextEdit::singleline(&mut label.name).desired_width(120.0));
+                        if ui
+                            .add_enabled(index + 1 < count, egui::Button::new("Up"))
+                            .on_hover_text("Bring forward")
+                            .clicked()
+                        {
+                            reorder = Some((index, index + 1));
+                        }
+                        if ui
+                            .add_enabled(index > 0, egui::Button::new("Down"))
+                            .on_hover_text("Send backward")
+                            .clicked()
+                        {
+                            reorder = Some((index, index - 1));
+                        }
+                        if ui
+                            .small_button("×")
+                            .on_hover_text("Remove label")
+                            .clicked()
+                        {
+                            remove = Some(index);
+                        }
+                        // Not offered for UV placement: there is no frame to
+                        // move, so a click on the model could not do anything
+                        // and a button that cannot work should not be there.
+                        let projected = label.mapping.projection != Projection::Uv;
+                        let active = placing == Some((key, index));
+                        if ui
+                            .add_enabled(
+                                projected,
+                                egui::SelectableLabel::new(active, "+ Place"),
+                            )
+                            .on_hover_text(
+                                "Click the part in the viewport to put the \
+                                 artwork there. Drag to slide it around. Esc \
+                                 when done.",
+                            )
+                            .on_disabled_hover_text(
+                                "UV placement follows the mesh's own \
+                                 coordinates, so there is nothing to point at. \
+                                 Switch to Project flat or Wrap around.",
+                            )
+                            .clicked()
+                        {
+                            place_request = Some(index);
+                        }
+                    });
+                    crate::field::Fold::new("Placement & finish")
+                        .id_salt("placement")
+                        .show(ui, |ui| {
+                            placement(ui, &mut label.mapping, part_has_uvs, fitted);
+                            ui.separator();
+                            ui.add(crate::field::Slider::new(&mut label.opacity, 0.0..=1.0).text("Opacity"));
+                            ui.add(
+                                crate::field::Slider::new(&mut label.roughness, 0.0..=1.0)
+                                    .text("Roughness"),
+                            );
+                            ui.add(crate::field::Checkbox::new(&mut label.metallic, "Foil"))
+                                .on_hover_text("Printed in metal foil: the artwork reflects like metal, as a hot-stamped logo does.");
+                        });
+                });
+            }
+            if let Some((a, b)) = reorder {
+                project.end_interaction();
+                decals.swap(a, b);
+            }
+            if let Some(index) = remove {
+                project.end_interaction();
+                decals.remove(index);
+            }
+        });
+
+    if action.is_none() && decals != original {
+        action = Some(Command::SetDecals {
+            material: key,
+            decals,
+        });
+    }
+    if let Some(command) = action {
+        let adding = matches!(command, Command::AddDecal { .. });
+        project.begin_group();
+        if let Err(error) = project.apply(command) {
+            project.status = error.to_string();
+        } else if let (true, Some(size)) = (adding, printed) {
+            print_at_size(project, key, size);
+        }
+        project.end_group();
+    }
+    if ui.input(|i| i.pointer.any_released()) {
+        project.end_interaction();
+    }
+    place_request
+}
+
+/// Size the label just added to what its artwork says it prints at, when it
+/// is projected flat — the one placement where a size on the part is a size
+/// in the world. Part of the same undo step as the adding.
+fn print_at_size(project: &mut Project, key: MaterialKey, (width, height): (f32, f32)) {
+    let Some(definition) = project.document().materials.get(key) else { return };
+    let mut decals = definition.graph.decals.clone();
+    let Some(label) = decals.last_mut() else { return };
+    if label.mapping.projection != Projection::Planar {
+        return;
+    }
+    // In metres, as every length in the document is.
+    label.mapping.real_world_units = true;
+    label.mapping.scale.x = width;
+    label.mapping.scale.y = height;
+    let text = format!("{:.1} × {:.1} mm, from the file's print resolution", width * 1000.0, height * 1000.0);
+    if project.apply(Command::SetDecals { material: key, decals }).is_ok() {
+        project.status = format!("Label sized to {text}");
+    }
+}
+
+/// How the label finds its way onto the part.
+fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitted: Option<Mapping>) {
+    ui.horizontal(|ui| {
+        ui.label("Placement");
+        // Three named for what they do to artwork, not for the projection
+        // they happen to use: "Cylindrical" is the name of the maths, "Wrap
+        // around" is the name of the thing a person wants done to a bottle.
+        for (projection, name, hint) in [
+            (
+                Projection::Uv,
+                "On UV map",
+                "Follow the part's own UV layout, as the artist authored it.",
+            ),
+            (
+                Projection::Planar,
+                "Project flat",
+                "Shine the artwork onto the part along one axis, like a slide \
+                 onto a wall. The right choice for a flat panel or a box face.",
+            ),
+            (
+                Projection::Cylindrical,
+                "Wrap around",
+                "Wrap the artwork around an axis — a bottle, a can, a tube.",
+            ),
+        ] {
+            let enabled = projection != Projection::Uv || part_has_uvs;
+            let chosen = mapping.projection == projection;
+            let response = ui.add_enabled(enabled, egui::SelectableLabel::new(chosen, name));
+            if response.clicked() && !chosen {
+                *mapping = switch_to(mapping, projection, fitted);
+            }
+            response.on_disabled_hover_text(
+                "This part has no UV layout, so there is nothing for UV \
+                 placement to follow. Project the artwork on instead.",
+            )
+            .on_hover_text(hint);
+        }
+    });
+
+    if mapping.projection == Projection::Uv {
+        uv_placement(ui, mapping);
+        reset_row(ui, mapping, fitted);
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        ui.label(if mapping.projection == Projection::Cylindrical {
+            "Wrap around"
+        } else {
+            "Facing"
+        });
+        for candidate in Axis::ALL {
+            ui.selectable_value(&mut mapping.axis, candidate, candidate.label());
+        }
+        if let Some(fit) = fitted {
+            if ui
+                .button("Fit to part")
+                .on_hover_text(
+                    "Centre the artwork on the part and size it to fit, facing \
+                     the widest face.",
+                )
+                .clicked()
+            {
+                let projection = mapping.projection;
+                *mapping = Mapping { projection, ..fit };
+            }
+        }
+    });
+
+    if mapping.projection == Projection::Planar {
+        // A size in metres, so the number on screen is the size the label
+        // will actually print at. Under a repeat count the same label is a
+        // different size on every part it is applied to.
+        mapping.real_world_units = true;
+        ui.horizontal(|ui| {
+            ui.label("Size");
+            ui.add(
+                egui::DragValue::new(&mut mapping.scale.x)
+                    .speed(0.01)
+                    .range(0.001..=1000.0)
+                    .prefix("w "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut mapping.scale.y)
+                    .speed(0.01)
+                    .range(0.001..=1000.0)
+                    .prefix("h "),
+            );
+        })
+        .response
+        .on_hover_text("Across the part, in metres. Larger is bigger.");
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("Wraps / height");
+            ui.add(
+                egui::DragValue::new(&mut mapping.scale.x)
+                    .speed(0.01)
+                    .range(0.01..=100.0),
+            )
+            .on_hover_text("1 wraps the artwork exactly once around.");
+            ui.add(
+                egui::DragValue::new(&mut mapping.scale.y)
+                    .speed(0.01)
+                    .range(0.01..=100.0),
+            );
+        });
+    }
+
+    ui.horizontal(|ui| {
+        ui.label("Nudge");
+        ui.add(
+            egui::DragValue::new(&mut mapping.offset.x)
+                .speed(0.005)
+                .range(-100.0..=100.0),
+        );
+        ui.add(
+            egui::DragValue::new(&mut mapping.offset.y)
+                .speed(0.005)
+                .range(-100.0..=100.0),
+        );
+    })
+    .response
+    .on_hover_text("Slide the artwork across the face. One unit is one artwork width.");
+
+    rotation(ui, mapping);
+    reset_row(ui, mapping, fitted);
+}
+
+/// The controls for a label following the mesh's own coordinates.
+fn uv_placement(ui: &mut egui::Ui, mapping: &mut Mapping) {
+    ui.small("Follows the part's UV layout · artwork does not repeat");
+    ui.horizontal(|ui| {
+        ui.label("Scale U / V");
+        ui.add(
+            egui::DragValue::new(&mut mapping.scale.x)
+                .speed(0.02)
+                .range(0.01..=100.0),
+        );
+        ui.add(
+            egui::DragValue::new(&mut mapping.scale.y)
+                .speed(0.02)
+                .range(0.01..=100.0),
+        );
+    })
+    .response
+    .on_hover_text("Higher values make artwork smaller. Anchored at the UV origin.");
+    ui.horizontal(|ui| {
+        ui.label("Offset U / V");
+        ui.add(
+            egui::DragValue::new(&mut mapping.offset.x)
+                .speed(0.01)
+                .range(-100.0..=100.0),
+        );
+        ui.add(
+            egui::DragValue::new(&mut mapping.offset.y)
+                .speed(0.01)
+                .range(-100.0..=100.0),
+        );
+    });
+    rotation(ui, mapping);
+}
+
+fn rotation(ui: &mut egui::Ui, mapping: &mut Mapping) {
+    let mut degrees = mapping.rotation * 360.0;
+    if ui
+        .add(crate::field::Slider::new(&mut degrees, -180.0..=180.0).text("Rotation °"))
+        .changed()
+    {
+        mapping.rotation = degrees / 360.0;
+    }
+}
+
+/// Back to where a freshly added label would have started.
+///
+/// Not to `Mapping::default()`: that is UV placement at one repeat, which on a
+/// projected label means a one-scene-unit square — a speck on a car door and
+/// larger than the part on a connector pin. Reset means "put it back where it
+/// was put for me", so it resets to the same fit.
+fn reset_row(ui: &mut egui::Ui, mapping: &mut Mapping, fitted: Option<Mapping>) {
+    if ui.small_button("Reset placement").clicked() {
+        *mapping = reset_to(mapping, fitted);
+    }
+}
+
+/// What the placement becomes when the user picks a different mode.
+///
+/// Pulled out of the widget because it is the part that can be wrong. The
+/// scale and offset mean different things on either side of the UV boundary —
+/// repeats across a UV square on one side, a size in scene units on the other
+/// — so carrying the numbers across unchanged puts the artwork at an arbitrary
+/// size somewhere off the part. Switching between the two projected modes does
+/// keep them, because there the numbers still mean what they meant.
+fn switch_to(mapping: &Mapping, projection: Projection, fitted: Option<Mapping>) -> Mapping {
+    let leaving_uv = mapping.projection == Projection::Uv && projection != Projection::Uv;
+    match (leaving_uv, fitted) {
+        (true, Some(fit)) => Mapping { projection, ..fit },
+        _ => Mapping {
+            projection,
+            ..*mapping
+        },
+    }
+}
+
+/// Back to where a freshly added label would have started.
+///
+/// Not `Mapping::default()` for a projected label: that is one repeat, which
+/// under real-world units means a one-scene-unit square — a speck on a car
+/// door and larger than the part on a connector pin. Reset means "put it back
+/// where it was put for me", so it resets to the same fit.
+fn reset_to(mapping: &Mapping, fitted: Option<Mapping>) -> Mapping {
+    let projection = mapping.projection;
+    match (projection, fitted) {
+        (Projection::Uv, _) | (_, None) => Mapping {
+            projection,
+            ..Default::default()
+        },
+        (_, Some(fit)) => Mapping { projection, ..fit },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tequila_core::math::{vec2, vec3};
+
+    /// A fit standing in for one measured off a part: a size in scene units,
+    /// centred somewhere well away from the origin.
+    fn a_fit() -> Mapping {
+        Mapping {
+            projection: Projection::Planar,
+            axis: Axis::Y,
+            real_world_units: true,
+            scale: vec3(0.8, 0.8, 1.0),
+            offset: vec2(0.5 - 12.0 / 0.8, 0.5 - 6.0 / 0.8),
+            pivot: vec2(12.0 / 0.8, 6.0 / 0.8),
+            ..Default::default()
+        }
+    }
+
+    /// Leaving UV placement takes the fitted numbers, because the ones it is
+    /// leaving behind mean something else.
+    ///
+    /// A UV mapping's scale is a repeat count across a unit square; a
+    /// projected one's is a size in scene units. Carrying "1" across turns a
+    /// label covering a whole part into a one-unit square somewhere near the
+    /// object's origin — which on an imported part is usually not even on the
+    /// part.
+    #[test]
+    fn leaving_uv_placement_takes_the_fit() {
+        let uv = Mapping::default();
+        let projected = switch_to(&uv, Projection::Planar, Some(a_fit()));
+        assert_eq!(projected.projection, Projection::Planar);
+        assert_eq!(projected.scale, a_fit().scale);
+        assert_eq!(projected.offset, a_fit().offset);
+        assert!(projected.real_world_units);
+    }
+
+    /// With no part to measure, the mode still changes. Refusing to switch
+    /// would leave the control dead with nothing on screen to say why.
+    #[test]
+    fn leaving_uv_placement_without_a_part_still_switches() {
+        let projected = switch_to(&Mapping::default(), Projection::Planar, None);
+        assert_eq!(projected.projection, Projection::Planar);
+    }
+
+    /// Between the two projected modes the numbers still mean what they meant,
+    /// so they are kept — including a rotation and nudge the user has set.
+    ///
+    /// Re-fitting here would silently discard that work every time someone
+    /// tried the other mode to see how it looked.
+    #[test]
+    fn switching_between_projected_modes_keeps_the_placement() {
+        let mine = Mapping {
+            rotation: 0.1,
+            offset: vec2(3.0, -1.0),
+            ..a_fit()
+        };
+        let wrapped = switch_to(&mine, Projection::Cylindrical, Some(a_fit()));
+        assert_eq!(wrapped.projection, Projection::Cylindrical);
+        assert_eq!(wrapped.rotation, 0.1);
+        assert_eq!(wrapped.offset, vec2(3.0, -1.0));
+        assert_eq!(wrapped.axis, mine.axis);
+    }
+
+    /// Reset puts a projected label back on the part, not onto a one-unit
+    /// square at the object's origin.
+    #[test]
+    fn reset_returns_a_projected_label_to_its_fit() {
+        let wandered = Mapping {
+            rotation: 0.3,
+            offset: vec2(90.0, -40.0),
+            scale: vec3(0.01, 0.01, 1.0),
+            ..a_fit()
+        };
+        let back = reset_to(&wandered, Some(a_fit()));
+        assert_eq!(back.scale, a_fit().scale);
+        assert_eq!(back.offset, a_fit().offset);
+        assert_eq!(back.pivot, a_fit().pivot);
+        assert_eq!(back.rotation, 0.0);
+    }
+
+    /// A reset keeps the mode it was reset in. Resetting a wrapped label onto
+    /// a flat projection would be answering a question nobody asked.
+    #[test]
+    fn reset_keeps_the_mode() {
+        for projection in [Projection::Planar, Projection::Cylindrical, Projection::Uv] {
+            let current = Mapping {
+                projection,
+                rotation: 0.25,
+                ..a_fit()
+            };
+            assert_eq!(
+                reset_to(&current, Some(a_fit())).projection,
+                projection,
+                "reset changed the placement mode"
+            );
+        }
+        // ...and a UV reset goes back to the plain UV defaults rather than to
+        // a fit measured for a projection it is not using.
+        let uv = Mapping {
+            projection: Projection::Uv,
+            ..a_fit()
+        };
+        assert_eq!(reset_to(&uv, Some(a_fit())), Mapping::default());
+    }
+}
