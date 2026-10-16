@@ -2921,7 +2921,12 @@ mod tests {
             let (scene, _) = tequila_scene::snapshot::snapshot(document, environment, &mut tequila_scene::snapshot::MeshCache::new());
             let directory = scratch(&format!("tequila-units-{}-{}", engine.key(), name.replace(' ', "-")));
             let renderer = BatchRenderer::new();
-            let mut job = job(1, &directory, RenderSettings { engine, width: 128, height: 96, max_samples: 64, denoise: false, ..Default::default() });
+            // Few samples: the routes render the same scene, so they agree
+            // sample for sample, and the control is off by the whole pattern.
+            // At 64 a picture of cork took five seconds here, and on GitHub's
+            // four-core Windows runner, among the other tests, passed the
+            // two minutes the batch renderer is given.
+            let mut job = job(1, &directory, RenderSettings { engine, width: 128, height: 96, max_samples: 16, denoise: false, ..Default::default() });
             job.scene = Arc::new(scene);
             job.camera = document.cameras.active().camera;
             job.config = IntegratorConfig::product();
