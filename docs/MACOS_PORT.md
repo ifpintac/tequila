@@ -148,8 +148,13 @@ a Mac.
   `~/Library/Caches`; `~/.tequila` keeps the journal and `channel.json`.
 - **Graphics:** eframe's OpenGL backend and the Solid view's GLSL 330 run on
   macOS's deprecated GL 4.1. Moving to wgpu/Metal is a separate project.
-- **Retina:** the viewport renders at logical points, so on a 2x screen it is
-  half resolution. Scale it by `pixels_per_point`.
+- *Done 2026-10-17.* **Retina:** a Rendered viewport on Cycles renders the
+  screen's own pixels (`render_scale` in `app/src/main.rs`); a screen of one
+  pixel per point is as before, whatever the text size. Tequila's own
+  renderer still traces the points: at a Retina screen's pixels its denoiser
+  took 1.7 s a picture, during which the view could not begin to move
+  (`retina_viewport_benchmark`). Still slow: at that size the viewport's GPU
+  denoiser roughly halves Cycles' samples a second.
 - *Done 2026-10-16.* **Shortcut labels** say Cmd and Option; hiding the
   selection is Control+H, since Cmd+H is the system's Hide.
 - *Done 2026-10-16.* **Trackpad:** two-finger pan, pinch zoom, Shift + swipe
