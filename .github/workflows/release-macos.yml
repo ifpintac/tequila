@@ -79,6 +79,34 @@ jobs:
           fi
           TEQUILA_CYCLES_WORK="$CYCLES_WORK" bash scripts/package-macos.sh
 
+      # Until here the app was only built. Start what was packaged: the
+      # renderer without a window, with Tequila's own engine and with
+      # Cycles (on the processor - these Macs have no graphics card for it),
+      # a STEP file through the OpenCASCADE reader, then the application
+      # itself, driven through its scripting channel.
+      - name: Smoke test the renderer
+        run: |
+          app="$(ls -d dist/Tequila-macOS-*/Tequila.app | tail -1)"
+          cli="$app/Contents/MacOS/tequila-cli"
+          "$cli" --width 160 --height 100 --samples 4 --output smoke-tequila.png
+          "$cli" --engine cycles --device CPU --width 160 --height 100 --samples 4 --output smoke-cycles.png
+          "$cli" --input crates/tequila-import/tests/data/two_bodies.step --width 160 --height 100 --samples 4 --output smoke-step.png 2>&1 | tee step.log
+          if grep -q "own reader instead" step.log; then echo "The STEP file was not read by OpenCASCADE"; exit 1; fi
+          ls -la smoke-*.png
+
+      - name: Smoke test the application
+        run: python3 scripts/smoke-app.py "$(ls -d dist/Tequila-macOS-*/Tequila.app | tail -1)" app-window.png
+
+      - name: Keep the smoke test's pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-macOS
+          path: |
+            smoke-*.png
+            app-window.png
+          if-no-files-found: ignore
+
       - name: Keep the disk image
         uses: actions/upload-artifact@v4
         with:
