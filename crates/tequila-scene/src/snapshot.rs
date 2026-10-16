@@ -959,9 +959,12 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
         reflection_fresnel: ground.reflection_fresnel,
         // Occlusion instead of a cast shadow, not as well as: the two are
         // alternative ways of saying the product sits on the floor, and
-        // showing both puts two different shadows under one object.
-        occlusion_only: ground.occlusion_shadows,
+        // showing both puts two different shadows under one object. And
+        // only while the floor catches shadows, as its greyed-out control
+        // says: a floor kept for its reflection darkens by neither.
+        occlusion_only: ground.shadows && ground.occlusion_shadows,
         occlusion_radius: 1.0,
+        shadows: ground.shadows,
     })
 }
 
@@ -1321,6 +1324,8 @@ mod tests {
         document.environment.ground.enabled = true;
         document.environment.ground.shadows = false;
         document.environment.ground.reflections = 0.5;
+        // Left on from before, greyed out with the shadows.
+        document.environment.ground.occlusion_shadows = true;
 
         let (scene, _) = snapshot(&document, environment(), &mut MeshCache::new());
         assert_eq!(
@@ -1332,6 +1337,11 @@ mod tests {
             1,
             "turning shadows off removed the floor"
         );
+        // A mirror floor that catches nothing. It was a full catcher, and
+        // the shadow switched off showed under the reflection.
+        let floor = scene.instances.iter().find_map(|i| i.shadow_catcher).expect("the floor");
+        assert!(!floor.shadows, "a floor with its shadows off still catches them");
+        assert!(!floor.occlusion_only, "a floor with its shadows off still darkens by occlusion");
     }
 
     #[test]

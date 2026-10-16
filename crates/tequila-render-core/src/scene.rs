@@ -180,6 +180,11 @@ pub struct ShadowCatcher {
     pub occlusion_only: bool,
     /// Radius the occlusion is measured over, in scene units.
     pub occlusion_radius: f32,
+    /// Whether the floor darkens at all, by a shadow or by occlusion. Off,
+    /// it is there only for its reflection - Ground's Catch shadows unticked
+    /// with Reflections up - and was a full catcher all the same: the shadow
+    /// the person had switched off stayed, under the reflection.
+    pub shadows: bool,
 }
 
 impl Default for ShadowCatcher {
@@ -192,6 +197,7 @@ impl Default for ShadowCatcher {
             reflection_fresnel: false,
             occlusion_only: false,
             occlusion_radius: 1.0,
+            shadows: true,
         }
     }
 }

@@ -110,7 +110,11 @@ if(TEQUILA_SHIM_DIR)
 endif()
 CMAKE
 fi
-if ! grep -q FSC_WITH_OCIO "$app"; then
+# Tequila's own block, not any: a work folder that built Cycles for
+# Freeshot, as Tequila was called, has Freeshot's, and taking that for this
+# one left the library without OpenColorIO, which it refuses to render
+# without.
+if ! grep -q "tequila_cycles PRIVATE FSC_WITH_OCIO" "$app"; then
     cat >> "$app" <<'CMAKE'
 
 # OpenColorIO for the shim itself: it sets the config Cycles works in.

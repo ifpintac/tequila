@@ -2232,7 +2232,7 @@ fn shadow_source(scene: &SceneSnapshot) -> u64 {
                 v.to_bits().hash(&mut h);
             }
         }
-        (casts_ground_shadow(instance), instance.shadow_catcher.as_ref().map(|c| c.occlusion_only)).hash(&mut h);
+        (casts_ground_shadow(instance), instance.shadow_catcher.as_ref().map(|c| (c.occlusion_only, c.shadows))).hash(&mut h);
     }
     h.finish()
 }
@@ -2244,10 +2244,10 @@ fn casts_ground_shadow(instance: &tequila_render_core::scene::Instance) -> bool 
 }
 
 /// Where the ground shadow lies for `scene`: under the parts that cast one,
-/// on the floor the render catches shadows on. None without a floor, or with
-/// nothing near enough to it to darken it.
+/// on the floor the render catches shadows on. None without a floor, with a
+/// floor that catches none, or with nothing near enough to it to darken it.
 fn shadow_footprint(scene: &SceneSnapshot) -> Option<ShadowFootprint> {
-    let floor = scene.instances.iter().find(|i| i.shadow_catcher.is_some())?;
+    let floor = scene.instances.iter().find(|i| i.shadow_catcher.is_some_and(|c| c.shadows))?;
     let plane = scene.mesh(floor.mesh).bounds().transformed(&floor.transform).max.y;
     let mut model = tequila_core::math::Aabb::EMPTY;
     for instance in scene.instances.iter().filter(|i| casts_ground_shadow(i)) {
@@ -2574,12 +2574,15 @@ mod tests {
         assert!(f.skew.0.abs() < 0.02 && f.skew.1.abs() < 0.02, "an even sky casts straight down: {:?}", f.skew);
     }
 
-    /// No floor, no shadow; and none from a model too far above the floor
-    /// to darken it.
+    /// No floor, no shadow; none on a floor kept only for its reflection
+    /// (Catch shadows unticked); and none from a model too far above the
+    /// floor to darken it.
     #[test]
     fn no_floor_or_a_high_model_casts_no_ground_shadow() {
         let mut scene = standing(Vec3::splat(1.0), 0.0, 0.0);
         assert!(shadow_footprint(&scene).is_some());
+        scene.instances[1].shadow_catcher = Some(tequila_render_core::scene::ShadowCatcher { shadows: false, reflections: 0.5, ..Default::default() });
+        assert!(shadow_footprint(&scene).is_none(), "a floor that catches no shadow");
         scene.instances.truncate(1);
         assert!(shadow_footprint(&scene).is_none(), "nothing to catch it");
         assert!(shadow_footprint(&standing(Vec3::splat(1.0), 0.0, 5.0)).is_none(), "five heights up");

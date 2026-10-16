@@ -90,7 +90,11 @@ if(TEQUILA_SHIM_DIR)
 endif()
 '@
 }
-if (-not (Select-String -Path $app -Pattern 'FSC_WITH_OCIO' -Quiet)) {
+# Tequila's own block, not any: a work folder that built Cycles for
+# Freeshot, as Tequila was called, has Freeshot's, and taking that for this
+# one left the library without OpenColorIO, which it refuses to render
+# without.
+if (-not (Select-String -Path $app -Pattern 'tequila_cycles PRIVATE FSC_WITH_OCIO' -SimpleMatch -Quiet)) {
     Add-Content $app @'
 
 # OpenColorIO for the shim itself: it sets the config Cycles works in.

@@ -330,6 +330,8 @@ struct TequilaApp {
     published_style: ImageStyle,
 
     viewport_size: (usize, usize),
+    /// Render pixels per point of `viewport_size` (`render_scale`).
+    render_scale: f32,
     /// The scene generation the render thread was last told about, so an edit
     /// restarts the render exactly once.
     submitted_generation: u64,
@@ -527,6 +529,27 @@ fn enclosing_group(
 fn fitted_window(inner: egui::Vec2, monitor: egui::Vec2) -> Option<egui::Vec2> {
     let room = egui::vec2(monitor.x * 0.94, monitor.y * 0.86);
     (inner.x > room.x || inner.y > room.y).then(|| inner.min(room).max(egui::vec2(640.0, 480.0)))
+}
+
+/// Render pixels per point of viewport.
+///
+/// A screen with more than one pixel per point - a Mac's Retina screen, a
+/// Windows screen set above 100% - takes egui's pixels per point, the text
+/// size's zoom included, so a pixel of the picture is a pixel of the screen.
+/// Rendered a pixel per point, it was a half-size picture stretched over a
+/// Retina viewport: soft beside the panels around it, drawn at the screen's
+/// own resolution.
+///
+/// A screen of one pixel per point keeps one, whatever the text size: its
+/// picture, and what it costs, stay as they always were.
+fn render_scale(native_pixels_per_point: Option<f32>, pixels_per_point: f32) -> f32 {
+    if native_pixels_per_point.unwrap_or(1.0) > 1.0 { pixels_per_point } else { 1.0 }
+}
+
+/// The render's size, in pixels, for a viewport `points` across.
+fn render_pixels(points: (usize, usize), scale: f32) -> (usize, usize) {
+    let pixels = |n: usize| ((n as f32 * scale).round() as usize).max(1);
+    (pixels(points.0), pixels(points.1))
 }
 
 /// The guides on the Help menu: title, the file beside a packaged Tequila,
@@ -730,6 +753,7 @@ impl TequilaApp {
             lighting_tab: Default::default(),
             published_style: ImageStyle::default(),
             viewport_size: (0, 0),
+            render_scale: 1.0,
             submitted_generation: 0,
             interacting: false,
             show_help: false,
@@ -855,10 +879,10 @@ impl TequilaApp {
     }
 
     fn submit(&mut self) {
-        let (width, height) = self.viewport_size;
-        if width == 0 || height == 0 {
+        if self.viewport_size.0 == 0 || self.viewport_size.1 == 0 {
             return;
         }
+        let (width, height) = render_pixels(self.viewport_size, self.render_scale);
         let settings = self.project.render_settings().clone();
         self.orchestrator.submit(RenderRequest {
             camera: self.camera.camera,
@@ -881,6 +905,7 @@ impl TequilaApp {
             gpu_solid: self.gpu_solid(),
             shading: self.shading,
             engine: settings.engine,
+            pixels_per_point: self.render_scale,
         });
         self.gpu_solid_submitted = self.gpu_solid();
     }
@@ -1441,8 +1466,12 @@ impl TequilaApp {
             (available.x.max(1.0) as usize).max(16),
             (available.y.max(1.0) as usize).max(16),
         );
-        let resized = size != self.viewport_size;
+        // A window dragged to another screen, or a new text size, changes
+        // the pixels behind the same points.
+        let scale = render_scale(ui.ctx().native_pixels_per_point(), ui.ctx().pixels_per_point());
+        let resized = size != self.viewport_size || scale != self.render_scale;
         self.viewport_size = size;
+        self.render_scale = scale;
 
         let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
         self.viewport_rect = rect;
@@ -5892,6 +5921,59 @@ mod undo_tests {
         // A desktop monitor fits it already; nothing shrinks past the minimum.
         assert_eq!(fitted_window(first, egui::vec2(1920.0, 1080.0)), None);
         assert_eq!(fitted_window(first, egui::vec2(600.0, 400.0)), Some(egui::vec2(640.0, 480.0)));
+    }
+
+    /// On a Retina screen the Rendered viewport asks for the screen's own
+    /// pixels, which Cycles renders. It asked for a pixel per point, which
+    /// there is a picture half the viewport's size, stretched over it. A
+    /// screen of one pixel per point still asks for a pixel per point,
+    /// whatever the text size; and Tequila's own renderer, on the
+    /// processor, traces a pixel per point on either.
+    #[test]
+    fn a_retina_viewport_asks_for_the_screens_own_pixels() {
+        // The screen's pixels per point, the text size's zoom, and the
+        // picture's pixels per point of viewport: 1.84 is a MacBook's at
+        // the Compact size.
+        for (native, zoom, scale) in [(2.0, 0.92, 1.84f32), (2.0, 1.0, 2.0), (1.0, 0.92, 1.0), (1.0, 1.0, 1.0)] {
+            let mut app = TequilaApp::for_tests();
+            // Tequila's renderer, which any test machine has: Cycles on a
+            // graphics card renders the size asked for.
+            let settings = tequila_scene::render::RenderSettings {
+                engine: tequila_scene::render::RenderEngine::Tequila,
+                ..app.project.render_settings().clone()
+            };
+            app.project.apply(Command::SetRenderSettings { settings: Box::new(settings) }).unwrap();
+            app.set_view_mode(view_mode::ViewMode::Rendered);
+            let ctx = egui::Context::default();
+            crate::theme::install_fonts(&ctx);
+            ctx.options_mut(|o| o.zoom_factor = zoom);
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 150.0))),
+                ..Default::default()
+            };
+            input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(native);
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| app.viewport(ui));
+            });
+            assert_eq!(app.viewport_size, (200, 150));
+            let request = app.orchestrator.request().expect("the viewport asked for nothing");
+            let expected = ((200.0 * scale).round() as usize, (150.0 * scale).round() as usize);
+            assert_eq!((request.width, request.height), expected, "at {native} pixels a point and a zoom of {zoom}");
+            assert!((request.pixels_per_point - scale).abs() < 1e-5, "{} at {native} and {zoom}", request.pixels_per_point);
+            // Tequila's own renderer still traces the points.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let mut seen = 0;
+            loop {
+                if let Some(image) = app.orchestrator.take_image(&mut seen) {
+                    if image.resolution_divisor == 1 {
+                        assert_eq!((image.width, image.height), (200, 150), "traced at {native} pixels a point");
+                        break;
+                    }
+                }
+                assert!(std::time::Instant::now() < deadline, "no full-size picture at {native} pixels a point");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
     }
 
     /// Import a file through the same path the File menu and a drop take.

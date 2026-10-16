@@ -106,6 +106,23 @@ pub struct RenderRequest {
     /// ([`crate::cycles_view`]). The final render's choice, so the preview is
     /// the render it previews.
     pub engine: tequila_scene::render::RenderEngine,
+    /// The render's pixels per point of viewport: one on a standard screen,
+    /// the screen's own on a Retina one (`render_scale` in `main.rs`).
+    /// `width` and `height` are pixels, which Cycles renders; Tequila's own
+    /// renderer traces the points ([`RenderRequest::traced_size`]).
+    pub pixels_per_point: f32,
+}
+
+impl RenderRequest {
+    /// The size Tequila's own renderer traces: a pixel per point, as it
+    /// always has, stretched over a Retina viewport. The screen's own pixels
+    /// there were three and a half times the samples and the denoise, and
+    /// the processor's denoiser took 1.7 s over each picture, during which
+    /// the view could not begin to move (`retina_viewport_benchmark`).
+    fn traced_size(&self) -> (usize, usize) {
+        let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).max(1);
+        (points(self.width), points(self.height))
+    }
 }
 
 /// A finished image, ready to upload.
@@ -156,6 +173,7 @@ impl PartialEq for RenderRequest {
             && self.shading == other.shading
             && self.interacting == other.interacting
             && self.engine == other.engine
+            && self.pixels_per_point == other.pixels_per_point
     }
 }
 
@@ -352,6 +370,12 @@ impl Orchestrator {
         }
         *seen = generation;
         Some(self.shared.image.lock().unwrap().clone())
+    }
+
+    /// What the render thread was last asked for.
+    #[cfg(test)]
+    pub fn request(&self) -> Option<RenderRequest> {
+        self.shared.request.lock().unwrap().clone()
     }
 }
 
@@ -712,12 +736,11 @@ fn render_loop(shared: Arc<Shared>) {
             // nothing to climb: full resolution as soon as the pointer stops,
             // and half while it is moving, which is the only place the frame
             // rate is felt.
-            let divisor = solid_divisor(state.request.width, state.request.height, state.request.interacting);
+            let (width, height) = state.request.traced_size();
+            let divisor = solid_divisor(width, height, state.request.interacting);
             if state.schedule.resolution_divisor != divisor {
                 state.schedule.resolution_divisor = divisor;
-                let (w, h) = state
-                    .schedule
-                    .render_resolution(state.request.width, state.request.height);
+                let (w, h) = state.schedule.render_resolution(width, height);
                 state.framebuffer.resize(w, h);
                 state.framebuffer.clear();
             }
@@ -793,9 +816,8 @@ fn render_loop(shared: Arc<Shared>) {
             if state.schedule.resolution_divisor != previous {
                 // A resolution step restarts accumulation, which §9.2 notes is
                 // cheap: only a few samples are lost.
-                let (w, h) = state
-                    .schedule
-                    .render_resolution(state.request.width, state.request.height);
+                let (width, height) = state.request.traced_size();
+                let (w, h) = state.schedule.render_resolution(width, height);
                 state.framebuffer.resize(w, h);
                 state.framebuffer.clear();
             }
@@ -889,10 +911,11 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
     if !request.interacting {
         schedule.update(0);
     }
+    let (width, height) = request.traced_size();
     if request.shading == Shading::Fast {
-        schedule.resolution_divisor = solid_divisor(request.width, request.height, request.interacting);
+        schedule.resolution_divisor = solid_divisor(width, height, request.interacting);
     }
-    let (w, h) = schedule.render_resolution(request.width.max(1), request.height.max(1));
+    let (w, h) = schedule.render_resolution(width, height);
     let mut framebuffer = framebuffer.take().unwrap_or_else(|| Framebuffer::new(w, h));
     framebuffer.resize(w, h);
     framebuffer.clear();
@@ -928,12 +951,14 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
 /// of the boundary rather than over the part — so selecting something never
 /// hides the edge of the thing being selected. That is also why it goes on
 /// after the develop: it is an annotation, not part of the picture, and must
-/// not be graded, tone-mapped or denoised with it.
+/// not be graded, tone-mapped or denoised with it. `density` is the image's
+/// pixels per point, one or more.
 fn outline_selection(
     pixels: &mut [u8],
     fb: &Framebuffer,
     width: usize,
     height: usize,
+    density: f32,
     selected: &[u32],
 ) {
     if selected.is_empty() || width == 0 || height == 0 {
@@ -965,7 +990,10 @@ fn outline_selection(
     // reads as part of the object it is around.
     let accent = crate::theme::p().accent;
     let ring = [accent.r(), accent.g(), accent.b()];
-    let radius = if width.min(height) > 700 { 2usize } else { 1usize };
+    // Measured in points: a Retina frame ringed two of its own pixels wide
+    // had half the ring Solid draws around the same part.
+    let points = (width as f32 / density).min(height as f32 / density);
+    let radius = ((if points > 700.0 { 2.0 } else { 1.0 }) * density).round() as usize;
 
     // A background pixel within `radius` of a selected one, both ways: the
     // square neighbourhood is a row pass and then a column pass.
@@ -1085,7 +1113,10 @@ fn publish(
         Shading::Rendered => (style, display),
     };
     let mut pixels = crate::profile::time("publish: develop", || style.develop_through(width, height, &scene_linear, display));
-    crate::profile::time("publish: outline", || outline_selection(&mut pixels, fb, width, height, selection));
+    // The image's own pixels per point: a Retina screen's for a full-size
+    // Cycles frame, and one for Tequila's, which traces the points.
+    let density = (width as f32 * state.request.pixels_per_point / state.request.width.max(1) as f32).max(1.0);
+    crate::profile::time("publish: outline", || outline_selection(&mut pixels, fb, width, height, density, selection));
 
     let elapsed = state.started.elapsed().as_secs_f64();
     if state.first_pixel_ms.is_none() {
@@ -1268,6 +1299,152 @@ mod tests {
         );
     }
 
+    /// What a Retina viewport costs: the same view at a pixel per point and
+    /// at a Retina screen's pixels (an M3 Max MacBook's at the Compact text
+    /// size, 889 x 908 points at 1.84 pixels a point), on Tequila's renderer
+    /// and on Cycles on the graphics card - and Tequila's renderer tracing
+    /// all the Retina pixels too, which is why it does not. For each: how
+    /// long a camera move takes to come back denoised at full size, the
+    /// samples a second after it, the pictures a second while orbiting and
+    /// how wide they are, and how long letting go takes to come back clean.
+    ///
+    /// Ignored by default (it takes a minute or two). Cycles is measured when
+    /// it is found; `TEQUILA_BENCH_SCENE` measures a scene of your own:
+    ///
+    /// ```text
+    /// TEQUILA_CYCLES=path/to/cycles/build/bin \
+    ///   cargo test --release -p tequila-app retina_viewport_benchmark -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn retina_viewport_benchmark() {
+        use tequila_scene::render::RenderEngine;
+        let document = match std::env::var("TEQUILA_BENCH_SCENE") {
+            Ok(path) => tequila_format::load(std::path::Path::new(&path)).expect("the scene loads").document,
+            Err(_) => crate::starter_document(),
+        };
+        let bounds = tequila_scene::snapshot::visible_bounds(&document);
+        let project = crate::project::Project::with_document(document, Arc::new(tequila_scene::demo::studio_environment()));
+        let center = (bounds.min + bounds.max) * 0.5;
+        let radius = (bounds.max - bounds.min).length() * 1.2;
+        let camera_at = |angle: f32| {
+            let eye = center + Vec3 { x: angle.sin() * radius, y: radius * 0.4, z: angle.cos() * radius };
+            Camera::look_at(eye, center, Vec3::Y)
+        };
+        // As the application asks, from the document's settings.
+        let settings = project.render_settings().clone();
+        let base = RenderRequest {
+            camera: camera_at(0.0),
+            width: 0,
+            height: 0,
+            config: project.integrator_config(),
+            scene: project.scene(),
+            scene_generation: project.generation(),
+            denoise: settings.denoise,
+            denoise_strength: settings.denoise_strength,
+            denoise_cadence: settings.denoise_cadence,
+            prefilter_guides: Some(settings.prefilter_guides),
+            reject_fireflies: settings.reject_fireflies,
+            clamp_sample: settings.clamp_indirect,
+            interacting: false,
+            gpu_solid: false,
+            shading: Shading::Rendered,
+            engine: RenderEngine::Tequila,
+            pixels_per_point: 1.0,
+        };
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesGpu),
+            Err(why) => println!("Cycles not measured: {why}"),
+        }
+        // The first picture at full size and denoised, and how long it took.
+        let clean = |orchestrator: &Orchestrator, seen: &mut u64, width: usize, within: Duration| {
+            let started = Instant::now();
+            loop {
+                if let Some(image) = orchestrator.take_image(seen) {
+                    if image.width == width && image.denoised {
+                        return Some((started.elapsed(), image));
+                    }
+                }
+                if started.elapsed() > within {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        println!(
+            "{:<10} {:>10} {:>10} {:>9} {:>8} {:>8} {:>10} {:>11} {:>10}",
+            "engine", "asked", "traced", "clean ms", "spp/s", "Msamp/s", "orbit fps", "orbit width", "let go ms"
+        );
+        for engine in engines {
+            let mut sizes = vec![(889, 908, 1.0), (1636, 1671, 1.84)];
+            if engine == RenderEngine::Tequila {
+                sizes.push((1636, 1671, 1.0));
+            }
+            for (width, height, pixels_per_point) in sizes {
+                let orchestrator = Orchestrator::new();
+                let mut seen = 0u64;
+                let mut req = RenderRequest { width, height, engine, pixels_per_point, ..base.clone() };
+                // What comes back: Tequila traces the points, Cycles the pixels.
+                let (full, tall) = if engine == RenderEngine::Tequila { req.traced_size() } else { (width, height) };
+                orchestrator.submit(req.clone());
+                // Cycles starting, the denoiser made and the BVH built are
+                // the same at either size: paid here, not measured.
+                clean(&orchestrator, &mut seen, full, Duration::from_secs(600)).expect("no clean picture at first");
+
+                req.camera = camera_at(0.6);
+                orchestrator.submit(req.clone());
+                let moved = Instant::now();
+                let (first, mut latest) =
+                    clean(&orchestrator, &mut seen, full, Duration::from_secs(60)).expect("no clean picture after a move");
+                while moved.elapsed() < Duration::from_secs(5) {
+                    if let Some(image) = orchestrator.take_image(&mut seen) {
+                        latest = image;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let spp = latest.samples as f64 / latest.elapsed_seconds.max(1e-3);
+
+                // Orbiting: a new camera every 1/60 s for three seconds.
+                req.interacting = true;
+                let orbit = Instant::now();
+                let (mut moves, mut widths) = (0u32, Vec::new());
+                while orbit.elapsed() < Duration::from_secs(3) {
+                    moves += 1;
+                    req.camera = camera_at(0.6 + moves as f32 * 0.01);
+                    orchestrator.submit(req.clone());
+                    let tick = Instant::now();
+                    while tick.elapsed() < Duration::from_micros(16_667) {
+                        if let Some(image) = orchestrator.take_image(&mut seen) {
+                            widths.push(image.width);
+                        }
+                        std::thread::sleep(Duration::from_micros(500));
+                    }
+                }
+                let fps = widths.len() as f64 / orbit.elapsed().as_secs_f64();
+                widths.sort_unstable();
+                let typical = widths.get(widths.len() / 2).copied().unwrap_or(0);
+                req.interacting = false;
+                orchestrator.submit(req.clone());
+                let (released, _) =
+                    clean(&orchestrator, &mut seen, full, Duration::from_secs(60)).expect("no clean picture after letting go");
+                println!(
+                    "{:<10} {:>10} {:>10} {:>9.0} {:>8.1} {:>8.1} {:>10.1} {:>11} {:>10.0}",
+                    format!("{engine:?}"),
+                    format!("{width}x{height}"),
+                    format!("{full}x{tall}"),
+                    ms(first),
+                    spp,
+                    spp * (full * tall) as f64 / 1e6,
+                    fps,
+                    typical,
+                    ms(released)
+                );
+            }
+        }
+    }
+
     /// The Solid pass runs each material's program pruned to what Solid
     /// shading reads; on a real textured scene, every pixel must come out
     /// exactly as it would from the full program.
@@ -1347,6 +1524,7 @@ mod tests {
             // default engine is Cycles on the graphics card, and every test
             // starting a card session of its own at once left one without.
             engine: tequila_scene::render::RenderEngine::Tequila,
+            pixels_per_point: 1.0,
         }
     }
 
@@ -1562,6 +1740,90 @@ mod tests {
         assert!(changed > 20, "selecting the sphere drew no outline ({changed} pixels changed)");
     }
 
+    /// Orbiting a Cycles viewport shows Cycles' pictures as it goes, each a
+    /// picture of the view. It showed none until the mouse stopped: every
+    /// move restarted Cycles before its picture of the last was made, and the
+    /// first picture after a restart was thrown away as having no samples,
+    /// which it had. Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn the_cycles_viewport_shows_pictures_while_orbiting() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        // Big enough that Cycles, on the processor, navigates with pictures
+        // smaller than the view.
+        req.width = 640;
+        req.height = 480;
+        // The processor by default, as in the test above.
+        req.engine = if std::env::var_os("TEQUILA_TEST_CYCLES_GPU").is_some() {
+            tequila_scene::render::RenderEngine::CyclesGpu
+        } else {
+            tequila_scene::render::RenderEngine::CyclesCpu
+        };
+        let camera_at = |angle: f32| Camera::look_at(Vec3 { x: 4.0 * angle.sin(), y: 2.0, z: 4.0 * angle.cos() }, Vec3::ZERO, Vec3::Y);
+        req.camera = camera_at(0.0);
+        renderer.submit(req.clone());
+        let mut seen = 0;
+        // Cycles starting and the scene translated are not what is tested.
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while renderer.take_image(&mut seen).is_none() {
+            assert!(Instant::now() < deadline, "Cycles never drew the viewport");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Three seconds of a mouse turning the view sixty times a second.
+        req.interacting = true;
+        let (started, mut moves, mut shown) = (Instant::now(), 0u32, Vec::new());
+        while started.elapsed() < Duration::from_secs(3) {
+            moves += 1;
+            req.camera = camera_at(moves as f32 * 0.01);
+            renderer.submit(req.clone());
+            let tick = Instant::now();
+            while tick.elapsed() < Duration::from_micros(16_667) {
+                if let Some(image) = renderer.take_image(&mut seen) {
+                    shown.push(image);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        assert!(shown.len() >= 5, "{} pictures in three seconds of orbiting", shown.len());
+
+        // Each a picture of the view at its own size, not a smaller picture
+        // read as a larger one: block by block, near a settled one of where
+        // the orbit ended.
+        req.interacting = false;
+        renderer.submit(req);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let settled = loop {
+            if let Some(image) = renderer.take_image(&mut seen) {
+                if image.width == 640 && image.samples >= 16 {
+                    break image;
+                }
+            }
+            assert!(Instant::now() < deadline, "the view never settled after the orbit");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let blocks = |image: &DisplayImage| -> Vec<f64> {
+            let (w, h) = (image.width, image.height);
+            let mut sums = vec![0.0; 8 * 6];
+            for y in 0..h {
+                for x in 0..w {
+                    let p = &image.pixels[(y * w + x) * 4..(y * w + x) * 4 + 3];
+                    sums[(y * 6 / h) * 8 + x * 8 / w] += (f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])) / 3.0;
+                }
+            }
+            sums.iter().map(|s| s / (w * h / 48) as f64).collect()
+        };
+        let reference = blocks(&settled);
+        for image in shown.iter().rev().take(3) {
+            let off = blocks(image).iter().zip(&reference).map(|(a, b)| (a - b).abs()).sum::<f64>() / 48.0;
+            assert!(off < 30.0, "a {}x{} picture from the orbit is {off:.0} away from the view", image.width, image.height);
+        }
+    }
+
     /// The core contract of §9.1: the UI must get an image without ever
     /// blocking on the renderer.
     #[test]
@@ -1644,7 +1906,7 @@ mod tests {
             }
         }
         let mut pixels = vec![0u8; w * h * 4];
-        outline_selection(&mut pixels, &fb, w, h, &[1]);
+        outline_selection(&mut pixels, &fb, w, h, 1.0, &[1]);
 
         let ringed = |x: usize, y: usize| pixels[(y * w + x) * 4] > 0;
         // Every pixel of the selection itself is untouched.
@@ -1663,6 +1925,29 @@ mod tests {
             !ringed(0, 0),
             "the ring reached the far corner of the image"
         );
+    }
+
+    /// The ring is as wide in points on a Retina frame as on a standard one.
+    /// Ringed in its own pixels, a Cycles frame at the screen's pixels had
+    /// half the ring Solid draws around the same part.
+    #[test]
+    fn the_outline_is_as_wide_in_points_on_a_retina_frame() {
+        let ring = |density: f32| {
+            let (w, h) = (400usize, 300usize);
+            let mut fb = Framebuffer::new(w, h);
+            for y in 140..160 {
+                for x in 190..210 {
+                    fb.pixel_mut(x, y).first_instance = 1;
+                }
+            }
+            let mut pixels = vec![0u8; w * h * 4];
+            outline_selection(&mut pixels, &fb, w, h, density, &[1]);
+            // Ringed pixels on the row through the middle, left of the part.
+            (0..200).filter(|&x| pixels[(150 * w + x) * 4] > 0).count()
+        };
+        assert_eq!(ring(1.0), 1);
+        assert_eq!(ring(2.0), 2);
+        assert_eq!(ring(1.84), 2);
     }
 
     /// The ring is the square neighbourhood of the selection, exactly — the
@@ -1684,7 +1969,7 @@ mod tests {
             }
             let selected = [4u32, 9];
             let mut fast = vec![0u8; w * h * 4];
-            outline_selection(&mut fast, &fb, w, h, &selected);
+            outline_selection(&mut fast, &fb, w, h, 1.0, &selected);
 
             let radius = if w.min(h) > 700 { 2i32 } else { 1i32 };
             let is_selected = |x: i32, y: i32| selected.contains(&fb.pixel(x as usize, y as usize).first_instance);
@@ -1717,7 +2002,7 @@ mod tests {
             }
         }
         let mut pixels = vec![0u8; w * h * 4];
-        outline_selection(&mut pixels, &fb, w, h, &[]);
+        outline_selection(&mut pixels, &fb, w, h, 1.0, &[]);
         assert!(pixels.iter().all(|b| *b == 0), "something was drawn");
     }
 
