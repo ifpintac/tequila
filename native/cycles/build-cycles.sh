@@ -143,6 +143,10 @@ cd ..
 #    Tequila's own Embree, TBB and OIDN in place of Blender's, so one copy
 #    of each is loaded (as on Windows).
 bin="$work/cycles/build/bin"
+# CMake puts a shared library in build/lib on a Mac (build/bin holds DLLs
+# on Windows): it is gathered into bin with what it loads.
+mkdir -p "$bin"
+cp -a "$work/cycles/build/lib/libtequila_cycles.dylib" "$bin/"
 find -L "$lib" -path '*/lib/*.dylib' | grep -v -i -E '/(embree|tbb|openimagedenoise)/' | while read -r dylib; do
     cp -a "$dylib" "$bin/"
 done
