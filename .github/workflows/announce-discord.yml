@@ -1,0 +1,76 @@
+name: Announce on Discord
+
+# Posts a new release in the Discord server's #announcements, once the Mac
+# release has attached its disk image, so the post lists both downloads.
+# It needs the channel's webhook link as the repository secret
+# DISCORD_WEBHOOK (Discord: Server Settings > Integrations > Webhooks);
+# without it, nothing is posted.
+#
+# Run it by hand (Actions > Announce on Discord > Run workflow) with a
+# release's tag to check the webhook and see the message; tick "post" to
+# post it as well.
+
+on:
+  workflow_run:
+    workflows: ["Mac release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "A release's tag (v2026.10.17.0122)"
+        required: true
+      post:
+        description: "Post it (otherwise only check the webhook and print the message)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    # Only a Mac release that a published release started: the ones run by
+    # hand re-attach a disk image to a release already announced.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Announce the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+          POST: ${{ github.event_name == 'workflow_run' || inputs.post }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::notice::There is no DISCORD_WEBHOOK secret, so nothing is announced."
+            exit 0
+          fi
+          # A release's run names its tag as the branch; the newest release
+          # stands in if that ever is not so.
+          fields=tagName,name,url,isDraft,isPrerelease,assets
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json "$fields" > release.json \
+            || gh release view --repo "$GITHUB_REPOSITORY" --json "$fields" > release.json
+          python3 - <<'EOF'
+          import json
+          release = json.load(open('release.json'))
+          if release['isDraft'] or release['isPrerelease']:
+              raise SystemExit(f"{release['tagName']} is a draft or a pre-release: not announced")
+          names = [asset['name'] for asset in release['assets']]
+          version = release['tagName'].removeprefix('v')
+          title = release['name'] or f'Tequila {version}'
+          lines = [f'# {title} is out', release['url']]
+          for system, ending in (('Windows', '.exe'), ('Mac', '.dmg')):
+              for name in names:
+                  if name.startswith('Tequila') and name.endswith(ending):
+                      lines.append(f'- **{system}:** {name}')
+          lines.append('What changed, and how to install it, is on the release page.')
+          message = {'content': '\n'.join(lines), 'allowed_mentions': {'parse': []}}
+          json.dump(message, open('message.json', 'w'))
+          print(message['content'])
+          EOF
+          # The webhook answers a GET with its own details, without posting.
+          curl -fsS "$WEBHOOK" | python3 -c "import json, sys; hook = json.load(sys.stdin); print('Webhook:', hook['name'], 'in channel', hook['channel_id'])"
+          if [ "$POST" = "true" ]; then
+            curl -fsS -H 'Content-Type: application/json' --data @message.json "$WEBHOOK?wait=true" > /dev/null
+            echo "Posted."
+          fi
