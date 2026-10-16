@@ -33,6 +33,12 @@ not signed with a paid certificate:
   Settings > Privacy & Security**, scroll down and click **Open Anyway** next
   to Tequila.
 
+## Community
+
+Questions, bugs, ideas and renders: join the
+**[Tequila Discord](https://discord.gg/Na5T2qgQBX)**. Bugs can also go in
+[GitHub issues](../../issues).
+
 ## What it does
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
