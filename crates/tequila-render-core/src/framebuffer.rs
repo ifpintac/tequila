@@ -648,8 +648,25 @@ impl Pixel {
             }
         }
 
+        // Scaled as the clamp scaled the sample, so the background never
+        // outweighs it.
+        let kept = if original > 1e-12 { (radiance.luminance() / original).clamp(0.0, 1.0) } else { 1.0 };
+        let background = result.background * kept;
+
         if reject_fireflies && self.samples >= FIREFLY_MIN_SAMPLES {
-            let luminance = brightness(radiance);
+            // Only what the path found by sampling is judged. The background
+            // is what the camera sees, the same however often it looks, and a
+            // shadow catcher's floor is that background darkened, never
+            // brighter than it. Judged with it, a pixel deep in a shadow whose
+            // first samples were all blocked had no spread at all, and every
+            // lit sample after them was clipped to the dark mean: one pixel in
+            // sixteen of a shadow came out black.
+            let sampled = Spectrum {
+                r: (radiance.r - background.r).max(0.0),
+                g: (radiance.g - background.g).max(0.0),
+                b: (radiance.b - background.b).max(0.0),
+            };
+            let luminance = brightness(sampled);
             let mean = self.mean().luminance();
             let limit = mean + FIREFLY_SIGMA_THRESHOLD * self.luminance_std_dev();
             if luminance > limit && limit.is_finite() {
@@ -657,14 +674,12 @@ impl Pixel {
                 // Scale the sample down rather than dropping it: dropping it
                 // would leave the sample count and the sum inconsistent, and
                 // scaling preserves the sample's hue.
-                radiance *= limit / luminance.max(1e-9);
+                radiance = radiance - sampled * (1.0 - limit / luminance.max(1e-9));
             }
         }
 
         self.sum += radiance;
-        // Scaled as the sample was, so the background never outweighs it.
-        let kept = if original > 1e-12 { (radiance.luminance() / original).clamp(0.0, 1.0) } else { 1.0 };
-        self.background_sum += result.background * kept;
+        self.background_sum += background;
         self.sum_squared_luminance += (radiance.luminance() as f64).powi(2);
         self.albedo_sum += result.albedo;
         self.normal_sum += result.normal;
@@ -876,6 +891,43 @@ mod tests {
             warm.clamped_energy > 0.0,
             "rejected energy must be recorded so the bias is auditable"
         );
+    }
+
+    /// What the camera sees of the background is not sampled, and is never a
+    /// firefly. A shadow catcher's floor is that background darkened by
+    /// coverage, a sample at a time: deep in a shadow the first sixteen
+    /// samples may all be blocked, leaving no spread at all, and every lit
+    /// sample after them was clipped to the dark mean. One pixel in sixteen
+    /// of a shadow came out black.
+    #[test]
+    fn the_background_is_never_rejected_as_a_firefly() {
+        let behind = Spectrum::splat(0.3);
+        let blocked = PathResult { coverage: 1.0, ..Default::default() };
+        let lit = PathResult { radiance: behind, background: behind, ..Default::default() };
+        let mut pixel = Pixel::default();
+        for _ in 0..FIREFLY_MIN_SAMPLES {
+            pixel.accumulate(&blocked, true);
+        }
+        for i in 0..64 {
+            pixel.accumulate(if i % 4 == 0 { &lit } else { &blocked }, true);
+        }
+        let expected = 0.3 * 16.0 / 80.0;
+        assert!(
+            (pixel.mean().g - expected).abs() < 1e-5,
+            "the floor came out {} where its samples average {expected}",
+            pixel.mean().g
+        );
+        assert_eq!(pixel.clamped_energy, 0.0);
+        assert!((pixel.mean_foreground().g).abs() < 1e-6, "{:?}", pixel.mean_foreground());
+
+        // The same light found by sampling, on a surface rather than seen
+        // past it, is still judged: rejection is not switched off.
+        let mut surface = Pixel::default();
+        for _ in 0..FIREFLY_MIN_SAMPLES {
+            surface.accumulate(&blocked, true);
+        }
+        surface.accumulate(&PathResult { radiance: behind, ..Default::default() }, true);
+        assert!(surface.clamped_energy > 0.0);
     }
 
     /// A pixel with genuine variation must not have that variation clipped
