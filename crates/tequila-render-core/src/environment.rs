@@ -231,29 +231,25 @@ impl Dome {
         }
     }
 
-    /// The point on the dome that is seen from its centre along `local`, and
-    /// the density conversion from that direction to solid angle at `origin`.
+    /// The point on the dome that is seen from its centre along `local`, as
+    /// `(direction from origin, jacobian, distance from origin)`.
     ///
     /// The inverse of [`Self::lookup`], which is what sampling needs: the CDF
     /// draws a direction as seen from the centre, and the estimator needs the
-    /// direction and density as seen from the shading point.
+    /// direction and density as seen from the shading point. The jacobian is
+    /// `dω_centre / dω_origin`, the solid angle a patch of the dome spans from
+    /// the centre over the one it spans from `origin`. A density over
+    /// directions from the centre is multiplied by it to become a density at
+    /// `origin`; a patch nearer `origin` than the centre spans more of its
+    /// sky, so the factor is small there and the density spreads thinner.
     fn from_centre(&self, origin: Vec3, local: Vec3) -> Option<(Vec3, f32, f32)> {
-        let radius = self.radius.filter(|r| *r > 0.0)?;
-        let centre = self.centre();
-
-        // The same two surfaces as `surface_point`, inverted.
-        let (point, normal) = if self.flatten && local.y < -1e-6 {
-            let t = -centre.y / local.y;
-            let candidate = centre + local * t;
-            if t > 0.0 && (candidate.x * candidate.x + candidate.z * candidate.z) <= radius * radius
-            {
-                (candidate, -Vec3::Y)
-            } else {
-                (centre + local * radius, -local)
-            }
-        } else {
-            (centre + local * radius, -local)
-        };
+        // Found the way every other lookup finds it, from the centre, so that
+        // sampling lands on the surface `lookup` reads. That includes taking
+        // the ground only where it is nearer than the sphere: elsewhere in
+        // the footprint it lies outside the dome, behind the sphere as seen
+        // from every point inside.
+        let hit = self.surface_point(self.centre(), local)?;
+        let (point, normal) = (hit.point, hit.normal);
 
         let offset = point - origin;
         let distance = offset.length();
@@ -262,11 +258,10 @@ impl Dome {
         }
         let direction = offset / distance;
 
-        // Solid angle at the centre -> area on the dome -> solid angle at the
-        // shading point. The first factor is `d_c² / |local·n|`, the second
-        // `|direction·n| / d²`; for a sphere `|local·n|` is 1 and the pair
-        // collapses to the familiar `r²`.
-        let from_centre_distance = (point - centre).length().max(1e-6);
+        // A patch of area dA spans `dA |local·n| / d_c²` from the centre and
+        // `dA |direction·n| / d²` from `origin`; the factor is the first over
+        // the second. On the sphere `|local·n|` is 1 and `d_c` the radius.
+        let from_centre_distance = hit.distance.max(1e-6);
         let cos_centre = local.dot(normal).abs().max(1e-6);
         let cos_surface = direction.dot(normal).abs().max(1e-6);
         let jacobian = (cos_centre / (from_centre_distance * from_centre_distance))
@@ -522,7 +517,7 @@ impl Environment {
         let Some((_, jacobian, _)) = self.dome.from_centre(origin, local) else {
             return 0.0;
         };
-        self.pdf(local) / jacobian.max(1e-12)
+        self.pdf(local) * jacobian
     }
 
     /// Importance-sample a direction as seen from `origin`.
@@ -533,7 +528,7 @@ impl Environment {
         let centre_sample = self.sample(u)?;
         let (direction, jacobian, distance) =
             self.dome.from_centre(origin, centre_sample.direction)?;
-        let pdf = centre_sample.pdf / jacobian.max(1e-12);
+        let pdf = centre_sample.pdf * jacobian;
         #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(pdf > 0.0) {
             return None;
@@ -768,15 +763,25 @@ mod tests {
     /// shift no amount of sampling removes.
     #[test]
     fn a_finite_dome_agrees_with_its_own_density() {
-        let mut env = sun_env(20, 8, 500.0);
-        env.set_dome(finite_dome(50.0));
+        // Flattened with the centre well above the floor, so that the ground
+        // disc is large; the points stay off the floor itself, which sees the
+        // whole disc edge-on.
+        let flat = Dome {
+            radius: Some(50.0),
+            height: 20.0,
+            flatten: true,
+        };
         let mut rng = Pcg32::new(7, 11);
-        let origins = [
-            Vec3::ZERO,
-            vec3(12.0, 3.0, -7.0),
-            vec3(-30.0, 1.0, 20.0),
+        let cases = [
+            (finite_dome(50.0), Vec3::ZERO),
+            (finite_dome(50.0), vec3(12.0, 3.0, -7.0)),
+            (finite_dome(50.0), vec3(-30.0, 1.0, 20.0)),
+            (flat, vec3(12.0, 3.0, -7.0)),
+            (flat, vec3(-30.0, 1.0, 20.0)),
         ];
-        for origin in origins {
+        for (dome, origin) in cases {
+            let mut env = sun_env(20, 8, 500.0);
+            env.set_dome(dome);
             for _ in 0..2000 {
                 let u = vec2(rng.next_f32(), rng.next_f32());
                 let Some(sample) = env.sample_from(origin, u) else {
@@ -786,7 +791,7 @@ mod tests {
                 let ratio = recovered / sample.pdf;
                 assert!(
                     (ratio - 1.0).abs() < 2e-2,
-                    "at {origin:?}: sample said {} and pdf says {recovered}",
+                    "{dome:?} at {origin:?}: sample said {} and pdf says {recovered}",
                     sample.pdf
                 );
             }
@@ -817,6 +822,64 @@ mod tests {
                 assert!((pb / pa - 1.0).abs() < 1e-2, "{pa} vs {pb}");
             }
         }
+    }
+
+    /// A uniform sky surrounds every point inside the dome completely, so
+    /// the light arriving from all directions is 4πL wherever the point
+    /// stands. Agreement between `sample_from` and `pdf_from` cannot show
+    /// this, and neither can a dome too large for the point to be off its
+    /// centre: a density converted the wrong way round passes both, and only
+    /// shows as a sky that brightens towards the dome's wall. Flattened, the
+    /// ground stands in for the lower cap, and a centre well above the floor
+    /// widens the band of sphere just above the ground's rim, which is easy
+    /// to hand to the ground by mistake.
+    #[test]
+    fn a_close_dome_delivers_the_whole_sky_off_its_centre() {
+        let plain = Dome {
+            radius: Some(4.0),
+            height: 1.0,
+            flatten: false,
+        };
+        let flat = Dome {
+            radius: Some(4.0),
+            height: 2.5,
+            flatten: true,
+        };
+        let cases = [
+            (plain, vec3(0.0, 1.0, 0.0)),
+            (plain, vec3(2.5, 0.0, 0.5)),
+            (plain, vec3(0.0, 1.0, 3.5)),
+            (flat, vec3(0.0, 2.5, 0.0)),
+            (flat, vec3(2.0, 0.3, -1.0)),
+            (flat, vec3(-0.5, 1.0, 2.8)),
+        ];
+        let mut failures = Vec::new();
+        for (dome, origin) in cases {
+            let mut env = constant_env(0.5);
+            env.set_dome(dome);
+            let expected = 4.0 * PI as f64 * env.radiance(Vec3::Y).luminance() as f64;
+
+            // Stratified, so that 2% is many standard errors wide.
+            let n = 400;
+            let mut rng = Pcg32::new(13, 17);
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                for j in 0..n {
+                    let u = vec2(
+                        ((i as f32 + rng.next_f32()) / n as f32).min(1.0 - f32::EPSILON),
+                        ((j as f32 + rng.next_f32()) / n as f32).min(1.0 - f32::EPSILON),
+                    );
+                    if let Some(sample) = env.sample_from(origin, u) {
+                        sum += (sample.radiance.luminance() / sample.pdf) as f64;
+                    }
+                }
+            }
+            let mean = sum / (n * n) as f64;
+            if (mean / expected - 1.0).abs() > 2e-2 {
+                failures.push(format!("{dome:?} at {origin:?}: {mean:.4}, not {expected:.4}"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     /// Size is not cosmetic: with a dome close to the scene, two points see
