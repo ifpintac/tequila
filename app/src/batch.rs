@@ -2150,6 +2150,85 @@ mod tests {
         assert!((g_tequila - g_cycles).abs() < 12.0, "where the label is, green is {g_tequila:.1} in Tequila's render and {g_cycles:.1} in Cycles'");
     }
 
+    /// A label only partly covering fades in Cycles as it does in Tequila's
+    /// renderer: cream ink at a quarter coverage and white at a half, all
+    /// over a dark sphere, come out the same colour in both. Cycles squared
+    /// the coverage of a white label, so a quarter-covered print all but
+    /// vanished, and drew a cream one brighter than solid ink, so the fading
+    /// rings of a pedal's silkscreen rendered solid. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn a_part_covering_label_fades_as_in_tequila() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::{Axis, Mapping, Projection};
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        // The sphere's middle, where the camera looks.
+        let middle = |image: &[u8]| -> [f64; 3] {
+            let (mut sum, mut n) = ([0.0; 3], 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    let i = (y * 96 + x) * 4;
+                    for c in 0..3 {
+                        sum[c] += f64::from(image[i + c]);
+                    }
+                    n += 1.0;
+                }
+            }
+            sum.map(|s| s / n)
+        };
+        let dark = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+            scene.materials[0].base_color = Spectrum::splat(0.05);
+            scene.programs.clear();
+        };
+        let [bare, _] = both_engines("label-bare", dark);
+        let bare = middle(&bare);
+        // Cream goes to Cycles as bytes; white, a hair over 1 in ACEScg, as
+        // floats.
+        for (name, ink, coverage) in [("cream", [0.8, 0.7, 0.5], 0.25), ("white", [1.0; 3], 0.5)] {
+            let labelled = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+                graph.material_mut().base_color = Spectrum::splat(0.05);
+                // All the way round the sphere and over its height.
+                let mut print = tequila_materials::decal::Decal::new("Print", TextureId(1));
+                print.mapping = Mapping {
+                    projection: Projection::Cylindrical,
+                    axis: Axis::Y,
+                    scale: tequila_core::math::vec3(1.0, 0.25, 1.0),
+                    offset: tequila_core::math::vec2(0.0, 0.5),
+                    ..Mapping::default()
+                };
+                graph.decals.push(print);
+                let program = graph.compile().expect("compiles");
+                let mut table = tequila_render_core::shade::TextureTable::new();
+                let texel = [ink[0], ink[1], ink[2], coverage];
+                table.insert(TextureId(1), Arc::new(Texture::from_linear(
+                    Image { width: 16, height: 16, channels: 4, color_space: ColorSpace::LinearSrgb, data: texel.repeat(256) },
+                    MapRole::Color,
+                    Mapping::default(),
+                )));
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+            };
+            let [tequila, cycles] = both_engines(&format!("label-{name}"), labelled);
+            let (tequila, cycles) = (middle(&tequila), middle(&cycles));
+            assert!(tequila[1] > bare[1] + 20.0, "Tequila's render shows no {name} label: {tequila:.1?} against {bare:.1?} bare");
+            for c in 0..3 {
+                assert!(
+                    (tequila[c] - cycles[c]).abs() < 8.0,
+                    "{name} ink at {coverage} coverage is {tequila:.1?} in Tequila's render and {cycles:.1?} in Cycles' ({bare:.1?} bare)"
+                );
+            }
+        }
+    }
+
     /// Coloured glass with a depth absorbs as it goes, in Cycles as in
     /// Tequila's renderer: through the middle of a ball of amber liquid -
     /// two depths of it - the sky behind comes out the same colour in both.

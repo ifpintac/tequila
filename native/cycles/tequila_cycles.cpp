@@ -108,8 +108,12 @@ class MemoryLoader : public ImageLoader {
       for (int y = 0; y < h; y++) {
         memcpy(dst + size_t(h - 1 - y) * row, pixels_->bytes.data() + size_t(y) * row, row);
       }
-      /* Images are added with raw parameters, so Cycles never asks for
-       * associated alpha here: colour and coverage stay apart. */
+      /* Left as they are, even when Cycles asks for associated alpha, as it
+       * does for an "unassociated" image, raw or not: a label's bytes come
+       * associated already, multiplied on the sRGB curve as Cycles' own
+       * loader multiplies an 8-bit PNG's (translate.rs, encode_label). Every
+       * other picture is channel-packed, which Cycles never asks to
+       * associate. */
       return true;
     }
     float *dst = static_cast<float *>(out);

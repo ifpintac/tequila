@@ -273,8 +273,36 @@ fn encode_picture(image: &tequila_texture::Image, colour: bool) -> Encoded {
     )
 }
 
-fn send_picture(session: &mut Session, name: &str, image: &tequila_texture::Image, colour: bool) -> Result<i32, String> {
+/// A label's picture as it goes to Cycles, which reads a label - an
+/// "unassociated" image (`image_node`) - with its colour multiplied by its
+/// coverage, filters it so, and divides the coverage out again as it looks
+/// it up, before it takes the sRGB curve off (`svm_image_texture`). So bytes
+/// are multiplied on the curve, as Cycles' own loader multiplies an 8-bit
+/// PNG's; floats go straight, since the shim multiplies those when Cycles
+/// asks (`MemoryLoader::load_pixels`). Multiplied in linear beforehand, a
+/// label had its coverage taken twice as floats - a white print at a quarter
+/// all but vanished - and divided out on the curve as bytes, which drew a
+/// cream print at a quarter brighter than solid ink.
+fn encode_label(image: &tequila_texture::Image, colour: bool) -> Encoded {
+    use rayon::prelude::*;
     match encode_picture(image, colour) {
+        Encoded::Bytes(mut bytes) if image.channels == 4 => {
+            bytes.par_chunks_exact_mut(4).for_each(|pixel| {
+                let coverage = u32::from(pixel[3]);
+                for value in &mut pixel[..3] {
+                    *value = ((u32::from(*value) * coverage + 127) / 255) as u8;
+                }
+            });
+            Encoded::Bytes(bytes)
+        }
+        other => other,
+    }
+}
+
+/// `image` on the device; `label` for a label's (`encode_label`).
+fn send_picture(session: &mut Session, name: &str, image: &tequila_texture::Image, colour: bool, label: bool) -> Result<i32, String> {
+    let encoded = if label { encode_label(image, colour) } else { encode_picture(image, colour) };
+    match encoded {
         Encoded::Floats(data) => session.image(name, image.width, image.height, image.channels, &data),
         Encoded::Bytes(bytes) => session.image_bytes(name, image.width, image.height, image.channels, &bytes, colour),
     }
@@ -857,15 +885,15 @@ impl Builder<'_> {
         self.session.mesh(&positions, normals.as_deref(), &triangles, uvs.as_deref(), &[shader])
     }
 
-    /// `texture` on the device; `premultiplied` for a label's, whose colour
-    /// is multiplied by its coverage first (a copy of its own).
-    fn image(&mut self, texture: TextureId, premultiplied: bool) -> Result<Option<i32>, String> {
+    /// `texture` on the device; `label` for a label's, a copy of its own
+    /// that Cycles reads with its coverage folded in (`encode_label`).
+    fn image(&mut self, texture: TextureId, label: bool) -> Result<Option<i32>, String> {
         let Some(source) = self.scene.textures.get(texture) else {
             self.out.warn(format!("texture {} is missing", texture.0));
             return Ok(None);
         };
         // Pointers are aligned, so the low bit is free to tell the two apart.
-        let key = std::sync::Arc::as_ptr(source) as usize | usize::from(premultiplied);
+        let key = std::sync::Arc::as_ptr(source) as usize | usize::from(label);
         if let Some(id) = self.images.get(key) {
             return Ok(Some(id));
         }
@@ -873,17 +901,10 @@ impl Builder<'_> {
         // Colour, in Rec.709 primaries, goes over in ACEScg; data
         // (roughness, normals, masks) as it is.
         let colour = base.color_space == tequila_texture::image::ColorSpace::LinearSrgb;
-        let id = if premultiplied && base.channels == 4 {
-            let mut copy = base.clone();
-            for pixel in copy.data.chunks_exact_mut(4) {
-                let a = pixel[3].clamp(0.0, 1.0);
-                pixel[0] *= a;
-                pixel[1] *= a;
-                pixel[2] *= a;
-            }
-            send_picture(self.session, &format!("label{}", texture.0), &copy, colour)?
+        let id = if label && base.channels == 4 {
+            send_picture(self.session, &format!("label{}", texture.0), base, colour, true)?
         } else {
-            send_picture(self.session, &format!("texture{}", texture.0), base, colour)?
+            send_picture(self.session, &format!("texture{}", texture.0), base, colour, false)?
         };
         self.images.insert(key, Kept::Texture(source.clone()), id);
         Ok(Some(id))
@@ -942,11 +963,12 @@ impl Builder<'_> {
         self.session.set_string(node, "extension", extension)?;
         // Colour and coverage as stored, nothing dividing one by the other -
         // except a label's, which is filtered premultiplied, as Tequila
-        // filters labels, and divided out again: between an inked texel and
-        // a clear one the ink keeps its colour and only its coverage falls
-        // off. Filtered straight, the colour fell off too, and every edge of
-        // a label faded twice as fast; and whatever colour the clear texels
-        // hold - often white - would bleed into the ink.
+        // filters labels (multiplied as it goes over: `encode_label`), and
+        // divided out again: between an inked texel and a clear one the ink
+        // keeps its colour and only its coverage falls off. Filtered
+        // straight, the colour fell off too, and every edge of a label faded
+        // twice as fast; and whatever colour the clear texels hold - often
+        // white - would bleed into the ink.
         self.session.set_string(node, "alpha_type", if clip { "unassociated" } else { "channel_packed" })?;
         self.session.set_image(node, image)?;
         if let Some((from, socket)) = vector {
@@ -3210,6 +3232,40 @@ mod tests {
         }
         let Encoded::Bytes(data) = encode_picture(&image, false) else { panic!("in-range data goes as bytes") };
         assert_eq!(data, vec![204, 26, 13], "data was changed");
+    }
+
+    /// A label partly covering reads back in Cycles as its own colour, so
+    /// the coverage alone fades it: bytes go multiplied by their coverage on
+    /// the sRGB curve, which Cycles divides out before it takes the curve
+    /// off (`svm_image_texture`); floats go straight, for the shim to
+    /// multiply as Cycles asks. Multiplied in linear beforehand, cream at a
+    /// quarter came back several times brighter than the ink itself.
+    #[test]
+    fn a_part_covering_label_reads_back_as_its_own_colour() {
+        let cream = vec3(0.8, 0.7, 0.5);
+        let want = tequila_core::spectrum::srgb_to_acescg(cream);
+        for coverage in [0.1f32, 0.25, 0.5, 0.75, 1.0] {
+            let image = tequila_texture::Image {
+                width: 1,
+                height: 1,
+                channels: 4,
+                data: vec![cream.x, cream.y, cream.z, coverage],
+                color_space: tequila_texture::image::ColorSpace::LinearSrgb,
+            };
+            let Encoded::Bytes(bytes) = encode_label(&image, true) else { panic!("an in-range label goes as bytes") };
+            // As Cycles reads it: the coverage divided out, then the curve.
+            let alpha = f32::from(bytes[3]) / 255.0;
+            let back: Vec<f32> = bytes[..3].iter().map(|&b| tequila_core::spectrum::srgb_eotf(f32::from(b) / 255.0 / alpha)).collect();
+            for (got, want) in back.iter().zip([want.x, want.y, want.z]) {
+                // What it adds to the surface, coverage times colour, to
+                // about a level.
+                assert!((got - want).abs() * coverage < 0.006, "cream at {coverage} came back {back:?}, not {want:?}");
+            }
+            let bright = tequila_texture::Image { data: vec![1.5, 1.5, 1.5, coverage], ..image };
+            let Encoded::Floats(data) = encode_label(&bright, true) else { panic!("an over-white label goes as floats") };
+            assert_eq!(data[3], coverage, "the coverage was changed");
+            assert!((data[0] - 1.5).abs() < 1e-3, "a float label went over multiplied: {data:?}");
+        }
     }
     use tequila_core::math::Vec3;
     use tequila_core::sampling::direction_to_equirect;
