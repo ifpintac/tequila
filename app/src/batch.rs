@@ -2151,9 +2151,10 @@ mod tests {
     }
 
     /// A label only partly covering fades in Cycles as it does in Tequila's
-    /// renderer: cream ink at a quarter coverage and white at a half, all
-    /// over a dark sphere, come out the same colour in both. Cycles squared
-    /// the coverage of a white label, so a quarter-covered print all but
+    /// renderer: cream ink at a quarter coverage and ink brighter than white
+    /// at a half, all over a dark sphere, come out the same colour in both,
+    /// one through each way a label goes to Cycles. Cycles squared the
+    /// coverage of a white label, so a quarter-covered print all but
     /// vanished, and drew a cream one brighter than solid ink, so the fading
     /// rings of a pedal's silkscreen rendered solid. Skipped where Cycles is
     /// not installed.
@@ -2189,9 +2190,8 @@ mod tests {
         };
         let [bare, _] = both_engines("label-bare", dark);
         let bare = middle(&bare);
-        // Cream goes to Cycles as bytes; white, a hair over 1 in ACEScg, as
-        // floats.
-        for (name, ink, coverage) in [("cream", [0.8, 0.7, 0.5], 0.25), ("white", [1.0; 3], 0.5)] {
+        // Cream goes to Cycles as bytes; ink brighter than white, as floats.
+        for (name, ink, coverage) in [("cream", [0.8, 0.7, 0.5], 0.25), ("bright", [1.5; 3], 0.5)] {
             let labelled = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
                 let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
                 graph.material_mut().base_color = Spectrum::splat(0.05);
@@ -2316,7 +2316,12 @@ mod tests {
     /// renderer does: a red and white checker, real-world sized on a sphere
     /// scaled to half, covers the same pixels red in both. Cycles read every
     /// tri-planar texture through the mesh's UVs, and no size as a size in
-    /// the scene. Skipped where Cycles is not installed.
+    /// the scene. The squares are 8 by 8 texels so their edges stay sharp
+    /// and the test measures placement, not filtering: Cycles blends an
+    /// 8-bit colour texture on the sRGB curve (decoded in the kernel), as
+    /// Blender does, where Tequila blends in linear, and a checker of four
+    /// texels was one blend from red to white. Skipped where Cycles is not
+    /// installed.
     #[test]
     fn a_tri_planar_texture_lands_where_tequila_puts_it() {
         use tequila_texture::image::{ColorSpace, Image};
@@ -2325,11 +2330,11 @@ mod tests {
             return;
         }
         let checker = Image {
-            width: 2,
-            height: 2,
+            width: 16,
+            height: 16,
             channels: 3,
             color_space: ColorSpace::LinearSrgb,
-            data: vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
+            data: (0..256).flat_map(|i| if (i % 16 < 8) == (i / 16 < 8) { [1.0, 0.0, 0.0] } else { [1.0; 3] }).collect(),
         };
         let [tequila, cycles] = both_engines("tri-planar", |scene| {
             tri_planar_material(scene, tequila_materials::material_type::Param::BaseColor, tequila_texture::texture::MapRole::Color, checker.clone(), 0.35);

@@ -234,9 +234,15 @@ enum Encoded {
     Floats(Vec<f32>),
 }
 
+/// How far over 1 a value may be and still go as a byte, which clamps it:
+/// in f32 white comes out of `srgb_to_acescg` a hair over 1, and every
+/// texture with a single white texel went as floats, at four times the
+/// memory and upload of bytes.
+const BYTE_ROUNDING: f32 = 1e-5;
+
 /// A picture as compactly as it allows: 8-bit when every value is in
-/// [0, 1], floats when it holds more than a display range, as an HDRI or a
-/// height map in metres can.
+/// [0, 1], give or take rounding, floats when it holds more than a display
+/// range, as an HDRI or a height map in metres can.
 ///
 /// A colour picture (Tequila keeps those linear, in Rec.709 primaries) goes
 /// over in ACEScg, the space Cycles works in, and as 8-bit on the sRGB curve,
@@ -255,7 +261,7 @@ fn encode_picture(image: &tequila_texture::Image, colour: bool) -> Encoded {
             pixel[2] = v.z;
         });
     }
-    if !data.par_iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0) {
+    if !data.par_iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0 + BYTE_ROUNDING) {
         return Encoded::Floats(data);
     }
     Encoded::Bytes(
@@ -3232,6 +3238,27 @@ mod tests {
         }
         let Encoded::Bytes(data) = encode_picture(&image, false) else { panic!("in-range data goes as bytes") };
         assert_eq!(data, vec![204, 26, 13], "data was changed");
+    }
+
+    /// A colour picture holding pure white still goes as bytes: in f32
+    /// white comes out of `srgb_to_acescg` a hair over 1, and every texture
+    /// with a single white texel went as floats, at four times the memory -
+    /// 256 MB for a 4K one. Past rounding it goes as floats, as an HDRI does.
+    #[test]
+    fn a_white_colour_texture_goes_as_bytes() {
+        let image = tequila_texture::Image {
+            width: 2,
+            height: 1,
+            channels: 4,
+            data: vec![1.0, 1.0, 1.0, 1.0, 0.8, 0.1, 0.05, 0.5],
+            color_space: tequila_texture::image::ColorSpace::LinearSrgb,
+        };
+        let Encoded::Bytes(bytes) = encode_picture(&image, true) else { panic!("white went as floats") };
+        assert_eq!(&bytes[..4], &[255, 255, 255, 255], "white came out as {bytes:?}");
+        let hdr = tequila_texture::Image { data: vec![1.001, 1.0, 1.0, 1.0, 0.8, 0.1, 0.05, 0.5], ..image };
+        assert!(matches!(encode_picture(&hdr, true), Encoded::Floats(_)), "over white went as bytes");
+        let height = tequila_texture::Image { channels: 1, width: 1, data: vec![1.001], ..hdr };
+        assert!(matches!(encode_picture(&height, false), Encoded::Floats(_)), "a height over 1 went as bytes");
     }
 
     /// A label partly covering reads back in Cycles as its own colour, so
