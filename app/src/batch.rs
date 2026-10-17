@@ -1235,6 +1235,87 @@ mod tests {
         }
     }
 
+    /// An area light node shines along its local +Z, the cross of its width
+    /// and its height, in both engines, and still does with a photometric
+    /// file. The board's panel is turned so its +Z points down at the board;
+    /// turned half a turn more, so its -Z does, as a lamp placed with a
+    /// Blender matrix is, it lights nothing. The docs said -Z, and a scene
+    /// built from them came out black; and a file aimed every light along
+    /// -Z, so ticking "Photometric file" turned the panel round, though the
+    /// Lighting tab says the shape still decides which way it points. Cycles
+    /// is skipped where it is not installed.
+    #[test]
+    fn an_area_light_shines_along_its_local_plus_z() {
+        use tequila_core::math::Transform;
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_scene::lighting::Photometry;
+        use tequila_scene::render::RenderEngine;
+        use tequila_scene::{Command, CommandBus};
+        // A downlight about its aim, as bright as the panel: lit to 90
+        // degrees off the aim, dark beyond.
+        let ies = scratch("tequila-light-facing-file").join("downlight.ies");
+        std::fs::write(&ies, concat!(
+            "IESNA:LM-63-2002\n",
+            "TILT=NONE\n",
+            "1 -1 1 5 2 1 2 0 0 0\n",
+            "1 1 0\n",
+            "0 45 90 135 180\n",
+            "0 360\n",
+            "300 300 300 0 0\n",
+            "300 300 300 0 0\n",
+        )).unwrap();
+        let plastic = tequila_scene::material::MaterialDefinition::new(
+            "Plastic",
+            tequila_materials::material_type::MaterialType::Plastic,
+            Default::default(),
+        );
+
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for file in [false, true] {
+            let mut facing_down = board(&plastic, 1.0);
+            let light = facing_down.tree.iter().find(|n| n.kind.light().is_some()).unwrap().id;
+            if file {
+                let mut settings = facing_down.tree.get(light).unwrap().kind.light().unwrap().clone();
+                settings.photometry = Some(Photometry { path: ies.to_string_lossy().to_string() });
+                CommandBus::new().apply(&mut facing_down, Command::SetLight { node: light, settings: Box::new(settings) }).unwrap();
+            }
+            let mut facing_up = facing_down.clone();
+            let turned = facing_up.tree.get(light).unwrap().transform * Transform::rotation(Vec3::X, std::f32::consts::PI);
+            CommandBus::new().apply(&mut facing_up, Command::set_transform(light, turned)).unwrap();
+            let what = if file { "the panel with a file" } else { "the panel" };
+            for &engine in &engines {
+                let render = |name: &str, document: &tequila_scene::SceneDocument| -> f64 {
+                    let black = Arc::new(Environment::uniform(Spectrum::ZERO));
+                    let (mut scene, _) = tequila_scene::snapshot::snapshot(document, black, &mut tequila_scene::snapshot::MeshCache::new());
+                    scene.background = Background::Color(Spectrum::ZERO);
+                    let directory = scratch(&format!("tequila-light-facing-{}-{file}-{name}", engine.key()));
+                    let renderer = BatchRenderer::new();
+                    let mut job = job(1, &directory, RenderSettings { engine, width: 64, height: 48, max_samples: 32, denoise: false, ..Default::default() });
+                    job.scene = Arc::new(scene);
+                    job.camera = document.cameras.active().camera;
+                    renderer.submit(job);
+                    match wait_for_finish(&renderer) {
+                        BatchEvent::Finished { preview, .. } => {
+                            preview.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>()
+                                / (preview.len() / 4 * 3) as f64
+                        }
+                        BatchEvent::Failed { message, .. } => panic!("{name}: {message}"),
+                        _ => unreachable!(),
+                    }
+                };
+                let (down, up) = (render("down", &facing_down), render("up", &facing_up));
+                eprintln!("{}: {what}, +Z down averages {down:.1}, -Z down {up:.1}", engine.key());
+                assert!(down > 20.0, "{}: {what} with +Z down left the board black ({down:.1})", engine.key());
+                assert!(up < down * 0.1, "{}: {what}, turned away, still lit the board ({up:.1} against {down:.1})", engine.key());
+            }
+        }
+    }
+
     /// A shadow-catcher floor catches the shadow a lamp casts in Cycles as it
     /// does in Tequila's renderer: letting the lamp cast shadows darkens the
     /// image by much the same amount in both. Cycles counts on a catcher only

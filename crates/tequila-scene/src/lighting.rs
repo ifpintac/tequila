@@ -250,10 +250,13 @@ impl LightSettings {
     /// here, so the sampler never sees a unit and the UI never sees a
     /// half-extent.
     ///
-    /// Emission runs along local **-Z**, matching the camera convention and
-    /// every DCC a user will have come from, and the panel spans local X and
-    /// Y. A light with no transform therefore points straight down the world
-    /// -Z axis rather than at nothing in particular.
+    /// An area light's panel spans local X and Y and emits along local
+    /// **+Z**, the cross of its width and its height, so a light with no
+    /// transform shines along world +Z, towards the Front view's camera.
+    /// That is the opposite of Blender's area lights: a matrix taken from
+    /// Blender needs turning half a turn about its X axis. A spot aims along
+    /// local **-Z**, as does a photometric file on a point or a spot; on an
+    /// area light the file aims where the panel faces, +Z.
     pub fn to_render_light(&self, world: &Transform) -> Option<Light> {
         self.to_render_light_with(world, None)
     }
@@ -280,10 +283,16 @@ impl LightSettings {
         // space with an aiming axis, and the file only says how brightly it
         // emits in each direction.
         if let Some(profile) = profile {
-            let direction = world
-                .vector(-Vec3::Z)
-                .try_normalize()
-                .unwrap_or(-Vec3::Z);
+            // Aimed where the shape points, as the Lighting tab promises: a
+            // panel faces +Z, so a file on one aims there - the luminaire
+            // turned over about its width, keeping `right`, so an asymmetric
+            // file is turned rather than mirrored. Aiming every file along -Z
+            // turned a panel round the moment it was given one.
+            let aim = match self.shape {
+                LightShape::Area { .. } => Vec3::Z,
+                LightShape::Point { .. } | LightShape::Spot { .. } => -Vec3::Z,
+            };
+            let direction = world.vector(aim).try_normalize().unwrap_or(aim);
             let right = world.vector(Vec3::X).try_normalize().unwrap_or(Vec3::X);
             return Some(
                 Light::new(LightKind::Ies(IesLight {
