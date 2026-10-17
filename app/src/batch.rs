@@ -1322,6 +1322,12 @@ mod tests {
     /// the lights marked as catcher lights, and while none were, a lamp's
     /// shadow went missing and an HDRI's sun cast half the shadow Blender's
     /// does. Skipped where Cycles is not installed.
+    ///
+    /// Twice: with a lamp that outshines the sky, and with one that lights
+    /// the floor about as much as the sky does. Tequila's catcher used to
+    /// average the quotients of one sky and one lamp sample at a time, which
+    /// darkened the dimmer lamp's shadow by 15.5 where Cycles' darkened by
+    /// 10.0, and the brighter one's by 19.1 against 17.6.
     #[test]
     fn a_cycles_shadow_catcher_catches_the_shadow() {
         use tequila_core::spectrum::Spectrum;
@@ -1332,62 +1338,63 @@ mod tests {
             eprintln!("skipped: {why}");
             return;
         }
-        // Off to the side and low, so the shadow falls on the floor beside
-        // the sphere, in view; and bright against the sky, so the shadow is
-        // the lamp's. Tequila's catcher shades each sample by one sky and
-        // one lamp sample, which darkens a shadow the sky has much part in.
-        let mut lamp = Light::new(LightKind::Point(PointLight { position: vec3(-3.0, 3.0, 1.0), intensity: Spectrum::splat(80.0), radius: 0.05 }));
-        let mut darkening = Vec::new();
-        for engine in [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu] {
-            let mut means = Vec::new();
-            // The lamp's own shadow switched off and on: all that changes is
-            // the shadow on the floor.
-            for shadow in [false, true] {
-                lamp.visibility.shadow = shadow;
-                let directory = scratch(&format!("tequila-cycles-catcher-{}-{shadow}", engine.key()));
-                let renderer = BatchRenderer::new();
-                let mut render = job(1, &directory, RenderSettings {
-                    engine,
-                    width: 64, height: 48, max_samples: 256, denoise: false,
-                    ..Default::default()
-                });
-                let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(vec![lamp.clone()])));
-                scene.environment = Arc::new(Environment::uniform(Spectrum::splat(0.2)));
-                scene.background = Background::Environment;
-                scene.instances[1].shadow_catcher = Some(ShadowCatcher::default());
-                // A black sphere: nothing it reflects reaches the floor. Cycles
-                // counts light the sphere bounces into its own shadow, as a
-                // real floor would receive it; Tequila's catcher counts only
-                // what comes straight from the lights, so with a lit sphere
-                // the two shadows differ by the bounce and not by the lamp.
-                let m = &mut scene.materials[0];
-                m.base_color = Spectrum::ZERO;
-                m.specular_weight = 0.0;
-                m.coat_weight = 0.0;
-                scene.programs.clear();
-                render.scene = Arc::new(scene);
-                // The test job's quick settings leave shadows out of
-                // Tequila's renderer altogether.
-                render.config.shadows = true;
-                renderer.submit(render);
-                match wait_for_finish(&renderer) {
-                    BatchEvent::Finished { preview, .. } => {
-                        let mean = preview.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>()
-                            / (preview.len() / 4 * 3) as f64;
-                        means.push(mean);
+        for intensity in [20.0, 80.0] {
+            // Off to the side and low, so the shadow falls on the floor beside
+            // the sphere, in view.
+            let mut lamp = Light::new(LightKind::Point(PointLight { position: vec3(-3.0, 3.0, 1.0), intensity: Spectrum::splat(intensity), radius: 0.05 }));
+            let mut darkening = Vec::new();
+            for engine in [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu] {
+                let mut means = Vec::new();
+                // The lamp's own shadow switched off and on: all that changes
+                // is the shadow on the floor.
+                for shadow in [false, true] {
+                    lamp.visibility.shadow = shadow;
+                    let directory = scratch(&format!("tequila-cycles-catcher-{intensity}-{}-{shadow}", engine.key()));
+                    let renderer = BatchRenderer::new();
+                    let mut render = job(1, &directory, RenderSettings {
+                        engine,
+                        width: 64, height: 48, max_samples: 256, denoise: false,
+                        ..Default::default()
+                    });
+                    let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(vec![lamp.clone()])));
+                    scene.environment = Arc::new(Environment::uniform(Spectrum::splat(0.2)));
+                    scene.background = Background::Environment;
+                    scene.instances[1].shadow_catcher = Some(ShadowCatcher::default());
+                    // A black sphere: nothing it reflects reaches the floor.
+                    // Cycles counts light the sphere bounces into its own
+                    // shadow, as a real floor would receive it; Tequila's
+                    // catcher counts only what comes straight from the lights,
+                    // so with a lit sphere the two shadows differ by the bounce
+                    // and not by the lamp.
+                    let m = &mut scene.materials[0];
+                    m.base_color = Spectrum::ZERO;
+                    m.specular_weight = 0.0;
+                    m.coat_weight = 0.0;
+                    scene.programs.clear();
+                    render.scene = Arc::new(scene);
+                    // The test job's quick settings leave shadows out of
+                    // Tequila's renderer altogether.
+                    render.config.shadows = true;
+                    renderer.submit(render);
+                    match wait_for_finish(&renderer) {
+                        BatchEvent::Finished { preview, .. } => {
+                            let mean = preview.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>()
+                                / (preview.len() / 4 * 3) as f64;
+                            means.push(mean);
+                        }
+                        BatchEvent::Failed { message, .. } => panic!("{message}"),
+                        _ => unreachable!(),
                     }
-                    BatchEvent::Failed { message, .. } => panic!("{message}"),
-                    _ => unreachable!(),
                 }
+                darkening.push(means[0] - means[1]);
             }
-            darkening.push(means[0] - means[1]);
+            let (tequila, cycles) = (darkening[0], darkening[1]);
+            assert!(tequila > 2.0, "the lamp cast no shadow in Tequila's render: it darkened it by {tequila:.2}");
+            assert!(
+                (cycles / tequila - 1.0).abs() < 0.04,
+                "with a lamp of {intensity} cd, the shadow darkened Tequila's render by {tequila:.2} and Cycles' by {cycles:.2}"
+            );
         }
-        let (tequila, cycles) = (darkening[0], darkening[1]);
-        assert!(tequila > 2.0, "the lamp cast no shadow in Tequila's render: it darkened it by {tequila:.2}");
-        assert!(
-            (cycles / tequila - 1.0).abs() < 0.35,
-            "the shadow darkened Tequila's render by {tequila:.2} and Cycles' by {cycles:.2}"
-        );
     }
 
     /// The mean of each channel of the demo scene with a black sphere on a

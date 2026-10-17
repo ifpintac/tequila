@@ -683,6 +683,93 @@ impl Light {
             LightKind::Spot(_) | LightKind::Ies(_) => true,
         }
     }
+
+    /// The most one sample of this light can bring onto a surface at `from`
+    /// facing `normal`: a bound on the luminance of `radiance · cos / pdf`
+    /// over every sample [`Light::sample`] can return there, for a rejection
+    /// sampler to measure samples against.
+    ///
+    /// Exact for a light that is a point, and as tight as cheap geometry
+    /// allows for one that is not: every direction to it lies in the cone of
+    /// the sphere around it, and none is nearer than that sphere. Zero for a
+    /// light that lights nothing, which selection never picks either.
+    pub fn irradiance_bound(&self, from: Vec3, normal: Vec3) -> f32 {
+        if !self.enabled || !self.visibility.lights_anything() {
+            return 0.0;
+        }
+        let point = |sample: Option<LightSample>| {
+            sample.map_or(0.0, |s| s.radiance.luminance().max(0.0) * s.direction.dot(normal).max(0.0))
+        };
+        match &self.kind {
+            LightKind::Point(l) if l.radius <= 0.0 => point(l.sample(from, Vec2::ZERO)),
+            LightKind::Spot(l) => point(l.sample(from, Vec2::ZERO)),
+            LightKind::Ies(l) => point(l.sample(from, Vec2::ZERO)),
+            LightKind::Point(l) => {
+                let offset = l.position - from;
+                let distance = offset.length();
+                if distance <= 0.0 {
+                    return 0.0;
+                }
+                let nearest = (distance - l.radius).max(distance * 1e-3);
+                l.intensity.luminance().max(0.0) * cone_cosine(normal, offset / distance, l.radius / distance)
+                    / (nearest * nearest)
+            }
+            LightKind::Area(l) => {
+                let to_light = l.position - from;
+                let facing = to_light.dot(l.normal());
+                if !l.two_sided && facing > 0.0 {
+                    return 0.0;
+                }
+                let distance = to_light.length();
+                if distance <= 0.0 {
+                    return 0.0;
+                }
+                let (u, v) = (l.half_u.length(), l.half_v.length());
+                let reach = if l.disc { u.max(v) } else { (u * u + v * v).sqrt() };
+                let cosine = cone_cosine(normal, to_light / distance, reach / distance);
+                let radiance = l.radiance.luminance().max(0.0);
+                if l.disc {
+                    // Drawn by area: `cos_light · area / d²` per sample, and
+                    // `cos_light / d²` is `h / d³` for a point `h` off the
+                    // light's plane, largest at the nearest point.
+                    let height = facing.abs();
+                    let nearest = (distance - reach).max(height);
+                    if nearest <= 0.0 {
+                        return 0.0;
+                    }
+                    radiance * cosine * l.area() * height / (nearest * nearest * nearest)
+                } else {
+                    // Drawn evenly over the solid angle it subtends, which is
+                    // no more than its sphere's cone.
+                    let sine = (reach / distance).min(1.0);
+                    let cone = TAU * (1.0 - (1.0 - sine * sine).sqrt());
+                    radiance * cosine * cone
+                }
+            }
+        }
+    }
+}
+
+/// The largest cosine against `normal` of any direction within the cone
+/// about `axis` whose half-angle has sine `sine`.
+///
+/// A sine of 1 or more is a point inside the sphere the cone was drawn
+/// around, which can see the light in any direction at all.
+fn cone_cosine(normal: Vec3, axis: Vec3, sine: f32) -> f32 {
+    if sine >= 1.0 {
+        return 1.0;
+    }
+    let sine = sine.max(0.0);
+    let cosine = (1.0 - sine * sine).sqrt();
+    let to_axis = normal.dot(axis).clamp(-1.0, 1.0);
+    if to_axis >= cosine {
+        // The normal is inside the cone.
+        return 1.0;
+    }
+    // cos(θ - α), with θ the angle from the normal to the axis and α the
+    // cone's half-angle.
+    let away = (1.0 - to_axis * to_axis).sqrt();
+    (to_axis * cosine + away * sine).max(0.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -1510,6 +1597,58 @@ mod tests {
         };
         let sample = light.sample(vec3(0.0, 0.0, 2.0), vec2(0.3, 0.7)).unwrap();
         assert!(!sample.is_delta);
+    }
+
+    /// No sample brings more onto a surface than the light's irradiance
+    /// bound, from anywhere and facing any way: a rejection sampler measured
+    /// against it would keep too few of the brightest. A point's bound is
+    /// exactly what its one direction brings, so none of its samples is
+    /// turned away.
+    #[test]
+    fn no_sample_brings_more_than_the_irradiance_bound() {
+        let kinds = [
+            LightKind::Point(PointLight { position: vec3(0.0, 2.0, 0.0), intensity: Spectrum::splat(20.0), radius: 0.0 }),
+            LightKind::Point(PointLight { position: vec3(0.0, 2.0, 0.0), intensity: Spectrum::splat(20.0), radius: 0.4 }),
+            LightKind::Spot(SpotLight {
+                position: vec3(0.0, 2.0, 0.0),
+                direction: -Vec3::Y,
+                intensity: Spectrum::splat(20.0),
+                inner_angle: 0.3,
+                outer_angle: 0.6,
+                falloff: 1.0,
+            }),
+            LightKind::Area(softbox()),
+            LightKind::Area(AreaLight { half_u: vec3(2.0, 0.0, 0.0), ..softbox() }),
+            LightKind::Area(AreaLight { disc: true, two_sided: true, ..softbox() }),
+        ];
+        let mut rng = tequila_core::rng::Pcg32::new(7, 3);
+        for kind in kinds {
+            let light = Light::new(kind);
+            let mut lit = 0;
+            for _ in 0..300 {
+                let from = vec3(rng.next_f32() * 6.0 - 3.0, rng.next_f32() * 3.0 - 0.5, rng.next_f32() * 6.0 - 3.0);
+                let normal = tequila_core::sampling::sample_uniform_sphere(vec2(rng.next_f32(), rng.next_f32()));
+                let bound = light.irradiance_bound(from, normal);
+                for _ in 0..64 {
+                    let Some(sample) = light.sample(from, vec2(rng.next_f32(), rng.next_f32())) else {
+                        continue;
+                    };
+                    let density = if sample.is_delta { 1.0 } else { sample.pdf };
+                    let brings = sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density;
+                    assert!(
+                        brings <= bound * 1.0001 + 1e-6,
+                        "{:?} from {from:?} facing {normal:?}: a sample brings {brings} against a bound of {bound}",
+                        light.kind
+                    );
+                    if light.is_delta() {
+                        assert!((brings - bound).abs() <= 1e-5 * bound.max(1e-3), "{brings} against {bound}");
+                    }
+                    lit += usize::from(brings > 0.0);
+                }
+            }
+            // The spot lights a narrow cone, and so the fewest of these.
+            assert!(lit > 300, "{:?} lit almost nothing: {lit}", light.kind);
+        }
     }
 
     /// The penumbra is smooth-stepped, not linear: a linear ramp leaves a

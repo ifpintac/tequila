@@ -30,7 +30,7 @@ use tequila_core::math::{Mat4, Vec2, Vec3};
 use tequila_core::sampling::{direction_to_equirect, equirect_to_direction};
 use tequila_core::spectrum::Spectrum;
 use tequila_texture::Image;
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 
 /// What the camera sees when a ray escapes the scene.
@@ -95,6 +95,20 @@ pub struct EnvironmentSample {
     /// dome that is infinitely distant. A shadow ray has to stop there: with a
     /// finite dome, geometry beyond it is behind the sky.
     pub distance: f32,
+}
+
+/// A direction towards the sky drawn for the light it brings onto a surface
+/// ([`Environment::sample_irradiance`]).
+#[derive(Clone, Copy, Debug)]
+pub struct IrradianceSample {
+    /// World-space direction towards the sky.
+    pub direction: Vec3,
+    /// How far away the dome is that way, as [`EnvironmentSample::distance`].
+    pub distance: f32,
+    /// The light this direction brings onto the surface, as a fraction of
+    /// [`Environment::irradiance_bound`]: the chance a rejection sampler
+    /// keeps it, 0 to 1.
+    pub keep: f32,
 }
 
 /// The surface the environment image is mapped onto (§1.5's Size, Height and
@@ -268,6 +282,24 @@ impl Dome {
             * (distance * distance / cos_surface);
         Some((direction, jacobian, distance))
     }
+
+    /// The most a patch of sky can grow by when seen from `origin` rather
+    /// than from the centre: a bound on `1 / jacobian` of
+    /// [`Self::from_centre`], whose jacobian is the patch's solid angle from
+    /// the centre over its solid angle from `origin`. 1 at the centre,
+    /// growing as `origin` nears the dome.
+    ///
+    /// On the sphere that ratio is `r² cos / d²`, and from a point `ρ` off
+    /// centre `d` is at least `r - ρ`. The flattened floor has no such bound;
+    /// only a surface facing the floor gets more from it than this allows,
+    /// and a floor at ground level faces away from it.
+    fn spread_bound(&self, origin: Vec3) -> f32 {
+        let Some(radius) = self.radius.filter(|r| *r > 0.0) else {
+            return 1.0;
+        };
+        let off = ((origin - self.centre()).length() / radius).min(0.999);
+        1.0 / ((1.0 - off) * (1.0 - off))
+    }
 }
 
 /// An equirectangular environment light with a 2D CDF for importance sampling.
@@ -295,6 +327,11 @@ pub struct Environment {
     /// `sum of luminance * sin(theta)` over every texel: the CDF's
     /// normalization constant.
     weighted_sum: f32,
+    /// The marginal CDF again with each row weighted by its mean cosine
+    /// towards straight up, `height + 1` entries, and its normalization
+    /// constant: the light onto a floor, which the shadow catcher draws from.
+    upward_cdf: Vec<f32>,
+    upward_sum: f32,
     width: usize,
     height: usize,
     /// The surface the image is mapped onto. Not part of the CDF, so changing
@@ -394,6 +431,23 @@ impl Environment {
             }
         }
 
+        // The same rows, each weighted by how squarely it faces straight up:
+        // the light onto a floor, row by row, for `sample_irradiance` to draw
+        // in exact proportion to.
+        let mut upward_cdf = vec![0.0f32; height + 1];
+        let mut running = 0.0f32;
+        for (y, integral) in row_integrals.iter().enumerate() {
+            running += integral * upward_cosine(y, height);
+            upward_cdf[y + 1] = running;
+        }
+        let upward_sum = running;
+        if upward_sum > 0.0 {
+            let inv = 1.0 / upward_sum;
+            for entry in upward_cdf.iter_mut().skip(1) {
+                *entry *= inv;
+            }
+        }
+
         Environment {
             image,
             rotation: Mat4::IDENTITY,
@@ -404,6 +458,8 @@ impl Environment {
             conditional_cdf,
             luminance,
             weighted_sum: total,
+            upward_cdf,
+            upward_sum,
             width,
             height,
             dome: Dome::default(),
@@ -582,21 +638,131 @@ impl Environment {
         luminance * (self.width * self.height) as f32 / (self.weighted_sum * 2.0 * PI * PI)
     }
 
-    /// Importance-sample a direction.
-    pub fn sample(&self, u: Vec2) -> Option<EnvironmentSample> {
+    /// The most one direction drawn by [`Self::sample_irradiance`] can bring
+    /// onto a surface at `origin` facing `normal`, in luminance.
+    ///
+    /// For a floor facing straight up under an infinite dome, every draw
+    /// brings the same, and this is exactly the light onto it. Otherwise it
+    /// is the whole sky's light: what a draw carries, before the surface's
+    /// cosine, when the sky is drawn in proportion to its own brightness.
+    pub fn irradiance_bound(&self, origin: Vec3, normal: Vec3) -> f32 {
+        if self.weighted_sum <= 0.0 {
+            return 0.0;
+        }
+        let per_texel = self.intensity * 2.0 * PI * PI / (self.width * self.height) as f32;
+        if self.faces_up(normal) {
+            return per_texel * self.upward_sum;
+        }
+        per_texel * self.weighted_sum * self.dome.spread_bound(origin)
+    }
+
+    /// A direction towards the sky for an estimate of the light onto a
+    /// surface at `origin` facing `normal`, with the chance of keeping it.
+    ///
+    /// Drawn from the same CDF as [`Self::sample`], but across each texel in
+    /// proportion to its solid angle, where `sample` goes evenly in latitude
+    /// and so crowds each row towards the pole. A direction kept with
+    /// probability [`IrradianceSample::keep`] is then distributed exactly as
+    /// the light arriving on the surface — as the sky's own luminance, texel
+    /// by texel, times the cosine — so whether something blocks it is, on
+    /// average, the share of that light that is blocked.
+    ///
+    /// A floor facing straight up, which is nearly every catcher, is drawn
+    /// that way outright, and every draw is kept. Turning draws away costs
+    /// more than the draws: a sampler that keeps one in four spends its
+    /// stratified dimensions on the three it throws away.
+    pub fn sample_irradiance(&self, origin: Vec3, normal: Vec3, u: Vec2) -> Option<IrradianceSample> {
         if self.weighted_sum <= 0.0 {
             return None;
         }
+        if self.faces_up(normal) {
+            if self.upward_sum <= 0.0 {
+                return None;
+            }
+            // Rows in proportion to the light they bring onto the floor, and
+            // within a row cos θ in proportion to itself.
+            let (x, y, dx, dy) = self.texel_at(&self.upward_cdf, u);
+            let (top, bottom) = self.row_cosines(y);
+            let bottom = bottom.max(0.0);
+            let cos_theta = (bottom * bottom + dy * (top * top - bottom * bottom)).max(0.0).sqrt();
+            return Some(IrradianceSample {
+                direction: self.direction_at(x, dx, cos_theta),
+                distance: f32::INFINITY,
+                keep: 1.0,
+            });
+        }
+        let (x, y, dx, dy) = self.texel_at(&self.marginal_cdf, u);
+        let (top, bottom) = self.row_cosines(y);
+        let direction = self.direction_at(x, dx, top + dy * (bottom - top));
+        if self.dome.is_infinite() {
+            return Some(IrradianceSample {
+                direction,
+                distance: f32::INFINITY,
+                keep: normal.dot(direction).max(0.0),
+            });
+        }
+        // Seen from `origin` rather than from the centre, a patch of sky
+        // spans `1 / jacobian` times the solid angle, and brings that much
+        // more light.
+        let (seen, jacobian, distance) = self.dome.from_centre(origin, direction)?;
+        let keep = normal.dot(seen).max(0.0) / (jacobian * self.dome.spread_bound(origin));
+        Some(IrradianceSample {
+            direction: seen,
+            distance,
+            keep: keep.min(1.0),
+        })
+    }
 
+    /// Whether a surface facing `normal` faces straight up, near enough to
+    /// be drawn for exactly ([`Self::sample_irradiance`]), under a dome far
+    /// enough away for every point of it to see the same sky.
+    fn faces_up(&self, normal: Vec3) -> bool {
+        self.dome.is_infinite() && self.inverse_rotation.transform_vector(normal).y >= 1.0 - 1e-5
+    }
+
+    /// Cosines of the latitudes at the top and the bottom of row `y`.
+    fn row_cosines(&self, y: usize) -> (f32, f32) {
+        (
+            (y as f32 / self.height as f32 * PI).cos(),
+            ((y + 1) as f32 / self.height as f32 * PI).cos(),
+        )
+    }
+
+    /// The world direction `dx` across column `x` at latitude `cos_theta`.
+    fn direction_at(&self, x: usize, dx: f32, cos_theta: f32) -> Vec3 {
+        let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
+        let (sin_phi, cos_phi) = (((x as f32 + dx) / self.width as f32 - 0.5) * TAU).sin_cos();
+        let local = Vec3 {
+            x: sin_theta * sin_phi,
+            y: cos_theta,
+            z: -sin_theta * cos_phi,
+        };
+        self.rotation.transform_vector(local).normalize()
+    }
+
+    /// The texel the CDFs put `u` in, with `marginal` choosing the row, and
+    /// where in it.
+    #[inline]
+    fn texel_at(&self, marginal: &[f32], u: Vec2) -> (usize, usize, f32, f32) {
         // Marginal: pick a row.
-        let y = find_interval(&self.marginal_cdf, u.y);
-        let dy = segment_offset(&self.marginal_cdf, y, u.y);
+        let y = find_interval(marginal, u.y);
+        let dy = segment_offset(marginal, y, u.y);
 
         // Conditional: pick a column within it.
         let base = y * (self.width + 1);
         let row = &self.conditional_cdf[base..base + self.width + 1];
         let x = find_interval(row, u.x);
         let dx = segment_offset(row, x, u.x);
+        (x, y, dx, dy)
+    }
+
+    /// Importance-sample a direction.
+    pub fn sample(&self, u: Vec2) -> Option<EnvironmentSample> {
+        if self.weighted_sum <= 0.0 {
+            return None;
+        }
+
+        let (x, y, dx, dy) = self.texel_at(&self.marginal_cdf, u);
 
         let uv = Vec2 {
             x: (x as f32 + dx) / self.width as f32,
@@ -696,6 +862,21 @@ fn find_interval(cdf: &[f32], u: f32) -> usize {
         }
     }
     lo.min(n - 1)
+}
+
+/// The mean of `max(0, cos θ)` over row `y` of `height`, by solid angle: how
+/// squarely the row faces straight up, on average. Solid angle is even in
+/// `cos θ`, so it is the mean of the clamped line between the row's edges.
+fn upward_cosine(y: usize, height: usize) -> f32 {
+    let top = (y as f32 / height as f32 * PI).cos();
+    let bottom = ((y + 1) as f32 / height as f32 * PI).cos();
+    if bottom >= 0.0 {
+        (top + bottom) * 0.5
+    } else if top <= 0.0 {
+        0.0
+    } else {
+        top * top / (2.0 * (top - bottom))
+    }
 }
 
 /// Position of `u` within CDF interval `i`, in `[0, 1)`.
@@ -1240,6 +1421,82 @@ mod tests {
         assert!(env.sample(vec2(0.5, 0.5)).is_none());
         assert_eq!(env.pdf(vec3(0.0, 1.0, 0.0)), 0.0);
         assert!(env.radiance(vec3(0.0, 1.0, 0.0)).is_black());
+    }
+
+    /// What a rejection sampler keeps of [`Environment::sample_irradiance`]'s
+    /// draws, times the bound, is the light onto the surface. Checked against
+    /// quadrature of the radiance itself, under an even sky and with a sun,
+    /// facing up (where every draw is kept), sideways and down; and from off
+    /// centre in a close dome, where an even sky still brings π·L and a bound
+    /// too small for the jacobian there would come out short. Flattened too:
+    /// a floor on the ground sees only the sphere above it, whose draws go
+    /// through the same lookup from the centre as everything else's.
+    ///
+    /// No surface here has the sun on its horizon. The sampler weighs the sky
+    /// texel by texel and the radiance is read bilinearly; the two agree on
+    /// every texel's total but not on where in it the light is, and with a
+    /// one-texel sun six degrees across, that decides how much of it is above
+    /// a horizon through it.
+    #[test]
+    fn kept_irradiance_draws_add_up_to_the_irradiance() {
+        let estimate = |env: &Environment, origin: Vec3, normal: Vec3| {
+            let mut rng = Pcg32::new(6, 6);
+            let n = 200_000;
+            let mut kept = 0.0f64;
+            for _ in 0..n {
+                if let Some(s) = env.sample_irradiance(origin, normal, vec2(rng.next_f32(), rng.next_f32())) {
+                    assert!((0.0..=1.0).contains(&s.keep), "kept with a chance of {}", s.keep);
+                    assert!((s.direction.length() - 1.0).abs() < 1e-4);
+                    // A floor facing straight up is drawn for outright.
+                    if normal == Vec3::Y && env.dome().is_infinite() {
+                        assert_eq!(s.keep, 1.0);
+                    }
+                    kept += f64::from(s.keep);
+                }
+            }
+            f64::from(env.irradiance_bound(origin, normal)) * kept / f64::from(n)
+        };
+        let quadrature = |env: &Environment, normal: Vec3| {
+            const THETA_STEPS: usize = 1024;
+            const PHI_STEPS: usize = 2048;
+            let d_theta = PI / THETA_STEPS as f32;
+            let d_phi = 2.0 * PI / PHI_STEPS as f32;
+            let mut sum = 0.0f64;
+            for ti in 0..THETA_STEPS {
+                let (sin_theta, cos_theta) = ((ti as f32 + 0.5) * d_theta).sin_cos();
+                for pi in 0..PHI_STEPS {
+                    let phi = (pi as f32 + 0.5) * d_phi - PI;
+                    let d = vec3(sin_theta * phi.sin(), cos_theta, -sin_theta * phi.cos());
+                    sum += (env.radiance(d).luminance() * normal.dot(d).max(0.0) * sin_theta) as f64;
+                }
+            }
+            sum * (d_theta * d_phi) as f64
+        };
+        for (name, env) in [("an even sky", constant_env(0.5)), ("a sun", sun_env(40, 9, 500.0))] {
+            for normal in [Vec3::Y, vec3(0.8, 0.0, -0.6), vec3(0.3, -0.5, 0.81).normalize(), -Vec3::Y] {
+                let (got, expected) = (estimate(&env, Vec3::ZERO, normal), quadrature(&env, normal));
+                assert!(
+                    (got - expected).abs() <= 0.02 * expected + 1e-4,
+                    "{name}, facing {normal:?}: {got:.4} against {expected:.4} by quadrature"
+                );
+            }
+        }
+        let mut dome = constant_env(0.5);
+        dome.set_dome(Dome {
+            radius: Some(4.0),
+            height: 1.0,
+            flatten: false,
+        });
+        let got = estimate(&dome, vec3(2.5, 0.0, 0.5), Vec3::Y);
+        let expected = f64::from(PI * 0.5);
+        assert!((got - expected).abs() < 0.02 * expected, "in a close dome: {got:.4} against {expected:.4}");
+        dome.set_dome(Dome {
+            radius: Some(4.0),
+            height: 2.5,
+            flatten: true,
+        });
+        let got = estimate(&dome, vec3(2.5, 0.0, -1.0), Vec3::Y);
+        assert!((got - expected).abs() < 0.02 * expected, "in a close, flattened dome: {got:.4} against {expected:.4}");
     }
 
     #[test]

@@ -911,6 +911,7 @@ pub fn trace_path_with_caustics(
                     &catcher,
                     ray.direction,
                     behind,
+                    bounce,
                     sampler,
                 );
                 // A caustic on the floor: the photons' light against what
@@ -1545,6 +1546,7 @@ fn catch_shadow(
     catcher: &ShadowCatcher,
     view: Vec3,
     behind: Spectrum,
+    bounce: u32,
     sampler: &mut Sampler,
 ) -> CaughtShadow {
     let normal = if hit.geometric_normal.dot(-view) > 0.0 {
@@ -1559,7 +1561,9 @@ fn catch_shadow(
     } else if catcher.occlusion_only {
         occlusion_at(intersector, hit, normal, catcher.occlusion_radius, sampler)
     } else {
-        shadow_at(intersector, config, hit, normal, sampler)
+        let coverage = shadow_at(intersector, config, hit, normal, bounce, sampler);
+        sampler.begin_bounce(bounce);
+        coverage
     };
     let mut coverage = coverage.clamp(0.0, 1.0);
 
@@ -1666,77 +1670,125 @@ fn floor_reflection(
     Some((seen, share))
 }
 
+/// How many directions [`shadow_at`] draws before it keeps the one it has.
+///
+/// The draws are rejection sampling, so how many it takes is the sum of the
+/// bounds over the light itself. On a floor facing up the sky and a point
+/// lamp are drawn for exactly and the first draw is always kept; a softbox,
+/// or a surface facing any other way, turns some away. Past this many the
+/// last draw is kept whatever it carries, which tilts that rare sample
+/// towards the proposal rather than leaving the floor unshadowed.
+const MAX_SHADOW_DRAWS: u32 = 32;
+
 /// Fraction of the light at this point that the scene blocks.
+///
+/// That is a ratio, blocked light over all of it, and an average of
+/// per-sample ratios is not one. The catcher used to divide one sky sample
+/// and one lamp sample at a time and average the quotients. Every sky sample
+/// below the horizon carried nothing, so with a lamp blocked it reported the
+/// floor fully shadowed, and under an HDRI alone it reported it unshadowed: a
+/// lamp's shadow came out darker than Cycles' and a sun's lighter.
+///
+/// So this draws one direction in proportion to the light it would bring with
+/// nothing in the way — from the sky and every lamp together, kept or not
+/// against each one's bound — and says how much of that one direction is
+/// blocked. The average of that is exactly the blocked share, and each sample
+/// is a fraction from 0 to 1, as a coverage has to be. The shadow ray goes
+/// where the light is, so a small bright sun's shadow is as sharp here as it
+/// is on the product.
+///
+/// `bounce` is the vertex's, whose dimensions the first draw uses. Later
+/// draws use the dimensions of the bounces after it, so leave the sampler on
+/// some other bounce.
 fn shadow_at(
     intersector: &dyn Intersector,
     config: &IntegratorConfig,
     hit: &Hit,
     normal: Vec3,
+    bounce: u32,
     sampler: &mut Sampler,
 ) -> f32 {
+    if !config.shadows {
+        return 0.0;
+    }
     let scene = intersector.scene();
-    let mut blocked = 0.0f32;
-    let mut total = 0.0f32;
+    let lights = scene.lights.lights();
+    let sky = scene.environment.irradiance_bound(hit.position, normal);
 
-    // The environment, through the same importance sampler the rest of the
-    // integrator uses — so a shadow from a small bright sun is as sharp here
-    // as it is on the product.
-    if let Some(sample) = scene
-        .environment
-        .sample_from(hit.position, sampler.light_sample())
-    {
-        let cosine = sample.direction.dot(normal);
-        if cosine > 0.0 && sample.pdf > 0.0 {
-            let weight = sample.radiance.luminance() * cosine / sample.pdf;
-            total += weight;
-            if config.shadows && occluded_towards(intersector, hit, normal, sample.direction, sample.distance) {
-                blocked += weight;
-            }
-        }
-    }
-
-    // And every analytic light, which a ratio has to include or a scene lit by
-    // lamps alone would catch no shadow at all.
-    if !scene.lights.is_empty() {
-        let u = sampler.light_sample();
-        if let Some((id, p_select)) = scene.lights.select_at(hit.position, normal, u.x) {
-            if let Some(light) = scene.lights.get(id) {
-                let reused = ((u.x - (1.0 - p_select).max(0.0)) / p_select.max(1e-6)).clamp(0.0, 1.0);
-                if let Some(sample) =
-                    light.sample(hit.position, tequila_core::math::vec2(reused, u.y))
-                {
-                    let cosine = sample.direction.dot(normal);
-                    let density = if sample.is_delta {
-                        p_select
-                    } else {
-                        sample.pdf * p_select
-                    };
-                    if cosine > 0.0 && density > 0.0 {
-                        let weight = sample.radiance.luminance() * cosine / density;
-                        total += weight;
-                        if config.shadows
-                            && light.visibility.shadow
-                            && occluded_towards(
-                                intersector,
-                                hit,
-                                normal,
-                                sample.direction,
-                                sample.distance,
-                            )
-                        {
-                            blocked += weight;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if total <= 1e-9 {
-        0.0
+    // Each lamp's bound, on the stack for the usual handful of lamps. Every
+    // lamp, which a ratio has to include or a scene lit by lamps alone would
+    // catch no shadow at all.
+    let mut stack = [0.0f32; 16];
+    let mut heap = Vec::new();
+    let bounds: &mut [f32] = if lights.len() <= stack.len() {
+        &mut stack[..lights.len()]
     } else {
-        blocked / total
+        heap.resize(lights.len(), 0.0);
+        &mut heap
+    };
+    let mut total = sky;
+    for (bound, light) in bounds.iter_mut().zip(lights) {
+        *bound = light.irradiance_bound(hit.position, normal);
+        total += *bound;
     }
+    // Negated, so that a NaN bound is refused too.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(total > 0.0) {
+        return 0.0;
+    }
+
+    for draw in 0..MAX_SHADOW_DRAWS {
+        // Each draw on dimensions stratified together: the vertex's own for
+        // the first, which is the one that usually counts, and for the rest
+        // those of the bounces the path would have made past here — it ends
+        // at the catcher, so they are free. Past the sequence's last
+        // dimension the sampler falls back to its open stream by itself.
+        sampler.begin_bounce(bounce + draw);
+        let (pick, u, chance) = (sampler.light_select(), sampler.light_sample(), sampler.bsdf_lobe());
+        let last = draw + 1 == MAX_SHADOW_DRAWS;
+
+        let mut along = pick * total;
+        if along < sky || bounds.is_empty() {
+            let Some(sample) = scene.environment.sample_irradiance(hit.position, normal, u) else {
+                continue;
+            };
+            if chance < sample.keep || (last && sample.keep > 0.0) {
+                return blocked_towards(intersector, hit, normal, sample.direction, sample.distance);
+            }
+            continue;
+        }
+        along -= sky;
+        // The lamp `along` falls in; rounding past the end lands on the last.
+        let mut chosen = bounds.len() - 1;
+        for (i, bound) in bounds.iter().enumerate() {
+            if along < *bound {
+                chosen = i;
+                break;
+            }
+            along -= bound;
+        }
+        let (light, bound) = (&lights[chosen], bounds[chosen]);
+        if bound <= 0.0 {
+            continue;
+        }
+        let Some(sample) = light.sample(hit.position, u) else {
+            continue;
+        };
+        let density = if sample.is_delta { 1.0 } else { sample.pdf };
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(density > 0.0) {
+            continue;
+        }
+        let keep = sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density / bound;
+        if chance < keep || (last && keep > 0.0) {
+            return if light.visibility.shadow {
+                blocked_towards(intersector, hit, normal, sample.direction, sample.distance)
+            } else {
+                0.0
+            };
+        }
+    }
+    0.0
 }
 
 /// Ambient occlusion at a point: the contact darkening of §1.5's Occlusion
@@ -1780,11 +1832,7 @@ fn occlusion_at(
     let direction = onb.to_world(local);
     // Bounded: occlusion is about what is *near*, and letting it reach the
     // whole scene turns a contact shadow into a second, wrong drop shadow.
-    if occluded_towards(intersector, hit, normal, direction, radius.max(1e-3)) {
-        1.0
-    } else {
-        0.0
-    }
+    blocked_towards(intersector, hit, normal, direction, radius.max(1e-3))
 }
 
 /// How much of a shadow ray survives the surfaces between its ends.
@@ -1978,13 +2026,15 @@ fn carried_past(hit: &Hit, ray: &Ray) -> Ray {
     Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction)
 }
 
-fn occluded_towards(
+/// How much of the light from `direction` the scene stops before it reaches
+/// this point, 0 to 1.
+fn blocked_towards(
     intersector: &dyn Intersector,
     hit: &Hit,
     normal: Vec3,
     direction: Vec3,
     distance: f32,
-) -> bool {
+) -> f32 {
     let reach = if distance.is_finite() {
         distance * (1.0 - 1e-3)
     } else {
@@ -1996,10 +2046,11 @@ fn occluded_towards(
             * 1e4
     };
     let target = hit.position + direction * reach;
-    // A cutout casts a broken shadow onto the catcher too, so the matte has to
-    // ask the same question the lighting does. Halfway is the split: a surface
-    // more than half open leaves the catcher lit.
-    shadow_transmittance(intersector, hit.position, normal, target, -direction) < 0.5
+    // A cutout casts a broken shadow onto the catcher too, so the matte asks
+    // the same question the lighting does and takes the same answer: the
+    // share that gets through. It used to split at half, so a part more than
+    // half open left the floor lit and one less than half open, black.
+    1.0 - shadow_transmittance(intersector, hit.position, normal, target, -direction)
 }
 
 /// Where a flight through a medium ends.
@@ -3244,5 +3295,183 @@ mod tests {
             assert!(r.radiance.is_finite(), "sample {i}: {:?}", r.radiance);
             assert!(r.radiance.min_component() >= 0.0, "sample {i}");
         }
+    }
+
+    /// A shadow-catching floor through the origin with a sphere over it: the
+    /// sphere is instance 0 and the floor instance 1, as the analytic
+    /// intersector numbers them. A triangle that nothing intersects gives the
+    /// scene its size, so a shadow ray towards the sky has a finite end.
+    fn catcher_scene(
+        environment: Environment,
+        lights: Vec<crate::light::Light>,
+        sphere: Sphere,
+        sphere_material: Material,
+    ) -> AnalyticIntersector {
+        let size = crate::scene::Mesh::new(
+            vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)],
+            vec![0, 1, 2],
+        );
+        let instances = vec![
+            crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
+            crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(1), tequila_core::ids::MaterialId(0))
+                .with_shadow_catcher(ShadowCatcher::default()),
+        ];
+        let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![sphere_material], Arc::new(environment))
+            .with_lights(Arc::new(crate::light::LightSet::new(lights)));
+        AnalyticIntersector::new(scene)
+            .with_sphere(sphere)
+            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)))
+    }
+
+    /// The share of the light onto the floor at the origin that the scene
+    /// blocks, the long way round: a fine grid over the sky, each direction
+    /// weighted by the light it brings, and every lamp at its full worth. Of
+    /// everything a catcher reports, this is the number it is estimating.
+    fn blocked_share(intersector: &AnalyticIntersector) -> f32 {
+        let scene = intersector.scene();
+        let blocked_towards =
+            |direction: Vec3, distance: f32| intersector.occluded(Vec3::ZERO, Vec3::Y, direction * distance, -direction);
+        let (mut blocked, mut total) = (0.0f64, 0.0f64);
+        let (columns, rows) = (1440, 360);
+        for row in 0..rows {
+            let theta = (row as f32 + 0.5) / rows as f32 * std::f32::consts::FRAC_PI_2;
+            for column in 0..columns {
+                let phi = (column as f32 + 0.5) / columns as f32 * std::f32::consts::TAU;
+                let direction = vec3(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin());
+                let weight = f64::from(scene.environment.radiance(direction).luminance() * theta.cos() * theta.sin());
+                total += weight;
+                if blocked_towards(direction, 100.0) {
+                    blocked += weight;
+                }
+            }
+        }
+        // From the grid's sum to irradiance.
+        let cell = f64::from(std::f32::consts::FRAC_PI_2 / rows as f32 * std::f32::consts::TAU / columns as f32);
+        let (mut blocked, mut total) = (blocked * cell, total * cell);
+        for light in scene.lights.lights() {
+            let sample = light.sample(Vec3::ZERO, Vec2 { x: 0.5, y: 0.5 }).expect("the lamp lights the floor");
+            assert!(sample.is_delta, "the long way round counts a lamp as a point");
+            let weight = f64::from(sample.radiance.luminance() * sample.direction.dot(Vec3::Y).max(0.0));
+            total += weight;
+            if blocked_towards(sample.direction, sample.distance * 0.999) {
+                blocked += weight;
+            }
+        }
+        (blocked / total) as f32
+    }
+
+    /// The coverage a catcher reports at the origin, averaged over many
+    /// samples, and the most any one of them reported.
+    fn caught_at_origin(intersector: &AnalyticIntersector) -> (f32, f32) {
+        let config = IntegratorConfig { shadows: true, ..IntegratorConfig::product() };
+        let n = 24_000u32;
+        let (mut sum, mut most) = (0.0f64, 0.0f32);
+        for i in 0..n {
+            let mut sampler = Sampler::new(3, 5, i, 29);
+            // In low from the side, clear of the sphere overhead.
+            let ray = Ray::new(vec3(4.0, 1.0, 0.5), vec3(-4.0, -1.0, -0.5).normalize());
+            let result = trace_path(intersector, &config, ray, Vec2::ZERO, &mut sampler);
+            assert_eq!(result.object_id, 1, "the camera ray missed the floor");
+            sum += f64::from(result.coverage);
+            most = most.max(result.coverage);
+        }
+        ((sum / f64::from(n)) as f32, most)
+    }
+
+    /// A lamp's shadow under a sky darkens the floor by the lamp's share of
+    /// the light, no more. The catcher used to divide one sky sample and one
+    /// lamp sample at a time and average the quotients: half the sky samples
+    /// fall below the horizon and count for nothing, and with the lamp blocked
+    /// each of those reported the floor fully shadowed. The shadow came out
+    /// far darker than Cycles'.
+    #[test]
+    fn a_catcher_darkens_a_lamps_shadow_by_the_lamps_share_of_the_light() {
+        let lamp = crate::light::Light::new(crate::light::LightKind::Point(crate::light::PointLight {
+            position: vec3(0.0, 4.0, 0.0),
+            intensity: Spectrum::splat(10.0),
+            radius: 0.0,
+        }));
+        // The lamp and the sky about equal, so neither hides the other.
+        let intersector = catcher_scene(
+            Environment::uniform(Spectrum::splat(0.2)),
+            vec![lamp],
+            Sphere::new(vec3(0.0, 2.0, 0.0), 0.5, tequila_core::ids::MaterialId(0)),
+            Material::diffuse(Spectrum::ZERO),
+        );
+        let expected = blocked_share(&intersector);
+        let (caught, most) = caught_at_origin(&intersector);
+        assert!(most <= 1.0, "a sample reported more than all of the light blocked: {most}");
+        assert!(
+            (caught - expected).abs() < 0.02,
+            "the catcher reports {caught:.3} of the light blocked; {expected:.3} of it is"
+        );
+    }
+
+    /// An HDRI's sun, blocked, leaves the floor as dark as the sun's share of
+    /// the light says. With one sky sample per estimate, every sample that
+    /// fell below the horizon reported the floor unshadowed, and the sun's
+    /// shadow came out light: on the bulb, 67 against Cycles' 52.6.
+    #[test]
+    fn a_catcher_darkens_an_hdri_suns_shadow_by_the_suns_share_of_the_light() {
+        let (width, height) = (128usize, 64usize);
+        let sky = 0.3f32;
+        let mut data = vec![sky; width * height * 3];
+        // A sun three texels across, 45 degrees up, worth about three times
+        // the rest of the sky on the floor. The ground half of the image is
+        // as bright as the sky half, as it is outdoors.
+        let (sun_x, sun_y) = (width * 5 / 8, height / 4);
+        for y in sun_y - 1..=sun_y + 1 {
+            for x in sun_x - 1..=sun_x + 1 {
+                data[(y * width + x) * 3..(y * width + x) * 3 + 3].fill(250.0);
+            }
+        }
+        let image = tequila_texture::Image {
+            width,
+            height,
+            channels: 3,
+            data,
+            color_space: tequila_texture::ColorSpace::LinearSrgb,
+        };
+        let sun = tequila_core::sampling::equirect_to_direction(Vec2 {
+            x: (sun_x as f32 + 0.5) / width as f32,
+            y: (sun_y as f32 + 0.5) / height as f32,
+        });
+        // A black sphere straight towards the sun, wide enough to cover it
+        // and its filtered edge.
+        let intersector = catcher_scene(
+            Environment::new(Arc::new(image), 1.0),
+            Vec::new(),
+            Sphere::new(sun * 3.0, 1.2, tequila_core::ids::MaterialId(0)),
+            Material::diffuse(Spectrum::ZERO),
+        );
+        let expected = blocked_share(&intersector);
+        assert!(expected > 0.6, "the sun is not most of the light: {expected}");
+        let (caught, _) = caught_at_origin(&intersector);
+        assert!(
+            (caught - expected).abs() < 0.02,
+            "the catcher reports {caught:.3} of the light blocked; {expected:.3} of it is"
+        );
+    }
+
+    /// A see-through part casts the shadow its opacity says. Two walls of a
+    /// sphere 40% opaque let 36% of the lamp's light through, so the floor
+    /// is 64% shadowed. A catcher that called anything under half open fully
+    /// blocked rendered it black.
+    #[test]
+    fn a_see_through_part_casts_a_partial_shadow_on_a_catcher() {
+        let lamp = crate::light::Light::new(crate::light::LightKind::Point(crate::light::PointLight {
+            position: vec3(0.0, 4.0, 0.0),
+            intensity: Spectrum::splat(10.0),
+            radius: 0.0,
+        }));
+        let intersector = catcher_scene(
+            Environment::uniform(Spectrum::ZERO),
+            vec![lamp],
+            Sphere::new(vec3(0.0, 2.0, 0.0), 0.5, tequila_core::ids::MaterialId(0)),
+            Material { geometry_opacity: 0.4, ..Material::diffuse(Spectrum::ZERO) },
+        );
+        assert!(intersector.scene().has_cutouts());
+        let (caught, _) = caught_at_origin(&intersector);
+        assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
     }
 }
