@@ -1085,13 +1085,18 @@ mod tests {
         let (found, problems) = discover(&[(bundled, Origin::Bundled)]);
         assert!(problems.is_empty(), "{problems:?}");
         let ids: Vec<&str> = found.iter().map(|p| p.manifest.id.as_str()).collect();
-        for id in ["tequila.colourways", "tequila.anodised-extras", "tequila.vibes", "tequila.auto-materials", "tequila.render-every-camera"] {
+        for id in ["tequila.colourways", "tequila.anodised-extras", "tequila.vibes", "tequila.auto-materials", "tequila.render-every-camera", "tequila.studio-lighting"] {
             assert!(ids.contains(&id), "{id} is missing: {ids:?}");
         }
         let vibes = found.iter().find(|p| p.manifest.id == "tequila.vibes").unwrap();
         assert!(vibes.runs_code());
         let panel = vibes.manifest.panels.iter().find(|p| p.id == "vibes").expect("the Vibes panel");
         assert!(panel.fields.iter().any(|f| matches!(&f.kind, FieldKind::Choice { options, .. } if options.len() == 8)), "the eight vibes are not a choice");
+        let studio = found.iter().find(|p| p.manifest.id == "tequila.studio-lighting").unwrap();
+        assert!(studio.runs_code());
+        for panel in ["studio", "lights", "set"] {
+            assert!(studio.manifest.panels.iter().any(|p| p.id == panel), "Studio Lighting has no `{panel}` panel");
+        }
         let pack = found.iter().find(|p| p.manifest.id == "tequila.anodised-extras").unwrap();
         assert!(!pack.runs_code(), "a material pack asks to run code");
         let (presets, problems) = tequila_format::library::read_directory_from(&pack.materials_folder().expect("its materials"), tequila_format::library::Source::Plugin);

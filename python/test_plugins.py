@@ -277,5 +277,80 @@ class VibesTests(unittest.TestCase):
                 running.close()
 
 
+STUDIO_MANIFEST = json.loads((EXAMPLES / 'studio-lighting' / 'plugin.json').read_text(encoding='utf-8'))
+STUDIO_NAMES = next(f for p in STUDIO_MANIFEST['panels'] for f in p['fields'] if f['id'] == 'preset')['options']
+
+
+@unittest.skipIf(MISSING, MISSING)
+class StudioLightingTests(unittest.TestCase):
+    """The Studio Lighting example: every studio goes on, its settings are
+    kept and shown again, the person's own environment can come back, and
+    Back to my look puts the look back exactly."""
+
+    def run_command(self, running, command, **values):
+        running.send({'type': 'command', 'command': command, 'values': values})
+        return running.expect(lambda m: m['type'] == 'done')
+
+    def test_every_studio_applies_and_back_to_my_look_puts_it_all_back(self):
+        self.assertGreaterEqual(len(STUDIO_NAMES), 15)
+        with tequila.open(MODEL) as fs:
+            mine = look(fs)
+            running = Running(EXAMPLES / 'studio-lighting', fs)
+            try:
+                for name in STUDIO_NAMES:
+                    heard = self.run_command(running, 'apply', preset=name)
+                    self.assertIn({'type': 'status', 'text': f'Studio: {name}'}, heard)
+                    pins = fs.context()['document']['environment'].get('pins', [])
+                    self.assertTrue(pins and all(p['name'].startswith('Studio: ') for p in pins), name)
+                self.run_command(running, 'restore')
+                self.assertEqual(look(fs), mine, f'{len(STUDIO_NAMES)} studios later, the look was not put back')
+                heard = self.run_command(running, 'restore')
+                self.assertTrue(any('already yours' in (m.get('text') or '') for m in heard), heard)
+            finally:
+                running.close()
+
+    def test_settings_are_kept_shown_and_reset(self):
+        with tequila.open(MODEL) as fs:
+            running = Running(EXAMPLES / 'studio-lighting', fs)
+            try:
+                self.run_command(running, 'apply', preset='Spotlight', turn=30)
+                self.run_command(running, 'apply', key=250, mirror=True)
+                running.send({'type': 'event', 'event': 'panel_opened', 'data': {'panel': 'lights'}})
+                panel = [m for m in running.expect(lambda m: m['type'] == 'panel') if m['type'] == 'panel'][-1]
+                running.expect(lambda m: m['type'] == 'done')
+                self.assertEqual((panel['values']['key'], panel['values']['mirror']), (250, True))
+                heard = self.run_command(running, 'reset_lights')
+                reset = next(m for m in heard if m['type'] == 'panel')
+                self.assertEqual((reset['values']['key'], reset['values']['mirror']), (100, False))
+            finally:
+                running.close()
+
+    def test_my_environment_brings_the_persons_own_image_back(self):
+        with tequila.open(MODEL) as fs:
+            own = fs.context()['document']['environment'].get('image')
+            running = Running(EXAMPLES / 'studio-lighting', fs)
+            try:
+                self.run_command(running, 'apply', preset='Soft Light Tent')
+                self.assertNotEqual(fs.context()['document']['environment'].get('image'), own)
+                self.run_command(running, 'apply', backdrop='My environment (HDRI)')
+                environment = fs.context()['document']['environment']
+                self.assertEqual(environment.get('image'), own)
+                self.assertFalse(any(p['name'] in ('Studio: Room', 'Studio: Backdrop') for p in environment['pins']))
+            finally:
+                running.close()
+
+    def test_a_studio_is_one_undo_step(self):
+        with tequila.open(MODEL) as fs:
+            mine = look(fs)
+            running = Running(EXAMPLES / 'studio-lighting', fs)
+            try:
+                self.run_command(running, 'apply', preset='Chiaroscuro')
+                self.assertNotEqual(look(fs), mine)
+                fs.undo()
+                self.assertEqual(look(fs), mine)
+            finally:
+                running.close()
+
+
 if __name__ == '__main__':
     unittest.main()

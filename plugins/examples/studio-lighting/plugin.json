@@ -1,0 +1,95 @@
+{
+  "id": "tequila.studio-lighting",
+  "name": "Studio Lighting",
+  "version": "1.0.0",
+  "author": "Tequila",
+  "description": "21 ready-made product-photography studios - from clean e-commerce white and soft light tents to glass, jewellery, chrome and dramatic low-key sets. One click sets the lights, backdrop, floor and grade around your camera; your materials and camera are left alone. Every studio can then be fine-tuned: key, fill and rims, softness, warmth, gels, backdrop colour and glow, floor and reflections.",
+  "tequila": 1,
+  "main": "main.py",
+  "commands": [
+    { "id": "open", "title": "Studio Lighting…", "panel": "studio", "description": "Pick a studio set-up and apply it" },
+    { "id": "lights_panel", "title": "Lights…", "panel": "lights", "description": "Fine-tune the key, fill, rims, softness, warmth and gel colours" },
+    { "id": "set_panel", "title": "Backdrop & floor…", "panel": "set", "description": "Fine-tune the backdrop colour and glow, the floor and its reflections" },
+    { "id": "next", "title": "Next studio", "description": "Apply the next studio in the list, with your fine-tuning" },
+    { "id": "restore", "title": "Back to my look", "description": "The lights, backdrop, floor and grade as they were before the first studio" }
+  ],
+  "panels": [
+    {
+      "id": "studio",
+      "title": "Studio Lighting",
+      "fields": [
+        { "id": "preset", "type": "choice", "label": "Studio", "default": "Three-Point Classic",
+          "options": ["Three-Point Classic", "White Infinity", "Soft Light Tent", "Clamshell Beauty", "Overhead Flat-Lay",
+                      "Window Light", "Overcast Daylight", "Ring Light", "Hero Gradient", "Gradient Chrome",
+                      "Glass: Bright Field", "Glass: Dark Field", "Jewellery Sparkle", "Low-Key Glossy", "Rim Silhouette",
+                      "Spotlight", "Chiaroscuro", "Backlit Halo", "Cinematic Teal & Orange", "Split Gel", "Hard Sun Pop"] },
+        { "id": "about", "type": "label", "text": "Pick a studio and click Apply. Each one sets the lights, backdrop, floor and colour grade around your camera; your materials and the camera itself are left alone." },
+        { "id": "apply", "type": "button", "label": "Apply", "command": "apply" },
+        { "id": "next", "type": "button", "label": "Next studio ▶", "command": "next" },
+        { "id": "turn", "type": "number", "label": "Turn the lights °", "min": -180, "max": 180, "step": 5, "default": 0 },
+        { "id": "turn_hint", "type": "label", "text": "Swings the whole rig round the product. 0 = as the studio was designed, for your camera." },
+        { "id": "brightness", "type": "number", "label": "Brightness (stops)", "min": -3, "max": 3, "step": 0.1, "default": 0 },
+        { "id": "brightness_hint", "type": "label", "text": "+1 is twice as bright, -1 half. Exposure only: the balance between the lights stays." },
+        { "id": "mood", "type": "number", "label": "Mood %", "min": 0, "max": 200, "step": 5, "default": 100 },
+        { "id": "mood_hint", "type": "label", "text": "How strongly the studio's contrast, vignette, glow and colour grade apply. 0 = neutral, 100 = as designed, 200 = pushed." },
+        { "id": "restore", "type": "button", "label": "Back to my look", "command": "restore" },
+        { "id": "status", "type": "label", "text": "Ctrl+Z undoes one Apply. More control: Plugins → Studio Lighting → Lights… and Backdrop & floor…" }
+      ]
+    },
+    {
+      "id": "lights",
+      "title": "Studio Lighting: Lights",
+      "fields": [
+        { "id": "key", "type": "number", "label": "Key light %", "min": 0, "max": 300, "step": 5, "default": 100 },
+        { "id": "key_hint", "type": "label", "text": "The main light: it shapes the product and casts its shadow." },
+        { "id": "key_size", "type": "number", "label": "Key size %", "min": 25, "max": 400, "step": 5, "default": 100 },
+        { "id": "key_size_hint", "type": "label", "text": "Smaller = harder: crisp shadows, sharp highlights. Larger = softer, wrapping light. Its brightness stays the same." },
+        { "id": "key_height", "type": "number", "label": "Key height °", "min": -40, "max": 40, "step": 1, "default": 0 },
+        { "id": "key_height_hint", "type": "label", "text": "Raise it for an overhead studio feel, lower it for long, dramatic side light." },
+        { "id": "fill", "type": "number", "label": "Fill %", "min": 0, "max": 300, "step": 5, "default": 100 },
+        { "id": "fill_hint", "type": "label", "text": "Lifts the shadows, with the room's ambient light. 0 = deep shadows; more = flatter, cleaner light." },
+        { "id": "rim", "type": "number", "label": "Rims %", "min": 0, "max": 300, "step": 5, "default": 100 },
+        { "id": "rim_hint", "type": "label", "text": "Edge lights behind the product that outline it against the backdrop." },
+        { "id": "accents", "type": "number", "label": "Accents %", "min": 0, "max": 300, "step": 5, "default": 100 },
+        { "id": "accents_hint", "type": "label", "text": "The extras some studios add: sparkle lights for gems, halos, glows behind glass." },
+        { "id": "warmth", "type": "number", "label": "Warmth", "min": -100, "max": 100, "step": 5, "default": 0 },
+        { "id": "warmth_hint", "type": "label", "text": "Tints the white lights: minus is cooler (blue), plus is warmer (amber). Coloured gels keep their colour." },
+        { "id": "mirror", "type": "toggle", "label": "Mirror left ↔ right", "default": false },
+        { "id": "mirror_hint", "type": "label", "text": "Puts the key light, and everything else, on the other side." },
+        { "id": "use_gels", "type": "toggle", "label": "Use my gel colours", "default": false },
+        { "id": "gel_a", "type": "colour", "label": "Gel A", "default": [1.0, 0.18, 0.58] },
+        { "id": "gel_b", "type": "colour", "label": "Gel B", "default": [0.18, 0.77, 1.0] },
+        { "id": "gels_hint", "type": "label", "text": "Recolours the coloured lights of Cinematic Teal & Orange and Split Gel. A is the front or left gel, B the back or right one." },
+        { "id": "apply", "type": "button", "label": "Apply", "command": "apply" },
+        { "id": "reset", "type": "button", "label": "Reset the lights", "command": "reset_lights" },
+        { "id": "status", "type": "label", "text": "These carry over to every studio you apply until you reset them." }
+      ]
+    },
+    {
+      "id": "set",
+      "title": "Studio Lighting: Backdrop & floor",
+      "fields": [
+        { "id": "backdrop", "type": "choice", "label": "Backdrop", "default": "As the studio",
+          "options": ["As the studio", "Black", "Charcoal", "Mid grey", "Light grey", "White", "Custom colour", "My environment (HDRI)"] },
+        { "id": "backdrop_hint", "type": "label", "text": "What's seen behind the product. My environment keeps your own HDRI behind and in the reflections, and only adds the studio's lights." },
+        { "id": "backdrop_colour", "type": "colour", "label": "Custom colour", "default": [0.95, 0.72, 0.63] },
+        { "id": "backdrop_colour_hint", "type": "label", "text": "Used when Backdrop is Custom colour. The floor's shadows take its hue." },
+        { "id": "glow", "type": "number", "label": "Backdrop glow %", "min": 0, "max": 300, "step": 5, "default": 100 },
+        { "id": "glow_hint", "type": "label", "text": "The pool of light on the backdrop straight behind the product. 0 = an even backdrop." },
+        { "id": "floor", "type": "choice", "label": "Floor", "default": "As the studio",
+          "options": ["As the studio", "Shadows only", "Satin", "Glossy", "Black mirror", "No floor (floating)"] },
+        { "id": "floor_hint", "type": "label", "text": "Shadows only: a seamless sweep. Satin and Glossy: soft or sharp reflections. Black mirror: a polished black table. No floor: the product floats." },
+        { "id": "reflection", "type": "number", "label": "Reflection %", "min": 0, "max": 200, "step": 5, "default": 100 },
+        { "id": "reflection_hint", "type": "label", "text": "How strongly the floor reflects the product." },
+        { "id": "shadows", "type": "toggle", "label": "Floor shadows", "default": true },
+        { "id": "shadows_hint", "type": "label", "text": "The product's shadow on the floor. Off for a clean cut-out look." },
+        { "id": "follow", "type": "toggle", "label": "Place the lights around my camera", "default": true },
+        { "id": "follow_hint", "type": "label", "text": "On: the key is always on the same side of the picture. Off: the studio stays put in the scene, so orbiting shows it from other sides." },
+        { "id": "apply", "type": "button", "label": "Apply", "command": "apply" },
+        { "id": "reset", "type": "button", "label": "Reset backdrop & floor", "command": "reset_set" },
+        { "id": "status", "type": "label", "text": "These carry over to every studio you apply until you reset them." }
+      ]
+    }
+  ],
+  "events": ["panel_opened"]
+}

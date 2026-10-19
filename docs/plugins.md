@@ -217,6 +217,13 @@ turning one on. Install plugins only from people you trust, and read
 - **Render Every Camera** — one background render from each saved camera,
   named after it, into a folder of your choice. Uses `fs.context()`, a
   folder field and `fs.queue(camera=...)`.
+- **Studio Lighting** — 21 product-photography studios, from e-commerce
+  white and soft light tents to glass, jewellery, chrome and low-key sets,
+  each set around the camera in one click and then fine-tuned: key, fill and
+  rims, softness, warmth, gels, backdrop colour and glow, floor and
+  reflections. Three panels with described settings, `load_settings` /
+  `save_settings`, and a black environment written once into its data
+  folder so the studio's own lights are the only light.
 - **Vibes** — one click turns the scene into a mood (Cyberpunk, Golden
   Hour, Keynote, Vaporwave, Noir, Candy, Lava, Deep Space), with Shuffle, a
   Drama slider and Back to my look. Builds lights, backdrops and stars from
