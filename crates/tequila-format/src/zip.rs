@@ -1,4 +1,6 @@
-//! A ZIP reader and writer, stored entries only.
+//! A ZIP reader and writer. It writes stored entries only; it reads stored
+//! and deflated ones, since a ZIP a person made - a plugin, a material
+//! package, Windows' Compressed folder - is deflated.
 //!
 //! §4.1: "A ZIP archive (stored, not compressed, for large binary members so
 //! memory-mapping works)." Storing rather than deflating is what lets a
@@ -30,6 +32,7 @@ const LOCAL_HEADER: u32 = 0x0403_4b50;
 const CENTRAL_HEADER: u32 = 0x0201_4b50;
 const END_OF_CENTRAL_DIRECTORY: u32 = 0x0605_4b50;
 const STORED: u16 = 0;
+const DEFLATED: u16 = 8;
 /// A central-directory entry's fixed-size part, before its variable-length
 /// name, extra field and comment.
 const CENTRAL_HEADER_SIZE: usize = 46;
@@ -210,9 +213,9 @@ impl ZipArchive {
             }
             let name = String::from_utf8_lossy(&bytes[at + 46..name_end]).into_owned();
 
-            if method != STORED {
+            if method != STORED && method != DEFLATED {
                 return Err(ZipError::Unsupported(format!(
-                    "`{name}` is compressed with method {method}; only stored members are read"
+                    "`{name}` is compressed with method {method}; only stored and deflated members are read"
                 )));
             }
             // A member naming `../` would escape the extraction directory. This
@@ -250,13 +253,31 @@ impl ZipArchive {
                     "`{name}` runs past the end of the file"
                 )));
             }
-            if compressed != uncompressed {
-                return Err(ZipError::Malformed(format!(
-                    "`{name}` is stored but its sizes disagree"
-                )));
-            }
-
-            let data = bytes[start..finish].to_vec();
+            let data = if method == STORED {
+                if compressed != uncompressed {
+                    return Err(ZipError::Malformed(format!(
+                        "`{name}` is stored but its sizes disagree"
+                    )));
+                }
+                bytes[start..finish].to_vec()
+            } else {
+                // Inflated to no more than the size the directory states, so
+                // a member that claims a little and inflates to a lot is
+                // refused rather than filling memory.
+                use std::io::Read;
+                let mut data = Vec::with_capacity(uncompressed.min(1 << 26));
+                flate2::read::DeflateDecoder::new(&bytes[start..finish])
+                    .take(uncompressed as u64 + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|_| ZipError::Corrupt { name: name.clone() })?;
+                if data.len() != uncompressed {
+                    return Err(ZipError::Malformed(format!(
+                        "`{name}` inflates to {} bytes, not the {uncompressed} its directory says",
+                        data.len()
+                    )));
+                }
+                data
+            };
             if crc32(&data) != crc {
                 return Err(ZipError::Corrupt { name });
             }
@@ -420,8 +441,21 @@ mod tests {
         assert!(matches!(error, ZipError::Malformed(m) if m.contains("safe member name")));
     }
 
+    /// A ZIP made by an ordinary tool deflates its members, and they read
+    /// back as they were written. Made by Python's zipfile.
     #[test]
-    fn a_compressed_member_is_refused_by_name() {
+    fn deflated_members_are_read() {
+        const DEFLATED_ZIP: &[u8] = &[80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 251, 133, 83, 93, 167, 57, 72, 47, 73, 0, 0, 0, 89, 0, 0, 0, 18, 0, 0, 0, 115, 104, 97, 114, 101, 100, 47, 112, 108, 117, 103, 105, 110, 46, 106, 115, 111, 110, 171, 86, 202, 76, 81, 178, 82, 74, 206, 207, 213, 75, 173, 72, 204, 45, 200, 73, 213, 43, 46, 44, 77, 77, 173, 74, 77, 81, 210, 81, 202, 75, 204, 77, 85, 178, 82, 10, 70, 136, 228, 38, 102, 230, 41, 89, 129, 41, 189, 130, 74, 37, 29, 144, 206, 220, 196, 188, 148, 98, 37, 171, 232, 106, 136, 89, 233, 249, 74, 181, 177, 181, 0, 80, 75, 3, 4, 20, 0, 0, 0, 8, 0, 251, 133, 83, 93, 107, 135, 187, 190, 30, 0, 0, 0, 184, 1, 0, 0, 14, 0, 0, 0, 115, 104, 97, 114, 101, 100, 47, 109, 97, 105, 110, 46, 112, 121, 203, 204, 45, 200, 47, 42, 81, 40, 73, 45, 44, 205, 204, 73, 140, 47, 200, 41, 77, 207, 204, 227, 202, 28, 21, 45, 29, 220, 162, 0, 80, 75, 1, 2, 20, 0, 20, 0, 0, 0, 8, 0, 251, 133, 83, 93, 167, 57, 72, 47, 73, 0, 0, 0, 89, 0, 0, 0, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 1, 0, 0, 0, 0, 115, 104, 97, 114, 101, 100, 47, 112, 108, 117, 103, 105, 110, 46, 106, 115, 111, 110, 80, 75, 1, 2, 20, 0, 20, 0, 0, 0, 8, 0, 251, 133, 83, 93, 107, 135, 187, 190, 30, 0, 0, 0, 184, 1, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 1, 121, 0, 0, 0, 115, 104, 97, 114, 101, 100, 47, 109, 97, 105, 110, 46, 112, 121, 80, 75, 5, 6, 0, 0, 0, 0, 2, 0, 2, 0, 124, 0, 0, 0, 195, 0, 0, 0, 0, 0];
+        let archive = ZipArchive::read(DEFLATED_ZIP).expect("reads");
+        assert_eq!(archive.names(), ["shared/plugin.json", "shared/main.py"]);
+        assert!(String::from_utf8_lossy(archive.get("shared/plugin.json").unwrap()).contains("com.example.squeezed"));
+        assert_eq!(archive.get("shared/main.py").unwrap(), "import tequila_plugin\n".repeat(20).as_bytes());
+    }
+
+    /// A member that claims to be deflated but is not is refused, not read
+    /// as whatever bytes it holds; a method with no decoder says so.
+    #[test]
+    fn a_member_that_does_not_inflate_is_refused() {
         let mut bytes = archive();
         // Set the compression method to deflate in the first directory entry.
         let directory = bytes
@@ -435,7 +469,9 @@ mod tests {
             .unwrap();
         assert!(first <= directory);
         bytes[first + 10] = 8;
+        assert!(ZipArchive::read(&bytes).is_err(), "stored bytes read as deflated");
 
+        bytes[first + 10] = 12;
         let error = ZipArchive::read(&bytes).unwrap_err();
         assert!(matches!(error, ZipError::Unsupported(_)), "{error}");
     }

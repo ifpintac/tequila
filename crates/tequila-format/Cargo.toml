@@ -10,6 +10,9 @@ authors.workspace = true
 
 [dependencies]
 tequila-core.workspace = true
+# Reading deflated ZIP members: plugins, material packages and skills that
+# people zipped themselves (Windows' Compressed folder deflates everything).
+flate2 = "1"
 tequila-scene.workspace = true
 tequila-color.workspace = true
 tequila-render-core.workspace = true
