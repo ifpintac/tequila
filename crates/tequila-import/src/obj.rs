@@ -49,22 +49,17 @@ pub fn read(
     let mut group_name = name.to_string();
     let mut current_material: Option<usize> = None;
 
-    // ZBrush's polypaint: `#MRGB` comment lines after the vertices, holding
-    // a mask and a colour for each vertex in order, as 8 hex digits MMRRGGBB.
-    let mut polypaint: Vec<tequila_core::math::Vec4> = Vec::new();
+    // ZBrush's polypaint: `#MRGB` comment lines holding a mask and a colour
+    // for each vertex of the file in order, as 8 hex digits MMRRGGBB. Read
+    // first, whole: ZBrush writes the block after the vertices, which in a
+    // file of several objects is after some of their faces.
+    let polypaint: Vec<tequila_core::math::Vec4> = text
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("#MRGB"))
+        .flat_map(mrgb)
+        .collect();
 
     for (number, line) in text.lines().enumerate() {
-        if let Some(block) = line.trim_start().strip_prefix("#MRGB") {
-            for colour in mrgb(block) {
-                let index = polypaint.len();
-                polypaint.push(colour);
-                // A colour on the vertex line is the file's own say.
-                if let Some(slot @ None) = vertex_colors.get_mut(index) {
-                    *slot = Some(colour);
-                }
-            }
-            continue;
-        }
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -1144,6 +1139,26 @@ mod tests {
         assert!(at(vec3(1.0, 1.0, 0.0)).z > 0.99, "{:?}", at(vec3(1.0, 1.0, 0.0)));
         // 0x80 on screen is about 0.216 linear.
         assert!((at(vec3(0.0, 1.0, 0.0)).x - 0.216).abs() < 0.005, "{:?}", at(vec3(0.0, 1.0, 0.0)));
+        // In a file of several objects the block comes after the first
+        // ones' faces; they are painted all the same.
+        let text = "o a
+v 0 0 0
+v 1 0 0
+v 1 1 0
+f 1 2 3
+o b
+v 5 0 0
+v 6 0 0
+v 6 1 0
+                    #MRGB ffff0000ffff0000ffff0000ff0000ffff0000ffff0000ff
+f 4 5 6
+";
+        let scene = read(text.as_bytes(), "test", &no_mtl).unwrap();
+        assert_eq!(scene.meshes.len(), 2);
+        for (mesh, red) in scene.meshes.iter().zip([true, false]) {
+            assert_eq!(mesh.colors.len(), 3, "{} lost its polypaint", mesh.name);
+            assert_eq!(mesh.colors[0].x > 0.99, red, "{}: {:?}", mesh.name, mesh.colors[0]);
+        }
         // A file without polypaint has no colour channel.
         let plain = read(b"v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n", "test", &no_mtl).unwrap();
         assert!(plain.meshes[0].colors.is_empty());

@@ -22,6 +22,7 @@
 //! script that cannot ask what is in the scene can only act blind.
 
 pub mod bindings;
+pub mod client;
 pub mod document;
 pub mod material;
 pub mod protocol;

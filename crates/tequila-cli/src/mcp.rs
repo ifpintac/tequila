@@ -19,9 +19,9 @@
 
 use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
+use tequila_scripting::client::{one_line, Connection as Channel};
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -430,82 +430,6 @@ impl Bridge {
     }
 }
 
-/// One connection to Tequila's scripting channel.
-struct Channel {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
-    token: String,
-    next: u64,
-}
-
-impl Channel {
-    /// The instance the discovery file names, or, if that one has gone (it
-    /// crashed and could not hand the file on), the newest other instance
-    /// still answering.
-    fn connect(discovery: &Path) -> Result<Channel, String> {
-        let mut candidates = Vec::new();
-        if discovery.exists() {
-            candidates.push(discovery.to_path_buf());
-        }
-        let others = tequila_scripting::server::instances_dir(discovery);
-        if let Ok(entries) = std::fs::read_dir(&others) {
-            let mut records: Vec<(std::time::SystemTime, PathBuf)> = entries
-                .flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-                .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-                .collect();
-            records.sort_by(|a, b| b.0.cmp(&a.0));
-            candidates.extend(records.into_iter().map(|(_, p)| p));
-        }
-        if candidates.is_empty() {
-            return Err(format!("Tequila is not running (no {})", discovery.display()));
-        }
-        for candidate in candidates {
-            let Ok(bytes) = std::fs::read(&candidate) else { continue };
-            let Ok(info) = json::parse(&bytes) else { continue };
-            let (Some(port), Some(token)) = (info.get("port").and_then(Value::as_f64), info.get("token").and_then(Value::as_str)) else {
-                continue;
-            };
-            let address = std::net::SocketAddr::from(([127, 0, 0, 1], port as u16));
-            let Ok(stream) = TcpStream::connect_timeout(&address, Duration::from_secs(5)) else { continue };
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(600)));
-            let Ok(writer) = stream.try_clone() else { continue };
-            let mut channel = Channel { reader: BufReader::new(stream), writer, token: token.to_string(), next: 0 };
-            if channel.request("ping", vec![]).is_ok() {
-                return Ok(channel);
-            }
-        }
-        Err("no running Tequila answered; is it open?".into())
-    }
-
-    fn request(&mut self, op: &str, fields: Vec<(&str, Value)>) -> Result<Value, String> {
-        self.next += 1;
-        let mut request = Object::new();
-        for (key, value) in fields {
-            request.set(key, value);
-        }
-        request.set("id", self.next as f64).set("token", self.token.as_str()).set("op", op);
-        let line = one_line(&request.build());
-        let ended = |e: &dyn std::fmt::Display| format!("Connection ended; do not retry edits blindly: {e}");
-        writeln!(self.writer, "{line}").map_err(|e| ended(&e))?;
-        self.writer.flush().map_err(|e| ended(&e))?;
-        let mut answer = String::new();
-        match self.reader.read_line(&mut answer) {
-            Ok(0) => return Err(ended(&"Tequila closed the connection")),
-            Ok(_) => {}
-            Err(e) => return Err(ended(&e)),
-        }
-        let reply = json::parse(answer.as_bytes()).map_err(|e| ended(&e))?;
-        if reply.get("id").and_then(Value::as_f64) != Some(self.next as f64) {
-            return Err(ended(&"the reply was for another request"));
-        }
-        if reply.get("ok").and_then(Value::as_bool) != Some(true) {
-            return Err(reply.get("error").and_then(Value::as_str).unwrap_or("Request failed").to_string());
-        }
-        Ok(reply.get("result").cloned().unwrap_or(Value::Null))
-    }
-}
-
 /// The answer's parts and groups, slimmed: id, name, kind, material and
 /// visibility, with each one's size and centre rather than its corners, and
 /// filtered as asked, so a model split into hundreds of parts reads.
@@ -612,12 +536,6 @@ fn absolute(path: &str) -> String {
     let path = Path::new(path);
     let full = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
     full.to_string_lossy().into_owned()
-}
-
-/// The shared writer indents; this protocol is a line per message. Its
-/// strings escape their own newlines, so the only ones left are its own.
-fn one_line(value: &Value) -> String {
-    json_write::to_string(value).split('\n').map(str::trim).collect::<Vec<_>>().join(" ").trim().to_string()
 }
 
 fn base64(bytes: &[u8]) -> String {

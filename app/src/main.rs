@@ -91,7 +91,12 @@ use orchestrator::{DisplayImage, Orchestrator, RenderRequest};
 /// application something to look at — and what makes "try this model" a command
 /// rather than a set of directions through a dialog.
 fn file_from_arguments() -> Option<(Action, std::path::PathBuf)> {
-    let path = std::path::PathBuf::from(std::env::args().nth(1)?);
+    // `--send` that found no Tequila open starts this one with the file.
+    let mut arguments = std::env::args().skip(1).peekable();
+    if arguments.peek().is_some_and(|a| a == "--send") {
+        arguments.next();
+    }
+    let path = std::path::PathBuf::from(arguments.next()?);
     if !path.is_file() {
         return None;
     }
@@ -131,6 +136,32 @@ fn main() -> eframe::Result<()> {
             std::process::exit(1);
         }
         return Ok(());
+    }
+    // `--send <file>`: what a modelling application's "Send to Tequila"
+    // runs. The Tequila that is open updates the model sent from that file
+    // before, keeping its materials, or imports it; with none open, this
+    // one starts with the file.
+    if arguments.get(1).is_some_and(|a| a == "--send") {
+        let Some(path) = arguments.get(2).map(std::path::PathBuf::from) else {
+            eprintln!("usage: tequila-app --send <model file>");
+            std::process::exit(2);
+        };
+        if !path.is_file() {
+            eprintln!("{} is not a file", path.display());
+            std::process::exit(2);
+        }
+        match tequila_scripting::client::send(&tequila_scripting::server::discovery_path(), &path) {
+            Ok(sent) => {
+                println!("{sent:?}");
+                return Ok(());
+            }
+            // None open: this one starts, with the file.
+            Err(tequila_scripting::client::SendError::NotRunning(_)) => {}
+            Err(tequila_scripting::client::SendError::Failed(error)) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
     }
     // The application was called Freeshot before: on a computer that had
     // it, its things come across the first time.
