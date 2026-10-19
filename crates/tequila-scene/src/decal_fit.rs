@@ -144,7 +144,7 @@ pub fn fit_to_bounds(bounds: Aabb) -> Option<Mapping> {
         largest * COVERAGE
     };
 
-    Some(Mapping {
+    let centred = Mapping {
         projection: Projection::Planar,
         axis,
         // A size in scene units rather than a repeat count, so the same label
@@ -160,7 +160,125 @@ pub fn fit_to_bounds(bounds: Aabb) -> Option<Mapping> {
         wrap_u: tequila_texture::mip::Wrap::Clamp,
         wrap_v: tequila_texture::mip::Wrap::Clamp,
         ..Default::default()
-    })
+    };
+    // The right way up on that face, not the way the projection's own
+    // coordinates happen to run.
+    Some(reorient(&centred, upright(Projection::Planar, axis)))
+}
+
+/// A linear map in the texture plane, rows first: from a projection's own
+/// coordinates (scaled) to the artwork's, u across the picture and v down it.
+type Plane = [[f32; 2]; 2];
+
+fn product(a: Plane, b: Plane) -> Plane {
+    [
+        [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1]],
+        [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1]],
+    ]
+}
+
+/// The inverse, for the turns and flips this module deals in.
+fn transpose(a: Plane) -> Plane {
+    [[a[0][0], a[1][0]], [a[0][1], a[1][1]]]
+}
+
+fn apply(a: Plane, p: [f32; 2]) -> [f32; 2] {
+    [a[0][0] * p[0] + a[0][1] * p[1], a[1][0] * p[0] + a[1][1] * p[1]]
+}
+
+fn turn(turns: f32) -> Plane {
+    let (sin, cos) = (turns * std::f32::consts::TAU).sin_cos();
+    [[cos, -sin], [sin, cos]]
+}
+
+fn flips(flip_u: bool, flip_v: bool) -> Plane {
+    [[if flip_u { -1.0 } else { 1.0 }, 0.0], [0.0, if flip_v { -1.0 } else { 1.0 }]]
+}
+
+/// A label's flips and turn together, in the order `Mapping` applies them.
+fn orientation(mapping: &Mapping) -> Plane {
+    product(flips(mapping.flip_u, mapping.flip_v), turn(mapping.rotation))
+}
+
+/// How artwork reads the right way up on a projection, seen from outside the
+/// part.
+///
+/// A flat one from the positive side of its axis, with the world's +Y up -
+/// and on a top face, the picture's top away from someone standing at +Z, the
+/// front. A wrap round Y from outside, reading to the right. The
+/// projections' coordinates were chosen as maths rather than for reading: v
+/// runs up the part while it runs down the picture, and the angle round a
+/// cylinder grows to the left. So a flat label used to land upside down, on
+/// its side on a side face, and wrapped round a bottle upside down and
+/// backwards. The other projections keep their own coordinates.
+fn upright(projection: Projection, axis: Axis) -> Plane {
+    match (projection, axis) {
+        // (x, y): across is x, down is -y.
+        (Projection::Planar, Axis::Z) => [[1.0, 0.0], [0.0, -1.0]],
+        // (y, z): across is -z, down is -y.
+        (Projection::Planar, Axis::X) => [[0.0, -1.0], [-1.0, 0.0]],
+        // (angle, height): across is the angle backwards, down is -height.
+        (Projection::Cylindrical, Axis::Y) => [[-1.0, 0.0], [0.0, -1.0]],
+        _ => [[1.0, 0.0], [0.0, 1.0]],
+    }
+}
+
+/// `mapping` turned and flipped to `to`, keeping its size, its pivot and the
+/// point on the part the artwork is centred on.
+///
+/// Its flips are kept where they still fit, so a mirrored label stays
+/// mirrored the way it was rather than becoming one turned half round.
+fn reorient(mapping: &Mapping, to: Plane) -> Mapping {
+    let half = [0.5, 0.5];
+    let c = [mapping.pivot.x, mapping.pivot.y];
+    let o = [mapping.offset.x, mapping.offset.y];
+    // The artwork's centre q, from F(R(q - c) + c + o) = (0.5, 0.5).
+    let fh = apply(flips(mapping.flip_u, mapping.flip_v), half);
+    let back = apply(transpose(turn(mapping.rotation)), [fh[0] - c[0] - o[0], fh[1] - c[1] - o[1]]);
+    let q = [c[0] + back[0], c[1] + back[1]];
+
+    let mirrored = to[0][0] * to[1][1] - to[0][1] * to[1][0] < 0.0;
+    let (flip_u, mut flip_v) = (mapping.flip_u, mapping.flip_v);
+    if (flip_u != flip_v) != mirrored {
+        flip_v = !flip_v;
+    }
+    let f = flips(flip_u, flip_v);
+    let r = product(f, to);
+    let rotation = r[1][0].atan2(r[0][0]) / std::f32::consts::TAU;
+    let fh = apply(f, half);
+    let ahead = apply(turn(rotation), [q[0] - c[0], q[1] - c[1]]);
+    Mapping {
+        flip_u,
+        flip_v,
+        rotation,
+        offset: vec2(fh[0] - c[0] - ahead[0], fh[1] - c[1] - ahead[1]),
+        ..*mapping
+    }
+}
+
+/// The same label on another projection or axis: centred where it was, and
+/// turned to read on the new one as it read on the old - upright if it was
+/// upright, mirrored or turned by as much as it was.
+pub fn rebase(mapping: &Mapping, projection: Projection, axis: Axis) -> Mapping {
+    if projection == mapping.projection && axis == mapping.axis {
+        return *mapping;
+    }
+    let own = product(orientation(mapping), transpose(upright(mapping.projection, mapping.axis)));
+    reorient(&Mapping { projection, axis, ..*mapping }, product(own, upright(projection, axis)))
+}
+
+/// The rotation an upright label has on this projection: what the Rotation
+/// control counts from, so it reads 0 on a label the right way up.
+pub fn upright_turn(projection: Projection, axis: Axis) -> f32 {
+    reorient(&Mapping { projection, axis, ..Mapping::default() }, upright(projection, axis)).rotation
+}
+
+/// Whether the artwork's width runs along the projection's second coordinate
+/// - a label on its side, which an upright one on a side face is - so the
+/// Size control can put width and height on the fields they belong to.
+pub fn sideways(mapping: &Mapping) -> bool {
+    let m = orientation(mapping);
+    m[0][1].abs() > m[0][0].abs()
 }
 
 /// The principal axis a surface most nearly faces.
@@ -196,10 +314,8 @@ pub fn place_at(mapping: Mapping, point: Vec3, normal: Vec3) -> Mapping {
         // UV placement has no frame to move: the coordinates belong to the
         // mesh. Nothing sensible to do, so nothing is done.
         Projection::Uv => return mapping,
-        Projection::Planar => Mapping {
-            axis: axis_facing(normal),
-            ..mapping
-        },
+        // A new face, read the same way round on it as on the old one.
+        Projection::Planar => rebase(&mapping, Projection::Planar, axis_facing(normal)),
         _ => mapping,
     };
 
@@ -231,7 +347,10 @@ pub fn place_at(mapping: Mapping, point: Vec3, normal: Vec3) -> Mapping {
     // turning the artwork where it sits rather than about wherever it was
     // last placed.
     placed.pivot = vec2(pu, pv);
-    placed.offset = vec2(0.5 - pu, 0.5 - pv);
+    // A flipped coordinate is negated after the offset, so a mirrored label
+    // is centred on -0.5 rather than 0.5 before its flip.
+    let (hu, hv) = (if placed.flip_u { -0.5 } else { 0.5 }, if placed.flip_v { -0.5 } else { 0.5 });
+    placed.offset = vec2(hu - pu, hv - pv);
     placed
 }
 
@@ -392,6 +511,112 @@ mod tests {
         });
         assert_eq!(contributions.len(), 1);
         (contributions[0].coords.u, contributions[0].coords.v)
+    }
+
+    /// Where on the artwork a point lands: (across, down) of the picture.
+    fn reads(mapping: &Mapping, at: Vec3) -> (f32, f32) {
+        coords(mapping, at)
+    }
+
+    /// Asserts that, from the centre, `right` reads further across the
+    /// picture and `up` further up it - the artwork the right way up and the
+    /// right way round, seen from where those directions are right and up.
+    fn assert_upright(mapping: &Mapping, centre: Vec3, right: Vec3, up: Vec3, what: &str) {
+        let (u0, v0) = reads(mapping, centre);
+        assert!((u0 - 0.5).abs() < 1e-4 && (v0 - 0.5).abs() < 1e-4, "{what}: the centre read ({u0}, {v0})");
+        let (ur, vr) = reads(mapping, centre + right);
+        let (uu, vu) = reads(mapping, centre + up);
+        // Linear steps: across moves u alone and up moves v alone, the
+        // right way.
+        let (du, dv) = (ur - u0, vr - v0);
+        assert!(
+            du > 0.0 && dv.abs() < 0.01 * du,
+            "{what}: to the right read ({ur}, {vr}) from ({u0}, {v0}); the artwork is mirrored or turned"
+        );
+        let (du, dv) = (uu - u0, vu - v0);
+        assert!(
+            dv < 0.0 && du.abs() < 0.01 * -dv,
+            "{what}: upwards read ({uu}, {vu}) from ({u0}, {v0}); the artwork is upside down or on its side"
+        );
+    }
+
+    /// A fitted label reads the right way up on the face it lands on, seen
+    /// from outside: the front (+Z), the side (+X) and the top, looked down
+    /// on from the front. It used to land upside down on the front and on its
+    /// side on the side.
+    #[test]
+    fn a_fitted_label_reads_the_right_way_up() {
+        let d = 0.002;
+        let front = Aabb { min: vec3(10.0, 4.0, -0.5), max: vec3(14.0, 8.0, 0.5) };
+        let fitted = fit_to_bounds(front).expect("fits");
+        assert_eq!(fitted.axis, Axis::Z);
+        assert_upright(&fitted, vec3(12.0, 6.0, 0.5), vec3(d, 0.0, 0.0), vec3(0.0, d, 0.0), "the front");
+
+        let side = Aabb { min: vec3(-0.5, 4.0, 10.0), max: vec3(0.5, 8.0, 14.0) };
+        let fitted = fit_to_bounds(side).expect("fits");
+        assert_eq!(fitted.axis, Axis::X);
+        assert_upright(&fitted, vec3(0.5, 6.0, 12.0), vec3(0.0, 0.0, -d), vec3(0.0, d, 0.0), "the side");
+        assert!(sideways(&fitted), "on a side face the width runs along the projection's second coordinate");
+
+        let top = Aabb { min: vec3(10.0, -0.5, 4.0), max: vec3(14.0, 0.5, 8.0) };
+        let fitted = fit_to_bounds(top).expect("fits");
+        assert_eq!(fitted.axis, Axis::Y);
+        assert_upright(&fitted, vec3(12.0, 0.5, 6.0), vec3(d, 0.0, 0.0), vec3(0.0, 0.0, -d), "the top");
+
+        // Wrapped round a bottle and seen from the front.
+        let wrapped = rebase(&fitted, Projection::Cylindrical, Axis::Y);
+        let r = 1.0;
+        let at = vec3(0.0, 0.3, r);
+        let wrapped = place_at(Mapping { real_world_units: false, scale: vec3(4.0, 4.0, 1.0), ..wrapped }, at, Vec3::Z);
+        assert_upright(&wrapped, at, vec3(d, 0.0, 0.0), vec3(0.0, d, 0.0), "round a bottle");
+    }
+
+    /// Dragged from the front of a box onto its side, a label stays the right
+    /// way up - and a mirrored or turned one stays mirrored or turned by as
+    /// much, and still lands under the cursor. The mirror and turn are the
+    /// person's; the face's own coordinates are not.
+    #[test]
+    fn a_label_moved_to_another_face_keeps_reading_the_same_way() {
+        let d = 0.002;
+        let start = fit_to_bounds(Aabb { min: vec3(-1.0, -1.0, -0.2), max: vec3(1.0, 1.0, 0.2) }).expect("fits");
+        let on_side = place_at(start, vec3(1.0, 0.3, 0.1), Vec3::X);
+        assert_eq!(on_side.axis, Axis::X);
+        assert_upright(&on_side, vec3(1.0, 0.3, 0.1), vec3(0.0, 0.0, -d), vec3(0.0, d, 0.0), "moved onto the side");
+
+        for (name, mine) in [("mirrored", start.mirrored(true)), ("turned", Mapping { rotation: start.rotation + 0.1, ..start })] {
+            let front = vec3(0.2, -0.1, 0.2);
+            let here = place_at(mine, front, Vec3::Z);
+            let there = place_at(here, vec3(1.0, 0.3, 0.1), Vec3::X);
+            let (u, v) = reads(&there, vec3(1.0, 0.3, 0.1));
+            assert!((u - 0.5).abs() < 1e-4 && (v - 0.5).abs() < 1e-4, "{name}: landed at ({u}, {v}), not under the click");
+            // The same small step right and up reads the same on both faces.
+            let step = |m: &Mapping, at: Vec3, right: Vec3, up: Vec3| {
+                let (u0, v0) = reads(m, at);
+                let (ur, vr) = reads(m, at + right);
+                let (uu, vu) = reads(m, at + up);
+                [ur - u0, vr - v0, uu - u0, vu - v0]
+            };
+            let a = step(&here, front, vec3(d, 0.0, 0.0), vec3(0.0, d, 0.0));
+            let b = step(&there, vec3(1.0, 0.3, 0.1), vec3(0.0, 0.0, -d), vec3(0.0, d, 0.0));
+            for k in 0..4 {
+                assert!((a[k] - b[k]).abs() < 1e-4, "{name}: read {a:?} on the front but {b:?} on the side");
+            }
+        }
+    }
+
+    /// A mirrored label clicked somewhere lands there, mirrored. Placing
+    /// used to centre it as if it were not flipped, a whole artwork-width
+    /// away.
+    #[test]
+    fn a_mirrored_label_lands_where_it_was_placed() {
+        let start = fit_to_bounds(Aabb { min: vec3(-1.0, -1.0, -0.1), max: vec3(1.0, 1.0, 0.1) }).expect("fits");
+        for mine in [start.mirrored(true), start.mirrored(false), start.mirrored(true).mirrored(false)] {
+            let at = vec3(0.4, -0.3, 0.1);
+            let placed = place_at(mine, at, Vec3::Z);
+            assert_eq!((placed.flip_u, placed.flip_v), (mine.flip_u, mine.flip_v));
+            let (u, v) = reads(&placed, at);
+            assert!((u - 0.5).abs() < 1e-4 && (v - 0.5).abs() < 1e-4, "landed at ({u}, {v})");
+        }
     }
 
     /// A panel: wide in X and Z, thin in Y. The artwork belongs on the big

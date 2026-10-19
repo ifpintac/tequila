@@ -198,10 +198,12 @@ fn print_at_size(project: &mut Project, key: MaterialKey, (width, height): (f32,
     if label.mapping.projection != Projection::Planar {
         return;
     }
-    // In metres, as every length in the document is.
+    // In metres, as every length in the document is; on a side face the
+    // width runs along the projection's second coordinate.
     label.mapping.real_world_units = true;
-    label.mapping.scale.x = width;
-    label.mapping.scale.y = height;
+    let (x, y) = if decal_fit::sideways(&label.mapping) { (height, width) } else { (width, height) };
+    label.mapping.scale.x = x;
+    label.mapping.scale.y = y;
     let text = format!("{:.1} × {:.1} mm, from the file's print resolution", width * 1000.0, height * 1000.0);
     if project.apply(Command::SetDecals { material: key, decals }).is_ok() {
         project.status = format!("Label sized to {text}");
@@ -260,7 +262,10 @@ fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitte
             "Facing"
         });
         for candidate in Axis::ALL {
-            ui.selectable_value(&mut mapping.axis, candidate, candidate.label());
+            // Turned to read on the new face as it read on the old one.
+            if ui.selectable_label(mapping.axis == candidate, candidate.label()).clicked() && mapping.axis != candidate {
+                *mapping = decal_fit::rebase(mapping, mapping.projection, candidate);
+            }
         }
         if let Some(fit) = fitted {
             if ui
@@ -271,8 +276,7 @@ fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitte
                 )
                 .clicked()
             {
-                let projection = mapping.projection;
-                *mapping = Mapping { projection, ..fit };
+                *mapping = decal_fit::rebase(&fit, mapping.projection, fit.axis);
             }
         }
     });
@@ -282,16 +286,21 @@ fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitte
         // will actually print at. Under a repeat count the same label is a
         // different size on every part it is applied to.
         mapping.real_world_units = true;
+        // On a side face the artwork's width runs along the projection's
+        // second coordinate.
+        let sideways = decal_fit::sideways(mapping);
         ui.horizontal(|ui| {
             ui.label("Size");
+            let scale = &mut mapping.scale;
+            let (width, height) = if sideways { (&mut scale.y, &mut scale.x) } else { (&mut scale.x, &mut scale.y) };
             ui.add(
-                egui::DragValue::new(&mut mapping.scale.x)
+                egui::DragValue::new(width)
                     .speed(0.01)
                     .range(0.001..=1000.0)
                     .prefix("w "),
             );
             ui.add(
-                egui::DragValue::new(&mut mapping.scale.y)
+                egui::DragValue::new(height)
                     .speed(0.01)
                     .range(0.001..=1000.0)
                     .prefix("h "),
@@ -372,13 +381,16 @@ fn uv_placement(ui: &mut egui::Ui, mapping: &mut Mapping) {
     mirror(ui, mapping);
 }
 
+/// Counted from the right way up, so an upright label reads 0 whichever
+/// face it is on.
 fn rotation(ui: &mut egui::Ui, mapping: &mut Mapping) {
-    let mut degrees = mapping.rotation * 360.0;
+    let upright = decal_fit::upright_turn(mapping.projection, mapping.axis);
+    let mut degrees = ((mapping.rotation - upright) * 360.0 + 180.0).rem_euclid(360.0) - 180.0;
     if ui
         .add(crate::field::Slider::new(&mut degrees, -180.0..=180.0).text("Rotation °"))
         .changed()
     {
-        mapping.rotation = degrees / 360.0;
+        mapping.rotation = upright + degrees / 360.0;
     }
 }
 
@@ -428,7 +440,11 @@ fn reset_row(ui: &mut egui::Ui, mapping: &mut Mapping, fitted: Option<Mapping>) 
 fn switch_to(mapping: &Mapping, projection: Projection, fitted: Option<Mapping>) -> Mapping {
     let leaving_uv = mapping.projection == Projection::Uv && projection != Projection::Uv;
     match (leaving_uv, fitted) {
-        (true, Some(fit)) => Mapping { projection, ..fit },
+        (true, Some(fit)) => decal_fit::rebase(&fit, projection, fit.axis),
+        // Between the projected modes, read the same way round on the new one.
+        _ if mapping.projection != Projection::Uv && projection != Projection::Uv => {
+            decal_fit::rebase(mapping, projection, mapping.axis)
+        }
         _ => Mapping {
             projection,
             ..*mapping
@@ -449,7 +465,7 @@ fn reset_to(mapping: &Mapping, fitted: Option<Mapping>) -> Mapping {
             projection,
             ..Default::default()
         },
-        (_, Some(fit)) => Mapping { projection, ..fit },
+        (_, Some(fit)) => decal_fit::rebase(&fit, projection, fit.axis),
     }
 }
 
@@ -498,8 +514,10 @@ mod tests {
         assert_eq!(projected.projection, Projection::Planar);
     }
 
-    /// Between the two projected modes the numbers still mean what they meant,
-    /// so they are kept — including a rotation and nudge the user has set.
+    /// Between the two projected modes the placement is kept - its axis,
+    /// size, pivot and the turn the user gave it, counted from the right way
+    /// up - and turned to read the right way round on the new one: the
+    /// coordinates round a cylinder run the other way to a flat projection's.
     ///
     /// Re-fitting here would silently discard that work every time someone
     /// tried the other mode to see how it looked.
@@ -512,9 +530,14 @@ mod tests {
         };
         let wrapped = switch_to(&mine, Projection::Cylindrical, Some(a_fit()));
         assert_eq!(wrapped.projection, Projection::Cylindrical);
-        assert_eq!(wrapped.rotation, 0.1);
-        assert_eq!(wrapped.offset, vec2(3.0, -1.0));
         assert_eq!(wrapped.axis, mine.axis);
+        assert_eq!((wrapped.scale, wrapped.pivot), (mine.scale, mine.pivot));
+        let turn = |m: &Mapping| m.rotation - decal_fit::upright_turn(m.projection, m.axis);
+        let apart = (turn(&wrapped) - turn(&mine)).rem_euclid(1.0);
+        assert!(apart.min(1.0 - apart) < 1e-5, "the user's turn went from {} to {}", turn(&mine), turn(&wrapped));
+        // ...and back again is where it started.
+        let back = switch_to(&wrapped, Projection::Planar, Some(a_fit()));
+        assert!((back.offset - mine.offset).length() < 1e-4 && (back.rotation - mine.rotation).abs() < 1e-5, "{back:?}");
     }
 
     /// Reset puts a projected label back on the part, not onto a one-unit

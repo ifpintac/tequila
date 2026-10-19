@@ -137,7 +137,8 @@ impl LabelGizmo {
         let mut decals = definition.graph.decals.clone();
         let Some(label) = decals.get_mut(target.index) else { return };
         if turn {
-            label.mapping.rotation += steps * 5f32.to_radians();
+            // Five degrees a notch; the rotation is in turns.
+            label.mapping.rotation += steps * 5.0 / 360.0;
         } else {
             let factor = (steps * 0.08).exp();
             label.mapping.scale.x = (label.mapping.scale.x * factor).clamp(1e-4, 1e4);
@@ -435,7 +436,9 @@ mod tests {
 
         gizmo.adjust(&mut project, target, -3.0, true);
         let turned = decals_of(project.document(), target)[0].mapping;
-        assert!((turned.rotation - (before.rotation - 15f32.to_radians())).abs() < 1e-5);
+        // Three notches back is fifteen degrees, and the rotation is in turns:
+        // read as radians it was 94 degrees.
+        assert!((turned.rotation - (before.rotation - 15.0 / 360.0)).abs() < 1e-5, "turned {} turns", turned.rotation - before.rotation);
     }
 
     #[test]
