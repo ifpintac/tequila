@@ -333,6 +333,7 @@ fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitte
     .on_hover_text("Slide the artwork across the face. One unit is one artwork width.");
 
     rotation(ui, mapping);
+    mirror(ui, mapping);
     reset_row(ui, mapping, fitted);
 }
 
@@ -368,6 +369,7 @@ fn uv_placement(ui: &mut egui::Ui, mapping: &mut Mapping) {
         );
     });
     rotation(ui, mapping);
+    mirror(ui, mapping);
 }
 
 fn rotation(ui: &mut egui::Ui, mapping: &mut Mapping) {
@@ -378,6 +380,29 @@ fn rotation(ui: &mut egui::Ui, mapping: &mut Mapping) {
     {
         mapping.rotation = degrees / 360.0;
     }
+}
+
+/// Turn the artwork over where it sits, for a logo that reads backwards on
+/// the face it is projected onto (the far side of a box, the inside of a
+/// lid) or artwork that was simply drawn the wrong way round.
+fn mirror(ui: &mut egui::Ui, mapping: &mut Mapping) {
+    ui.horizontal(|ui| {
+        ui.label("Mirror");
+        if ui
+            .add(egui::SelectableLabel::new(mapping.flip_u, "Horizontal"))
+            .on_hover_text("Flip the artwork left to right, where it sits.")
+            .clicked()
+        {
+            *mapping = mapping.mirrored(true);
+        }
+        if ui
+            .add(egui::SelectableLabel::new(mapping.flip_v, "Vertical"))
+            .on_hover_text("Flip the artwork top to bottom, where it sits.")
+            .clicked()
+        {
+            *mapping = mapping.mirrored(false);
+        }
+    });
 }
 
 /// Back to where a freshly added label would have started.

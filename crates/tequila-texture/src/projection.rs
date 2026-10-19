@@ -536,6 +536,26 @@ impl Mapping {
     pub fn wrap(&self) -> (Wrap, Wrap) {
         (self.wrap_u, self.wrap_v)
     }
+
+    /// The artwork mirrored where it sits: across its width (`horizontal`)
+    /// or its height.
+    ///
+    /// A flip on its own negates the finished coordinate, and a label is the
+    /// one piece of artwork between 0 and 1, so flipping alone would move it a
+    /// whole artwork-width away, usually off the part. Moving the offset by
+    /// one as well keeps that square where it was, and the picture turns over
+    /// inside it.
+    pub fn mirrored(&self, horizontal: bool) -> Mapping {
+        let mut out = *self;
+        let (flip, offset) = if horizontal {
+            (&mut out.flip_u, &mut out.offset.x)
+        } else {
+            (&mut out.flip_v, &mut out.offset.y)
+        };
+        *offset += if *flip { 1.0 } else { -1.0 };
+        *flip = !*flip;
+        out
+    }
 }
 
 /// The distance between two coordinates on a repeating axis, measured the short
@@ -574,6 +594,41 @@ mod tests {
     fn only(contributions: &[Contribution]) -> TextureCoords {
         assert_eq!(contributions.len(), 1, "expected a single contribution");
         contributions[0].coords
+    }
+
+    /// Mirroring a label turns the picture over where it sits: every point
+    /// that showed the artwork still does, at the mirrored spot in it, and a
+    /// second mirror puts it back exactly.
+    #[test]
+    fn a_mirrored_label_stays_where_it_was() {
+        let label = Mapping {
+            projection: Projection::Planar,
+            real_world_units: true,
+            scale: vec3(0.2, 0.1, 1.0),
+            offset: vec2(0.5 - 1.3 / 0.2, 0.5 - 0.4 / 0.1),
+            pivot: vec2(1.3 / 0.2, 0.4 / 0.1),
+            rotation: 0.07,
+            wrap_u: Wrap::Clamp,
+            wrap_v: Wrap::Clamp,
+            ..Default::default()
+        };
+        for horizontal in [true, false] {
+            let mirrored = label.mirrored(horizontal);
+            for (x, y) in [(1.3, 0.4), (1.36, 0.43), (1.25, 0.37), (1.4, 0.5), (2.0, 0.4)] {
+                let at = point(vec3(x, y, 0.0), Vec3::Z);
+                let (a, b) = (only(&label.project(&at)), only(&mirrored.project(&at)));
+                let (want_u, want_v) = if horizontal { (1.0 - a.u, a.v) } else { (a.u, 1.0 - a.v) };
+                assert!(
+                    (b.u - want_u).abs() < 1e-4 && (b.v - want_v).abs() < 1e-4,
+                    "at ({x}, {y}) the label read ({}, {}); mirrored it read ({}, {}), not ({want_u}, {want_v})",
+                    a.u,
+                    a.v,
+                    b.u,
+                    b.v
+                );
+            }
+            assert_eq!(mirrored.mirrored(horizontal), label, "mirroring twice is not where it started");
+        }
     }
 
     #[test]
