@@ -91,12 +91,7 @@ use orchestrator::{DisplayImage, Orchestrator, RenderRequest};
 /// application something to look at — and what makes "try this model" a command
 /// rather than a set of directions through a dialog.
 fn file_from_arguments() -> Option<(Action, std::path::PathBuf)> {
-    // `--send` that found no Tequila open starts this one with the file.
-    let mut arguments = std::env::args().skip(1).peekable();
-    if arguments.peek().is_some_and(|a| a == "--send") {
-        arguments.next();
-    }
-    let path = std::path::PathBuf::from(arguments.next()?);
+    let path = std::path::PathBuf::from(std::env::args().nth(1)?);
     if !path.is_file() {
         return None;
     }
@@ -106,6 +101,32 @@ fn file_from_arguments() -> Option<(Action, std::path::PathBuf)> {
         _ => Action::Import,
     };
     Some((action, path))
+}
+/// This process's own input and output, not handed down to a Tequila it
+/// starts. Windows gives a new process every inheritable handle its parent
+/// has, whatever its own are set to, so a Tequila started by `--send` would
+/// hold the pipes whoever ran `--send` reads, and they would wait on them
+/// until its window closed.
+#[cfg(windows)]
+fn keep_standard_handles() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(which: u32) -> *mut std::ffi::c_void;
+        fn SetHandleInformation(handle: *mut std::ffi::c_void, mask: u32, flags: u32) -> i32;
+    }
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    // STD_INPUT_HANDLE, STD_OUTPUT_HANDLE and STD_ERROR_HANDLE: -10, -11, -12.
+    for which in [-10i32, -11, -12] {
+        // SAFETY: GetStdHandle takes a constant and returns a handle, null or
+        // INVALID_HANDLE_VALUE; SetHandleInformation is given only the first
+        // and changes one flag on it. Neither keeps anything.
+        unsafe {
+            let handle = GetStdHandle(which as u32);
+            if !handle.is_null() && handle as isize != -1 {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
 }
 use library_tab::LibraryTab;
 use material_tab::MaterialTab;
@@ -150,18 +171,44 @@ fn main() -> eframe::Result<()> {
             eprintln!("{} is not a file", path.display());
             std::process::exit(2);
         }
+        use tequila_scripting::client::{SendError, Sent};
         match tequila_scripting::client::send(&tequila_scripting::server::discovery_path(), &path) {
-            Ok(sent) => {
-                println!("{sent:?}");
-                return Ok(());
+            Ok(Sent::Updated { .. }) => println!("updated {}", path.display()),
+            Ok(Sent::Imported(_)) => println!("imported {}", path.display()),
+            // None open: one is started with the file, on its own, so the
+            // button that ran this is not left waiting on a window that
+            // stays open, nor holding its output.
+            Err(SendError::NotRunning(_)) => {
+                let started = std::env::current_exe().and_then(|exe| {
+                    let mut command = std::process::Command::new(exe);
+                    command
+                        .arg(&path)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null());
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+                        command.creation_flags(0x0000_0008 | 0x0000_0200);
+                        keep_standard_handles();
+                    }
+                    command.spawn()
+                });
+                match started {
+                    Ok(_) => println!("started Tequila with {}", path.display()),
+                    Err(error) => {
+                        eprintln!("could not start Tequila: {error}");
+                        std::process::exit(1);
+                    }
+                }
             }
-            // None open: this one starts, with the file.
-            Err(tequila_scripting::client::SendError::NotRunning(_)) => {}
-            Err(tequila_scripting::client::SendError::Failed(error)) => {
+            Err(SendError::Failed(error)) => {
                 eprintln!("{error}");
                 std::process::exit(1);
             }
         }
+        return Ok(());
     }
     // The application was called Freeshot before: on a computer that had
     // it, its things come across the first time.

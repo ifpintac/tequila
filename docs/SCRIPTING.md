@@ -271,6 +271,19 @@ The ChatGPT desktop app connects only to *remote* MCP servers over HTTP, which
 this local bridge is not. For ChatGPT, use an agent that can run commands on
 this computer, such as Codex, together with the Python client.
 
+## Sending a model from another application
+
+`Tequila --send <model file>` is what a modelling application's "Send to
+Tequila" button runs (`integrations/` has ones for SolidWorks and ZBrush).
+If Tequila is open, the model sent from that file before is updated from it,
+keeping its materials, labels and names; a file not sent before is imported
+and framed. If Tequila is not open, it starts one with the file, on its own,
+and returns. It prints one line (`updated`, `imported` or `started Tequila
+with`, and the file) and exits 0, or 1 with the reason. The
+model is found again by the file it records, so a bridge writes each
+document to the same path every time. On a Mac the program is
+`Tequila.app/Contents/MacOS/Tequila`.
+
 ## Wire protocol
 
 Read `~/.tequila/channel.json` locally for `port`, `token`, and `pid`.
