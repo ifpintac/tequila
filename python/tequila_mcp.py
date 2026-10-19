@@ -130,6 +130,7 @@ TOOLS = [
     tool('tequila_ui', 'Open or close panels and switch the viewport shading.',
          {'render_window': {'type': 'boolean'}, 'console': {'type': 'boolean'}, 'inspector': {'type': 'boolean'},
           'library': {'type': 'boolean'}, 'full_viewport': {'type': 'boolean'}, 'help': {'type': 'boolean'},
+          'frame': {'type': 'boolean', 'description': "Show the viewport at the render's size and shape (on by default)."},
           'graph': {'type': ['integer', 'boolean'],
                     'description': 'Open the Material Graph editor on this material number; false closes it.'},
           'tab': {'type': 'string', 'enum': ['scene', 'material', 'environment', 'lighting', 'camera', 'image', 'studios', 'scripting']},

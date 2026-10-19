@@ -268,6 +268,9 @@ pub struct UiChange {
     pub present: Option<bool>,
     /// Draw the parts' own edges in Solid and Material Preview.
     pub edges: Option<bool>,
+    /// Show the viewport at the render's shape, the rest left empty, so
+    /// what is in the view is what the render will hold.
+    pub frame: Option<bool>,
     /// The shortcuts window.
     pub help: Option<bool>,
     /// `light`, `dark` or `auto`.
@@ -786,6 +789,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             full_viewport: opt_bool(value, "full_viewport")?,
             present: opt_bool(value, "present")?,
             edges: opt_bool(value, "edges")?,
+            frame: opt_bool(value, "frame")?,
             help: opt_bool(value, "help")?,
             mode: opt_string(value, "mode")?,
             theme: opt_string(value, "theme")?,

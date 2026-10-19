@@ -57,6 +57,7 @@ mod orient;
 mod profile;
 mod project;
 mod recent;
+mod render_frame;
 mod render_window;
 mod scene_tab;
 mod procedural_gpu;
@@ -215,6 +216,9 @@ struct TequilaApp {
     presenting: Option<Presentation>,
     /// Draw the parts' own edges in Solid and Material Preview.
     show_model_edges: bool,
+    /// The viewport at the render's own shape, so nothing in view is cut
+    /// from the render and nothing out of view appears in it.
+    show_render_frame: bool,
     /// Full screen asked for, for the next frame to send.
     fullscreen_request: Option<bool>,
     /// Every configuration, waiting on a yes before it is queued.
@@ -702,6 +706,7 @@ impl TequilaApp {
             full_viewport: false,
             presenting: None,
             show_model_edges: false,
+            show_render_frame: true,
             fullscreen_request: None,
             batch_plan: None,
             web_plan: None,
@@ -1462,9 +1467,16 @@ impl eframe::App for TequilaApp {
 impl TequilaApp {
     fn viewport(&mut self, ui: &mut egui::Ui) {
         let available = ui.available_size();
+        let (area, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+        // The picture: all of the area, or with the render frame on, the
+        // render's own shape inside it. Everything about the picture -
+        // drawing, picking, the gizmos - works in `rect`; the controls laid
+        // over the view stay where they always are, in `area`. Navigation
+        // takes drags anywhere in the area.
+        let rect = self.picture_rect(area);
         let size = (
-            (available.x.max(1.0) as usize).max(16),
-            (available.y.max(1.0) as usize).max(16),
+            (rect.width().max(1.0) as usize).max(16),
+            (rect.height().max(1.0) as usize).max(16),
         );
         // A window dragged to another screen, or a new text size, changes
         // the pixels behind the same points.
@@ -1472,8 +1484,6 @@ impl TequilaApp {
         let resized = size != self.viewport_size || scale != self.render_scale;
         self.viewport_size = size;
         self.render_scale = scale;
-
-        let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
         self.viewport_rect = rect;
 
         // ---- Navigation (`TEQUILA_SPEC.md` §1.7) -----------------------
@@ -1550,7 +1560,7 @@ impl TequilaApp {
         let over_legend = self.show_axis_legend
             && response
                 .hover_pos()
-                .is_some_and(|at| axis_legend::contains(rect, at));
+                .is_some_and(|at| axis_legend::contains(area, at));
 
         // ---- Picking (§4.1) ---------------------------------------------
         let presenting = self.presenting.is_some();
@@ -1730,7 +1740,7 @@ impl TequilaApp {
         // of the numbers.
         if self.camera_tab.show_grid {
             grid::draw(
-                ui.painter(),
+                &ui.painter_at(rect),
                 rect,
                 &self.camera.camera,
                 self.camera.target,
@@ -1752,8 +1762,12 @@ impl TequilaApp {
             self.pin_gizmo.draw(ui, rect, &self.project);
         }
 
+        if rect != area {
+            render_frame::draw(ui.painter(), area, rect, self.project.render_settings());
+        }
+
         if self.show_axis_legend {
-            if let Some(view) = axis_legend::show(ui, rect, &self.camera.camera, Vec3::Y) {
+            if let Some(view) = axis_legend::show(ui, area, &self.camera.camera, Vec3::Y) {
                 self.camera.set_standard_view(view);
                 self.submit();
             }
@@ -1769,16 +1783,27 @@ impl TequilaApp {
             self.show_hud = !self.show_hud;
         }
         if !presenting {
-            self.viewport_overlays(ui, rect);
-            self.welcome_card(ui, rect);
+            self.viewport_overlays(ui, area);
+            self.welcome_card(ui, area);
             if self.show_hud {
-                self.hud(ui, rect);
+                self.hud(ui, area);
             }
         }
 
         let mut toasts = std::mem::take(&mut self.toasts);
-        toasts.show(ui.ctx(), rect);
+        toasts.show(ui.ctx(), area);
         self.toasts = toasts;
+    }
+
+    /// Where the picture goes in the viewport's `area`: all of it, or with
+    /// the render frame on, the render's shape inside it. Not while
+    /// presenting, which is the product full screen and not a render.
+    fn picture_rect(&self, area: egui::Rect) -> egui::Rect {
+        let settings = self.project.render_settings();
+        if !self.show_render_frame || self.presenting.is_some() {
+            return area;
+        }
+        render_frame::fit(area, settings.width, settings.height)
     }
 
     /// The node under a viewport point, or `None` for empty space.
@@ -2749,6 +2774,8 @@ impl TequilaApp {
                     ui.separator();
                     ui.add(crate::field::Checkbox::new(&mut self.show_hud, "Render statistics"))
                         .on_hover_text("H");
+                    ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
+                        .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
                     ui.separator();
@@ -5936,6 +5963,9 @@ mod undo_tests {
         // the Compact size.
         for (native, zoom, scale) in [(2.0, 0.92, 1.84f32), (2.0, 1.0, 2.0), (1.0, 0.92, 1.0), (1.0, 1.0, 1.0)] {
             let mut app = TequilaApp::for_tests();
+            // The whole viewport: this is about pixels per point, not about
+            // the render frame's shape.
+            app.show_render_frame = false;
             // Tequila's renderer, which any test machine has: Cycles on a
             // graphics card renders the size asked for.
             let settings = tequila_scene::render::RenderSettings {
@@ -5974,6 +6004,45 @@ mod undo_tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+    }
+
+    /// With the render frame on (the default), the viewport renders at the
+    /// render's shape: a 16:9 render in a 4:3 viewport asks for a 16:9
+    /// picture across its width, so nothing on screen is cut from the
+    /// render. Turned off, the picture fills the viewport again.
+    #[test]
+    fn the_viewport_takes_the_renders_shape() {
+        let mut app = TequilaApp::for_tests();
+        assert!(app.show_render_frame, "the render frame is on by default");
+        let settings = tequila_scene::render::RenderSettings {
+            engine: tequila_scene::render::RenderEngine::Tequila,
+            width: 1920,
+            height: 1080,
+            ..app.project.render_settings().clone()
+        };
+        app.project.apply(Command::SetRenderSettings { settings: Box::new(settings) }).unwrap();
+        app.set_view_mode(view_mode::ViewMode::Rendered);
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let run = |app: &mut TequilaApp| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                ..Default::default()
+            };
+            input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.0);
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| app.viewport(ui));
+            });
+        };
+        run(&mut app);
+        assert_eq!(app.viewport_size, (400, 225), "the picture is not the render's shape");
+        let request = app.orchestrator.request().expect("the viewport asked for nothing");
+        assert_eq!((request.width, request.height), (400, 225));
+        assert!(app.viewport_rect.center().distance(egui::pos2(200.0, 150.0)) <= 0.5, "the picture is not centred");
+
+        app.show_render_frame = false;
+        run(&mut app);
+        assert_eq!(app.viewport_size, (400, 300), "with the frame off the picture fills the viewport");
     }
 
     /// Import a file through the same path the File menu and a drop take.

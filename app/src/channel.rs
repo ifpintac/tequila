@@ -453,6 +453,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(edges) = change.edges {
         app.show_model_edges = edges;
     }
+    if let Some(frame) = change.frame {
+        app.show_render_frame = frame;
+    }
     match change.present {
         Some(true) => app.start_presentation(),
         Some(false) => app.end_presentation(),
@@ -500,6 +503,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("full_viewport", app.full_viewport)
         .set("present", app.presenting.is_some())
         .set("edges", app.show_model_edges)
+        .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
         .set("recent", Value::Array(app.recent.iter().map(|p| Value::String(p.display().to_string())).collect()))

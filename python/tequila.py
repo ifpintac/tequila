@@ -275,7 +275,8 @@ class Client:
 
     def ui(self, **changes):
         """Open or close panels: render_window, console, inspector, library,
-        full_viewport, help (bools), tab='material', graph=<material> or
+        full_viewport, help, frame (the render's shape in the viewport)
+        (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
         'meadow'|'rose'."""
