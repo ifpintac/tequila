@@ -1,3 +1,7 @@
 # Shell scripts run on macOS and Linux, where a carriage return at the end
 # of a line breaks them; keep them LF in every checkout, Windows included.
 *.sh text eol=lf
+
+# SolidWorks macros: VBA text, CRLF as the VBA editor writes and reads it.
+*.bas text eol=crlf
+*.swb text eol=crlf

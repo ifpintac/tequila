@@ -44,12 +44,15 @@ Questions, bugs, ideas and renders: join the
 ## What it does
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
-  OBJ, STL, USD and IFC, with assemblies, names, colours and units; very
-  large models; re-tessellate and re-import that keep your work.
+  OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
+  colours and units; very large models; re-tessellate and re-import that
+  keep your work. Send models from Blender (live), SolidWorks and ZBrush
+  ([integrations](integrations)).
 - **Materials** - a library of 309 procedural materials (plastics, metals,
   glass, paints with flakes, fabrics, gems, liquids with bubbles, wood,
-  stone...), a node editor, labels and decals, texture packs, colourways and
-  variants. Drop a material on a part, on a selection or on a whole group.
+  stone...), a node editor, labels and decals, texture packs, KeyShot
+  material packages (.kmp), colourways and variants. Drop a material on a
+  part, on a selection or on a whole group.
 - **Lighting** - HDRI environments and an HDRI editor, sun and sky, area,
   spot, point and IES lights, light groups you can relight after rendering,
   and studio setups saved by name.
