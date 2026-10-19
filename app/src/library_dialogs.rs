@@ -240,7 +240,7 @@ impl NewMaterialDialog {
                         if let Some(path) = &self.file {
                             ui.label(egui::RichText::new(path.display().to_string()).small().monospace());
                         }
-                        hint(ui, "A material somebody shared: a Tequila material package (.fsmat) or a preset's .json. It keeps its own name unless you give it another here.");
+                        hint(ui, "A material somebody shared: a Tequila material package (.fsmat), a preset's .json, or a KeyShot material package (.kmp). It keeps its own name unless you give it another here.");
                         self.file.is_some()
                     }
                 };
@@ -475,7 +475,8 @@ fn pack_name(path: &std::path::Path) -> String {
 pub fn pick_material_file() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Import a material")
-        .add_filter("Material", &["fsmat", "json", "zip"])
+        .add_filter("Material", &["fsmat", "json", "zip", "kmp"])
+        .add_filter("KeyShot material package", &["kmp"])
         .pick_file()
 }
 

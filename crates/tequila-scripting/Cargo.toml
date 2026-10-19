@@ -12,6 +12,8 @@ authors.workspace = true
 tequila-core.workspace = true
 tequila-scene.workspace = true
 tequila-format.workspace = true
+# KeyShot material packages for `library import`.
+tequila-import.workspace = true
 tequila-materials.workspace = true
 tequila-texture.workspace = true
 tequila-render-core.workspace = true

@@ -94,7 +94,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("jobs", "the background queue: what is waiting, rendering and done"),
     ("library", "every material preset, shipped and your own"),
     ("library apply <name>", "put a library preset on the selection, as one undo step"),
-    ("library import <path>", "a material package (.fsmat), preset (.json) or texture pack into your library"),
+    ("library import <path>", "a material package (.fsmat), preset (.json), KeyShot package (.kmp) or texture pack into your library"),
     ("stop", "stop the background render; it still saves what it has"),
     ("changes", "what undo and redo would do, and whether there is unsaved work"),
     ("quit [save|discard]", "close Tequila; refuses unsaved work unless told which"),

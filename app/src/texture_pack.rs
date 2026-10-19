@@ -279,6 +279,8 @@ pub fn classify_drop(path: &Path) -> Dropped {
         "tequila" | "freeshot" => Dropped::Project,
         // A ZIP is a pack of maps unless it holds a material.
         "fsmat" | "json" | "zip" if tequila_format::library::is_material_file(path) => Dropped::Material,
+        // KeyShot's material packages.
+        "kmp" => Dropped::Material,
         "zip" | "png" | "jpg" | "jpeg" | "tif" | "tiff" => Dropped::TexturePack,
         _ => Dropped::Unknown,
     }

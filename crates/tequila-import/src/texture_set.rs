@@ -511,7 +511,7 @@ pub fn extract_zip(bytes: &[u8], directory: &Path) -> Result<Vec<PathBuf>, Impor
 }
 
 /// A ZIP's members, stored or deflated, read through the central directory.
-fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ImportError> {
+pub(crate) fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, ImportError> {
     use std::io::Read;
     let u16_at = |at: usize| -> Option<u16> { bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]])) };
     let u32_at = |at: usize| -> Option<u32> { bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) };

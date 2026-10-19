@@ -3784,6 +3784,7 @@ dependencies = [
  "tequila-core",
  "tequila-denoise",
  "tequila-format",
+ "tequila-import",
  "tequila-materials",
  "tequila-render-core",
  "tequila-render-cpu",

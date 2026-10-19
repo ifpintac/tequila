@@ -340,7 +340,24 @@ pub fn library_request(
             if !path.exists() {
                 return Err(format!("{} does not exist", path.display()));
             }
-            let file = if library::is_material_file(&path) {
+            // What a KeyShot package could not bring across.
+            let mut notes: Vec<String> = Vec::new();
+            let file = if tequila_import::keyshot::is_kmp(&path) {
+                let (file, kept) = tequila_import::keyshot::import_to_library(&path, &user, |entry| {
+                    if let Some(name) = &request.name {
+                        entry.name = name.clone();
+                    }
+                    if let Some(category) = &request.category {
+                        entry.category = category.clone();
+                    }
+                    if !request.tags.is_empty() {
+                        entry.tags = request.tags.clone();
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+                notes = kept;
+                file
+            } else if library::is_material_file(&path) {
                 library::import_material_file(&path, &user, |entry| {
                     if let Some(name) = &request.name {
                         entry.name = name.clone();
@@ -366,7 +383,12 @@ pub fn library_request(
             };
             let (now, _) = library::read_directory_from(&user, Source::User);
             let imported = now.iter().find(|e| std::path::Path::new(&e.path) == file).map(|e| e.name.clone()).unwrap_or_default();
-            Ok(done("imported", &imported, Some(&file)))
+            let mut out = Object::new();
+            out.set("imported", imported).set("file", file.display().to_string());
+            if !notes.is_empty() {
+                out.set("notes", Value::Array(notes.into_iter().map(Value::String).collect()));
+            }
+            Ok(LibraryOutcome::Done(out.build()))
         }
         "export" => {
             let entry = find(&name, false)?;

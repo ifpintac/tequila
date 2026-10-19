@@ -153,6 +153,22 @@ impl crate::TequilaApp {
     /// A material file - a package or a preset - into the user's library,
     /// however it arrived: dropped, picked, or named by a script.
     pub(crate) fn import_material_file(&mut self, path: &Path) {
+        // A KeyShot package says what did not come across.
+        if tequila_import::keyshot::is_kmp(path) {
+            match tequila_import::keyshot::import_to_library(path, &user_library_path(), |_| {}) {
+                Ok((saved, notes)) => {
+                    self.library.reload();
+                    self.library.show_mine();
+                    let name = self.library_entry_at(&saved.display().to_string()).map(|e| e.name).unwrap_or_default();
+                    self.toasts.info(format!("Added `{name}` to your library, from KeyShot"));
+                    for note in notes {
+                        self.toasts.warn(format!("{name}: {note}"));
+                    }
+                }
+                Err(error) => self.toasts.warn(error.to_string()),
+            }
+            return;
+        }
         match library::import_material_file(path, &user_library_path(), |_| {}) {
             Ok(saved) => {
                 self.library.reload();
@@ -200,17 +216,28 @@ impl crate::TequilaApp {
                 let entry = pack_entry(&path, size, name, category, tags)?;
                 library::save_entry(&directory, &entry)
             }
-            Start::File(path) => library::import_material_file(&path, &directory, |entry| {
-                if !name.is_empty() {
-                    entry.name = name;
+            Start::File(path) => {
+                let adjust = |entry: &mut LibraryEntry| {
+                    if !name.is_empty() {
+                        entry.name = name;
+                    }
+                    if !category.is_empty() {
+                        entry.category = category;
+                    }
+                    if !tags.is_empty() {
+                        entry.tags = tags;
+                    }
+                };
+                if tequila_import::keyshot::is_kmp(&path) {
+                    let (saved, notes) = tequila_import::keyshot::import_to_library(&path, &directory, adjust).map_err(|e| e.to_string())?;
+                    for note in notes {
+                        self.toasts.warn(note);
+                    }
+                    Ok(saved)
+                } else {
+                    library::import_material_file(&path, &directory, adjust)
                 }
-                if !category.is_empty() {
-                    entry.category = category;
-                }
-                if !tags.is_empty() {
-                    entry.tags = tags;
-                }
-            }),
+            }
         };
         saved.map_err(|e| e.to_string())
     }

@@ -556,9 +556,10 @@ class Library:
         return self._client.request('library', **fields)
 
     def import_(self, path, *, name=None, category=None, tags=(), size=None):
-        """A material package (.fsmat), a preset's .json, or a texture pack
-        (folder, ZIP or one of its maps; `size` metres a repeat) into the
-        user's library."""
+        """A material package (.fsmat), a preset's .json, a KeyShot material
+        package (.kmp; the reply's `notes` say what did not come across), or
+        a texture pack (folder, ZIP or one of its maps; `size` metres a
+        repeat) into the user's library."""
         fields = {'action': 'import', 'path': str(Path(path).resolve()), 'tags': list(tags)}
         for key, value in (('name', name), ('category', category), ('size', size)):
             if value is not None:
