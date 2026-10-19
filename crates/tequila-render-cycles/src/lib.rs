@@ -322,6 +322,21 @@ impl Session {
         self.node_or_error(node)
     }
 
+    /// Whether this library takes vertex colours (`mesh_colors`); one built
+    /// before them does not.
+    pub fn has_vertex_colours(&self) -> bool {
+        self.api.fsc_mesh_colors.is_some()
+    }
+
+    /// Colours painted on `mesh`'s vertices, RGBA in the rendering space, one
+    /// per vertex: the "tq_color" attribute.
+    pub fn mesh_colors(&mut self, mesh: Node, rgba: &[[f32; 4]]) -> Result<(), String> {
+        let Some(send) = self.api.fsc_mesh_colors else {
+            return Err("this Cycles library predates vertex colours".into());
+        };
+        self.check(unsafe { send(self.raw, mesh.0, rgba.len() as c_int, rgba.as_ptr().cast()) })
+    }
+
     pub fn object(&mut self, mesh: Node, matrix: &[f32; 12], visibility: u32, shadow_catcher: bool) -> Result<Node, String> {
         let node = unsafe { (self.api.fsc_object)(self.raw, mesh.0, matrix.as_ptr(), visibility, shadow_catcher as c_int) };
         self.node_or_error(node)

@@ -49,7 +49,22 @@ pub fn read(
     let mut group_name = name.to_string();
     let mut current_material: Option<usize> = None;
 
+    // ZBrush's polypaint: `#MRGB` comment lines after the vertices, holding
+    // a mask and a colour for each vertex in order, as 8 hex digits MMRRGGBB.
+    let mut polypaint: Vec<tequila_core::math::Vec4> = Vec::new();
+
     for (number, line) in text.lines().enumerate() {
+        if let Some(block) = line.trim_start().strip_prefix("#MRGB") {
+            for colour in mrgb(block) {
+                let index = polypaint.len();
+                polypaint.push(colour);
+                // A colour on the vertex line is the file's own say.
+                if let Some(slot @ None) = vertex_colors.get_mut(index) {
+                    *slot = Some(colour);
+                }
+            }
+            continue;
+        }
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
@@ -75,7 +90,7 @@ pub fn read(
                         if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
                     };
                     tequila_core::math::vec4(linear(values[3]), linear(values[4]), linear(values[5]), 1.0)
-                }));
+                }).or_else(|| polypaint.get(positions.len() - 1).copied()));
             }
             "vn" => normals.push(read_vec3(&mut words, number)?),
             "vt" => {
@@ -226,6 +241,25 @@ pub fn read(
 }
 
 /// A path from another machine, or rooted: not relative to anything here.
+/// The colours in one `#MRGB` line: groups of 8 hex digits, a mask byte then
+/// red, green and blue as display values. A group that is not hex ends the
+/// line rather than shifting every colour after it onto the wrong vertex.
+fn mrgb(block: &str) -> Vec<tequila_core::math::Vec4> {
+    let digits: Vec<u8> = block.trim().bytes().collect();
+    let linear = |byte: u8| {
+        let v = byte as f32 / 255.0;
+        if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let mut out = Vec::new();
+    for group in digits.chunks_exact(8) {
+        let Ok(text) = std::str::from_utf8(group) else { break };
+        let Ok(value) = u32::from_str_radix(text, 16) else { break };
+        let [_, r, g, b] = value.to_be_bytes();
+        out.push(tequila_core::math::vec4(linear(r), linear(g), linear(b), 1.0));
+    }
+    out
+}
+
 fn is_absolute(path: &str) -> bool {
     path.starts_with(['/', '\\']) || path.as_bytes().get(1) == Some(&b':')
 }
@@ -1092,6 +1126,27 @@ mod tests {
             "the mask does not drive opacity: {:?}",
             program.driven
         );
+    }
+
+    /// ZBrush writes polypaint as `#MRGB` comments after the vertices, a
+    /// mask byte and a colour per vertex in order; read as display values.
+    #[test]
+    fn zbrush_polypaint_comes_in_as_vertex_colours() {
+        let text = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n\
+                    #MRGB ffff0000ff00ff00\n#MRGB ff0000ff00808080\n\
+                    f 1 2 3 4\n";
+        let scene = read(text.as_bytes(), "test", &no_mtl).unwrap();
+        let mesh = &scene.meshes[0];
+        assert_eq!(mesh.colors.len(), mesh.positions.len(), "the polypaint did not come in");
+        let at = |p: Vec3| mesh.colors[mesh.positions.iter().position(|&q| q == p).unwrap()];
+        assert!(at(vec3(0.0, 0.0, 0.0)).x > 0.99 && at(vec3(0.0, 0.0, 0.0)).y < 0.01, "{:?}", at(vec3(0.0, 0.0, 0.0)));
+        assert!(at(vec3(1.0, 0.0, 0.0)).y > 0.99, "{:?}", at(vec3(1.0, 0.0, 0.0)));
+        assert!(at(vec3(1.0, 1.0, 0.0)).z > 0.99, "{:?}", at(vec3(1.0, 1.0, 0.0)));
+        // 0x80 on screen is about 0.216 linear.
+        assert!((at(vec3(0.0, 1.0, 0.0)).x - 0.216).abs() < 0.005, "{:?}", at(vec3(0.0, 1.0, 0.0)));
+        // A file without polypaint has no colour channel.
+        let plain = read(b"v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2 3\n", "test", &no_mtl).unwrap();
+        assert!(plain.meshes[0].colors.is_empty());
     }
 
     #[test]

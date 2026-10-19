@@ -455,6 +455,7 @@ pub fn build(
 /// The half of [`build`] that needs no document.
 fn prepare_scene(mut scene: RawScene, options: &ImportOptions) -> Result<(RawScene, Processed, ImportReport), ImportError> {
     scene.validate().map_err(ImportError::Malformed)?;
+    show_vertex_colours(&mut scene);
     let mut report = ImportReport {
         meshes_read: scene.meshes.len(),
         warnings: std::mem::take(&mut scene.warnings),
@@ -477,6 +478,69 @@ fn prepare_scene(mut scene: RawScene, options: &ImportOptions) -> Result<(RawSce
     let processed = process(&scene, options, &mut report)?;
     resolve_units(&scene, &processed.0, options, &mut report);
     Ok((scene, processed, report))
+}
+
+/// Colours painted on the vertices, shown: the base colour of every material
+/// a coloured mesh wears is multiplied by them, as glTF's COLOR_0 asks. A
+/// mesh without colours reads white there, so a material it shares is
+/// unchanged on it. A coloured mesh with no material is given one.
+///
+/// Without this the colours were imported and nothing showed them: a ZBrush
+/// polypaint, a scan's colours and a glTF's painted vertices all rendered as
+/// a plain finish, and only a Vertex Color node added by hand brought them
+/// back.
+fn show_vertex_colours(scene: &mut RawScene) {
+    use tequila_materials::graph::{Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::{MaterialType, Param};
+
+    let mut own: Option<usize> = None;
+    let mut shown = std::collections::BTreeSet::new();
+    for i in 0..scene.meshes.len() {
+        let mesh = &scene.meshes[i];
+        if mesh.colors.is_empty() || mesh.colors.len() != mesh.positions.len() {
+            continue;
+        }
+        let material = match mesh.material.filter(|&m| m < scene.materials.len()) {
+            Some(material) => material,
+            None => *own.get_or_insert_with(|| {
+                scene.materials.push(tequila_scene::material::MaterialDefinition::new(
+                    "Vertex colours",
+                    MaterialType::Plastic,
+                    tequila_materials::openpbr::Material::plastic(tequila_core::spectrum::Spectrum::ONE, 0.45),
+                ));
+                scene.materials.len() - 1
+            }),
+        };
+        scene.meshes[i].material = Some(material);
+        if !shown.insert(material) {
+            continue;
+        }
+        let graph = &mut scene.materials[material].graph;
+        let output = graph.output();
+        let colours = graph.add_node(Node::new(NodeKind::VertexColor));
+        // Whatever gave the base colour before - a picture, or the colour
+        // itself - times the vertices'.
+        let driver = graph
+            .links()
+            .iter()
+            .find(|l| l.to == output && l.to_socket == Socket::Param(Param::BaseColor))
+            .map(|l| (l.from, l.from_socket));
+        let base = graph.material().base_color;
+        let by = match driver {
+            Some(driver) => Some(driver),
+            None if (base.max_component() - base.min_component()).abs() < 1e-4 && base.max_component() > 0.999 => None,
+            None => Some((graph.add_node(Node::new(NodeKind::Constant(Value::Color(base)))), 0)),
+        };
+        match by {
+            None => graph.connect(colours, output, Socket::Param(Param::BaseColor)),
+            Some((from, socket)) => {
+                let product = graph.add_node(Node::new(NodeKind::Multiply));
+                graph.connect(colours, product, Socket::Input(0));
+                graph.connect_output(from, socket, product, Socket::Input(1));
+                graph.connect(product, output, Socket::Param(Param::BaseColor));
+            }
+        }
+    }
 }
 
 /// The half of [`build`] that gives the import the document's keys.
@@ -964,6 +1028,88 @@ mod tests {
         let grey = meshes.iter().find(|m| m.colors.first().is_some_and(|c| c.x < 0.9)).expect("the grey part");
         // 0.5 on screen is about 0.214 linear.
         assert!((grey.colors[0].x - 0.214).abs() < 0.01, "not decoded: {:?}", grey.colors[0]);
+    }
+
+    /// Painted vertices are shown: the parts that carry colours wear a
+    /// material whose base colour is the vertices' - a material of their own
+    /// when they had none, the one they had multiplied when they did - and a
+    /// part without colours keeps its material as it was.
+    #[test]
+    fn vertex_colours_are_shown_on_the_parts_that_carry_them() {
+        use tequila_materials::graph::{NodeKind, Socket};
+        use tequila_materials::material_type::Param;
+        // Whether a part's material reads the vertices' colours into its base
+        // colour, through whatever lies between.
+        let reads_colours = |document: &SceneDocument, coloured: bool| -> Vec<bool> {
+            document
+                .tree
+                .iter()
+                .filter_map(|n| match n.kind {
+                    tequila_scene::tree::NodeKind::Part { mesh } => {
+                        let has = document.geometry.get(mesh).is_some_and(|g| !g.colors.is_empty());
+                        (has == coloured).then_some(n.material)
+                    }
+                    _ => None,
+                })
+                .map(|material| {
+                    let Some(graph) = material.and_then(|m| document.materials.get(m)).map(|d| &d.graph) else {
+                        return false;
+                    };
+                    let output = graph.output();
+                    let mut stack: Vec<_> = graph
+                        .links()
+                        .iter()
+                        .filter(|l| l.to == output && l.to_socket == Socket::Param(Param::BaseColor))
+                        .map(|l| l.from)
+                        .collect();
+                    while let Some(id) = stack.pop() {
+                        if matches!(graph.node(id).map(|n| &n.kind), Some(NodeKind::VertexColor)) {
+                            return true;
+                        }
+                        stack.extend(graph.links().iter().filter(|l| l.to == id).map(|l| l.from));
+                    }
+                    false
+                })
+                .collect()
+        };
+
+        // No material at all: one is made, for the painted part only.
+        let text = "o painted
+v 0 0 0 1 0 0
+v 1 0 0 0 1 0
+v 1 1 0 0 0 1
+f 1 2 3
+o plain
+v 5 0 0
+v 6 0 0
+v 6 1 0
+f 4 5 6
+";
+        let (document, _) = import_text(text, "obj", &Default::default());
+        assert_eq!(reads_colours(&document, true), vec![true], "the painted part's material does not read its colours");
+        assert_eq!(reads_colours(&document, false), vec![false], "the plain part was given the painted part's material");
+
+        // A coloured glTF-style mesh with its own tinted material: multiplied.
+        let mut scene = RawScene::default();
+        scene.materials.push(tequila_scene::material::MaterialDefinition::new(
+            "Tinted",
+            tequila_materials::material_type::MaterialType::Plastic,
+            tequila_materials::openpbr::Material::plastic(tequila_core::spectrum::spectrum(0.8, 0.2, 0.2), 0.4),
+        ));
+        scene.meshes.push(crate::raw::RawMesh {
+            positions: vec![vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)],
+            colors: vec![tequila_core::math::vec4(0.5, 0.5, 0.5, 1.0); 3],
+            indices: vec![0, 1, 2],
+            material: Some(0),
+            name: "tinted".into(),
+            ..Default::default()
+        });
+        show_vertex_colours(&mut scene);
+        let graph = &scene.materials[0].graph;
+        let output = graph.output();
+        let driver = graph.links().iter().find(|l| l.to == output && l.to_socket == Socket::Param(Param::BaseColor)).expect("driven");
+        assert!(matches!(graph.node(driver.from).map(|n| &n.kind), Some(NodeKind::Multiply)), "the tint was replaced rather than multiplied");
+        assert_eq!(scene.materials.len(), 1, "a material was made for a mesh that had one");
     }
 
     #[test]

@@ -888,7 +888,21 @@ impl Builder<'_> {
                 })
                 .collect()
         });
-        self.session.mesh(&positions, normals.as_deref(), &triangles, uvs.as_deref(), &[shader])
+        let node = self.session.mesh(&positions, normals.as_deref(), &triangles, uvs.as_deref(), &[shader])?;
+        // Painted vertices, in the rendering space as Tequila's renderer
+        // reads them (`SceneSnapshot::vertex_color_at`).
+        if mesh.colors.len() == mesh.positions.len() && !mesh.colors.is_empty() && self.session.has_vertex_colours() {
+            let rgba: Vec<[f32; 4]> = mesh
+                .colors
+                .iter()
+                .map(|c| {
+                    let v = tequila_core::spectrum::Spectrum::from_linear_srgb(tequila_core::math::vec3(c.x, c.y, c.z)).to_rendering_rgb();
+                    [v.x, v.y, v.z, 1.0]
+                })
+                .collect();
+            self.session.mesh_colors(node, &rgba)?;
+        }
+        Ok(node)
     }
 
     /// `texture` on the device; `label` for a label's, a copy of its own
@@ -1470,6 +1484,7 @@ impl Builder<'_> {
                     (dst, self.apply(shader, kind, &inputs, *output)?)
                 }
                 Instruction::Input { dst, input } => (dst, self.point_input(shader, *input)?),
+                Instruction::VertexColor { dst } => (dst, self.vertex_colour(shader)?),
                 Instruction::Evaluate { dst, procedural, seed, mapping } => {
                     let slot = self.procedural(shader, procedural, *seed, mapping.as_deref())?;
                     (dst, slot.unwrap_or(Slot::Value(Value::Float(0.5))))
@@ -1613,6 +1628,25 @@ impl Builder<'_> {
             }
         };
         Ok(Slot::Link(cycles, out.cycles))
+    }
+
+    /// The colours painted on the vertices, white where a mesh has none, as
+    /// Tequila's renderer reads them. Cycles reads a missing attribute as
+    /// transparent black, so its alpha chooses between it and white; a
+    /// library built before vertex colours gives white everywhere.
+    fn vertex_colour(&mut self, shader: Shader) -> Result<Slot, String> {
+        if !self.session.has_vertex_colours() {
+            self.out.warn("this Cycles library predates vertex colours; they render white");
+            return Ok(Slot::Value(Value::Color(tequila_core::spectrum::Spectrum::ONE)));
+        }
+        let attribute = self.session.node(shader, "attribute")?;
+        self.session.set_string(attribute, "attribute", "tq_color")?;
+        let mix = self.session.node(shader, "mix")?;
+        self.session.set_string(mix, "mix_type", "mix")?;
+        self.session.connect(shader, attribute, "Alpha", mix, "Fac")?;
+        self.feed(shader, mix, "Color1", Slot::Value(Value::Color(tequila_core::spectrum::Spectrum::ONE)), true)?;
+        self.session.connect(shader, attribute, "Color", mix, "Color2")?;
+        Ok(Slot::Link(mix, "Color"))
     }
 
     /// What the shading point says to a node that reads it, as Tequila's

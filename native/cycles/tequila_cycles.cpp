@@ -923,6 +923,22 @@ FscNode fsc_mesh(FscSession *s,
   return mesh;
 }
 
+int fsc_mesh_colors(FscSession *s, FscNode node, int vertex_count, const float *rgba)
+{
+  const EditLock lock(s);
+  Mesh *mesh = static_cast<Mesh *>(node);
+  if (mesh == nullptr || rgba == nullptr || vertex_count != int(mesh->get_verts().size())) {
+    fail("vertex colours do not match the mesh's vertices");
+    return 0;
+  }
+  Attribute *attr = mesh->attributes.add(ustring("tq_color"), TypeRGBA, ATTR_ELEMENT_VERTEX);
+  float4 *colour = attr->data_float4();
+  for (int i = 0; i < vertex_count; i++) {
+    colour[i] = make_float4(rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2], rgba[4 * i + 3]);
+  }
+  return 1;
+}
+
 FscNode fsc_object(FscSession *s, FscNode mesh, const float *m, unsigned visibility,
                    int shadow_catcher)
 {

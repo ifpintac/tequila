@@ -2157,6 +2157,91 @@ mod tests {
         assert!((g_tequila - g_cycles).abs() < 12.0, "where the label is, green is {g_tequila:.1} in Tequila's render and {g_cycles:.1} in Cycles'");
     }
 
+    /// Colours painted on the vertices - a ZBrush polypaint, a scan's -
+    /// show in Cycles as in Tequila's renderer: a sphere painted red above
+    /// its middle and blue below, through a Vertex Color node, comes out red
+    /// over blue in both, the same reds and blues. Cycles had no vertex
+    /// colours and rendered such a part flat grey. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn vertex_colours_show_in_cycles_as_in_tequila() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+        use tequila_materials::material_type::{MaterialType, Param};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let painted = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            let output = graph.output();
+            let colours = graph.add_node(Node::new(NodeKind::VertexColor));
+            graph.connect(colours, output, Socket::Param(Param::BaseColor));
+            let program = graph.compile().expect("compiles");
+            scene.materials[0] = graph.material().clone();
+            let table = tequila_render_core::shade::TextureTable::new();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+            let index = scene.instances[0].mesh.index();
+            let mut mesh = (*scene.meshes[index]).clone();
+            let (low, high) = mesh.positions.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(l, h), p| (l.min(p.y), h.max(p.y)));
+            let middle = (low + high) * 0.5;
+            mesh.colors = mesh
+                .positions
+                .iter()
+                .map(|p| if p.y > middle { tequila_core::math::vec4(0.8, 0.05, 0.05, 1.0) } else { tequila_core::math::vec4(0.05, 0.1, 0.8, 1.0) })
+                .collect();
+            scene.meshes[index] = Arc::new(mesh);
+        };
+        let [tequila, cycles] = both_engines("vertex-colours", painted);
+        // Where each image is clearly red, and clearly blue.
+        let classify = |image: &[u8]| -> (Vec<usize>, Vec<usize>) {
+            let mut reds = Vec::new();
+            let mut blues = Vec::new();
+            for (i, p) in image.chunks_exact(4).enumerate() {
+                let (r, g, b) = (i32::from(p[0]), i32::from(p[1]), i32::from(p[2]));
+                if r > g + 40 && r > b + 40 {
+                    reds.push(i);
+                } else if b > r + 40 && b > g + 20 {
+                    blues.push(i);
+                }
+            }
+            (reds, blues)
+        };
+        let (reds, blues) = classify(&tequila);
+        assert!(reds.len() > 200 && blues.len() > 200, "Tequila's render is not red over blue: {} red, {} blue", reds.len(), blues.len());
+        let (cycles_reds, cycles_blues): (Vec<usize>, Vec<usize>) = {
+            let red = |i: &usize| {
+                let p = &cycles[i * 4..i * 4 + 3];
+                i32::from(p[0]) > i32::from(p[1]) + 40 && i32::from(p[0]) > i32::from(p[2]) + 40
+            };
+            let blue = |i: &usize| {
+                let p = &cycles[i * 4..i * 4 + 3];
+                i32::from(p[2]) > i32::from(p[0]) + 40 && i32::from(p[2]) > i32::from(p[1]) + 20
+            };
+            (reds.iter().copied().filter(red).collect(), blues.iter().copied().filter(blue).collect())
+        };
+        assert!(
+            cycles_reds.len() * 10 > reds.len() * 8 && cycles_blues.len() * 10 > blues.len() * 8,
+            "Cycles is red on {} of Tequila's {} red pixels and blue on {} of its {} blue ones",
+            cycles_reds.len(), reds.len(), cycles_blues.len(), blues.len()
+        );
+        let mean = |image: &[u8], at: &[usize]| -> [f64; 3] {
+            let mut sum = [0.0; 3];
+            for &i in at {
+                for c in 0..3 {
+                    sum[c] += f64::from(image[i * 4 + c]);
+                }
+            }
+            sum.map(|s| s / at.len().max(1) as f64)
+        };
+        for (name, at) in [("red", &reds), ("blue", &blues)] {
+            let (a, b) = (mean(&tequila, at), mean(&cycles, at));
+            for c in 0..3 {
+                assert!((a[c] - b[c]).abs() < 14.0, "the {name} is {a:.1?} in Tequila's render and {b:.1?} in Cycles'");
+            }
+        }
+    }
+
     /// A label only partly covering fades in Cycles as it does in Tequila's
     /// renderer: cream ink at a quarter coverage and ink brighter than white
     /// at a half, all over a dark sphere, come out the same colour in both,

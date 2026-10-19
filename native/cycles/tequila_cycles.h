@@ -135,6 +135,10 @@ FSC_API FscNode fsc_mesh(FscSession *session,
                          const int *tri_shader,
                          int shader_count,
                          const FscNode *shaders);
+/* Colours painted on a mesh's vertices: 4 floats (RGBA, the rendering
+ * space) per vertex, as an attribute named "tq_color" that an "attribute"
+ * shader node reads. Returns 0 if the count is not the mesh's. */
+FSC_API int fsc_mesh_colors(FscSession *session, FscNode mesh, int vertex_count, const float *rgba);
 FSC_API FscNode fsc_object(FscSession *session,
                            FscNode mesh,
                            const float *matrix12,

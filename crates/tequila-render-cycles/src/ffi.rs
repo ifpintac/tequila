@@ -21,8 +21,12 @@ pub const VISIBLE_SHADOW: c_uint = 16;
 pub const VISIBLE_ALL: c_uint = 63;
 
 macro_rules! api {
-    ($($name:ident: fn($($arg:ty),*) $(-> $ret:ty)?;)*) => {
-        /// Every entry point, resolved.
+    (
+        $($name:ident: fn($($arg:ty),*) $(-> $ret:ty)?;)*
+        @optional { $($opt:ident: fn($($oarg:ty),*) $(-> $oret:ty)?;)* }
+    ) => {
+        /// Every entry point, resolved; the optional ones are those a library
+        /// built before them lacks, and Tequila manages without.
         #[allow(non_snake_case)]
         pub struct Api {
             _library: libloading::Library,
@@ -30,6 +34,7 @@ macro_rules! api {
             /// GPU kernels (`lib/`) sit beside it.
             pub folder: PathBuf,
             $(pub $name: unsafe extern "C" fn($($arg),*) $(-> $ret)?,)*
+            $(pub $opt: Option<unsafe extern "C" fn($($oarg),*) $(-> $oret)?>,)*
         }
 
         impl Api {
@@ -43,8 +48,16 @@ macro_rules! api {
                             )
                             .map_err(|e| format!("{}: {e}", stringify!($name)))?;
                     )*
+                    $(
+                        let $opt = library
+                            .get::<unsafe extern "C" fn($($oarg),*) $(-> $oret)?>(
+                                concat!(stringify!($opt), "\0").as_bytes(),
+                            )
+                            .ok()
+                            .map(|symbol| *symbol);
+                    )*
                     let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
-                    Ok(Api { _library: library, folder, $($name,)* })
+                    Ok(Api { _library: library, folder, $($name,)* $($opt,)* })
                 }
             }
         }
@@ -101,6 +114,9 @@ api! {
     fsc_set_shadow_tint: fn(*mut Session, f32, f32, f32);
     fsc_rendered_samples: fn(*mut Session) -> c_int;
     fsc_clear: fn(*mut Session);
+    @optional {
+        fsc_mesh_colors: fn(*mut Session, Node, c_int, *const f32) -> c_int;
+    }
 }
 
 #[cfg(windows)]
