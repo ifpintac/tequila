@@ -441,7 +441,7 @@ mod tests {
         let (entries, _) = read_directory_from(&library, Source::User);
         let entry = &entries[0];
         let device = tequila_render_cpu::Device::shared().expect("a device");
-        let settings = tequila_render_cpu::PreviewSettings { size: std::env::var("TEQUILA_PACK_EVAL_PX").ok().and_then(|s| s.parse().ok()).unwrap_or(256), samples: 64, ..crate::library_tab::thumbnail_settings() };
+        let settings = tequila_render_cpu::PreviewSettings { size: std::env::var("TEQUILA_PACK_EVAL_PX").ok().and_then(|s| s.parse().ok()).unwrap_or(256), samples: 64, ..crate::library_tab::thumbnail_settings_at(1) };
         let thumbnail = tequila_render_cpu::render_thumbnail_textured(
             &device,
             &entry.graph,

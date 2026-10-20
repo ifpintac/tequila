@@ -85,23 +85,17 @@ use tequila_scene::Command;
 use orbit::{OrbitCamera, StandardView};
 use orchestrator::{DisplayImage, Orchestrator, RenderRequest};
 
-/// A file named on the command line: a project to open, or a model to import.
+/// A file named on the command line: a project to open, a model to import,
+/// a material for the library.
 ///
 /// `tequila-app path/to/model.gltf` or `tequila-app scene.tequila`. Small,
 /// but it is what lets a file manager, a shell, or another tool hand this
 /// application something to look at — and what makes "try this model" a command
-/// rather than a set of directions through a dialog.
-fn file_from_arguments() -> Option<(Action, std::path::PathBuf)> {
-    let path = std::path::PathBuf::from(std::env::args().nth(1)?);
-    if !path.is_file() {
-        return None;
-    }
-    let action = match path.extension().and_then(|e| e.to_str()) {
-        // Freeshot, as it was called before, saved them as .freeshot.
-        Some("tequila" | "freeshot") => Action::Open,
-        _ => Action::Import,
-    };
-    Some((action, path))
+/// rather than a set of directions through a dialog. As given, not as text:
+/// a name that is not valid Unicode is still a file.
+fn file_from_arguments() -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(std::env::args_os().nth(1)?);
+    path.is_file().then_some(path)
 }
 /// This process's own input and output, not handed down to a Tequila it
 /// starts. Windows gives a new process every inheritable handle its parent
@@ -239,12 +233,14 @@ fn main() -> eframe::Result<()> {
         multisampling: 4,
         ..Default::default()
     };
+    mac::listen_for_opened_files();
     eframe::run_native(
         "Tequila",
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
             mac::quit_asks_first(cc);
+            mac::wake_on_open(&cc.egui_ctx);
             {
                 let mut app = TequilaApp::new();
                 if !adopted.is_empty() {
@@ -901,14 +897,21 @@ impl TequilaApp {
     /// file on the command line, the scripting channel, capture hooks.
     fn start_up(&mut self) {
         let app = self;
-        if let Some((action, path)) = file_from_arguments() {
+        // Named on the command line, or - on a Mac - sent by Finder as the
+        // application launched.
+        let given: Vec<std::path::PathBuf> = file_from_arguments().into_iter().chain(mac::take_opened()).collect();
+        if given.iter().any(|path| {
+            matches!(texture_pack::classify_drop(path), texture_pack::Dropped::Model | texture_pack::Dropped::Project)
+        }) {
             // Start from nothing, not from the demo. Importing alongside it
             // leaves a 40-metre ground plane in the scene, and framing the
             // camera on everything then makes a pair of glasses 140 mm across
             // a speck in the middle of the screen — which reads as "the model
             // did not load".
             app.project.reset();
-            app.handle_file(action, path);
+        }
+        for path in given {
+            app.open_given(path);
         }
         // Last, and never fatal: an application that would not open
         // because a port was busy is a worse tool than one that is simply not
@@ -4359,16 +4362,24 @@ impl TequilaApp {
 
         let dropped: Vec<std::path::PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
-        for path in dropped {
-            match texture_pack::classify_drop(&path) {
-                texture_pack::Dropped::Model => self.handle_file(Action::Import, path),
-                texture_pack::Dropped::Project => self.handle_file(Action::Open, path),
-                texture_pack::Dropped::TexturePack => self.load_texture_pack(&path),
-                texture_pack::Dropped::Material => self.import_material_file(&path),
-                texture_pack::Dropped::Unknown => {
-                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    self.toasts.warn(format!("Tequila does not open {name}"));
-                }
+        // And on a Mac, what Finder sent while Tequila was running.
+        for path in dropped.into_iter().chain(mac::take_opened()) {
+            self.open_given(path);
+        }
+    }
+
+    /// A file handed to Tequila - dropped on the window, named on the command
+    /// line, sent by Finder: a model is imported, a project opened, a texture
+    /// pack loaded onto the selection and a material added to the library.
+    fn open_given(&mut self, path: std::path::PathBuf) {
+        match texture_pack::classify_drop(&path) {
+            texture_pack::Dropped::Model => self.handle_file(Action::Import, path),
+            texture_pack::Dropped::Project => self.handle_file(Action::Open, path),
+            texture_pack::Dropped::TexturePack => self.load_texture_pack(&path),
+            texture_pack::Dropped::Material => self.import_material_file(&path),
+            texture_pack::Dropped::Unknown => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.toasts.warn(format!("Tequila does not open {name}"));
             }
         }
     }

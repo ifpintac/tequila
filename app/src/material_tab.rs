@@ -128,6 +128,7 @@ impl MaterialTab {
                 }
             }
         }
+        let size = SIZE * crate::thumbnail::density(ui.ctx());
         if self.preview_job.is_none() && self.preview.as_ref().map(|(k, _)| *k) != Some(key) {
             if self.device.is_none() {
                 self.device = tequila_render_cpu::Device::shared().ok();
@@ -140,7 +141,7 @@ impl MaterialTab {
                     .name("material-preview".into())
                     .spawn(move || {
                         let settings = tequila_render_cpu::PreviewSettings {
-                            size: SIZE,
+                            size,
                             // Low, deliberately. This runs inside the frame, so it has
                             // to fit inside one; a noisier sphere that keeps up with
                             // the slider is worth more than a clean one that lags.

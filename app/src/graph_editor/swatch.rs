@@ -56,6 +56,9 @@ impl Swatch {
         let (results, done) = mpsc::channel::<Done>();
         let worker_inbox = inbox.clone();
         let repaint = ctx.clone();
+        // The clean pass at the screen's own density: the swatch is shown up
+        // to 300 points square.
+        let clean_pass = PreviewSettings { size: CLEAN.size * crate::thumbnail::density(ctx), ..CLEAN };
         let spawned = std::thread::Builder::new().name("tequila-material-swatch".into()).spawn(move || {
             let Ok(device) = Device::shared() else { return };
             let environment = Arc::new(tequila_scene::demo::preview_environment());
@@ -79,7 +82,7 @@ impl Swatch {
             };
             let mut job = take(true);
             while let Some(current) = job {
-                for (pass, clean) in [(ROUGH, false), (CLEAN, true)] {
+                for (pass, clean) in [(ROUGH, false), (clean_pass, true)] {
                     let settings = PreviewSettings { shape: current.shape, radius: current.radius, ..pass };
                     let rendered = pool.install(|| render_thumbnail_textured(&device, &current.graph, current.textures.clone(), environment.clone(), settings));
                     if let Ok(thumbnail) = rendered {

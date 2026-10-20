@@ -154,7 +154,9 @@ a Mac.
   renderer still traces the points: at a Retina screen's pixels its denoiser
   took 1.7 s a picture, during which the view could not begin to move
   (`retina_viewport_benchmark`). Still slow: at that size the viewport's GPU
-  denoiser roughly halves Cycles' samples a second.
+  denoiser roughly halves Cycles' samples a second. *Done 2026-10-20:* the
+  library's tiles, the Material tab's sphere and the graph editor's swatch are
+  rendered at the screen's density (`thumbnail::density`).
 - *Done 2026-10-17.* **Orbiting on Cycles** shows pictures as it goes: the
   live driver read Cycles' first picture after a change as empty, and its
   smaller navigating pictures at the view's size; and a camera moving every
@@ -166,8 +168,13 @@ a Mac.
   orbit. To check by hand: the speeds, and that a mouse wheel still zooms.
 - **Menus:** the menu bar lives inside the window; the global menu is
   winit's (Hide, Quit). *Done 2026-10-16:* Quit asks about unsaved work.
-- **Opening files from Finder** needs an open-document handler. Today only
-  command-line arguments are read.
+- *Done 2026-10-20.* **Opening files from Finder:** an Apple Event handler
+  for "open documents", installed as AppKit finishes launching
+  (`listen_for_opened_files` in `app/src/mac.rs`), takes what Finder, the Dock
+  and Open With send, at launch and while Tequila runs, through the same
+  routes as a dropped file. The Info.plist exports a type for `.tequila` and
+  `.freeshot` and offers to open models and materials. The release smoke test
+  opens two projects with `open -a`.
 - *Done 2026-10-16.* **Window size:** fitted to the screen.
 - **Docs** use PowerShell and `python` (Macs have `python3`).
 

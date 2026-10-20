@@ -691,7 +691,8 @@ impl LibraryTab {
         let Some(device) = self.device.clone() else {
             return;
         };
-        let settings = thumbnail_settings();
+        let density = crate::thumbnail::density(ctx);
+        let settings = thumbnail_settings_at(density);
         let started = std::time::Instant::now();
         // Tiles read from disk are drawn the next frame, so ask for one.
         let mut loaded = false;
@@ -704,7 +705,7 @@ impl LibraryTab {
                 continue;
             }
             // Kept from an earlier launch: a file read, not a render.
-            if let Some(image) = self.disk.load(key) {
+            if let Some(image) = self.disk.load(crate::thumbnail::dense_key(key, density)) {
                 let handle = ctx.load_texture(format!("preview_{key:x}"), image, egui::TextureOptions::LINEAR);
                 self.thumbnails.insert(key, handle);
                 loaded = true;
@@ -740,7 +741,7 @@ impl LibraryTab {
                     };
 
                     let rgba = crate::thumbnail::develop_rgba(&thumbnail);
-                    disk.store(key, thumbnail.width, thumbnail.height, &rgba);
+                    disk.store(crate::thumbnail::dense_key(key, density), thumbnail.width, thumbnail.height, &rgba);
                     let image = egui::ColorImage::from_rgba_unmultiplied([thumbnail.width, thumbnail.height], &rgba);
                     repaint.request_repaint();
                     Some((key, image))
@@ -977,9 +978,10 @@ pub fn entry_key(entry: &LibraryEntry) -> u64 {
     key ^ hasher.finish().rotate_left(29)
 }
 
-/// What a library tile is rendered with.
-pub(crate) fn thumbnail_settings() -> PreviewSettings {
-    PreviewSettings { size: 96, samples: 40, ..PreviewSettings::default() }
+/// What a library tile is rendered with, at `density` pixels a point
+/// (`thumbnail::density`).
+pub(crate) fn thumbnail_settings_at(density: usize) -> PreviewSettings {
+    PreviewSettings { size: 96 * density.max(1), samples: 40, ..PreviewSettings::default() }
 }
 
 /// Where the bundled library lives.

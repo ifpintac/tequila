@@ -191,7 +191,38 @@ cat > "$contents/Info.plist" <<PLIST
             <key>CFBundleTypeName</key><string>Tequila project</string>
             <key>CFBundleTypeRole</key><string>Editor</string>
             <key>LSHandlerRank</key><string>Owner</string>
-            <key>CFBundleTypeExtensions</key><array><string>tequila</string></array>
+            <key>LSItemContentTypes</key><array><string>io.github.ifpintac.tequila.project</string></array>
+            <key>CFBundleTypeIconFile</key><string>Tequila</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>3D model</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>obj</string><string>stl</string><string>gltf</string><string>glb</string>
+                <string>step</string><string>stp</string><string>igs</string><string>iges</string>
+                <string>usd</string><string>usda</string><string>ifc</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Material</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>CFBundleTypeExtensions</key><array><string>kmp</string><string>fsmat</string></array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>io.github.ifpintac.tequila.project</string>
+            <key>UTTypeDescription</key><string>Tequila project</string>
+            <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.content</string></array>
+            <key>UTTypeIconFile</key><string>Tequila</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key><array><string>tequila</string><string>freeshot</string></array>
+            </dict>
         </dict>
     </array>
 </dict>

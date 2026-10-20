@@ -14,6 +14,26 @@ pub fn develop(thumbnail: &Thumbnail) -> egui::ColorImage {
     )
 }
 
+/// Pixels a small preview is rendered at per point it is shown at: two on a
+/// Retina screen, or any as dense, where a preview of one showed each of its
+/// pixels as four and every sphere on the shelf came out soft; one elsewhere.
+pub fn density(ctx: &egui::Context) -> usize {
+    if ctx.pixels_per_point() > 1.25 {
+        2
+    } else {
+        1
+    }
+}
+
+/// A thumbnail's key in the disk cache at `density`: the key itself at one,
+/// so the thumbnails already kept stay kept.
+pub fn dense_key(key: u64, density: usize) -> u64 {
+    match density {
+        1 => key,
+        n => key ^ (0x9e37_79b9_7f4a_7c15u64.wrapping_mul(n as u64)),
+    }
+}
+
 /// RGBA8, row-major from the top-left.
 ///
 /// Denoised, because a thumbnail's sample count leaves glass and clear
@@ -277,7 +297,7 @@ mod tests {
         );
         assert!(entries.len() > 40, "the standard library did not load");
         let environment = Arc::new(tequila_scene::demo::preview_environment());
-        let settings = crate::library_tab::thumbnail_settings();
+        let settings = crate::library_tab::thumbnail_settings_at(1);
         let mut worst = (0.0f32, String::new());
         for entry in &entries {
             // Glitter is a pattern too: flakes a few tenths of a millimetre

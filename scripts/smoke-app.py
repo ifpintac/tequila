@@ -3,6 +3,11 @@ take a screenshot of its window, resize a label on a part over and over with
 the viewport rendering, as a drag does, and quit - in folders of its own, so
 the settings and work of whoever runs it are never read or touched.
 
+On a Mac it then opens two saved projects the way Finder does, with `open`:
+one to launch Tequila, one sent to it while it runs. Launched by macOS, that
+Tequila has the runner's own settings, so run it only on a machine that is
+there to be tested.
+
 Usage: python3 scripts/smoke-app.py <Tequila.app | package folder> <screenshot.png>
 """
 import glob
@@ -65,6 +70,52 @@ def resize_labels(client, box):
     time.sleep(5)
     print('resized a label 60 times in the Rendered view')
 
+
+def wait_for(what, check, seconds=120):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            if check():
+                return
+        except Exception:  # noqa: BLE001 - not there yet
+            pass
+        time.sleep(1)
+    raise SystemExit(f'{what} did not happen in {seconds} s')
+
+
+def showing(client):
+    """The project the window has open, symbolic links and all resolved."""
+    path = client.query('history')['path']
+    return Path(path).resolve() if path else None
+
+
+def opened_from_finder(app_bundle, first, second):
+    """Double-clicking a project in Finder sends it to Tequila by an Apple
+    Event, not on the command line: launched by one, and sent one while it
+    runs, Tequila opens each."""
+    discovery = Path.home() / '.tequila' / 'channel.json'
+    if discovery.exists():
+        discovery.unlink()
+    subprocess.run(['open', '-a', str(app_bundle), str(first)], check=True)
+    client = None
+
+    def answering():
+        nonlocal client
+        client = tequila.Client(str(discovery), timeout=60)
+        return True
+    wait_for('Tequila launched by open', answering)
+    pid = client.pid
+    try:
+        wait_for(f'opening {first.name} at launch', lambda: showing(client) == first.resolve())
+        print('launched by Finder with', first.name)
+        subprocess.run(['open', '-a', str(app_bundle), str(second)], check=True)
+        wait_for(f'opening {second.name} while running', lambda: showing(client) == second.resolve())
+        print('sent', second.name, 'while running, and it opened')
+        client.request('quit', discard=True)
+        client.close()
+    finally:
+        wait_for('Tequila to quit', lambda: subprocess.run(['kill', '-0', str(pid)], capture_output=True).returncode != 0, 60)
+
 box = Path(tempfile.mkdtemp(prefix='tequila-smoke-'))
 home = box / 'home'
 for folder in (home, box / 'Roaming', box / 'Local'):
@@ -93,6 +144,10 @@ with open(log, 'w', encoding='utf-8') as output:
             time.sleep(0.5)
         print('screenshot:', shot, shot.stat().st_size if shot.is_file() else 'not written')
         resize_labels(client, box)
+        # Two projects for Finder to open, after.
+        projects = [box / 'second.tequila', box / 'first.tequila']
+        for project in projects:
+            client.save(project)
         labelled = shot.with_name(shot.stem + '-labels' + shot.suffix)
         client.request('screenshot', path=str(labelled))
         for _ in range(60):
@@ -105,6 +160,8 @@ with open(log, 'w', encoding='utf-8') as output:
         print('quit with exit code', app.returncode)
         if app.returncode != 0 or not shot.is_file():
             raise SystemExit(1)
+        if target.suffix == '.app' and sys.platform == 'darwin':
+            opened_from_finder(target, projects[1], projects[0])
     finally:
         if app.poll() is None:
             app.kill()
