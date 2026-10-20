@@ -608,6 +608,42 @@ float fs_smoothmin(float a, float b, float k) {
     return min(a, b);
 }
 float fs_floored_mod(float a, float b) { return b != 0.0 ? a - floor(a / b) * b : 0.0; }
+
+// Steps and waves box-filtered over the pixel, from how fast their input
+// changes across it (fwidth). A pattern built of them that repeats faster
+// than the pixels can show - a print's 0.2 mm layers on a part seen whole -
+// comes out as its mean, as the ray tracer's many samples make it, not as
+// moire; one the pixels resolve comes out as it is. The mean of floor over
+// [a, b] is the difference of its integral, I(x) = f(f - 1)/2 + f(x - f)
+// with f = floor(x), taken near zero (k) where a float keeps its digits.
+float fs_floor_integral(float x) {
+    float f = floor(x);
+    return f * (f - 1.0) * 0.5 + f * (x - f);
+}
+// Two pixels wide: a box one pixel wide still let stripes near the
+// pixels' own spacing through as rings.
+float fs_filter_width(float x) { return 2.0 * fwidth(x); }
+float fs_ffloor(float x) {
+    float w = fs_filter_width(x);
+    if (!(w > 1e-6)) return floor(x);
+    float k = floor(x - 0.5 * w);
+    return k + (fs_floor_integral(x - k + 0.5 * w) - fs_floor_integral(x - k - 0.5 * w)) / w;
+}
+float fs_ffract(float x) { return x - fs_ffloor(x); }
+float fs_ftrunc(float x) { return x >= 0.0 ? fs_ffloor(x) : -fs_ffloor(-x); }
+float fs_fsine_gain(float x) {
+    float h = 0.5 * fs_filter_width(x);
+    return h > 1e-4 ? sin(h) / h : 1.0;
+}
+float fs_fsin(float x) { return sin(x) * fs_fsine_gain(x); }
+float fs_fcos(float x) { return cos(x) * fs_fsine_gain(x); }
+float fs_ffloored_mod(float a, float b) { return b != 0.0 ? a - fs_ffloor(a / b) * b : 0.0; }
+float fs_ftrunc_mod(float a, float b) { return a - b * fs_ftrunc(a / b); }
+float fs_fwrapf(float value, float maxv, float minv) {
+    float range = maxv - minv;
+    return range != 0.0 ? value - range * fs_ffloor((value - minv) / range) : minv;
+}
+vec3 fs_ffloor3(vec3 x) { return vec3(fs_ffloor(x.x), fs_ffloor(x.y), fs_ffloor(x.z)); }
 float fs_smoothstep_c(float e0, float e1, float x) {
     if (x < e0) return 0.0;
     if (x >= e1) return 1.0;

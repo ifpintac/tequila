@@ -158,11 +158,14 @@ pub struct SolidMaterial {
 }
 
 /// How many labels a part shows in Solid and Material Preview; the
-/// render shows them all.
-pub const MAX_LABELS: usize = 4;
+/// render shows them all. Eight: with the maps, the environment, the
+/// background and the shadow they take all sixteen texture units OpenGL
+/// 3.3 promises (and a Mac's 4.1 gives).
+pub const MAX_LABELS: usize = 8;
 /// The texture units the labels' artwork is bound to, from this one up.
 const LABEL_UNIT: u32 = 8;
-const LABEL_SAMPLERS: [&str; MAX_LABELS] = ["t_label0", "t_label1", "t_label2", "t_label3"];
+const LABEL_SAMPLERS: [&str; MAX_LABELS] =
+    ["t_label0", "t_label1", "t_label2", "t_label3", "t_label4", "t_label5", "t_label6", "t_label7"];
 
 /// A label as the Solid shader lays one over its part. Labels were drawn
 /// only in the render, so a label could be placed, sized and turned only by
@@ -608,7 +611,12 @@ in vec2 v_uv;
 in vec4 v_tangent;
 in vec3 v_object;
 in vec3 v_object_normal;
-out vec4 out_colour;
+// The colour, and in the see-through pass how much of what is already
+// drawn behind passes through: the blend is colour + behind * through
+// (dual-source blending, core since OpenGL 3.3).
+layout(location = 0, index = 0) out vec4 out_colour;
+layout(location = 0, index = 1) out vec4 out_through;
+uniform int u_see_through;
 
 // What a material's patterns read of the part (`procedural_gpu`): scene
 // units per mesh unit, its random number, where it is, and its mesh's
@@ -798,13 +806,17 @@ uniform sampler2D t_label0;
 uniform sampler2D t_label1;
 uniform sampler2D t_label2;
 uniform sampler2D t_label3;
+uniform sampler2D t_label4;
+uniform sampler2D t_label5;
+uniform sampler2D t_label6;
+uniform sampler2D t_label7;
 // projection (0 UV, 1 planar, 2 cylindrical, 3 spherical), axis (x, y, z),
 // sized in scene units, colour-managed artwork.
-uniform ivec4 u_label_mode[4];
+uniform ivec4 u_label_mode[8];
 // Two each, as `transform_uv` takes them.
-uniform vec4 u_label_uv[8];
+uniform vec4 u_label_uv[16];
 // opacity, roughness, foil.
-uniform vec4 u_label_finish[4];
+uniform vec4 u_label_finish[8];
 
 vec2 label_frame(int i) {
     ivec4 mode = u_label_mode[i];
@@ -832,6 +844,7 @@ void lay_label(sampler2D artwork, int i, inout vec3 base, inout float metal, ino
 }
 
 void main() {
+    out_through = vec4(0.0);
     for (int i = 0; i < u_cutter_count; i++) {
         if (inside_cutter(u_cutter_shape[i], (u_cutter_inverse[i] * vec4(v_world, 1.0)).xyz)) discard;
     }
@@ -1004,6 +1017,10 @@ void main() {
     if (u_label_count > 1) lay_label(t_label1, 1, base_colour, metalness, roughness_in, transmission_in);
     if (u_label_count > 2) lay_label(t_label2, 2, base_colour, metalness, roughness_in, transmission_in);
     if (u_label_count > 3) lay_label(t_label3, 3, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 4) lay_label(t_label4, 4, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 5) lay_label(t_label5, 5, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 6) lay_label(t_label6, 6, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 7) lay_label(t_label7, 7, base_colour, metalness, roughness_in, transmission_in);
 
     vec3 base = base_colour * clamp(u_base_weight, 0.0, 1.0);
 
@@ -1021,7 +1038,12 @@ void main() {
         vec3 diffuse = base * (1.0 - metal) * irradiance(normal) / PI * kept;
         vec3 colour = diffuse + specular;
         float transmission = clamp(transmission_in, 0.0, 1.0) * (1.0 - metal);
-        if (transmission > 0.0) {
+        if (transmission > 0.0 && u_see_through == 1) {
+            // Drawn over what is behind it: the parts inside a clear housing
+            // and the backdrop past it come through, tinted, by the blend.
+            colour = mix(colour, u_cloud * irradiance(normal) / PI * kept + specular, transmission);
+            out_through = vec4(pow(max(u_transmission_colour * kept, vec3(0.0)), vec3(1.0 / 2.2)) * transmission, 1.0);
+        } else if (transmission > 0.0) {
             // Through the part: the environment along the refracted view,
             // once, tinted - not a path through glass, but what it shows.
             vec3 through = refract(-view, normal, 1.0 / max(u_ior, 1.0001));
@@ -1064,7 +1086,10 @@ void main() {
     colour += vec3(fresnel * fresnel * (0.10 + 0.14 * rim));
 
     float transmission = clamp(transmission_in, 0.0, 1.0);
-    if (transmission > 0.0) {
+    if (transmission > 0.0 && u_see_through == 1) {
+        colour = mix(colour, u_cloud * lighting, transmission * 0.8);
+        out_through = vec4(pow(max(u_transmission_colour, vec3(0.0)), vec3(1.0 / 2.2)) * (transmission * 0.8), 1.0);
+    } else if (transmission > 0.0) {
         float film_y = 1.0 - (gl_FragCoord.y - u_viewport_px.y) / u_viewport_px.w;
         vec3 behind = backdrop(film_y) * u_transmission_colour;
         colour = mix(colour, behind + u_cloud * lighting, transmission * 0.8);
@@ -1625,7 +1650,18 @@ impl Gpu {
         gl.uniform_1_f32(location("u_outline").as_ref(), 0.0);
         let mut current = program;
         let mut configured = vec![program];
+        // Parts light passes through are drawn after everything else, over
+        // what is behind them: a clear housing showed only the environment
+        // where the parts inside it are.
+        let see_through = |instance: &tequila_render_core::scene::Instance| {
+            self.materials.get(instance.material.index()).is_some_and(|m| m.transmission > 0.01 && m.metalness < 0.5)
+        };
+        let mut through: Vec<(f32, &tequila_render_core::scene::Instance)> = Vec::new();
         for instance in scene.instances.iter().filter(drawable) {
+            if see_through(instance) {
+                through.push(((instance.transform.point(Vec3::ZERO) - eye).length(), instance));
+                continue;
+            }
             let index = instance.material.index();
             let wanted = material_programs.get(index).copied().flatten().unwrap_or(program);
             if wanted != current {
@@ -1644,9 +1680,40 @@ impl Gpu {
             }
             self.draw_instance(gl, current, instance, &scene);
         }
+        if !through.is_empty() {
+            // Farthest first, each blended over what is drawn by then.
+            through.sort_by(|a, b| b.0.total_cmp(&a.0));
+            gl.enable(glow::BLEND);
+            gl.blend_equation(glow::FUNC_ADD);
+            gl.blend_func(glow::ONE, glow::SRC1_COLOR);
+            gl.depth_mask(false);
+            for (_, instance) in through {
+                let index = instance.material.index();
+                let wanted = material_programs.get(index).copied().flatten().unwrap_or(program);
+                if wanted != current {
+                    if configured.contains(&wanted) {
+                        gl.use_program(Some(wanted));
+                    } else {
+                        configure(wanted);
+                        configured.push(wanted);
+                    }
+                    current = wanted;
+                }
+                gl.uniform_1_i32(gl.get_uniform_location(current, "u_see_through").as_ref(), 1);
+                self.set_material(gl, current, index);
+                self.set_volume(gl, current, instance, &scene);
+                if current != program {
+                    self.set_object(gl, current, instance, &scene);
+                }
+                self.draw_instance(gl, current, instance, &scene);
+            }
+            gl.depth_mask(true);
+            gl.disable(glow::BLEND);
+        }
         for program in configured {
             gl.use_program(Some(program));
             gl.uniform_1_i32(gl.get_uniform_location(program, "u_volume").as_ref(), 0);
+            gl.uniform_1_i32(gl.get_uniform_location(program, "u_see_through").as_ref(), 0);
         }
 
         // Model edges over the shading, where they are in front of it: the
