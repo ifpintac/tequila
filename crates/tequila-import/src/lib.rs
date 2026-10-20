@@ -26,7 +26,9 @@
 //!
 //! PLY, 3DS, Collada and 3MF are M8's business, alongside the CAD kernels.
 
+pub mod axf;
 pub mod gltf;
+pub mod hdf5;
 pub mod ifc;
 pub mod iges;
 pub mod keyshot;

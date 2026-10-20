@@ -35,6 +35,8 @@ use tequila_core::spectrum::Spectrum;
 use tequila_format::library::{LibraryEntry, Source};
 use tequila_materials::fresnel::ComplexIor;
 use tequila_materials::graph::{Channel, MaterialGraph, Node, NodeId, NodeKind, Socket, TextureId, Value};
+use tequila_materials::nodes::{MixData, ShaderNode};
+use tequila_texture::cycles::ops::{BlendMode, MapRangeKind, MathOp};
 use tequila_materials::material_type::{MaterialType, Param};
 use tequila_materials::openpbr::Material;
 use tequila_scene::textures::TextureSource;
@@ -52,7 +54,20 @@ pub struct Converted {
 /// Metres per unit of the oldest packages' texture sizes (`scale_u`), which
 /// say no unit: measured against the 100 mm disc KeyShot's own preview shows
 /// a wood grain on. Newer packages give sizes in metres.
-const OLD_UNIT: f32 = 0.09;
+const OLD_UNIT: f32 = 0.22;
+
+/// Scene units of bump per unit of a procedural's `bump_height`: White
+/// pearl's noise, at 5, a gentle undulation as in KeyShot's preview.
+const PROCEDURAL_BUMP: f32 = 0.00002;
+
+/// A moulded grain's features to a Mold-Tech texture's tile, and its
+/// depth: what stands in for a texture in KeyShot's protected format.
+const GRAIN_PER_TILE: f32 = 6.0;
+const GRAIN_DEPTH: f32 = 0.0001;
+
+/// Metres between Marble's bands at a `scale` of 1: measured off the 100 mm
+/// disc KeyShot's preview shows a 3D-print material's layer lines on.
+const MARBLE_PERIOD: f32 = 0.0014;
 
 /// The first material in a `.kmp`, its pictures extracted into `scratch`.
 pub fn read_kmp(path: &Path, scratch: &Path) -> Result<Converted, ImportError> {
@@ -259,6 +274,9 @@ impl Cursor<'_> {
 }
 
 fn parse(bytes: &[u8]) -> Result<Mtl, String> {
+    if is_binary(bytes) {
+        return parse_binary(bytes);
+    }
     let mut c = Cursor { bytes, at: 0 };
     let mut mtl = Mtl::default();
     loop {
@@ -318,6 +336,156 @@ fn parse(bytes: &[u8]) -> Result<Mtl, String> {
         return Err("the material names no surface".into());
     }
     Ok(mtl)
+}
+
+// ---- KeyShot 11 and later: the same nodes, as binary records -------------------
+//
+// The newer `.mtl` keeps its first line (`//--lux:mat:001--`), then a
+// fixed header, then a stream of records. A record is a tag byte, its
+// payload's length - one byte, or four little-endian when the tag's low
+// bits are 2, none when they are 0 - and the payload. The nodes are the
+// text format's, record for record:
+//
+// ```text
+// 07  id, type name            a node: `#define shader <id> <type> {`
+// 09                           the node's end
+// 17/1d/25  f32/i32/bool, key  a number, a whole number, on/off
+// 27/29  3 or 4 f32, key       a colour, without or with alpha
+// 2f  length, text, key        text: a picture's file name
+// 31  id, key                  a node by number, as `"shader" 3`
+// 9b  id, key                  driven by a node, as `"color" ! 3`
+// a1  id, key                  one of the file's named colours
+// 7f  key length, key, ids     a list of nodes
+// 0b  name                     the material; `11` (1, id) names its surface
+// 9d … 9f                      a named colour: `39` its id, `29` the colour
+// 36  …PNG                     the preview
+// ```
+//
+// Read from the packages people share, as the text format is.
+
+/// Where the records start, after the first line and the fixed header.
+const BINARY_RECORDS: usize = 128;
+
+fn is_binary(bytes: &[u8]) -> bool {
+    let Some(newline) = bytes.iter().take(64).position(|&b| b == b'\n') else { return false };
+    bytes.starts_with(b"//--lux:mat:") && bytes[newline..].iter().take(32).any(|&b| b == 0)
+}
+
+fn parse_binary(bytes: &[u8]) -> Result<Mtl, String> {
+    let u32_at = |p: &[u8], at: usize| p.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let f32_at = |p: &[u8], at: usize| u32_at(p, at).map(f32::from_bits);
+    let text = |p: &[u8]| String::from_utf8_lossy(p).into_owned();
+
+    let mut mtl = Mtl::default();
+    let mut colours: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
+    // A named colour being read: its id and its value.
+    let mut colour: Option<(Option<u32>, Option<Vec<f32>>)> = None;
+    let mut shader: Option<(u32, Shader)> = None;
+    let mut in_material = false;
+    let mut at = BINARY_RECORDS;
+    while at < bytes.len() {
+        let tag = bytes[at];
+        let (start, length) = match tag & 3 {
+            0 => (at + 1, 0),
+            2 => (at + 5, u32_at(bytes, at + 1).ok_or("a record is cut short")? as usize),
+            _ => (at + 2, *bytes.get(at + 1).ok_or("a record is cut short")? as usize),
+        };
+        let payload = bytes.get(start..start + length).ok_or_else(|| format!("a record at byte {at} runs past the end"))?;
+        at = start + length;
+        match tag {
+            0x07 | 0x09 | 0x0b => {
+                if let Some((id, s)) = shader.take() {
+                    mtl.shaders.insert(id, s);
+                }
+                if tag == 0x07 {
+                    let id = u32_at(payload, 0).ok_or("a node without a number")?;
+                    shader = Some((id, Shader { kind: text(&payload[4..]), params: Vec::new() }));
+                } else if tag == 0x0b {
+                    mtl.name = text(payload);
+                    in_material = true;
+                }
+            }
+            0x36 => {
+                let png = b"\x89PNG";
+                if let Some(p) = payload.windows(4).position(|w| w == png) {
+                    mtl.icon = Some(payload[p..].to_vec());
+                }
+            }
+            0x9d => colour = Some((None, None)),
+            0x9f => {
+                if let Some((Some(id), Some(value))) = colour.take() {
+                    colours.insert(id, value);
+                }
+            }
+            0x39 if colour.is_some() => {
+                if let Some((id, _)) = colour.as_mut() {
+                    *id = u32_at(payload, 0);
+                }
+            }
+            0x29 if colour.is_some() => {
+                if let Some((_, value)) = colour.as_mut() {
+                    *value = (0..4).map(|i| f32_at(payload, 4 * i)).collect();
+                }
+            }
+            // The material's surface (1) or displacement (2), by node.
+            0x11 if in_material && shader.is_none() => {
+                if let (Some(role), Some(id)) = (u32_at(payload, 0), u32_at(payload, 4)) {
+                    match role {
+                        1 => mtl.surface = Some(id),
+                        2 => mtl.geometry = Some(id),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {
+                if let (Some((_, s)), Some(param)) = (shader.as_mut(), binary_param(tag, payload, &colours)) {
+                    s.params.push(param);
+                }
+            }
+        }
+    }
+    if let Some((id, s)) = shader.take() {
+        mtl.shaders.insert(id, s);
+    }
+    if mtl.surface.is_none() {
+        return Err("the material names no surface".into());
+    }
+    Ok(mtl)
+}
+
+/// A node's parameter from its record: the value comes first, the name
+/// after it (a list's name comes first). `None` for what carries nothing a
+/// material needs: attributes, the editor's notes.
+fn binary_param(tag: u8, payload: &[u8], colours: &BTreeMap<u32, Vec<f32>>) -> Option<(String, Val)> {
+    let word = |at: usize| payload.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let name = |at: usize| payload.get(at..).map(|k| String::from_utf8_lossy(k).into_owned());
+    let numbers = |count: usize| -> Option<(String, Val)> {
+        let values: Option<Vec<f32>> = (0..count).map(|i| word(4 * i).map(f32::from_bits)).collect();
+        Some((name(4 * count)?, Val::Numbers(values?)))
+    };
+    match tag {
+        0x17 => numbers(1),
+        0x27 => numbers(3),
+        0x29 => numbers(4),
+        0x1d => Some((name(4)?, Val::Numbers(vec![word(0)? as i32 as f32]))),
+        0x25 => Some((name(4)?, Val::Flag(word(0)? != 0))),
+        0x31 => Some((name(4)?, Val::Numbers(vec![word(0)? as f32]))),
+        0x9b => Some((name(4)?, Val::Link(word(0)?))),
+        0xa1 => Some((name(4)?, Val::Numbers(colours.get(&word(0)?)?.clone()))),
+        0x2f => {
+            let n = word(0)? as usize;
+            let value = String::from_utf8_lossy(payload.get(4..4 + n)?).into_owned();
+            Some((name(4 + n)?, Val::Text(value)))
+        }
+        0x7f => {
+            let n = word(0)? as usize;
+            let key = String::from_utf8_lossy(payload.get(4..4 + n)?).into_owned();
+            let rest = payload.get(4 + n..)?;
+            let ids = rest.chunks_exact(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+            Some((key, Val::List(ids)))
+        }
+        _ => None,
+    }
 }
 
 fn parse_params(c: &mut Cursor) -> Result<Vec<(String, Val)>, String> {
@@ -553,7 +721,20 @@ impl Build<'_> {
             "lux_flat" => (MaterialType::Flat, MaterialType::Flat.defaults()),
             "lux_generic" => (MaterialType::Generic, MaterialType::Generic.defaults()),
             "lux_advanced" => (MaterialType::Advanced, MaterialType::Advanced.defaults()),
+            "lux_toon" => {
+                self.toon(s);
+                return Ok(MaterialType::Flat);
+            }
             k if k.starts_with("bsdf_axf") => {
+                // The measured material itself, from the AxF file the
+                // package carries.
+                let measured = s.text("bsdf").map(|file| (self.picture)(file).map_err(ImportError::Io)).transpose()?.flatten();
+                let read = measured.as_deref().map(|path| std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| crate::axf::read(&bytes)));
+                match read {
+                    Some(Ok(svbrdf)) => return self.measured(s, &svbrdf),
+                    Some(Err(e)) => self.note(format!("its measured AxF data could not be read ({e})")),
+                    None => {}
+                }
                 let carpaint = k.contains("carpaint");
                 let mut m = if carpaint { MaterialType::MetallicPaint.defaults() } else { MaterialType::Plastic.defaults() };
                 if let Some(colour) = self.mtl.icon.as_deref().and_then(icon_colour) {
@@ -565,10 +746,7 @@ impl Build<'_> {
                     }
                 }
                 m.specular_roughness = if carpaint { 0.3 } else { 0.45 };
-                self.note(format!(
-                    "{} is a measured material (X-Rite AxF), which Tequila cannot read; it is approximated from the package's preview",
-                    self.mtl.name
-                ));
+                self.note(format!("{} is a measured material (X-Rite AxF); it is approximated from the package's preview", self.mtl.name));
                 self.graph.material_mut().clone_from(&m);
                 let t = if carpaint { MaterialType::MetallicPaint } else { MaterialType::Plastic };
                 return Ok(t);
@@ -609,8 +787,17 @@ impl Build<'_> {
                 if let Some(r) = s.number("metal_roughness") {
                     m.flake_roughness = r;
                 }
-                if let Some(size) = s.number("metal_flake_size").filter(|v| *v > 0.0) {
-                    m.flake_size = size * 0.001;
+                match s.number("metal_flake_size") {
+                    Some(size) if size > 0.0 => m.flake_size = size * 0.001,
+                    // KeyShot's 0: flakes too fine to see one by one, a
+                    // pearly sheen over the paint (White pearl's) rather
+                    // than glitter. At its full coverage the flakes' colour
+                    // swamped the paint's.
+                    Some(_) => {
+                        m.flake_size = 0.000005;
+                        m.flake_weight *= 0.25;
+                    }
+                    None => {}
                 }
                 if let Some(r) = rough(s) {
                     m.specular_roughness = r;
@@ -711,14 +898,10 @@ impl Build<'_> {
         ];
         for (key, param, want, role) in inputs.iter().copied() {
             let Some(from) = s.link(key) else { continue };
-            // A picture of a metal's colour is its reflectance as the file
-            // stores it, not decoded as a photograph: a mid-grey weathered
-            // steel renders as bright metal in KeyShot.
-            let role = if param == Param::BaseColor && matches!(material_type, MaterialType::Metal | MaterialType::Anisotropic) {
-                MapRole::Data
-            } else {
-                role
-            };
+            // A metal's colour picture is decoded as the photograph it is,
+            // as KeyShot decodes it. Read as raw numbers, Weathered Metal's
+            // mid-grey steel came in nearly white and mirror-bright, where
+            // KeyShot's own preview shows it dark and patchy.
             if let Some((node, socket)) = self.drive(from, want, role)? {
                 self.graph.connect_output(node, socket, output, Socket::Param(param));
                 if param == Param::SpecularColor {
@@ -757,10 +940,7 @@ impl Build<'_> {
             return Ok(Some((image, 0)));
         }
         // Converters between kinds of value, which pass their input on.
-        if kind.starts_with("edgeshader_") || kind == "lux_color_adjust" || kind == "convert_rgba_to_float" {
-            if kind == "lux_color_adjust" {
-                self.note("a colour adjustment (hue, saturation, colorize) was left out".into());
-            }
+        if kind.starts_with("edgeshader_") || kind == "convert_rgba_to_float" {
             let input = s.link("input").or_else(|| s.link("color")).or_else(|| s.value("input").and_then(|v| match v {
                 Val::Numbers(v) if v.len() == 1 => Some(v[0] as u32),
                 _ => None,
@@ -780,6 +960,44 @@ impl Build<'_> {
                 }
             }
             return Ok(passed);
+        }
+        // A colour on its own, which KeyShot 11 and later put in a node of
+        // its own to name it.
+        if matches!(kind, "lux_const_color_extended" | "lux_const_color" | "lux_color") {
+            let c = s.colour("color").unwrap_or(Spectrum::splat(0.5));
+            let value = match want {
+                Want::Colour => Value::Color(c),
+                Want::Number => Value::Float(c.luminance()),
+            };
+            return Ok(Some((self.graph.add_node(Node::new(NodeKind::Constant(value))), 0)));
+        }
+        if matches!(kind, "lux_noise" | "lux_fractal_noise") {
+            let share = self.noise(&s);
+            if want == Want::Number {
+                return Ok(Some(share));
+            }
+            return Ok(Some(self.between(&s, share)));
+        }
+        if kind == "lux_color_adjust" {
+            let input = s.link("color").or_else(|| s.link("input"));
+            let Some(input) = input else { return Ok(None) };
+            let Some(passed) = self.make(input, Want::Colour, role, depth + 1)? else { return Ok(None) };
+            // Wired to a number, a colour is read as its luminance.
+            return Ok(Some(self.adjust(&s, passed)));
+        }
+        if kind == "lux_marble" {
+            let marble = self.marble(&s);
+            if want == Want::Number {
+                return Ok(Some((marble, 0)));
+            }
+            // Between its two colours, the second in the veins.
+            let first = self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(s.colour("color1").unwrap_or(Spectrum::splat(0.7))))));
+            let second = self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(s.colour("color2").unwrap_or(Spectrum::splat(0.2))))));
+            let mix = self.graph.add_node(Node::new(NodeKind::Mix));
+            self.graph.connect(first, mix, Socket::Input(0));
+            self.graph.connect(second, mix, Socket::Input(1));
+            self.graph.connect(marble, mix, Socket::Input(2));
+            return Ok(Some((mix, 0)));
         }
         // A pattern: the colour it mostly shows, in its place - its first,
         // moved towards its second as far as its magnitude takes it.
@@ -883,13 +1101,352 @@ impl Build<'_> {
         mapping
     }
 
+    /// A measured AxF material: its diffuse colour, GGX lobe, Fresnel and
+    /// normals, maps of the scanned sample tiled at the sample's size, or
+    /// single values. A car paint's flakes, which its SVBRDF leaves out,
+    /// are Tequila's own over it.
+    fn measured(&mut self, s: &Shader, svbrdf: &crate::axf::Svbrdf) -> Result<MaterialType, ImportError> {
+        use crate::axf::{write_png, Encoding, Map};
+        let car_paint = svbrdf.car_paint || s.kind.contains("carpaint");
+        let material_type = if car_paint { MaterialType::MetallicPaint } else { MaterialType::Plastic };
+        let mut m = material_type.defaults();
+        let linear = |v: &[f32]| Spectrum::from_linear_srgb(vec3(v[0], *v.get(1).unwrap_or(&v[0]), *v.get(2).unwrap_or(&v[0])));
+        // The tile: as the package places it, else the sample's own size.
+        let size = (
+            s.number("uv_scale_u").filter(|v| *v > 0.0).unwrap_or(svbrdf.size.0),
+            s.number("uv_scale_v").filter(|v| *v > 0.0).unwrap_or(svbrdf.size.1),
+        );
+        let mapping = Mapping {
+            projection: Projection::TriPlanar,
+            real_world_units: true,
+            scale: vec3(size.0.max(1e-5), size.1.max(1e-5), 1.0),
+            ..Mapping::default()
+        };
+        let stem: String = svbrdf.name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+        let output = self.graph.output();
+
+        // Fresnel's reflectance at normal incidence as an index, and the
+        // specular colour's strength as the weight that scales it.
+        let f0 = svbrdf.fresnel.clamp(0.001, 0.5).sqrt();
+        m.specular_ior = ((1.0 + f0) / (1.0 - f0)).clamp(1.0, 3.0);
+        let specular = svbrdf.specular.mean();
+        let strength = specular.iter().copied().fold(0.0f32, f32::max);
+        m.specular_weight = strength.clamp(0.0, 1.0);
+        if strength > 1e-4 {
+            m.specular_color = linear(&specular.iter().map(|v| v / strength).collect::<Vec<_>>());
+        }
+        match &svbrdf.diffuse {
+            Map::Constant(v) => m.base_color = linear(v),
+            image => {
+                m.base_color = linear(&image.mean());
+                let path = write_png(image, Encoding::Colour, &self.scratch.join(format!("{stem}-diffuse.png"))).map_err(ImportError::Io)?;
+                let node = self.picture_node(path, MapRole::Color, mapping);
+                self.graph.connect(node, output, Socket::Param(Param::BaseColor));
+            }
+        }
+        match &svbrdf.lobes {
+            Map::Constant(v) => m.specular_roughness = v.first().copied().unwrap_or(0.1).max(0.0).sqrt(),
+            image => {
+                m.specular_roughness = image.mean().first().copied().unwrap_or(0.1).max(0.0).sqrt();
+                let path = write_png(image, Encoding::Roughness, &self.scratch.join(format!("{stem}-roughness.png"))).map_err(ImportError::Io)?;
+                let node = self.picture_node(path, MapRole::Data, mapping);
+                let red = self.graph.add_node(Node::new(NodeKind::Channel { channel: Channel::Red }));
+                self.graph.connect(node, red, Socket::Input(0));
+                self.graph.connect(red, output, Socket::Param(Param::SpecularRoughness));
+            }
+        }
+        if let Some(normal) = &svbrdf.normal {
+            let path = write_png(normal, Encoding::Normal, &self.scratch.join(format!("{stem}-normal.png"))).map_err(ImportError::Io)?;
+            let node = self.picture_node(path, MapRole::Normal, mapping);
+            self.graph.connect(node, output, Socket::Param(Param::Bump));
+        }
+        if car_paint {
+            // A powder or car paint's sparkle: fine silver flakes over the
+            // measured coat, which has no clear coat of its own.
+            // Sparse: at a quarter's coverage the flakes alone turned a
+            // black paint satin grey.
+            m.coat_weight = 0.0;
+            m.flake_weight = 0.06;
+            m.flake_size = 0.000025;
+            m.flake_color = Spectrum::splat(0.5);
+            m.flake_roughness = 0.2;
+            self.note(format!("{}'s flakes are Tequila's own: the measured ones in its AxF file are not read", self.mtl.name));
+        }
+        m.geometry_opacity = 1.0;
+        *self.graph.material_mut() = m;
+        Ok(material_type)
+    }
+
+    /// A picture node for a file written here, placed by `mapping`.
+    fn picture_node(&mut self, path: PathBuf, role: MapRole, mapping: Mapping) -> NodeId {
+        let id = TextureId(self.textures.len() as u32 + 1);
+        self.textures.push((id, TextureSource::new(path, role)));
+        let coords = self.graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
+        let fallback = match role {
+            MapRole::Color => Value::Color(Spectrum::splat(0.5)),
+            _ => Value::Float(0.5),
+        };
+        let image = self.graph.add_node(Node::new(NodeKind::ImageTexture { texture: id, fallback }));
+        self.graph.connect(coords, image, Socket::Input(0));
+        image
+    }
+
+    /// A height in scene units from node `n`, for adding to another: a
+    /// procedural's or a height map's, not a normal map's.
+    fn height(&mut self, n: u32, scale: f32) -> Result<Option<(NodeId, u8)>, ImportError> {
+        let s = self.shader(n)?.clone();
+        let depth = match s.kind.as_str() {
+            "lux_noise" | "lux_fractal_noise" => PROCEDURAL_BUMP,
+            k if k.starts_with("texture") && !k.contains("normal") && s.number("bump_mode") != Some(1.0) => 0.0005,
+            _ => return Ok(None),
+        };
+        let share = match s.kind.as_str() {
+            "lux_noise" | "lux_fractal_noise" => self.noise(&s),
+            _ => {
+                let Some(image) = self.image(&s, MapRole::Height)? else { return Ok(None) };
+                let red = self.graph.add_node(Node::new(NodeKind::Channel { channel: Channel::Red }));
+                self.graph.connect(image, red, Socket::Input(0));
+                (red, 0)
+            }
+        };
+        let height = s.number("bump_height").unwrap_or(1.0) * scale;
+        let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: depth * height }));
+        self.graph.connect_output(share.0, share.1, bump, Socket::Input(0));
+        Ok(Some((bump, 0)))
+    }
+
+    /// KeyShot's Noise and Fractal Noise, as Blender's noise: a share from
+    /// 0 to 1 of the way from its first colour to its second. Its `scale` is
+    /// the size of a feature in metres; Fractal Noise's levels are octaves,
+    /// and its fall-off how much each is weaker than the last. Noise's
+    /// magnitude is how far towards the second colour it goes.
+    fn noise(&mut self, s: &Shader) -> (NodeId, u8) {
+        let size = s.number("scale").filter(|v| *v > 0.0).unwrap_or(0.01);
+        let fractal = s.kind == "lux_fractal_noise";
+        let detail = if fractal { (s.number("levels").unwrap_or(3.0) - 1.0).clamp(0.0, 15.0) } else { 1.0 };
+        let roughness = if fractal { s.number("fall-off").unwrap_or(0.5).clamp(0.0, 1.0) } else { 0.5 };
+        let noise = self.graph.add_node(
+            Node::new(NodeKind::Node(ShaderNode::noise()))
+                .with_literal(Socket::Input(2), Value::Float(1.0 / size))
+                .with_literal(Socket::Input(3), Value::Float(detail))
+                .with_literal(Socket::Input(4), Value::Float(roughness)),
+        );
+        if fractal {
+            return (noise, 0);
+        }
+        let magnitude = s.number("magnitude").unwrap_or(1.0);
+        let scaled = self.graph.add_node(
+            Node::new(NodeKind::Node(ShaderNode::Math { op: MathOp::Multiply, clamp: true })).with_literal(Socket::Input(1), Value::Float(magnitude)),
+        );
+        self.graph.connect(noise, scaled, Socket::Input(0));
+        (scaled, 0)
+    }
+
+    /// A procedural's two colours, `share` of the way from the first.
+    fn between(&mut self, s: &Shader, share: (NodeId, u8)) -> (NodeId, u8) {
+        let first = self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(s.colour("color1").unwrap_or(Spectrum::ONE)))));
+        let second = self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(s.colour("color2").unwrap_or(Spectrum::ZERO)))));
+        let mix = self.graph.add_node(Node::new(NodeKind::Mix));
+        self.graph.connect(first, mix, Socket::Input(0));
+        self.graph.connect(second, mix, Socket::Input(1));
+        self.graph.connect_output(share.0, share.1, mix, Socket::Input(2));
+        (mix, 0)
+    }
+
+    /// KeyShot's Color Adjust: the colour tinted by its colorize colour,
+    /// its hue turned (a whole turn is 1), its saturation and value scaled,
+    /// and its contrast.
+    fn adjust(&mut self, s: &Shader, input: (NodeId, u8)) -> (NodeId, u8) {
+        let mut colour = input;
+        if let Some(tint) = s.colour("colorize").filter(|c| (c.r - 1.0).abs() + (c.g - 1.0).abs() + (c.b - 1.0).abs() > 1e-3) {
+            let tint = self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(tint))));
+            let multiply = self.graph.add_node(Node::new(NodeKind::Multiply));
+            self.graph.connect_output(colour.0, colour.1, multiply, Socket::Input(0));
+            self.graph.connect(tint, multiply, Socket::Input(1));
+            colour = (multiply, 0);
+        }
+        let hue = s.number("hue").unwrap_or(0.0);
+        let saturation = s.number("saturation").unwrap_or(1.0);
+        let value = s.number("value").unwrap_or(1.0);
+        if hue != 0.0 || saturation != 1.0 || value != 1.0 {
+            let hsv = self.graph.add_node(
+                Node::new(NodeKind::Node(ShaderNode::HueSaturationValue))
+                    .with_literal(Socket::Input(0), Value::Float((0.5 + hue).rem_euclid(1.0)))
+                    .with_literal(Socket::Input(1), Value::Float(saturation))
+                    .with_literal(Socket::Input(2), Value::Float(value))
+                    .with_literal(Socket::Input(3), Value::Float(1.0)),
+            );
+            self.graph.connect_output(colour.0, colour.1, hsv, Socket::Input(4));
+            colour = (hsv, 0);
+        }
+        let contrast = s.number("contrast").unwrap_or(1.0);
+        if (contrast - 1.0).abs() > 1e-3 {
+            let node = self.graph.add_node(
+                Node::new(NodeKind::Node(ShaderNode::BrightContrast)).with_literal(Socket::Input(2), Value::Float((contrast - 1.0).clamp(-1.0, 1.0))),
+            );
+            self.graph.connect_output(colour.0, colour.1, node, Socket::Input(0));
+            colour = (node, 0);
+        }
+        colour
+    }
+
+    /// KeyShot's Toon: flat tones and outlines. Tequila has no cel shading,
+    /// so the tones are one flat colour halfway between lit and shadowed,
+    /// as see-through as the material is, and the outline is drawn where
+    /// the surface turns away from the viewer - a silhouette's contour,
+    /// though not the edges inside it.
+    fn toon(&mut self, s: &Shader) {
+        let mut m = MaterialType::Flat.defaults();
+        let lit = s.colour("color").unwrap_or(Spectrum::splat(0.5));
+        let shadow = s.colour("shadow color").unwrap_or(lit);
+        let fill = lit * 0.5 + shadow * 0.5;
+        let clear = (1.0 - s.number("transparency").unwrap_or(0.0)).clamp(0.0, 1.0);
+        m.emission_color = fill;
+        m.geometry_opacity = clear;
+        *self.graph.material_mut() = m;
+        let outline = s.flag("outline contour").unwrap_or(true) || s.flag("part contour").unwrap_or(true);
+        let contour = s.colour("contour color");
+        if let (true, Some(contour)) = (outline, contour) {
+            // How far the surface faces away, 0 facing the viewer to 1 edge
+            // on; the outline is the last stretch of it, the wider the
+            // thicker the contour asked for.
+            let width = s.number("contour width").unwrap_or(1.0).clamp(0.2, 8.0) * s.number("outline width multiplier").unwrap_or(1.0).clamp(0.5, 4.0);
+            let start = (1.0 - 0.05 * width).clamp(0.5, 0.97);
+            let facing = self.graph.add_node(Node::new(NodeKind::Node(ShaderNode::LayerWeight)).with_literal(Socket::Input(0), Value::Float(0.5)));
+            let silhouette = self.graph.add_node(
+                Node::new(NodeKind::Node(ShaderNode::MapRange { kind: MapRangeKind::Smoothstep, clamp: true }))
+                    .with_literal(Socket::Input(1), Value::Float(start))
+                    .with_literal(Socket::Input(2), Value::Float((start + 0.04).min(1.0)))
+                    .with_literal(Socket::Input(3), Value::Float(0.0))
+                    .with_literal(Socket::Input(4), Value::Float(1.0)),
+            );
+            self.graph.connect_output(facing, 1, silhouette, Socket::Input(0));
+            // And the creases KeyShot draws inside it: wherever the part
+            // bends sharply, either way, within a millimetre.
+            let mut edge = silhouette;
+            if s.flag("interior edge contour").unwrap_or(true) || s.flag("material contour").unwrap_or(true) {
+                let convex = self.graph.add_node(Node::new(NodeKind::Curvature {
+                    mode: tequila_materials::graph::CurvatureMode::Convex,
+                    radius: 0.001 * width.max(1.0),
+                    contrast: 3.0,
+                }));
+                let concave = self.graph.add_node(Node::new(NodeKind::Curvature {
+                    mode: tequila_materials::graph::CurvatureMode::Concave,
+                    radius: 0.001 * width.max(1.0),
+                    contrast: 3.0,
+                }));
+                let creases = self.graph.add_node(Node::new(NodeKind::Node(ShaderNode::Math { op: MathOp::Add, clamp: true })));
+                self.graph.connect(convex, creases, Socket::Input(0));
+                self.graph.connect(concave, creases, Socket::Input(1));
+                let both = self.graph.add_node(Node::new(NodeKind::Node(ShaderNode::Math { op: MathOp::Maximum, clamp: true })));
+                self.graph.connect(silhouette, both, Socket::Input(0));
+                self.graph.connect(creases, both, Socket::Input(1));
+                edge = both;
+            }
+            let (fill_node, line) = (
+                self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(fill)))),
+                self.graph.add_node(Node::new(NodeKind::Constant(Value::Color(contour)))),
+            );
+            let mix = self.graph.add_node(Node::new(NodeKind::Mix));
+            self.graph.connect(fill_node, mix, Socket::Input(0));
+            self.graph.connect(line, mix, Socket::Input(1));
+            self.graph.connect(edge, mix, Socket::Input(2));
+            let output = self.graph.output();
+            self.graph.connect(mix, output, Socket::Param(Param::EmissionColor));
+            // The outline opaque, the fill as clear as it is.
+            let opacity = self.graph.add_node(
+                Node::new(NodeKind::Node(ShaderNode::MapRange { kind: MapRangeKind::Linear, clamp: true }))
+                    .with_literal(Socket::Input(1), Value::Float(0.0))
+                    .with_literal(Socket::Input(2), Value::Float(1.0))
+                    .with_literal(Socket::Input(3), Value::Float(clear))
+                    .with_literal(Socket::Input(4), Value::Float(1.0)),
+            );
+            self.graph.connect(edge, opacity, Socket::Input(0));
+            self.graph.connect(opacity, output, Socket::Param(Param::Opacity));
+            self.note(format!(
+                "{} is a toon (cel-shaded) material: Tequila has no cel shading, so its tones came in as one flat colour; its outline is drawn round the silhouette and along sharp creases, which the Solid view does not show",
+                self.mtl.name
+            ));
+        } else {
+            self.note(format!("{} is a toon (cel-shaded) material; it came in as a flat, see-through colour", self.mtl.name));
+        }
+    }
+
+    /// KeyShot's Marble as Tequila's: parallel bands bent by noise, across
+    /// the axis its placement turns them to.
+    fn marble(&mut self, s: &Shader) -> NodeId {
+        use tequila_texture::procedural::{Axis, Procedural};
+        // The placement: a 4×4, row by row, points multiplied on its left.
+        // The bands run across the pattern's first coordinate, so they
+        // vary along its first column.
+        let axis = match s.value("transform_obj_to_uv") {
+            Some(Val::Numbers(m)) if m.len() >= 9 => {
+                let column = [m[0].abs(), m[4].abs(), m[8].abs()];
+                if column[1] > column[0] && column[1] >= column[2] {
+                    Axis::Y
+                } else if column[2] > column[0] {
+                    Axis::Z
+                } else {
+                    Axis::X
+                }
+            }
+            _ => Axis::X,
+        };
+        let scale = s.number("scale").filter(|v| *v > 0.0).unwrap_or(1.0);
+        let marble = Procedural::Marble {
+            axis,
+            frequency: std::f32::consts::TAU / (MARBLE_PERIOD * scale),
+            distortion: s.number("vein_noise").unwrap_or(0.1) * std::f32::consts::TAU,
+            fractal: tequila_texture::noise::Fractal { octaves: 3, ..Default::default() },
+        };
+        self.note("its marble pattern's band spacing was estimated from KeyShot's own preview of it".into());
+        self.graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(marble), seed: 1 }))
+    }
+
     /// A bump or normal map from node `n`.
     fn bump(&mut self, n: u32, scale: f32) -> Result<(), ImportError> {
         let s = self.shader(n)?.clone();
+        let output = self.graph.output();
         if s.kind == "lux_bumpmap_add" {
-            self.note("two bump maps added together were reduced to the first".into());
-            if let Some(first) = s.number("bump_1") {
-                return self.bump(first as u32, scale);
+            // Two heights, mixed by its ratio: none of the second at 0, all
+            // of it at 1. A normal map has no height to add, so it stands
+            // alone.
+            let (first, second) = (s.number("bump_1").map(|v| v as u32), s.number("bump_2").map(|v| v as u32));
+            let ratio = s.number("ratio").unwrap_or(0.5).clamp(0.0, 1.0);
+            let a = match first {
+                Some(f) => self.height(f, scale * s.number("weight_1").unwrap_or(1.0))?,
+                None => None,
+            };
+            let b = match second {
+                Some(f) => self.height(f, scale * s.number("weight_2").unwrap_or(1.0))?,
+                None => None,
+            };
+            let mixed = match (a, b) {
+                (Some(a), Some(b)) => {
+                    // a + (b - a) * ratio, as one Mix of numbers.
+                    let mix = self.graph.add_node(
+                        Node::new(NodeKind::Node(ShaderNode::Mix { data: MixData::Float, blend: BlendMode::Mix, clamp_factor: true, clamp_result: false }))
+                            .with_literal(Socket::Input(0), Value::Float(ratio)),
+                    );
+                    self.graph.connect_output(a.0, a.1, mix, Socket::Input(1));
+                    self.graph.connect_output(b.0, b.1, mix, Socket::Input(2));
+                    Some((mix, 0))
+                }
+                (one, other) => one.or(other),
+            };
+            match mixed {
+                Some((node, socket)) => self.graph.connect_output(node, socket, output, Socket::Param(Param::Bump)),
+                None => {
+                    if let Some(first) = first {
+                        return self.bump(first, scale);
+                    }
+                }
+            }
+            return Ok(());
+        }
+        if matches!(s.kind.as_str(), "lux_noise" | "lux_fractal_noise") {
+            if let Some((node, socket)) = self.height(n, scale)? {
+                self.graph.connect_output(node, socket, output, Socket::Param(Param::Bump));
             }
             return Ok(());
         }
@@ -899,12 +1456,40 @@ impl Build<'_> {
                 let t = base_name(t).to_ascii_lowercase();
                 t.contains("normal") || t.contains("_nrm") || t.contains("_nm") || t.contains("-nm")
             });
-        let output = self.graph.output();
+        if s.kind == "lux_marble" {
+            // Marble's bands as a bump are what 3D-print materials draw
+            // their layer lines with.
+            let marble = self.marble(&s);
+            let height = s.number("bump_height").unwrap_or(1.0) * scale;
+            let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: 0.0005 * height }));
+            self.graph.connect(marble, bump, Socket::Input(0));
+            self.graph.connect(bump, output, Socket::Param(Param::Bump));
+            return Ok(());
+        }
         if !(s.kind.starts_with("texture") || s.kind == "triplanar") {
             self.note(format!("the procedural bump `{}` was left out", s.kind));
             return Ok(());
         }
-        let Some(image) = self.image(&s, if normal { MapRole::Normal } else { MapRole::Height })? else { return Ok(()) };
+        let Some(image) = self.image(&s, if normal { MapRole::Normal } else { MapRole::Height })? else {
+            // A protected Mold-Tech texture: a moulded grain at its size
+            // stands in, so the finish is textured and matte as moulded
+            // plastic is, not glass-smooth.
+            let file = s.text("texture").or_else(|| s.text("textureX")).unwrap_or("");
+            if file.to_ascii_lowercase().ends_with(".ktx") {
+                let tile = s.number("uScaleX").or_else(|| s.number("uv_scale_u")).filter(|v| *v > 0.0).unwrap_or(0.01);
+                let grain = self.graph.add_node(
+                    Node::new(NodeKind::Node(ShaderNode::noise()))
+                        .with_literal(Socket::Input(2), Value::Float(GRAIN_PER_TILE / tile))
+                        .with_literal(Socket::Input(3), Value::Float(4.0))
+                        .with_literal(Socket::Input(4), Value::Float(0.6)),
+                );
+                let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: GRAIN_DEPTH * scale }));
+                self.graph.connect(grain, bump, Socket::Input(0));
+                self.graph.connect(bump, output, Socket::Param(Param::Bump));
+                self.note("a moulded grain at the texture's size stands in for it".into());
+            }
+            return Ok(());
+        };
         if normal {
             self.graph.connect(image, output, Socket::Param(Param::Bump));
         } else {
@@ -1048,8 +1633,8 @@ id 195
         assert!(entry.graph.is_connected(Param::BaseColor), "the colour picture is not wired");
         assert!(entry.graph.is_connected(Param::Bump), "the normal map is not wired");
         let roles: Vec<MapRole> = entry.textures.iter().map(|(_, t)| t.role).collect();
-        // A metal's colour picture is read as stored, not decoded.
-        assert!(roles.contains(&MapRole::Data) && roles.contains(&MapRole::Normal), "{roles:?}");
+        // A metal's colour picture is a photograph, decoded as one.
+        assert!(roles.contains(&MapRole::Color) && roles.contains(&MapRole::Normal), "{roles:?}");
         assert_eq!(asked, vec!["weathered-metal.jpg", "weathered-metal-NM.png"]);
         let _ = std::fs::remove_dir_all(&scratch);
     }
@@ -1067,13 +1652,211 @@ id 195
         assert!(converted.notes.is_empty(), "{:?}", converted.notes);
     }
 
+    /// A 3D-print material draws its layer lines as a Marble bump; it was
+    /// left out, and the material came in smooth. Its bands run across the
+    /// axis its placement says, at the spacing KeyShot shows them.
+    #[test]
+    fn a_marble_bump_draws_layer_lines() {
+        let text = "#define shader 1 lux_marble {\n\"color1\" 0.7 0.7 0.7,\n\"color2\" 0.2 0.1 0.1,\n\"vein_noise\" 0.075,\n\"scale\" 1,\n\"bump_height\" 0.25,\n\"transform_obj_to_uv\" 1 0 0 0 0 1 -1.8e-07 0 0 1.8e-07 1 0 2.55 0 -39.77 1,\n}\n#define shader 2 lux_plastic {\n\"diffuse\" 0.0007 0.27 0.72,\n\"roughness\" 0.01,\n}\n#define shader 3 lux_bumpmap {\n\"bumpmap\" 1,\n\"shader\" 2,\n\"bump_scale\" 1,\n}\n#define material \"True Blue PLA\" {\nsurface 3\n}\n";
+        let converted = convert(&parse(text.as_bytes()).unwrap(), &mut |_| Ok(None), Path::new(".")).unwrap();
+        let graph = &converted.entry.graph;
+        assert!(graph.is_connected(Param::Bump), "{:?}", converted.notes);
+        assert!(!converted.notes.iter().any(|n| n.contains("left out")), "{:?}", converted.notes);
+        let marble = graph.nodes().find_map(|(_, n)| match &n.kind {
+            NodeKind::Procedural { procedural, .. } => match **procedural {
+                tequila_texture::procedural::Procedural::Marble { axis, frequency, .. } => Some((axis, frequency)),
+                _ => None,
+            },
+            _ => None,
+        });
+        let (axis, frequency) = marble.expect("no marble in the graph");
+        assert_eq!(axis, tequila_texture::procedural::Axis::X);
+        let period_mm = std::f32::consts::TAU / frequency * 1000.0;
+        assert!((1.0..2.0).contains(&period_mm), "bands every {period_mm} mm");
+        assert_eq!(converted.entry.material_type, MaterialType::Plastic);
+    }
+
+    /// One record of KeyShot 11's binary `.mtl`: a tag, a one-byte length,
+    /// the payload.
+    fn record(tag: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag, payload.len() as u8];
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn binary_mtl(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut bytes = b"//--lux:mat:001--\n     \0\x02".to_vec();
+        bytes.resize(BINARY_RECORDS, 0);
+        for r in records {
+            bytes.extend_from_slice(r);
+        }
+        bytes
+    }
+
+    fn with_key(value: &[u8], key: &str) -> Vec<u8> {
+        [value, key.as_bytes()].concat()
+    }
+
+    fn floats(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    /// KeyShot 11 and later write the `.mtl` as binary records, which were
+    /// refused as "unexpected text": a toon material from KeyShot 13 would
+    /// not import at all. Its named colours, links, on/off values and layer
+    /// list all read, and the toon comes in as the flat, see-through colour
+    /// Tequila can draw.
+    #[test]
+    fn a_keyshot_13_binary_material_reads() {
+        let id = |n: u32| n.to_le_bytes().to_vec();
+        let mut colour_block = vec![vec![0x9d, 0]];
+        colour_block.push(record(0x39, &id(17)));
+        colour_block.push(record(0x29, &with_key(&floats(&[0.25, 0.01, 0.01, 1.0]), "color")));
+        colour_block.push(vec![0x9f, 0]);
+        let mut records = vec![record(0x8d, b"//--lux:mat:12--\n")];
+        let mut icon = vec![0x36];
+        let png = b"0\x89PNG\r\n\x1a\nrest";
+        icon.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        icon.extend_from_slice(png);
+        records.push(icon);
+        records.extend(colour_block);
+        records.push(record(0x07, &with_key(&id(1), "lux_const_color_extended")));
+        records.push(record(0xa1, &with_key(&id(17), "color")));
+        records.push(vec![0x09, 0]);
+        records.push(record(0x07, &with_key(&id(2), "lux_toon")));
+        records.push(record(0x27, &with_key(&floats(&[0.0, 0.0, 0.0]), "color")));
+        records.push(record(0x9b, &with_key(&id(1), "shadow color")));
+        records.push(record(0x27, &with_key(&floats(&[0.25, 0.01, 0.01]), "shadow color")));
+        records.push(record(0x17, &with_key(&floats(&[0.68]), "transparency")));
+        records.push(record(0x25, &with_key(&id(1), "outline contour")));
+        records.push(vec![0x09, 0]);
+        records.push(record(0x07, &with_key(&id(3), "lux_composite")));
+        records.push(record(0x7f, &[id(7), b"shaders".to_vec(), id(1), id(2)].concat()));
+        records.push(vec![0x09, 0]);
+        records.push(record(0x0b, b"evil toon"));
+        records.push(record(0x11, &[id(1), id(3)].concat()));
+        records.push(vec![0x0f, 0]);
+
+        let mtl = parse(&binary_mtl(&records)).unwrap();
+        assert_eq!(mtl.name, "evil toon");
+        assert_eq!(mtl.surface, Some(3));
+        assert!(mtl.icon.as_deref().is_some_and(|i| i.starts_with(b"\x89PNG")));
+        let toon = &mtl.shaders[&2];
+        assert_eq!(toon.kind, "lux_toon");
+        assert_eq!(toon.link("shadow color"), Some(1));
+        assert_eq!(toon.number("transparency"), Some(0.68));
+        assert_eq!(toon.flag("outline contour"), Some(true));
+        assert_eq!(mtl.shaders[&3].value("shaders"), Some(&Val::List(vec![1, 2])));
+        // The named colour is resolved where it is used.
+        assert_eq!(mtl.shaders[&1].colour("color"), Some(Spectrum::from_linear_srgb(vec3(0.25, 0.01, 0.01))));
+
+        let converted = convert(&mtl, &mut |_| Ok(None), Path::new(".")).unwrap();
+        let m = &converted.entry.material;
+        assert_eq!(converted.entry.material_type, MaterialType::Flat);
+        assert!((m.geometry_opacity - 0.32).abs() < 1e-4, "{}", m.geometry_opacity);
+        let red = m.emission_color.to_linear_srgb();
+        assert!(red.x > 0.1 && red.y < 0.02 && red.z < 0.02, "{red:?}");
+        assert!(converted.notes.iter().any(|n| n.contains("toon")), "{:?}", converted.notes);
+    }
+
+    /// Packages on this computer, named in `TEQUILA_KMP` (separated by `;`):
+    /// each reads, and says what did not come across.
+    #[test]
+    #[ignore = "reads packages named in TEQUILA_KMP"]
+    fn packages_named_in_the_environment_read() {
+        let Ok(list) = std::env::var("TEQUILA_KMP") else { return };
+        for path in list.split(';').filter(|p| !p.is_empty()) {
+            // TEQUILA_KMP_DUMP: every node of the package's material, as read.
+            if std::env::var_os("TEQUILA_KMP_DUMP").is_some() {
+                let bytes = std::fs::read(path).unwrap();
+                let members = crate::texture_set::read_zip(&bytes).unwrap();
+                for (name, data) in members.iter().filter(|(n, _)| n.to_ascii_lowercase().ends_with(".mtl")) {
+                    let mtl = parse(data).unwrap();
+                    println!("== {path} :: {name}: {} surface {:?} geometry {:?}", mtl.name, mtl.surface, mtl.geometry);
+                    for (n, shader) in &mtl.shaders {
+                        let params: Vec<String> = shader
+                            .params
+                            .iter()
+                            .map(|(k, v)| match v {
+                                Val::Numbers(n) if n.len() > 16 => format!("{k}=[{} numbers]", n.len()),
+                                other => format!("{k}={other:?}"),
+                            })
+                            .collect();
+                        println!("  {n} {}: {}", shader.kind, params.join(", "));
+                    }
+                }
+                for (name, data) in &members {
+                    println!("  member {name} ({} bytes)", data.len());
+                }
+            }
+            let scratch = std::env::temp_dir().join(format!("tequila-kmp-check-{}", std::process::id()));
+            let converted = read_kmp(Path::new(path), &scratch).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let _ = std::fs::remove_dir_all(&scratch);
+            let m = &converted.entry.material;
+            println!(
+                "{path}: {} ({:?}) base {:?} emission {:?} opacity {} bump {}\n  notes: {:?}",
+                converted.entry.name,
+                converted.entry.material_type,
+                m.base_color.to_linear_srgb(),
+                m.emission_color.to_linear_srgb(),
+                m.geometry_opacity,
+                converted.entry.graph.is_connected(Param::Bump),
+                converted.notes
+            );
+        }
+    }
+
     /// What cannot come across is said, not dropped silently.
     #[test]
     fn what_has_no_counterpart_is_noted() {
-        let text = "#define shader 1 lux_noise {\n\"color1\" 1 1 1,\n\"color2\" 0 0 0,\n}\n#define shader 2 lux_plastic {\n\"diffuse\" 0.5 0.5 0.5,\n\"diffuse\" ! 1,\n}\n#define material \"Speckle\" {\nsurface 2\n}\n";
+        let text = "#define shader 1 lux_cellular {\n\"color1\" 1 1 1,\n\"color2\" 0 0 0,\n}\n#define shader 2 lux_plastic {\n\"diffuse\" 0.5 0.5 0.5,\n\"diffuse\" ! 1,\n}\n#define material \"Cells\" {\nsurface 2\n}\n";
         let mtl = parse(text.as_bytes()).unwrap();
         let converted = convert(&mtl, &mut |_| Ok(None), Path::new(".")).unwrap();
-        assert!(converted.notes.iter().any(|n| n.contains("lux_noise")), "{:?}", converted.notes);
+        assert!(converted.notes.iter().any(|n| n.contains("lux_cellular")), "{:?}", converted.notes);
         assert!(converted.entry.graph.is_connected(Param::BaseColor));
+    }
+
+    /// KeyShot's noise is Blender's noise between its two colours, a feature
+    /// its `scale` across; and as a bump, added to another by its ratio.
+    #[test]
+    fn noise_comes_across_as_noise_colour_and_bump() {
+        let text = "#define shader 1 lux_noise {\n\"color1\" 1 1 1,\n\"color2\" 1 0.3 0.15,\n\"scale\" 0.0125,\n\"magnitude\" 0.32,\n\"bump_height\" 5,\n}\n\
+#define shader 2 lux_fractal_noise {\n\"levels\" 3,\n\"fall-off\" 0.25,\n\"scale\" 0.01,\n\"bump_height\" 0.04,\n}\n\
+#define shader 3 lux_bumpmap_add {\n\"bump_1\" 1,\n\"bump_2\" 2,\n\"ratio\" 0.9,\n}\n\
+#define shader 4 lux_color_adjust {\n\"color\" ! 1,\n\"hue\" 0.25,\n\"colorize\" 0.6 1 0.6,\n}\n\
+#define shader 5 metallic_paint {\n\"base\" 0.9 0.8 0.75,\n\"base\" ! 1,\n\"metal\" ! 4,\n\"roughness\" 0.08,\n}\n\
+#define shader 6 lux_bumpmap {\n\"bumpmap\" 3,\n\"shader\" 5,\n\"bump_scale\" 1,\n}\n#define material \"Pearl\" {\nsurface 6\n}\n";
+        let mtl = parse(text.as_bytes()).unwrap();
+        let converted = convert(&mtl, &mut |_| Ok(None), Path::new(".")).unwrap();
+        let graph = &converted.entry.graph;
+        assert!(converted.notes.is_empty(), "{:?}", converted.notes);
+        for param in [Param::BaseColor, Param::FlakeColor, Param::Bump] {
+            assert!(graph.is_connected(param), "{param:?} is not wired");
+        }
+        let noise = graph
+            .nodes()
+            .find_map(|(_, n)| match n.kind {
+                NodeKind::Node(ShaderNode::Noise { .. }) => n.literals.get(&Socket::Input(2)).copied(),
+                _ => None,
+            })
+            .expect("a noise node");
+        assert_eq!(noise, Value::Float(80.0));
+        assert!(graph.nodes().any(|(_, n)| matches!(n.kind, NodeKind::Node(ShaderNode::HueSaturationValue))));
+        graph.compile().expect("compiles");
+    }
+
+    /// A toon's outline is drawn where the surface turns from view: opaque,
+    /// in its contour colour, over a fill as clear as the toon is.
+    #[test]
+    fn a_toon_has_its_outline() {
+        let text = "#define shader 1 lux_toon {\n\"color\" 0 0 0,\n\"contour color\" 0.64 0.03 0.03,\n\"shadow color\" 0.25 0.01 0.01,\n\"transparency\" 0.68,\n\"contour width\" 1,\n}\n#define material \"Toon\" {\nsurface 1\n}\n";
+        let mtl = parse(text.as_bytes()).unwrap();
+        let converted = convert(&mtl, &mut |_| Ok(None), Path::new(".")).unwrap();
+        assert_eq!(converted.entry.material_type, MaterialType::Flat);
+        let graph = &converted.entry.graph;
+        assert!(graph.is_connected(Param::EmissionColor));
+        assert!(graph.is_connected(Param::Opacity));
+        assert!((converted.entry.material.geometry_opacity - 0.32).abs() < 1e-5);
+        graph.compile().expect("compiles");
     }
 }
