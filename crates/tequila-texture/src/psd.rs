@@ -7,6 +7,14 @@
 //! Photoshop shows - and that is the label. Its resolution resource says
 //! what it was made to print at.
 //!
+//! Unless it was saved with "Maximize Compatibility" off: then the merged
+//! image is a blank stand-in, and the version resource (1057) says it has no
+//! real merged data. Such a document is composited from its layers here
+//! ([`layered`]): the visible ones, groups' visibility included, at their
+//! opacity and fill, through their transparency, masks and clipping, with
+//! normal, multiply and screen blending, and the rest of Photoshop's blend
+//! modes as normal - the stand-in being white, a blank label otherwise.
+//!
 //! What is read: 8, 16 and 32 bits a channel; greyscale and RGB, with the
 //! merged transparency when there is one; raw or PackBits (RLE)
 //! compression, which is all Photoshop writes for the merged image.
@@ -80,12 +88,20 @@ pub fn composite(bytes: &[u8]) -> Result<Composite, String> {
     r.skip(length)?;
     // Image resources: whether the extra channels are saved selections.
     let length = r.u32()? as usize;
-    let selections = resources(r.take(length)?)
+    let section = r.take(length)?;
+    let selections = resources(section)
         .find(|(id, _)| *id == 1053)
         .is_some_and(|(_, data)| data.len() >= 4 && data.chunks_exact(4).all(|id| id != [0, 0, 0, 0]));
+    // Version info: its fifth byte says whether the merged image is real.
+    let merged = resources(section).find(|(id, _)| *id == 1057).is_none_or(|(_, data)| data.get(4).is_none_or(|&real| real != 0));
     // Layers: past them, but for the sign of their count.
     let length = if big { r.u64()? as usize } else { r.u32()? as usize };
     let layers = r.take(length)?;
+    if !merged {
+        if let Some(composite) = layered(layers, big, width, height, depth, colour_channels)? {
+            return Ok(composite);
+        }
+    }
     let info = if big { 8 } else { 4 };
     let marked = layers.len() >= info + 2 && {
         let count = i16::from_be_bytes([layers[info], layers[info + 1]]);
@@ -148,6 +164,259 @@ pub fn composite(bytes: &[u8]) -> Result<Composite, String> {
         rgba.push(alpha);
     }
     Ok(Composite { width, height, rgba, linear: depth == 32 })
+}
+
+/// One layer's record: where it is, its channels, and how it goes over
+/// what is below it.
+struct Layer {
+    top: i32,
+    left: i32,
+    bottom: i32,
+    right: i32,
+    /// Each channel's id and the length of its image data.
+    channels: Vec<(i16, usize)>,
+    blend: [u8; 4],
+    opacity: f32,
+    clipped: bool,
+    visible: bool,
+    /// The layer mask's rectangle and the value outside it, if it has one.
+    mask: Option<(i32, i32, i32, i32, f32)>,
+    /// A group's opening (1, 2) or its closing divider (3), from `lsct`.
+    section: u32,
+    /// Fill opacity (`iOpa`), which scales the layer but not its effects.
+    fill: f32,
+}
+
+/// The document composited from its layers, as Photoshop would show it;
+/// `None` if it has none.
+fn layered(section: &[u8], big: bool, width: usize, height: usize, depth: u16, colour_channels: usize) -> Result<Option<Composite>, String> {
+    let mut r = Reader { bytes: section, at: 0 };
+    if section.is_empty() {
+        return Ok(None);
+    }
+    let length = if big { r.u64()? as usize } else { r.u32()? as usize };
+    let mut info = r.take(length)?;
+    if info.is_empty() {
+        // A 16- or 32-bit document keeps its layers in a block of their own
+        // after the global mask: `Lr16` or `Lr32`.
+        let mask = r.u32().unwrap_or(0) as usize;
+        let _ = r.skip(mask);
+        while r.bytes.len() - r.at >= 12 {
+            let signature = r.take(4)?;
+            if signature != b"8BIM" && signature != b"8B64" {
+                break;
+            }
+            let key: [u8; 4] = r.take(4)?.try_into().unwrap();
+            let size = if big && matches!(&key, b"Lr16" | b"Lr32" | b"Layr") { r.u64()? as usize } else { r.u32()? as usize };
+            let data = r.take(size.min(r.bytes.len() - r.at))?;
+            if matches!(&key, b"Lr16" | b"Lr32" | b"Layr") {
+                info = data;
+                break;
+            }
+            // Blocks are padded to a multiple of four here.
+            let _ = r.skip((4 - size % 4) % 4);
+        }
+        if info.is_empty() {
+            return Ok(None);
+        }
+    }
+    let mut r = Reader { bytes: info, at: 0 };
+    let count = (r.u16()? as i16).unsigned_abs() as usize;
+    let mut layers = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (top, left, bottom, right) = (r.u32()? as i32, r.u32()? as i32, r.u32()? as i32, r.u32()? as i32);
+        let channel_count = r.u16()? as usize;
+        let mut channels = Vec::with_capacity(channel_count);
+        for _ in 0..channel_count {
+            let id = r.u16()? as i16;
+            let length = if big { r.u64()? as usize } else { r.u32()? as usize };
+            channels.push((id, length));
+        }
+        if r.take(4)? != b"8BIM" {
+            return Err("a layer record is malformed".into());
+        }
+        let blend: [u8; 4] = r.take(4)?.try_into().unwrap();
+        let opacity = r.take(1)?[0] as f32 / 255.0;
+        let clipped = r.take(1)?[0] != 0;
+        let flags = r.take(1)?[0];
+        r.skip(1)?;
+        let extra = r.u32()? as usize;
+        let extra = r.take(extra)?;
+        let mut e = Reader { bytes: extra, at: 0 };
+        let mask_length = e.u32()? as usize;
+        let mask_data = e.take(mask_length)?;
+        let mask = (mask_data.len() >= 18).then(|| {
+            let v = |i: usize| i32::from_be_bytes(mask_data[i..i + 4].try_into().unwrap());
+            (v(0), v(4), v(8), v(12), mask_data[16] as f32 / 255.0)
+        });
+        let ranges = e.u32()? as usize;
+        e.skip(ranges)?;
+        let name = e.take(1)?[0] as usize;
+        // A Pascal name padded to a multiple of four.
+        e.skip((name + 1).div_ceil(4) * 4 - 1)?;
+        let (mut section, mut fill) = (0, 1.0);
+        while e.bytes.len() - e.at >= 12 {
+            let signature = e.take(4)?;
+            if signature != b"8BIM" && signature != b"8B64" {
+                break;
+            }
+            let key: [u8; 4] = e.take(4)?.try_into().unwrap();
+            // A few keys take a 64-bit length in a PSB.
+            let long = big && matches!(&key, b"LMsk" | b"Lr16" | b"Lr32" | b"Layr" | b"Mt16" | b"Mt32" | b"Mtrn" | b"Alph" | b"FMsk" | b"lnk2" | b"FEid" | b"FXid" | b"PxSD");
+            let size = if long { e.u64()? as usize } else { e.u32()? as usize };
+            let data = e.take(size.min(e.bytes.len() - e.at))?;
+            match &key {
+                b"lsct" | b"lsdk" if data.len() >= 4 => section = u32::from_be_bytes(data[..4].try_into().unwrap()),
+                b"iOpa" if !data.is_empty() => fill = data[0] as f32 / 255.0,
+                _ => {}
+            }
+            // Padded to an even length.
+            let _ = e.skip(size % 2);
+        }
+        layers.push(Layer { top, left, bottom, right, channels, blend, opacity, clipped, visible: flags & 2 == 0, mask, section, fill });
+    }
+    // Channel image data, layer by layer, channel by channel, after the
+    // records (what is left of the info block).
+    let bytes_per = (depth / 8) as usize;
+    let sample = |plane: &[u8], i: usize| -> f32 {
+        match bytes_per {
+            1 => plane[i] as f32 / 255.0,
+            2 => u16::from_be_bytes([plane[2 * i], plane[2 * i + 1]]) as f32 / 65535.0,
+            _ => {
+                let v = f32::from_be_bytes([plane[4 * i], plane[4 * i + 1], plane[4 * i + 2], plane[4 * i + 3]]);
+                if v.is_finite() { v.max(0.0) } else { 0.0 }
+            }
+        }
+    };
+    let mut planes: Vec<Vec<(i16, Vec<f32>)>> = Vec::with_capacity(layers.len());
+    for layer in &layers {
+        let mut decoded = Vec::with_capacity(layer.channels.len());
+        for &(id, length) in &layer.channels {
+            let data = r.take(length)?;
+            let (w, h) = match (id, layer.mask) {
+                (-2, Some((top, left, bottom, right, _))) => ((right - left).max(0) as usize, (bottom - top).max(0) as usize),
+                _ => ((layer.right - layer.left).max(0) as usize, (layer.bottom - layer.top).max(0) as usize),
+            };
+            if data.len() < 2 || w == 0 || h == 0 {
+                decoded.push((id, Vec::new()));
+                continue;
+            }
+            let mut c = Reader { bytes: data, at: 0 };
+            let row = w * bytes_per;
+            let mut bytes = Vec::with_capacity(row * h);
+            match c.u16()? {
+                0 => bytes.extend_from_slice(c.take(row * h)?),
+                1 => {
+                    let mut lengths = Vec::with_capacity(h);
+                    for _ in 0..h {
+                        lengths.push(if big { c.u32()? as usize } else { c.u16()? as usize });
+                    }
+                    for packed in lengths {
+                        unpack_bits(c.take(packed)?, row, &mut bytes)?;
+                    }
+                }
+                other => return Err(format!("layer compression {other} (ZIP) is not one this reads; save with Maximize Compatibility on")),
+            }
+            decoded.push((id, (0..w * h).map(|i| sample(&bytes, i)).collect()));
+        }
+        planes.push(decoded);
+    }
+
+    // Which layers show: their own visibility, and their groups'. Records
+    // run from the bottom up, so a group's opening comes after its layers.
+    let mut shown = vec![false; layers.len()];
+    let mut groups: Vec<bool> = Vec::new();
+    for (i, layer) in layers.iter().enumerate().rev() {
+        let inside = groups.last().copied().unwrap_or(true);
+        match layer.section {
+            1 | 2 => groups.push(inside && layer.visible),
+            3 => {
+                groups.pop();
+            }
+            _ => shown[i] = inside && layer.visible,
+        }
+    }
+
+    // Over a transparent canvas, premultiplied.
+    let (w, h) = (width, height);
+    let mut canvas = vec![0.0f32; w * h * 4];
+    // The alpha of the layer clipped layers are clipped to.
+    let mut base: Vec<f32> = vec![0.0; w * h];
+    let mut drawn = false;
+    for (i, layer) in layers.iter().enumerate() {
+        if layer.section != 0 {
+            continue;
+        }
+        let (lw, lh) = ((layer.right - layer.left).max(0) as usize, (layer.bottom - layer.top).max(0) as usize);
+        let channel = |id: i16| planes[i].iter().find(|(c, p)| *c == id && !p.is_empty()).map(|(_, p)| p);
+        let colour: Vec<Option<&Vec<f32>>> = (0..3).map(|k| channel(if colour_channels == 1 { 0 } else { k as i16 })).collect();
+        let alpha = channel(-1);
+        let mask = channel(-2).zip(layer.mask);
+        if !layer.clipped {
+            base.iter_mut().for_each(|a| *a = 0.0);
+        }
+        for y in 0..lh {
+            let cy = layer.top + y as i32;
+            if cy < 0 || cy as usize >= h {
+                continue;
+            }
+            for x in 0..lw {
+                let cx = layer.left + x as i32;
+                if cx < 0 || cx as usize >= w {
+                    continue;
+                }
+                let at = y * lw + x;
+                let pixel = cy as usize * w + cx as usize;
+                let mut a = alpha.map_or(1.0, |p| p[at].min(1.0));
+                if let Some((plane, (top, left, bottom, right, outside))) = mask {
+                    let inside = cy >= top && cy < bottom && cx >= left && cx < right;
+                    a *= if inside { plane[((cy - top) as usize) * (right - left) as usize + (cx - left) as usize] } else { outside };
+                }
+                if layer.clipped {
+                    a *= base[pixel];
+                } else {
+                    base[pixel] = a;
+                }
+                if !shown[i] {
+                    continue;
+                }
+                a *= layer.opacity * layer.fill;
+                if a <= 0.0 {
+                    continue;
+                }
+                drawn = true;
+                let below = &mut canvas[pixel * 4..pixel * 4 + 4];
+                let under_alpha = below[3];
+                for k in 0..3 {
+                    let s = colour[k].map_or(0.0, |p| p[at]);
+                    // What is below, unpremultiplied, for the blend.
+                    let d = if under_alpha > 0.0 { below[k] / under_alpha } else { s };
+                    let blended = match &layer.blend {
+                        b"mul " => s * d,
+                        b"scrn" => 1.0 - (1.0 - s) * (1.0 - d),
+                        _ => s,
+                    };
+                    // Where nothing is below, the layer's own colour.
+                    let c = blended * under_alpha + s * (1.0 - under_alpha);
+                    below[k] = c * a + below[k] * (1.0 - a);
+                }
+                below[3] = a + under_alpha * (1.0 - a);
+            }
+        }
+    }
+    if !drawn {
+        return Ok(None);
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for pixel in canvas.chunks_exact(4) {
+        let a = pixel[3].min(1.0);
+        for k in 0..3 {
+            let c = if a > 0.0 { pixel[k] / a } else { 0.0 };
+            rgba.push(if depth == 32 { c } else { c.clamp(0.0, 1.0) });
+        }
+        rgba.push(a);
+    }
+    Ok(Some(Composite { width, height, rgba, linear: depth == 32 }))
 }
 
 /// Pixels per metre across and down, from the resolution resource (1005),
@@ -395,6 +664,117 @@ pub(crate) mod tests {
         assert_eq!(alpha(write_with(2, 2, &pixels, false, None, &[7], -3)), 0.0, "marked transparency was missed");
         assert_eq!(alpha(write_with(2, 2, &pixels, false, None, &[], 0)), 0.0);
         assert_eq!(alpha(write_with(2, 2, &pixels, false, None, &[0], 0)), 0.0);
+    }
+
+    /// A layered document saved with Maximize Compatibility off: a red
+    /// layer filling it, a blue one at half opacity over its middle, a
+    /// green one switched off, and one in a hidden group; the merged image
+    /// a white stand-in, and the version resource saying so.
+    fn layered_document(real_merged: bool) -> Vec<u8> {
+        let (width, height) = (4usize, 4usize);
+        let mut out = Vec::new();
+        out.extend_from_slice(b"8BPS");
+        out.extend_from_slice(&1u16.to_be_bytes());
+        out.extend_from_slice(&[0; 6]);
+        out.extend_from_slice(&3u16.to_be_bytes());
+        out.extend_from_slice(&(height as u32).to_be_bytes());
+        out.extend_from_slice(&(width as u32).to_be_bytes());
+        out.extend_from_slice(&8u16.to_be_bytes());
+        out.extend_from_slice(&3u16.to_be_bytes());
+        out.extend_from_slice(&0u32.to_be_bytes());
+        // Version info: version 1, then whether the merged data is real.
+        let mut resources = Vec::new();
+        resources.extend_from_slice(b"8BIM");
+        resources.extend_from_slice(&1057u16.to_be_bytes());
+        resources.extend_from_slice(&[0, 0]);
+        resources.extend_from_slice(&6u32.to_be_bytes());
+        resources.extend_from_slice(&1u32.to_be_bytes());
+        resources.extend_from_slice(&[real_merged as u8, 0]);
+        out.extend_from_slice(&(resources.len() as u32).to_be_bytes());
+        out.extend_from_slice(&resources);
+
+        // name, rect, colour, opacity, visible, section, raw data per channel.
+        struct L {
+            name: &'static str,
+            rect: (i32, i32, i32, i32),
+            rgb: [u8; 3],
+            opacity: u8,
+            visible: bool,
+            section: u32,
+        }
+        let layers = [
+            L { name: "Red", rect: (0, 0, 4, 4), rgb: [255, 0, 0], opacity: 255, visible: true, section: 0 },
+            L { name: "Blue", rect: (1, 1, 3, 3), rgb: [0, 0, 255], opacity: 128, visible: true, section: 0 },
+            L { name: "Green", rect: (0, 0, 4, 4), rgb: [0, 255, 0], opacity: 255, visible: false, section: 0 },
+            // A hidden group holding a white layer: its divider, the layer,
+            // then the group's own record above them.
+            L { name: "</Layer group>", rect: (0, 0, 0, 0), rgb: [0, 0, 0], opacity: 255, visible: true, section: 3 },
+            L { name: "White", rect: (0, 0, 4, 4), rgb: [255, 255, 255], opacity: 255, visible: true, section: 0 },
+            L { name: "Group", rect: (0, 0, 0, 0), rgb: [0, 0, 0], opacity: 255, visible: false, section: 1 },
+        ];
+        let mut info = Vec::new();
+        info.extend_from_slice(&(layers.len() as i16).to_be_bytes());
+        let mut data = Vec::new();
+        for l in &layers {
+            for v in [l.rect.0, l.rect.1, l.rect.2, l.rect.3] {
+                info.extend_from_slice(&v.to_be_bytes());
+            }
+            let pixels = ((l.rect.2 - l.rect.0) * (l.rect.3 - l.rect.1)) as usize;
+            info.extend_from_slice(&4u16.to_be_bytes());
+            for (id, value) in [(0i16, l.rgb[0]), (1, l.rgb[1]), (2, l.rgb[2]), (-1, 255)] {
+                info.extend_from_slice(&id.to_be_bytes());
+                info.extend_from_slice(&(2 + pixels as u32).to_be_bytes());
+                data.extend_from_slice(&0u16.to_be_bytes());
+                data.extend(std::iter::repeat_n(value, pixels));
+            }
+            info.extend_from_slice(b"8BIMnorm");
+            info.extend_from_slice(&[l.opacity, 0, if l.visible { 0 } else { 2 }, 0]);
+            let mut extra = Vec::new();
+            extra.extend_from_slice(&0u32.to_be_bytes());
+            extra.extend_from_slice(&0u32.to_be_bytes());
+            let mut name = vec![l.name.len() as u8];
+            name.extend_from_slice(l.name.as_bytes());
+            while name.len() % 4 != 0 {
+                name.push(0);
+            }
+            extra.extend_from_slice(&name);
+            if l.section != 0 {
+                extra.extend_from_slice(b"8BIMlsct");
+                extra.extend_from_slice(&4u32.to_be_bytes());
+                extra.extend_from_slice(&l.section.to_be_bytes());
+            }
+            info.extend_from_slice(&(extra.len() as u32).to_be_bytes());
+            info.extend_from_slice(&extra);
+        }
+        info.extend_from_slice(&data);
+        if info.len() % 2 == 1 {
+            info.push(0);
+        }
+        let mut section = Vec::new();
+        section.extend_from_slice(&(info.len() as u32).to_be_bytes());
+        section.extend_from_slice(&info);
+        section.extend_from_slice(&0u32.to_be_bytes());
+        out.extend_from_slice(&(section.len() as u32).to_be_bytes());
+        out.extend_from_slice(&section);
+        // The merged image: white, raw.
+        out.extend_from_slice(&0u16.to_be_bytes());
+        out.extend(std::iter::repeat_n(255u8, width * height * 3));
+        out
+    }
+
+    /// With no real merged image, the layers are composited: red, with the
+    /// blue half over its middle, and neither the hidden layer nor the
+    /// hidden group's showing.
+    #[test]
+    fn a_document_without_its_merged_image_is_composited_from_its_layers() {
+        let c = composite(&layered_document(false)).expect("reads");
+        let pixel = |x: usize, y: usize| -> Vec<i32> { c.rgba[(y * 4 + x) * 4..(y * 4 + x) * 4 + 4].iter().map(|v| (v * 255.0).round() as i32).collect() };
+        assert_eq!(pixel(0, 0), vec![255, 0, 0, 255], "the corner is the red layer alone");
+        let middle = pixel(1, 1);
+        assert!((middle[0] - 127).abs() <= 2 && middle[1] == 0 && (middle[2] - 128).abs() <= 2 && middle[3] == 255, "{middle:?}");
+        // With a real merged image, that is what is read: white.
+        let real = composite(&layered_document(true)).expect("reads");
+        assert!(real.rgba.iter().all(|&v| v == 1.0));
     }
 
     #[test]
