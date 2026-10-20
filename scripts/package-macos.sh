@@ -236,6 +236,9 @@ Plugins: Plugins > Manage plugins... They are written in Python, which a
 Mac has once Apple's command line tools are installed (xcode-select
 --install in Terminal).
 Guides: Help > Guides.
+If Tequila closes unexpectedly, the next launch shows what happened (with
+macOS's own crash report); Copy for Discord puts it on the clipboard for
+#bug-reports. Help > Crash reports.
 README
 cp "$readme" "$resources/"
 

@@ -20,6 +20,7 @@ mod channel;
 mod clock;
 mod color_picker;
 mod connect_claude;
+mod crash;
 mod console;
 mod cutaway_panel;
 mod cycles_view;
@@ -210,6 +211,9 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    // Reports of a session that ended badly, to show once the window is up;
+    // and this session's, should it.
+    let crashed = crash::install(&build_line());
     // The application was called Freeshot before: on a computer that had
     // it, its things come across the first time.
     let adopted = tequila_format::library::adopt_older_name();
@@ -247,6 +251,15 @@ fn main() -> eframe::Result<()> {
                     app.toasts.info("Brought your materials, plugins and settings across from Freeshot".to_string());
                 }
                 app.solid = solid_gpu::SolidView::new(cc.gl.is_some());
+                if let Some(gl) = &cc.gl {
+                    use eframe::glow::HasContext;
+                    // SAFETY: plain queries on the window's own context.
+                    let (renderer, version) = unsafe {
+                        (gl.get_parameter_string(eframe::glow::RENDERER), gl.get_parameter_string(eframe::glow::VERSION))
+                    };
+                    crash::set_graphics(format!("{renderer} · OpenGL {version}"));
+                }
+                app.crash_window.show_after_crash(crashed);
                 // Picked up by the first frame's submit.
                 app.submit();
                 Ok(Box::new(app))
@@ -420,6 +433,10 @@ struct TequilaApp {
     interacting: bool,
     show_help: bool,
     show_about: bool,
+    /// What went wrong last time, or in a worker just now, or from Help.
+    crash_window: crash::CrashWindow,
+    /// The status line last noted for a crash report.
+    noted_status: String,
     show_hud: bool,
     viewport_paused: bool,
     window_title: String,
@@ -668,6 +685,20 @@ fn shipped_in(folder: &std::path::Path, name: &str) -> Option<std::path::PathBuf
 
 /// What `BUILD.txt` beside a packaged Tequila says: when it was built, and
 /// from which revision. `None` for a build run from its checkout.
+/// This build, in a line: when and from what it was built.
+fn build_line() -> String {
+    match build_note() {
+        Some((built, source)) => {
+            let date = built.get(..16).unwrap_or(&built).replace('T', " ");
+            match source.get(..10) {
+                Some(short) => format!("built {date} · source {short}"),
+                None => format!("built {date}"),
+            }
+        }
+        None => format!("development build {}", env!("CARGO_PKG_VERSION")),
+    }
+}
+
 fn build_note() -> Option<(String, String)> {
     read_build_note(&std::fs::read_to_string(beside_application("BUILD.txt")?).ok()?)
 }
@@ -841,6 +872,8 @@ impl TequilaApp {
             interacting: false,
             show_help: false,
             show_about: false,
+            crash_window: crash::CrashWindow::default(),
+            noted_status: String::new(),
             show_hud: false,
             viewport_paused: false,
             window_title: String::new(),
@@ -1412,6 +1445,24 @@ impl eframe::App for TequilaApp {
         if self.show_about {
             self.about_window(ctx);
         }
+        // TEQUILA_CRASH_TEST: crash on purpose, once the window is up, to
+        // see the report the next launch shows.
+        crash::test_crash(ctx);
+        // What the person sees happen, kept for a crash report.
+        if self.project.status != self.noted_status {
+            self.noted_status = self.project.status.clone();
+            crash::note(&self.noted_status);
+        }
+        let fresh = crash::take_fresh();
+        if !fresh.is_empty() {
+            self.toasts.info("Something went wrong in the background. Help, Crash reports has what happened".to_string());
+            self.crash_window.show_after_crash(fresh);
+            self.crash_window.browsing = true;
+        }
+        // After the work is recovered or let go: that matters more.
+        if self.recoverable.is_empty() {
+            self.crash_window.ui(ctx);
+        }
         self.update_report_window(ctx);
         self.model_units_window(ctx);
         self.improve_model_window(ctx);
@@ -1534,6 +1585,7 @@ impl eframe::App for TequilaApp {
     /// never lost — which trains the user to dismiss the prompt that matters.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.end_session();
+        crash::finish();
         // Before the window is gone, so a client asking in the meantime is
         // pointed at a Tequila that will still be there to answer.
         if let Some(channel) = &mut self.channel {
@@ -2970,6 +3022,10 @@ impl TequilaApp {
                         }
                     });
                     ui.separator();
+                    if ui.button("Crash reports").on_hover_text("What happened when Tequila stopped unexpectedly, to copy for Discord").clicked() {
+                        self.crash_window.browse();
+                        ui.close_menu();
+                    }
                     if ui.button("About Tequila").clicked() {
                         self.show_about = true;
                         ui.close_menu();

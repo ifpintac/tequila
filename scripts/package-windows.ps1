@@ -29,6 +29,15 @@ try {
     New-Item -ItemType Directory -Path $packagePath | Out-Null
     Copy-Item -LiteralPath (Join-Path $releasePath 'tequila-app.exe') -Destination (Join-Path $packagePath 'Tequila.exe')
     Copy-Item -LiteralPath (Join-Path $releasePath 'tequila.exe') -Destination (Join-Path $packagePath 'tequila-cli.exe')
+    # The program's symbols, beside the package and not in it: a crash
+    # report gives Windows' frames as Tequila.exe+offset, and these turn
+    # them back into names. Too large to ship (tens of megabytes).
+    $symbolsPath = Join-Path $projectRoot "dist/$packageName-symbols"
+    $appSymbols = Join-Path $releasePath 'tequila_app.pdb'
+    if (Test-Path -LiteralPath $appSymbols) {
+        New-Item -ItemType Directory -Path $symbolsPath | Out-Null
+        Copy-Item -LiteralPath $appSymbols -Destination $symbolsPath
+    }
     Get-ChildItem -LiteralPath $releasePath -Filter '*.dll' | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $packagePath
     }
@@ -177,6 +186,8 @@ lighting, renders, even plugins. Tequila-Claude-Skill.zip teaches it how
 (upload it in Claude's Settings > Capabilities > Skills).
 Plugins: Plugins > Manage plugins... (PLUGINS.md says how to write one).
 Guides: SCRIPTING.md, PLUGINS.md, MATERIALS.md, also under Help > Guides.
+If Tequila closes unexpectedly, the next launch shows what happened; Copy
+for Discord puts it on the clipboard for #bug-reports. Help > Crash reports.
 
 tequila-cli.exe is the optional command-line renderer; with --worker it is
 a render node for network rendering (Render window > Network rendering).

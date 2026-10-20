@@ -11,6 +11,7 @@
 #![deny(clippy::float_cmp_const)]
 #![warn(missing_debug_implementations)]
 
+pub mod guard;
 pub mod ids;
 pub mod math;
 pub mod rng;

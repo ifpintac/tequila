@@ -36,7 +36,6 @@ use tequila_scene::material::MaterialDefinition;
 use ruststep::ast::{EntityInstance, Name, Parameter, Record};
 use ruststep::tables::PlaceHolder;
 use std::collections::{BTreeMap, HashMap};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use truck_meshalgo::prelude::*;
 use truck_stepio::r#in::{FaceAnyHolder, ShellHolder, Table};
 use truck_topology::compress::CompressedShell;
@@ -484,7 +483,7 @@ fn mesh_faces(table: &Table, holder: &ShellHolder, tolerance: f64, inverted: boo
             face.orientation = !face.orientation;
         }
     }
-    let whole = catch_unwind(AssertUnwindSafe(|| compressed.robust_triangulation(tolerance)));
+    let whole = tequila_core::guard::catching(|| compressed.robust_triangulation(tolerance));
     // Each divided shell, and for one face divided alone, which face.
     let meshed: Vec<(Option<usize>, CompressedShell<Point3, PolylineCurve<Point3>, Option<PolygonMesh>>)> = match whole {
         Ok(meshed) => vec![(None, meshed)],
@@ -497,7 +496,7 @@ fn mesh_faces(table: &Table, holder: &ShellHolder, tolerance: f64, inverted: boo
                 .into_par_iter()
                 .filter_map(|i| {
                     let one = face_alone(&compressed, i)?;
-                    catch_unwind(AssertUnwindSafe(|| one.robust_triangulation(tolerance))).ok().map(|m| (Some(i), m))
+                    tequila_core::guard::catching(|| one.robust_triangulation(tolerance)).ok().map(|m| (Some(i), m))
                 })
                 .collect()
         }
@@ -589,7 +588,7 @@ fn normalize_knots<P, C>(shell: &mut CompressedShell<P, C, truck_stepio::r#in::a
     use truck_stepio::r#in::alias::Surface;
     let wide = |u: f64, v: f64| u > 1e-5 && v > 1e-5;
     for face in &mut shell.faces {
-        let _ = catch_unwind(AssertUnwindSafe(|| match &mut face.surface {
+        let _ = tequila_core::guard::catching(|| match &mut face.surface {
             Surface::BSplineSurface(surface) if wide(surface.uknot_vec().range_length(), surface.vknot_vec().range_length()) => {
                 surface.knot_normalize();
             }
@@ -597,7 +596,7 @@ fn normalize_knots<P, C>(shell: &mut CompressedShell<P, C, truck_stepio::r#in::a
                 surface.knot_normalize();
             }
             _ => {}
-        }));
+        });
     }
 }
 
@@ -630,7 +629,7 @@ fn outline(compressed: &StepShell, index: usize, tolerance: f64) -> Option<Vec<V
             let mut points: Vec<Point3> = Vec::new();
             for used in wire {
                 let curve = &compressed.edges.get(used.index)?.curve;
-                let mut line = catch_unwind(AssertUnwindSafe(|| PolylineCurve::from_curve(curve, curve.range_tuple(), tolerance).0)).ok()?;
+                let mut line = tequila_core::guard::catching(|| PolylineCurve::from_curve(curve, curve.range_tuple(), tolerance).0).ok()?;
                 if !used.orientation {
                     line.reverse();
                 }
@@ -875,7 +874,7 @@ impl Body {
         let mut high = [f64::NEG_INFINITY; 3];
         for (shell, _) in &self.shells {
             let Some(holder) = table.shell.get(shell) else { continue };
-            let Ok(compressed) = catch_unwind(AssertUnwindSafe(|| table.to_compressed_shell(holder))) else { continue };
+            let Ok(compressed) = tequila_core::guard::catching(|| table.to_compressed_shell(holder)) else { continue };
             let Ok(compressed) = compressed else { continue };
             for p in &compressed.vertices {
                 for (axis, value) in [p.x, p.y, p.z].into_iter().enumerate() {
