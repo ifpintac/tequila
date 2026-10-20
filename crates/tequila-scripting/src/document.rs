@@ -134,7 +134,9 @@ pub fn nodes(document: &SceneDocument) -> Value {
 
         match node.kind {
             NodeKind::Part { mesh } => {
-                entry.set("kind", "part");
+                // Its mesh's key: parts with the same are copies of one shape
+                // (an assembly's screws), which a script can treat as one.
+                entry.set("kind", "part").set("mesh", mesh.0 as f64);
                 if let Some(source) = document.geometry.get(mesh) {
                     entry
                         .set("triangles", (source.indices.len() / 3) as f64)

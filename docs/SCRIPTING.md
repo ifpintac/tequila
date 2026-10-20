@@ -129,8 +129,9 @@ is a discovery guide, not a JSON Schema.
 `query context` combines selection, node IDs/names/parents/world bounds,
 material users, full material definitions/graphs, and the saved scene metadata:
 units, local transforms, lights, environment, textures, cameras and render
-settings. Mesh vertex/index buffers are omitted. `document.tree` contains local
-transforms; node-summary bounds are world-space. Material definitions follow
+settings. Mesh vertex/index buffers are omitted; a part's `mesh` key says which
+mesh it uses (copies of one shape share it) and `triangles` how big it is.
+`document.tree` contains local transforms; node-summary bounds are world-space. Material definitions follow
 the project file schema. Parameter keys follow the API catalog. Colors passed
 to parameter commands are linear RGB, not 0–255 display colors, in the
 rendering space (ACEScg primaries). Greys and gentle tints are the same as

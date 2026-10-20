@@ -169,7 +169,7 @@ class AutoMaterialsTests(unittest.TestCase):
                 running.close()
             box = next(p for p in fs.parts() if p.name.startswith('Box'))
             material = fs.materials[box.material]
-            self.assertTrue(material.name.startswith('ABS White ('), material.name)
+            self.assertEqual(material.name, 'ABS White (red)')
             red = material.base_color
             self.assertGreater(red[0], 0.5)
             self.assertLess(red[1], 0.1)
@@ -178,6 +178,51 @@ class AutoMaterialsTests(unittest.TestCase):
             fs.undo()
             fs.undo()
             self.assertEqual(next(p for p in fs.parts() if p.name.startswith('Box')).material, before)
+
+
+    def test_what_you_gave_a_part_is_learned_when_you_save(self):
+        with tempfile.TemporaryDirectory() as data, tequila.open(MODEL) as fs:
+            pin = next(p for p in fs.parts() if p.name == 'Pin')
+            fs.library.apply('Brass Satin', pin)
+            running = Running(EXAMPLES / 'auto-materials', fs, data)
+            try:
+                running.send({'type': 'event', 'event': 'saved', 'data': {'path': 'x.tequila'}})
+                running.expect(lambda m: m['type'] == 'done')
+            finally:
+                running.close()
+            learned = json.loads(Path(data, 'settings.json').read_text(encoding='utf-8'))['learned']
+            self.assertEqual(learned, {'pin': 'Brass Satin'})
+        # A new model with a part of that name: it gets the learned one.
+        with tempfile.TemporaryDirectory() as data, tequila.open(MODEL) as fs:
+            Path(data, 'settings.json').write_text(json.dumps({'learned': {'pin': 'Brass Satin'}, 'rules': ''}), encoding='utf-8')
+            running = Running(EXAMPLES / 'auto-materials', fs, data)
+            try:
+                running.send({'type': 'command', 'command': 'preview', 'values': {}})
+                heard = running.expect(lambda m: m['type'] == 'done')
+                running.send({'type': 'command', 'command': 'apply', 'values': {}})
+                running.expect(lambda m: m['type'] == 'done')
+            finally:
+                running.close()
+            status = next(m['values']['status'] for m in heard if m['type'] == 'panel')
+            self.assertIn('learned 1', status)
+            pin = next(p for p in fs.parts() if p.name == 'Pin')
+            self.assertEqual(fs.materials[pin.material].name, 'Brass Satin')
+
+    def test_parts_nothing_names_still_get_a_finish(self):
+        with tempfile.TemporaryDirectory() as data, tequila.open(MODEL) as fs:
+            # No rules at all: the pin is a slender rod, the red box a red moulding.
+            Path(data, 'settings.json').write_text(json.dumps({'rules': '', 'builtin': False}), encoding='utf-8')
+            running = Running(EXAMPLES / 'auto-materials', fs, data)
+            try:
+                running.send({'type': 'command', 'command': 'apply', 'values': {}})
+                running.expect(lambda m: m['type'] == 'done')
+            finally:
+                running.close()
+            parts = {p.name: p for p in fs.parts()}
+            self.assertEqual(fs.materials[parts['Pin'].material].name, 'Steel Turned')
+            box = fs.materials[next(p for n, p in parts.items() if n.startswith('Box')).material]
+            self.assertEqual(box.name, 'Plastic Semi-Gloss Grey (red)')
+            self.assertGreater(box.base_color[0], 0.5)
 
 
 class AutoMaterialsMatchingTests(unittest.TestCase):
@@ -216,11 +261,48 @@ class AutoMaterialsMatchingTests(unittest.TestCase):
         self.assertEqual(module.match([[('Lens', 'name')], [('Screws', 'assembly')]], rules)[0], 'Glass Clear')
         self.assertEqual(module.match([[('Part7', 'name')], []], rules), (None, None))
 
+    def test_shorthand_other_languages_and_standards_are_read(self):
+        module, rules = self.module, self.module.BUILTIN
+        named = lambda name: module.match([[(name, 'name')]], rules)[0]
+        for name, wanted in [
+            ('Gehäuse_oben', 'Plastic VDI 24 Grey'), ('PRT-1023_HSG', 'Plastic VDI 24 Grey'), ('BRKT-LEFT', 'Plastic VDI 24 Grey'),
+            ('Glas Front', 'Glass Clear'), ('Dichtung', 'Rubber Black'), ('Écrou M5', 'Stainless Brushed'),
+            ('Tornillo M3', 'Stainless Brushed'), ('Vite TCEI', 'Stainless Brushed'), ('Rondelle M4', 'Stainless Brushed'),
+            ('ISO 4762 M3x10', 'Steel Black Oxide'), ('DIN 934 M4', 'Stainless Brushed'), ('ISO 7089 - 4', 'Stainless Brushed'),
+            ('91290A115', 'Stainless Brushed'), ('#4-40 x 1/2', 'Stainless Brushed'), ('M2.5x6', 'Stainless Brushed'),
+        ]:
+            self.assertEqual(named(name), wanted, name)
+        for name in ('Peanut', 'Nutella jar', 'M4', 'Part12'):
+            self.assertIsNone(named(name), f'{name} matched')
+
+    def test_copies_and_generic_names_are_told_apart(self):
+        module = self.module
+        for name in ('Screw <3>', 'Screw_2', 'Screw (2)', 'Screw.001', 'Screw:1', 'Screw 2'):
+            self.assertEqual(module.stem(name), 'Screw', name)
+        for name in ('Part12', 'Body3', 'Solid1', 'Part 7', 'Unnamed'):
+            self.assertTrue(module.says_nothing(name), name)
+        self.assertFalse(module.says_nothing('Front Bezel'))
+
+    def test_a_part_nothing_names_is_guessed_from_its_shape_and_colour(self):
+        module = self.module
+        part = lambda size: type('P', (), {'bounds': {'size': size}})()
+        material = lambda **d: type('M', (), {'definition': d})()
+        guess = module.guess
+        self.assertEqual(guess(part([0.05, 0.05, 0.02]), material(transmission_weight=1.0), 1, 0.3)[0], 'Glass Clear')
+        self.assertEqual(guess(part([0.006, 0.006, 0.012]), material(base_color=[0.5, 0.5, 0.5]), 12, 0.3)[0], 'Stainless Brushed')
+        self.assertEqual(guess(part([0.008, 0.008, 0.06]), material(base_color=[0.5, 0.5, 0.5]), 1, 0.3)[0], 'Steel Turned')
+        self.assertEqual(guess(part([0.08, 0.05, 0.02]), material(base_color=[0.01, 0.01, 0.01]), 1, 0.3)[0], 'Plastic Satin Black')
+        self.assertEqual(guess(part([0.08, 0.05, 0.02]), material(base_color=[0.7, 0.1, 0.1]), 1, 0.3)[0], 'Plastic Semi-Gloss Grey')
+        # One big shape used four times is not hardware.
+        self.assertNotEqual(guess(part([0.1, 0.1, 0.2]), material(base_color=[0.5, 0.5, 0.5]), 4, 0.3)[0], 'Stainless Brushed')
+
     def test_every_built_in_rule_names_a_library_preset(self):
         library = HERE.parent / 'assets' / 'library' / 'standard'
         names = {json.loads(f.read_text(encoding='utf-8'))['name'] for f in library.glob('*.json')}
         for words, material in self.module.BUILTIN:
             self.assertIn(material, names, f'{words} name {material}, which the library does not have')
+        for material in (self.module.MOULDED, self.module.MOULDED_BLACK, 'Glass Clear', 'Steel Turned', 'Stainless Brushed'):
+            self.assertIn(material, names, f'a guess names {material}, which the library does not have')
 
     def test_a_models_own_colour_is_told_from_an_importers_grey(self):
         module = self.module

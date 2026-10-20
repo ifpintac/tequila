@@ -200,7 +200,10 @@ turning one on. Install plugins only from people you trust, and read
 
 ## Examples
 
-`plugins/examples` (the `plugins` folder beside Tequila):
+`plugins/examples` (the `plugins` folder beside Tequila). They come with
+Tequila and start off: the **Plugins** menu lists them under *Off · click to
+turn on*, and one click turns one on. Those with code need Python 3 on the
+computer; the menu says so where it is missing.
 
 - **Colourways** — a panel with a list of colours; renders the selected
   part in each, or keeps each as a library material. Uses a panel, two
@@ -208,15 +211,28 @@ turning one on. Install plugins only from people you trust, and read
   `fs.library.save`.
 - **Anodised Extras** — a material pack: four presets and a manifest, no
   code.
-- **Auto Materials** — library materials on parts as a model is imported, or
-  on the whole scene at a click: by the parts' names (screws → steel, lenses
-  → glass, grips → rubber), by the materials the CAD file named ("Aluminum
-  6061", "ABS"), and by the assemblies they sit in. Your rules, typed or from
-  a CSV file, come before about sixty built-in ones; plastics and paints
-  keep the colours the model gave them; a preview says what would change.
-  Uses the `imported` and `panel_opened` events, `load_settings` /
-  `save_settings`, a file field, and library presets applied in one
-  `fs.batch()`.
+- **Auto Materials** — a library material on every part as a model is
+  imported, or on the whole scene at a click, whatever the parts are called.
+  In turn:
+  1. your rules, typed or from a CSV file;
+  2. what it learned from you: the materials you gave parts of the same
+     name, in projects you saved or with *Learn from this scene*;
+  3. about sixty built-in rules over the part's name (screws → steel,
+     lenses → glass, grips → rubber), in English, German, French, Spanish
+     or Italian, CAD shorthand (HSG, BRKT, SCR) or a fastener standard
+     (ISO 4762, DIN 934, M3x10, 1/4-20, a McMaster number); over the
+     material, description and layer the CAD file gave it ("Aluminum
+     6061", "ABS"); and over the assemblies it sits in;
+  4. a part it is a copy of, or named like (`Screw <3>`, `Bracket_2`);
+  5. and for the rest, its shape and colour: see-through parts glass, four or
+     more copies of a small shape hardware, a thin rod steel, anything else a
+     moulded finish in its own colour.
+
+  Plastics and paints keep the colours the model gave them, and a preview
+  says what would change and what decided it. Uses the `imported`, `saved`
+  and `panel_opened` events, `load_settings` / `save_settings`, a file
+  field, each part's mesh (copies share one) and bounds, and library presets
+  applied in one `fs.batch()`.
 - **Render Every Camera** — one background render from each saved camera,
   named after it, into a folder of your choice. Uses `fs.context()`, a
   folder field and `fs.queue(camera=...)`.

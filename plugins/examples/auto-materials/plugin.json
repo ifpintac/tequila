@@ -1,9 +1,9 @@
 {
   "id": "tequila.auto-materials",
   "name": "Auto Materials",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "author": "Tequila",
-  "description": "Puts library materials on parts when a model comes in, by their names, their CAD materials and their assemblies: screws get steel, lenses glass, grips rubber, an aluminium part aluminium. Plastics keep the model's colours. Your own rules on top of the built-in ones, a preview, or the whole scene at a click.",
+  "description": "Puts library materials on every part when a model comes in, whatever it is called: by its name - in English, German, French, Spanish or Italian, CAD shorthand or a fastener standard - its CAD material, description, layer and assemblies; by what you gave parts of the same name before; and for the rest by shape and colour: see-through parts glass, small repeated parts hardware, rods steel, anything else a moulded finish in its own colour. Plastics keep the model's colours. Your own rules on top, a preview of what decided what, or the whole scene at a click.",
   "tequila": 1,
   "main": "main.py",
   "commands": [
@@ -17,6 +17,11 @@
       "id": "apply",
       "title": "Apply the rules to every part",
       "description": "Materials as one undo step, and the model's colours as another"
+    },
+    {
+      "id": "learn",
+      "title": "Learn from this scene",
+      "description": "Remember the materials you gave parts here, by their names, for the next model"
     }
   ],
   "panels": [
@@ -43,13 +48,19 @@
         {
           "id": "builtin",
           "type": "toggle",
-          "label": "Then Tequila's own rules (about 60: fasteners, plastics, metals by alloy, prints, glass, rubber, wood)",
+          "label": "Then Tequila's own rules (about 60, in five languages, with CAD shorthand and fastener standards)",
           "default": true
         },
         {
           "id": "deep",
           "type": "toggle",
-          "label": "Match the CAD file's material names and the assemblies too, not only the parts' names",
+          "label": "Read the CAD file's material names, descriptions, layers and the assemblies too, not only the parts' names",
+          "default": true
+        },
+        {
+          "id": "guess",
+          "type": "toggle",
+          "label": "Guess the rest from shape and colour: see-through parts glass, small repeated parts hardware, rods steel, anything else a moulded finish in its own colour",
           "default": true
         },
         {
@@ -71,6 +82,12 @@
           "default": true
         },
         {
+          "id": "learn_on_save",
+          "type": "toggle",
+          "label": "Learn from the materials you choose: a project you save teaches it, so parts with the same names get them next time",
+          "default": true
+        },
+        {
           "id": "preview",
           "type": "button",
           "label": "Preview: what would change",
@@ -81,6 +98,18 @@
           "type": "button",
           "label": "Apply to every part now",
           "command": "apply"
+        },
+        {
+          "id": "learn",
+          "type": "button",
+          "label": "Learn from this scene now",
+          "command": "learn"
+        },
+        {
+          "id": "forget",
+          "type": "button",
+          "label": "Forget what it learned",
+          "command": "forget"
         },
         {
           "id": "keep",
@@ -98,6 +127,7 @@
   ],
   "events": [
     "imported",
-    "panel_opened"
+    "panel_opened",
+    "saved"
   ]
 }

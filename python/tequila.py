@@ -714,6 +714,9 @@ class Part:
         self.metadata = entry.get('metadata', {})
         self.bounds = entry.get('bounds')
         self.visible = entry.get('visible', True)
+        # A part's shape: its mesh's key (copies share one) and its size.
+        self.mesh = entry.get('mesh')
+        self.triangles = entry.get('triangles')
 
     def __repr__(self):
         return f'<Part {self.id} {self.name!r}>'

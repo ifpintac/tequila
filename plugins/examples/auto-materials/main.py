@@ -1,16 +1,26 @@
-"""Auto Materials: library materials on parts by what they are called.
+"""Auto Materials: library materials on parts, whatever they are called.
 
-When a model comes in, every part is matched against the rules - your own
-first, then Tequila's built-in ones - by its name, by the name of the
-material the CAD file gave it ("Stainless Steel 304", "ABS"), and by the
-assemblies it sits in ("Fasteners", "Front Bezel"). Screws get steel,
-lenses glass, grips rubber, a part whose CAD material is aluminium gets
-aluminium. Plastics and paints keep the colour the model gave the part, so
-a red housing stays red with a real moulded finish. Parts that already wear
-a library material are left alone unless you say otherwise.
+When a model comes in, every part gets a material, decided in turn by:
+
+1. your own rules, words in a name and the material they mean;
+2. what it learned from you: the materials you gave parts of the same name
+   in projects you saved (or with "Learn from this scene");
+3. what the part is called - in English, German, French, Spanish or
+   Italian, in CAD shorthand (HSG, BRKT, SCR), or as a fastener standard
+   (ISO 4762, DIN 934, M3x10, 1/4-20, a McMaster number) - what the CAD
+   file says it is made of ("Stainless Steel 304", "ABS"), its
+   description, its layer, and the assemblies it sits in;
+4. a part it is a copy of, or named like, that something above matched;
+5. and for whatever is left, its shape and colour: a see-through part is
+   glass, many identical small parts are hardware, a slender rod is steel,
+   and anything else gets a moulded finish in the colour the model gave it.
+
+Plastics and paints keep the colour the model gave the part, so a red
+housing stays red with a real moulded finish. Parts that already wear a
+library material are left alone unless you say otherwise.
 
 The panel edits the rules (or reads them from a CSV file), previews what
-would change, and applies the rules to the whole scene at a click.
+would change and why, and applies the rules to the whole scene at a click.
 
 An example of the `imported` and `panel_opened` events, settings kept with
 plugin.save_settings(), a file field, and library presets applied in one
@@ -19,12 +29,14 @@ fs.batch().
 import csv
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 import tequila_plugin as plugin
 
 FIELDS = {f['id']: f for f in json.loads((Path(__file__).parent / 'plugin.json').read_text(encoding='utf-8'))['panels'][0]['fields']}
-DEFAULTS = {key: FIELDS[key].get('default', '') for key in ('rules', 'rules_file', 'builtin', 'deep', 'keep_colours', 'keep_finished', 'on_import')}
+DEFAULTS = {key: FIELDS[key].get('default', '') for key in
+            ('rules', 'rules_file', 'builtin', 'deep', 'guess', 'keep_colours', 'keep_finished', 'on_import', 'learn_on_save')}
 
 # Tequila's own rules, after yours: the names parts, CAD materials and
 # assemblies are commonly given, and the library preset each wants. The
@@ -105,6 +117,71 @@ BUILTIN = [
 # Library categories whose look a part's own colour should carry.
 COLOURED = {'plastic', 'paint', 'fdm 3d print', 'leather', 'fabric', 'composite'}
 
+# Words CAD packages and people shorten, and other languages' words for the
+# same things, read as the words the rules know. A name keeps its own words
+# as well, so a rule of yours in any of them still matches.
+ALIASES = {
+    # CAD shorthand.
+    'hsg': 'housing', 'hous': 'housing', 'encl': 'enclosure', 'brkt': 'bracket', 'bkt': 'bracket', 'brk': 'bracket',
+    'scr': 'screw', 'scrw': 'screw', 'wshr': 'washer', 'wsh': 'washer', 'gskt': 'gasket', 'gsk': 'gasket',
+    'brg': 'bearing', 'brng': 'bearing', 'shft': 'shaft', 'sprg': 'spring', 'spg': 'spring', 'btn': 'button',
+    'knb': 'knob', 'cvr': 'cover', 'pnl': 'panel', 'frm': 'frame', 'lbl': 'label', 'stdf': 'standoff',
+    'stdoff': 'standoff', 'hdl': 'handle', 'mtg': 'mount', 'insrt': 'insert', 'rvt': 'rivet', 'nt': 'nut',
+    'lns': 'lens', 'wndw': 'window', 'dspl': 'display', 'disp': 'display', 'gls': 'glass', 'rbr': 'rubber',
+    'ss': 'stainless', 'al': 'aluminium', 'alum': 'aluminium', 'cu': 'copper', 'brs': 'brass',
+    # German.
+    'schraube': 'screw', 'schrauben': 'screw', 'mutter': 'nut', 'muttern': 'nut', 'scheibe': 'washer',
+    'unterlegscheibe': 'washer', 'gehause': 'housing', 'gehaeuse': 'housing', 'deckel': 'cover', 'abdeckung': 'cover',
+    'glas': 'glass', 'linse': 'lens', 'gummi': 'rubber', 'dichtung': 'seal', 'feder': 'spring', 'welle': 'shaft',
+    'lager': 'bearing', 'halter': 'holder', 'halterung': 'bracket', 'griff': 'grip', 'knopf': 'button', 'kabel': 'cable',
+    'stahl': 'steel', 'edelstahl': 'stainless', 'holz': 'wood', 'leder': 'leather', 'kunststoff': 'plastic',
+    'messing': 'brass', 'kupfer': 'copper', 'bildschirm': 'screen', 'niete': 'rivet', 'stift': 'dowel',
+    # French.
+    'vis': 'screw', 'ecrou': 'nut', 'rondelle': 'washer', 'boitier': 'housing', 'couvercle': 'cover', 'verre': 'glass',
+    'lentille': 'lens', 'caoutchouc': 'rubber', 'ressort': 'spring', 'arbre': 'shaft', 'roulement': 'bearing',
+    'bouton': 'button', 'poignee': 'grip', 'acier': 'steel', 'bois': 'wood', 'cuir': 'leather', 'plastique': 'plastic',
+    'laiton': 'brass', 'cuivre': 'copper', 'ecran': 'screen', 'rivet': 'rivet', 'support': 'bracket',
+    # Spanish.
+    'tornillo': 'screw', 'tuerca': 'nut', 'arandela': 'washer', 'carcasa': 'housing', 'tapa': 'cover', 'vidrio': 'glass',
+    'cristal': 'glass', 'lente': 'lens', 'goma': 'rubber', 'caucho': 'rubber', 'junta': 'seal', 'resorte': 'spring',
+    'muelle': 'spring', 'eje': 'shaft', 'rodamiento': 'bearing', 'boton': 'button', 'acero': 'steel', 'madera': 'wood',
+    'cuero': 'leather', 'plastico': 'plastic', 'laton': 'brass', 'cobre': 'copper', 'pantalla': 'screen',
+    'remache': 'rivet', 'soporte': 'bracket',
+    # Italian.
+    'vite': 'screw', 'viti': 'screw', 'dado': 'nut', 'rondella': 'washer', 'alloggiamento': 'housing',
+    'coperchio': 'cover', 'vetro': 'glass', 'gomma': 'rubber', 'guarnizione': 'seal', 'molla': 'spring',
+    'albero': 'shaft', 'cuscinetto': 'bearing', 'pulsante': 'button', 'acciaio': 'steel', 'legno': 'wood',
+    'pelle': 'leather', 'plastica': 'plastic', 'ottone': 'brass', 'rame': 'copper', 'schermo': 'screen',
+    'rivetto': 'rivet', 'staffa': 'bracket',
+}
+
+# Fastener standards, as CAD libraries name their parts: the kind each is.
+STANDARDS = {
+    # Socket head cap screws, button heads, countersunk.
+    '4762': 'socket head', '912': 'socket head', '7380': 'bhcs', '10642': 'fhcs', '7991': 'fhcs',
+    # Hex bolts and screws, set screws.
+    '4014': 'bolt', '4017': 'bolt', '931': 'bolt', '933': 'bolt', '4026': 'screw', '4027': 'screw',
+    '4028': 'screw', '4029': 'screw', '913': 'screw', '914': 'screw', '915': 'screw', '916': 'screw',
+    '7045': 'screw', '7046': 'screw', '7985': 'screw', '965': 'screw', '7981': 'screw', '7982': 'screw',
+    # Nuts.
+    '4032': 'nut', '4035': 'nut', '934': 'nut', '985': 'nut', '439': 'nut', '1587': 'nut', '10511': 'nut',
+    # Washers.
+    '7089': 'washer', '7090': 'washer', '7092': 'washer', '7093': 'washer', '125': 'washer', '127': 'washer',
+    '433': 'washer', '9021': 'washer', '6798': 'washer',
+    # Pins, circlips, rivets.
+    '2338': 'dowel', '8734': 'dowel', '6325': 'dowel', '7979': 'dowel', '1481': 'dowel', '471': 'circlip',
+    '472': 'circlip', '6799': 'circlip', '15977': 'rivet', '660': 'rivet',
+}
+
+# Names that say nothing: what CAD packages call a part nobody named. They
+# are not learned from, and a part named one is not "named like" another.
+GENERIC = re.compile(r'^(part|body|solid|feature|component|comp|item|mesh|object|obj|shape|unnamed|untitled|default|surface|'
+                     r'surfaces|instance|node|group|assembly|asm|subassembly|sub|brep|geometry|import|imported|copy|new)?\s*\d*$')
+
+# What a part nobody could name gets, in its own colour.
+MOULDED = 'Plastic Semi-Gloss Grey'
+MOULDED_BLACK = 'Plastic Satin Black'
+
 
 def parse_rules(text):
     """Lines (or `;`-separated rules) of `words, words: Material` as
@@ -134,16 +211,69 @@ def rules_from_file(path):
     return rules
 
 
-def words_of(name):
-    """A name as lower-case words: `FrontLens_02` is front, lens, 02;
-    `M3x10-SHCS` is m3x10, shcs."""
-    spaced = re.sub(r'([a-z])([A-Z])', r'\1 \2', name or '')
+def unaccented(text):
+    """`Gehäuse` as `Gehause`, `Écrou` as `Ecrou`: names are matched
+    without their accents."""
+    return ''.join(c for c in unicodedata.normalize('NFKD', text or '') if not unicodedata.combining(c))
+
+
+def raw_words(name):
+    """A name as lower-case words, as written: `FrontLens_02` is front,
+    lens, 02; `M3x10-SHCS` is m3x10, shcs."""
+    spaced = re.sub(r'([a-z])([A-Z])', r'\1 \2', unaccented(name).replace('ß', 'ss'))
     return [w.lower() for w in re.split(r'[^A-Za-z0-9]+', spaced) if w]
 
 
+def meanings(name):
+    """The words a name means beyond its own: its shorthand and foreign
+    words spelled out, and what a fastener standard, a thread or a
+    McMaster-Carr number in it says the part is."""
+    words = raw_words(name)
+    found = [ALIASES[w] for w in words if w in ALIASES]
+    text = unaccented(name).lower()
+    for code in re.findall(r'(?:iso|din|en|jis|ansi|asme|gb)\s*[-_ ]?\s*(\d{3,5})', text):
+        found.append(STANDARDS.get(code, 'screw'))
+    # Metric threads with a length (M3x10, M2.5x6), unified ones (#4-40,
+    # 1/4-20) and McMaster's fastener numbers (91290A115).
+    if re.search(r'(?<![a-z0-9])m\d+(?:[.,]\d+)?\s*x\s*\d+', text) or re.search(r'#\d+\s*-\s*\d+|\b\d+/\d+\s*-\s*\d+\b', text):
+        found.append('screw')
+    if re.search(r'\b9\d{4}a\d{2,4}\b', text):
+        found.append('screw')
+    return found
+
+
+def words_of(name):
+    """A name as lower-case words, and the words it means
+    (`meanings`): `Gehäuse_SCR` is gehause, scr, housing, screw."""
+    return raw_words(name) + meanings(name)
+
+
 def plain(name):
-    """A name for matching phrases: lower case, words apart by one space."""
-    return ' ' + ' '.join(words_of(name)) + ' '
+    """A name for matching phrases: lower case, words apart by one space,
+    and what it means after it."""
+    return ' ' + ' '.join(raw_words(name)) + ' | ' + ' '.join(meanings(name)) + ' '
+
+
+def stem(name):
+    """A part's name without the counts CAD packages add to copies:
+    `Screw <3>`, `Screw_2`, `Screw (2)`, `Screw.001` and `Screw:1` are all
+    Screw."""
+    name = (name or '').strip()
+    while True:
+        cut = re.sub(r'\s*(?:<\d+>|\(\d+\)|\[\d+\]|[._:#-]\d+|\s\d+)$', '', name)
+        if cut == name or not cut:
+            return name
+        name = cut
+
+
+def name_key(name):
+    """The name a part is remembered by: its stem, as words."""
+    return ' '.join(raw_words(stem(name)))
+
+
+def says_nothing(name):
+    """Whether a name is one nobody chose: `Part12`, `Body3`, `Solid1`."""
+    return not raw_words(name) or bool(GENERIC.match(' '.join(raw_words(stem(name)))))
 
 
 def word_matches(key, words):
@@ -205,12 +335,17 @@ def current_rules(settings):
 def plan(fs, part_ids, settings):
     """What the rules would do: {material: [(part, colour or None, why)]},
     the materials not in the library, and how many parts nothing matched."""
-    rules = current_rules(settings)
+    user = []
+    if settings.get('rules_file'):
+        user += rules_from_file(settings['rules_file'])
+    user += parse_rules(settings.get('rules', ''))
+    builtin = BUILTIN if settings.get('builtin', True) else []
+    learned = {k: v for k, v in (settings.get('learned') or {}).items() if k}
     presets = {p['name'].lower(): p for p in fs.library.presets()}
     nodes = {n.id: n for n in fs.nodes()}
     materials = {m.id: m for m in fs.materials}
     deep = settings.get('deep', True)
-    chosen, missing, unmatched = {}, set(), 0
+    decided, missing, left = {}, set(), []
     for part_id in part_ids:
         part = nodes.get(part_id)
         if part is None or part.kind != 'part':
@@ -221,28 +356,125 @@ def plan(fs, part_ids, settings):
         if settings.get('keep_finished', True) and library_name(current_name) in presets:
             continue
         own = [(part.name, 'name')]
-        assemblies = []
+        layers, assemblies = [], []
         if deep:
             own.append((current_name, 'CAD material'))
-            own += [(str(v), 'CAD material') for k, v in (part.metadata or {}).items() if 'material' in k.lower()]
+            for key, value in (part.metadata or {}).items():
+                key = key.lower()
+                if 'material' in key:
+                    own.append((str(value), 'CAD material'))
+                elif 'description' in key or 'designation' in key or key in ('part number', 'standard'):
+                    own.append((str(value), 'description'))
+                elif key == 'layer':
+                    layers.append((str(value), 'layer'))
             parent = nodes.get(part.parent)
             # Not the top one: that is usually the file's name.
             while parent is not None and nodes.get(parent.parent) is not None:
                 assemblies.append((parent.name, 'assembly'))
                 parent = nodes.get(parent.parent)
-        material, why = match([own, assemblies], rules)
+        material, why = match([own], user)
+        if material is not None:
+            why = 'your rule'
+        if material is None and learned.get(name_key(part.name)) and not says_nothing(part.name):
+            material, why = learned[name_key(part.name)], 'learned'
         if material is None:
+            material, why = match([own, layers, assemblies], user + builtin)
+        if material is None:
+            left.append(part)
+            continue
+        decided[part_id] = (material, why)
+    # What is left: a copy of a part that matched, or one named like it,
+    # takes its material.
+    by_mesh, by_name = {}, {}
+    for part_id, (material, _) in decided.items():
+        node = nodes[part_id]
+        by_mesh.setdefault(getattr(node, 'mesh', None), (material, node.name))
+        if not says_nothing(node.name):
+            by_name.setdefault(name_key(node.name), (material, node.name))
+    copies = {}
+    for node in nodes.values():
+        if node.kind == 'part' and getattr(node, 'mesh', None) is not None:
+            copies[node.mesh] = copies.get(node.mesh, 0) + 1
+    model = scene_size(nodes.values())
+    unmatched = 0
+    for part in left:
+        mesh = getattr(part, 'mesh', None)
+        if mesh is not None and mesh in by_mesh:
+            material, other = by_mesh[mesh]
+            decided[part.id] = (material, f'a copy of {other}')
+            continue
+        if not says_nothing(part.name) and name_key(part.name) in by_name:
+            material, other = by_name[name_key(part.name)]
+            decided[part.id] = (material, f'named like {other}')
+            continue
+        guessed = guess(part, materials.get(part.material), copies.get(mesh, 1), model) if settings.get('guess', True) else None
+        if guessed is None:
             unmatched += 1
             continue
+        decided[part.id] = guessed
+    chosen = {}
+    for part_id, (material, why) in decided.items():
         preset = presets.get(material.lower())
         if preset is None:
             missing.add(material)
             continue
+        current = materials.get(nodes[part_id].material)
         colour = None
         if settings.get('keep_colours', True) and current is not None and preset.get('category', '').lower() in COLOURED:
             colour = model_colour(current)
         chosen.setdefault(preset['name'], []).append((part_id, colour, why))
     return chosen, sorted(missing), unmatched
+
+
+def size_of(part):
+    """A part's box, its sides from shortest to longest, in metres."""
+    size = (part.bounds or {}).get('size')
+    if not size or len(size) != 3:
+        return None
+    return sorted(abs(s) for s in size)
+
+
+def scene_size(nodes):
+    """How big the model is: the diagonal of the box around its parts."""
+    low, high = [float('inf')] * 3, [float('-inf')] * 3
+    for node in nodes:
+        bounds = node.bounds if node.kind == 'part' else None
+        if not bounds or 'min' not in bounds:
+            continue
+        for i in range(3):
+            low[i] = min(low[i], bounds['min'][i])
+            high[i] = max(high[i], bounds['max'][i])
+    if low[0] == float('inf'):
+        return 0.0
+    return sum((high[i] - low[i]) ** 2 for i in range(3)) ** 0.5
+
+
+def guess(part, material, copies, model):
+    """A material for a part nothing named, from what can be seen of it:
+    (material, why), or None.
+
+    See-through in the model: glass. Four or more copies of one small shape
+    are hardware - screws, nuts, washers, inserts. A slender rod is a pin
+    or a shaft, if it is thin and not most of the model. Anything else is
+    moulded plastic in the colour the model
+    gave it, black if it is black: a finish, where the importer's flat
+    colour looked like no material at all."""
+    definition = (material.definition or {}) if material is not None else {}
+    if definition.get('transmission_weight', 0) >= 0.5 or definition.get('geometry_opacity', 1) < 0.5:
+        return 'Glass Clear', 'see-through in the model'
+    sides = size_of(part)
+    small = sides is not None and sides[2] <= max(0.04, 0.02 * model) and sides[2] <= 0.15 * max(model, 1e-9)
+    if sides is not None and copies >= 4 and small:
+        return 'Stainless Brushed', f'one of {copies} identical small parts'
+    # A rod: round across, at least two and a half times as long, thin (a
+    # pen's barrel is slender too, and plastic), and not the model itself.
+    if (sides is not None and 0 < sides[0] <= 0.012 and sides[1] <= 1.3 * sides[0] and sides[2] >= 2.5 * sides[1]
+            and sides[2] <= 0.6 * max(model, 1e-9)):
+        return ('Stainless Brushed' if sides[2] <= 0.03 else 'Steel Turned'), 'a slender rod'
+    colour = model_colour(material) if material is not None else None
+    if colour is not None and max(colour) < 0.04:
+        return MOULDED_BLACK, 'its colour'
+    return MOULDED, 'its colour'
 
 
 def model_colour(material):
@@ -290,8 +522,10 @@ def apply(fs, part_ids, settings):
                 if material is None:
                     continue
                 definition = recoloured(material.definition, colour)
-                definition['name'] = f'{preset} ({colour_name(colour)})'
                 batch.apply('material.set_graph', material=material.id, definition=definition)
+                # Named for its colour: the graph carries no name, and the copy
+                # was "(copy)".
+                batch.apply('material.rename', material=material.id, name=f'{preset} ({colour_name(colour)})')
     return sum(len(e) for e in chosen.values()), missing, unmatched
 
 
@@ -331,6 +565,17 @@ def colour_name(colour):
     return 'colour'
 
 
+def reason(why):
+    """What decided, as a heading for the preview's counts."""
+    if why.startswith('a copy of') or why.startswith('named like'):
+        return 'like another part'
+    if why in ('see-through in the model', 'a slender rod', 'its colour') or why.startswith('one of'):
+        return 'shape and colour'
+    if why in ('your rule', 'learned'):
+        return why
+    return 'name and CAD data'
+
+
 def describe(chosen, missing, unmatched, where):
     if not chosen:
         text = f'No part {where} matched a rule.'
@@ -338,11 +583,43 @@ def describe(chosen, missing, unmatched, where):
         counts = ', '.join(f'{len(entries)} {name}' for name, entries in sorted(chosen.items(), key=lambda kv: -len(kv[1])))
         total = sum(len(e) for e in chosen.values())
         text = f'{total} part(s) {where}: {counts}.'
+        by = {}
+        for entries in chosen.values():
+            for _, _, why in entries:
+                by[reason(why)] = by.get(reason(why), 0) + 1
+        order = ['your rule', 'learned', 'name and CAD data', 'like another part', 'shape and colour']
+        text += ' By ' + ', '.join(f'{k} {by[k]}' for k in order if k in by) + '.'
     if unmatched:
         text += f' {unmatched} matched nothing.'
     if missing:
         text += ' Not in the library: ' + ', '.join(missing) + '.'
     return text
+
+
+def learn(fs, settings):
+    """What the scene teaches: each part wearing a library material that
+    the rules would not have given it, by its name. Returns how many names
+    it learned."""
+    presets = {p['name'].lower(): p['name'] for p in fs.library.presets()}
+    materials = {m.id: m for m in fs.materials}
+    rules = current_rules(settings)
+    learned = dict(settings.get('learned') or {})
+    count = 0
+    for part in fs.parts():
+        material = materials.get(part.material)
+        preset = presets.get(library_name(material.name if material else ''))
+        if preset is None or says_nothing(part.name):
+            continue
+        # What the rules give it already needs no remembering.
+        if match([[(part.name, 'name')]], rules)[0] == preset:
+            learned.pop(name_key(part.name), None)
+            continue
+        if learned.get(name_key(part.name)) != preset:
+            learned[name_key(part.name)] = preset
+            count += 1
+    settings['learned'] = learned
+    plugin.save_settings(settings)
+    return count
 
 
 def settings_from(values):
@@ -353,13 +630,18 @@ def settings_from(values):
     return settings
 
 
+def remembered(settings):
+    count = len(settings.get('learned') or {})
+    return f' It knows {count} name(s) from your projects.' if count else ''
+
+
 @plugin.on('panel_opened')
 def panel_opened(fs, data):
     settings = plugin.load_settings(DEFAULTS)
     rules = current_rules(settings)
     plugin.set_panel('auto', **{k: settings[k] for k in DEFAULTS},
-                     status=f'{len(rules)} rule(s). New parts are matched as they are imported.' if settings['on_import']
-                     else f'{len(rules)} rule(s). Imports are left alone.')
+                     status=(f'{len(rules)} rule(s). New parts are matched as they are imported.' if settings['on_import']
+                             else f'{len(rules)} rule(s). Imports are left alone.') + remembered(settings))
 
 
 @plugin.command('keep')
@@ -367,7 +649,31 @@ def keep(fs, values):
     settings = settings_from(values)
     rules = current_rules(settings)
     plugin.save_settings(settings)
-    plugin.set_panel('auto', status=f'Kept {len(rules)} rule(s) for next time.')
+    plugin.set_panel('auto', status=f'Kept {len(rules)} rule(s) for next time.' + remembered(settings))
+
+
+@plugin.command('learn')
+def learn_now(fs, values):
+    settings = settings_from(values)
+    count = learn(fs, settings)
+    text = f'Learned {count} new name(s) from this scene.' if count else 'Nothing new to learn here: the rules already give these parts their materials.'
+    plugin.set_panel('auto', status=text + remembered(settings))
+    plugin.status(text)
+
+
+@plugin.command('forget')
+def forget(fs, values):
+    settings = settings_from(values)
+    settings['learned'] = {}
+    plugin.save_settings(settings)
+    plugin.set_panel('auto', status='Forgot every name it had learned.')
+
+
+@plugin.on('saved')
+def saved(fs, data):
+    settings = plugin.load_settings(DEFAULTS)
+    if settings.get('learn_on_save', True):
+        learn(fs, settings)
 
 
 @plugin.command('preview')
