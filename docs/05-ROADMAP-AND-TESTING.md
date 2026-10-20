@@ -552,16 +552,20 @@ Alembic deformation import serve neither.
       while the last environment keeps being served. The sky was then a
       single-scattering model, which is why the item stayed open until
       Hosek–Wilkie's own replaced it.
-- [ ] Labels and decals: full layer stack, Move Texture gizmo, PSD DPI sizing, video labels, Labels AOV.
-      *Done except PSD and video:* an ordered stack of labels per material,
+- [x] Labels and decals: full layer stack, Move Texture gizmo, PSD DPI sizing, video labels, Labels AOV.
+      *Done 2026-10-20:* PSD and PSB artwork by its merged image, or
+      composited from its layers when it was saved without one; and video
+      labels: a frame picked from an MP4, MOV and the rest the system plays,
+      decoded by the system (Media Foundation, AVFoundation) and kept as a
+      PNG beside the project (`tequila_texture::video`). *Before:* an ordered stack of labels per material,
       each with its own projection, opacity, roughness and a Foil finish
       (metal where the artwork covers); a placement gizmo — click or drag
       to put the artwork there, Ctrl + scroll to size it, Shift + scroll to
       turn it, one undo step per gesture; PNG and JPEG artwork arrives at
       the print size its file records (`pHYs`, JFIF density); and a Labels
-      pass (RGBA, premultiplied, coverage as alpha) in the EXR. *Open:* PSD
-      artwork (no PSD decoder yet) and video labels (need a video decoder,
-      which is a new dependency).
+      pass (RGBA, premultiplied, coverage as alpha) in the EXR. A label that
+      plays as video, frame by frame through an animation, waits on
+      animation (parked).
 - [x] Cutaway: plane/box/sphere/cylinder/mesh cutters, cap shading.
       A per-ray CSG walk inside the intersector, so every query — camera,
       bounce, shadow, picking, the fast preview — sees the cut model: hits

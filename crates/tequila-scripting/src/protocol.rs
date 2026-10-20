@@ -492,6 +492,23 @@ pub fn parse_operation(value: &Value) -> Result<Operation, ProtocolError> {
     parse_operation_at(value, 0)
 }
 
+/// `material.add_decal` naming a video takes a still of it, at `time`
+/// seconds (the first frame without one), kept among Tequila's settings
+/// under "Video frames"; the command then names that picture, so the
+/// journal and an undo replay a picture rather than decode the video again.
+fn video_label(command: &Value) -> Result<Value, ProtocolError> {
+    let mut command = command.clone();
+    let is_label = command.get("command").and_then(Value::as_str) == Some("material.add_decal");
+    let video = command.get("path").and_then(Value::as_str).filter(|p| tequila_texture::video::is_video(p)).map(str::to_string);
+    if let (true, Some(video), Value::Object(fields)) = (is_label, video, &mut command) {
+        let seconds = fields.remove("time").and_then(|t| t.as_f64()).unwrap_or(0.0);
+        let folder = tequila_format::library::settings_directory().join("Video frames");
+        let still = tequila_texture::video::still(&video, seconds, folder).map_err(|e| ProtocolError(format!("the video's frame could not be taken: {e}")))?;
+        fields.insert("path".into(), Value::String(still.display().to_string()));
+    }
+    Ok(command)
+}
+
 fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, ProtocolError> {
     let op = string(value, "op")?;
 
@@ -504,8 +521,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             // reaching into the parsed value keeps exactly one decoder for
             // commands, which is what makes the journal's exhaustive
             // round-trip test cover this path too.
-            let command = field(value, "command")?;
-            let text = json_write::to_string(command);
+            let command = video_label(field(value, "command")?)?;
+            let text = json_write::to_string(&command);
             let command = tequila_format::journal::decode(&text)
                 .map_err(|e| ProtocolError(format!("the command could not be read: {e}")))?;
             Operation::Apply(Box::new(command))

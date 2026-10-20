@@ -23,6 +23,7 @@ pub mod udim;
 pub mod print_size;
 pub mod psd;
 pub mod radiance;
+pub mod video;
 pub mod volume;
 
 pub use bump::{BumpGradient, TangentFrame};

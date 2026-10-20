@@ -41,6 +41,10 @@ pub fn show(
     // Read once, before anything borrows the document mutably.
     let part_has_uvs = decal_fit::has_uvs(project.document(), key);
     let fitted = decal_fit::fit_projected(project.document(), key);
+    // A video chosen for a label, while its frame is picked.
+    let pick_id = egui::Id::new(("video-label", key.0));
+    let mut pick: Option<VideoPick> = ui.ctx().data(|d| d.get_temp(pick_id));
+    let mut picked = false;
 
     crate::field::Fold::new(format!("Labels · {}", decals.len()))
         .id_salt(("labels", key.0))
@@ -51,26 +55,60 @@ pub fn show(
                  that says its print resolution arrives at its printed size.",
             );
             if ui.button("+ Add label…").clicked() {
+                const ARTWORK: &[&str] = &["png", "jpg", "jpeg", "psd", "psb"];
+                let both: Vec<&str> = ARTWORK.iter().chain(tequila_texture::video::EXTENSIONS).copied().collect();
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Artwork", &["png", "jpg", "jpeg", "psd", "psb"])
+                    .add_filter("Artwork or video", &both)
+                    .add_filter("Artwork", ARTWORK)
+                    .add_filter("Video", tequila_texture::video::EXTENSIONS)
                     .pick_file()
                 {
-                    printed = tequila_texture::print_size::print_size(&path);
-                    match Image::load(&path) {
-                        Ok(_) => {
-                            let name = path
-                                .file_stem()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned();
-                            action = Some(Command::AddDecal {
-                                material: key,
-                                source: TextureSource::new(path, MapRole::Color),
-                                name,
-                            });
+                    if tequila_texture::video::is_video(&path) {
+                        // A frame of it, picked below.
+                        match tequila_texture::video::duration(&path) {
+                            Ok(duration) => {
+                                pick = Some(VideoPick { path, duration, seconds: 0.0, preview: None, decoding: None, error: None })
+                            }
+                            Err(error) => project.status = format!("Cannot use this video: {error}"),
                         }
-                        Err(error) => project.status = format!("Cannot load label: {error}"),
+                    } else {
+                        printed = tequila_texture::print_size::print_size(&path);
+                        match Image::load(&path) {
+                            Ok(_) => {
+                                let name = path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned();
+                                action = Some(Command::AddDecal {
+                                    material: key,
+                                    source: TextureSource::new(path, MapRole::Color),
+                                    name,
+                                });
+                            }
+                            Err(error) => project.status = format!("Cannot load label: {error}"),
+                        }
                     }
+                }
+            }
+            if let Some(chosen) = &mut pick {
+                match video_picker(ui, chosen) {
+                    Some(true) => {
+                        picked = true;
+                        match tequila_texture::video::still(&chosen.path, chosen.seconds, video_folder(project)) {
+                            Ok(still) => {
+                                let stem = chosen.path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+                                action = Some(Command::AddDecal {
+                                    material: key,
+                                    source: TextureSource::new(still, MapRole::Color),
+                                    name: format!("{stem} at {:.1} s", chosen.seconds),
+                                });
+                            }
+                            Err(error) => project.status = format!("Cannot take the video's frame: {error}"),
+                        }
+                    }
+                    Some(false) => picked = true,
+                    None => {}
                 }
             }
             if decals.is_empty() {
@@ -166,6 +204,10 @@ pub fn show(
             }
         });
 
+    ui.ctx().data_mut(|d| match pick.filter(|_| !picked) {
+        Some(pick) => d.insert_temp(pick_id, pick),
+        None => d.remove::<VideoPick>(pick_id),
+    });
     if action.is_none() && decals != original {
         action = Some(Command::SetDecals {
             material: key,
@@ -186,6 +228,104 @@ pub fn show(
         project.end_interaction();
     }
     place_request
+}
+
+/// A video chosen as a label's artwork, while the frame to print is picked.
+#[derive(Clone)]
+struct VideoPick {
+    path: std::path::PathBuf,
+    duration: f64,
+    seconds: f64,
+    /// The preview shown, and the time it is of.
+    preview: Option<(f64, egui::TextureHandle)>,
+    /// A frame being decoded for the preview on another thread, and its time.
+    decoding: Option<(f64, std::sync::Arc<std::sync::Mutex<Option<Result<tequila_texture::video::Frame, String>>>>)>,
+    error: Option<String>,
+}
+
+/// The frame picker: the video at the chosen time, a slider through it, and
+/// whether to use that frame (`Some(true)`) or not (`Some(false)`).
+fn video_picker(ui: &mut egui::Ui, pick: &mut VideoPick) -> Option<bool> {
+    let mut answer = None;
+    // A preview decoded since the last frame.
+    if let Some((time, slot)) = &pick.decoding {
+        let finished = slot.lock().ok().and_then(|mut s| s.take());
+        if let Some(result) = finished {
+            match result {
+                Ok(frame) => {
+                    let image = egui::ColorImage::from_rgba_unmultiplied([frame.width, frame.height], &frame.rgba);
+                    let texture = ui.ctx().load_texture("video-label-preview", image, egui::TextureOptions::LINEAR);
+                    pick.preview = Some((*time, texture));
+                    pick.error = None;
+                }
+                Err(error) => pick.error = Some(error),
+            }
+            pick.decoding = None;
+        }
+    }
+    // One decode at a time, of the newest time asked for.
+    let shown = pick.preview.as_ref().map(|(t, _)| *t);
+    if pick.decoding.is_none() && shown != Some(pick.seconds) && pick.error.is_none() {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let (path, seconds, into, ctx) = (pick.path.clone(), pick.seconds, slot.clone(), ui.ctx().clone());
+        let started = std::thread::Builder::new().name("tequila-video-frame".into()).spawn(move || {
+            let frame = tequila_texture::video::frame(&path, seconds);
+            if let Ok(mut into) = into.lock() {
+                *into = Some(frame);
+            }
+            ctx.request_repaint();
+        });
+        if started.is_ok() {
+            pick.decoding = Some((pick.seconds, slot));
+        }
+    }
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        let name = pick.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        ui.label(format!("Which frame of {name}?"));
+        match (&pick.preview, &pick.error) {
+            (_, Some(error)) => {
+                ui.colored_label(crate::theme::p().danger, error.as_str());
+            }
+            (Some((_, texture)), None) => {
+                let size = texture.size_vec2();
+                let width = ui.available_width().min(260.0);
+                ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(width, width * size.y / size.x.max(1.0))));
+            }
+            (None, None) => {
+                ui.spinner();
+            }
+        }
+        let changed = ui
+            .add(egui::Slider::new(&mut pick.seconds, 0.0..=pick.duration.max(0.0)).suffix(" s").max_decimals(2))
+            .on_hover_text("Where in the video the label's picture is taken from.")
+            .changed();
+        if changed {
+            pick.error = None;
+        }
+        ui.horizontal(|ui| {
+            if ui.add_enabled(pick.error.is_none(), egui::Button::new("Use this frame")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Cancel").clicked() {
+                answer = Some(false);
+            }
+        });
+        ui.small("The frame is kept as a picture beside the project, and printed like any label.");
+    });
+    answer
+}
+
+/// Where a video label's frame is kept: beside the project, in a folder
+/// named after it, so the two travel together; among Tequila's settings for
+/// a project not saved yet.
+fn video_folder(project: &Project) -> std::path::PathBuf {
+    match project.path.as_deref() {
+        Some(path) => {
+            let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+            path.with_file_name(format!("{stem} video frames"))
+        }
+        None => tequila_format::library::settings_directory().join("Video frames"),
+    }
 }
 
 /// Size the label just added to what its artwork says it prints at, when it

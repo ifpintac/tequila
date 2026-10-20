@@ -18,6 +18,15 @@ exr = "1"
 # source through blosc-src.
 vdb-rs = "0.6"
 
+# A video label's frame, through the system's own decoders (`video.rs`):
+# Media Foundation on Windows, AVFoundation on a Mac. Versions the workspace
+# already brings.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
 [dev-dependencies]
 # Only so the decoder can be tested against pixels this crate chose, rather
 # than against a checked-in blob nobody can see the contents of. Its licence is

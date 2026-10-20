@@ -215,6 +215,9 @@ pub enum Command {
         parameter: MaterialParameter,
     },
     /// `material.add_decal` — a label, an image projected onto a material.
+    /// PNG, JPEG or Photoshop artwork; or a video (MP4, MOV and the rest the
+    /// system plays), sent with `time` in seconds, whose frame then is the
+    /// picture (kept under "Video frames" among Tequila's settings).
     AddDecal {
         material: MaterialKey,
         source: TextureSource,

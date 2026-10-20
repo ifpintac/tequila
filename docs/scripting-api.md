@@ -82,7 +82,10 @@ placeholders: read the real ones from the scene first.
 
 #### `material.add_decal`
 
-A label, an image projected onto a material.
+A label, an image projected onto a material. PNG, JPEG or Photoshop artwork;
+or a video (MP4, MOV and the rest the system plays), sent with `time` in
+seconds, whose frame then is the picture (kept under "Video frames" among
+Tequila's settings).
 
 `fs.commands.material.add_decal(material=..., name=..., path=..., role=...)`
 
