@@ -31,6 +31,25 @@ else:
 sys.path.insert(0, str(module))
 import tequila  # noqa: E402
 
+STARTED = time.time()
+
+
+def say(*what):
+    """A line of progress, timed from the start, out at once: a hang shows
+    where it began."""
+    print(f'[{time.time() - STARTED:6.1f} s]', *what, flush=True)
+
+
+def stacks(pid):
+    """Where every thread of a process that stopped answering is: macOS's
+    `sample`, three seconds of it."""
+    if sys.platform != 'darwin':
+        return
+    sampled = subprocess.run(['sample', str(pid), '3'], capture_output=True, text=True)
+    say('--- where Tequila is, by sample ---')
+    print('\n'.join((sampled.stdout or sampled.stderr).splitlines()[:400]), flush=True)
+
+
 def write_label(path, width=64, height=32):
     """A red label with a white band: a PNG written by hand, as the repository
     keeps no picture of its own to use."""
@@ -53,10 +72,13 @@ def resize_labels(client, box):
     # The part a new window opens with.
     part = next(n['id'] for n in client.query('nodes')['nodes'] if n.get('kind') == 'part')
     client.library.apply('Plastic Matte White', part)
+    say('applied a library material')
     material = next(m['id'] for m in client.query('materials')['materials']
                     if m['used_by'] and m.get('name', '').startswith('Plastic Matte White'))
     client.apply('material.add_decal', material=material, name='Label', path=str(label), role='color')
+    say('added a label')
     client.ui(viewport='rendered', tab='material')
+    say('Rendered view')
     time.sleep(5)
     for i in range(60):
         size = 0.002 + 0.05 * abs(((i % 20) - 10) / 10.0)
@@ -68,7 +90,7 @@ def resize_labels(client, box):
              'roughness': 0.35, 'texture': 1}])
         time.sleep(1 / 30)
     time.sleep(5)
-    print('resized a label 60 times in the Rendered view')
+    say('resized a label 60 times in the Rendered view')
 
 
 def wait_for(what, check, seconds=120):
@@ -107,10 +129,10 @@ def opened_from_finder(app_bundle, first, second):
     pid = client.pid
     try:
         wait_for(f'opening {first.name} at launch', lambda: showing(client) == first.resolve())
-        print('launched by Finder with', first.name)
+        say('launched by Finder with', first.name)
         subprocess.run(['open', '-a', str(app_bundle), str(second)], check=True)
         wait_for(f'opening {second.name} while running', lambda: showing(client) == second.resolve())
-        print('sent', second.name, 'while running, and it opened')
+        say('sent', second.name, 'while running, and it opened')
         client.request('quit', discard=True)
         client.close()
     finally:
@@ -135,14 +157,14 @@ with open(log, 'w', encoding='utf-8') as output:
         if client is None:
             raise SystemExit(f'Tequila did not answer (exit code {app.poll()})')
         names = [node['name'] for node in client.query('nodes')['nodes']]
-        print('answering; the scene holds', names)
+        say('answering; the scene holds', names)
         time.sleep(3)
         client.request('screenshot', path=str(shot))
         for _ in range(60):
             if shot.is_file() and shot.stat().st_size > 0:
                 break
             time.sleep(0.5)
-        print('screenshot:', shot, shot.stat().st_size if shot.is_file() else 'not written')
+        say('screenshot:', shot, shot.stat().st_size if shot.is_file() else 'not written')
         resize_labels(client, box)
         # Two projects for Finder to open, after.
         projects = [box / 'second.tequila', box / 'first.tequila']
@@ -157,11 +179,15 @@ with open(log, 'w', encoding='utf-8') as output:
         client.request('quit', discard=True)
         client.close()
         app.wait(timeout=60)
-        print('quit with exit code', app.returncode)
+        say('quit with exit code', app.returncode)
         if app.returncode != 0 or not shot.is_file():
             raise SystemExit(1)
         if target.suffix == '.app' and sys.platform == 'darwin':
             opened_from_finder(target, projects[1], projects[0])
+    except BaseException:
+        if app.poll() is None:
+            stacks(app.pid)
+        raise
     finally:
         if app.poll() is None:
             app.kill()
