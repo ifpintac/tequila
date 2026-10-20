@@ -115,6 +115,10 @@ impl EnvironmentTab {
             );
         }
         ui.add_space(2.0);
+        // The whole environment flattened, its lights on it, as KeyShot's
+        // HDRI editor shows it: where the light comes from, at a glance.
+        crate::pin_panel::map_section(ui, project);
+        ui.add_space(2.0);
 
         // The dialog blocks, so it runs after the panel is laid out rather
         // than in the middle of a layout pass.

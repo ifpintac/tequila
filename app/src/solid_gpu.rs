@@ -153,6 +153,79 @@ pub struct SolidMaterial {
     /// patterns, and heights through a Bump node, which a shader variant
     /// computes per pixel (`procedural_gpu`).
     pub procedural: Option<Arc<crate::procedural_gpu::Generated>>,
+    /// Its labels, bottom to top: the top [`MAX_LABELS`].
+    pub labels: Vec<SolidLabel>,
+}
+
+/// How many labels a part shows in Solid and Material Preview; the
+/// render shows them all.
+pub const MAX_LABELS: usize = 4;
+/// The texture units the labels' artwork is bound to, from this one up.
+const LABEL_UNIT: u32 = 8;
+const LABEL_SAMPLERS: [&str; MAX_LABELS] = ["t_label0", "t_label1", "t_label2", "t_label3"];
+
+/// A label as the Solid shader lays one over its part. Labels were drawn
+/// only in the render, so a label could be placed, sized and turned only by
+/// rendering to see where it went.
+#[derive(Clone, Debug)]
+pub struct SolidLabel {
+    pub texture: Arc<Texture>,
+    /// Projection (0 UV, 1 planar, 2 cylindrical, 3 spherical), axis (x, y,
+    /// z), sized in scene units, colour-managed artwork.
+    pub mode: [i32; 4],
+    /// Scale, pivot, offset, rotation and flips, as `transform_uv` takes them.
+    pub uv: [f32; 8],
+    pub opacity: f32,
+    pub roughness: f32,
+    pub metallic: bool,
+}
+
+impl SolidLabel {
+    /// `None` for a label the shader cannot place: tri-planar, or a second
+    /// UV set.
+    fn of(decal: &tequila_materials::decal::Decal, texture: Arc<Texture>) -> Option<SolidLabel> {
+        let m = &decal.mapping;
+        let projection = match m.projection {
+            UvProjection::Uv if m.uv_set == 0 => 0,
+            UvProjection::Planar => 1,
+            UvProjection::Cylindrical => 2,
+            UvProjection::Spherical => 3,
+            _ => return None,
+        };
+        let axis = match m.axis {
+            tequila_texture::projection::Axis::X => 0,
+            tequila_texture::projection::Axis::Y => 1,
+            tequila_texture::projection::Axis::Z => 2,
+        };
+        let (su, sv) = if m.real_world_units {
+            (1.0 / m.scale.x.abs().max(1e-6), 1.0 / m.scale.y.abs().max(1e-6))
+        } else {
+            (m.scale.x, m.scale.y)
+        };
+        let flips = m.flip_u as i32 as f32 + 2.0 * m.flip_v as i32 as f32;
+        let colour_managed = texture.role == MapRole::Color && texture.source_color_space != tequila_texture::image::ColorSpace::Raw;
+        Some(SolidLabel {
+            mode: [projection, axis, (m.real_world_units && projection != 0) as i32, colour_managed as i32],
+            uv: [su, sv, m.pivot.x, m.pivot.y, m.offset.x, m.offset.y, m.rotation * std::f32::consts::TAU, flips],
+            opacity: decal.opacity.clamp(0.0, 1.0),
+            roughness: decal.roughness.clamp(0.0, 1.0),
+            metallic: decal.metallic,
+            texture,
+        })
+    }
+}
+
+/// A material's labels the shader can draw, the top [`MAX_LABELS`].
+fn labels_of(program: &CompiledGraph, scene: &SceneSnapshot) -> Vec<SolidLabel> {
+    let mut labels: Vec<SolidLabel> = program
+        .decals
+        .iter()
+        .filter(|d| d.enabled && d.opacity > 0.0)
+        .filter_map(|d| SolidLabel::of(d, scene.textures.get(d.texture)?.clone()))
+        .collect();
+    let extra = labels.len().saturating_sub(MAX_LABELS);
+    labels.drain(..extra);
+    labels
 }
 
 fn source(program: &CompiledGraph, scene: &SceneSnapshot, param: Param, scalar: bool) -> Source {
@@ -247,6 +320,7 @@ impl SolidMaterial {
                 _ => Source::Constant,
             },
             procedural: program.and_then(|p| crate::procedural_gpu::generate(p)).map(Arc::new),
+            labels: program.map(|p| labels_of(p, scene)).unwrap_or_default(),
         }
     }
 }
@@ -389,6 +463,9 @@ struct Gpu {
     programs: Option<Programs>,
     meshes: HashMap<usize, GpuMesh>,
     textures: HashMap<usize, GpuTexture>,
+    /// Labels' artwork, premultiplied and clear past its edges: kept apart
+    /// from `textures`, which hold the same picture as it is.
+    label_textures: HashMap<usize, GpuTexture>,
     volumes: HashMap<usize, GpuVolume>,
     /// The scene the materials were analysed for, and the result.
     materials_for: Option<Arc<SceneSnapshot>>,
@@ -712,6 +789,48 @@ vec3 display(vec3 rendering) {
     return encode_srgb(pbr_neutral(max(u_ap1_to_srgb * rendering * u_exposure, vec3(0.0))));
 }
 
+// Labels (`docs/01` §1.11): up to four, bottom to top, each its artwork
+// premultiplied by its coverage and clear past its edges, placed as the
+// renderer's `Mapping::project` places it and laid over the surface as its
+// `shade` lays it - colour by coverage, foil as metal, its own roughness.
+uniform int u_label_count;
+uniform sampler2D t_label0;
+uniform sampler2D t_label1;
+uniform sampler2D t_label2;
+uniform sampler2D t_label3;
+// projection (0 UV, 1 planar, 2 cylindrical, 3 spherical), axis (x, y, z),
+// sized in scene units, colour-managed artwork.
+uniform ivec4 u_label_mode[4];
+// Two each, as `transform_uv` takes them.
+uniform vec4 u_label_uv[8];
+// opacity, roughness, foil.
+uniform vec4 u_label_finish[4];
+
+vec2 label_frame(int i) {
+    ivec4 mode = u_label_mode[i];
+    if (mode.x == 0) return v_uv;
+    vec3 p = mode.z == 1 ? v_object * u_object_scale : v_object;
+    // The two components across the axis, then the one along it.
+    vec3 q = mode.y == 0 ? p.yzx : (mode.y == 1 ? p.xzy : p);
+    if (mode.x == 1) return q.xy;
+    if (mode.x == 2) return vec2(atan(q.y, q.x) / (2.0 * PI) + 0.5, q.z);
+    float r = length(p);
+    if (r < 1e-6) return vec2(0.0, 0.5);
+    vec3 d = p / r;
+    return vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
+}
+
+void lay_label(sampler2D artwork, int i, inout vec3 base, inout float metal, inout float rough, inout float transmission) {
+    vec4 texel = texture(artwork, transform_uv(label_frame(i), u_label_uv[2 * i], u_label_uv[2 * i + 1]));
+    vec3 colour = u_label_mode[i].w == 1 ? u_srgb_to_ap1 * texel.rgb : texel.rgb;
+    float opacity = u_label_finish[i].x;
+    float alpha = clamp(texel.a, 0.0, 1.0) * opacity;
+    base = base * (1.0 - alpha) + colour * opacity;
+    metal = metal * (1.0 - alpha) + (u_label_finish[i].z > 0.5 ? alpha : 0.0);
+    rough = rough * (1.0 - alpha) + u_label_finish[i].y * alpha;
+    transmission *= 1.0 - alpha;
+}
+
 void main() {
     for (int i = 0; i < u_cutter_count; i++) {
         if (inside_cutter(u_cutter_shape[i], (u_cutter_inverse[i] * vec4(v_world, 1.0)).xyz)) discard;
@@ -880,6 +999,12 @@ void main() {
     roughness_in = fs_rough;
 #endif
 
+    float transmission_in = u_transmission;
+    if (u_label_count > 0) lay_label(t_label0, 0, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 1) lay_label(t_label1, 1, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 2) lay_label(t_label2, 2, base_colour, metalness, roughness_in, transmission_in);
+    if (u_label_count > 3) lay_label(t_label3, 3, base_colour, metalness, roughness_in, transmission_in);
+
     vec3 base = base_colour * clamp(u_base_weight, 0.0, 1.0);
 
     if (u_mode == 2) {
@@ -895,7 +1020,7 @@ void main() {
         vec3 kept = 1.0 - (f0 * ab.x + ab.y);
         vec3 diffuse = base * (1.0 - metal) * irradiance(normal) / PI * kept;
         vec3 colour = diffuse + specular;
-        float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metal);
+        float transmission = clamp(transmission_in, 0.0, 1.0) * (1.0 - metal);
         if (transmission > 0.0) {
             // Through the part: the environment along the refracted view,
             // once, tinted - not a path through glass, but what it shows.
@@ -938,7 +1063,7 @@ void main() {
     float rim = max(dot(normal, u_rim), 0.0);
     colour += vec3(fresnel * fresnel * (0.10 + 0.14 * rim));
 
-    float transmission = clamp(u_transmission, 0.0, 1.0);
+    float transmission = clamp(transmission_in, 0.0, 1.0);
     if (transmission > 0.0) {
         float film_y = 1.0 - (gl_FragCoord.y - u_viewport_px.y) / u_viewport_px.w;
         vec3 behind = backdrop(film_y) * u_transmission_colour;
@@ -1423,6 +1548,9 @@ impl Gpu {
             gl.uniform_1_i32(location("t_rough").as_ref(), 2);
             gl.uniform_1_i32(location("t_normal").as_ref(), 3);
             gl.uniform_1_i32(location("t_volume").as_ref(), 4);
+            for (i, name) in LABEL_SAMPLERS.iter().enumerate() {
+                gl.uniform_1_i32(location(name).as_ref(), LABEL_UNIT as i32 + i as i32);
+            }
             // The ring colour: the interface's accent, as display code.
             let accent = crate::theme::p().accent;
             gl.uniform_3_f32(location("u_outline_colour").as_ref(), accent.r() as f32 / 255.0, accent.g() as f32 / 255.0, accent.b() as f32 / 255.0);
@@ -1924,6 +2052,27 @@ impl Gpu {
         bind(1, &material.metalness_source, "u_metal_channel", "u_metal_uv", true);
         bind(2, &material.roughness_source, "u_rough_channel", "u_rough_uv", true);
         bind(3, &material.normal_source, "u_normal_texture", "u_normal_uv", false);
+
+        // The labels, their artwork on units of their own.
+        let mut modes = [0i32; 4 * MAX_LABELS];
+        let mut uvs = [0f32; 8 * MAX_LABELS];
+        let mut finishes = [0f32; 4 * MAX_LABELS];
+        let mut count = 0;
+        for label in &material.labels {
+            let Some(gpu) = self.label_textures.get(&(Arc::as_ptr(&label.texture) as usize)) else { continue };
+            gl.active_texture(glow::TEXTURE0 + LABEL_UNIT + count as u32);
+            gl.bind_texture(glow::TEXTURE_2D, Some(gpu.texture));
+            modes[4 * count..4 * count + 4].copy_from_slice(&label.mode);
+            uvs[8 * count..8 * count + 8].copy_from_slice(&label.uv);
+            finishes[4 * count..4 * count + 4].copy_from_slice(&[label.opacity, label.roughness, label.metallic as i32 as f32, 0.0]);
+            count += 1;
+        }
+        gl.uniform_1_i32(location("u_label_count").as_ref(), count as i32);
+        if count > 0 {
+            gl.uniform_4_i32_slice(location("u_label_mode").as_ref(), &modes);
+            gl.uniform_4_f32_slice(location("u_label_uv").as_ref(), &uvs);
+            gl.uniform_4_f32_slice(location("u_label_finish").as_ref(), &finishes);
+        }
         gl.active_texture(glow::TEXTURE0);
     }
 
@@ -1970,6 +2119,20 @@ impl Gpu {
                         slot.insert(upload_texture(gl, texture)?);
                     }
                 }
+            }
+        }
+        let mut live_labels = std::collections::HashSet::new();
+        for label in self.materials.iter().flat_map(|m| &m.labels) {
+            let key = Arc::as_ptr(&label.texture) as usize;
+            live_labels.insert(key);
+            if let std::collections::hash_map::Entry::Vacant(slot) = self.label_textures.entry(key) {
+                slot.insert(upload_label(gl, &label.texture)?);
+            }
+        }
+        let stale_labels: Vec<usize> = self.label_textures.keys().copied().filter(|k| !live_labels.contains(k)).collect();
+        for key in stale_labels {
+            if let Some(texture) = self.label_textures.remove(&key) {
+                gl.delete_texture(texture.texture);
             }
         }
         let mut live_volumes = std::collections::HashSet::new();
@@ -2384,6 +2547,50 @@ unsafe fn upload_texture(gl: &glow::Context, texture: &Arc<Texture>) -> Result<G
     gl.generate_mipmap(glow::TEXTURE_2D);
     gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
     gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    gl.bind_texture(glow::TEXTURE_2D, None);
+    Ok(GpuTexture { texture: handle, _source: texture.clone() })
+}
+
+/// A label's artwork as `Texture::sample_decal` reads it: colour multiplied
+/// by coverage before filtering, so an edge does not pick up whatever colour
+/// the clear pixels happen to hold, and clear past the picture's edges.
+unsafe fn upload_label(gl: &glow::Context, texture: &Arc<Texture>) -> Result<GpuTexture, String> {
+    let pyramid = texture.pyramid();
+    let level = (0..pyramid.levels())
+        .find(|&l| pyramid.level(l).width.max(pyramid.level(l).height) <= TEXTURE_LIMIT)
+        .unwrap_or(pyramid.levels() - 1);
+    let image = pyramid.level(level);
+    let colour = texture.role == MapRole::Color;
+    let channels = image.channels.max(1);
+    let mut bytes = Vec::with_capacity(image.width * image.height * 4);
+    for texel in image.data.chunks_exact(channels) {
+        let grey = channels < 3;
+        let (r, g, b) = if grey { (texel[0], texel[0], texel[0]) } else { (texel[0], texel[1], texel[2]) };
+        let a = if channels == 4 { texel[3].clamp(0.0, 1.0) } else { 1.0 };
+        let encode = |v: f32| if colour { encode_srgb8(v * a) } else { ((v * a).clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
+        bytes.extend_from_slice(&[encode(r), encode(g), encode(b), (a * 255.0 + 0.5) as u8]);
+    }
+    let handle = gl.create_texture()?;
+    gl.bind_texture(glow::TEXTURE_2D, Some(handle));
+    gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+    gl.tex_image_2d(
+        glow::TEXTURE_2D,
+        0,
+        (if colour { glow::SRGB8_ALPHA8 } else { glow::RGBA8 }) as i32,
+        image.width as i32,
+        image.height as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        Some(&bytes),
+    );
+    gl.generate_mipmap(glow::TEXTURE_2D);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    // Clear past the edges: a label is printed once, never tiled.
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_BORDER as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_BORDER as i32);
+    gl.tex_parameter_f32_slice(glow::TEXTURE_2D, glow::TEXTURE_BORDER_COLOR, &[0.0, 0.0, 0.0, 0.0]);
     gl.bind_texture(glow::TEXTURE_2D, None);
     Ok(GpuTexture { texture: handle, _source: texture.clone() })
 }

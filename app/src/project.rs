@@ -614,6 +614,13 @@ impl Project {
         tequila_format::hdri::export(&image, path)
     }
 
+    /// The environment as it lights the scene, pins painted in, flattened to
+    /// `width` by half: the picture the Lighting pins map moves them on.
+    pub fn environment_picture(&mut self, width: usize) -> tequila_texture::Image {
+        let settings = self.document().environment.clone();
+        self.environment.rasterize(&settings, width, false)
+    }
+
     /// Image pins whose picture would not load.
     pub fn missing_pin_images(&self) -> Vec<String> {
         self.environment.missing_pin_images()

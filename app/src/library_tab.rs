@@ -130,6 +130,10 @@ pub struct LibraryTab {
     category: Option<String>,
     favorites: BTreeSet<String>,
     recent: Vec<String>,
+    /// Where the two shelves are kept between launches; none in a test.
+    /// Kept in memory only, they were empty after every restart and every
+    /// update.
+    shelf_files: Option<ShelfFiles>,
     /// Rendered previews, keyed by the material's content.
     thumbnails: HashMap<u64, egui::TextureHandle>,
     /// Names still waiting for a preview, in the order they were first seen.
@@ -153,7 +157,27 @@ pub struct LibraryTab {
 
 impl LibraryTab {
     pub fn new(environment: Arc<Environment>) -> LibraryTab {
-        LibraryTab::with_cache(environment, Arc::new(crate::thumbnail::DiskCache::persistent()))
+        let mut tab = LibraryTab::with_cache(environment, Arc::new(crate::thumbnail::DiskCache::persistent()));
+        tab.keep_shelves(ShelfFiles::beside_library());
+        tab
+    }
+
+    /// Read the Favorites and Recent shelves from `files`, and write them
+    /// back there whenever they change.
+    pub fn keep_shelves(&mut self, files: ShelfFiles) {
+        self.favorites = read_names(&files.favorites).into_iter().collect();
+        self.recent = read_names(&files.recent);
+        self.recent.truncate(RECENT);
+        self.shelf_files = Some(files);
+    }
+
+    fn toggle_favorite(&mut self, name: &str) {
+        if !self.favorites.remove(name) {
+            self.favorites.insert(name.to_string());
+        }
+        if let Some(files) = &self.shelf_files {
+            write_names(&files.favorites, self.favorites.iter());
+        }
     }
 
     /// The same, keeping thumbnails in `disk`.
@@ -178,6 +202,7 @@ impl LibraryTab {
             category: None,
             favorites: BTreeSet::new(),
             recent: Vec::new(),
+            shelf_files: None,
             thumbnails: HashMap::new(),
             queued: Vec::new(),
             preview_job: None,
@@ -271,7 +296,10 @@ impl LibraryTab {
     pub fn note_used(&mut self, name: &str) {
         self.recent.retain(|n| n != name);
         self.recent.insert(0, name.to_string());
-        self.recent.truncate(24);
+        self.recent.truncate(RECENT);
+        if let Some(files) = &self.shelf_files {
+            write_names(&files.recent, self.recent.iter());
+        }
     }
 
     fn visible(&self, in_project: &BTreeSet<String>) -> Vec<usize> {
@@ -509,11 +537,7 @@ impl LibraryTab {
                         let star = star_rect(response.rect, size);
                         let on_star = response.hover_pos().is_some_and(|p| star.contains(p));
                         if on_star && response.clicked() {
-                            if starred {
-                                self.favorites.remove(&entry.name);
-                            } else {
-                                self.favorites.insert(entry.name.clone());
-                            }
+                            favourite_toggle = Some(entry.name.clone());
                             action = None;
                             continue;
                         }
@@ -619,9 +643,7 @@ impl LibraryTab {
         // Applied after the grid, not inside it: the closure holds `&self.entries`
         // while it lays the tiles out, and a favourites edit is a `&mut self`.
         if let Some(name) = favourite_toggle {
-            if !self.favorites.remove(&name) {
-                self.favorites.insert(name);
-            }
+            self.toggle_favorite(&name);
         }
 
         // Previews for the tiles on screen and the next screenful, top first.
@@ -810,6 +832,40 @@ fn star_points(centre: egui::Pos2, r: f32) -> Vec<egui::Pos2> {
 /// worst possible failure for the one part of it a person built themselves.
 pub fn user_library_path() -> std::path::PathBuf {
     library::user_directory()
+}
+
+/// How many materials the Recent shelf keeps.
+const RECENT: usize = 24;
+
+/// Where the Favorites and Recent shelves are kept: beside the person's
+/// library, so they outlive restarts and updates as the library does.
+pub struct ShelfFiles {
+    pub favorites: std::path::PathBuf,
+    pub recent: std::path::PathBuf,
+}
+
+impl ShelfFiles {
+    fn beside_library() -> ShelfFiles {
+        let folder = user_library_path().parent().map(|p| p.to_path_buf()).unwrap_or_else(std::env::temp_dir);
+        ShelfFiles { favorites: folder.join("favorites.txt"), recent: folder.join("recent-materials.txt") }
+    }
+}
+
+/// Material names kept one a line; none when the file is not there yet.
+fn read_names(file: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(file)
+        .map(|text| text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
+
+/// A shelf that cannot be written is a convenience lost, not an error to
+/// interrupt anybody with.
+fn write_names<'a>(file: &std::path::Path, names: impl Iterator<Item = &'a String>) {
+    let text: String = names.map(|n| format!("{n}\n")).collect();
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(file, text);
 }
 
 /// What is in a folder of presets, as one number: their names and when
@@ -1259,6 +1315,29 @@ mod tests {
         let favorites = tab.visible(&BTreeSet::new());
         assert_eq!(favorites.len(), 1);
         assert_eq!(tab.entries()[favorites[0]].name, name);
+    }
+
+    /// Favorites and Recent are what they were after a restart. They were
+    /// in memory only, and a community member lost every favorite updating
+    /// the Mac application.
+    #[test]
+    fn favorites_and_recent_outlive_a_restart() {
+        let folder = std::env::temp_dir().join(format!("tequila-shelves-{}", std::process::id()));
+        let files = || ShelfFiles { favorites: folder.join("favorites.txt"), recent: folder.join("recent-materials.txt") };
+        let mut before = tab();
+        before.keep_shelves(files());
+        let (a, b) = (before.entries()[0].name.clone(), before.entries()[1].name.clone());
+        before.toggle_favorite(&a);
+        before.toggle_favorite(&b);
+        before.toggle_favorite(&a);
+        before.note_used(&a);
+        before.note_used(&b);
+
+        let mut after = tab();
+        after.keep_shelves(files());
+        assert_eq!(after.favorites, BTreeSet::from([b.clone()]));
+        assert_eq!(after.recent, vec![b, a]);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// Recently-used keeps the most recent first, without duplicates.

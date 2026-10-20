@@ -3181,11 +3181,30 @@ impl TequilaApp {
             ),
         };
         let converged = image.converged_fraction >= 0.995;
+        // What renders the view, named on the chip, which opens the choice:
+        // the switch between the graphics card and the processor was only
+        // in the Render window, where nobody looking at the viewport found it.
+        let engine = self.project.render_settings().engine;
+        let detail = if rendered {
+            let on = match engine {
+                tequila_scene::render::RenderEngine::Tequila => "Tequila",
+                tequila_scene::render::RenderEngine::CyclesCpu => "Cycles · processor",
+                tequila_scene::render::RenderEngine::CyclesGpu => "Cycles · graphics card",
+            };
+            format!("{on} · {detail}")
+        } else {
+            detail
+        };
         let title = painter.layout_no_wrap(title.to_string(), theme::strong(12.0), theme::p().text);
         let detail = painter.layout_no_wrap(detail, egui::FontId::proportional(12.0), theme::p().text_dim);
         let chip = egui::Rect::from_min_size(
             rect.min + egui::Vec2::splat(OVERLAY_INSET),
-            egui::vec2(28.0 + title.size().x + if detail.is_empty() { 12.0 } else { 8.0 + detail.size().x + 12.0 }, ISLAND - 8.0),
+            // Room at the end, in the Rendered view, for the arrow that says
+            // the chip opens a choice.
+            egui::vec2(
+                28.0 + title.size().x + if detail.is_empty() { 12.0 } else { 8.0 + detail.size().x + 12.0 } + if rendered { 12.0 } else { 0.0 },
+                ISLAND - 8.0,
+            ),
         );
         icons::island(&painter, chip);
         let dot = egui::pos2(chip.left() + 15.0, chip.center().y);
@@ -3207,6 +3226,37 @@ impl TequilaApp {
         painter.galley(egui::pos2(chip.left() + 26.0, text_y), title.clone(), egui::Color32::PLACEHOLDER);
         if !detail.is_empty() {
             painter.galley(egui::pos2(chip.left() + 26.0 + title.size().x + 8.0, text_y), detail, egui::Color32::PLACEHOLDER);
+        }
+        if rendered {
+            // A small arrow, drawn: the interface font has no glyph for one.
+            let tip = egui::pos2(chip.right() - 13.0, chip.center().y + 2.5);
+            painter.add(egui::Shape::convex_polygon(
+                vec![tip, tip + egui::vec2(-3.5, -5.0), tip + egui::vec2(3.5, -5.0)],
+                theme::p().text_dim,
+                egui::Stroke::NONE,
+            ));
+            let response = ui
+                .interact(chip, ui.id().with("viewport-engine"), egui::Sense::click())
+                .on_hover_text("What draws the view, and on what: click to switch between the graphics card and the processor");
+            let popup = ui.id().with("viewport-engine-menu");
+            if response.clicked() {
+                ui.memory_mut(|m| m.toggle_popup(popup));
+            }
+            let mut picked = None;
+            egui::popup::popup_below_widget(ui, popup, &response, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                ui.set_min_width(260.0);
+                for candidate in tequila_scene::render::RenderEngine::ALL {
+                    if let Some(choice) = render_window::engine_choice(ui, engine, candidate) {
+                        picked = Some(choice);
+                    }
+                }
+            });
+            if let Some(choice) = picked.filter(|c| *c != engine) {
+                let mut settings = self.project.render_settings().clone();
+                settings.engine = choice;
+                let _ = self.project.apply(Command::SetRenderSettings { settings: Box::new(settings) });
+                self.project.status = format!("The view and renders now use {}", choice.label());
+            }
         }
         if rendered && !converged && !exporting && !self.viewport_paused {
             let track = egui::Rect::from_min_max(

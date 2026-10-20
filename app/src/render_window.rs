@@ -1418,6 +1418,34 @@ fn section(ui: &mut egui::Ui, title: &str, open: bool, body: impl FnOnce(&mut eg
     ui.add_space(2.0);
 }
 
+/// One engine in a list to pick from - here and on the viewport's chip -
+/// greyed out with the reason where it cannot run on this computer. The
+/// engine when it was clicked.
+pub(crate) fn engine_choice(
+    ui: &mut egui::Ui,
+    current: tequila_scene::render::RenderEngine,
+    engine: tequila_scene::render::RenderEngine,
+) -> Option<tequila_scene::render::RenderEngine> {
+    use tequila_scene::render::RenderEngine;
+    let unavailable = match (engine, crate::batch::cycles_here()) {
+        (RenderEngine::Tequila, _) => None,
+        (_, Err(why)) => Some(why.clone()),
+        (RenderEngine::CyclesGpu, Ok(false)) => Some("Cycles found no graphics card it can use".to_string()),
+        _ => None,
+    };
+    let label = egui::SelectableLabel::new(current == engine, engine.label());
+    let response = ui.add_enabled(unavailable.is_none(), label);
+    let response = match &unavailable {
+        Some(why) => response.on_disabled_hover_text(why),
+        None => response.on_hover_text(match engine {
+            RenderEngine::Tequila => "Tequila's own path tracer, on the processor",
+            RenderEngine::CyclesCpu => "Blender's Cycles, on the processor: slower, but it can hold scenes too big for the graphics card",
+            RenderEngine::CyclesGpu => "Blender's Cycles, on the graphics card: usually several times faster",
+        }),
+    };
+    response.clicked().then_some(engine)
+}
+
 /// Whether Cycles is installed here and has a graphics card to use, asked
 /// once: loading it and listing devices wakes the graphics driver, which is
 /// not something to do every frame the Render window is open.
@@ -1429,26 +1457,8 @@ fn engine_picker(ui: &mut egui::Ui, settings: &mut RenderSettings) {
             .selected_text(settings.engine.label())
             .show_ui(ui, |ui| {
                 for engine in RenderEngine::ALL {
-                    let unavailable = match (engine, crate::batch::cycles_here()) {
-                        (RenderEngine::Tequila, _) => None,
-                        (_, Err(why)) => Some(why.clone()),
-                        (RenderEngine::CyclesGpu, Ok(false)) => {
-                            Some("Cycles found no graphics card it can use".to_string())
-                        }
-                        _ => None,
-                    };
-                    let label = egui::SelectableLabel::new(settings.engine == engine, engine.label());
-                    let response = ui.add_enabled(unavailable.is_none(), label);
-                    let response = match &unavailable {
-                        Some(why) => response.on_disabled_hover_text(why),
-                        None => response.on_hover_text(match engine {
-                            RenderEngine::Tequila => "Tequila's own path tracer, on the processor",
-                            RenderEngine::CyclesCpu => "Blender's Cycles, on the processor",
-                            RenderEngine::CyclesGpu => "Blender's Cycles, on the graphics card: usually several times faster",
-                        }),
-                    };
-                    if response.clicked() {
-                        settings.engine = engine;
+                    if let Some(picked) = engine_choice(ui, settings.engine, engine) {
+                        settings.engine = picked;
                     }
                 }
             });
