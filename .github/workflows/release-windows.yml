@@ -1,0 +1,234 @@
+name: Windows release
+
+# The Windows installer, built here from the repository's own sources, so it
+# can be signed: SignPath signs only what a project's CI built
+# (docs/CODE-SIGNING.md). With
+#   - Rust, as CI builds it;
+#   - the STEP reader against OpenCASCADE 8.0.1's release build;
+#   - Cycles built from source (native/cycles/build-cycles.ps1), with
+#     Blender 5.0.1's GPU kernels and NVIDIA's OptiX headers;
+#   - Inno Setup 6.
+#
+# Run it by hand (Actions > Windows release > Run workflow), optionally
+# naming a release to attach the installer to. Until SignPath is set up (the
+# SIGNPATH_API_TOKEN secret and SIGNPATH_ORGANIZATION_ID variable), the
+# installer it makes is unsigned, as the ones built on a PC are. The package
+# it made is kept as an artifact, for the next run's update installer
+# (`patch_from_run`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "A release's tag (v2026.10.21.0930) to attach the installer to, and take the version from; empty for neither"
+        required: false
+        default: ""
+      patch_from_run:
+        description: "The id of an earlier Windows release run, whose package the update installer updates; empty for none"
+        required: false
+        default: ""
+
+  # TEMPORARY: to try the workflow from the work branch before it is on main.
+  push:
+    branches: [round2]
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    env:
+      CYCLES_WORK: ${{ github.workspace }}\..\cycles-work
+      TAG: ${{ inputs.release }}
+    outputs:
+      signing: ${{ steps.signing.outputs.configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target-package"
+
+      - name: Tools
+        shell: pwsh
+        run: |
+          git lfs install
+          choco install innosetup --no-progress -y
+
+      - name: Cache third-party SDKs
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-windows-embree4.4.1-oidn2.5.1-occt8.0.1
+
+      - name: Fetch third-party SDKs
+        shell: pwsh
+        run: |
+          pwsh scripts/fetch-third-party.ps1
+          # OpenCASCADE 8.0.1's release build and its third-party libraries,
+          # as native/occt/build-occt.bat expects them.
+          function Get-Zip($url, $into) {
+            if (Test-Path $into) { return }
+            $zip = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($url))
+            Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+            $unpacked = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($url))
+            Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+            # One folder at the top is the root; otherwise the archive is.
+            $top = @(Get-ChildItem $unpacked)
+            $root = if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $top[0].FullName } else { $unpacked }
+            Move-Item $root $into
+          }
+          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/opencascade-release-no-pch.zip' 'third_party/occt-8.0.1'
+          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/3rdparty-vc14-64.zip' 'third_party/occt-3rdparty'
+
+      - name: Crates
+        run: cargo fetch
+
+      - name: STEP reader (OpenCASCADE)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $env:VCVARS = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          cmd /c native\occt\build-occt.bat
+          if ($LASTEXITCODE -ne 0) { throw 'The STEP reader did not build' }
+
+      # Cycles takes most of the time: its sources, Blender's libraries and
+      # the build are kept between runs, keyed on what decides them.
+      - name: Cache Cycles
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CYCLES_WORK }}
+          key: cycles-windows-x64-${{ hashFiles('native/cycles/**') }}
+          restore-keys: cycles-windows-x64-
+
+      # Blender 5.0.1's GPU kernels, which the Cycles build matches.
+      - name: GPU kernels
+        shell: pwsh
+        run: |
+          $kernels = Join-Path $env:CYCLES_WORK 'blender-5.0.1\5.0\scripts\addons_core\cycles\lib'
+          if (-not (Test-Path (Join-Path $kernels 'kernel_optix.ptx.zst'))) {
+            New-Item -ItemType Directory -Force $kernels | Out-Null
+            $zip = Join-Path $env:RUNNER_TEMP 'blender.zip'
+            Invoke-WebRequest -Uri 'https://download.blender.org/release/Blender5.0/blender-5.0.1-windows-x64.zip' -OutFile $zip -UseBasicParsing
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+            foreach ($entry in $archive.Entries) {
+              if ($entry.FullName -match '/5\.0/scripts/addons_core/cycles/lib/(kernel_[^/]+)$') {
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $kernels $Matches[1]), $true)
+              }
+            }
+            $archive.Dispose()
+            Remove-Item $zip
+          }
+          Get-ChildItem $kernels | Measure-Object | ForEach-Object { "$($_.Count) kernel files" }
+
+      - name: Cycles
+        shell: pwsh
+        run: |
+          .\native\cycles\build-cycles.ps1 -Work $env:CYCLES_WORK -Blender (Join-Path $env:CYCLES_WORK 'blender-5.0.1')
+
+      - name: Package
+        shell: pwsh
+        run: |
+          # The release's time is the package's: v2026.10.21.0930 is
+          # Tequila-Windows-20261021-093000, which makes 2026.10.21.0930.
+          if ($env:TAG -match '^v(\d{4})\.(\d{2})\.(\d{2})\.(\d{2})(\d{2})$') {
+            $env:TEQUILA_PACKAGE_STAMP = "$($Matches[1])$($Matches[2])$($Matches[3])-$($Matches[4])$($Matches[5])00"
+          }
+          $env:TEQUILA_CYCLES_WORK = $env:CYCLES_WORK
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+          $package = Get-ChildItem dist -Directory -Filter 'Tequila-Windows-*' | Where-Object { $_.Name -notlike '*-symbols' } | Sort-Object Name | Select-Object -Last 1
+          "PACKAGE=$($package.FullName)" >> $env:GITHUB_ENV
+          # Beside it, so the artifact keeps the package's folder, whose name
+          # is its version.
+          Set-Content dist\package.txt $package.Name
+
+      # The package as built, for a later run's update installer.
+      - name: Keep the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-Windows-package
+          path: |
+            ${{ env.PACKAGE }}
+            dist/package.txt
+          retention-days: 90
+
+      - name: Base package for the update installer
+        if: inputs.patch_from_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: Tequila-Windows-package
+          run-id: ${{ inputs.patch_from_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}\base
+
+      - name: Installers
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps1 -Package $env:PACKAGE
+          if ($LASTEXITCODE -ne 0) { throw 'The installer was not made' }
+          $base = Join-Path $env:RUNNER_TEMP 'base'
+          $named = if (Test-Path (Join-Path $base 'package.txt')) { Join-Path $base (Get-Content (Join-Path $base 'package.txt')).Trim() }
+          if ($named -and (Test-Path (Join-Path $named 'Tequila.exe'))) {
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-installer.ps1 -Package $env:PACKAGE -PatchFrom $named
+            if ($LASTEXITCODE -ne 0) { throw 'The update installer was not made' }
+          }
+          New-Item -ItemType Directory -Force installers | Out-Null
+          Move-Item dist\Tequila-Setup-*.exe, dist\Tequila-Update-*.exe installers -ErrorAction SilentlyContinue
+          Get-ChildItem installers
+
+      - name: Keep the installers
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-Windows-installers
+          path: installers\*.exe
+
+      - name: Whether SignPath is set up
+        id: signing
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ORGANIZATION: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ORGANIZATION" ]; then echo "configured=true" >> "$GITHUB_OUTPUT"; else echo "configured=false" >> "$GITHUB_OUTPUT"; fi
+
+      # Signed by SignPath, with the certificate SignPath Foundation issues
+      # to open-source projects; see docs/CODE-SIGNING.md and
+      # .signpath/artifact-configuration.xml.
+      - name: Sign
+        if: steps.signing.outputs.configured == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'tequila' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Keep the signed installers
+        if: steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-Windows-installers-signed
+          path: signed\*.exe
+
+      - name: Attach them to the release
+        if: inputs.release != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.signing.outputs.configured }}" = "true" ]; then dir=signed; else dir=installers; fi
+          gh release upload "$TAG" "$dir"/*.exe --clobber

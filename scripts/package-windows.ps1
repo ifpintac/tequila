@@ -24,7 +24,11 @@ try {
         }
     }
     # A new folder for each build also permits packaging while an older copy is open.
-    $packageName = 'Tequila-Windows-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    # Named for when it was built, which is its version; or for the release
+    # it is built for (TEQUILA_PACKAGE_STAMP, 20261021-093000), as the
+    # release workflow builds it.
+    $stamp = if ($env:TEQUILA_PACKAGE_STAMP) { $env:TEQUILA_PACKAGE_STAMP } else { Get-Date -Format 'yyyyMMdd-HHmmss' }
+    $packageName = 'Tequila-Windows-' + $stamp
     $packagePath = Join-Path $projectRoot "dist/$packageName"
     New-Item -ItemType Directory -Path $packagePath | Out-Null
     Copy-Item -LiteralPath (Join-Path $releasePath 'tequila-app.exe') -Destination (Join-Path $packagePath 'Tequila.exe')

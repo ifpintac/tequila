@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What SignPath signs in the artifact the Windows release workflow sends:
+     the installers, with Authenticode (docs/CODE-SIGNING.md). A copy of the
+     configuration kept in SignPath's project, here so a change to it is
+     reviewed like any other. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Tequila-Setup-*.exe" min-matches="1" max-matches="1">
+      <authenticode-sign/>
+    </pe-file>
+    <pe-file path="Tequila-Update-*.exe" min-matches="0" max-matches="1">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

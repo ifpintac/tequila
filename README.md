@@ -30,7 +30,8 @@ line tools).
 not signed with a paid certificate:
 
 - **Windows** shows "Windows protected your PC": click **More info**, then
-  **Run anyway**.
+  **Run anyway**. Signing for Windows, free through the SignPath
+  Foundation, is being set up: see the [code signing policy](docs/CODE-SIGNING.md).
 - **Mac** says Apple could not verify it: click **Done**, open **System
   Settings > Privacy & Security**, scroll down and click **Open Anyway** next
   to Tequila.
@@ -109,6 +110,7 @@ cargo test --workspace --release
 - [Writing plugins](docs/plugins.md)
 - [Making materials](docs/materials-authoring.md)
 - [The specification](docs/TEQUILA_SPEC.md) and the [roadmap and status](docs/05-ROADMAP-AND-TESTING.md)
+- [Code signing policy](docs/CODE-SIGNING.md)
 
 ## Licence
 
