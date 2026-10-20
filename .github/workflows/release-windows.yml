@@ -75,19 +75,28 @@ jobs:
           pwsh scripts/fetch-third-party.ps1
           # OpenCASCADE 8.0.1's release build and its third-party libraries,
           # as native/occt/build-occt.bat expects them.
-          function Get-Zip($url, $into) {
+          # Each archive's root is the folder holding what marks it, however
+          # deep the archive keeps it.
+          function Get-Zip($url, $into, $marker, $levels) {
             if (Test-Path $into) { return }
             $zip = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileName($url))
             Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
             $unpacked = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($url))
             Expand-Archive -Path $zip -DestinationPath $unpacked -Force
-            # One folder at the top is the root; otherwise the archive is.
-            $top = @(Get-ChildItem $unpacked)
-            $root = if ($top.Count -eq 1 -and $top[0].PSIsContainer) { $top[0].FullName } else { $unpacked }
+            $found = Get-ChildItem $unpacked -Recurse -Filter $marker | Select-Object -First 1
+            if (-not $found) { throw "No $marker in $url" }
+            $root = $found.FullName
+            for ($i = 0; $i -lt $levels; $i++) { $root = Split-Path -Parent $root }
+            Write-Host "$url -> $root"
+            Get-ChildItem $root | Select-Object -First 12 | ForEach-Object { "  $($_.Name)" }
             Move-Item $root $into
+            Remove-Item $zip
           }
-          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/opencascade-release-no-pch.zip' 'third_party/occt-8.0.1'
-          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/3rdparty-vc14-64.zip' 'third_party/occt-3rdparty'
+          # inc\Standard.hxx: the root is the folder above inc.
+          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/opencascade-release-no-pch.zip' 'third_party/occt-8.0.1' 'Standard.hxx' 2
+          # tbb-...\bin\tbb12.dll: the root is the folder above tbb's.
+          Get-Zip 'https://github.com/Open-Cascade-SAS/OCCT/releases/download/V8.0.1/3rdparty-vc14-64.zip' 'third_party/occt-3rdparty' 'tbb12.dll' 3
+          if (-not (Test-Path 'third_party/occt-8.0.1/win64/vc14/lib')) { Get-ChildItem third_party/occt-8.0.1; throw 'OpenCASCADE has no win64/vc14/lib' }
 
       - name: Crates
         run: cargo fetch
