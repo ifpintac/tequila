@@ -29,9 +29,11 @@ permissions:
 
 jobs:
   announce:
-    # Only a Mac release that a published release started: the ones run by
-    # hand re-attach a disk image to a release already announced.
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'release'
+    # Only a Mac release that a published release started, and only when it
+    # succeeded: the ones run by hand re-attach a disk image to a release
+    # already announced, and one GitHub had no Mac for (cancelled) posted the
+    # release without its disk image, once for each attempt.
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'release' && github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Announce the release
