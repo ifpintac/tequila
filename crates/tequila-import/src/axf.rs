@@ -6,8 +6,10 @@
 //! diffuse colour, a specular colour, a GGX lobe's width, a Fresnel
 //! reflectance and a normal map, each a picture of the sample or a single
 //! value, over a tile of the sample's size. A car paint's own
-//! representation (`CarPaint2`: tabulated colour and measured flakes) is
-//! not read; its SVBRDF, which every car paint file carries beside it, is.
+//! representation (`CarPaint2`) is read for its measured flakes alone
+//! ([`Flakes`]), fitted to Tequila's flakes; its tabulated colour is not,
+//! and its SVBRDF, which every car paint file carries beside it, is the
+//! rest of the material.
 
 use crate::hdf5::{Dataset, File};
 use std::path::{Path, PathBuf};
@@ -48,6 +50,121 @@ pub struct Svbrdf {
     pub size: (f32, f32),
     /// The file is a car paint: it has flakes the SVBRDF does not carry.
     pub car_paint: bool,
+    /// Its measured flakes, where it has them and they read.
+    pub flakes: Option<Flakes>,
+}
+
+/// A car paint's flakes as Tequila draws them, fitted to the flake
+/// reflectance X-Rite measured (`CarPaint2`'s flake BTF).
+///
+/// The BTF is pictures of the sparkle, one for each pair of angles: the
+/// half vector's from the normal, in steps of 90 / NumThetaF degrees, by
+/// the light's from the half vector. Its mean over the picture is the
+/// flakes' BRDF, added to the paint's (Unity's AxF renderer, `AxF.hlsl`).
+/// Tequila's flakes cover a share `w` of the surface, with normals spread
+/// evenly over a cone of half-angle `a` and the flakes' own reflectance
+/// `F`. Seen with the light behind the eye (the first column of light
+/// angles), they make a BRDF of `w F D(h) / (4 cos^3 h)`. So
+/// `4 BRDF cos^3 h` integrated over the hemisphere is `w F`, and its mean
+/// tilt is `2a/3`, the mean of a cone's. The measured flakes fall off with
+/// a tail where Tequila's stop at the cone's edge: matched by their energy
+/// and mean tilt, they glint as far out as the real ones on the whole.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Flakes {
+    /// The flakes' colour, linear sRGB, its strongest channel 1.
+    pub colour: [f32; 3],
+    /// Their reflectance times their coverage, `w F`.
+    pub coverage_reflectance: f32,
+    /// The half-angle of the cone their normals spread over, in degrees.
+    pub cone_degrees: f32,
+    /// A flake's diameter, in metres: one of the BTF's texels in area. Each
+    /// sparkle in it is a texel, and as many sparkle as flakes of this size
+    /// at their coverage would (two a square millimetre in TIGER's powder
+    /// coats); flakes of Tequila's default size, a few hundredths of that,
+    /// averaged into a sheen where the paint glitters.
+    pub size: f32,
+}
+
+impl Flakes {
+    /// Fit from the BRDF's mean at half-vector angles `0, step, 2 step, ...`
+    /// degrees, the light behind the eye, and its colour at the first.
+    pub fn fit(brdf: &[f32], step_degrees: f32, colour: [f32; 3], texel: f32) -> Option<Flakes> {
+        let first = *brdf.first()?;
+        if !(first > 0.0) || brdf.len() < 2 {
+            return None;
+        }
+        let step = step_degrees.to_radians();
+        let (mut energy, mut tilt) = (0.0f64, 0.0f64);
+        for (j, value) in brdf.iter().enumerate() {
+            // The bin around j steps: half a step either side.
+            let centre = j as f32 * step;
+            let (low, high) = ((centre - step / 2.0).max(0.0), centre + step / 2.0);
+            let solid = std::f32::consts::TAU * (low.cos() - high.cos());
+            let weight = (4.0 * value.max(0.0) * centre.cos().powi(3) * solid) as f64;
+            energy += weight;
+            tilt += weight * centre as f64;
+        }
+        if energy <= 0.0 {
+            return None;
+        }
+        let mean = (tilt / energy) as f32;
+        let strongest = colour.iter().copied().fold(0.0f32, f32::max);
+        if !(strongest > 0.0) {
+            return None;
+        }
+        Some(Flakes {
+            colour: colour.map(|c| (c / strongest).max(0.0)),
+            coverage_reflectance: energy as f32,
+            cone_degrees: (1.5 * mean).to_degrees().clamp(1.0, 60.0),
+            size: (2.0 * texel / std::f32::consts::PI.sqrt()).clamp(0.000_005, 0.000_5),
+        })
+    }
+}
+
+/// The flakes of the car paint representation `rep` of `material`, read
+/// from its flake BTF.
+fn flakes(file: &File, material: &str, rep: &str) -> Option<Flakes> {
+    // The operand naming the BTF: its lookup table of patches by light and
+    // half-vector angle, and how many of those angles.
+    let mut operands = Vec::new();
+    collect_operands(file, &format!("{rep}/com.xrite.Input"), &mut operands, 0);
+    let operand = operands.iter().find(|o| file.has(&format!("{o}/PatchesLookupTable")))?;
+    let table = file.dataset(&format!("{operand}/PatchesLookupTable")).ok()?;
+    let columns = *table.shape.get(1)?;
+    let lookup = table.numbers()?;
+    let thetas = file.dataset(&format!("{operand}/NumThetaF")).ok()?.numbers()?.first().copied()? as f32;
+    let locations = file.dataset(&format!("{operand}/com.xrite.Resources/Data/ResourceLocations")).ok()?;
+    let crate::hdf5::Values::Strings(locations) = &locations.values else { return None };
+    let resources = format!("{material}/com.xrite.Resources");
+    // A texel's width, from the patches' size and the first's pixels.
+    let first = locations.first()?.rsplit_once('/').map_or(String::new(), |(group, _)| group.to_string());
+    let width_mm = file.dataset(&format!("{resources}/{first}/WidthMM")).ok()?.numbers()?.first().copied()? as f32;
+    let mut texel = 0.0;
+    // The first row: the light behind the eye, the half vector tilting.
+    let mut brdf = Vec::new();
+    let mut colour = [0.0f32; 3];
+    for column in 0..columns {
+        let Some(&patch) = lookup.get(column) else { break };
+        if patch < 0.0 {
+            break;
+        }
+        let location = locations.get(patch as usize)?;
+        let data = file.dataset(&format!("{resources}/{location}/Data")).ok()?;
+        let values = data.numbers()?;
+        let value = |v: f64| if data.integer_bytes == Some(2) { crate::hdf5::half(v as u16) } else { v as f32 };
+        let channels = data.shape.last().copied().unwrap_or(1).max(1);
+        let count = (values.len() / channels).max(1) as f64;
+        let mean: Vec<f32> =
+            (0..channels).map(|c| (values.iter().skip(c).step_by(channels).map(|v| value(*v) as f64).sum::<f64>() / count) as f32).collect();
+        if column == 0 {
+            texel = width_mm * 0.001 / data.shape.get(1).copied().unwrap_or(1).max(1) as f32;
+            for (k, slot) in colour.iter_mut().enumerate() {
+                *slot = mean.get(k).or(mean.first()).copied().unwrap_or(0.0);
+            }
+        }
+        brdf.push(mean.iter().sum::<f32>() / mean.len() as f32);
+    }
+    Flakes::fit(&brdf, 90.0 / thetas.max(1.0), colour, texel)
 }
 
 /// The first material's SVBRDF in an AxF file's bytes.
@@ -61,6 +178,10 @@ pub fn read(bytes: &[u8]) -> Result<Svbrdf, String> {
     reps.sort();
     let class_of = |rep: &str| file.dataset(&format!("{representations}/{rep}/RepresentationClass")).ok().and_then(|d| d.text().map(str::to_string)).unwrap_or_default();
     let car_paint = reps.iter().any(|r| class_of(r).contains("CarPaint"));
+    let flakes = reps
+        .iter()
+        .find(|r| class_of(r).contains("CarPaint"))
+        .and_then(|r| flakes(&file, &material, &format!("{representations}/{r}")));
     let preferred = file
         .dataset(&format!("{material}/IndexOfPreferredRepresentation"))
         .ok()
@@ -134,7 +255,7 @@ pub fn read(bytes: &[u8]) -> Result<Svbrdf, String> {
     };
     // A normal map of one flat normal is no normal map.
     let normal = normal.filter(|n| matches!(n, Map::Image { width, height, .. } if *width > 1 || *height > 1));
-    Ok(Svbrdf { name, diffuse, specular, lobes, fresnel, normal, size: size.unwrap_or((0.1, 0.1)), car_paint })
+    Ok(Svbrdf { name, diffuse, specular, lobes, fresnel, normal, size: size.unwrap_or((0.1, 0.1)), car_paint, flakes })
 }
 
 fn collect_operands(file: &File, at: &str, out: &mut Vec<String>, depth: u32) {
@@ -231,6 +352,43 @@ pub fn write_png(map: &Map, encoding: Encoding, path: &Path) -> Result<PathBuf, 
 mod tests {
     use super::*;
 
+    /// Flakes made by Tequila's own model - a cone of normals, a coverage
+    /// and a reflectance - measured as the BTF measures them, fit back to
+    /// themselves.
+    #[test]
+    fn flakes_fit_back_to_the_cone_that_made_them() {
+        let (coverage, reflectance, cone) = (0.03f32, 0.9f32, 24.0f32);
+        let solid = std::f32::consts::TAU * (1.0 - cone.to_radians().cos());
+        // Finely sampled, so the bins' own width hardly counts.
+        let step = 0.5f32;
+        let brdf: Vec<f32> = (0..120)
+            .map(|j| {
+                let h = (j as f32 * step).to_radians();
+                if h.to_degrees() < cone {
+                    coverage * reflectance / solid / (4.0 * h.cos().powi(3))
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let fit = Flakes::fit(&brdf, step, [0.9, 0.81, 0.7], 0.0001).expect("a fit");
+        assert!((fit.coverage_reflectance - coverage * reflectance).abs() < 0.002, "{fit:?}");
+        assert!((fit.cone_degrees - cone).abs() < 1.0, "{fit:?}");
+        assert_eq!(fit.colour[0], 1.0);
+        assert!((fit.colour[2] - 0.7 / 0.9).abs() < 1e-5);
+        // A texel's area: 0.1 mm square is a disc 0.113 mm across.
+        assert!((fit.size - 0.000_112_8).abs() < 1e-6, "{fit:?}");
+    }
+
+    /// X-Rite keeps half floats as 16-bit integers; their bits read back.
+    #[test]
+    fn half_floats_read_from_their_bits() {
+        assert_eq!(crate::hdf5::half(0x3c00), 1.0);
+        assert_eq!(crate::hdf5::half(0xc000), -2.0);
+        assert!((crate::hdf5::half(0x2e66) - 0.1).abs() < 1e-4);
+        assert_eq!(crate::hdf5::half(0), 0.0);
+    }
+
     /// AxF files named in `TEQUILA_AXF`: each reads to an SVBRDF.
     #[test]
     #[ignore = "reads files named in TEQUILA_AXF"]
@@ -244,9 +402,10 @@ mod tests {
                 Map::Image { width, height, channels, .. } => format!("{width}x{height}x{channels} mean {:?}", m.mean()),
             };
             println!(
-                "{path}: {} car paint {} size {:?} fresnel {}\n  diffuse {}\n  specular {}\n  lobes {}\n  normal {}",
+                "{path}: {} car paint {} flakes {:?} size {:?} fresnel {}\n  diffuse {}\n  specular {}\n  lobes {}\n  normal {}",
                 svbrdf.name,
                 svbrdf.car_paint,
+                svbrdf.flakes,
                 svbrdf.size,
                 svbrdf.fresnel,
                 kind(&svbrdf.diffuse),

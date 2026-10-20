@@ -1035,6 +1035,13 @@ impl Build<'_> {
             self.note(format!("its texture {} is not in the package", base_name(file)));
             return Ok(None);
         };
+        // A floating-point normal map with its normals as they are, -1 to 1,
+        // rather than encoded 0 to 1 as normal maps are: encoded.
+        if role == MapRole::Normal {
+            if let Some(encoded) = self.encode_signed_normals(&path)? {
+                path = encoded;
+            }
+        }
         // DirectX-convention normal maps, turned to the renderer's.
         if role == MapRole::Normal && base_name(file).to_ascii_lowercase().contains("normaldx") {
             let flipped = self.scratch.join(format!("{}-gl.png", path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()));
@@ -1052,6 +1059,24 @@ impl Build<'_> {
         let image = self.graph.add_node(Node::new(NodeKind::ImageTexture { texture: id, fallback }));
         self.graph.connect(coords, image, Socket::Input(0));
         Ok(Some(image))
+    }
+
+    /// The normal map at `path`, encoded as normal maps are, when it is a
+    /// floating-point picture of normals as they are: `None` for one that
+    /// is not.
+    fn encode_signed_normals(&mut self, path: &std::path::Path) -> Result<Option<PathBuf>, ImportError> {
+        let extension = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if !matches!(extension.as_str(), "exr" | "hdr") {
+            return Ok(None);
+        }
+        let Ok(image) = tequila_texture::Image::load_raw(path) else { return Ok(None) };
+        if image.channels < 3 || !image.data.iter().any(|v| *v < -0.01) {
+            return Ok(None);
+        }
+        let map = crate::axf::Map::Image { width: image.width, height: image.height, channels: image.channels, data: image.data };
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let encoded = crate::axf::write_png(&map, crate::axf::Encoding::Normal, &self.scratch.join(format!("{stem}-encoded.png"))).map_err(ImportError::Io)?;
+        Ok(Some(encoded))
     }
 
     /// Where a texture node puts its picture.
@@ -1161,16 +1186,28 @@ impl Build<'_> {
             self.graph.connect(node, output, Socket::Param(Param::Bump));
         }
         if car_paint {
-            // A powder or car paint's sparkle: fine silver flakes over the
-            // measured coat, which has no clear coat of its own.
-            // Sparse: at a quarter's coverage the flakes alone turned a
-            // black paint satin grey.
+            // A powder or car paint's sparkle over the measured coat, which
+            // has no clear coat of its own: fitted to the flakes the file
+            // measured (`axf::Flakes`), else fine silver ones of Tequila's.
+            // Sparse either way: at a quarter's coverage flakes alone turned
+            // a black paint satin grey.
             m.coat_weight = 0.0;
-            m.flake_weight = 0.06;
             m.flake_size = 0.000025;
-            m.flake_color = Spectrum::splat(0.5);
             m.flake_roughness = 0.2;
-            self.note(format!("{}'s flakes are Tequila's own: the measured ones in its AxF file are not read", self.mtl.name));
+            match &svbrdf.flakes {
+                Some(flakes) => {
+                    m.flake_color = linear(&flakes.colour);
+                    let reflectance = m.flake_color.luminance().max(0.05);
+                    m.flake_weight = (flakes.coverage_reflectance / reflectance).clamp(0.002, 0.5);
+                    m.flake_spread = (flakes.cone_degrees / 60.0).clamp(0.02, 1.0);
+                    m.flake_size = flakes.size;
+                }
+                None => {
+                    m.flake_weight = 0.06;
+                    m.flake_color = Spectrum::splat(0.5);
+                    self.note(format!("{}'s flakes are Tequila's own: the measured ones in its AxF file did not read", self.mtl.name));
+                }
+            }
         }
         m.geometry_opacity = 1.0;
         *self.graph.material_mut() = m;
@@ -1454,7 +1491,11 @@ impl Build<'_> {
             || s.number("bump_mode") == Some(1.0)
             || s.text("texture").is_some_and(|t| {
                 let t = base_name(t).to_ascii_lowercase();
-                t.contains("normal") || t.contains("_nrm") || t.contains("_nm") || t.contains("-nm")
+                // `_n` closing the name as well: X-Rite's scans name their
+                // normal maps `..._n.exr`, and one read as heights left a
+                // powder coat's grain flat.
+                let stem = t.rsplit_once('.').map_or(t.as_str(), |(stem, _)| stem);
+                t.contains("normal") || t.contains("_nrm") || t.contains("_nm") || t.contains("-nm") || stem.ends_with("_n") || stem.ends_with("-n")
             });
         if s.kind == "lux_marble" {
             // Marble's bands as a bump are what 3D-print materials draw

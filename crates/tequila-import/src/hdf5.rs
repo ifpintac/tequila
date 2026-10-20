@@ -33,6 +33,27 @@ pub enum Values {
 pub struct Dataset {
     pub shape: Vec<usize>,
     pub values: Values,
+    /// The bytes of an integer it was stored as, when it was: X-Rite keeps
+    /// half floats as 16-bit integers ([`half`]).
+    pub integer_bytes: Option<usize>,
+}
+
+/// An IEEE half float from its bits.
+pub fn half(bits: u16) -> f32 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = ((bits >> 10) & 0x1f) as i32;
+    let mantissa = (bits & 0x3ff) as f32;
+    sign * match exponent {
+        0 => mantissa / 1024.0 * 2f32.powi(-14),
+        31 => {
+            if mantissa == 0.0 {
+                f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
+        e => (1.0 + mantissa / 1024.0) * 2f32.powi(e - 15),
+    }
 }
 
 impl Dataset {
@@ -422,6 +443,7 @@ impl<'a> File<'a> {
                     return Err("big-endian HDF5 numbers are not read".into());
                 }
                 Values::Numbers(match size {
+                    2 => raw.chunks_exact(2).map(|c| half(u16::from_le_bytes([c[0], c[1]])) as f64).collect(),
                     4 => raw.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64).collect(),
                     8 => raw.chunks_exact(8).map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])).collect(),
                     _ => return Err("an HDF5 float of an unknown size".into()),
@@ -463,7 +485,7 @@ impl<'a> File<'a> {
             }
             other => return Err(format!("HDF5 datatype class {other} is not read")),
         };
-        Ok(Dataset { shape, values })
+        Ok(Dataset { shape, values, integer_bytes: (class == 0).then_some(size) })
     }
 
     fn dataspace(&self, at: usize) -> Result<Vec<usize>> {
