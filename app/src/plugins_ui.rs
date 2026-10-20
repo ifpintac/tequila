@@ -231,7 +231,8 @@ impl PluginsWindow {
     }
 }
 
-/// The Plugins menu: each enabled plugin's commands, and the window.
+/// The Plugins menu: each enabled plugin's commands, the others to turn
+/// on, and the window.
 pub fn menu(ui: &mut egui::Ui, plugins: &Plugins, window: &mut PluginsWindow) -> Option<PluginsAction> {
     let mut action = None;
     let mut any = false;
@@ -251,6 +252,34 @@ pub fn menu(ui: &mut egui::Ui, plugins: &Plugins, window: &mut PluginsWindow) ->
         });
     }
     if any {
+        ui.separator();
+    }
+    // The ones that are off, there to be turned on: on a new computer every
+    // plugin is off, and one that is nowhere in the menu is one a person
+    // thinks was never installed. Those Tequila ships turn on at a click;
+    // one of the person's own with code asks first, as the window does.
+    let off: Vec<_> = plugins.plugins.iter().filter(|p| !plugins.is_enabled(&p.manifest.id) && !p.manifest.commands.is_empty()).collect();
+    if !off.is_empty() {
+        ui.label(egui::RichText::new("Off · click to turn on").small().color(crate::theme::dim()));
+        let python = crate::plugins::python().is_some();
+        for plugin in off {
+            let needs_python = plugin.runs_code() && !python;
+            let mut item = ui.add_enabled(!needs_python, egui::Button::new(format!("Turn on {}", plugin.manifest.name)));
+            if !plugin.manifest.description.is_empty() {
+                item = item.on_hover_text(&plugin.manifest.description);
+            }
+            item = item.on_disabled_hover_text(
+                "It runs Python code, and Python 3 is not on this computer: install it from python.org (or name it with TEQUILA_PYTHON), then turn it on.",
+            );
+            if item.clicked() {
+                if plugin.origin == Origin::Bundled || !plugin.runs_code() {
+                    action = Some(PluginsAction::Enable(plugin.manifest.id.clone()));
+                } else {
+                    window.ask_to_enable(&plugin.manifest.id);
+                }
+                ui.close_menu();
+            }
+        }
         ui.separator();
     }
     if crate::icons::labelled(ui, crate::icons::Icon::Puzzle, "Manage plugins…", false).clicked() {
