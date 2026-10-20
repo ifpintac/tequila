@@ -658,6 +658,29 @@ impl Project {
         self.generation += 1;
     }
 
+    /// The scene as Studio `index` would show it - its environment, model
+    /// set and variants - with its camera, image style and lighting, for its
+    /// thumbnail. Built over this project's own converted meshes, and with
+    /// `environment` for its environment, so neither the project's meshes
+    /// nor its environment are made again; the document is copied without
+    /// its geometry, which is lent to the copy while the scene is built.
+    /// `None` for no such Studio.
+    pub fn studio_scene(
+        &mut self,
+        index: usize,
+        environment: &mut EnvironmentCache,
+    ) -> Option<(Arc<SceneSnapshot>, tequila_render_core::camera::Camera, tequila_color::ImageStyle, tequila_render_core::settings::IntegratorConfig)> {
+        let geometry = std::mem::take(&mut self.document.geometry);
+        let mut copy = self.document.clone();
+        self.document.geometry = geometry;
+        CommandBus::new().apply(&mut copy, Command::ApplyStudio { index }).ok()?;
+        std::mem::swap(&mut copy.geometry, &mut self.document.geometry);
+        let (mut scene, _) = build_scene(&copy, environment, &mut self.meshes, &self.view);
+        std::mem::swap(&mut copy.geometry, &mut self.document.geometry);
+        scene.background = environment.background(&copy.environment);
+        Some((Arc::new(scene), copy.cameras.active().camera, copy.image_style, copy.lighting.config()))
+    }
+
     /// What the integrator should run with, from the Lighting tab.
     pub fn integrator_config(&self) -> tequila_render_core::settings::IntegratorConfig {
         self.document.lighting.config()

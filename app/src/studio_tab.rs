@@ -16,6 +16,7 @@ use tequila_scene::Command;
 #[derive(Default)]
 pub struct StudioTab {
     wizard: crate::configurator_panel::Wizard,
+    thumbnails: Thumbnails,
     /// What the configurator asked for this frame - to present, or to
     /// render every combination - drained by the application.
     pub action: Option<crate::configurator_panel::Action>,
@@ -29,7 +30,7 @@ impl StudioTab {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
         let mut camera_moved = false;
         crate::theme::section(ui, "Studios");
-        camera_moved |= studios(ui, project);
+        camera_moved |= studios(ui, project, &mut self.thumbnails);
         ui.add_space(6.0);
         ui.separator();
         crate::theme::section(ui, "Model sets");
@@ -79,7 +80,124 @@ fn report(project: &mut Project, result: Result<(), tequila_scene::command::Comm
 
 // ---- Studios --------------------------------------------------------------------
 
-fn studios(ui: &mut egui::Ui, project: &mut Project) -> bool {
+/// Each Studio's picture: the shot it recalls, rendered small on another
+/// thread, one at a time, and kept until the Studio changes or another
+/// project opens (`TEQUILA_SPEC.md` §1.12, "auto thumbnails").
+#[derive(Default)]
+struct Thumbnails {
+    shown: std::collections::HashMap<u64, egui::TextureHandle>,
+    /// The thumbnail being rendered, by its key.
+    job: Option<(u64, std::thread::JoinHandle<Option<egui::ColorImage>>)>,
+    /// Ones that would not render, so they are not tried every frame.
+    failed: std::collections::HashSet<u64>,
+    /// Studios' environments, apart from the scene's.
+    environment: tequila_scene::environment::EnvironmentCache,
+}
+
+/// A thumbnail's width in pixels; its height follows the render's shape.
+const THUMBNAIL_WIDTH: usize = 192;
+
+impl Thumbnails {
+    /// What a Studio's thumbnail shows: the Studio, in this project.
+    fn key(studio: &Studio, project: &Project) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        format!("{studio:?}").hash(&mut hasher);
+        project.document_epoch().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Take a finished render, and start the next one missing.
+    fn update(&mut self, ctx: &egui::Context, project: &mut Project) {
+        if self.job.as_ref().is_some_and(|(_, job)| job.is_finished()) {
+            if let Some((key, job)) = self.job.take() {
+                match job.join().ok().flatten() {
+                    Some(image) => {
+                        let texture = ctx.load_texture(format!("studio-{key:x}"), image, egui::TextureOptions::LINEAR);
+                        self.shown.insert(key, texture);
+                    }
+                    None => {
+                        self.failed.insert(key);
+                    }
+                }
+            }
+        }
+        if self.job.is_some() {
+            return;
+        }
+        let keys: Vec<u64> = project.document().studios.iter().map(|s| Self::key(s, project)).collect();
+        // Thumbnails of Studios gone or changed are let go.
+        self.shown.retain(|key, _| keys.contains(key));
+        let Some((index, &key)) = keys.iter().enumerate().find(|(_, k)| !self.shown.contains_key(k) && !self.failed.contains(k)) else {
+            return;
+        };
+        let Some((scene, camera, style, config)) = project.studio_scene(index, &mut self.environment) else {
+            self.failed.insert(key);
+            return;
+        };
+        let render = &project.document().render;
+        let height = ((THUMBNAIL_WIDTH as f32 * render.height.max(1) as f32 / render.width.max(1) as f32).round() as usize).clamp(32, 256);
+        let repaint = ctx.clone();
+        let job = std::thread::Builder::new().name("tequila-studio-thumbnail".into()).spawn(move || {
+            let image = render_thumbnail(scene, camera, style, config, THUMBNAIL_WIDTH, height);
+            repaint.request_repaint();
+            image
+        });
+        if let Ok(job) = job {
+            self.job = Some((key, job));
+        }
+    }
+}
+
+/// The shot, small: a few samples a pixel, denoised and developed in the
+/// Studio's own image style. On one worker, so the viewport keeps the rest
+/// of the machine.
+fn render_thumbnail(
+    scene: std::sync::Arc<tequila_render_core::scene::SceneSnapshot>,
+    camera: tequila_render_core::camera::Camera,
+    style: tequila_color::ImageStyle,
+    config: tequila_render_core::settings::IntegratorConfig,
+    width: usize,
+    height: usize,
+) -> Option<egui::ColorImage> {
+    use tequila_render_core::framebuffer::Framebuffer;
+    use tequila_render_core::scheduler::ProgressiveSchedule;
+    use tequila_render_cpu::{render_pass, Device, EmbreeIntersector, RenderContext};
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    let pool = POOL
+        .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(2).thread_name(|_| "tequila-studio-cpu".into()).build().ok())
+        .as_ref()?;
+    pool.install(|| {
+        let device = Device::shared().ok()?;
+        let intersector = EmbreeIntersector::build(&device, (*scene).clone()).ok()?;
+        let mut framebuffer = Framebuffer::new(width, height);
+        let context = RenderContext { camera, config, ..RenderContext::default() };
+        let mut schedule = ProgressiveSchedule::default();
+        schedule.update(60_000);
+        render_pass(&intersector, &mut framebuffer, &context, &schedule, 24);
+        let guides = framebuffer.to_denoiser_buffers();
+        let denoised = tequila_denoise::Denoiser::shared().ok().and_then(|denoiser| {
+            denoiser
+                .denoise(width, height, &guides.color, &guides.albedo, &guides.normal, tequila_denoise::DenoiseSettings::default())
+                .ok()
+        });
+        let colour: Vec<tequila_core::spectrum::Spectrum> = (0..width * height)
+            .map(|i| match &denoised {
+                Some(image) => tequila_core::spectrum::Spectrum::from_rendering_rgb(tequila_core::math::vec3(
+                    image.data[i * 3],
+                    image.data[i * 3 + 1],
+                    image.data[i * 3 + 2],
+                )),
+                None => framebuffer.pixel(i % width, i / width).mean(),
+            })
+            .collect();
+        let rgba = style.develop(width, height, &colour);
+        Some(egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba))
+    })
+}
+
+fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails) -> bool {
+    thumbnails.update(ui.ctx(), project);
     ui.small(
         "A Studio is a saved shot: the camera, the environment, the image style, \
          the model set and the material variants, recalled in one click.",
@@ -100,9 +218,31 @@ fn studios(ui: &mut egui::Ui, project: &mut Project) -> bool {
     }
 
     let count = list.len();
+    let keys: Vec<u64> = list.iter().map(|s| Thumbnails::key(s, project)).collect();
     for (index, studio) in list.iter_mut().enumerate() {
         ui.push_id(("studio", index), |ui| {
             ui.separator();
+            // The shot it recalls: click it to apply it.
+            let size = egui::vec2(160.0, 90.0);
+            match thumbnails.shown.get(&keys[index]) {
+                Some(texture) => {
+                    let shape = texture.size_vec2();
+                    let size = egui::vec2(size.x, (size.x * shape.y / shape.x.max(1.0)).min(size.x));
+                    let picture = ui
+                        .add(egui::Image::new(texture).fit_to_exact_size(size).rounding(6.0).sense(egui::Sense::click()))
+                        .on_hover_text("Apply this shot");
+                    if picture.clicked() {
+                        apply = Some(index);
+                    }
+                }
+                None => {
+                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 6.0, crate::theme::p().control);
+                    if !thumbnails.failed.contains(&keys[index]) {
+                        ui.put(rect, egui::Spinner::new());
+                    }
+                }
+            }
             ui.horizontal(|ui| {
                 if ui.button("▶ Apply").on_hover_text("Make the scene this shot. One undo step.").clicked() {
                     apply = Some(index);
