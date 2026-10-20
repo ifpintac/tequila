@@ -1805,6 +1805,7 @@ fn read_nodes(
                 _ => None,
             },
             metadata: Default::default(),
+            hidden: false,
         };
         // §6.5: "Retain all imported attributes per node." glTF puts them in
         // `extras`; nested objects and arrays have nowhere to go in a

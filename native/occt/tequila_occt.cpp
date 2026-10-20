@@ -3,7 +3,8 @@
 //   tequila-occt IN.step OUT.fsocc CHORD ANGLE
 //
 // Reads the file through OCCT's document layer (XDE), which keeps the
-// assembly, every component's placement, product names and colours; divides
+// assembly, every component's placement, product names and colours, and the
+// layers, materials and attributes a CAD package wrote; divides
 // each part once with BRepMesh at CHORD (a fraction of the part's size, as
 // Tequila's own importer does) and ANGLE (radians); and writes what
 // Tequila's importer needs to lay it out exactly as its pure-Rust reader
@@ -37,7 +38,10 @@
 #include <STEPControl_Reader.hxx>
 #include <Standard_Failure.hxx>
 #include <TDF_Label.hxx>
+#include <TCollection_HAsciiString.hxx>
 #include <TDataStd_Name.hxx>
+#include <TDataStd_NamedData.hxx>
+#include <TDataStd_TreeNode.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -45,7 +49,10 @@
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <XCAFApp_Application.hxx>
+#include <XCAFDoc.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_LayerTool.hxx>
+#include <XCAFDoc_MaterialTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <XCAFPrs_DocumentExplorer.hxx>
 #include <Standard_Version.hxx>
@@ -140,11 +147,40 @@ struct Group
   int    mesh     = -1;
 };
 
+// What a CAD package wrote about a product or a solid besides its shape:
+// its layers, its material, and named attributes - a part number, a
+// description, properties of the user's own.
+struct About
+{
+  std::vector<std::pair<std::string, std::string>> attributes;
+  std::vector<std::string>                         layers;
+  // Every layer it is on is switched off.
+  bool hidden = false;
+
+  void set(const std::string& key, const std::string& value)
+  {
+    if (key.empty() || value.empty())
+    {
+      return;
+    }
+    for (auto& attribute : attributes)
+    {
+      if (attribute.first == key)
+      {
+        attribute.second = value;
+        return;
+      }
+    }
+    attributes.emplace_back(key, value);
+  }
+};
+
 struct Body
 {
   std::string        name;
   std::vector<Group> groups;
   int                faces = 0, lost = 0;
+  About              about;
 };
 
 struct Product
@@ -153,7 +189,38 @@ struct Product
   double               matrix[16];
   std::vector<int>     bodies;
   std::vector<Product> children;
+  About                about;
 };
+
+std::string utf8(const TCollection_ExtendedString& text)
+{
+  return TCollection_AsciiString(text).ToCString();
+}
+
+// Each key and value of an OCCT map: the same code for OCCT 7.9's map types
+// and OCCT 8's, which differ in name only.
+template <typename Map, typename F> void each(const Map& map, F f)
+{
+  for (typename Map::Iterator it(map); it.More(); it.Next())
+  {
+    f(it.Key(), it.Value());
+  }
+}
+
+std::string about_json(const About& about)
+{
+  std::string json = "\"attributes\":{";
+  for (size_t i = 0; i < about.attributes.size(); ++i)
+  {
+    json += (i ? "," : "") + quoted(about.attributes[i].first) + ":" + quoted(about.attributes[i].second);
+  }
+  json += "},\"layers\":[";
+  for (size_t i = 0; i < about.layers.size(); ++i)
+  {
+    json += (i ? "," : "") + quoted(about.layers[i]);
+  }
+  return json + "],\"hidden\":" + (about.hidden ? "true" : "false");
+}
 
 // How far OCCT has got turning the file's entities into shapes, as
 // "reading PERCENT" lines: on a big assembly that is most of the wait.
@@ -217,8 +284,14 @@ public:
     STEPCAFControl_Reader reader;
     reader.SetColorMode(true);
     reader.SetNameMode(true);
-    reader.SetLayerMode(false);
+    // Layers, materials, user attributes and each product's id and
+    // description, for the Metadata panel. Not the validation properties
+    // (volume, area, centroid): Tequila measures those itself.
+    reader.SetLayerMode(true);
     reader.SetPropsMode(false);
+    reader.SetMatMode(true);
+    reader.SetMetaMode(true);
+    reader.SetProductMetaMode(true);
     // The names of solids within a part as well as of parts: CAD packages
     // name bodies, and Tequila names its parts after them.
     DESTEP_Parameters parameters;
@@ -242,7 +315,8 @@ public:
       error = "OpenCASCADE could not turn the file's entities into shapes";
       return false;
     }
-    myShapes = XCAFDoc_DocumentTool::ShapeTool(myDoc->Main());
+    myShapes    = XCAFDoc_DocumentTool::ShapeTool(myDoc->Main());
+    myLayers    = XCAFDoc_DocumentTool::LayerTool(myDoc->Main());
     return true;
   }
 
@@ -306,7 +380,7 @@ public:
                                : std::string("null");
         json += "}";
       }
-      json += "]}";
+      json += "]," + about_json(body.about) + "}";
     }
     json += "],\"products\":[";
     for (size_t p = 0; p < myProducts.size(); ++p)
@@ -433,13 +507,21 @@ private:
 
     std::vector<FaceSet>     solids;
     std::vector<std::string> solid_names;
+    std::vector<About>       solid_about;
     for (TopExp_Explorer s(shape, TopAbs_SOLID); s.More(); s.Next())
     {
       FaceSet faces;
       TopExp::MapShapes(s.Current(), TopAbs_FACE, faces);
       solids.push_back(faces);
       TDF_Label sub;
-      solid_names.push_back(myShapes->FindSubShape(part.label, s.Current(), sub) ? name_of(sub) : std::string());
+      const bool found = myShapes->FindSubShape(part.label, s.Current(), sub);
+      solid_names.push_back(found ? name_of(sub) : std::string());
+      About about;
+      if (found)
+      {
+        read_about(sub, about);
+      }
+      solid_about.push_back(about);
     }
     const std::string part_name = name_of(part.label);
     const size_t      first     = myBodies.size();
@@ -447,6 +529,10 @@ private:
     for (size_t b = 0; b < count; ++b)
     {
       Body body;
+      if (b < solid_about.size())
+      {
+        body.about = solid_about[b];
+      }
       if (b < solids.size())
       {
         body.name = !solid_names[b].empty() ? solid_names[b]
@@ -601,6 +687,11 @@ private:
     {
       out.name = name_of(label);
     }
+    read_about(shape, out.about);
+    if (label != shape)
+    {
+      read_about(label, out.about);
+    }
     matrix_of(location, 1.0 / myUnitMm, out.matrix);
     if (XCAFDoc_ShapeTool::IsAssembly(shape))
     {
@@ -636,12 +727,84 @@ private:
     {
       json += (i ? "," : "") + product_json(p.children[i]);
     }
-    return json + "]}";
+    return json + "]," + about_json(p.about) + "}";
+  }
+
+  // What the file says about the shape at `label` beyond its geometry.
+  void read_about(const TDF_Label& label, About& about) const
+  {
+    if (label.IsNull())
+    {
+      return;
+    }
+    // Layers, and whether all of them are switched off.
+    if (!myLayers.IsNull())
+    {
+      NCollection_Sequence<TDF_Label> layers;
+      if (myLayers->GetLayers(label, layers) && layers.Length() > 0)
+      {
+        bool any_visible = false;
+        for (int i = 1; i <= layers.Length(); ++i)
+        {
+          const std::string layer = name_of(layers.Value(i));
+          if (!layer.empty() && std::find(about.layers.begin(), about.layers.end(), layer) == about.layers.end())
+          {
+            about.layers.push_back(layer);
+          }
+          any_visible = any_visible || myLayers->IsVisible(layers.Value(i));
+        }
+        about.hidden = !any_visible;
+      }
+    }
+    // The material the file names (MATERIAL_DESIGNATION), and its density.
+    occ::handle<TDataStd_TreeNode> material;
+    if (label.FindAttribute(XCAFDoc::MaterialRefGUID(), material) && material->HasFather())
+    {
+      occ::handle<TCollection_HAsciiString> name, description, density_name, density_type;
+      double                                density = 0.0;
+      if (XCAFDoc_MaterialTool::GetMaterial(material->Father()->Label(), name, description, density, density_name, density_type))
+      {
+        if (!name.IsNull())
+        {
+          about.set("Material", name->ToCString());
+        }
+        if (density > 0.0)
+        {
+          about.set("Density", number(density));
+        }
+      }
+    }
+    // Named attributes: the product's id and description, and properties of
+    // the user's own, by the names they were given.
+    occ::handle<TDataStd_NamedData> named = myShapes->GetNamedProperties(label, false);
+    if (named.IsNull())
+    {
+      return;
+    }
+    each(named->GetStringsContainer(), [&](const TCollection_ExtendedString& key, const TCollection_ExtendedString& value) {
+      about.set(attribute_name(utf8(key)), utf8(value));
+    });
+    each(named->GetIntegersContainer(), [&](const TCollection_ExtendedString& key, int value) {
+      about.set(attribute_name(utf8(key)), std::to_string(value));
+    });
+    each(named->GetRealsContainer(), [&](const TCollection_ExtendedString& key, double value) {
+      about.set(attribute_name(utf8(key)), number(value));
+    });
+  }
+
+  // OCCT's names for a product's own fields, as a person would say them.
+  static std::string attribute_name(const std::string& key)
+  {
+    if (key == "ProductID") return "Part number";
+    if (key == "ProductName") return std::string();
+    if (key == "ProductDefinition") return "Definition";
+    return key;
   }
 
   double                         myChord, myAngle;
   occ::handle<TDocStd_Document>  myDoc;
   occ::handle<XCAFDoc_ShapeTool> myShapes;
+  occ::handle<XCAFDoc_LayerTool> myLayers;
   std::string                    myUnitName = "MILLIMETRE";
   double                         myUnitMm   = 1.0;
   std::vector<Part>              myParts;

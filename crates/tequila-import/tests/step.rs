@@ -347,3 +347,53 @@ fn re_dividing_keeps_the_work_on_the_parts() {
     assert_eq!(metadata.get(tequila_import::step::TESSELLATION).map(String::as_str), Some("High"));
     assert!(metadata.contains_key(tequila_scene::document::BREP), "re-dividing forgot the source");
 }
+
+const LAYERS: &[u8] = include_bytes!("data/layers.step");
+
+/// What a CAD package writes about a part besides its shape arrives as the
+/// nodes' metadata: the product's part number, description and release and
+/// a property of the user's own on the group; each body's layer, the
+/// material on the first body; and a body on a layer that is switched off
+/// arrives hidden. By OpenCASCADE where its helper is built, by truck
+/// elsewhere; `step_fallback.rs` reads it with truck as well.
+#[test]
+fn layers_and_attributes_arrive_as_metadata() {
+    let scene = read(LAYERS);
+    let node = |name: &str| scene.nodes.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("no node `{name}`"));
+    let housing = node("Housing");
+    assert_eq!(housing.metadata.get("Part number").map(String::as_str), Some("PN-1042"));
+    assert_eq!(housing.metadata.get("Description").map(String::as_str), Some("Front housing"));
+    assert_eq!(housing.metadata.get("Definition").map(String::as_str), Some("Production release"));
+    assert_eq!(housing.metadata.get("Finish").map(String::as_str), Some("Mold-Tech 11010"));
+    let (box_part, pin) = (node("Box"), node("Pin"));
+    assert_eq!(box_part.metadata.get("Layer").map(String::as_str), Some("Outer"));
+    assert_eq!(box_part.metadata.get("Material").map(String::as_str), Some("ABS"));
+    assert!(!box_part.hidden, "the box's layer is on");
+    assert_eq!(pin.metadata.get("Layer").map(String::as_str), Some("Construction"));
+    assert!(pin.hidden, "the pin's layer is switched off");
+
+    // And in the document: the pin hidden, the box shown, and the layer
+    // there for a search or a rule to find.
+    let mut document = SceneDocument::new();
+    let (command, _) = build(&document, None, scene, &ImportOptions::default(), None).unwrap();
+    CommandBus::new().apply(&mut document, command).unwrap();
+    let placed = |name: &str| document.tree.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("no `{name}` in the document"));
+    assert!(!placed("Pin").visible && placed("Box").visible);
+    assert_eq!(placed("Box").metadata.get("Layer").map(String::as_str), Some("Outer"));
+}
+
+/// A file that says nothing about its parts adds nothing: the product
+/// whose id only repeats its name gets no part number.
+#[test]
+fn a_file_that_says_nothing_adds_no_metadata() {
+    let scene = read(TWO_BODIES);
+    for node in &scene.nodes {
+        assert!(
+            node.metadata.keys().all(|k| k == "Tessellation" || k == "B-rep" || k.starts_with("Source")),
+            "{}: {:?}",
+            node.name,
+            node.metadata
+        );
+        assert!(!node.hidden);
+    }
+}

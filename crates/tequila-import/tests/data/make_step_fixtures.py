@@ -15,6 +15,11 @@ tests can state exact expectations:
 * inches.step: the same box, in inches. The file also defines millimetres, as
   the base the inch is converted from, so a reader that takes the first
   length unit it finds rather than the one the context assigns gets it wrong.
+* layers.step: the two bodies again, as a product a CAD package describes:
+  part number "PN-1042", described "Front housing", released as "Production
+  release", of the material "ABS"; a property of the user's own, "Finish",
+  of "Mold-Tech 11010"; the box on a layer "Outer" and the pin on a layer
+  "Construction" that is switched off.
 """
 
 import os
@@ -172,14 +177,15 @@ def pin(s, y, radius, length):
     return s.add(f"MANIFOLD_SOLID_BREP('Pin',{shell})")
 
 
-def product(s, name, inches):
+def product(s, name, inches, id=None, description='', released=''):
     app = s.add("APPLICATION_CONTEXT('automotive design')")
     s.add(f"APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,{app})")
     context = s.add(f"PRODUCT_CONTEXT('',{app},'mechanical')")
-    prod = s.add(f"PRODUCT('{name}','{name}','',({context}))")
+    prod = s.add(f"PRODUCT('{id or name}','{name}','{description}',({context}))")
     formation = s.add(f"PRODUCT_DEFINITION_FORMATION('','',{prod})")
     def_context = s.add(f"PRODUCT_DEFINITION_CONTEXT('part definition',{app},'design')")
-    definition = s.add(f"PRODUCT_DEFINITION('design','',{formation},{def_context})")
+    definition = s.add(f"PRODUCT_DEFINITION('design','{released}',{formation},{def_context})")
+    s.definition = definition
     shape = s.add(f"PRODUCT_DEFINITION_SHAPE('','',{definition})")
     mm = s.add("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )")
     if inches:
@@ -215,6 +221,35 @@ def two_bodies():
     ]
     s.add(f"MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({','.join(styled)}),{context})")
     return s.text("two_bodies.step", None)
+
+
+def layers():
+    s = Step()
+    shape, context = product(s, "Housing", inches=False, id="PN-1042", description="Front housing",
+                             released="Production release")
+    box_brep, top = box(s, (10, 20, 30))
+    pin_brep = pin(s, 50.0, 5.0, 40)
+    rep = s.add(f"ADVANCED_BREP_SHAPE_REPRESENTATION('',({box_brep},{pin_brep}),{context})")
+    s.add(f"SHAPE_DEFINITION_REPRESENTATION({shape},{rep})")
+    red = colour_style(s, s.add("COLOUR_RGB('',1.,0.,0.)"))
+    styled = [s.add(f"STYLED_ITEM('color',({red}),{box_brep})")]
+    s.add(f"MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({','.join(styled)}),{context})")
+    # Layers: what CAD packages write, a layer assignment naming the solids.
+    s.add(f"PRESENTATION_LAYER_ASSIGNMENT('Outer','',({box_brep}))")
+    hidden = s.add(f"PRESENTATION_LAYER_ASSIGNMENT('Construction','',({pin_brep}))")
+    s.add(f"INVISIBILITY(({hidden}))")
+    # The material, as a property of the product's definition.
+    material = s.add(f"PROPERTY_DEFINITION('material property','material of the part',{s.definition})")
+    name = s.add("DESCRIPTIVE_REPRESENTATION_ITEM('ABS','Acrylonitrile butadiene styrene')")
+    s.add(f"PROPERTY_DEFINITION_REPRESENTATION({material},"
+          + s.add(f"REPRESENTATION('material name',({name}),{context})") + ")")
+    # A property of the user's own, on the product's shape.
+    finish = s.add(f"PROPERTY_DEFINITION('Finish','',{shape})")
+    general = s.add("GENERAL_PROPERTY('1','Finish','')")
+    s.add(f"GENERAL_PROPERTY_ASSOCIATION('','',{general},{finish})")
+    value = s.add("DESCRIPTIVE_REPRESENTATION_ITEM('','Mold-Tech 11010')")
+    s.add(f"PROPERTY_DEFINITION_REPRESENTATION({finish}," + s.add(f"REPRESENTATION('',({value}),{context})") + ")")
+    return s.text("layers.step", None)
 
 
 def inches():
@@ -323,7 +358,8 @@ def assembly():
     return s.text("assembly.step", None)
 
 
-for name, text in [("two_bodies.step", two_bodies()), ("inches.step", inches()), ("assembly.step", assembly())]:
+for name, text in [("two_bodies.step", two_bodies()), ("inches.step", inches()), ("assembly.step", assembly()),
+                   ("layers.step", layers())]:
     with open(os.path.join(HERE, name), "w", newline="\n") as f:
         f.write(text)
     print("wrote", name)

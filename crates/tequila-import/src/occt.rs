@@ -49,6 +49,7 @@ pub(crate) struct Body {
     pub lost: usize,
     /// sRGB-encoded colour, as the file wrote it, and the mesh in it.
     pub groups: Vec<(Option<[f32; 3]>, RawMesh)>,
+    pub about: crate::step::About,
 }
 
 pub(crate) struct Product {
@@ -57,6 +58,23 @@ pub(crate) struct Product {
     pub matrix: [f32; 16],
     pub bodies: Vec<usize>,
     pub children: Vec<Product>,
+    pub about: crate::step::About,
+}
+
+/// What the helper says about a product or a body: its attributes, its
+/// layers, and whether they are all switched off.
+fn about(value: &Value) -> crate::step::About {
+    let mut about = crate::step::About::default();
+    if let Some(Value::Object(attributes)) = value.get("attributes") {
+        for (key, value) in attributes {
+            if let Some(text) = value.as_str() {
+                about.set(key, text);
+            }
+        }
+    }
+    about.layers = value.get("layers").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str).map(str::to_string).collect();
+    about.hidden = matches!(value.get("hidden"), Some(Value::Bool(true)));
+    about
 }
 
 /// How far the helper has got: turning the file into shapes (percent), then
@@ -226,6 +244,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Read, String> {
             faces: count(body, "faces"),
             lost: count(body, "lost"),
             groups,
+            about: about(body),
         });
     }
 
@@ -239,6 +258,7 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Read, String> {
             matrix,
             bodies: value.get("bodies").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_f64).map(|b| b as usize).collect(),
             children: value.get("children").map(Value::as_array).unwrap_or(&[]).iter().map(product).collect(),
+            about: about(value),
         }
     }
     let products: Vec<Product> = root.get("products").map(Value::as_array).unwrap_or(&[]).iter().map(product).collect();

@@ -269,7 +269,13 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
 
     let fallback = entities.product_name().unwrap_or_else(|| name.to_string());
     let products = entities.structure(&bodies, &fallback, &mut warnings);
-    let mut layout = Layout { scene: &mut scene, meshed: &meshed, names: &names };
+    let mut about = entities.layers(&bodies);
+    // The material a product names goes to its first body, as OpenCASCADE
+    // reads it.
+    for (body, material) in entities.materials(&bodies) {
+        about[body].set("Material", &material);
+    }
+    let mut layout = Layout { scene: &mut scene, meshed: &meshed, names: &names, about: &about };
     match products.as_slice() {
         [product] => layout.product(product, None),
         several => {
@@ -313,6 +319,7 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
     let mut materials: Vec<(Colour, usize)> = Vec::new();
     let mut meshed: Vec<Vec<(Option<Colour>, usize)>> = Vec::with_capacity(read.bodies.len());
     let mut names = Vec::with_capacity(read.bodies.len());
+    let about: Vec<About> = read.bodies.iter().map(|b| b.about.clone()).collect();
     for (index, body) in read.bodies.into_iter().enumerate() {
         let body_name = if body.name.trim().is_empty() { format!("Body {}", index + 1) } else { body.name };
         if body.lost > 0 {
@@ -351,10 +358,11 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
             transform: Transform::from_matrix(m).unwrap_or(Transform::IDENTITY),
             bodies: p.bodies,
             children: p.children.into_iter().map(product).collect(),
+            about: p.about,
         }
     }
     let products: Vec<Product> = read.products.into_iter().map(product).collect();
-    let mut layout = Layout { scene: &mut scene, meshed: &meshed, names: &names };
+    let mut layout = Layout { scene: &mut scene, meshed: &meshed, names: &names, about: &about };
     match products.as_slice() {
         [product] => layout.product(product, None),
         several => {
@@ -395,6 +403,64 @@ struct Product {
     /// Indices into the file's bodies.
     bodies: Vec<usize>,
     children: Vec<Product>,
+    about: About,
+}
+
+/// What a CAD package wrote about a product or a body besides its shape:
+/// named attributes - a part number, a description, the material, properties
+/// of the user's own - the layers it is on, and whether every one of those
+/// is switched off. It lands in the node's metadata (the Metadata panel, the
+/// Scene tab's search and Material Templates' rules read it there), the
+/// layers as one field, "Layer".
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct About {
+    pub attributes: Vec<(String, String)>,
+    pub layers: Vec<String>,
+    pub hidden: bool,
+}
+
+impl About {
+    /// Set `key` to `value`, unless either is empty.
+    pub(crate) fn set(&mut self, key: &str, value: &str) {
+        let (key, value) = (key.trim(), value.trim());
+        if key.is_empty() || value.is_empty() {
+            return;
+        }
+        match self.attributes.iter_mut().find(|(k, _)| k == key) {
+            Some((_, v)) => *v = value.to_string(),
+            None => self.attributes.push((key.to_string(), value.to_string())),
+        }
+    }
+
+    /// `self` over what it sits in: its own attributes over `outer`'s, and
+    /// its own layers, or `outer`'s where it is on none.
+    fn over(&self, outer: &About) -> About {
+        let mut out = outer.clone();
+        for (key, value) in &self.attributes {
+            out.set(key, value);
+        }
+        if !self.layers.is_empty() {
+            out.layers = self.layers.clone();
+            out.hidden = self.hidden;
+        }
+        out
+    }
+
+    /// Into `node`'s metadata, and its visibility. A part number that only
+    /// repeats the node's name - many packages write the name in both - is
+    /// left out.
+    fn write(&self, node: &mut RawNode) {
+        for (key, value) in &self.attributes {
+            if key == "Part number" && *value == node.name {
+                continue;
+            }
+            node.metadata.insert(key.clone(), value.clone());
+        }
+        if !self.layers.is_empty() {
+            node.metadata.insert("Layer".into(), self.layers.join(", "));
+        }
+        node.hidden |= self.hidden;
+    }
 }
 
 /// Turns products into nodes over the meshes already made.
@@ -403,6 +469,8 @@ struct Layout<'a> {
     /// Each body's meshes, and the colour each renders in.
     meshed: &'a [Vec<(Option<Colour>, usize)>],
     names: &'a [String],
+    /// What the file says about each body.
+    about: &'a [About],
 }
 
 impl Layout<'_> {
@@ -423,17 +491,26 @@ impl Layout<'_> {
     /// named.
     fn product(&mut self, product: &Product, parent: Option<usize>) {
         let bodies: Vec<usize> = product.bodies.iter().copied().filter(|&b| !self.meshed[b].is_empty()).collect();
+        let about_body = |b: usize| self.about.get(b).cloned().unwrap_or_default();
         if product.children.is_empty() {
             match bodies.as_slice() {
                 [] => return,
-                [body] => return self.body(*body, &product.name, parent, product.transform),
+                [body] => {
+                    let about = about_body(*body).over(&product.about);
+                    return self.body(*body, &product.name, parent, product.transform, &about);
+                }
                 _ => {}
             }
         }
-        let group = self.push(RawNode::group(product.name.clone()), parent, product.transform);
+        let mut node = RawNode::group(product.name.clone());
+        product.about.write(&mut node);
+        let group = self.push(node, parent, product.transform);
+        // A body is on its product's layers unless it is on its own.
+        let layers = About { attributes: Vec::new(), ..product.about.clone() };
         for body in bodies {
             let name = self.names[body].clone();
-            self.body(body, &name, Some(group), Transform::IDENTITY);
+            let about = about_body(body).over(&layers);
+            self.body(body, &name, Some(group), Transform::IDENTITY, &about);
         }
         for child in &product.children {
             self.product(child, Some(group));
@@ -442,20 +519,28 @@ impl Layout<'_> {
 
     /// A body is a part, or, where its faces carry colours of their own,
     /// a group of one part per colour, since a part has one material.
-    fn body(&mut self, body: usize, name: &str, parent: Option<usize>, transform: Transform) {
+    fn body(&mut self, body: usize, name: &str, parent: Option<usize>, transform: Transform, about: &About) {
         match self.meshed[body].as_slice() {
             [] => {}
             [(_, mesh)] => {
-                self.push(RawNode::part(name, *mesh), parent, transform);
+                let mut node = RawNode::part(name, *mesh);
+                about.write(&mut node);
+                self.push(node, parent, transform);
             }
             several => {
-                let group = self.push(RawNode::group(name), parent, transform);
+                let mut node = RawNode::group(name);
+                about.write(&mut node);
+                let group = self.push(node, parent, transform);
+                // Each colour's part carries what its body does, for a rule
+                // or a search on parts to find.
                 for &(colour, mesh) in several {
                     let part = match colour {
                         Some(colour) => format!("{name} ({})", colour.name()),
                         None => name.to_string(),
                     };
-                    self.push(RawNode::part(part, mesh), Some(group), Transform::IDENTITY);
+                    let mut node = RawNode::part(part, mesh);
+                    about.write(&mut node);
+                    self.push(node, Some(group), Transform::IDENTITY);
                 }
             }
         }
@@ -1192,8 +1277,10 @@ impl<'a> Entities<'a> {
             }
         };
 
+        let attributes = self.attributes();
         struct Context<'s, 'a> {
             entities: &'s Entities<'a>,
+            attributes: &'s HashMap<u64, About>,
             children: &'s BTreeMap<u64, Vec<(u64, u64)>>,
             bodies_of: &'s dyn Fn(u64) -> Vec<usize>,
             transform_for: &'s dyn Fn(u64, u64) -> Transform,
@@ -1215,9 +1302,16 @@ impl<'a> Entities<'a> {
                 transform,
                 bodies: (context.bodies_of)(pd),
                 children,
+                about: context.attributes.get(&pd).cloned().unwrap_or_default(),
             }
         }
-        let context = Context { entities: self, children: &children, bodies_of: &bodies_of, transform_for: &transform_for };
+        let context = Context {
+            entities: self,
+            attributes: &attributes,
+            children: &children,
+            bodies_of: &bodies_of,
+            transform_for: &transform_for,
+        };
         let roots: Vec<u64> = shapes.keys().chain(children.keys()).copied().filter(|pd| !used.contains(pd)).collect();
         let mut roots: Vec<u64> = roots.into_iter().collect::<std::collections::BTreeSet<_>>().into_iter().collect();
         roots.retain(|pd| self.is(*pd, "PRODUCT_DEFINITION"));
@@ -1239,10 +1333,174 @@ impl<'a> Entities<'a> {
                     transform: Transform::IDENTITY,
                     bodies: loose,
                     children: Vec::new(),
+                    about: About::default(),
                 }),
             }
         }
         products
+    }
+
+    /// Each product definition's attributes, as OpenCASCADE reads them: its
+    /// product's id ("Part number") and description, its own description
+    /// ("Definition"), and every general property the file associates with
+    /// it or its shape, by the property's name.
+    fn attributes(&self) -> HashMap<u64, About> {
+        let mut out: HashMap<u64, About> = HashMap::new();
+        for (pd, definition) in self.named("PRODUCT_DEFINITION") {
+            let about = out.entry(pd).or_default();
+            let args = arguments(definition);
+            if let Some(product) = self.product_of(pd) {
+                let product = arguments(product);
+                if let Some(id) = product.first().and_then(string) {
+                    about.set("Part number", &id);
+                }
+                if let Some(description) = product.get(2).and_then(string) {
+                    about.set("Description", &description);
+                }
+            }
+            if let Some(description) = args.get(1).and_then(string) {
+                about.set("Definition", &description);
+            }
+        }
+        for (_, association) in self.named("GENERAL_PROPERTY_ASSOCIATION") {
+            let Some(property) = arguments(association).get(3).and_then(reference) else { continue };
+            let Some(definition) = self.record(property, "PROPERTY_DEFINITION") else { continue };
+            let args = arguments(definition);
+            let Some(key) = args.first().and_then(string) else { continue };
+            let Some(target) = args.get(2).and_then(reference) else { continue };
+            let pd = if self.is(target, "PRODUCT_DEFINITION") { Some(target) } else { self.shape_definition(target) };
+            let Some(pd) = pd.filter(|pd| self.is(*pd, "PRODUCT_DEFINITION")) else { continue };
+            if let Some(value) = self.property_values(property).into_iter().next() {
+                out.entry(pd).or_default().set(&key, &value);
+            }
+        }
+        out
+    }
+
+    /// The values a property definition's representations give it: a
+    /// descriptive item's description, a value's or a measure's number.
+    fn property_values(&self, property: u64) -> Vec<String> {
+        let mut values = Vec::new();
+        for (_, link) in self.named("PROPERTY_DEFINITION_REPRESENTATION") {
+            let args = arguments(link);
+            if args.first().and_then(reference) != Some(property) {
+                continue;
+            }
+            let Some(representation) = args.get(1).and_then(reference).and_then(|r| self.first(r)) else { continue };
+            for item in arguments(representation).get(1).map(references).unwrap_or_default() {
+                if let Some(record) = self.record(item, "DESCRIPTIVE_REPRESENTATION_ITEM") {
+                    let args = arguments(record);
+                    if let Some(text) = args.get(1).and_then(string).filter(|t| !t.trim().is_empty()) {
+                        values.push(text);
+                    }
+                } else if let Some(record) =
+                    self.record(item, "VALUE_REPRESENTATION_ITEM").or_else(|| self.record(item, "MEASURE_REPRESENTATION_ITEM"))
+                {
+                    if let Some(value) = arguments(record).get(1).and_then(real) {
+                        values.push(format!("{value}"));
+                    }
+                }
+            }
+        }
+        values
+    }
+
+    /// The material each product names, by the first of its bodies: a
+    /// property of the product definition whose representation names it
+    /// (a descriptive item), as CAD packages write a material.
+    fn materials(&self, bodies: &[Body]) -> Vec<(usize, String)> {
+        let body_of: HashMap<u64, usize> = bodies.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+        let mut out = Vec::new();
+        for (property, definition) in self.named("PROPERTY_DEFINITION") {
+            let args = arguments(definition);
+            let Some(pd) = args.get(2).and_then(reference).filter(|pd| self.is(*pd, "PRODUCT_DEFINITION")) else { continue };
+            // A general property's value is an attribute, not a material.
+            let general = self
+                .named("GENERAL_PROPERTY_ASSOCIATION")
+                .any(|(_, a)| arguments(a).get(3).and_then(reference) == Some(property));
+            if general {
+                continue;
+            }
+            let Some(material) = self.material_name(property) else { continue };
+            if let Some(&body) = self.first_body_of(pd, &body_of).as_ref().and_then(|b| body_of.get(b)) {
+                out.push((body, material));
+            }
+        }
+        out
+    }
+
+    /// A material property's name: its descriptive item's name, or its
+    /// description where the name is empty.
+    fn material_name(&self, property: u64) -> Option<String> {
+        for (_, link) in self.named("PROPERTY_DEFINITION_REPRESENTATION") {
+            let args = arguments(link);
+            if args.first().and_then(reference) != Some(property) {
+                continue;
+            }
+            let Some(representation) = args.get(1).and_then(reference).and_then(|r| self.first(r)) else { continue };
+            for item in arguments(representation).get(1).map(references).unwrap_or_default() {
+                let Some(record) = self.record(item, "DESCRIPTIVE_REPRESENTATION_ITEM") else { continue };
+                let args = arguments(record);
+                let name = [0, 1].into_iter().filter_map(|i| args.get(i).and_then(string)).find(|s| !s.trim().is_empty());
+                if name.is_some() {
+                    return name;
+                }
+            }
+        }
+        None
+    }
+
+    /// The first body a product definition's shape representation holds.
+    fn first_body_of(&self, pd: u64, body_of: &HashMap<u64, usize>) -> Option<u64> {
+        for (_, definition) in self.named("SHAPE_DEFINITION_REPRESENTATION") {
+            let args = arguments(definition);
+            let (Some(shape), Some(representation)) = (args.first().and_then(reference), args.get(1).and_then(reference)) else {
+                continue;
+            };
+            if self.shape_definition(shape) != Some(pd) {
+                continue;
+            }
+            let Some(record) = self.first(representation) else { continue };
+            if let Some(body) = arguments(record).get(1).map(references).unwrap_or_default().into_iter().find(|i| body_of.contains_key(i)) {
+                return Some(body);
+            }
+        }
+        None
+    }
+
+    /// Each body's layers, from the file's layer assignments, and whether
+    /// all of them are switched off (`INVISIBILITY`).
+    fn layers(&self, bodies: &[Body]) -> Vec<About> {
+        let body_of: HashMap<u64, usize> = bodies.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+        let invisible: std::collections::HashSet<u64> =
+            self.named("INVISIBILITY").flat_map(|(_, r)| arguments(r).first().map(references).unwrap_or_default()).collect();
+        let mut out = vec![About::default(); bodies.len()];
+        let mut visible = vec![false; bodies.len()];
+        for (layer, assignment) in self.named("PRESENTATION_LAYER_ASSIGNMENT") {
+            let args = arguments(assignment);
+            let Some(name) = args.first().and_then(string).filter(|n| !n.trim().is_empty()) else { continue };
+            for item in args.get(2).map(references).unwrap_or_default() {
+                let Some(&body) = body_of.get(&item) else { continue };
+                if !out[body].layers.contains(&name) {
+                    out[body].layers.push(name.clone());
+                }
+                visible[body] |= !invisible.contains(&layer);
+            }
+        }
+        for (about, visible) in out.iter_mut().zip(visible) {
+            about.hidden = !about.layers.is_empty() && !visible;
+        }
+        out
+    }
+
+    /// The `PRODUCT` a product definition is of.
+    fn product_of(&self, pd: u64) -> Option<&'a Record> {
+        let formation = arguments(self.record(pd, "PRODUCT_DEFINITION")?).get(2).and_then(reference)?;
+        let formation = self
+            .record(formation, "PRODUCT_DEFINITION_FORMATION")
+            .or_else(|| self.record(formation, "PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE"))?;
+        let product = arguments(formation).get(2).and_then(reference)?;
+        self.record(product, "PRODUCT")
     }
 
     /// What a `PRODUCT_DEFINITION_SHAPE` is the shape of: a product
