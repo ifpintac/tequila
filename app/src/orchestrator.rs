@@ -379,12 +379,34 @@ impl Orchestrator {
     }
 }
 
+/// Set when the render thread had not stopped as the application quit
+/// (`Drop for Orchestrator`), for `main` to end the process at once.
+static STUCK_ON_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a render thread was left running as the application quit.
+pub fn stuck_on_exit() -> bool {
+    STUCK_ON_EXIT.load(Ordering::Acquire)
+}
+
 impl Drop for Orchestrator {
     fn drop(&mut self) {
         self.shared.running.store(false, Ordering::Release);
         self.shared.wake();
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            // Cycles making its kernels for a graphics card - minutes, the
+            // first time on a Mac - holds its scene while it does, and the
+            // render thread waits for the scene: quitting waited as long,
+            // and a window that would not close was force-quit, which reads
+            // as a crash. A few seconds, then the application leaves it.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !thread.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                STUCK_ON_EXIT.store(true, Ordering::Release);
+            }
         }
     }
 }

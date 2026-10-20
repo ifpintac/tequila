@@ -234,7 +234,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     mac::listen_for_opened_files();
-    eframe::run_native(
+    let result = eframe::run_native(
         "Tequila",
         options,
         Box::new(move |cc| {
@@ -261,7 +261,19 @@ fn main() -> eframe::Result<()> {
                 Ok(Box::new(app))
             }
         }),
-    )
+    );
+    if orchestrator::stuck_on_exit() {
+        // The render thread is still waiting on Cycles, which is still at
+        // work on other threads: ending the usual way runs the libraries'
+        // destructors underneath them. Ended now instead; the work is saved
+        // and the crash journal closed by then (`on_exit`).
+        extern "C" {
+            fn _exit(code: i32) -> !;
+        }
+        // SAFETY: ends the process; nothing after it runs.
+        unsafe { _exit(i32::from(result.is_err())) }
+    }
+    result
 }
 
 struct TequilaApp {
