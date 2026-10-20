@@ -334,9 +334,12 @@ fn trace_photon(
 
         let (geometric_normal, shading_normal) = hit.facing_forward(ray.direction);
 
-        // The floor as a shadow catcher: where a caustic on it is read.
+        // The floor as a shadow catcher: where a caustic on it is read - one
+        // that catches shadows; one with its shadows off leaves the picture
+        // alone, the light a glass focuses on it too (Cycles does not show
+        // such a floor at all). The photon stops there either way.
         if instance.shadow_catcher.is_some() && !config.ground_illumination {
-            if smooth_events > 0 {
+            if smooth_events > 0 && instance.shadow_catcher.is_some_and(|c| c.shadows) {
                 out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
             }
             return;

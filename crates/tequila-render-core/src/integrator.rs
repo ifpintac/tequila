@@ -917,8 +917,9 @@ pub fn trace_path_with_caustics(
                 // A caustic on the floor: the photons' light against what
                 // the floor would receive in the open, brightening what is
                 // behind it as that light would a real floor.
+                // Not on a floor with its shadows off (`caustics::trace_photon`).
                 let caustic = match caustic_map {
-                    Some(map) => {
+                    Some(map) if catcher.shadows => {
                         let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 {
                             hit.geometric_normal
                         } else {
@@ -931,7 +932,7 @@ pub fn trace_path_with_caustics(
                             Spectrum::ZERO
                         }
                     }
-                    None => Spectrum::ZERO,
+                    _ => Spectrum::ZERO,
                 };
                 let contribution = throughput * (caught.radiance + caustic);
                 radiance += contribution;

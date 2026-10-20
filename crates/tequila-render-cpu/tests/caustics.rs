@@ -221,3 +221,27 @@ fn caustics_are_the_same_on_any_number_of_threads() {
     }
 }
 
+
+/// A shadow-catching floor with its shadows off leaves the picture alone
+/// - it is there for its reflection, if for anything - and that is true of
+/// the light a glass focuses onto it too, as Cycles has it, where such a
+/// floor is not seen at all. With shadows on, the caustic is on the floor.
+#[test]
+fn a_floor_without_shadows_shows_no_caustic() {
+    let dark = || Environment::uniform(Spectrum::splat(0.02));
+    let camera = tequila_render_core::camera::Camera::look_at(vec3(-2.6, 2.0, 2.2), vec3(-0.9, -0.75, 0.0), Vec3::Y);
+    let on_catcher = |shadows: bool| {
+        let mut scene = scene(dark(), vec![lamp()]);
+        scene.instances[1].shadow_catcher = Some(tequila_render_core::scene::ShadowCatcher { shadows, ..Default::default() });
+        scene
+    };
+    let brightest = |framebuffer: &Framebuffer| {
+        (1..SIZE - 1).flat_map(|y| (1..SIZE - 1).map(move |x| (x, y))).map(|(x, y)| luminance(framebuffer, x, y)).fold(0.0f32, f32::max)
+    };
+    // The floor's own picture without photons, to measure against.
+    let plain = brightest(&render_from(on_catcher(false), false, 32, camera));
+    let without = brightest(&render_from(on_catcher(false), true, 32, camera));
+    let with = brightest(&render_from(on_catcher(true), true, 32, camera));
+    assert!(without < plain * 1.5 + 0.05, "a floor without shadows caught a caustic: {without} against {plain} without photons");
+    assert!(with > without * 3.0, "a floor with shadows lost its caustic: {with} against {without}");
+}
