@@ -34,6 +34,17 @@ pub fn dense_key(key: u64, density: usize) -> u64 {
     }
 }
 
+/// A library tile's key in the disk cache when it is `pixels` across: those
+/// of 96 and 192 under the keys a tile of density one and two always had, so
+/// the thumbnails already kept stay kept.
+pub fn sized_key(key: u64, pixels: usize) -> u64 {
+    if pixels % 96 == 0 {
+        dense_key(key, pixels / 96)
+    } else {
+        key ^ (0xc2b2_ae3d_27d4_eb4fu64.wrapping_mul(pixels as u64))
+    }
+}
+
 /// RGBA8, row-major from the top-left.
 ///
 /// Denoised, because a thumbnail's sample count leaves glass and clear

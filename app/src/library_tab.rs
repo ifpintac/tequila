@@ -136,6 +136,9 @@ pub struct LibraryTab {
     shelf_files: Option<ShelfFiles>,
     /// Rendered previews, keyed by the material's content.
     thumbnails: HashMap<u64, egui::TextureHandle>,
+    /// How many pixels across a tile is drawn, so how many its preview is
+    /// rendered at ([`tile_pixels`]).
+    tile_pixels: usize,
     /// Names still waiting for a preview, in the order they were first seen.
     queued: Vec<usize>,
     preview_job: Option<PreviewJob>,
@@ -204,6 +207,7 @@ impl LibraryTab {
             recent: Vec::new(),
             shelf_files: None,
             thumbnails: HashMap::new(),
+            tile_pixels: 96,
             queued: Vec::new(),
             preview_job: None,
             device: Device::shared().ok(),
@@ -439,6 +443,7 @@ impl LibraryTab {
         // than leaving a ragged strip down the right.
         let gap = 8.0;
         let size = ((width - gap * (columns as f32 - 1.0)) / columns as f32).floor().max(24.0);
+        self.tile_pixels = tile_pixels(size, ui.ctx().pixels_per_point());
 
         let mut favourite_toggle: Option<String> = None;
         // Only the rows in view are laid out: every tile is a handful of
@@ -653,7 +658,7 @@ impl LibraryTab {
         // nobody had scrolled to.
         self.queued = wanted(&visible, in_view)
             .rev()
-            .filter(|&index| !self.thumbnails.contains_key(&self.keys[index]))
+            .filter(|&index| !self.sharp(self.keys[index]))
             .collect();
         self.render_queued(ui.ctx());
 
@@ -671,6 +676,14 @@ impl LibraryTab {
             return Some(LibraryAction::EditDetails(details));
         }
         self.confirm_delete.show(ctx).map(LibraryAction::Delete)
+    }
+
+    /// Whether the tile of `key` has a preview as large as it is drawn. One
+    /// smaller is shown until the larger is ready: made before the window
+    /// knew it was on a Retina screen, or for a tile drawn smaller, it stayed
+    /// for the session, a sphere of 96 pixels spread over 228.
+    fn sharp(&self, key: u64) -> bool {
+        self.thumbnails.get(&key).is_some_and(|texture| texture.size()[0] >= self.tile_pixels)
     }
 
     /// Upload finished previews and start at most one background job.
@@ -691,8 +704,8 @@ impl LibraryTab {
         let Some(device) = self.device.clone() else {
             return;
         };
-        let density = crate::thumbnail::density(ctx);
-        let settings = thumbnail_settings_at(density);
+        let pixels = self.tile_pixels;
+        let settings = tile_settings(pixels);
         let started = std::time::Instant::now();
         // Tiles read from disk are drawn the next frame, so ask for one.
         let mut loaded = false;
@@ -701,11 +714,11 @@ impl LibraryTab {
             let (Some(entry), Some(&key)) = (self.entries.get(index), self.keys.get(index)) else {
                 continue;
             };
-            if self.thumbnails.contains_key(&key) {
+            if self.sharp(key) {
                 continue;
             }
             // Kept from an earlier launch: a file read, not a render.
-            if let Some(image) = self.disk.load(crate::thumbnail::dense_key(key, density)) {
+            if let Some(image) = self.disk.load(crate::thumbnail::sized_key(key, pixels)) {
                 let handle = ctx.load_texture(format!("preview_{key:x}"), image, egui::TextureOptions::LINEAR);
                 self.thumbnails.insert(key, handle);
                 loaded = true;
@@ -741,7 +754,7 @@ impl LibraryTab {
                     };
 
                     let rgba = crate::thumbnail::develop_rgba(&thumbnail);
-                    disk.store(crate::thumbnail::dense_key(key, density), thumbnail.width, thumbnail.height, &rgba);
+                    disk.store(crate::thumbnail::sized_key(key, pixels), thumbnail.width, thumbnail.height, &rgba);
                     let image = egui::ColorImage::from_rgba_unmultiplied([thumbnail.width, thumbnail.height], &rgba);
                     repaint.request_repaint();
                     Some((key, image))
@@ -981,7 +994,24 @@ pub fn entry_key(entry: &LibraryEntry) -> u64 {
 /// What a library tile is rendered with, at `density` pixels a point
 /// (`thumbnail::density`).
 pub(crate) fn thumbnail_settings_at(density: usize) -> PreviewSettings {
-    PreviewSettings { size: 96 * density.max(1), samples: 40, ..PreviewSettings::default() }
+    tile_settings(96 * density.max(1))
+}
+
+/// What a library tile `pixels` across is rendered with.
+fn tile_settings(pixels: usize) -> PreviewSettings {
+    PreviewSettings { size: pixels, samples: 40, ..PreviewSettings::default() }
+}
+
+/// The pixels a tile `points` across is rendered at: what it covers on the
+/// screen, so it is never enlarged. The tiles share the panel's width out,
+/// 109 points each at the usual three across, 114 on a Mac; rendered at 96
+/// and 192 they were spread over 109 and 228 pixels and came out soft. In
+/// steps of 48, so a slider dragged across the range renders a few sizes, not
+/// one for each pixel; at least 96, the size of the kept thumbnails, and at
+/// most 384.
+fn tile_pixels(points: f32, pixels_per_point: f32) -> usize {
+    let covered = (points * pixels_per_point.max(0.5)).ceil().max(1.0) as usize;
+    (covered.div_ceil(48) * 48).clamp(96, 384)
 }
 
 /// Where the bundled library lives.
@@ -1244,6 +1274,51 @@ mod tests {
             next.thumbnails.get(&key).expect("the next launch shows it at once").size(),
             [96, 96]
         );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A tile is rendered at the pixels it covers, on any screen.
+    #[test]
+    fn a_tile_is_rendered_at_the_size_it_is_drawn() {
+        assert_eq!(tile_pixels(96.0, 1.0), 96);
+        assert_eq!(tile_pixels(109.0, 1.0), 144);
+        assert_eq!(tile_pixels(96.0, 2.0), 192);
+        assert_eq!(tile_pixels(114.0, 2.0), 240);
+        assert_eq!(tile_pixels(40.0, 1.0), 96, "a small tile keeps the kept thumbnails");
+        assert_eq!(tile_pixels(320.0, 2.0), 384, "one tile across the panel is bounded");
+        // The thumbnails kept at 96 and 192 keep their keys.
+        assert_eq!(crate::thumbnail::sized_key(7, 96), 7);
+        assert_eq!(crate::thumbnail::sized_key(7, 192), crate::thumbnail::dense_key(7, 2));
+        let others = [144, 240, 288, 336, 384].map(|pixels| crate::thumbnail::sized_key(7, pixels));
+        assert!(others.iter().all(|&key| key != 7 && key != crate::thumbnail::dense_key(7, 2)));
+    }
+
+    /// A preview smaller than its tile is rendered again at the tile's size,
+    /// and shown until then: on a Mac the shelf kept spheres of 96 pixels
+    /// drawn over 228 for a whole session.
+    #[test]
+    fn a_preview_smaller_than_its_tile_is_rendered_again() {
+        let folder = scratch_cache("larger");
+        let context = egui::Context::default();
+        let mut tab = tab_keeping_in(&folder);
+        let key = graph_key(&tab.entries[0].graph);
+        let small = context.load_texture("small", egui::ColorImage::new([96, 96], egui::Color32::GRAY), egui::TextureOptions::LINEAR);
+        tab.thumbnails.insert(key, small);
+        tab.queued.push(0);
+        tab.render_queued(&context);
+        assert!(tab.preview_job.is_none(), "a tile of 96 pixels was rendered again");
+
+        tab.tile_pixels = 144;
+        tab.queued.push(0);
+        tab.render_queued(&context);
+        assert_eq!(tab.thumbnails.get(&key).unwrap().size(), [96, 96], "the smaller one is shown meanwhile");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        while !tab.preview_job.as_ref().expect("a larger tile renders its preview again").is_finished() {
+            assert!(std::time::Instant::now() < deadline, "preview worker timed out");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        tab.render_queued(&context);
+        assert_eq!(tab.thumbnails.get(&key).unwrap().size(), [144, 144]);
         let _ = std::fs::remove_dir_all(&folder);
     }
 
