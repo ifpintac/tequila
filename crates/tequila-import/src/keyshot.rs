@@ -60,10 +60,15 @@ const OLD_UNIT: f32 = 0.22;
 /// pearl's noise, at 5, a gentle undulation as in KeyShot's preview.
 const PROCEDURAL_BUMP: f32 = 0.00002;
 
-/// A moulded grain's features to a Mold-Tech texture's tile, and its
-/// depth: what stands in for a texture in KeyShot's protected format.
-const GRAIN_PER_TILE: f32 = 6.0;
-const GRAIN_DEPTH: f32 = 0.0001;
+/// What stands in for a texture in KeyShot's protected format (Mold-Tech's):
+/// a fine, even moulded texture, its features this wide and this deep.
+/// Mold-Tech's patterns are anything from sand grains to cross-hatching,
+/// and an encrypted one cannot be told apart; a fine stipple reads as a
+/// textured moulding whichever it was. Sized from the texture's tile, six
+/// to one, the features of a 10 mm tile were lumps 1.7 mm across, which
+/// no moulding has.
+const GRAIN_SIZE: f32 = 0.000_35;
+const GRAIN_DEPTH: f32 = 0.000_03;
 
 /// Metres between Marble's bands at a `scale` of 1: measured off the 100 mm
 /// disc KeyShot's preview shows a 3D-print material's layer lines on.
@@ -1517,17 +1522,16 @@ impl Build<'_> {
             // plastic is, not glass-smooth.
             let file = s.text("texture").or_else(|| s.text("textureX")).unwrap_or("");
             if file.to_ascii_lowercase().ends_with(".ktx") {
-                let tile = s.number("uScaleX").or_else(|| s.number("uv_scale_u")).filter(|v| *v > 0.0).unwrap_or(0.01);
                 let grain = self.graph.add_node(
                     Node::new(NodeKind::Node(ShaderNode::noise()))
-                        .with_literal(Socket::Input(2), Value::Float(GRAIN_PER_TILE / tile))
-                        .with_literal(Socket::Input(3), Value::Float(4.0))
-                        .with_literal(Socket::Input(4), Value::Float(0.6)),
+                        .with_literal(Socket::Input(2), Value::Float(1.0 / GRAIN_SIZE))
+                        .with_literal(Socket::Input(3), Value::Float(2.0))
+                        .with_literal(Socket::Input(4), Value::Float(0.5)),
                 );
                 let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: GRAIN_DEPTH * scale }));
                 self.graph.connect(grain, bump, Socket::Input(0));
                 self.graph.connect(bump, output, Socket::Param(Param::Bump));
-                self.note("a moulded grain at the texture's size stands in for it".into());
+                self.note("a fine moulded texture stands in for it".into());
             }
             return Ok(());
         };
