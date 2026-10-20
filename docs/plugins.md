@@ -208,9 +208,12 @@ turning one on. Install plugins only from people you trust, and read
   `fs.library.save`.
 - **Anodised Extras** — a material pack: four presets and a manifest, no
   code.
-- **Auto Materials** — library materials on parts by their names (screws →
-  steel, lenses → glass, grips → rubber) as a model is imported, or on the
-  whole scene at a click; rules typed in a box or read from a CSV file.
+- **Auto Materials** — library materials on parts as a model is imported, or
+  on the whole scene at a click: by the parts' names (screws → steel, lenses
+  → glass, grips → rubber), by the materials the CAD file named ("Aluminum
+  6061", "ABS"), and by the assemblies they sit in. Your rules, typed or from
+  a CSV file, come before about sixty built-in ones; plastics and paints
+  keep the colours the model gave them; a preview says what would change.
   Uses the `imported` and `panel_opened` events, `load_settings` /
   `save_settings`, a file field, and library presets applied in one
   `fs.batch()`.

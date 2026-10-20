@@ -156,20 +156,85 @@ class AutoMaterialsTests(unittest.TestCase):
             self.assertEqual(next(p for p in fs.parts() if p.name == 'Pin').material, pin.material, 'an import was not left alone')
             self.assertTrue(Path(data, 'settings.json').is_file())
 
-    def test_names_match_by_word(self):
+    def test_a_red_part_keeps_its_red_with_the_rules_finish(self):
+        with tempfile.TemporaryDirectory() as data, tequila.open(MODEL) as fs:
+            Path(data, 'settings.json').write_text(json.dumps({'rules': 'box: ABS White', 'builtin': False}), encoding='utf-8')
+            box = next(p for p in fs.parts() if p.name.startswith('Box'))
+            before = box.material
+            running = Running(EXAMPLES / 'auto-materials', fs, data)
+            try:
+                running.send({'type': 'command', 'command': 'apply', 'values': {}})
+                running.expect(lambda m: m['type'] == 'done')
+            finally:
+                running.close()
+            box = next(p for p in fs.parts() if p.name.startswith('Box'))
+            material = fs.materials[box.material]
+            self.assertTrue(material.name.startswith('ABS White ('), material.name)
+            red = material.base_color
+            self.assertGreater(red[0], 0.5)
+            self.assertLess(red[1], 0.1)
+            # The finish is the preset's: its roughness, not the import's.
+            self.assertEqual(material.type.lower(), 'plastic')
+            fs.undo()
+            fs.undo()
+            self.assertEqual(next(p for p in fs.parts() if p.name.startswith('Box')).material, before)
+
+
+class AutoMaterialsMatchingTests(unittest.TestCase):
+    """How Auto Materials reads names, with no Tequila running."""
+
+    @classmethod
+    def setUpClass(cls):
         import importlib.util
         spec = importlib.util.spec_from_file_location('auto_materials', EXAMPLES / 'auto-materials' / 'main.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        rules = module.parse_rules(module.DEFAULT_RULES)
-        self.assertEqual(module.match('M3x8 Screws', rules), 'Stainless Brushed')
-        self.assertEqual(module.match('FrontLens_02', rules), 'Glass Clear')
-        self.assertEqual(module.match('O-Ring seal', rules), 'Rubber Black')
-        self.assertIsNone(module.match('Peanut', rules), 'a word inside another word matched')
+        cls.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.module)
+
+    def test_names_match_by_word(self):
+        module = self.module
+        rules = module.parse_rules(module.DEFAULTS['rules'])
+        self.assertEqual(module.match_text('M3x8 Screws', rules), 'Stainless Brushed')
+        self.assertEqual(module.match_text('FrontLens_02', rules), 'Glass Clear')
+        self.assertEqual(module.match_text('O-Ring seal', rules), 'Rubber Black')
+        self.assertIsNone(module.match_text('Peanut', rules), 'a word inside another word matched')
         with tempfile.TemporaryDirectory() as folder:
             csv = Path(folder, 'rules.csv')
             csv.write_text('# words, material\nknob|dial,Aluminium Knurled Straight\n', encoding='utf-8')
-            self.assertEqual(module.match('Volume Dial', module.rules_from_file(csv)), 'Aluminium Knurled Straight')
+            self.assertEqual(module.match_text('Volume Dial', module.rules_from_file(csv)), 'Aluminium Knurled Straight')
+
+    def test_what_a_part_is_made_of_wins_over_what_it_is_called(self):
+        module = self.module
+        rules = module.BUILTIN
+        own = [('Housing', 'name'), ('Aluminum 6061-T6', 'CAD material')]
+        self.assertEqual(module.match([own, []], rules), ('Aluminium Bead Blasted', 'CAD material'))
+        self.assertEqual(module.match([[('Housing', 'name'), ('Default', 'CAD material')], []], rules)[0], 'Plastic VDI 24 Grey')
+        self.assertEqual(module.match([[('ISO 4762 M3x10 SHCS', 'name')], []], rules)[0], 'Steel Black Oxide')
+        self.assertEqual(module.match([[('PrintedBracket', 'name')], []], rules)[0], 'Plastic VDI 24 Grey')
+        self.assertEqual(module.match([[('Bracket', 'name'), ('PLA', 'CAD material')], []], rules)[0], 'FDM PLA White')
+        # An assembly only when the part itself says nothing.
+        self.assertEqual(module.match([[('Part7', 'name')], [('Screws', 'assembly')]], rules), ('Stainless Brushed', 'assembly'))
+        self.assertEqual(module.match([[('Lens', 'name')], [('Screws', 'assembly')]], rules)[0], 'Glass Clear')
+        self.assertEqual(module.match([[('Part7', 'name')], []], rules), (None, None))
+
+    def test_every_built_in_rule_names_a_library_preset(self):
+        library = HERE.parent / 'assets' / 'library' / 'standard'
+        names = {json.loads(f.read_text(encoding='utf-8'))['name'] for f in library.glob('*.json')}
+        for words, material in self.module.BUILTIN:
+            self.assertIn(material, names, f'{words} name {material}, which the library does not have')
+
+    def test_a_models_own_colour_is_told_from_an_importers_grey(self):
+        module = self.module
+        colour = module.model_colour
+        definition = lambda c: type('M', (), {'definition': {'base_color': c}})()
+        self.assertIsNone(colour(definition([0.5, 0.5, 0.5])), 'a fallback grey kept')
+        self.assertEqual(colour(definition([0.8, 0.05, 0.05])), [0.8, 0.05, 0.05])
+        self.assertEqual(colour(definition([0.02, 0.02, 0.02])), [0.02, 0.02, 0.02], 'a black part lost its black')
+        self.assertEqual(module.colour_name([0.8, 0.05, 0.05]), 'red')
+        self.assertEqual(module.colour_name([0.05, 0.1, 0.8]), 'blue')
+        recoloured = module.recoloured({'base_color': [0.8, 0.8, 0.8], 'graph': {'nodes': [
+            {'literals': [{'socket': 'input:1', 'value': {'color': [0.8, 0.8, 0.8]}}]}]}}, [0.1, 0.2, 0.3])
+        self.assertEqual(recoloured['base_color'], [0.1, 0.2, 0.3])
+        self.assertEqual(recoloured['graph']['nodes'][0]['literals'][0]['value']['color'], [0.1, 0.2, 0.3])
 
 
 @unittest.skipIf(MISSING, MISSING)

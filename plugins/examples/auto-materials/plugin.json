@@ -1,9 +1,9 @@
 {
   "id": "tequila.auto-materials",
   "name": "Auto Materials",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Tequila",
-  "description": "Puts library materials on parts by their names when a model comes in: screws get steel, lenses glass, grips rubber. Your own rules, or the whole scene at a click.",
+  "description": "Puts library materials on parts when a model comes in, by their names, their CAD materials and their assemblies: screws get steel, lenses glass, grips rubber, an aluminium part aluminium. Plastics keep the model's colours. Your own rules on top of the built-in ones, a preview, or the whole scene at a click.",
   "tequila": 1,
   "main": "main.py",
   "commands": [
@@ -11,12 +11,12 @@
       "id": "open",
       "title": "Auto Materials…",
       "panel": "auto",
-      "description": "Edit the rules, and apply them"
+      "description": "Edit the rules, preview and apply them"
     },
     {
       "id": "apply",
       "title": "Apply the rules to every part",
-      "description": "One undo step"
+      "description": "Materials as one undo step, and the model's colours as another"
     }
   ],
   "panels": [
@@ -27,24 +27,54 @@
         {
           "id": "rules",
           "type": "text",
-          "label": "Rules, one a line - words in a part's name: library material",
+          "label": "Your rules, first, one a line - words in a part's name: library material",
           "default": "screw, bolt, nut, washer, rivet, standoff: Stainless Brushed\nglass, lens, window: Glass Clear\nrubber, grip, foot, feet, gasket, seal, tyre, tire, o-ring: Rubber Black\nchrome: Chrome\nleather, strap: Leather Black\nscreen, display, lcd: Screen Glow",
           "lines": 6
         },
         {
           "id": "rules_file",
           "type": "file",
-          "label": "Or rules from a CSV file (words, material)",
+          "label": "And rules from a CSV file (words, material)",
           "extensions": [
             "csv",
             "txt"
           ]
         },
         {
+          "id": "builtin",
+          "type": "toggle",
+          "label": "Then Tequila's own rules (about 60: fasteners, plastics, metals by alloy, prints, glass, rubber, wood)",
+          "default": true
+        },
+        {
+          "id": "deep",
+          "type": "toggle",
+          "label": "Match the CAD file's material names and the assemblies too, not only the parts' names",
+          "default": true
+        },
+        {
+          "id": "keep_colours",
+          "type": "toggle",
+          "label": "Plastics and paints keep the colour the model gave the part",
+          "default": true
+        },
+        {
+          "id": "keep_finished",
+          "type": "toggle",
+          "label": "Leave parts that already have a library material",
+          "default": true
+        },
+        {
           "id": "on_import",
           "type": "toggle",
           "label": "Apply them when a model is imported",
           "default": true
+        },
+        {
+          "id": "preview",
+          "type": "button",
+          "label": "Preview: what would change",
+          "command": "preview"
         },
         {
           "id": "apply",
@@ -55,7 +85,7 @@
         {
           "id": "keep",
           "type": "button",
-          "label": "Keep these rules",
+          "label": "Keep these settings",
           "command": "keep"
         },
         {
