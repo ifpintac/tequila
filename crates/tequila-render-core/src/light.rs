@@ -100,7 +100,7 @@ pub struct LightSample {
 }
 
 /// A rectangular or disc area light.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AreaLight {
     /// Centre of the emitter.
     pub position: Vec3,
@@ -413,7 +413,7 @@ impl SphericalRectangle {
 }
 
 /// A point light, optionally with a radius that makes it a small sphere.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointLight {
     pub position: Vec3,
     /// Luminous intensity in candela, as a colour.
@@ -465,7 +465,7 @@ impl PointLight {
 }
 
 /// A spotlight: a point light inside a cone, with a soft edge.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpotLight {
     pub position: Vec3,
     /// Where the cone points, normalized.
@@ -604,7 +604,7 @@ impl IesLight {
 /// No longer `Copy`, because a photometric profile is a measured table shared
 /// between every instance of the same fitting — a `Copy` light would mean
 /// copying that table on every selection.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LightKind {
     Area(AreaLight),
     Point(PointLight),
@@ -613,7 +613,7 @@ pub enum LightKind {
 }
 
 /// A light in the scene, with the flags every light carries (§5.1).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Light {
     pub kind: LightKind,
     pub visibility: Visibility,

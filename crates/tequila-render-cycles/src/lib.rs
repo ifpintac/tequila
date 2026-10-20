@@ -226,6 +226,20 @@ impl Session {
         Ok(shader.0)
     }
 
+    /// Whether this library can open a committed shader again
+    /// ([`Session::reopen`]).
+    pub fn can_reopen(&self) -> bool {
+        self.api.fsc_shader_reopen.is_some()
+    }
+
+    /// Open a committed shader again, empty, for a new graph to replace its
+    /// old one at [`Session::commit`]: what uses the shader keeps it. `None`
+    /// from a library that predates it.
+    pub fn reopen(&mut self, shader: Node) -> Option<Result<Shader, String>> {
+        let reopen = self.api.fsc_shader_reopen?;
+        Some(self.check(unsafe { reopen(self.raw, shader.0) }).map(|()| Shader(shader)))
+    }
+
     pub fn set_world(&mut self, shader: Node) {
         unsafe { (self.api.fsc_set_world)(self.raw, shader.0) }
     }

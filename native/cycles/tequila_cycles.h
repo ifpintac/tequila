@@ -93,6 +93,10 @@ FSC_API int fsc_connect(FscSession *session,
                         FscNode to,
                         const char *input);
 FSC_API int fsc_shader_commit(FscSession *session, FscNode shader);
+/* Open a committed shader for editing again, with an empty graph: its new
+ * graph replaces the old one at fsc_shader_commit, and whatever uses the
+ * shader keeps using it. Returns 0 if it is open already. */
+FSC_API int fsc_shader_reopen(FscSession *session, FscNode shader);
 /* Use a committed shader as the world. */
 FSC_API void fsc_set_world(FscSession *session, FscNode shader);
 

@@ -6,9 +6,11 @@
 //! HUD as Tequila's own frames. Tequila's renderer still builds the scene's
 //! BVH, because picking a part with the mouse goes through it.
 //!
-//! What restarts what: a new scene (any document edit) is translated again; a
-//! camera move or a resize only moves Cycles' camera, which is the cheap path
-//! and the one orbiting takes sixty times a second.
+//! What restarts what: a new scene is translated again; an edit to materials
+//! alone - a label resized, a colour picked - builds only their shaders again;
+//! a part dragged only moves Cycles' objects; and a camera move or a resize
+//! only moves Cycles' camera, which is the cheap path and the one orbiting
+//! takes sixty times a second.
 
 use crate::orchestrator::RenderRequest;
 use tequila_core::spectrum::Spectrum;
@@ -44,6 +46,8 @@ pub struct CyclesView {
     /// The Cycles object of each instance, to move a dragged part without
     /// translating the scene again.
     objects: Vec<Option<tequila_render_cycles::Node>>,
+    /// Each material's Cycles shader, to build a changed one again in place.
+    shaders: Vec<tequila_render_cycles::Node>,
     /// The lighting the scene was translated with: Ground illumination, and
     /// the bounce limits.
     lighting: (bool, u32, u32),
@@ -60,6 +64,8 @@ pub struct CyclesView {
     /// it did: a change waits for the picture of the one before (`sync`).
     answered: bool,
     restarted: std::time::Instant,
+    /// How many times the whole scene has been translated.
+    translations: u64,
 }
 
 impl CyclesView {
@@ -78,6 +84,7 @@ impl CyclesView {
             paused: false,
             images: translate::Images::default(),
             objects: Vec::new(),
+            shaders: Vec::new(),
             lighting: (false, 0, 0),
             background_under: false,
             under: Vec::new(),
@@ -85,11 +92,19 @@ impl CyclesView {
             floor_reflection: false,
             answered: true,
             restarted: std::time::Instant::now(),
+            translations: 0,
         })
     }
 
     pub fn engine(&self) -> RenderEngine {
         self.engine
+    }
+
+    /// How many times the whole scene has been translated, rather than
+    /// updated in place.
+    #[cfg(test)]
+    pub fn translations(&self) -> u64 {
+        self.translations
     }
 
     /// Whether frames need Tequila's floor reflection laid over them.
@@ -105,15 +120,23 @@ impl CyclesView {
         // A part dragged with the gizmo changes where instances are and
         // nothing else: Cycles' objects move, and nothing is translated.
         let moved = !same && self.scene.as_ref().is_some_and(|scene| translate::only_moved(scene, &request.scene));
+        // An edit to materials alone builds their shaders again and leaves
+        // the meshes on the device. Translating the whole scene for each step
+        // of a label being resized sent a big model's every mesh to the
+        // device and built its BVH again at the speed of the mouse.
+        let repainted = (!same && !moved && self.session.can_reopen())
+            .then(|| self.scene.as_ref().and_then(|scene| translate::changed_materials(scene, &request.scene)))
+            .flatten();
         // Ground illumination decides what the floor is to Cycles, and the
         // bounce limits how far its paths go.
         let config = &request.config;
         let lighting = (config.ground_illumination, config.max_bounces, config.max_transmission_bounces);
         let relit = lighting != self.lighting;
-        let rescene = (!same && !moved) || relit;
+        let mut rescene = (!same && !moved && repainted.is_none()) || relit;
         let moved = moved && !relit;
+        let repainted = repainted.filter(|_| !relit);
         let recamera = self.camera != Some(request.camera) || self.size != size;
-        if !rescene && !moved && !recamera {
+        if !rescene && !moved && repainted.is_none() && !recamera {
             return Ok(false);
         }
         // A change that comes before Cycles has shown its picture of the last
@@ -132,13 +155,27 @@ impl CyclesView {
             ground_illumination: request.config.ground_illumination,
         };
         self.session.begin_edit();
+        if let Some(changed) = &repainted {
+            // A library that cannot rebuild a shader in place, or a shader that
+            // would not build, translates everything instead.
+            match translate::update_materials(&mut self.session, &request.scene, &self.shaders, changed, &mut self.images) {
+                Ok(true) => {}
+                Ok(false) => rescene = true,
+                Err(error) => {
+                    eprintln!("Cycles: a material update failed ({error}); translating the scene again");
+                    rescene = true;
+                }
+            }
+        }
         let result = if rescene {
+            self.translations += 1;
             self.session.clear_scene();
             translate::build_with(&mut self.session, &request.scene, &view, &mut self.images).and_then(|translation| {
                 for warning in &translation.warnings {
                     eprintln!("Cycles: {warning}");
                 }
                 self.objects = translation.objects;
+                self.shaders = translation.shaders;
                 self.background_under = translation.background_under;
                 self.floor_reflection = translation.floor_reflection;
                 translate::configure(

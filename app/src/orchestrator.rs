@@ -1740,6 +1740,74 @@ mod tests {
         assert!(changed > 20, "selecting the sphere drew no outline ({changed} pixels changed)");
     }
 
+    /// A material changed in a Cycles viewport - a colour picked, a label
+    /// resized - builds that material's shader again and nothing else, and a
+    /// part dragged moves it: neither translates the scene again. Both did,
+    /// at every step of the mouse, because each snapshot's lights and
+    /// textures were new allocations and were compared by pointer; on a
+    /// 200 MB model on a Mac, resizing a label closed Tequila. Skipped where
+    /// Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn a_material_edit_rebuilds_only_its_shader_in_the_cycles_viewport() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(64, 48);
+        // Red over green in the middle of the frame, where the sphere is, once
+        // Cycles has some samples of the scene it was last given.
+        let mut redness = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !view.sync(req).expect("synced") {
+                assert!(Instant::now() < deadline, "Cycles never took the change");
+                view.take_frame(&mut framebuffer);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            loop {
+                if let Some(frame) = view.take_frame(&mut framebuffer) {
+                    if frame.samples >= 8 && frame.width == 64 {
+                        let pixels = framebuffer.pixels();
+                        let (r, g) = (18..30)
+                            .flat_map(|y| (24..40).map(move |x| y * 64 + x))
+                            .fold((0.0f64, 0.0f64), |(r, g), i| (r + f64::from(pixels[i].sum.r), g + f64::from(pixels[i].sum.g)));
+                        return r / g.max(1e-9);
+                    }
+                }
+                assert!(Instant::now() < deadline, "Cycles never drew the change");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let before = redness(&mut view, &req);
+        assert_eq!(view.translations(), 1);
+
+        // The sphere painted red: one shader again, the meshes left alone.
+        let mut painted = (*req.scene).clone();
+        let material = painted.instances[0].material.index();
+        painted.materials[material].base_color = tequila_core::spectrum::Spectrum { r: 0.8, g: 0.02, b: 0.02 };
+        // Rebuilt around the same things, as the application's snapshots are.
+        painted.lights = Arc::new((*painted.lights).clone());
+        painted.textures = Arc::new((*painted.textures).clone());
+        req.scene = Arc::new(painted);
+        req.scene_generation += 1;
+        let after = redness(&mut view, &req);
+        assert!(after > before * 1.5, "the sphere did not turn red: red over green {before} then {after}");
+        assert_eq!(view.translations(), 1, "a colour change translated the scene again");
+
+        // And dragged: Cycles' object moves.
+        let mut dragged = (*req.scene).clone();
+        dragged.instances[0].transform = tequila_core::math::Transform::translation(Vec3 { x: 0.6, y: 1.0, z: 0.3 });
+        dragged.lights = Arc::new((*dragged.lights).clone());
+        req.scene = Arc::new(dragged);
+        req.scene_generation += 1;
+        redness(&mut view, &req);
+        assert_eq!(view.translations(), 1, "a dragged part translated the scene again");
+    }
+
     /// Orbiting a Cycles viewport shows Cycles' pictures as it goes, each a
     /// picture of the view. It showed none until the mouse stopped: every
     /// move restarted Cycles before its picture of the last was made, and the

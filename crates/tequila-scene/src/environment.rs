@@ -71,6 +71,13 @@ pub struct EnvironmentCache {
     /// over, and rebuilding over it again would only redo the same work.
     built_from: Option<(Vec<tequila_render_core::pins::Pin>, u64)>,
     built: Option<Arc<Environment>>,
+    /// The built environment turned, brightened and given its dome, and the
+    /// rotation, brightness and dome it was given. Handed out again while
+    /// they stay the same, so a snapshot of an edit that left the
+    /// environment alone shares it with the one before - which is how
+    /// Cycles' live view tells a dragged part or a resized label from new
+    /// lighting, and moves or repaints rather than translating everything.
+    finished: Option<((f32, f32, Dome), Arc<Environment>)>,
     /// The decoded backplate, and the path it came from.
     backplate: Option<(String, Option<Arc<Image>>)>,
     /// Image pins' pictures, decoded once each; `None` for one that would
@@ -271,21 +278,31 @@ impl EnvironmentCache {
             }
             self.built = Some(Arc::new(environment));
             self.built_from = Some(key);
+            self.finished = None;
         }
 
         // The cheap settings are applied to a *copy* of the built object. The
         // copy shares the image and clones the CDF vectors, which is a memcpy
         // rather than an integration — and it has to be a copy, because the
         // renderer holds the previous snapshot while this one is built.
-        let mut environment = (**self.built.as_ref().expect("just built")).clone();
-        environment.set_rotation_y(settings.rotation);
-        environment.set_intensity(settings.brightness);
-        environment.set_dome(Dome {
+        let dome = Dome {
             radius: (settings.size > 0.0).then_some(settings.size * 0.5),
             height: settings.height,
             flatten: settings.ground.flatten,
-        });
-        Arc::new(environment)
+        };
+        let finish = (settings.rotation, settings.brightness, dome);
+        if let Some((key, finished)) = &self.finished {
+            if *key == finish {
+                return finished.clone();
+            }
+        }
+        let mut environment = (**self.built.as_ref().expect("just built")).clone();
+        environment.set_rotation_y(settings.rotation);
+        environment.set_intensity(settings.brightness);
+        environment.set_dome(dome);
+        let environment = Arc::new(environment);
+        self.finished = Some((finish, environment.clone()));
+        environment
     }
 
     /// The pictures these pins show, decoding any not seen before.

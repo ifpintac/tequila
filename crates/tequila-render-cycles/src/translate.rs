@@ -332,6 +332,9 @@ pub struct Translation {
     /// The floor reflects, and Cycles has drawn none: the caller lays
     /// Tequila's reflection over the image (`tequila_render_cpu::floor`).
     pub floor_reflection: bool,
+    /// Each material's Cycles shader, by material index, for
+    /// [`update_materials`] to build again in place.
+    pub shaders: Vec<Node>,
 }
 
 impl Translation {
@@ -385,13 +388,16 @@ pub fn build(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Resul
 /// forgetting the ones this scene no longer uses.
 pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, images: &mut Images) -> Result<Translation, String> {
     let mut out = Translation::default();
+    // What updates since the last translation used is asked again below.
+    images.used.clear();
     let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new() };
 
     // One Cycles shader per Tequila material.
     let mut shaders = Vec::with_capacity(scene.materials.len());
     for index in 0..scene.materials.len() {
-        shaders.push(builder.material(index)?);
+        shaders.push(builder.material(index, None)?);
     }
+    builder.out.shaders = shaders.clone();
     let fallback = builder.fallback_shader()?;
     // The floor's own surface, made when there is one. Tequila's renderer
     // never shades a shadow catcher, so its ground carries whatever material
@@ -693,11 +699,12 @@ fn conductor_colours(ior: &tequila_materials::fresnel::ComplexIor) -> (Spectrum,
     (f0, Spectrum { r: tint(f82.r, f0.r), g: tint(f82.g, f0.g), b: tint(f82.b, f0.b) })
 }
 
-/// Whether `new` differs from `old` only in where its instances are: the
-/// same meshes (by pointer, as the snapshot builder shares an unchanged one),
-/// materials, textures, lights and world. Such a change - a part dragged with
-/// the gizmo - needs only [`move_objects`].
-pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
+/// Whether `old` and `new` show the same things under the same light, apart
+/// from their materials and where their parts are: the same meshes (by
+/// pointer, as the snapshot builder shares an unchanged one), lights, world
+/// and background. `moves` lets parts be elsewhere; a shadow catcher moved is
+/// always a new scene.
+fn same_stage(old: &SceneSnapshot, new: &SceneSnapshot, moves: bool) -> bool {
     old.instances.len() == new.instances.len()
         && old.meshes.len() == new.meshes.len()
         && old.meshes.iter().zip(&new.meshes).all(|(a, b)| std::sync::Arc::ptr_eq(a, b))
@@ -707,18 +714,14 @@ pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
                 && a.visible_to_camera == b.visible_to_camera
                 && a.casts_shadows == b.casts_shadows
                 && a.shadow_catcher == b.shadow_catcher
-                && (a.shadow_catcher.is_none() || a.transform == b.transform)
+                && ((moves && a.shadow_catcher.is_none()) || a.transform == b.transform)
                 && a.light_proxy == b.light_proxy
         })
-        && old.materials == new.materials
-        && old.programs.len() == new.programs.len()
-        && old.programs.iter().zip(&new.programs).all(|(a, b)| match (a, b) {
-            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
-            (None, None) => true,
-            _ => false,
-        })
-        && std::sync::Arc::ptr_eq(&old.textures, &new.textures)
-        && std::sync::Arc::ptr_eq(&old.lights, &new.lights)
+        // By what they hold: every snapshot builds its light set anew, and a
+        // comparison by pointer took every edit for new lighting - a dragged
+        // part, and every step of a label being resized, translated the whole
+        // scene again, meshes and all.
+        && (std::sync::Arc::ptr_eq(&old.lights, &new.lights) || old.lights.lights() == new.lights.lights())
         && std::sync::Arc::ptr_eq(&old.environment, &new.environment)
         && std::mem::discriminant(&old.background) == std::mem::discriminant(&new.background)
         && match (&old.background, &new.background) {
@@ -726,6 +729,82 @@ pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
             (Background::Backplate { image: a }, Background::Backplate { image: b }) => std::sync::Arc::ptr_eq(a, b),
             _ => true,
         }
+}
+
+/// Whether `new` differs from `old` only in where its instances are. Such a
+/// change - a part dragged with the gizmo - needs only [`move_objects`].
+pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
+    same_stage(old, new, true) && changed_materials_of(old, new).is_some_and(|changed| changed.is_empty())
+}
+
+/// The materials `new` changed from `old`, when nothing else differs - a
+/// label resized, a colour picked - for [`update_materials`] to build again
+/// in place; `None` when anything else changed too, the parts' places among
+/// them.
+pub fn changed_materials(old: &SceneSnapshot, new: &SceneSnapshot) -> Option<Vec<usize>> {
+    if !same_stage(old, new, false) {
+        return None;
+    }
+    changed_materials_of(old, new)
+}
+
+/// The materials that differ, in their parameters, their program, their bump
+/// or a picture they read; `None` if there are not as many.
+fn changed_materials_of(old: &SceneSnapshot, new: &SceneSnapshot) -> Option<Vec<usize>> {
+    if old.materials.len() != new.materials.len() || old.programs.len() != new.programs.len() || old.bumps.len() != new.bumps.len() {
+        return None;
+    }
+    fn same<T>(a: Option<&std::sync::Arc<T>>, b: Option<&std::sync::Arc<T>>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    let same_textures = std::sync::Arc::ptr_eq(&old.textures, &new.textures) || old.textures.same_as(&new.textures);
+    let changed = (0..new.materials.len())
+        .filter(|&i| {
+            let program = new.programs.get(i).and_then(|p| p.as_ref());
+            old.materials[i] != new.materials[i]
+                || !same(old.programs.get(i).and_then(|p| p.as_ref()), program)
+                || !same(old.bumps.get(i).and_then(|b| b.as_ref()), new.bumps.get(i).and_then(|b| b.as_ref()))
+                || (!same_textures
+                    && program.is_some_and(|program| {
+                        program.requirements.textures.iter().any(|id| !old.textures.same_entry(&new.textures, *id))
+                    }))
+        })
+        .collect();
+    Some(changed)
+}
+
+/// Build the shaders of materials `changed` again in place, as `scene` has
+/// them, from an earlier translation's `shaders`: every mesh keeps its
+/// shader, and nothing but the shaders is touched. `Ok(false)` when the
+/// Cycles library cannot rebuild a shader in place, and a full translation
+/// is needed.
+///
+/// What a label dragged to a new size costs: one shader, where translating
+/// the scene again sent every mesh to the device and built its BVH anew at
+/// each step - on a 200 MB model, at the speed of the mouse.
+pub fn update_materials(
+    session: &mut Session,
+    scene: &SceneSnapshot,
+    shaders: &[Node],
+    changed: &[usize],
+    images: &mut Images,
+) -> Result<bool, String> {
+    if !session.can_reopen() || changed.iter().any(|&i| i >= shaders.len()) {
+        return Ok(false);
+    }
+    let mut out = Translation::default();
+    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new() };
+    for &index in changed {
+        builder.material(index, Some(shaders[index]))?;
+    }
+    for warning in &out.warnings {
+        eprintln!("Cycles: {warning}");
+    }
+    Ok(true)
 }
 
 /// Place the objects of an earlier translation where `scene` has them.
@@ -2622,10 +2701,14 @@ impl Builder<'_> {
         Ok(sum)
     }
 
-    fn material(&mut self, index: usize) -> Result<Node, String> {
+    /// Material `index`'s shader: a new one, or `reuse` built again.
+    fn material(&mut self, index: usize, reuse: Option<Node>) -> Result<Node, String> {
         let material: &Material = &self.scene.materials[index];
         let program = self.scene.programs.get(index).and_then(|p| p.as_deref());
-        let shader = self.session.shader(&format!("material{index}"))?;
+        let shader = match reuse {
+            Some(shader) => self.session.reopen(shader).ok_or("this Cycles library cannot rebuild a shader in place")??,
+            None => self.session.shader(&format!("material{index}"))?,
+        };
         let bsdf = self.session.node(shader, "principled_bsdf")?;
         let output = self.session.node(shader, "output")?;
 
@@ -3413,6 +3496,42 @@ mod tests {
         assert!(!only_moved(&old, &remeshed), "a rebuilt mesh was taken for a move");
 
         assert!(only_moved(&old, &old.clone()), "an unchanged scene was taken for a new one");
+
+        // Every snapshot the application makes builds its lights and its
+        // texture table anew, around the same lights and pictures.
+        let mut rebuilt = moved.clone();
+        rebuilt.lights = std::sync::Arc::new((*old.lights).clone());
+        rebuilt.textures = std::sync::Arc::new((*old.textures).clone());
+        assert!(only_moved(&old, &rebuilt), "a snapshot rebuilt around the same lights was taken for a new scene");
+    }
+
+    /// A changed material, and nothing else, is that material to build again;
+    /// with a part moved or a mesh rebuilt as well, it is a new scene.
+    #[test]
+    fn a_repainted_material_is_only_that_material() {
+        use tequila_core::math::Transform;
+        let old = tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+
+        let mut repainted = old.clone();
+        repainted.lights = std::sync::Arc::new((*old.lights).clone());
+        repainted.textures = std::sync::Arc::new((*old.textures).clone());
+        repainted.materials[0].base_color = Spectrum { r: 0.1, g: 0.9, b: 0.1 };
+        assert_eq!(changed_materials(&old, &repainted), Some(vec![0]));
+        assert_eq!(changed_materials(&old, &old.clone()), Some(vec![]));
+
+        let mut moved = repainted.clone();
+        moved.instances[0].transform = Transform::translation(vec3(0.5, 1.0, 0.0));
+        assert_eq!(changed_materials(&old, &moved), None, "a move was taken for a repaint");
+
+        let mut remeshed = repainted.clone();
+        remeshed.meshes[0] = std::sync::Arc::new((*old.meshes[0]).clone());
+        assert_eq!(changed_materials(&old, &remeshed), None, "a rebuilt mesh was taken for a repaint");
+
+        let mut relit = repainted;
+        relit.lights = std::sync::Arc::new(tequila_render_core::light::LightSet::default());
+        if !old.lights.lights().is_empty() {
+            assert_eq!(changed_materials(&old, &relit), None, "new lighting was taken for a repaint");
+        }
     }
 
     /// Up is up: Tequila's +Y is Cycles' +Z, and the frame keeps its

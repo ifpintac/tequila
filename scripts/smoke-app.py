@@ -1,14 +1,18 @@
 """Start a packaged Tequila, check that it answers on its scripting channel,
-take a screenshot of its window, and quit - in folders of its own, so the
-settings and work of whoever runs it are never read or touched.
+take a screenshot of its window, resize a label on a part over and over with
+the viewport rendering, as a drag does, and quit - in folders of its own, so
+the settings and work of whoever runs it are never read or touched.
 
 Usage: python3 scripts/smoke-app.py <Tequila.app | package folder> <screenshot.png>
 """
+import glob
 import os
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 
 target = Path(sys.argv[1]).resolve()
@@ -21,6 +25,45 @@ else:
     module = target / 'python'
 sys.path.insert(0, str(module))
 import tequila  # noqa: E402
+
+def write_label(path, width=64, height=32):
+    """A red label with a white band: a PNG written by hand, as the repository
+    keeps no picture of its own to use."""
+    rows = b''.join(b'\x00' + b''.join(
+        (b'\xff\xff\xff\xff' if height // 3 <= y < 2 * height // 3 else b'\xd0\x10\x10\xff') for _ in range(width))
+        for y in range(height))
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
+                     + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
+
+
+def resize_labels(client, box):
+    """The tester's crash on a Mac (2026-10-19): insert a label, change its
+    size, and Tequila closed. A part, a label on it, the Rendered view, and
+    sixty sizes in two seconds."""
+    label = box / 'label.png'
+    write_label(label)
+    # The part a new window opens with.
+    part = next(n['id'] for n in client.query('nodes')['nodes'] if n.get('kind') == 'part')
+    client.library.apply('Plastic Matte White', part)
+    material = next(m['id'] for m in client.query('materials')['materials']
+                    if m['used_by'] and m.get('name', '').startswith('Plastic Matte White'))
+    client.apply('material.add_decal', material=material, name='Label', path=str(label), role='color')
+    client.ui(viewport='rendered', tab='material')
+    time.sleep(5)
+    for i in range(60):
+        size = 0.002 + 0.05 * abs(((i % 20) - 10) / 10.0)
+        mapping = {'projection': 'planar', 'axis': 'y', 'real_world_units': True, 'scale': [size, size * 0.5, 1.0],
+                   'offset': [0.5, 0.5], 'pivot': [0.5, 0.5], 'rotation': 0, 'uv_set': 0, 'blend_sharpness': 6,
+                   'flip_u': False, 'flip_v': False, 'wrap_u': 'clamp', 'wrap_v': 'clamp'}
+        client.apply('material.set_decals', material=material, decals=[
+            {'enabled': True, 'mapping': mapping, 'metallic': False, 'name': 'Label', 'opacity': 1,
+             'roughness': 0.35, 'texture': 1}])
+        time.sleep(1 / 30)
+    time.sleep(5)
+    print('resized a label 60 times in the Rendered view')
 
 box = Path(tempfile.mkdtemp(prefix='tequila-smoke-'))
 home = box / 'home'
@@ -49,6 +92,13 @@ with open(log, 'w', encoding='utf-8') as output:
                 break
             time.sleep(0.5)
         print('screenshot:', shot, shot.stat().st_size if shot.is_file() else 'not written')
+        resize_labels(client, box)
+        labelled = shot.with_name(shot.stem + '-labels' + shot.suffix)
+        client.request('screenshot', path=str(labelled))
+        for _ in range(60):
+            if labelled.is_file() and labelled.stat().st_size > 0:
+                break
+            time.sleep(0.5)
         client.request('quit', discard=True)
         client.close()
         app.wait(timeout=60)
@@ -60,3 +110,9 @@ with open(log, 'w', encoding='utf-8') as output:
             app.kill()
         print('--- its output, last lines ---')
         print(''.join(log.read_text(encoding='utf-8', errors='replace').splitlines(True)[-40:]))
+        # What a crash left: Tequila's own report, and on a Mac the system's.
+        reports = sorted((home / '.tequila' / 'crashes').glob('crash-*.txt'))
+        reports += sorted(glob.glob(os.path.expanduser('~/Library/Logs/DiagnosticReports/Tequila*.ips')))
+        for report in reports:
+            print('--- crash report', report, '---')
+            print(Path(report).read_text(encoding='utf-8', errors='replace')[:6000])

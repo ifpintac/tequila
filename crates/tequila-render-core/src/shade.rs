@@ -73,6 +73,29 @@ impl TextureTable {
         self.entries.iter().filter(|e| e.is_some()).count()
     }
 
+    /// Whether `other` holds the same pictures and grids under the same ids:
+    /// the same allocations, as a snapshot rebuilt around unchanged files
+    /// has them, so nothing is compared pixel by pixel.
+    pub fn same_as(&self, other: &TextureTable) -> bool {
+        fn same<T>(a: &[Option<Arc<T>>], b: &[Option<Arc<T>>]) -> bool {
+            (0..a.len().max(b.len())).all(|i| match (a.get(i).and_then(|e| e.as_ref()), b.get(i).and_then(|e| e.as_ref())) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            })
+        }
+        same(&self.entries, &other.entries) && same(&self.volumes, &other.volumes)
+    }
+
+    /// Whether `id` names the same picture in both, or nothing in both.
+    pub fn same_entry(&self, other: &TextureTable, id: TextureId) -> bool {
+        match (self.get(id), other.get(id)) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

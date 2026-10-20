@@ -1594,6 +1594,11 @@ mod tests {
             before.instances[0].transform, after.instances[0].transform,
             "nothing actually moved, so this proves nothing"
         );
+        // And Cycles' live view takes it for a move, not a new scene.
+        assert!(
+            tequila_render_cycles::translate::only_moved(&before, &after),
+            "Cycles would translate the whole scene again for a dragged part"
+        );
     }
 
     /// A material change does not touch geometry either, and neither does a

@@ -116,6 +116,7 @@ api! {
     fsc_clear: fn(*mut Session);
     @optional {
         fsc_mesh_colors: fn(*mut Session, Node, c_int, *const f32) -> c_int;
+        fsc_shader_reopen: fn(*mut Session, Node) -> c_int;
     }
 }
 

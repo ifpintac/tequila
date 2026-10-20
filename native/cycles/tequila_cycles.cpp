@@ -770,6 +770,17 @@ int fsc_shader_commit(FscSession *s, FscNode handle)
   return 1;
 }
 
+int fsc_shader_reopen(FscSession *s, FscNode handle)
+{
+  Shader *shader = static_cast<Shader *>(handle);
+  if (s->pending.count(shader) != 0) {
+    fail("shader is open for editing already");
+    return 0;
+  }
+  s->pending[shader] = make_unique<ShaderGraph>();
+  return 1;
+}
+
 void fsc_set_world(FscSession *s, FscNode shader)
 {
   const EditLock lock(s);
