@@ -72,10 +72,10 @@ def drawn(client):
 
 def first_frame(client, what):
     """Wait for the viewport to show a picture. The first time Cycles runs
-    with a cache of its own, as here, it compiles its graphics-card code
-    first, minutes on a Mac, and a label resized before it ends was never
-    rendered: the test passed without testing. On a machine whose card takes
-    longer than FIRST_FRAME_SECONDS, carry on and say so."""
+    it compiles its graphics-card code, minutes on a Mac, and a label resized
+    before it ends was never rendered: the test passed without testing. On a
+    machine whose card takes longer than FIRST_FRAME_SECONDS (GitHub's Mac
+    gave no picture in twenty minutes), carry on and say so."""
     seconds = float(os.environ.get('FIRST_FRAME_SECONDS', '600'))
     deadline = time.time() + seconds
     while time.time() < deadline:
@@ -107,7 +107,7 @@ def resize_labels(client, box):
                     if m['used_by'] and m.get('name', '').startswith('Plastic Matte White'))
     client.apply('material.add_decal', material=material, name='Label', path=str(label), role='color')
     say('added a label')
-    first_frame(client, 'with the label')
+    rendering = first_frame(client, 'with the label')
     # The label as Tequila fitted it to the part, its size changed as a drag
     # on the size field does: a mapping written here instead put it half a
     # metre off a part 10 cm across, and nothing was ever drawn.
@@ -120,8 +120,9 @@ def resize_labels(client, box):
         client.apply('material.set_decals', material=material, decals=[decal])
         time.sleep(1 / 30)
     client.apply('material.set_decals', material=material, decals=[fitted])
-    first_frame(client, 'after resizing it')
-    say('resized a label 60 times in the Rendered view')
+    if rendering:
+        first_frame(client, 'after resizing it')
+    say('resized a label 60 times in the Rendered view' + ('' if rendering else ', with no picture yet'))
 
 
 def wait_for(what, check, seconds=120):
@@ -203,6 +204,11 @@ home = box / 'home'
 for folder in (home, box / 'Roaming', box / 'Local'):
     folder.mkdir(parents=True)
 env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), APPDATA=str(box / 'Roaming'), LOCALAPPDATA=str(box / 'Local'))
+# Cycles' compiled graphics-card code is kept under ~/.cache on a Mac, and is
+# neither settings nor work: the real one, so a Mac that has rendered before
+# shows a picture in seconds, not after minutes of compiling.
+if os.name != 'nt':
+    env['XDG_CACHE_HOME'] = os.environ.get('XDG_CACHE_HOME') or str(Path.home() / '.cache')
 log = box / 'tequila.log'
 with open(log, 'w', encoding='utf-8') as output:
     app = subprocess.Popen([str(program)], env=env, stdout=output, stderr=subprocess.STDOUT)
