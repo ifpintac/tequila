@@ -23,6 +23,7 @@
 #include "scene/shader.h"
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
+#include "scene/volume.h"
 #include "session/buffers.h"
 #include "session/output_driver.h"
 #include "session/session.h"
@@ -449,6 +450,13 @@ static void init_once(const char *kernel_dir)
       log_level_set(string(level));
     }
     path_init(kernel_dir ? kernel_dir : "");
+    /* Cycles keeps the cache folder in a static string it fills on first
+     * use, without a lock, and the Metal device's kernel threads ask for it
+     * together at the first render: two filling it at once corrupted the
+     * heap (an abort in path_cache_get, or NSURL refusing a mangled path in
+     * MetalKernelPipeline::compile). Filled once here, before any device
+     * exists, they only ever read it. */
+    path_cache_get("");
   });
 }
 
@@ -1231,6 +1239,16 @@ void fsc_clear_scene(FscSession *s)
 {
   const EditLock lock(s);
   Scene *scene = s->scene();
+  /* The volume manager remembers each object it built a volume octree for,
+   * by pointer, and Cycles' bulk delete_nodes - unlike delete_node - never
+   * tells it. Those objects, freed below, were read again at the next octree
+   * build: update_root_indices wrote through a freed object's index, and the
+   * Rendered view crashed after a few edits to glass, acrylic or liquids.
+   * Forgotten here, while every object is still alive: tag_update(geometry)
+   * drops each object that uses the geometry, whatever its shader. */
+  for (Geometry *geom : scene->geometry) {
+    scene->volume_manager->tag_update(geom);
+  }
   std::set<Object *> objects(scene->objects.begin(), scene->objects.end());
   scene->delete_nodes(objects);
   std::set<Geometry *> geometry(scene->geometry.begin(), scene->geometry.end());
