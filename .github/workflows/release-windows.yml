@@ -83,8 +83,16 @@ jobs:
             Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
             $unpacked = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($url))
             Expand-Archive -Path $zip -DestinationPath $unpacked -Force
+            # An archive inside it is unpacked where it is.
+            Get-ChildItem $unpacked -Recurse -Include *.zip, *.7z | ForEach-Object {
+              & 7z x $_.FullName "-o$($_.DirectoryName)" -y | Out-Null
+              Remove-Item $_.FullName
+            }
             $found = Get-ChildItem $unpacked -Recurse -Filter $marker | Select-Object -First 1
-            if (-not $found) { throw "No $marker in $url" }
+            if (-not $found) {
+              Get-ChildItem $unpacked -Recurse -Depth 2 | Select-Object -First 60 | ForEach-Object { "  $($_.FullName)" }
+              throw "No $marker in $url"
+            }
             $root = $found.FullName
             for ($i = 0; $i -lt $levels; $i++) { $root = Split-Path -Parent $root }
             Write-Host "$url -> $root"
