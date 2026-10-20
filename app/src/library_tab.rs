@@ -992,7 +992,8 @@ pub fn entry_key(entry: &LibraryEntry) -> u64 {
 }
 
 /// What a library tile is rendered with, at `density` pixels a point
-/// (`thumbnail::density`).
+/// (`thumbnail::density`): for the tests that judge the shelf's look.
+#[cfg(test)]
 pub(crate) fn thumbnail_settings_at(density: usize) -> PreviewSettings {
     tile_settings(96 * density.max(1))
 }
