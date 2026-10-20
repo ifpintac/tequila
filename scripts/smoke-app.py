@@ -69,16 +69,17 @@ def resize_labels(client, box):
     sixty sizes in two seconds."""
     label = box / 'label.png'
     write_label(label)
-    # The part a new window opens with.
+    # The part a new window opens with. The Rendered view first: a runner
+    # with no graphics card draws the Solid view's shaders in software, and a
+    # procedural material there took minutes a frame.
     part = next(n['id'] for n in client.query('nodes')['nodes'] if n.get('kind') == 'part')
+    client.ui(viewport='rendered', tab='material')
     client.library.apply('Plastic Matte White', part)
     say('applied a library material')
     material = next(m['id'] for m in client.query('materials')['materials']
                     if m['used_by'] and m.get('name', '').startswith('Plastic Matte White'))
     client.apply('material.add_decal', material=material, name='Label', path=str(label), role='color')
     say('added a label')
-    client.ui(viewport='rendered', tab='material')
-    say('Rendered view')
     time.sleep(5)
     for i in range(60):
         size = 0.002 + 0.05 * abs(((i % 20) - 10) / 10.0)
@@ -165,11 +166,12 @@ with open(log, 'w', encoding='utf-8') as output:
                 break
             time.sleep(0.5)
         say('screenshot:', shot, shot.stat().st_size if shot.is_file() else 'not written')
-        resize_labels(client, box)
-        # Two projects for Finder to open, after.
+        # Two projects for Finder to open, after: of the demo as it opens,
+        # whose plain material a runner draws quickly.
         projects = [box / 'second.tequila', box / 'first.tequila']
         for project in projects:
             client.save(project)
+        resize_labels(client, box)
         labelled = shot.with_name(shot.stem + '-labels' + shot.suffix)
         client.request('screenshot', path=str(labelled))
         for _ in range(60):
