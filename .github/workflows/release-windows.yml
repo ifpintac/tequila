@@ -28,9 +28,6 @@ on:
         required: false
         default: ""
 
-  # TEMPORARY: to try the workflow from the work branch before it is on main.
-  push:
-    branches: [round2]
 
 permissions:
   contents: write
