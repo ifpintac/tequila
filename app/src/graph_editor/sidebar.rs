@@ -393,6 +393,18 @@ fn legacy_controls(ui: &mut egui::Ui, project: &Project, kind: &mut NodeKind) ->
             hint(ui, "The colour the mesh carries at each vertex, blended across its triangles. White where the model has none.");
             false
         }
+        NodeKind::Group(group) => {
+            hint(ui, group.description());
+            ui.add_space(4.0);
+            egui::Grid::new("group-outputs").num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
+                for output in group.outputs() {
+                    ui.label(egui::RichText::new(output.name).small());
+                    hint(ui, output.tip);
+                    ui.end_row();
+                }
+            });
+            false
+        }
         NodeKind::Occlusion { radius, contrast } => {
             let mut changed = false;
             let mut millimetres = *radius * 1000.0;

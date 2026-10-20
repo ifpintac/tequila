@@ -50,6 +50,12 @@ pub enum Param {
     TransmissionWeight,
     TransmissionColor,
     TransmissionDepth,
+    /// The colour the surface itself gives light passing through it, the
+    /// square root at each crossing so that in and out again is the colour
+    /// once - Cycles' principled glass's base colour. With a depth, on top
+    /// of what the volume absorbs: a tinted plastic is coloured both at its
+    /// skin and through its thickness, and its thin edges are not clear.
+    TransmissionTint,
     TransmissionScatter,
     ScatterAnisotropy,
     VolumeDensity,
@@ -112,6 +118,7 @@ impl Param {
             Param::TransmissionWeight => "Transmission",
             Param::TransmissionColor => "Transmission Color",
             Param::TransmissionDepth => "Transmission Depth",
+            Param::TransmissionTint => "Surface Tint",
             Param::TransmissionScatter => "Scatter",
             Param::ScatterAnisotropy => "Scatter Anisotropy",
             Param::VolumeDensity => "Density",
@@ -149,7 +156,7 @@ impl Param {
     }
 
     /// Every parameter, for the types that expose all of them.
-    pub const ALL: [Param; 48] = [
+    pub const ALL: [Param; 49] = [
         Param::BaseWeight,
         Param::BaseColor,
         Param::BaseMetalness,
@@ -165,6 +172,7 @@ impl Param {
         Param::TransmissionWeight,
         Param::TransmissionColor,
         Param::TransmissionDepth,
+        Param::TransmissionTint,
         Param::TransmissionScatter,
         Param::ScatterAnisotropy,
         Param::VolumeDensity,
@@ -830,9 +838,13 @@ impl MaterialType {
             MaterialType::PlasticTransparent => vec![
                 TransmissionColor,
                 TransmissionDepth,
+                TransmissionTint,
+                TransmissionScatter,
+                ScatterAnisotropy,
                 SpecularRoughness,
                 SpecularIor,
                 MediumPriority,
+                Bump,
             ],
             MaterialType::RealCloth => vec![
                 BaseColor,
@@ -941,6 +953,7 @@ impl Param {
             Param::TransmissionWeight => "transmission_weight",
             Param::TransmissionColor => "transmission_color",
             Param::TransmissionDepth => "transmission_depth",
+            Param::TransmissionTint => "transmission_tint",
             Param::TransmissionScatter => "transmission_scatter",
             Param::ScatterAnisotropy => "transmission_scatter_anisotropy",
             Param::VolumeDensity => "volume_density",
@@ -994,6 +1007,7 @@ impl Param {
             "transmission_weight" => Param::TransmissionWeight,
             "transmission_color" => Param::TransmissionColor,
             "transmission_depth" => Param::TransmissionDepth,
+            "transmission_tint" => Param::TransmissionTint,
             "transmission_scatter" => Param::TransmissionScatter,
             "transmission_scatter_anisotropy" => Param::ScatterAnisotropy,
             "volume_density" => Param::VolumeDensity,
@@ -1051,6 +1065,7 @@ impl Param {
             Param::TransmissionWeight => Some(ParamValue::Scalar(material.transmission_weight)),
             Param::TransmissionColor => Some(ParamValue::Color(material.transmission_color)),
             Param::TransmissionDepth => Some(ParamValue::Scalar(material.transmission_depth)),
+            Param::TransmissionTint => Some(ParamValue::Color(material.transmission_tint)),
             Param::TransmissionScatter => Some(ParamValue::Color(material.transmission_scatter)),
             Param::ScatterAnisotropy => Some(ParamValue::Scalar(material.transmission_scatter_anisotropy)),
             Param::VolumeDensity => Some(ParamValue::Scalar(material.volume_density)),
@@ -1107,6 +1122,7 @@ impl Param {
             (Param::TransmissionWeight, ParamValue::Scalar(value)) => material.transmission_weight = value,
             (Param::TransmissionColor, ParamValue::Color(value)) => material.transmission_color = value,
             (Param::TransmissionDepth, ParamValue::Scalar(value)) => material.transmission_depth = value,
+            (Param::TransmissionTint, ParamValue::Color(value)) => material.transmission_tint = value,
             (Param::TransmissionScatter, ParamValue::Color(value)) => material.transmission_scatter = value,
             (Param::ScatterAnisotropy, ParamValue::Scalar(value)) => material.transmission_scatter_anisotropy = value,
             (Param::VolumeDensity, ParamValue::Scalar(value)) => material.volume_density = value,
@@ -1194,6 +1210,7 @@ impl Param {
             Param::TransmissionWeight => ParamUi::Scalar,
             Param::TransmissionColor => ParamUi::Color,
             Param::TransmissionDepth => ParamUi::Scalar,
+            Param::TransmissionTint => ParamUi::Color,
             // Per channel, and far past 1 for anything milky: numbers, not a
             // colour picker, which holds 0 to 1.
             Param::TransmissionScatter => ParamUi::Vector,
@@ -1288,6 +1305,7 @@ impl Param {
             Param::TransmissionWeight => Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false }),
             Param::TransmissionColor => None,
             Param::TransmissionDepth => Some(ParamRange { low: 0.0, high: 1000.0, logarithmic: true }),
+            Param::TransmissionTint => None,
             Param::TransmissionScatter => Some(ParamRange { low: 0.0, high: 1000.0, logarithmic: true }),
             Param::ScatterAnisotropy => Some(ParamRange { low: -1.0, high: 1.0, logarithmic: false }),
             Param::VolumeDensity => Some(ParamRange { low: 0.0, high: 100.0, logarithmic: true }),
@@ -1556,6 +1574,7 @@ mod tests {
             transmission_weight: 0.37,
             transmission_color: spectrum(0.13, 0.24, 0.35),
             transmission_depth: 4.5,
+            transmission_tint: spectrum(0.61, 0.72, 0.83),
             transmission_scatter: spectrum(0.14, 0.25, 0.36),
             transmission_scatter_anisotropy: 0.21,
             volume_density: 1.9,
@@ -2181,6 +2200,12 @@ mod exposed_parameters_do_something {
             MaterialType::Liquid,
             Param::ScatterAnisotropy,
             "the default liquid is clear; scatter is zero",
+        ),
+        // So does a clear plastic, until it is hazy as translucent filament.
+        (
+            MaterialType::PlasticTransparent,
+            Param::ScatterAnisotropy,
+            "the default clear plastic scatters nothing",
         ),
         // Anisotropy shapes a specular lobe, and cloth's is dominated by fuzz.
         (

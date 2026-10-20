@@ -96,7 +96,7 @@ pub fn family(kind: &NodeKind) -> Family {
         },
         NodeKind::Constant(_) | NodeKind::Mapping2d { .. } | NodeKind::VertexColor => Family::Input,
         NodeKind::ImageTexture { .. } | NodeKind::ImageAlpha { .. } | NodeKind::VolumeMap { .. } => Family::Texture,
-        NodeKind::Procedural { .. } => Family::Pattern,
+        NodeKind::Procedural { .. } | NodeKind::Group(_) => Family::Pattern,
         NodeKind::Gradient { .. } | NodeKind::Remap { .. } | NodeKind::Clamp { .. } | NodeKind::Channel { .. } => Family::Converter,
         NodeKind::Mix | NodeKind::Multiply | NodeKind::Add | NodeKind::Invert => Family::Color,
         NodeKind::Bump { .. } => Family::Vector,
@@ -278,6 +278,7 @@ pub fn inline_of(node: &Node, index: usize, socket: Socket, ty: SocketType) -> I
                 SocketType::Bool => Inline::Bool,
             }
         }
+        NodeKind::Group(group) => Inline::Number { range: group.inputs().get(index).map(|i| (i.min, i.max)) },
         NodeKind::Reroute { .. } => Inline::Label,
         NodeKind::Mix => match index {
             2 => Inline::Number { range: Some((0.0, 1.0)) },
@@ -297,6 +298,7 @@ pub fn inline_of(node: &Node, index: usize, socket: Socket, ty: SocketType) -> I
 fn note(node: &Node, texture_name: &dyn Fn(tequila_materials::graph::TextureId) -> String) -> Option<String> {
     Some(match &node.kind {
         NodeKind::Procedural { seed, .. } => format!("Seed {seed} · settings in the sidebar"),
+        NodeKind::Group(group) => format!("A group of {} nodes · about it in the sidebar", group.expansion().len()),
         NodeKind::ImageTexture { texture, .. } | NodeKind::ImageAlpha { texture, .. } => texture_name(*texture),
         NodeKind::VolumeMap { volume } => texture_name(*volume),
         NodeKind::Mapping2d { mapping } => format!("{:?}", mapping.projection),

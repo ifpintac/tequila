@@ -194,6 +194,10 @@ fn node_to_json(id: NodeId, node: &Node) -> Value {
                 .set("seed", *seed as f64);
         }
         NodeKind::Mix | NodeKind::Multiply | NodeKind::Add | NodeKind::Invert => {}
+        // By name: what is inside is the group as this Tequila builds it.
+        NodeKind::Group(group) => {
+            object.set("group", group.key());
+        }
         NodeKind::Node(shader) => {
             object.set("type", shader.key());
             let mut settings = Object::new();
@@ -479,6 +483,13 @@ fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
                 _ => tequila_materials::graph::SocketType::Color,
             },
         },
+        "group" => {
+            let key = value.get("group").and_then(|v| v.as_str()).unwrap_or("");
+            let Some(group) = tequila_materials::groups::NodeGroup::from_key(key) else {
+                return Err(FormatError::Invalid(format!("{name}: `{key}` is not a node group this version has")));
+            };
+            NodeKind::Group(group)
+        }
         "node" => {
             let key = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
             let Some(mut shader) = ShaderNode::from_key(key) else {
@@ -562,6 +573,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::ImageTexture { .. } => "image_texture",
         NodeKind::ImageAlpha { .. } => "image_alpha",
         NodeKind::Node(_) => "node",
+        NodeKind::Group(_) => "group",
         NodeKind::Mix => "mix",
         NodeKind::Multiply => "multiply",
         NodeKind::Add => "add",

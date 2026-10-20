@@ -15,6 +15,7 @@ pub mod bsdf;
 pub mod energy;
 pub mod fresnel;
 pub mod graph;
+pub mod groups;
 pub mod lobes;
 pub mod material_type;
 pub mod nodes;

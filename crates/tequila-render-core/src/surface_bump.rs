@@ -10,15 +10,19 @@
 //! - **A height**, in scene units — anything else. Typically a pattern or a
 //!   height map through a Bump node, which gives the 0-to-1 value its depth.
 //!   The slope is measured by evaluating just the bump's part of the graph a
-//!   footprint either side of the point, along the surface, in world space.
+//!   little either side of the point, along the surface, in world space.
 //!
 //! Measuring in world space is what makes a bump mean the same thing on every
 //! part: half a millimetre deep is half a millimetre on a watch and on a car,
 //! however each was scaled on import and however its UVs were laid out.
 //!
-//! The step is the ray's footprint, as §5.4 asks, so detail finer than a
-//! pixel fades out rather than turning to noise that crawls as the camera
-//! moves.
+//! The step is a tenth of the ray's footprint, [`BUMP_FILTER_WIDTH`]: what
+//! Cycles' bump node takes by default, and so what Tequila's Cycles
+//! translation renders. Detail near a pixel's size is measured where each
+//! sample lands, and the pixel's samples average it, in both engines alike.
+//! A whole footprint either side, as it was, smoothed the slope over two
+//! pixels: a 3D print's 0.2 mm layer lines, four pixels apart in a close-up,
+//! shaded a third shallower here than in Cycles and in Blender.
 
 use crate::intersect::Hit;
 use crate::material::Material;
@@ -31,6 +35,9 @@ use tequila_texture::projection::SurfacePoint;
 use tequila_texture::texture::MapRole;
 use tequila_texture::TangentFrame;
 use std::sync::Arc;
+
+/// The share of the ray's footprint a bump's slope is measured across.
+pub const BUMP_FILTER_WIDTH: f32 = 0.1;
 
 /// What drives a material's Bump socket.
 #[derive(Debug)]
@@ -173,9 +180,9 @@ pub fn bumped_normal(
                 .unwrap_or_else(|| TangentFrame::from_normal(n).tangent);
             let bitangent = n.cross(tangent);
             let transform = &scene.instance(hit.instance).transform;
-            // A footprint in world units, floored so a sharp view still has
-            // something to difference across.
-            let step = (point.footprint * point.scale).max(1e-6);
+            // A tenth of a footprint in world units, floored so a sharp view
+            // still has something to difference across.
+            let step = (point.footprint * point.scale * BUMP_FILTER_WIDTH).max(1e-6);
 
             // The height a world-space offset along the surface away.
             let mut height = |offset: Vec3| -> f32 {

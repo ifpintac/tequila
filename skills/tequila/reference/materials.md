@@ -16,6 +16,7 @@ Tequila's materials are OpenPBR. `tequila_query {"what": "api"}` is the authorit
 | Composite (20) | Carbon Fibre, Carbon Fibre 12K Twill, Carbon Fibre Matte, Forged Carbon, Kevlar Twill, Fiberglass Gelcoat White |
 | Stone (21) | Marble Calacatta, Marble Black, Granite Absolute Black, Concrete Polished, Terrazzo, Slate, Travertine |
 | Glass (9) | Glass Clear, Glass Frosted, Glass Reeded, Glass Blue Tint, Acrylic Clear, Acrylic Smoked, Sapphire Crystal |
+| FDM 3D Print (11) | FDM PLA White, Black, Grey, Red, Blue, Yellow; FDM PLA Translucent Natural, Red, Orange, Green, Blue. Real 0.2 mm layer lines, seam and top raster, built along the part's own Z (STL, STEP); for a part drawn Y up (glTF, OBJ) set the FDM Layer Lines node's Build Along Z to 0 |
 | Others | Gem: Diamond, Ruby, Sapphire Blue. Liquid: Water, Coffee Black, Red Wine, Milk Whole. Ceramic: Porcelain, Ceramic Glazed White, Ceramic Matte. Translucent: Wax Candle, Jade, Soap White. Leather: Leather Black, Leather Tan, Leather Cognac. Light: LED Warm White, LED Cool White, Screen Glow. Other: Cork, Paper Matte |
 
 Apply with `{"op": "library", "action": "apply", "name": "<exact name>", "nodes": [ids]}` through `tequila_request`. Pick by what the part is made of in the real product, then adjust colour or roughness if asked. A preset is far more realistic than a material built from scratch: its grain, brushing, weave or flakes are procedural and sized for real objects.
@@ -59,6 +60,7 @@ Set with `{"command": "material.set_parameter", "material": <id>, "parameter": "
 | `specular_roughness_anisotropy`, `specular_rotation` | Brushed-metal stretch and its direction | Anisotropy 0.9-0.97 with roughness about 0.3 for brushed |
 | `coat_weight`, `coat_roughness` | A clear lacquer over the surface | Car paint 1 and 0.02-0.05 |
 | `transmission_weight`, `transmission_color`, `transmission_depth` | Light through the material; the colour it takes on after `transmission_depth` metres | Glass 1; tinted glass colour over 0.01-0.05 m |
+| `transmission_tint` | The surface's own tint on light through it, on top of the volume's colour: what makes a thin edge of dyed plastic coloured | White unless the plastic is dyed; translucent PLA 0.45 + 0.55 x its colour |
 | `subsurface_weight`, `subsurface_color`, `subsurface_radius` | Light scattering inside (wax, skin) | Radius a few millimetres: 0.002-0.01 |
 | `fuzz_weight`, `fuzz_color`, `fuzz_roughness` | The soft sheen of fabric | Velvet 1 |
 | `flake_weight`, `flake_color`, `flake_size` | Metallic flakes in paint | Size 0.00002-0.0001 m |

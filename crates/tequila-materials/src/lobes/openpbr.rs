@@ -381,12 +381,13 @@ impl OpenPbrBsdf {
                     // closed ball 0.25. The full colour at every crossing
                     // squared it, and Poly Haven's dirty bulb, authored in
                     // Blender, came out several times too dark.
-                    let tint = if has_depth {
-                        Spectrum::ONE
+                    // The surface tint is the surface's own, depth or not.
+                    let c = if has_depth {
+                        material.transmission_tint
                     } else {
-                        let c = material.transmission_color;
-                        Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() }
+                        material.transmission_color * material.transmission_tint
                     };
+                    let tint = Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() };
                     let transmission = DielectricTransmission::new(
                         rough(material.specular_roughness),
                         material.specular_ior,

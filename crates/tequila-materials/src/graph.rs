@@ -255,6 +255,9 @@ pub enum NodeKind {
     /// A Blender shader node (`crate::nodes`): textures, converters, colour
     /// and vector nodes, and the surface inputs they read.
     Node(crate::nodes::ShaderNode),
+    /// A node made of other nodes (`crate::groups`), with numbers in and
+    /// values out. Replaced by what is inside it before compiling.
+    Group(crate::groups::NodeGroup),
     /// A literal.
     Constant(Value),
     /// Texture coordinates from the geometry, through a projection.
@@ -512,6 +515,12 @@ impl NodeKind {
                 Vec::new()
             }
             NodeKind::Reroute { ty } => vec![(Socket::Input(0), *ty, "In")],
+            NodeKind::Group(group) => group
+                .inputs()
+                .iter()
+                .enumerate()
+                .map(|(i, input)| (Socket::Input(i as u8), SocketType::Float, input.name))
+                .collect(),
             NodeKind::Node(node) => node
                 .inputs()
                 .iter()
@@ -526,6 +535,7 @@ impl NodeKind {
     pub fn outputs(&self) -> Vec<(&'static str, SocketType)> {
         match self {
             NodeKind::Node(node) => node.outputs().iter().map(|o| (o.name, o.ty)).collect(),
+            NodeKind::Group(group) => group.outputs().iter().map(|o| (o.name, o.ty)).collect(),
             other => other
                 .output_type()
                 .map(|ty| {
@@ -546,6 +556,7 @@ impl NodeKind {
     pub fn output_type_at(&self, index: u8) -> Option<SocketType> {
         match self {
             NodeKind::Node(node) => node.outputs().get(index as usize).map(|o| o.ty),
+            NodeKind::Group(group) => group.outputs().get(index as usize).map(|o| o.ty),
             other if index == 0 => other.output_type(),
             _ => None,
         }
@@ -556,6 +567,7 @@ impl NodeKind {
     pub fn input_default(&self, index: usize) -> Option<Value> {
         match self {
             NodeKind::Node(node) => node.inputs().get(index).map(|s| s.default),
+            NodeKind::Group(group) => group.inputs().get(index).map(|i| Value::Float(i.default)),
             _ => None,
         }
     }
@@ -606,6 +618,7 @@ impl NodeKind {
             NodeKind::VolumeMap { .. } => Some(SocketType::Float),
             NodeKind::Reroute { ty } => Some(*ty),
             NodeKind::Node(node) => node.outputs().first().map(|o| o.ty),
+            NodeKind::Group(group) => group.outputs().first().map(|o| o.ty),
             NodeKind::Mix
             | NodeKind::Multiply
             | NodeKind::Add
@@ -627,6 +640,7 @@ impl NodeKind {
         matches!(
             self,
             NodeKind::Mapping2d { .. }
+                | NodeKind::Group(_)
                 | NodeKind::Procedural { .. }
                 | NodeKind::ImageTexture { .. }
                 | NodeKind::ImageAlpha { .. }
@@ -662,6 +676,7 @@ impl NodeKind {
             NodeKind::Fuzz { .. } => "Fuzz",
             NodeKind::Reroute { .. } => "Reroute",
             NodeKind::Node(node) => node.label(),
+            NodeKind::Group(group) => group.label(),
         }
     }
 
@@ -727,6 +742,8 @@ impl NodeKind {
             NodeKind::VertexColor => Value::Color(Spectrum::ONE),
             NodeKind::VolumeMap { .. } => Value::Float(1.0),
             NodeKind::Bubbles { .. } | NodeKind::Fuzz { .. } => Value::Float(0.0),
+            // Expanded before compiling, so never evaluated whole.
+            NodeKind::Group(_) => Value::Float(0.0),
             NodeKind::Node(node) => node.evaluate(inputs, 0),
         }
     }
@@ -1006,6 +1023,7 @@ impl MaterialGraph {
                 | NodeKind::VolumeMap { volume: texture } => texture.hash(&mut hasher),
                 // Its settings change what it computes and what it outputs.
                 NodeKind::Node(node) => format!("{node:?}").hash(&mut hasher),
+                NodeKind::Group(group) => group.hash(&mut hasher),
                 NodeKind::Procedural { procedural, seed } => {
                     // The discriminant is already hashed above; what
                     // distinguishes two of the same kind is the seed, and the
@@ -1115,7 +1133,7 @@ impl MaterialGraph {
             SocketType::Float | SocketType::Color => true,
             // A Blender node's vector, as Blender's viewer shows one; a
             // projection's coordinates are not a picture of anything.
-            SocketType::Vector | SocketType::Normal => matches!(kind, NodeKind::Node(_)),
+            SocketType::Vector | SocketType::Normal => matches!(kind, NodeKind::Node(_) | NodeKind::Group(_)),
             SocketType::Bool => false,
         };
         if !showable {
@@ -1550,6 +1568,10 @@ impl MaterialGraph {
         // with each wire joined through them.
         if self.nodes.values().any(|n| matches!(n.kind, NodeKind::Reroute { .. })) {
             return self.without_reroutes().compile();
+        }
+        // A group is the nodes inside it.
+        if self.nodes.values().any(|n| matches!(n.kind, NodeKind::Group(_))) {
+            return self.without_groups().compile();
         }
         let order = self.topological_order()?;
 

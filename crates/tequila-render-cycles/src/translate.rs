@@ -1437,6 +1437,29 @@ impl Builder<'_> {
         Ok(Slot::Link(node, "Value"))
     }
 
+    /// Tequila's anisotropy as Cycles' principled shader takes it. Tequila
+    /// stretches the lobe by an aspect of (1 - a^2)^(1/4)
+    /// (`Ggx::from_roughness`), Cycles by sqrt(1 - 0.9 a); the same aspect is
+    /// a Cycles anisotropy of (1 - sqrt(1 - a^2)) / 0.9. Passed through as it
+    /// was, a brushed metal's 0.7 stretched its highlight nearly twice as far
+    /// in Cycles as in Tequila's renderer.
+    fn cycles_anisotropy(&mut self, shader: Shader, a: Slot) -> Result<Slot, String> {
+        let convert = |a: f32| {
+            let a = a.clamp(0.0, 0.99);
+            (1.0 - (1.0 - a * a).sqrt()) / 0.9
+        };
+        if let Slot::Value(v) = a {
+            return Ok(Slot::Value(Value::Float(convert(v.as_float()))));
+        }
+        let clamped = self.float_op(shader, "minimum", a, Slot::Value(Value::Float(0.99)))?;
+        let clamped = self.float_op(shader, "maximum", clamped, Slot::Value(Value::Float(0.0)))?;
+        let square = self.float_op(shader, "multiply", clamped, clamped)?;
+        let rest = self.float_op(shader, "subtract", Slot::Value(Value::Float(1.0)), square)?;
+        let root = self.float_op(shader, "sqrt", rest, Slot::Value(Value::Float(0.0)))?;
+        let short = self.float_op(shader, "subtract", Slot::Value(Value::Float(1.0)), root)?;
+        self.float_op(shader, "divide", short, Slot::Value(Value::Float(0.9)))
+    }
+
     /// `a` towards `b` by `t`, for numbers.
     fn float_mix(&mut self, shader: Shader, a: Slot, b: Slot, t: Slot) -> Result<Slot, String> {
         let difference = self.float_op(shader, "subtract", b, a)?;
@@ -2645,15 +2668,18 @@ impl Builder<'_> {
         // transmission weight with a shell made below.
         let thin = m.geometry_thin_walled && (m.transmission_weight > 0.0 || driven.contains_key(&Param::TransmissionWeight));
         let transmissive = !thin && (m.transmission_weight >= 0.5 || driven.contains_key(&Param::TransmissionWeight));
-        // Cycles tints transmission by the base colour; Tequila has a colour
-        // of its own for it. Glass takes its transmission colour - unless it
-        // has a depth, when the colour belongs to the volume inside, which
-        // absorbs it along the way (below), and the surface is clear.
+        // Cycles tints transmission by the base colour, the square root at
+        // each crossing; Tequila has a colour of its own for it, and a
+        // surface tint. Glass takes its transmission colour - unless it has
+        // a depth, when the colour belongs to the volume inside, which
+        // absorbs it along the way (below) - and the surface tint either way.
         let volume = !thin && m.transmission_weight > 0.0 && m.transmission_depth > 0.0;
+        let surface_tint = value(Param::TransmissionTint, Value::Color(m.transmission_tint));
         let base = if transmissive && volume {
-            Slot::Value(Value::Color(Spectrum::ONE))
+            surface_tint
         } else if transmissive {
-            value(Param::TransmissionColor, Value::Color(m.transmission_color))
+            let colour = value(Param::TransmissionColor, Value::Color(m.transmission_color));
+            self.apply(shader, &NodeKind::Multiply, &[colour, surface_tint], 0)?
         } else {
             value(Param::BaseColor, Value::Color(m.base_color * m.base_weight))
         };
@@ -2711,7 +2737,8 @@ impl Builder<'_> {
         }
         self.session.set_float(bsdf, "specular_ior_level", 0.5 * m.specular_weight)?;
         self.feed(shader, bsdf, "specular_tint", edge, true)?;
-        self.feed(shader, bsdf, "anisotropic", value(Param::Anisotropy, Value::Float(m.specular_roughness_anisotropy)), false)?;
+        let anisotropy = self.cycles_anisotropy(shader, value(Param::Anisotropy, Value::Float(m.specular_roughness_anisotropy)))?;
+        self.feed(shader, bsdf, "anisotropic", anisotropy, false)?;
         // Tequila's rotation runs 0 to 1 over a half turn (an anisotropic
         // lobe turned half way round is the same lobe); Cycles' over a whole.
         let rotation = self.float_op(shader, "multiply", value(Param::AnisotropyRotation, Value::Float(m.specular_rotation)), Slot::Value(Value::Float(0.5)))?;
@@ -2852,7 +2879,9 @@ impl Builder<'_> {
             self.session.set_float(scale, "Value2", m.specular_weight)?;
             Slot::Link(scale, "Value")
         };
-        let tint = match value(Param::TransmissionColor, Value::Color(m.transmission_color)) {
+        let colour = value(Param::TransmissionColor, Value::Color(m.transmission_color));
+        let surface_tint = value(Param::TransmissionTint, Value::Color(m.transmission_tint));
+        let tint = match self.apply(shader, &NodeKind::Multiply, &[colour, surface_tint], 0)? {
             Slot::Value(colour) => {
                 let c = colour.as_color();
                 Slot::Value(Value::Color(Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() }))

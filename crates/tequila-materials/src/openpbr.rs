@@ -79,6 +79,12 @@ pub struct Material {
     /// Distance at which `transmission_color` is reached by Beer-Lambert
     /// absorption. 0 means thin, with no volume.
     pub transmission_depth: f32,
+    /// The surface's own tint on light through it, in and out again: the
+    /// square root at each crossing ([`Param::TransmissionTint`]). White
+    /// leaves it to the colour and the volume.
+    ///
+    /// [`Param::TransmissionTint`]: crate::material_type::Param::TransmissionTint
+    pub transmission_tint: Spectrum,
     /// Volumetric scattering coefficient inside the medium.
     pub transmission_scatter: Spectrum,
     /// Henyey-Greenstein `g` for the medium, -1 to 1.
@@ -225,6 +231,7 @@ impl Default for Material {
             transmission_weight: 0.0,
             transmission_color: Spectrum::ONE,
             transmission_depth: 0.0,
+            transmission_tint: Spectrum::ONE,
             transmission_scatter: Spectrum::ZERO,
             transmission_scatter_anisotropy: 0.0,
             volume_density: 1.0,
@@ -500,9 +507,9 @@ impl Material {
                 g: (-scattered.g).exp(),
                 b: (-scattered.b).exp(),
             };
-            self.transmittance_over(PREVIEW_WALL) * unscattered
+            self.transmittance_over(PREVIEW_WALL) * unscattered * self.transmission_tint
         } else {
-            self.transmission_color
+            self.transmission_color * self.transmission_tint
         }
     }
 

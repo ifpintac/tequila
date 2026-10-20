@@ -386,6 +386,7 @@ is spelled exactly as the parameter is named there.
 | `transmission_weight` | number | How much of the base transmits rather than scatters. |
 | `transmission_color` | number[3] | Tint of what passes through. |
 | `transmission_depth` | number | Attenuation distance in scene units. 0 means no volume. |
+| `transmission_tint` | number[3] | The surface's own tint on light through it, in and out again: the square root at each crossing, as Cycles' principled glass takes its base colour. With a depth, on top of what the volume absorbs: a dyed plastic is coloured at its skin as well as through it. White by default. |
 | `transmission_scatter` | number[3] | In-scattering albedo of the interior. |
 | `transmission_scatter_anisotropy` | number | Henyey-Greenstein `g`, -1 to 1. |
 | `volume_density` | number | How thick the medium is, as a multiple of what its colour, depth and scatter describe; scales absorption and scattering together. 1 by default; 0 is clear. A Volume Map node drives it to make the medium heterogeneous. Not an OpenPBR parameter. |
@@ -483,14 +484,18 @@ A node:
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | number | File-local. Reassigned on load, and links are remapped with it. |
-| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`. |
+| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`, `node` (a Blender shader node), `group`, and the rest of `NodeKind`. |
 | `position` | number[2] | Editor layout only; never affects rendering. |
 | `label?` | string | User-assigned name. |
 | `literals?` | object[] | Values for unconnected inputs: `{socket, value}`. |
 
 Kind-specific fields: `value` on a constant, `mapping` on a mapping node,
 `texture` and `fallback` on an image texture, `from`/`to` on a remap,
-`low`/`high` on a clamp.
+`low`/`high` on a clamp, `group` on a node group. A node group is one of
+Tequila's built-in groups, named - `fdm_layer_lines`, a filament print's
+surface - with its inputs as literals or links like any node's. What is
+inside it is not written: it is the group as the Tequila opening the file
+builds it, and one that does not know the name refuses the file.
 
 A link is `{from, to, socket}`, where `socket` is `param:<parameter key>` for an
 input on the surface node — the keys are the ones tabled above — or `input:<n>`

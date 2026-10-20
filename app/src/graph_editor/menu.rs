@@ -57,6 +57,10 @@ pub fn entries(project: &Project) -> Vec<Entry> {
     for procedural in tequila_texture::procedural::Procedural::catalog() {
         add(procedural.label(), NodeKind::Procedural { procedural: Box::new(procedural), seed: 0 });
     }
+    // Node groups: whole surfaces made of nodes.
+    for &group in tequila_materials::groups::NodeGroup::ALL {
+        add(group.label(), NodeKind::Group(group));
+    }
     // Colour.
     for node in ShaderNode::catalog().into_iter().filter(|n| matches!(family(&NodeKind::Node(*n)), Family::Color)) {
         let label = if matches!(node, ShaderNode::Mix { .. }) { "Mix Color" } else { node.menu_label() };
@@ -91,6 +95,12 @@ pub fn entries(project: &Project) -> Vec<Entry> {
     let mut variant = |parent: &'static str, label: &str, kind: NodeKind| {
         out.push(Entry { label: label.into(), parent: Some(parent), family: family(&kind), kind, search_only: true });
     };
+    // A group by what it is for: "3d print" finds the layer lines.
+    for &group in tequila_materials::groups::NodeGroup::ALL {
+        for words in group.keywords().split(", ") {
+            variant(group.label(), words, NodeKind::Group(group));
+        }
+    }
     for op in tequila_texture::cycles::ops::MathOp::ALL {
         variant("Math", op.label(), NodeKind::Node(set(shader("math"), "operation", Setting::Choice(op.cycles()))));
     }
