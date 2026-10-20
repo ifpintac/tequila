@@ -63,10 +63,37 @@ def write_label(path, width=64, height=32):
                      + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
+def drawn(client):
+    """Whether the viewport shows a picture: Cycles past preparing the
+    graphics card, with samples in it."""
+    state = client.ui()
+    return state.get('viewport_samples', 0) > 0 and not state.get('viewport_preparing', False)
+
+
+def first_frame(client, what):
+    """Wait for the viewport to show a picture. The first time Cycles runs
+    with a cache of its own, as here, it compiles its graphics-card code
+    first, minutes on a Mac, and a label resized before it ends was never
+    rendered: the test passed without testing. On a machine whose card takes
+    longer than FIRST_FRAME_SECONDS, carry on and say so."""
+    seconds = float(os.environ.get('FIRST_FRAME_SECONDS', '600'))
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            if drawn(client):
+                say(what, 'drawn:', client.ui().get('viewport_samples'), 'samples')
+                return True
+        except Exception:  # noqa: BLE001 - busy; ask again
+            pass
+        time.sleep(1)
+    say(f'NOTE: no picture {what} after {seconds:.0f} s; carrying on without one')
+    return False
+
+
 def resize_labels(client, box):
     """The tester's crash on a Mac (2026-10-19): insert a label, change its
     size, and Tequila closed. A part, a label on it, the Rendered view, and
-    sixty sizes in two seconds."""
+    sixty sizes in two seconds, with Cycles rendering."""
     label = box / 'label.png'
     write_label(label)
     # The part a new window opens with. The Rendered view first: a runner
@@ -80,17 +107,20 @@ def resize_labels(client, box):
                     if m['used_by'] and m.get('name', '').startswith('Plastic Matte White'))
     client.apply('material.add_decal', material=material, name='Label', path=str(label), role='color')
     say('added a label')
-    time.sleep(5)
+    first_frame(client, 'with the label')
+    # The label as Tequila fitted it to the part, its size changed as a drag
+    # on the size field does: a mapping written here instead put it half a
+    # metre off a part 10 cm across, and nothing was ever drawn.
+    definition = next(m for m in client.query('materials')['materials'] if m['id'] == material)['definition']
+    fitted = (definition.get('graph') or definition)['decals'][0]
+    scale = fitted['mapping']['scale']
     for i in range(60):
-        size = 0.002 + 0.05 * abs(((i % 20) - 10) / 10.0)
-        mapping = {'projection': 'planar', 'axis': 'y', 'real_world_units': True, 'scale': [size, size * 0.5, 1.0],
-                   'offset': [0.5, 0.5], 'pivot': [0.5, 0.5], 'rotation': 0, 'uv_set': 0, 'blend_sharpness': 6,
-                   'flip_u': False, 'flip_v': False, 'wrap_u': 'clamp', 'wrap_v': 'clamp'}
-        client.apply('material.set_decals', material=material, decals=[
-            {'enabled': True, 'mapping': mapping, 'metallic': False, 'name': 'Label', 'opacity': 1,
-             'roughness': 0.35, 'texture': 1}])
+        factor = 0.25 + 1.5 * abs(((i % 20) - 10) / 10.0)
+        decal = dict(fitted, mapping=dict(fitted['mapping'], scale=[scale[0] * factor, scale[1] * factor] + list(scale[2:])))
+        client.apply('material.set_decals', material=material, decals=[decal])
         time.sleep(1 / 30)
-    time.sleep(5)
+    client.apply('material.set_decals', material=material, decals=[fitted])
+    first_frame(client, 'after resizing it')
     say('resized a label 60 times in the Rendered view')
 
 
@@ -112,10 +142,39 @@ def showing(client):
     return Path(path).resolve() if path else None
 
 
+def recent_list():
+    """Where a Tequila that macOS launched, with the real settings, keeps
+    the projects opened lately."""
+    return Path.home() / 'Library' / 'Application Support' / 'Tequila' / 'recent.txt'
+
+
+def forget_recent(projects, existed):
+    """Take this test's projects off the real recent list again, and only
+    them: File > Open recent offered two projects in a deleted folder."""
+    path = recent_list()
+    if not path.is_file():
+        return
+    ours = {project.resolve() for project in projects}
+    lines = path.read_text(encoding='utf-8').splitlines()
+    kept = [line for line in lines if not line.strip() or Path(line.strip()).resolve() not in ours]
+    if not existed and not any(line.strip() for line in kept):
+        path.unlink()
+    elif kept != lines:
+        path.write_text(''.join(line + '\n' for line in kept), encoding='utf-8')
+
+
 def opened_from_finder(app_bundle, first, second):
     """Double-clicking a project in Finder sends it to Tequila by an Apple
     Event, not on the command line: launched by one, and sent one while it
     runs, Tequila opens each."""
+    existed = recent_list().is_file()
+    try:
+        finder_opens(app_bundle, first, second)
+    finally:
+        forget_recent([first, second], existed)
+
+
+def finder_opens(app_bundle, first, second):
     discovery = Path.home() / '.tequila' / 'channel.json'
     if discovery.exists():
         discovery.unlink()
@@ -197,7 +256,11 @@ with open(log, 'w', encoding='utf-8') as output:
         print(''.join(log.read_text(encoding='utf-8', errors='replace').splitlines(True)[-40:]))
         # What a crash left: Tequila's own report, and on a Mac the system's.
         reports = sorted((home / '.tequila' / 'crashes').glob('crash-*.txt'))
-        reports += sorted(glob.glob(os.path.expanduser('~/Library/Logs/DiagnosticReports/Tequila*.ips')))
+        # macOS names them for the process, `tequila-…` for the command-line
+        # one; only those of this run.
+        reports += sorted(report for report in glob.glob(os.path.expanduser('~/Library/Logs/DiagnosticReports/*.ips'))
+                          if os.path.basename(report).lower().startswith('tequila')
+                          and os.path.getmtime(report) >= STARTED - 1)
         for report in reports:
             print('--- crash report', report, '---')
             print(Path(report).read_text(encoding='utf-8', errors='replace')[:6000])

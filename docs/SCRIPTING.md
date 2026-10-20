@@ -159,7 +159,7 @@ is available from the console, the wire protocol and the Python client.
 | `viewport rendered` | `{"op":"ui","viewport":"rendered"}` | Switches the viewport between rendered and solid. |
 | | `{"op":"query","what":"api"}` → `procedurals` | Every pattern at its defaults, in the exact shape `material.set_procedural` takes as `procedural`. An unknown `kind` is refused rather than read as "detach". |
 | | `{"op":"ui","graph":3}` | Opens the Material Graph editor on material 3; `"graph":false` closes it. |
-| `ui` | `{"op":"query","what":"ui"}` | Shows what is open. |
+| `ui` | `{"op":"query","what":"ui"}` | Shows what is open, and how far the viewport's picture has got: `viewport_samples`, and `viewport_preparing` while Cycles prepares the graphics card and has shown nothing. |
 | `screenshot a.png viewport` | `{"op":"screenshot","path":...,"viewport":true}` | Captures just the viewport rather than the whole window. |
 | `screenshot a.png graph` | `{"op":"screenshot","path":...,"window":"graph"}` | Captures one of the other windows: `render`, `graph`, `shortcuts` or `connect`. They are windows of their own, so the main window's screenshot no longer shows them. Refused if that window is not open. |
 | `livelink` | `{"op":"livelink","message":"sync",...}` | A modelling application's scene, pushed as it changes: `hello`, `sync` (upserts and deletes as one undo step, matched objects keeping their Tequila materials) and `camera`. See `docs/livelink-protocol.md`. |
