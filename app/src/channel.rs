@@ -500,6 +500,10 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("tab", app.project_tab.label().to_ascii_lowercase())
         .set("library", app.show_library)
         .set("viewport", app.view_mode.key())
+        // How far the viewport's picture has got: its samples, and whether
+        // Cycles is still preparing the graphics card and has shown nothing.
+        .set("viewport_samples", app.image.samples as f64)
+        .set("viewport_preparing", matches!(app.engine_note, Some(crate::orchestrator::EngineNote::Preparing(_))))
         .set("full_viewport", app.full_viewport)
         .set("present", app.presenting.is_some())
         .set("edges", app.show_model_edges)

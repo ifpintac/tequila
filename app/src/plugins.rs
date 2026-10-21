@@ -556,8 +556,14 @@ pub fn python() -> Option<Vec<String>> {
             if cfg!(windows) {
                 candidates.push(vec!["py".into(), "-3".into()]);
             }
-            candidates.push(vec!["python3".into()]);
-            candidates.push(vec!["python".into()]);
+            if cfg!(target_os = "macos") {
+                let path = std::env::var("PATH").unwrap_or_default();
+                let found = mac_pythons(&path, &|file| file.is_file(), developer_python());
+                candidates.extend(found.into_iter().map(|program| vec![program]));
+            } else {
+                candidates.push(vec!["python3".into()]);
+                candidates.push(vec!["python".into()]);
+            }
             candidates.into_iter().find(|c| {
                 let mut command = std::process::Command::new(&c[0]);
                 command.args(&c[1..]).arg("--version");
@@ -566,6 +572,56 @@ pub fn python() -> Option<Vec<String>> {
             })
         })
         .clone()
+}
+
+/// Where python.org's installer and Homebrew put Python 3 on a Mac.
+const MAC_PYTHONS: [&str; 3] = [
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3",
+    "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+];
+
+/// The Pythons to try on a Mac, in order, given its `PATH`.
+///
+/// Opened from Finder, an app is given only the system's own folders to
+/// search, never where python.org's installer or Homebrew put Python, so a
+/// Mac with Python installed was told to install it: those are named in full.
+/// The system's own `/usr/bin/python3` is a stand-in until Apple's developer
+/// tools are installed, which puts up an offer to install them when run, so
+/// it is tried only when they are there (`developer_python`). One found on a
+/// `PATH` from a Terminal, such as pyenv's, comes first.
+fn mac_pythons(path: &str, exists: &dyn Fn(&Path) -> bool, developer_python: bool) -> Vec<String> {
+    const STAND_IN: &str = "/usr/bin/python3";
+    let mut found: Vec<String> = Vec::new();
+    let on_path = path
+        .split(':')
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| format!("{}/python3", dir.trim_end_matches('/')))
+        .find(|file| exists(Path::new(file)));
+    if let Some(file) = on_path.filter(|file| file != STAND_IN) {
+        found.push(file);
+    }
+    for program in MAC_PYTHONS {
+        if exists(Path::new(program)) && !found.iter().any(|f| f == program) {
+            found.push(program.into());
+        }
+    }
+    if developer_python {
+        found.push(STAND_IN.into());
+    }
+    found
+}
+
+/// Whether Apple's developer tools are installed with their Python, so the
+/// system's `python3` runs it rather than offering to install them: asked of
+/// `xcode-select`, which never offers.
+fn developer_python() -> bool {
+    std::process::Command::new("/usr/bin/xcode-select")
+        .arg("-p")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| Path::new(String::from_utf8_lossy(&output.stdout).trim()).join("usr/bin/python3").is_file())
 }
 
 /// No console window for a child process on Windows: a plugin is not a
@@ -1185,6 +1241,33 @@ mod tests {
     /// log rather than into the conversation, an error is reported and the
     /// plugin keeps running, and dropping it ends the process. Skipped
     /// where there is no Python.
+    /// On a Mac, a Python python.org or Homebrew installed is found though
+    /// Finder gives an app none of their folders, and the system's stand-in
+    /// is never run without the developer tools, as it offers to install them.
+    #[test]
+    fn a_mac_finds_the_python_installed_on_it() {
+        let finder = "/usr/bin:/bin:/usr/sbin:/sbin";
+        let on = |files: &'static [&'static str]| move |file: &Path| files.iter().any(|f| Path::new(f) == file);
+        let stand_in_only = on(&["/usr/bin/python3"]);
+        assert!(mac_pythons(finder, &stand_in_only, false).is_empty(), "the stand-in was run without the developer tools");
+        assert_eq!(mac_pythons(finder, &stand_in_only, true), ["/usr/bin/python3"]);
+        let python_org = on(&["/usr/bin/python3", "/usr/local/bin/python3", "/Library/Frameworks/Python.framework/Versions/Current/bin/python3"]);
+        assert_eq!(
+            mac_pythons(finder, &python_org, false),
+            ["/usr/local/bin/python3", "/Library/Frameworks/Python.framework/Versions/Current/bin/python3"]
+        );
+        let homebrew = on(&["/usr/bin/python3", "/opt/homebrew/bin/python3"]);
+        assert_eq!(mac_pythons(finder, &homebrew, true), ["/opt/homebrew/bin/python3", "/usr/bin/python3"]);
+        // From a Terminal, the person's own comes first, and once.
+        let pyenv = on(&["/Users/a/.pyenv/shims/python3", "/opt/homebrew/bin/python3"]);
+        assert_eq!(
+            mac_pythons("/Users/a/.pyenv/shims:/opt/homebrew/bin:/usr/bin", &pyenv, false),
+            ["/Users/a/.pyenv/shims/python3", "/opt/homebrew/bin/python3"]
+        );
+        let brew_first = on(&["/opt/homebrew/bin/python3"]);
+        assert_eq!(mac_pythons("/opt/homebrew/bin:/usr/bin", &brew_first, false), ["/opt/homebrew/bin/python3"]);
+    }
+
     #[test]
     fn a_plugins_code_runs_and_answers() {
         if python().is_none() {

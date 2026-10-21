@@ -95,6 +95,11 @@ jobs:
           ls -la smoke-*.png
 
       - name: Smoke test the application
+        # The runner's paravirtual Metal gave Cycles no picture in twenty
+        # minutes, so the label is resized whether one comes or not; a real
+        # Mac waits the full ten.
+        env:
+          FIRST_FRAME_SECONDS: '120'
         run: python3 scripts/smoke-app.py "$(ls -d dist/Tequila-macOS-*/Tequila.app | tail -1)" app-window.png
 
       - name: Keep the smoke test's pictures
