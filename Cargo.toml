@@ -31,7 +31,7 @@ edition = "2021"
 # is what keeps this honest.
 rust-version = "1.82"
 license = "Apache-2.0"
-repository = "https://github.com/tequila/tequila"
+repository = "https://github.com/ifpintac/tequila"
 authors = ["The Tequila Authors"]
 
 [workspace.dependencies]
