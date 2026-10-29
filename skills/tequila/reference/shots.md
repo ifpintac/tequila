@@ -47,6 +47,16 @@ Set the render block's `"alpha_mode": "straight"` and `"format": "png"` (see the
 
 Only with a file the user gives: `{"command": "environment.set_parameter", "parameter": "image", "value": "C:/path/to/studio.hdr"}`; `"value": null` returns to the built-in studio. `rotation` (radians, 0 to 6.283) turns the light around the product; `brightness` scales it.
 
+## A whole studio at once (studio presets)
+
+A studio preset brings lights, cameras and views, the floor and the look in one undo step, framed to the product's size. Use one when the person names a studio, or wants the same set of shots across products.
+- `tequila_studio_presets` lists them. In each family, the size nearest the product is marked `suggested`.
+- `tequila_studio_preset_apply {"preset": "<id>"}` applies one. Options:
+  - `"front"`: the side of the product that faces the main camera, `+z`, `-z`, `+x` or `-x`;
+  - `"dress": true`: put the preset's materials on parts by name.
+- `tequila_studio_render_all` renders every view, one file each. Only when asked for renders.
+- `tequila_studio_preset_save {"name": "..."}` keeps the current studio as the person's own preset.
+
 ## Jewellery and glass
 
 `{"command": "lighting.set_preset", "preset": "Jewelry"}` gives the deeper light paths gems and glass need; then gem presets (Diamond, Ruby, Sapphire Blue…) or glass ones.
