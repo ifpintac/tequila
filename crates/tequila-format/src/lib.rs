@@ -44,6 +44,7 @@ use tequila_core::units::LengthUnit;
 use tequila_materials::fresnel::ComplexIor;
 mod graph;
 pub mod library;
+pub mod studio_preset;
 
 /// A procedural as the project file and `material.set_procedural` write it:
 /// its `kind` and that kind's own fields. What a script or an assistant is

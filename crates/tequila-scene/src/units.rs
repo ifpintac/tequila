@@ -305,7 +305,7 @@ fn power_gain(settings: &LightSettings, power: f32) -> f32 {
 
 /// Move a camera with the scene. Its orientation stays as it is: a scale in
 /// a camera's matrix would distort its rays rather than move it.
-fn scale_camera(saved: &mut SavedCamera, s: f32) {
+pub(crate) fn scale_camera(saved: &mut SavedCamera, s: f32) {
     let camera = &mut saved.camera;
     for row in 0..3 {
         camera.camera_to_world.m[row][3] *= s;

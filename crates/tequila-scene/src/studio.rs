@@ -222,10 +222,22 @@ pub fn product_roots(document: &SceneDocument) -> Vec<NodeId> {
 /// the turn it has: its roots' transforms rotated about the axis through
 /// [`ProductTurn::pivot`], and nothing else moved.
 pub fn turn_product(document: &mut SceneDocument, yaw: f32) {
+    let (transforms, turn) = turned(document, yaw);
+    for (id, transform) in transforms {
+        if let Ok(node) = document.tree.get_mut(id) {
+            node.transform = transform;
+        }
+    }
+    document.product_turn = turn;
+}
+
+/// What [`turn_product`] would do: the product's top nodes' transforms
+/// turned to `yaw`, and the turn the document would then record.
+pub fn turned(document: &SceneDocument, yaw: f32) -> (Vec<(NodeId, tequila_core::math::Transform)>, ProductTurn) {
     let current = document.product_turn;
     let delta = yaw - current.yaw;
     if delta.abs() < 1e-7 {
-        return;
+        return (Vec::new(), current);
     }
     let roots = product_roots(document);
     let pivot = if current.yaw.abs() < 1e-7 {
@@ -238,14 +250,14 @@ pub fn turn_product(document: &mut SceneDocument, yaw: f32) {
     let turn = tequila_core::math::Mat4::translation(at)
         * tequila_core::math::Mat4::rotation(tequila_core::math::Vec3::Y, delta)
         * tequila_core::math::Mat4::translation(-at);
-    for root in roots {
-        if let Ok(node) = document.tree.get_mut(root) {
-            if let Some(turned) = tequila_core::math::Transform::from_matrix(turn * node.transform.matrix) {
-                node.transform = turned;
-            }
-        }
-    }
-    document.product_turn = ProductTurn { yaw, pivot };
+    let transforms = roots
+        .into_iter()
+        .filter_map(|root| {
+            let node = document.tree.get(root)?;
+            tequila_core::math::Transform::from_matrix(turn * node.transform.matrix).map(|t| (root, t))
+        })
+        .collect();
+    (transforms, ProductTurn { yaw, pivot })
 }
 
 /// Switch lights as `overrides` say, a later one winning.

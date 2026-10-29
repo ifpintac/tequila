@@ -66,6 +66,7 @@ CATALOG = (
     'image.set_style',
     'image.set_color_management',
     'render.set_settings',
+    'studio_preset.apply',
 )
 
 _UNSET = object()
@@ -479,6 +480,17 @@ class RenderCommands(_Commands):
         return self._apply('render.set_settings', {'render': render})
 
 
+class Studio_presetCommands(_Commands):
+    """The `studio_preset.*` commands."""
+
+    def apply(self, *, options=_UNSET, preset=_UNSET):
+        r"""`studio_preset.apply`: A whole studio from a preset, framed to the product: environment and floor, lights, cameras and views, image style, render and lighting settings, and the preset's materials added to assign. One step to undo. The product's geometry and its materials are never touched; its top nodes are moved to stand where the studio expects them (`crate::preset::fit`).
+
+        { "command": "studio_preset.apply", "options": { "front": "-x", "keep_cameras": true, "keep_lights": false, "keep_placement": false }, "preset": { "cameras": [ { "basis": [1, 0, 0, 0, 1, 0, 0, 0, 1], "dof": { "aperture": "Circular", "enabled": false, "f_number": 8, "focus_distance": 1, "keep_focus": false }, "focal_length_mm": 50, "iso": 100, "name": "Camera 1", "position": [0, 0, 0], "sensor_width_mm": 36, "shutter_speed_seconds": 0.01, "target": [0, 0, 0], "type": "Perspective", "up": [0, 1, 0] } ], "description": "", "environment": { "background": { "color": [0.05, 0.05, 0.05], "image": null, "mode": "Environment" }, "brightness": 1, "contrast": 1, "ground": { "bounce": false, "bounce_color": [1, 1, 1], "bounce_contact_falloff": 0, "bounce_strength": 1, "enabled": true, "flatten": false, "occlusion_shadows": false, "reflection_alpha": "coverage", "reflection_blur": 0, "reflection_fade_distance": 0, "reflection_fresnel": false, "reflection_length": 1, "reflections": 0, "shadow_color": [0, 0, 0], "shadows": true, "size": 0 }, "height": 0, "image": null, "rotation": 0, "size": 0 }, "family": "Samples", "format": "tequila.studio-preset", "framing": { "base_offset_m": 0, "reference_radius_m": 0.1, "scale": "cameras" }, "id": "sample-studio", "image_style": { "blacks": 0, "bloom": 0, "bloom_radius": 0.03, "chromatic_aberration": 0, "contrast": 1, "display_transform": "PBR Neutral", "exposure": 0, "highlights": 0, "saturation": 1, "shadows": 0, "sharpening": 0, "temperature": 6500, "tint": 0, "type": "Basic", "vignette": 0, "whites": 0 }, "lighting": { "custom": { "adaptive_sampling_threshold": 0.01, "caustics": false, "direct_lighting": true, "global_illumination": true, "ground_illumination": false, "interior_mode": false, "light_source_materials": true, "max_bounces": 6, "max_transmission_bounces": 8, "regularization_roughness": 0.09, "regularization_start_bounce": 2, "russian_roulette_start_bounce": 3, "shadows": true }, "preset": "Product" }, "lights": [ { "light": { "affects_diffuse": true, "affects_specular": true, "casts_shadows": true, "color": [1, 1, 1], "enabled": true, "height": 1, "intensity": 1500, "intensity_unit": "lm", "layer": 0, "shape": "Area", "two_sided": false, "visible_to_camera": true, "width": 1 }, "name": "Key", "transform": [1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1, 0.6, 0, 0, 0, 1] } ], "material_rules": [ { "material": "Steel", "pattern": "Metal; Screws*" } ], "materials": [], "name": "Sample Studio", "notes": "", "preset_version": "1", "render": { "adaptive": true, "adaptive_threshold": null, "alpha_mode": "none", "clamp_direct": null, "clamp_indirect": null, "denoise": true, "denoise_cadence": 4, "denoise_strength": 1, "depth": "8", "dpi": 300, "engine": "cycles-gpu", "filename_template": "{project}_{camera}_{date}", "format": "png", "jpeg_quality": 92, "layers": [], "max_samples": 256, "max_seconds": null, "output_directory": "", "pixel_filter": null, "prefilter_guides": true, "region": null, "reject_fireflies": true, "relight": false, "resolution": [1920, 1080], "write_passes": false, "write_text_metadata": false, "write_xmp": false }, "size": "Small", "studios": [], "tags": [], "version": 1 } }
+        """
+        return self._apply('studio_preset.apply', {'options': options, 'preset': preset})
+
+
 class Commands:
     """The whole catalog, by group: `commands.material.set_type(...)`."""
 
@@ -492,3 +504,4 @@ class Commands:
         self.camera = CameraCommands(client)
         self.image = ImageCommands(client)
         self.render = RenderCommands(client)
+        self.studio_preset = Studio_presetCommands(client)

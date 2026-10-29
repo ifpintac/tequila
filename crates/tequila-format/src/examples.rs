@@ -245,6 +245,19 @@ pub fn commands() -> Vec<Command> {
             }],
         },
         Command::ApplyStudio { index: 0 },
+        Command::ApplyStudioPreset {
+            preset: Box::new({
+                let mut preset = tequila_scene::preset::capture(&tequila_scene::SceneDocument::new(), "sample-studio", "Sample Studio", "Samples", "Small");
+                preset.lights.push(tequila_scene::preset::PresetLight {
+                    name: "Key".into(),
+                    settings: tequila_scene::lighting::LightSettings::default(),
+                    transform: tequila_core::math::Mat4::translation(tequila_core::math::vec3(0.0, 0.5, 0.6)),
+                });
+                preset.material_rules.push(tequila_scene::preset::MaterialRule { pattern: "Metal; Screws*".into(), material: "Steel".into() });
+                preset
+            }),
+            options: tequila_scene::preset::ApplyOptions { front: tequila_scene::preset::Front::MinusX, keep_cameras: true, ..Default::default() },
+        },
         Command::SetConfigurator {
             configurator: Box::new(tequila_scene::configurator::Configurator {
                 title: "Kettle".into(),
