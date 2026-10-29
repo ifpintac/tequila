@@ -14,7 +14,7 @@ use tequila_core::spectrum::Spectrum;
 use tequila_render_core::camera::Camera;
 use tequila_render_core::framebuffer::Framebuffer;
 use tequila_render_core::intersect::Intersector;
-use tequila_render_core::scheduler::ProgressiveSchedule;
+use tequila_render_core::scheduler::{ProgressiveSchedule, Tile};
 use tequila_render_core::settings::IntegratorConfig;
 
 /// `samples` more samples of the floor's reflection, alone, into `layer`:
@@ -43,7 +43,7 @@ pub fn render_floor_reflection_until(
     stop: &dyn Fn() -> bool,
 ) {
     const CHUNK: u32 = 8;
-    let context = RenderContext {
+    let mut context = RenderContext {
         camera,
         config: IntegratorConfig { floor_reflection_only: true, ..config.clone() },
         ..RenderContext::default()
@@ -56,6 +56,57 @@ pub fn render_floor_reflection_until(
         if stop() {
             break;
         }
+        // The rest only where the first pass found a reflection. Under a
+        // short fade that is a thin band beneath the product, and the floor
+        // everywhere else has nothing to add: at 3000 x 2250 the whole frame
+        // took minutes for a strip a few hundred pixels tall.
+        if done == now {
+            match reflected_band(layer) {
+                Band::Nowhere => break,
+                Band::Within(tile) => context.region = Some(tile),
+                Band::Everywhere => {}
+            }
+        }
+    }
+}
+
+/// Where a first pass of the floor's reflection found any.
+enum Band {
+    Nowhere,
+    /// Inside this rectangle, with a margin, so a faint edge the first
+    /// samples missed still gets the rest.
+    Within(Tile),
+    /// Over so much of the frame that a rectangle saves nothing.
+    Everywhere,
+}
+
+fn reflected_band(layer: &Framebuffer) -> Band {
+    let (width, height) = (layer.width, layer.height);
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for y in 0..height {
+        for x in 0..width {
+            if layer.pixel(x, y).alpha() > 0.0 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x0 == usize::MAX {
+        return Band::Nowhere;
+    }
+    let margin = (width.max(height) / 50).max(8);
+    let tile = Tile {
+        x0: x0.saturating_sub(margin),
+        y0: y0.saturating_sub(margin),
+        x1: (x1 + margin).min(width),
+        y1: (y1 + margin).min(height),
+    };
+    if tile.pixel_count() * 10 > width * height * 7 {
+        Band::Everywhere
+    } else {
+        Band::Within(tile)
     }
 }
 

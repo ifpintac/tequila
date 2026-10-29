@@ -443,6 +443,24 @@ fn the_reflection_shows_the_product_lit_by_the_bounce() {
     assert!(light(&lit) > 1.2 * light(&plain), "the bounce did not reach the reflection: {} against {}", light(&lit), light(&plain));
 }
 
+/// A short reflection's layer spends its samples where there is a
+/// reflection: after a first pass, only a band around what it found takes
+/// the rest, and the reflection comes to what sampling the whole frame
+/// makes of it.
+#[test]
+fn the_reflection_pass_samples_only_where_there_is_one() {
+    let short = || scene(Some(ShadowCatcher { reflections: 1.0, reflection_fade: Some(0.5), ..Default::default() }), true);
+    let whole = render_layer(short(), 64);
+    let device = Device::shared().expect("an Embree device");
+    let intersector = EmbreeIntersector::build(&device, short()).expect("builds");
+    let mut banded = Framebuffer::new(SIZE, SIZE);
+    tequila_render_cpu::floor::render_floor_reflection(&intersector, &mut banded, camera(), &tequila_render_core::settings::IntegratorConfig::default(), 64);
+    let total = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).sum::<f32>();
+    assert!((total(&banded) - total(&whole)).abs() < 0.05 * total(&whole), "the band's reflection is {} where the whole frame's is {}", total(&banded), total(&whole));
+    let skipped = banded.pixels().iter().filter(|p| p.samples < 64).count();
+    assert!(skipped > SIZE * SIZE / 4, "only {skipped} pixels were spared the full count");
+}
+
 fn changed_pixels(a: &Framebuffer, b: &Framebuffer) -> usize {
     let mut changed = 0;
     for y in 0..SIZE {
