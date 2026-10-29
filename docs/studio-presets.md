@@ -84,6 +84,22 @@ for job in fs.studios.render_all():
 | `"action": "delete"` | `id`. Only your own presets. |
 | `"action": "render_all"` | Queues every view. Returns `jobs`. |
 
+A headless session (`tequila.open()`) answers the same requests. There,
+`render_all` renders every view before it answers, and returns the files'
+`paths`. Give it a `path` with `{view}` in it, or it uses the project's own
+output folder and name.
+
+From the command line, one product through a studio, every view:
+
+```bash
+tequila -i product.step --studio-preset product-studio-small --front -z --dress --all-studios -o "renders/{product}_{view}_{date}.png"
+```
+
+`--studio-preset` takes an installed preset's id, or a preset's folder or
+`.studio.json`. The render then uses the preset's settings: engine,
+resolution, samples, alpha, and 16 bits when the preset asks for them.
+`--all-studios` also works on a saved project that has Studios.
+
 As a command, `{"command": "studio_preset.apply", "id": "...", "options": {...}}`
 applies an installed preset by its id. The journal records the whole preset
 in the command, so a replay doesn't depend on what's installed. The MCP

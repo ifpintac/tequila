@@ -281,10 +281,7 @@ impl Project {
     /// What `{product}` in a file name stands for: the product's one top
     /// group's name, or empty (the project's) when it has several or none.
     pub fn product_name(&self) -> String {
-        match tequila_scene::studio::product_roots(&self.document)[..] {
-            [root] => self.document.tree.get(root).map(|n| n.name.clone()).unwrap_or_default(),
-            _ => String::new(),
-        }
+        tequila_scene::studio::product_name(&self.document)
     }
 
     pub fn take_queued_snapshot(&mut self, id: u64) -> Option<crate::batch::BatchJob> {

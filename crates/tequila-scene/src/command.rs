@@ -2027,7 +2027,7 @@ fn apply_studio_preset(
         // offered, never applied.
         run(document, Command::SetStudios { studios: views(preset, fitted.scale) })?;
         if !preset.material_rules.is_empty() {
-            let name = format!("{} materials", preset.name);
+            let name = crate::preset::template_name(preset);
             let rules: Vec<crate::templates::Rule> = preset
                 .material_rules
                 .iter()

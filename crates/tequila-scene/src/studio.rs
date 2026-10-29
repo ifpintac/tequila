@@ -204,6 +204,19 @@ pub const STUDIO_LIGHTS: &str = "Studio lights";
 /// The roots of the product: every top-level node that is not a light, a
 /// cutaway, or a studio's own group of lights.
 pub fn product_roots(document: &SceneDocument) -> Vec<NodeId> {
+    product_roots_of(document)
+}
+
+/// What `{product}` in a file name stands for: the product's one top node's
+/// name, or empty - the project's name then - when it has several or none.
+pub fn product_name(document: &SceneDocument) -> String {
+    match product_roots_of(document)[..] {
+        [root] => document.tree.get(root).map(|n| n.name.clone()).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn product_roots_of(document: &SceneDocument) -> Vec<NodeId> {
     document
         .tree
         .roots()

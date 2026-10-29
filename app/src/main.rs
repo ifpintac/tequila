@@ -17,7 +17,7 @@
 mod assistant;
 mod axis_legend;
 mod channel;
-mod clock;
+use tequila_core::clock;
 mod color_picker;
 mod connect_claude;
 mod crash;

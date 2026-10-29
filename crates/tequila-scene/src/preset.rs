@@ -327,6 +327,53 @@ pub fn nearest_size<'a>(presets: impl IntoIterator<Item = &'a StudioPreset>, rad
         })
 }
 
+/// The Material Template a preset's rules become when it is applied.
+pub fn template_name(preset: &StudioPreset) -> String {
+    format!("{} materials", preset.name)
+}
+
+/// Once `preset` is applied: what dresses the product by its rules, through
+/// the Material Template they became. Empty for a preset without rules.
+pub fn dressing(document: &SceneDocument, preset: &StudioPreset) -> Vec<crate::Command> {
+    let name = template_name(preset);
+    match document.material_templates.iter().find(|t| t.name == name) {
+        Some(template) => crate::templates::commands(&crate::templates::plan(document, template)),
+        None => Vec::new(),
+    }
+}
+
+/// The bounding-sphere radius, metres, presets frame a product by: half the
+/// diagonal of what is shown. `None` with nothing shown.
+pub fn product_radius(document: &SceneDocument) -> Option<f32> {
+    let bounds = crate::snapshot::visible_bounds(document);
+    (!bounds.is_empty()).then(|| bounds.bounding_radius()).filter(|r| r.is_finite() && *r > 0.0)
+}
+
+/// The document's materials as a preset's library, each with the pictures
+/// its graph and its labels read, filed under `category`.
+pub fn document_materials(document: &SceneDocument, category: &str) -> Vec<PresetMaterial> {
+    use tequila_materials::graph::NodeKind;
+    document
+        .materials
+        .iter()
+        .map(|(_, definition)| {
+            let mut ids = std::collections::BTreeSet::new();
+            ids.extend(definition.graph.decals.iter().map(|decal| decal.texture));
+            for (_, node) in definition.graph.nodes() {
+                if let NodeKind::ImageTexture { texture, .. } = &node.kind {
+                    ids.insert(*texture);
+                }
+            }
+            PresetMaterial {
+                definition: definition.clone(),
+                textures: ids.into_iter().filter_map(|id| document.textures.get(id).map(|s| (id, s.clone()))).collect(),
+                category: category.into(),
+                tags: Vec::new(),
+            }
+        })
+        .collect()
+}
+
 /// A Studio preset made from `document` as it is: everything but the
 /// product, framed for its product. Materials and rules are the caller's
 /// to add.

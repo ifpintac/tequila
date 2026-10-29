@@ -91,6 +91,14 @@ struct Options {
     configuration: Option<String>,
     /// Every valid configuration, each to its own file.
     all_configurations: bool,
+    /// Every Studio - every view - each to its own file.
+    all_studios: bool,
+    /// A studio preset to apply first: an installed one's id, or its folder
+    /// or `.studio.json`; how the product faces it, and whether it dresses
+    /// the product by its rules.
+    studio_preset: Option<String>,
+    front: Option<String>,
+    dress: bool,
     export_glb: Option<String>,
     export_usd: Option<String>,
     export_web: Option<String>,
@@ -154,6 +162,10 @@ impl Default for Options {
             model_set: None,
             configuration: None,
             all_configurations: false,
+            all_studios: false,
+            studio_preset: None,
+            front: None,
+            dress: false,
             export_glb: None,
             export_usd: None,
             export_web: None,
@@ -225,6 +237,16 @@ From a project's own setup:
       --all-configurations
                         render every valid configuration, each to the
                         output name with {configuration} in it
+      --all-studios     render every Studio (every view), each to the
+                        output name with {view} in it - or, without -o,
+                        to the project's own output folder and name
+      --studio-preset P apply a studio preset first: an installed one's id,
+                        or its folder or .studio.json; the render then
+                        takes the preset's settings
+      --front F         with --studio-preset, the product's side that faces
+                        the Main camera: +z (default), -z, +x or -x
+      --dress           with --studio-preset, put its materials on parts
+                        by their names
 
 Exports (with no -o, only these run):
       --export-glb PATH what is shown, as a glTF binary
@@ -288,6 +310,10 @@ fn parse_args() -> Result<Options, String> {
             "--model-set" => options.model_set = Some(value()?),
             "--configuration" => options.configuration = Some(value()?),
             "--all-configurations" => options.all_configurations = true,
+            "--all-studios" => options.all_studios = true,
+            "--studio-preset" => options.studio_preset = Some(value()?),
+            "--front" => options.front = Some(value()?),
+            "--dress" => options.dress = true,
             "--export-glb" => options.export_glb = Some(value()?),
             "--export-usd" => options.export_usd = Some(value()?),
             "--export-web" => options.export_web = Some(value()?),
@@ -700,13 +726,15 @@ fn run(options: &Options) -> Result<(), String> {
 
     // An export-only run renders nothing more, unless it asked for every
     // configuration.
-    let rendering = options.all_configurations || !exporting || options.output_set;
+    let rendering = options.all_configurations || options.all_studios || !exporting || options.output_set;
     if !rendering {
         Ok(())
     } else if options.farm.is_some() {
         farm::dispatch(options, &document)
     } else if options.all_configurations {
         each_configuration(options, &document, &options.output)
+    } else if options.all_studios {
+        each_studio(options, &document, options.output_set.then_some(options.output.as_str())).map(|_| ())
     } else {
         render_one(options, &document, &options.output, None)
     }
@@ -731,6 +759,88 @@ fn each_configuration(options: &Options, document: &tequila_scene::SceneDocument
         println!("configuration {}/{}: {words}", n + 1, all.len());
         render_one(options, &copy, &output, None)?;
     }
+    Ok(())
+}
+
+/// Render every Studio - every view - one file each, as the application's
+/// Render all views does: to `template` (`-o`), with `{view}` added when it
+/// has none, or to the project's own output folder and file-name template.
+/// The files written.
+pub(crate) fn each_studio(options: &Options, document: &tequila_scene::SceneDocument, template: Option<&str>) -> Result<Vec<String>, String> {
+    use tequila_format::output::{expand_template, first_free, output_path, ImageFormat, NameFields};
+    if document.studios.is_empty() {
+        return Err("the project has no Studios to render; apply a studio preset or save some views first".into());
+    }
+    let (date, time) = (tequila_core::clock::date(), tequila_core::clock::time_for_filename());
+    let mut written = Vec::new();
+    for (index, studio) in document.studios.iter().enumerate() {
+        let mut copy = document.clone();
+        tequila_scene::CommandBus::new()
+            .apply(&mut copy, tequila_scene::Command::ApplyStudio { index })
+            .map_err(|e| format!("Studio {}: {e}", studio.name))?;
+        let settings = &copy.render;
+        let fields = NameFields {
+            project: if copy.meta.name.is_empty() { "Tequila".into() } else { copy.meta.name.clone() },
+            camera: copy.cameras.active().name.clone(),
+            studio: studio.filename_suffix.clone().unwrap_or_else(|| studio.name.clone()),
+            product: tequila_scene::studio::product_name(&copy),
+            width: options.width.unwrap_or(settings.width),
+            height: options.height.unwrap_or(settings.height),
+            samples: options.samples.unwrap_or(settings.max_samples),
+            date: date.clone(),
+            time: time.clone(),
+            ..Default::default()
+        };
+        let path = match template {
+            Some(template) => {
+                let path = std::path::Path::new(template);
+                let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let stem = if stem.contains("{view}") || stem.contains("{studio}") { stem } else { format!("{stem}_{{view}}") };
+                let extension = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "png".into());
+                path.with_file_name(format!("{}.{extension}", expand_template(&stem, &fields)))
+            }
+            None => {
+                let directory = if settings.output_directory.is_empty() { std::path::PathBuf::from(".") } else { std::path::PathBuf::from(&settings.output_directory) };
+                first_free(output_path(&directory, &settings.filename_template, &fields, ImageFormat::Png(tequila_format::psd::Depth::Eight)))
+            }
+        };
+        let path = path.to_string_lossy().into_owned();
+        println!("view {}/{}: {}", index + 1, document.studios.len(), studio.name);
+        render_one(options, &copy, &path, None)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// Apply the studio preset the flags name: an installed one's id, or its
+/// folder or `.studio.json`.
+fn apply_studio_preset(document: &mut tequila_scene::SceneDocument, options: &Options) -> Result<(), String> {
+    use tequila_format::studio_preset as presets;
+    let Some(wanted) = &options.studio_preset else { return Ok(()) };
+    let path = std::path::Path::new(wanted);
+    let file = if path.is_dir() {
+        let found = presets::file_in(path).ok_or_else(|| format!("{wanted} holds no {} file", presets::EXTENSION))?;
+        presets::read(&found, presets::PresetSource::User)?
+    } else if path.is_file() {
+        presets::read(path, presets::PresetSource::User)?
+    } else {
+        presets::find(wanted)?
+    };
+    let request = {
+        let mut fields = tequila_format::json_write::Object::new();
+        fields.set_some("front", options.front.clone());
+        fields.build()
+    };
+    let choices = tequila_scripting::studio_presets::options(&request)?;
+    let mut bus = tequila_scene::CommandBus::new();
+    bus.apply(document, tequila_scene::Command::ApplyStudioPreset { preset: Box::new(file.preset.clone()), options: choices })
+        .map_err(|e| e.to_string())?;
+    if options.dress {
+        for command in tequila_scene::preset::dressing(document, &file.preset) {
+            bus.apply(document, command).map_err(|e| e.to_string())?;
+        }
+    }
+    println!("applied the studio preset {} ({} views)", file.preset.name, file.preset.studios.len());
     Ok(())
 }
 
@@ -793,6 +903,7 @@ fn select(document: &mut tequila_scene::SceneDocument, options: &Options) -> Res
 /// The document as the flags leave it: loaded, its lighting overridden.
 fn prepare(options: &Options) -> Result<tequila_scene::SceneDocument, String> {
     let mut document = load_document(options)?;
+    apply_studio_preset(&mut document, options)?;
 
     // The flags, over whatever the project said.
     if let Some(name) = &options.pins {
@@ -843,8 +954,12 @@ fn framing(options: &Options, document: &tequila_scene::SceneDocument, aspect: f
     (camera, target)
 }
 
-/// Whether the input is a saved project, which renders as it was set up.
+/// Whether the input is a saved project, which renders as it was set up -
+/// or has a studio preset applied, whose settings it then renders with.
 fn is_project(options: &Options) -> bool {
+    if options.studio_preset.is_some() {
+        return true;
+    }
     // Freeshot, as it was called before, saved them as .freeshot.
     options.input.as_deref().is_some_and(|p| {
         let p = p.to_ascii_lowercase();
@@ -1065,25 +1180,12 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         }
         .unmatted();
     }
-    let mut pixels = style.develop_through(
-        width,
-        height,
-        &scene_linear,
-        &tequila_color::DisplayPipeline::Builtin(style.display),
-    );
     // Opaque unless alpha was asked for: the picture as it looks, background
     // and all, is what a viewer shows well. With alpha, coverage, so the
     // image composites over a backplate (`docs/01` §12).
-    for (i, a) in coverage.iter().flatten().enumerate() {
-        pixels[i * 4 + 3] = (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-    }
-    if let Some(alpha) = &cut_alpha {
-        for (i, a) in alpha.iter().enumerate() {
-            pixels[i * 4 + 3] = (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-        }
-    }
-
-    write_image(output, width, height, &pixels)?;
+    let alpha = cut_alpha.as_deref().or(coverage.as_deref());
+    let wide = project && settings.effective_depth() != tequila_scene::render::BitDepth::Eight;
+    finish_image(output, width, height, &scene_linear, alpha, &style, wide)?;
 
     println!(
         "wrote {} ({}x{})",
@@ -1261,18 +1363,8 @@ fn render_with_cycles(
         scene_linear = straight(width, height, color, cut_alpha.clone(), style);
         alpha = cut_alpha;
     }
-    let mut pixels = style.develop_through(
-        width,
-        height,
-        &scene_linear,
-        &tequila_color::DisplayPipeline::Builtin(style.display),
-    );
-    if keep_alpha {
-        for (i, a) in alpha.iter().enumerate() {
-            pixels[i * 4 + 3] = (a * 255.0 + 0.5) as u8;
-        }
-    }
-    write_image(output, width, height, &pixels)?;
+    let wide = project.is_some_and(|s| s.effective_depth() != tequila_scene::render::BitDepth::Eight);
+    finish_image(output, width, height, &scene_linear, keep_alpha.then_some(&alpha[..]), &style, wide)?;
     println!("wrote {} ({}x{})", output, width, height);
     println!(
         "  scene {:.0} ms · render {:.2} s",
@@ -1302,10 +1394,48 @@ fn straight(width: usize, height: usize, color: Vec<tequila_core::spectrum::Spec
 
 /// A PNG, or a JPEG for `.jpg`/`.jpeg` (opaque, on white where the image
 /// is see-through).
-fn write_image(path: &str, width: usize, height: usize, rgba: &[u8]) -> Result<(), String> {
+/// Develop the picture and write it: straight colour, and its coverage or
+/// `None` for opaque. Sixteen bits a sample when `wide` and it is a PNG, as
+/// the project's 16-bit setting asks.
+fn finish_image(
+    path: &str,
+    width: usize,
+    height: usize,
+    scene_linear: &[tequila_core::spectrum::Spectrum],
+    alpha: Option<&[f32]>,
+    style: &tequila_color::ImageStyle,
+    wide: bool,
+) -> Result<(), String> {
+    let display = tequila_color::DisplayPipeline::Builtin(style.display);
+    let lower = path.to_ascii_lowercase();
+    if wide && !(lower.ends_with(".jpg") || lower.ends_with(".jpeg")) {
+        let rgb = style.develop_through_wide(width, height, scene_linear, &display);
+        let mut samples = Vec::with_capacity(width * height * 8);
+        for (i, pixel) in rgb.chunks_exact(3).enumerate() {
+            let a = alpha.map_or(65535, |alpha| (alpha[i].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16);
+            for value in [pixel[0], pixel[1], pixel[2], a] {
+                samples.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+        make_parent(path)?;
+        return write_png(path, width, height, &samples, png::BitDepth::Sixteen);
+    }
+    let mut pixels = style.develop_through(width, height, scene_linear, &display);
+    for (i, a) in alpha.iter().flat_map(|a| a.iter()).enumerate() {
+        pixels[i * 4 + 3] = (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    }
+    write_image(path, width, height, &pixels)
+}
+
+fn make_parent(path: &str) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
+    Ok(())
+}
+
+fn write_image(path: &str, width: usize, height: usize, rgba: &[u8]) -> Result<(), String> {
+    make_parent(path)?;
     let lower = path.to_ascii_lowercase();
     if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
         let rgb: Vec<u8> = rgba
@@ -1320,15 +1450,16 @@ fn write_image(path: &str, width: usize, height: usize, rgba: &[u8]) -> Result<(
             .encode(&rgb, width as u16, height as u16, jpeg_encoder::ColorType::Rgb)
             .map_err(|e| format!("{path}: {e}"));
     }
-    write_png(path, width, height, rgba)
+    write_png(path, width, height, rgba, png::BitDepth::Eight)
 }
 
-fn write_png(path: &str, width: usize, height: usize, rgba: &[u8]) -> Result<(), String> {
+/// RGBA samples as a PNG: bytes at eight bits, big-endian pairs at sixteen.
+fn write_png(path: &str, width: usize, height: usize, rgba: &[u8], depth: png::BitDepth) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
     let writer = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(writer, width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_depth(depth);
     // The output is sRGB-encoded by the display transform, so say so; without
     // the chunk, viewers guess, and some guess wrong.
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);

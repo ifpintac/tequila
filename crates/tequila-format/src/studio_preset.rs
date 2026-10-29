@@ -229,16 +229,22 @@ fn write_folder_keeping(preset: &StudioPreset, folder: &Path, thumbnail: Option<
     let failed = |what: &Path, e: std::io::Error| format!("{}: {e}", what.display());
     std::fs::create_dir_all(folder).map_err(|e| failed(folder, e))?;
     let mut written = preset.clone();
-    // The pictures, copied in and named by where they now are.
+    // The pictures - the environment's and every view's own - copied in
+    // once each and named by where they now are.
     let textures = folder.join("textures");
     let mut used = std::collections::BTreeSet::new();
+    let mut copied: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut problem = None;
-    pictures(&mut written.environment, |path| {
+    let mut copy_in = |path: &mut String| {
         let source = PathBuf::from(&*path);
         if problem.is_some() || inside(folder, &source) {
             if let Ok(relative) = source.strip_prefix(folder) {
                 *path = relative.to_string_lossy().replace('\\', "/");
             }
+            return;
+        }
+        if let Some(already) = copied.get(&source) {
+            *path = already.clone();
             return;
         }
         let name = source.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "picture".into());
@@ -248,7 +254,14 @@ fn write_folder_keeping(preset: &StudioPreset, folder: &Path, thumbnail: Option<
             return;
         }
         *path = format!("textures/{name}");
-    });
+        copied.insert(source, path.clone());
+    };
+    pictures(&mut written.environment, &mut copy_in);
+    for studio in &mut written.studios {
+        if let Some(environment) = &mut studio.environment {
+            pictures(environment, &mut copy_in);
+        }
+    }
     if let Some(problem) = problem {
         return Err(problem);
     }
@@ -345,12 +358,20 @@ fn parse(root: &Value, folder: Option<&Path>) -> Result<(StudioPreset, Option<Pa
     }
 
     let mut environment = crate::read_environment(root);
+    let mut studios: Vec<tequila_scene::studio::Studio> =
+        root.get("studios").map(|v| v.as_array().iter().map(crate::read_studio).collect()).unwrap_or_default();
     if let Some(folder) = folder {
         let mut problem = None;
-        pictures(&mut environment, |path| match within(folder, path, "a picture") {
+        let mut resolve = |path: &mut String| match within(folder, path, "a picture") {
             Ok(full) => *path = full.to_string_lossy().into_owned(),
             Err(e) => problem = Some(e),
-        });
+        };
+        pictures(&mut environment, &mut resolve);
+        for studio in &mut studios {
+            if let Some(environment) = &mut studio.environment {
+                pictures(environment, &mut resolve);
+            }
+        }
         if let Some(problem) = problem {
             return Err(problem);
         }
@@ -438,7 +459,7 @@ fn parse(root: &Value, folder: Option<&Path>) -> Result<(StudioPreset, Option<Pa
         image_style: root.get("image_style").map(crate::read_image_style_value).unwrap_or_default(),
         lights,
         cameras: root.get("cameras").map(|v| v.as_array().iter().map(crate::read_camera).collect()).unwrap_or_default(),
-        studios: root.get("studios").map(|v| v.as_array().iter().map(crate::read_studio).collect()).unwrap_or_default(),
+        studios,
         framing,
         materials,
         material_rules,
@@ -515,6 +536,40 @@ fn size_rank(size: &str) -> (u8, String) {
 // ---------------------------------------------------------------------------
 // Sharing
 // ---------------------------------------------------------------------------
+
+/// The installed preset of `id`.
+pub fn find(id: &str) -> Result<PresetFile, String> {
+    let (all, _) = list();
+    all.into_iter().find(|p| p.preset.id == id).ok_or_else(|| format!("no studio preset `{id}` is installed"))
+}
+
+/// What to save a scene's studio as.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SaveAs {
+    pub name: String,
+    pub family: String,
+    pub size: String,
+    pub description: String,
+    /// Keep the scene's materials with it, as its library.
+    pub materials: bool,
+}
+
+/// Save `document`'s studio - everything but the product - as one of the
+/// person's presets, framed for the product it has now; its id is made of
+/// its name.
+pub fn save_document(document: &tequila_scene::SceneDocument, what: &SaveAs, thumbnail: Option<&[u8]>) -> Result<PresetFile, String> {
+    let name = what.name.trim();
+    if name.is_empty() {
+        return Err("a studio preset needs a name".into());
+    }
+    let id: String = slug(name).chars().take(64).collect();
+    let mut preset = tequila_scene::preset::capture(document, &id, name, what.family.trim(), what.size.trim());
+    preset.description = what.description.clone();
+    if what.materials {
+        preset.materials = tequila_scene::preset::document_materials(document, "My studios");
+    }
+    save(&preset, thumbnail)
+}
 
 /// Save `preset` as one of the person's own, replacing one of its id.
 pub fn save(preset: &StudioPreset, thumbnail: Option<&[u8]>) -> Result<PresetFile, String> {
@@ -684,6 +739,29 @@ mod tests {
         std::fs::write(&file, crate::json_write::to_string(&value)).unwrap();
         let kept = read(&file, PresetSource::User).unwrap();
         assert_eq!(kept.unknown.get("future").and_then(|v| v.as_str()), Some("kept"));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A view's own environment brings its HDRI as the studio's does: copied
+    /// into the folder once for both, and found there again when read.
+    #[test]
+    fn a_views_picture_travels_with_the_preset() {
+        let folder = scratch("view-pictures");
+        let picture = folder.join("outside").join("studio.hdr");
+        std::fs::create_dir_all(picture.parent().unwrap()).unwrap();
+        std::fs::write(&picture, b"#?RADIANCE").unwrap();
+        let mut preset = sample();
+        preset.environment.image = Some(picture.display().to_string());
+        let mut view = tequila_scene::studio::Studio { name: "Top".into(), ..Default::default() };
+        view.environment = Some(preset.environment.clone());
+        preset.studios = vec![view];
+        let file = write_folder(&preset, &folder.join("preset"), None).unwrap();
+        let copies = std::fs::read_dir(folder.join("preset").join("textures")).unwrap().count();
+        assert_eq!(copies, 1, "one copy for the studio and the view");
+        let back = read(&file, PresetSource::User).unwrap();
+        let theirs = back.preset.studios[0].environment.as_ref().and_then(|e| e.image.clone()).unwrap();
+        assert!(std::path::Path::new(&theirs).is_file(), "the view's picture is found: {theirs}");
+        assert_eq!(back.preset.environment.image.as_deref(), Some(theirs.as_str()));
         let _ = std::fs::remove_dir_all(&folder);
     }
 

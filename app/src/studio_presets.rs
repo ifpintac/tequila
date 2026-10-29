@@ -5,7 +5,7 @@
 
 use crate::project::Project;
 use tequila_format::studio_preset::{self as presets, PresetFile};
-use tequila_scene::preset::{ApplyOptions, PresetMaterial};
+use tequila_scene::preset::ApplyOptions;
 use tequila_scene::Command;
 
 /// What applying did, to say.
@@ -20,17 +20,10 @@ pub struct Applied {
     pub dressed: usize,
 }
 
-/// The preset of `id`, among those installed.
-pub fn find(id: &str) -> Result<PresetFile, String> {
-    let (all, _) = presets::list();
-    all.into_iter().find(|p| p.preset.id == id).ok_or_else(|| format!("no studio preset `{id}` is installed"))
-}
-
 /// The product's bounding-sphere radius, metres, as presets are framed by;
 /// `None` for a scene with nothing shown.
 pub fn product_radius(project: &Project) -> Option<f32> {
-    let bounds = tequila_scene::snapshot::visible_bounds(project.document());
-    (!bounds.is_empty()).then(|| bounds.bounding_radius()).filter(|r| r.is_finite() && *r > 0.0)
+    tequila_scene::preset::product_radius(project.document())
 }
 
 /// Apply `file` to the project as one undo step - and, with `dress`, its
@@ -50,15 +43,13 @@ pub fn apply(project: &mut Project, file: &PresetFile, options: ApplyOptions, dr
     }
     let mut dressed = 0;
     if dress {
-        let name = format!("{} materials", preset.name);
-        if let Some(template) = project.document().material_templates.iter().find(|t| t.name == name).cloned() {
-            let plan = tequila_scene::templates::plan(project.document(), &template);
-            dressed = plan.len();
-            for command in tequila_scene::templates::commands(&plan) {
-                if let Err(error) = project.apply(command) {
-                    project.abandon_group();
-                    return Err(error.to_string());
-                }
+        for command in tequila_scene::preset::dressing(project.document(), preset) {
+            if let tequila_scene::Command::AssignMaterial { nodes, .. } = &command {
+                dressed += nodes.len();
+            }
+            if let Err(error) = project.apply(command) {
+                project.abandon_group();
+                return Err(error.to_string());
             }
         }
     }
@@ -106,63 +97,20 @@ pub fn thumbnail_png(image: &crate::orchestrator::DisplayImage) -> Option<Vec<u8
     Some(bytes)
 }
 
-/// The project's materials as a preset's library: each with the pictures
-/// its graph and its labels read.
-pub fn project_materials(project: &Project) -> Vec<PresetMaterial> {
-    use tequila_materials::graph::NodeKind;
-    let document = project.document();
-    document
-        .materials
-        .iter()
-        .map(|(_, definition)| {
-            let mut ids = std::collections::BTreeSet::new();
-            ids.extend(definition.graph.decals.iter().map(|decal| decal.texture));
-            for (_, node) in definition.graph.nodes() {
-                if let NodeKind::ImageTexture { texture, .. } = &node.kind {
-                    ids.insert(*texture);
-                }
-            }
-            PresetMaterial {
-                definition: definition.clone(),
-                textures: ids.into_iter().filter_map(|id| document.textures.get(id).map(|s| (id, s.clone()))).collect(),
-                category: "My studios".into(),
-                tags: Vec::new(),
-            }
-        })
-        .collect()
-}
-
 /// What to save the scene's studio as.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SaveAs {
-    pub name: String,
-    pub family: String,
-    pub size: String,
-    pub description: String,
-    /// Keep the project's materials with it, as its library.
-    pub materials: bool,
-}
+pub use tequila_format::studio_preset::SaveAs;
 
 /// Save the scene's studio as one of the person's presets - everything but
 /// the product - framed for the product it has now.
 pub fn save(project: &Project, what: &SaveAs, thumbnail: Option<&[u8]>) -> Result<PresetFile, String> {
-    let name = what.name.trim();
-    if name.is_empty() {
-        return Err("a studio preset needs a name".into());
-    }
-    let id: String = presets::slug(name).chars().take(64).collect();
-    let mut preset = tequila_scene::preset::capture(project.document(), &id, name, what.family.trim(), what.size.trim());
-    preset.description = what.description.clone();
-    if what.materials {
-        preset.materials = project_materials(project);
-    }
-    presets::save(&preset, thumbnail)
+    presets::save_document(project.document(), what, thumbnail)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use tequila_scene::preset::PresetMaterial;
     use tequila_scene::tree::NodeKind;
 
     fn demo() -> Project {
