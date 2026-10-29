@@ -110,12 +110,13 @@ else
     echo "OpenCASCADE reader not built; STEP files are read by truck alone"
 fi
 
-# Resources: the material library (found by walking up from the executable
+# Resources: the material library and the built-in studio presets beside it (found by walking up from the executable
 # into Contents/Resources), the Python module, the example plugins (marked
 # as Tequila's own by their .bundled file), the guides on the Help menu,
 # and the Claude skill Connect an AI offers.
 mkdir -p "$resources/assets" "$resources/python"
 cp -R assets/library "$resources/assets/library"
+cp -R assets/studios "$resources/assets/studios"
 cp python/*.py "$resources/python/"
 cp -R plugins/examples "$resources/plugins"
 cp docs/SCRIPTING.md "$resources/SCRIPTING.md"

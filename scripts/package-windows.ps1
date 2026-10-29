@@ -121,6 +121,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'plugins/examples') -Destination (Join-Path $packagePath 'plugins') -Recurse
     New-Item -ItemType Directory -Path $assetsPath | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/library') -Destination $assetsPath -Recurse
+    # The built-in studio presets, found beside the library.
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/studios') -Destination $assetsPath -Recurse
     foreach ($name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_LICENSES.md', 'TRADEMARKS.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $packagePath
     }

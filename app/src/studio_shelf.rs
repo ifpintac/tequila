@@ -86,14 +86,20 @@ impl StudioShelf {
             return Some(handle.clone());
         }
         let bytes = std::fs::read(path).ok()?;
-        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        // Eight bits a channel whatever was saved: a preset's renders, and
+        // so a thumbnail made from one, may well be 16-bit.
+        decoder.set_transformations(png::Transformations::normalize_to_color8());
         let mut reader = decoder.read_info().ok()?;
         let mut buffer = vec![0; reader.output_buffer_size()];
         let info = reader.next_frame(&mut buffer).ok()?;
-        let rgba: Vec<u8> = match (info.color_type, info.bit_depth) {
-            (png::ColorType::Rgba, png::BitDepth::Eight) => buffer[..info.buffer_size()].to_vec(),
-            (png::ColorType::Rgb, png::BitDepth::Eight) => buffer[..info.buffer_size()].chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-            _ => return None,
+        let pixels = &buffer[..info.buffer_size()];
+        let rgba: Vec<u8> = match info.color_type {
+            png::ColorType::Rgba => pixels.to_vec(),
+            png::ColorType::Rgb => pixels.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+            png::ColorType::GrayscaleAlpha => pixels.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+            png::ColorType::Grayscale => pixels.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+            png::ColorType::Indexed => return None,
         };
         let image = egui::ColorImage::from_rgba_unmultiplied([info.width as usize, info.height as usize], &rgba);
         let handle = ctx.load_texture(format!("studio-preset-{}", path.display()), image, egui::TextureOptions::LINEAR);
