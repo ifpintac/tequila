@@ -67,6 +67,7 @@ const GROUPS: [(&str, &[EnvParam]); 3] = [
             EnvParam::GroundReflectionFadeDistance,
             EnvParam::GroundReflectionFresnel,
             EnvParam::GroundReflectionAlpha,
+            EnvParam::GroundReflectionFadeBy,
             EnvParam::GroundBounce,
             EnvParam::GroundBounceStrength,
             EnvParam::GroundBounceColor,
@@ -243,7 +244,8 @@ impl EnvironmentTab {
             EnvParam::GroundReflectionBlur
             | EnvParam::GroundReflectionFadeDistance
             | EnvParam::GroundReflectionFresnel
-            | EnvParam::GroundReflectionAlpha => settings.ground.enabled && settings.ground.reflections > 0.0,
+            | EnvParam::GroundReflectionAlpha
+            | EnvParam::GroundReflectionFadeBy => settings.ground.enabled && settings.ground.reflections > 0.0,
             EnvParam::GroundSize => {
                 settings.ground.enabled
                     && (settings.ground.shadows || settings.ground.reflections > 0.0)

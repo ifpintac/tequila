@@ -1677,12 +1677,23 @@ fn floor_reflection(
     // traced and shaded to be thrown away. The first thing the ray meets is
     // never further than what the path would shade, so this skips only what
     // would have faded anyway.
-    if let Some(fade) = catcher.reflection_fade {
-        match intersector.intersect(&Ray::new(origin, reflected)) {
+    // By distance, the floor shows its mirror by how much the product closes
+    // in on it within the fade, sampled as ambient occlusion is: most of the
+    // floor has nothing near and is done with in one short ray.
+    let mut near = 1.0;
+    match catcher.reflection_fade {
+        Some(fade) if catcher.reflection_fade_by_distance => {
+            near = occlusion_at(intersector, hit, normal, fade, sampler);
+            if near <= 0.0 {
+                return None;
+            }
+        }
+        Some(fade) => match intersector.intersect(&Ray::new(origin, reflected)) {
             None => return None,
             Some(first) if first.t * reflected.dot(normal) >= fade => return None,
             Some(_) => {}
-        }
+        },
+        None => {}
     }
     // One bounce, not a recursion: a floor reflecting a floor reflecting a
     // floor is a hall of mirrors nobody asked for, and the second bounce is
@@ -1695,11 +1706,11 @@ fn floor_reflection(
     if seen.escaped {
         return None;
     }
-    let mut share = catcher.reflections.clamp(0.0, 1.0);
+    let mut share = catcher.reflections.clamp(0.0, 1.0) * near;
     // A short reflection: fading with how high above the floor what it shows
     // is, as a photographer's faded reflection does, so it meets the product
     // at the floor and is gone further up.
-    if let Some(fade) = catcher.reflection_fade {
+    if let Some(fade) = catcher.reflection_fade.filter(|_| !catcher.reflection_fade_by_distance) {
         let height = seen.depth * reflected.dot(normal);
         let t = (height / fade.max(1e-6)).clamp(0.0, 1.0);
         share *= 1.0 - t * t * (3.0 - 2.0 * t);

@@ -190,6 +190,10 @@ pub struct GroundSettings {
     /// default; its brightness for pictures placed on any background, where
     /// the dark parts of a reflection otherwise come out as a grey band.
     pub reflection_alpha: ReflectionAlpha,
+    /// What the reflection fades by over its fade: how high above the floor
+    /// what it shows is, or how near the product is to the floor point it
+    /// is seen in (V-Ray's Dim distance, Blender's occlusion mask).
+    pub reflection_fade_by: ReflectionFade,
     /// A floor only the product sees: its reflections and the light it
     /// bounces take this glow, while the camera sees the floor exactly as
     /// before. A photo studio's white sweep, invisible in the picture; it
@@ -228,6 +232,7 @@ impl Default for GroundSettings {
             reflection_fade_distance: 0.0,
             reflection_fresnel: false,
             reflection_alpha: ReflectionAlpha::Coverage,
+            reflection_fade_by: ReflectionFade::Height,
             bounce: false,
             bounce_strength: 1.0,
             bounce_color: Spectrum::splat(1.0),
@@ -262,6 +267,36 @@ impl ReflectionAlpha {
 
     pub fn from_key(key: &str) -> Option<ReflectionAlpha> {
         ReflectionAlpha::ALL.into_iter().find(|a| a.key() == key)
+    }
+}
+
+/// What a short ground reflection fades by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReflectionFade {
+    /// The height above the floor of what it shows: full at the floor, gone
+    /// at the fade. What it always was.
+    #[default]
+    Height,
+    /// How much the product closes in on the floor point within the fade, as
+    /// ambient occlusion measures it: strongest in a corner, half beside a
+    /// wall, nothing beyond the fade. A product's own shape decides where the
+    /// reflection shows, as V-Ray's Dim distance and Blender's mask do.
+    Distance,
+}
+
+impl ReflectionFade {
+    pub const ALL: [ReflectionFade; 2] = [ReflectionFade::Height, ReflectionFade::Distance];
+
+    /// The name in the file format and the scripting API.
+    pub const fn key(self) -> &'static str {
+        match self {
+            ReflectionFade::Height => "height",
+            ReflectionFade::Distance => "distance",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<ReflectionFade> {
+        ReflectionFade::ALL.into_iter().find(|f| f.key() == key)
     }
 }
 

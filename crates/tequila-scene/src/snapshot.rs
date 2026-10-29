@@ -972,6 +972,7 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
         occlusion_radius: 1.0,
         shadows: ground.shadows,
         reflection_luminance_alpha: ground.reflection_alpha == crate::document::ReflectionAlpha::Luminance,
+        reflection_fade_by_distance: ground.reflection_fade_by == crate::document::ReflectionFade::Distance,
         bounce: (ground.bounce && ground.bounce_strength > 0.0).then(|| ground.bounce_color * ground.bounce_strength),
         bounce_falloff: ground.bounce_contact_falloff.max(0.0),
     })

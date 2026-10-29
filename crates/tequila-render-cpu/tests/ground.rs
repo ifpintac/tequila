@@ -461,6 +461,24 @@ fn the_reflection_pass_samples_only_where_there_is_one() {
     assert!(skipped > SIZE * SIZE / 4, "only {skipped} pixels were spared the full count");
 }
 
+/// Faded by distance, the floor mirrors the panel only near where it
+/// stands, and at most about half as strongly as the full mirror beside it,
+/// as an occlusion mask is: the panel hides half the sky from the floor at
+/// its foot, and none of it beyond the fade.
+#[test]
+fn a_reflection_faded_by_distance_shows_near_the_product() {
+    let full = render_layer(scene(Some(ShadowCatcher { reflections: 1.0, ..Default::default() }), true), 64);
+    let near = render_layer(
+        scene(Some(ShadowCatcher { reflections: 1.0, reflection_fade: Some(0.5), reflection_fade_by_distance: true, ..Default::default() }), true),
+        64,
+    );
+    let total = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).sum::<f32>();
+    let strongest = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).fold(0.0f32, f32::max);
+    assert!(total(&near) > 0.0, "no reflection at all");
+    assert!(total(&near) < 0.5 * total(&full), "the reflection did not shorten: {} of {}", total(&near), total(&full));
+    assert!(strongest(&near) < 0.8 * strongest(&full), "as strong as the full mirror: {} of {}", strongest(&near), strongest(&full));
+}
+
 fn changed_pixels(a: &Framebuffer, b: &Framebuffer) -> usize {
     let mut changed = 0;
     for y in 0..SIZE {

@@ -190,6 +190,10 @@ pub struct ShadowCatcher {
     /// on a white page shows the reflection's tint and never a grey band
     /// (V-Ray's matte "alpha contribution", Blender's compositor fix).
     pub reflection_luminance_alpha: bool,
+    /// The reflection fades by how much the scene closes in on the floor
+    /// point within [`ShadowCatcher::reflection_fade`], as ambient occlusion
+    /// measures it, rather than by the height of what it shows.
+    pub reflection_fade_by_distance: bool,
     /// What the product sees of the floor and the camera never does: an
     /// emission of this radiance, the soft white sweep of a photo studio
     /// that lifts the faces that mirror the floor. `None` for none.
@@ -212,6 +216,7 @@ impl Default for ShadowCatcher {
             occlusion_radius: 1.0,
             shadows: true,
             reflection_luminance_alpha: false,
+            reflection_fade_by_distance: false,
             bounce: None,
             bounce_falloff: 0.0,
         }

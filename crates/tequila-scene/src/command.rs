@@ -492,6 +492,7 @@ pub enum EnvParam {
     GroundReflectionFadeDistance,
     GroundReflectionFresnel,
     GroundReflectionAlpha,
+    GroundReflectionFadeBy,
     GroundBounce,
     GroundBounceStrength,
     GroundBounceColor,
@@ -546,7 +547,7 @@ pub struct EnvUi {
 }
 
 impl EnvParam {
-    pub const ALL: [EnvParam; 25] = [
+    pub const ALL: [EnvParam; 26] = [
         EnvParam::Rotation,
         EnvParam::Brightness,
         EnvParam::Contrast,
@@ -566,6 +567,7 @@ impl EnvParam {
         EnvParam::GroundReflectionFadeDistance,
         EnvParam::GroundReflectionFresnel,
         EnvParam::GroundReflectionAlpha,
+        EnvParam::GroundReflectionFadeBy,
         EnvParam::GroundBounce,
         EnvParam::GroundBounceStrength,
         EnvParam::GroundBounceColor,
@@ -579,6 +581,7 @@ impl EnvParam {
     pub const fn choices(self) -> &'static [(&'static str, &'static str)] {
         match self {
             EnvParam::GroundReflectionAlpha => &[("coverage", "By coverage"), ("luminance", "By brightness")],
+            EnvParam::GroundReflectionFadeBy => &[("height", "By height"), ("distance", "By distance")],
             _ => &[],
         }
     }
@@ -605,6 +608,7 @@ impl EnvParam {
             EnvParam::GroundReflectionFadeDistance => "ground_reflection_fade_distance",
             EnvParam::GroundReflectionFresnel => "ground_reflection_fresnel",
             EnvParam::GroundReflectionAlpha => "ground_reflection_alpha",
+            EnvParam::GroundReflectionFadeBy => "ground_reflection_fade_by",
             EnvParam::GroundBounce => "ground_bounce",
             EnvParam::GroundBounceStrength => "ground_bounce_strength",
             EnvParam::GroundBounceColor => "ground_bounce_color",
@@ -649,6 +653,7 @@ impl EnvParam {
             EnvParam::GroundReflectionFadeDistance => ("ground", "reflection_fade_distance"),
             EnvParam::GroundReflectionFresnel => ("ground", "reflection_fresnel"),
             EnvParam::GroundReflectionAlpha => ("ground", "reflection_alpha"),
+            EnvParam::GroundReflectionFadeBy => ("ground", "reflection_fade_by"),
             EnvParam::GroundBounce => ("ground", "bounce"),
             EnvParam::GroundBounceStrength => ("ground", "bounce_strength"),
             EnvParam::GroundBounceColor => ("ground", "bounce_color"),
@@ -736,6 +741,10 @@ impl EnvParam {
                 label: "Reflection alpha",
                 range: (0.0, 0.0),
             },
+            EnvParam::GroundReflectionFadeBy => EnvUi {
+                label: "Fade by",
+                range: (0.0, 0.0),
+            },
             EnvParam::GroundBounce => EnvUi {
                 label: "Floor bounce",
                 range: (0.0, 0.0),
@@ -785,6 +794,7 @@ impl EnvParam {
             EnvParam::GroundReflectionFadeDistance => EnvValue::Scalar(settings.ground.reflection_fade_distance),
             EnvParam::GroundReflectionFresnel => EnvValue::Flag(settings.ground.reflection_fresnel),
             EnvParam::GroundReflectionAlpha => EnvValue::Choice(settings.ground.reflection_alpha.key()),
+            EnvParam::GroundReflectionFadeBy => EnvValue::Choice(settings.ground.reflection_fade_by.key()),
             EnvParam::GroundBounce => EnvValue::Flag(settings.ground.bounce),
             EnvParam::GroundBounceStrength => EnvValue::Scalar(settings.ground.bounce_strength),
             EnvParam::GroundBounceColor => EnvValue::Color(settings.ground.bounce_color),
@@ -862,6 +872,11 @@ impl EnvParam {
             (EnvParam::GroundReflectionAlpha, EnvValue::Choice(c)) => {
                 if let Some(alpha) = crate::document::ReflectionAlpha::from_key(c) {
                     settings.ground.reflection_alpha = alpha;
+                }
+            }
+            (EnvParam::GroundReflectionFadeBy, EnvValue::Choice(c)) => {
+                if let Some(fade) = crate::document::ReflectionFade::from_key(c) {
+                    settings.ground.reflection_fade_by = fade;
                 }
             }
             (EnvParam::GroundBounce, EnvValue::Flag(f)) => settings.ground.bounce = *f,
