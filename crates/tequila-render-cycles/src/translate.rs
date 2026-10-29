@@ -432,6 +432,20 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             continue;
         }
         let (material, shader) = match &instance.shadow_catcher {
+            // A floor with a bounce: what the camera sees of it is as it
+            // always was, every other ray sees the glow.
+            Some(catcher) if catcher.bounce.is_some() => {
+                if catcher.shadows && catcher.shadow_color != tint {
+                    builder.out.warn("ground shadows of different colours all take the first one's colour in Cycles");
+                }
+                let seen = if catcher.shadows && catcher.occlusion_only {
+                    FloorLook::Occlusion(catcher.shadow_color, catcher.occlusion_radius)
+                } else {
+                    FloorLook::Catcher
+                };
+                let glow = catcher.bounce.unwrap_or(Spectrum::ZERO);
+                (usize::MAX - 2, builder.bounce_shader(seen, glow, catcher.bounce_falloff, view.ground_illumination)?)
+            }
             Some(catcher) if catcher.shadows && catcher.occlusion_only => {
                 (usize::MAX - 1, builder.occlusion_shader(catcher.shadow_color, catcher.occlusion_radius)?)
             }
@@ -455,8 +469,8 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             }
         };
         let key = (instance.mesh.index(), material);
-        // An occlusion-only floor's shader is its own.
-        let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1) {
+        // An occlusion-only floor's shader is its own, and a bouncing one's.
+        let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2) {
             Some(m) => *m,
             None => {
                 let m = builder.mesh(mesh, shader)?;
@@ -492,6 +506,12 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         let occlusion = instance.shadow_catcher.is_some_and(|c| c.shadows && c.occlusion_only);
         if occlusion {
             visibility = ffi::VISIBLE_CAMERA;
+        }
+        // A bouncing floor is a surface to what the product sends out - its
+        // reflections, the light it bounces, what passes through its glass -
+        // which see the glow; the camera's view of it is left as above.
+        if instance.shadow_catcher.is_some_and(|c| c.bounce.is_some()) {
+            visibility |= ffi::VISIBLE_DIFFUSE | ffi::VISIBLE_GLOSSY | ffi::VISIBLE_TRANSMISSION;
         }
         let matrix = Y_UP_TO_Z_UP * instance.transform.matrix;
         let catches = instance.shadow_catcher.is_some_and(|c| c.shadows) && !occlusion;
@@ -855,7 +875,74 @@ struct Builder<'a> {
     turned: HashMap<Node, (Node, &'static str)>,
 }
 
+/// What the camera sees of a floor whose bounce the rest of the scene sees.
+#[derive(Clone, Copy)]
+enum FloorLook {
+    /// The shadow catcher's own surface.
+    Catcher,
+    /// An occlusion-only floor, of this tint over this radius.
+    Occlusion(Spectrum, f32),
+}
+
 impl Builder<'_> {
+    /// A floor with a bounce (`ShadowCatcher::bounce`): to camera rays the
+    /// floor it would be without one; to every other ray an emission of the
+    /// bounce's radiance, darkened toward the contact by ambient occlusion
+    /// over `falloff` - the white sweep a photo studio puts under a product,
+    /// which its reflections see and the picture does not. With ground
+    /// illumination on, the lit floor is there to those rays as well.
+    fn bounce_shader(&mut self, seen: FloorLook, glow: Spectrum, falloff: f32, lit: bool) -> Result<Node, String> {
+        let shader = self.session.shader("bouncing ground")?;
+        let camera = match seen {
+            FloorLook::Catcher => {
+                let bsdf = self.session.node(shader, "diffuse_bsdf")?;
+                self.session.set_float3(bsdf, "color", [0.8, 0.8, 0.8])?;
+                (bsdf, "BSDF")
+            }
+            FloorLook::Occlusion(tint, radius) => {
+                let ao = self.session.node(shader, "ambient_occlusion")?;
+                self.session.set_float(ao, "Distance", radius.max(1e-3))?;
+                self.session.set_int(ao, "Samples", 16)?;
+                let shade = self.session.node(shader, "emission")?;
+                self.session.set_float3(shade, "Color", rgb(tint))?;
+                self.session.set_float(shade, "Strength", 1.0)?;
+                let clear = self.session.node(shader, "transparent_bsdf")?;
+                self.session.set_float3(clear, "Color", [1.0, 1.0, 1.0])?;
+                let mix = self.session.node(shader, "mix_closure")?;
+                self.session.connect(shader, ao, "AO", mix, "Fac")?;
+                self.session.connect(shader, shade, "Emission", mix, "Closure1")?;
+                self.session.connect(shader, clear, "BSDF", mix, "Closure2")?;
+                (mix, "Closure")
+            }
+        };
+        let emission = self.session.node(shader, "emission")?;
+        self.session.set_float3(emission, "Color", rgb(glow))?;
+        self.session.set_float(emission, "Strength", 1.0)?;
+        if falloff > 0.0 {
+            let ao = self.session.node(shader, "ambient_occlusion")?;
+            self.session.set_float(ao, "Distance", falloff)?;
+            self.session.set_int(ao, "Samples", 16)?;
+            self.session.connect(shader, ao, "AO", emission, "Strength")?;
+        }
+        let mut away = (emission, "Emission");
+        if lit {
+            let lit_floor = self.session.node(shader, "diffuse_bsdf")?;
+            self.session.set_float3(lit_floor, "color", [0.8, 0.8, 0.8])?;
+            let add = self.session.node(shader, "add_closure")?;
+            self.session.connect(shader, emission, "Emission", add, "Closure1")?;
+            self.session.connect(shader, lit_floor, "BSDF", add, "Closure2")?;
+            away = (add, "Closure");
+        }
+        let path = self.session.node(shader, "light_path")?;
+        let pick = self.session.node(shader, "mix_closure")?;
+        self.session.connect(shader, path, "Is Camera Ray", pick, "Fac")?;
+        self.session.connect(shader, away.0, away.1, pick, "Closure1")?;
+        self.session.connect(shader, camera.0, camera.1, pick, "Closure2")?;
+        let output = self.session.node(shader, "output")?;
+        self.session.connect(shader, pick, "Closure", output, "Surface")?;
+        self.session.commit(shader)
+    }
+
     /// A shadow catcher's surface: plain white diffuse, as Blender gives a
     /// catcher with no material of its own.
     fn catcher_shader(&mut self) -> Result<Node, String> {

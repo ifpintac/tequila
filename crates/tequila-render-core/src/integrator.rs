@@ -972,6 +972,23 @@ pub fn trace_path_with_caustics(
             // the floor), so what lies beyond is found by this path alone and
             // takes full weight.
             //
+            // A floor with a bounce glows for everything but the camera -
+            // the studio's white sweep the product's reflections see - and
+            // ends the path there; darker toward the contact over its
+            // falloff, as ambient occlusion. Never in the floor's own
+            // reflection, which shows the product as it is.
+            if let Some(glow) = catcher.bounce.filter(|_| !config.floor_reflection_only && !config.in_floor_reflection) {
+                let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 { hit.geometric_normal } else { -hit.geometric_normal };
+                let open = if catcher.bounce_falloff > 0.0 {
+                    1.0 - occlusion_at(intersector, &hit, facing, catcher.bounce_falloff, sampler)
+                } else {
+                    1.0
+                };
+                let emitted = throughput * glow * open;
+                radiance += emitted;
+                aovs.contribute(emitted, crate::lpe::ENVIRONMENT);
+                break;
+            }
             // Unless ground illumination is on, in which case the floor is
             // deliberately a real diffuse surface bouncing light back into the
             // product, and shading falls through to it.

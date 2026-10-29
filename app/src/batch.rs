@@ -1400,6 +1400,60 @@ mod tests {
         }
     }
 
+    /// A floor's bounce is seen by the product and never by the camera: a
+    /// mirror sphere on a floor that catches no shadow, in a black studio
+    /// with no lamp, mirrors black below its middle without one and the glow
+    /// with one, while the pixels the camera sees of the floor itself stay
+    /// as they were. In Tequila's renderer and, where it is installed, in
+    /// Cycles.
+    #[test]
+    fn a_floor_bounce_lights_the_product_and_not_the_picture() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::LightSet;
+        use tequila_render_core::scene::ShadowCatcher;
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let picture = |bounce: Option<Spectrum>| -> Vec<u8> {
+                let directory = scratch(&format!("tequila-bounce-{}-{}", engine.key(), bounce.is_some()));
+                let renderer = BatchRenderer::new();
+                let mut render =
+                    job(1, &directory, RenderSettings { engine, width: 64, height: 48, max_samples: 64, denoise: false, ..Default::default() });
+                let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(Vec::new())));
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                scene.background = Background::Environment;
+                scene.instances[1].shadow_catcher = Some(ShadowCatcher { shadows: false, bounce, bounce_falloff: 0.0, ..ShadowCatcher::default() });
+                let m = &mut scene.materials[0];
+                m.base_color = Spectrum::splat(1.0);
+                m.base_metalness = 1.0;
+                m.specular_roughness = 0.05;
+                m.coat_weight = 0.0;
+                scene.programs.clear();
+                render.scene = Arc::new(scene);
+                renderer.submit(render);
+                match wait_for_finish(&renderer) {
+                    BatchEvent::Finished { preview, .. } => preview,
+                    BatchEvent::Failed { message, .. } => panic!("{message}"),
+                    _ => unreachable!(),
+                }
+            };
+            let (dark, lifted) = (picture(None), picture(Some(Spectrum::splat(1.0))));
+            let mean = |p: &[u8]| p.chunks_exact(4).map(|c| f64::from(c[0]) + f64::from(c[1]) + f64::from(c[2])).sum::<f64>() / (p.len() / 4) as f64;
+            assert!(mean(&lifted) > mean(&dark) + 2.0, "{engine:?}: the bounce lit nothing, {:.2} against {:.2}", mean(&lifted), mean(&dark));
+            // The floor's corners, where the sphere is not: the camera sees
+            // no more of the floor than before.
+            for corner in [0, 63, 64 * 47, 64 * 48 - 1] {
+                let (a, b) = (&dark[4 * corner..4 * corner + 4], &lifted[4 * corner..4 * corner + 4]);
+                assert!(a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 2), "{engine:?}: the camera saw the bounce at pixel {corner}: {a:?} then {b:?}");
+            }
+        }
+    }
+
     /// The mean of each channel of the demo scene with a black sphere on a
     /// catcher floor set up as `catcher`, under a grey sky and a lamp off to
     /// the side casting a shadow or not, through `engine`.
