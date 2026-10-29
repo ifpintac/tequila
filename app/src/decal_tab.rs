@@ -189,13 +189,15 @@ pub fn show(
                                 crate::field::Slider::new(&mut label.roughness, 0.0..=1.0)
                                     .text("Roughness"),
                             );
+                            crate::color_picker::field(ui, "Ink", &mut label.ink)
+                                .on_hover_text("The artwork's colour is multiplied by this: white artwork prints in the ink's colour. White leaves it as it is.");
                             ui.add(crate::field::Checkbox::new(&mut label.metallic, "Foil"))
                                 .on_hover_text("Printed in metal foil: the artwork reflects like metal, as a hot-stamped logo does.");
                             if label.mapping.projection == tequila_texture::projection::Projection::Planar {
                                 use tequila_materials::decal::DecalSide;
                                 ui.horizontal(|ui| {
                                     ui.label(egui::RichText::new("Prints on").color(crate::theme::dim()))
-                                        .on_hover_text("A flat projection goes straight through the part: by itself, a label on the front also prints, mirrored, on the back.");
+                                        .on_hover_text("A flat projection goes straight through the part: by itself, a label on the front also prints, mirrored, on the back. One side prints on faces turned within 60° of the label.");
                                     crate::theme::segmented(
                                         ui,
                                         &mut label.side,

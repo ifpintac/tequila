@@ -1292,7 +1292,11 @@ impl Builder<'_> {
             tequila_texture::projection::Axis::Z => "Z",
         };
         let op = if decal.side == DecalSide::Positive { "greater_than" } else { "less_than" };
-        let threshold = if decal.side == DecalSide::Positive { 1e-3 } else { -1e-3 };
+        let threshold = if decal.side == DecalSide::Positive {
+            tequila_materials::decal::ONE_SIDED_COSINE
+        } else {
+            -tequila_materials::decal::ONE_SIDED_COSINE
+        };
         Ok(Some(self.float_op(shader, op, Slot::Link(normal, axis), Slot::Value(Value::Float(threshold)))?))
     }
 
@@ -2989,7 +2993,12 @@ impl Builder<'_> {
             if let Some(side) = self.label_side(shader, decal)? {
                 alpha = self.float_op(shader, "multiply", alpha, side)?;
             }
-            base = self.apply(shader, &NodeKind::Mix, &[base, label.colour(), alpha], 0)?;
+            let ink = if decal.ink == tequila_core::spectrum::Spectrum::ONE {
+                label.colour()
+            } else {
+                self.apply(shader, &NodeKind::Multiply, &[label.colour(), Slot::Value(Value::Color(decal.ink))], 0)?
+            };
+            base = self.apply(shader, &NodeKind::Mix, &[base, ink, alpha], 0)?;
             let foil = Slot::Value(Value::Float(if decal.metallic { 1.0 } else { 0.0 }));
             metalness = self.float_mix(shader, metalness, foil, alpha)?;
             let bare = self.float_op(shader, "subtract", Slot::Value(Value::Float(1.0)), alpha)?;

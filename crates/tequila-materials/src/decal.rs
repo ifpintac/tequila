@@ -16,6 +16,11 @@ pub enum DecalSide {
     Negative,
 }
 
+/// How far from its axis a face may turn and still take a one-sided label:
+/// 60 degrees. A face near edge-on would take the artwork smeared into
+/// streaks, and a CAD face meant to be square to the label is rarely quite.
+pub const ONE_SIDED_COSINE: f32 = 0.5;
+
 impl DecalSide {
     pub const ALL: [DecalSide; 3] = [DecalSide::Both, DecalSide::Positive, DecalSide::Negative];
 
@@ -45,6 +50,9 @@ pub struct Decal {
     pub enabled: bool,
     /// Which faces it prints on, for a planar label.
     pub side: DecalSide,
+    /// The ink: the artwork's colour multiplied by it, so white artwork
+    /// prints in any colour. White leaves the artwork as it is.
+    pub ink: tequila_core::spectrum::Spectrum,
 }
 
 impl Decal {
@@ -58,6 +66,7 @@ impl Decal {
             metallic: false,
             enabled: true,
             side: DecalSide::Both,
+            ink: tequila_core::spectrum::Spectrum::ONE,
         }
     }
 
@@ -70,13 +79,14 @@ impl Decal {
         let along = self.mapping.axis.of(normal);
         match self.side {
             DecalSide::Both => true,
-            DecalSide::Positive => along > 1e-3,
-            DecalSide::Negative => along < -1e-3,
+            DecalSide::Positive => along > ONE_SIDED_COSINE,
+            DecalSide::Negative => along < -ONE_SIDED_COSINE,
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.opacity.is_finite()
+        [self.ink.r, self.ink.g, self.ink.b].iter().all(|c| c.is_finite() && *c >= 0.0)
+            && self.opacity.is_finite()
             && (0.0..=1.0).contains(&self.opacity)
             && self.roughness.is_finite()
             && (0.0..=1.0).contains(&self.roughness)
@@ -106,9 +116,13 @@ mod tests {
         label.mapping.projection = Projection::Planar;
         label.mapping.axis = Axis::Z;
         let (front, back, edge) = (vec3(0.2, 0.3, 0.9), vec3(0.2, 0.3, -0.9), vec3(1.0, 0.0, 0.0));
+        // A face drafted a couple of degrees off square to the label, and one
+        // turned 70 degrees from it.
+        let (drafted, steep) = (vec3(0.0, -0.999, 0.035), vec3(0.94, 0.0, 0.342));
         assert!(label.prints_on(front) && label.prints_on(back) && label.prints_on(edge));
         label.side = DecalSide::Positive;
         assert!(label.prints_on(front) && !label.prints_on(back) && !label.prints_on(edge));
+        assert!(!label.prints_on(drafted) && !label.prints_on(steep), "near edge-on faces would smear it");
         label.side = DecalSide::Negative;
         assert!(!label.prints_on(front) && label.prints_on(back));
         label.mapping.projection = Projection::Cylindrical;

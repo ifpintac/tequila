@@ -522,10 +522,12 @@ A value is a single-key object naming its type: `{"float": 0.5}`,
 `{"color": [r, g, b]}`, `{"vector": [x, y, z]}` or `{"bool": true}`.
 
 The material's labels are `graph.decals`, bottom to top:
-`{name, texture, mapping, opacity, roughness, metallic, enabled, side?}`.
+`{name, texture, mapping, opacity, roughness, metallic, enabled, side?, ink?}`.
+`ink` is a linear colour the artwork's colour is multiplied by, absent for
+white.
 `side` is for a planar label, which goes straight through a part:
 `positive` prints only on faces looking along its axis, and `negative` only on
-faces looking against it. Absent, it prints on both, as every label did
+faces looking against it, each within 60 degrees of it. Absent, it prints on both, as every label did
 before.
 
 **The parameter block is never written twice.** The surface node's literals live

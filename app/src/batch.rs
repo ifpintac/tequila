@@ -2556,12 +2556,72 @@ mod tests {
         }
     }
 
+    /// White artwork prints in its ink's colour, the same in both renderers:
+    /// a label all round a dark sphere, white with a red ink, comes out red,
+    /// and as red in Cycles as in Tequila's renderer. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn a_labels_ink_colours_white_artwork() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::{Axis, Mapping, Projection};
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let middle = |image: &[u8]| -> [f64; 3] {
+            let (mut sum, mut n) = ([0.0; 3], 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    for c in 0..3 {
+                        sum[c] += f64::from(image[(y * 96 + x) * 4 + c]);
+                    }
+                    n += 1.0;
+                }
+            }
+            sum.map(|s| s / n)
+        };
+        let inked = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            graph.material_mut().base_color = Spectrum::splat(0.05);
+            let mut print = tequila_materials::decal::Decal::new("Print", TextureId(1));
+            print.mapping = Mapping {
+                projection: Projection::Cylindrical,
+                axis: Axis::Y,
+                scale: tequila_core::math::vec3(1.0, 0.25, 1.0),
+                offset: tequila_core::math::vec2(0.0, 0.5),
+                ..Mapping::default()
+            };
+            print.ink = Spectrum { r: 0.7, g: 0.08, b: 0.05 };
+            graph.decals.push(print);
+            let program = graph.compile().expect("compiles");
+            let mut table = tequila_render_core::shade::TextureTable::new();
+            table.insert(TextureId(1), Arc::new(Texture::from_linear(
+                Image { width: 4, height: 4, channels: 4, color_space: ColorSpace::LinearSrgb, data: [1.0, 1.0, 1.0, 1.0].repeat(16) },
+                MapRole::Color,
+                Mapping::default(),
+            )));
+            scene.materials[0] = graph.material().clone();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+        };
+        let [tequila, cycles] = both_engines("label-ink", inked);
+        let (tequila, cycles) = (middle(&tequila), middle(&cycles));
+        assert!(tequila[0] > tequila[1] + 40.0, "white artwork in red ink is not red: {tequila:.1?}");
+        for c in 0..3 {
+            assert!((tequila[c] - cycles[c]).abs() < 10.0, "red ink is {tequila:.1?} in Tequila's render and {cycles:.1?} in Cycles'");
+        }
+    }
+
     /// A flat label kept to one side prints on the faces looking that way and
     /// not on those behind, in both renderers alike: projected straight
     /// through a sphere along each axis in turn, where the camera looks it
     /// prints for at most one of the two sides - for one of them on some
-    /// axis - and on both sides wherever either does. Skipped where Cycles
-    /// is not installed.
+    /// axis - and on both sides wherever either does (and also on faces too
+    /// far off the axis for one side). Skipped where Cycles is not installed.
     #[test]
     fn a_one_sided_label_prints_on_one_side_only() {
         use tequila_core::spectrum::Spectrum;
@@ -2620,7 +2680,7 @@ mod tests {
             };
             let (plus, minus, both) = (shot(DecalSide::Positive), shot(DecalSide::Negative), shot(DecalSide::Both));
             assert!(!(plus && minus), "along {axis:?} it prints for both sides");
-            assert_eq!(both, plus || minus, "along {axis:?}: + {plus}, - {minus}, both sides {both}");
+            assert!(both || !(plus || minus), "along {axis:?}: + {plus}, - {minus}, both sides {both}");
             one_sided |= plus || minus;
         }
         assert!(one_sided, "no axis printed for either side");
