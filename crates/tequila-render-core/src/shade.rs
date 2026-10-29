@@ -279,7 +279,7 @@ pub fn shade<'a>(
         write_param(scratch, *param, *value);
     }
     for decal in &program.decals {
-        if !decal.enabled || decal.opacity <= 0.0 { continue; }
+        if !decal.enabled || decal.opacity <= 0.0 || !decal.prints_on(point.normal) { continue; }
         let Some(texture) = textures.get(decal.texture) else { continue; };
         let (color, coverage) = texture.sample_decal(&decal.mapping, point);
         let color = colour_of(texture, color);
@@ -305,7 +305,7 @@ pub fn labels_at(
     let mut colour = tequila_core::spectrum::Spectrum::ZERO;
     let mut coverage = 0.0f32;
     for decal in &program.decals {
-        if !decal.enabled || decal.opacity <= 0.0 {
+        if !decal.enabled || decal.opacity <= 0.0 || !decal.prints_on(point.normal) {
             continue;
         }
         let Some(texture) = textures.get(decal.texture) else { continue };

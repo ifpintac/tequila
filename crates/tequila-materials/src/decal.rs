@@ -1,6 +1,36 @@
 //! Printed image layers, ordered from bottom to top over a surface material.
 use crate::graph::TextureId;
-use tequila_texture::projection::Mapping;
+use tequila_texture::projection::{Mapping, Projection};
+
+/// Which faces a planar label prints on. A planar projection goes straight
+/// through a part, so by itself a label on the front panel also prints,
+/// mirrored, on the back one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DecalSide {
+    /// Every face it passes through, as labels always have.
+    #[default]
+    Both,
+    /// Only faces looking along the projection's axis.
+    Positive,
+    /// Only faces looking against it.
+    Negative,
+}
+
+impl DecalSide {
+    pub const ALL: [DecalSide; 3] = [DecalSide::Both, DecalSide::Positive, DecalSide::Negative];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            DecalSide::Both => "both",
+            DecalSide::Positive => "positive",
+            DecalSide::Negative => "negative",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<DecalSide> {
+        DecalSide::ALL.into_iter().find(|s| s.key() == key)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Decal {
@@ -13,6 +43,8 @@ pub struct Decal {
     /// hot-stamped logo or a foil seal (§1.11's per-label finish).
     pub metallic: bool,
     pub enabled: bool,
+    /// Which faces it prints on, for a planar label.
+    pub side: DecalSide,
 }
 
 impl Decal {
@@ -25,6 +57,21 @@ impl Decal {
             roughness: 0.35,
             metallic: false,
             enabled: true,
+            side: DecalSide::Both,
+        }
+    }
+
+    /// Whether it prints on a face whose normal, in the part's own space, is
+    /// `normal`: always, unless a planar label keeps to one side.
+    pub fn prints_on(&self, normal: tequila_core::math::Vec3) -> bool {
+        if self.mapping.projection != Projection::Planar {
+            return true;
+        }
+        let along = self.mapping.axis.of(normal);
+        match self.side {
+            DecalSide::Both => true,
+            DecalSide::Positive => along > 1e-3,
+            DecalSide::Negative => along < -1e-3,
         }
     }
 
@@ -42,5 +89,29 @@ impl Decal {
             && self.mapping.offset.x.is_finite()
             && self.mapping.offset.y.is_finite()
             && self.mapping.rotation.is_finite()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tequila_core::math::vec3;
+    use tequila_texture::projection::Axis;
+
+    /// A flat label kept to one side prints on faces looking along its axis
+    /// that way only; on both sides, or projected any other way, anywhere.
+    #[test]
+    fn a_label_kept_to_one_side_prints_on_that_side() {
+        let mut label = Decal::new("Print", TextureId(1));
+        label.mapping.projection = Projection::Planar;
+        label.mapping.axis = Axis::Z;
+        let (front, back, edge) = (vec3(0.2, 0.3, 0.9), vec3(0.2, 0.3, -0.9), vec3(1.0, 0.0, 0.0));
+        assert!(label.prints_on(front) && label.prints_on(back) && label.prints_on(edge));
+        label.side = DecalSide::Positive;
+        assert!(label.prints_on(front) && !label.prints_on(back) && !label.prints_on(edge));
+        label.side = DecalSide::Negative;
+        assert!(!label.prints_on(front) && label.prints_on(back));
+        label.mapping.projection = Projection::Cylindrical;
+        assert!(label.prints_on(front), "a wrapped label has no one side");
     }
 }

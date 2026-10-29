@@ -191,6 +191,18 @@ pub fn show(
                             );
                             ui.add(crate::field::Checkbox::new(&mut label.metallic, "Foil"))
                                 .on_hover_text("Printed in metal foil: the artwork reflects like metal, as a hot-stamped logo does.");
+                            if label.mapping.projection == tequila_texture::projection::Projection::Planar {
+                                use tequila_materials::decal::DecalSide;
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Prints on").color(crate::theme::dim()))
+                                        .on_hover_text("A flat projection goes straight through the part: by itself, a label on the front also prints, mirrored, on the back.");
+                                    crate::theme::segmented(
+                                        ui,
+                                        &mut label.side,
+                                        &[(DecalSide::Both, "Both sides"), (DecalSide::Positive, "+ side"), (DecalSide::Negative, "− side")],
+                                    );
+                                });
+                            }
                         });
                 });
             }

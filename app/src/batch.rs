@@ -2556,6 +2556,76 @@ mod tests {
         }
     }
 
+    /// A flat label kept to one side prints on the faces looking that way and
+    /// not on those behind, in both renderers alike: projected straight
+    /// through a sphere along each axis in turn, where the camera looks it
+    /// prints for at most one of the two sides - for one of them on some
+    /// axis - and on both sides wherever either does. Skipped where Cycles
+    /// is not installed.
+    #[test]
+    fn a_one_sided_label_prints_on_one_side_only() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::decal::DecalSide;
+        use tequila_materials::graph::{MaterialGraph, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::{Axis, Mapping, Projection};
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let middle = |image: &[u8]| -> f64 {
+            let (mut sum, mut n) = (0.0, 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    sum += f64::from(image[(y * 96 + x) * 4 + 1]);
+                    n += 1.0;
+                }
+            }
+            sum / n
+        };
+        let printed = |axis: Axis, side: Option<DecalSide>| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+                graph.material_mut().base_color = Spectrum::splat(0.05);
+                // The whole sphere under the artwork.
+                if let Some(side) = side {
+                    let mut print = tequila_materials::decal::Decal::new("Print", TextureId(1));
+                    print.mapping = Mapping { projection: Projection::Planar, axis, scale: tequila_core::math::vec3(0.01, 0.01, 0.01), offset: tequila_core::math::vec2(0.5, 0.5), real_world_units: false, ..Mapping::default() };
+                    print.side = side;
+                    graph.decals.push(print);
+                }
+                let program = graph.compile().expect("compiles");
+                let mut table = tequila_render_core::shade::TextureTable::new();
+                table.insert(TextureId(1), Arc::new(Texture::from_linear(
+                    Image { width: 4, height: 4, channels: 4, color_space: ColorSpace::LinearSrgb, data: [0.9, 0.9, 0.9, 1.0].repeat(16) },
+                    MapRole::Color,
+                    Mapping::default(),
+                )));
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+            }
+        };
+        let [bare, _] = both_engines("label-side-none", printed(Axis::Z, None));
+        let bare = middle(&bare);
+        let mut one_sided = false;
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let shot = |side: DecalSide| {
+                let [tequila, cycles] = both_engines(&format!("label-side-{axis:?}-{}", side.key()), printed(axis, Some(side)));
+                let (tequila, cycles) = (middle(&tequila), middle(&cycles));
+                assert!((tequila - cycles).abs() < 10.0, "{axis:?} {side:?}: {tequila:.1} in Tequila's render, {cycles:.1} in Cycles'");
+                tequila > bare + 20.0
+            };
+            let (plus, minus, both) = (shot(DecalSide::Positive), shot(DecalSide::Negative), shot(DecalSide::Both));
+            assert!(!(plus && minus), "along {axis:?} it prints for both sides");
+            assert_eq!(both, plus || minus, "along {axis:?}: + {plus}, - {minus}, both sides {both}");
+            one_sided |= plus || minus;
+        }
+        assert!(one_sided, "no axis printed for either side");
+    }
+
     /// Coloured glass with a depth absorbs as it goes, in Cycles as in
     /// Tequila's renderer: through the middle of a ball of amber liquid -
     /// two depths of it - the sky behind comes out the same colour in both.

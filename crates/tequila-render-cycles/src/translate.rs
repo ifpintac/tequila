@@ -1275,6 +1275,27 @@ impl Builder<'_> {
         Ok((scaled, "Vector"))
     }
 
+    /// Where a planar label keeps to one side: one on faces whose object-space
+    /// normal looks that way along its axis, else none. `None` for a label
+    /// on both sides, which needs nothing.
+    fn label_side(&mut self, shader: Shader, decal: &tequila_materials::decal::Decal) -> Result<Option<Slot>, String> {
+        use tequila_materials::decal::DecalSide;
+        if decal.side == DecalSide::Both || decal.mapping.projection != tequila_texture::projection::Projection::Planar {
+            return Ok(None);
+        }
+        let coords = self.session.node(shader, "texture_coordinate")?;
+        let normal = self.session.node(shader, "separate_xyz")?;
+        self.session.connect(shader, coords, "Normal", normal, "Vector")?;
+        let axis = match decal.mapping.axis {
+            tequila_texture::projection::Axis::X => "X",
+            tequila_texture::projection::Axis::Y => "Y",
+            tequila_texture::projection::Axis::Z => "Z",
+        };
+        let op = if decal.side == DecalSide::Positive { "greater_than" } else { "less_than" };
+        let threshold = if decal.side == DecalSide::Positive { 1e-3 } else { -1e-3 };
+        Ok(Some(self.float_op(shader, op, Slot::Link(normal, axis), Slot::Value(Value::Float(threshold)))?))
+    }
+
     /// How much each of the tri-planar planes counts at a point: its axis's
     /// share of the normal, raised to the blend sharpness, the three made to
     /// sum to one (`Mapping::tri_planar`).
@@ -2964,7 +2985,10 @@ impl Builder<'_> {
             let Some(label) = self.texture_node_with(shader, decal.texture, &decal.mapping, true)? else {
                 continue;
             };
-            let alpha = self.float_op(shader, "multiply", label.alpha, Slot::Value(Value::Float(decal.opacity)))?;
+            let mut alpha = self.float_op(shader, "multiply", label.alpha, Slot::Value(Value::Float(decal.opacity)))?;
+            if let Some(side) = self.label_side(shader, decal)? {
+                alpha = self.float_op(shader, "multiply", alpha, side)?;
+            }
             base = self.apply(shader, &NodeKind::Mix, &[base, label.colour(), alpha], 0)?;
             let foil = Slot::Value(Value::Float(if decal.metallic { 1.0 } else { 0.0 }));
             metalness = self.float_mix(shader, metalness, foil, alpha)?;
