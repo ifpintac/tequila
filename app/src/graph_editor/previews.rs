@@ -111,6 +111,7 @@ pub fn evaluate(textures: &TextureTable, extent: f32, graph: &MaterialGraph, id:
                     generated: position * (1.0 / extent) + tequila_core::math::Vec3::splat(0.5),
                     object_location: tequila_core::math::Vec3::ZERO,
                     object_random: 0.5,
+                    ray: Default::default(),
                 },
             };
             let material = tequila_render_core::shade::shade(&program, textures, &point, &mut registers, &mut scratch);

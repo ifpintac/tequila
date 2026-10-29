@@ -1104,9 +1104,11 @@ pub fn trace_path_with_caustics(
         // brackets, the inside of a housing — and making them pay for the
         // general case is how a feature that helps a few surfaces slows down
         // the whole render.
-        let point = scene
-            .program(hit.material)
-            .map(|_| scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction));
+        let point = scene.program(hit.material).map(|_| {
+            let mut point = scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction);
+            point.world.ray = seen_as.ray();
+            point
+        });
         if bounce == 0 {
             if let (Some(program), Some(point)) = (scene.program(hit.material), &point) {
                 if !program.decals.is_empty() {
@@ -1567,6 +1569,20 @@ pub fn trace_path_with_caustics(
         out.normal = -ray.direction;
     }
     out
+}
+
+impl Seen {
+    /// The kind of ray, as the Light Path node reads it: the floor's
+    /// reflection is a reflection.
+    fn ray(self) -> tequila_texture::projection::RayKind {
+        use tequila_texture::projection::RayKind;
+        match self {
+            Seen::Camera => RayKind::Camera,
+            Seen::FloorMirror | Seen::Glossy => RayKind::Glossy,
+            Seen::Diffuse => RayKind::Diffuse,
+            Seen::Transmission => RayKind::Transmission,
+        }
+    }
 }
 
 /// The kind of ray a path is, as a part's visibility names them.
@@ -2031,7 +2047,8 @@ fn cutout_transmittance(
                     )
                 });
                 let (_, shading_normal) = hit.facing_forward(segment.direction);
-                let point = scene.shading_point_along(&hit, shading_normal, crate::settings::DEFAULT_PIXEL_SPREAD, segment.direction);
+                let mut point = scene.shading_point_along(&hit, shading_normal, crate::settings::DEFAULT_PIXEL_SPREAD, segment.direction);
+                point.world.ray = tequila_texture::projection::RayKind::Shadow;
                 let program = scene
                     .program(hit.material)
                     .expect("a varying opacity comes from a program");
@@ -2109,7 +2126,8 @@ fn camera_coverage(intersector: &dyn Intersector, start: Vec3, direction: Vec3, 
                 let (registers, material) = scratch.get_or_insert_with(|| {
                     (shade::Registers::new(), crate::material::Material::default())
                 });
-                let point = scene.shading_point_along(&hit, shading_normal, crate::settings::DEFAULT_PIXEL_SPREAD, direction);
+                let mut point = scene.shading_point_along(&hit, shading_normal, crate::settings::DEFAULT_PIXEL_SPREAD, direction);
+                point.world.ray = tequila_texture::projection::RayKind::Shadow;
                 let program = scene.program(hit.material).expect("a varying opacity comes from a program");
                 shade::shade(program, &scene.textures, &point, registers, material).geometry_opacity
             }

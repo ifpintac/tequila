@@ -773,6 +773,7 @@ impl SceneSnapshot {
                 generated: self.generated_at(hit, object),
                 object_location: transform.point(Vec3::ZERO),
                 object_random: Self::object_random(hit.instance.index()),
+                ray: Default::default(),
             },
             position: object,
             // Renormalized because the inverse transpose does not preserve

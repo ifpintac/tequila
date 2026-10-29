@@ -812,10 +812,23 @@ highlight edges). Not the §01 §10.4 per-pixel gate, which assumed one
 integrator under two backends; a statistical one between two integrators.
 
 Tequila's own renderer stays: it is the reference, it makes what Cycles
-in this build does not (render passes, light groups and relighting,
-layers, regions, SPPM caustics), the app sends those renders to it
-automatically (`batch::engine_for`), and it renders where Cycles is not
-installed.
+in this build does not (layers, regions, SPPM caustics), the app sends
+those renders to it automatically (`batch::engine_for`), and it renders
+where Cycles is not installed.
+
+Passes and light groups come from Cycles' film (`batch::cycles_passes`),
+named and laid out as Tequila's are: depth (the distance from the camera,
+from Cycles' position pass), normal, position, albedo, clown, the object
+and material Cryptomattes (Cycles hashes the names Tequila gives its
+objects and shaders), the light groups for relighting - with what Tequila
+lays over Cycles' picture, the floor's reflection and the backdrop, as one
+more, `Other`, so they add up to it - and Diffuse, Lighting,
+GlobalIllumination, Reflection and Refraction from Cycles' diffuse, glossy
+and transmission passes, direct and indirect, by colour. Caustics,
+AmbientOcclusion, Shadow and Labels stay Tequila's renderer's, and the job
+says so. `cycles_keeps_passes_tequila_would` holds the depth and normal to
+what Tequila's tracer finds along the same rays, and the groups to the
+picture.
 
 Where the two still part, by design (each held by a test in `app/src/batch.rs`):
 

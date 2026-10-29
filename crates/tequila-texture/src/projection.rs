@@ -318,6 +318,26 @@ pub struct PointWorld {
     pub object_location: Vec3,
     /// 0 to 1, the same over a part, different between parts.
     pub object_random: f32,
+    /// The kind of ray that came to the point, for the Light Path node.
+    pub ray: RayKind,
+}
+
+/// The kind of ray a shading point was reached by: the camera's, a shadow
+/// ray's, or a bounce of one kind (`tequila_materials::nodes::PointInput`'s
+/// ray outputs, Cycles' Light Path node's).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RayKind {
+    /// What the camera sees, directly.
+    #[default]
+    Camera,
+    /// A shadow ray, testing what stands between a point and a light.
+    Shadow,
+    /// After a diffuse bounce.
+    Diffuse,
+    /// After a glossy bounce: a reflection.
+    Glossy,
+    /// After passing through glass.
+    Transmission,
 }
 
 impl Mapping {

@@ -526,15 +526,21 @@ pub(crate) fn engine_for(settings: &RenderSettings, layers: bool) -> (RenderEngi
     if !engine.is_cycles() {
         return (engine, None);
     }
-    if settings.effective_write_passes() || settings.relight || layers || settings.region.is_some() {
-        return (RenderEngine::Tequila, Some("passes, light groups, layers and regions are rendered by Tequila's own renderer".into()));
+    if layers || settings.region.is_some() {
+        return (RenderEngine::Tequila, Some("layers and regions are rendered by Tequila's own renderer".into()));
     }
+    if (settings.effective_write_passes() || settings.relight) && !tequila_render_cycles::has_passes() {
+        return (RenderEngine::Tequila, Some("this Cycles library renders the image alone, so passes and light groups are Tequila's own renderer's".into()));
+    }
+    // Its passes are Cycles' own, Tequila's names on them, short of those
+    // only Tequila's renderer makes.
+    let without = settings.effective_write_passes().then(|| format!("from Cycles, a render's passes leave out {TEQUILA_ONLY_PASSES}, which Tequila's own renderer writes"));
     match cycles_here() {
         Err(why) => (RenderEngine::Tequila, Some(format!("Cycles is not available ({why}), so Tequila's own renderer renders"))),
         Ok(false) if engine == RenderEngine::CyclesGpu => {
             (RenderEngine::CyclesCpu, Some("Cycles found no graphics card it can use, so it renders on the processor".into()))
         }
-        Ok(_) => (engine, None),
+        Ok(_) => (engine, without),
     }
 }
 
@@ -543,6 +549,8 @@ pub(crate) fn engine_for(settings: &RenderSettings, layers: bool) -> (RenderEngi
 struct CyclesFrame {
     color: Vec<tequila_core::spectrum::Spectrum>,
     alpha: Vec<f32>,
+    /// The passes it kept, for a render that asked for them.
+    passes: Option<CyclesPasses>,
     transparent: bool,
     floor_reflection: bool,
     started: Instant,
@@ -550,6 +558,123 @@ struct CyclesFrame {
     rendered: u32,
     halt: Halt,
     stopped: bool,
+}
+
+/// The passes a Cycles render keeps, in Tequila's terms: its depth (the
+/// distance from the camera, infinite where nothing was hit), normal and
+/// position in Tequila's Y-up world, albedo, the two Cryptomattes, and each
+/// light group's image, in the rendering space.
+struct CyclesPasses {
+    /// Tequila's light-path passes, as Cycles' own light passes make them
+    /// ([`CYCLES_LIGHT_PASSES`]).
+    radiance: Vec<(String, Vec<tequila_core::spectrum::Spectrum>)>,
+    clown: Vec<tequila_core::spectrum::Spectrum>,
+    depth: Vec<f32>,
+    normal: Vec<tequila_core::math::Vec3>,
+    position: Vec<tequila_core::math::Vec3>,
+    albedo: Vec<tequila_core::spectrum::Spectrum>,
+    mattes: Vec<tequila_render_core::cryptomatte::Cryptomatte>,
+    groups: Vec<(String, Vec<tequila_core::spectrum::Spectrum>)>,
+}
+
+/// Tequila's light-path passes (`aov::standard_passes`) from Cycles' own:
+/// each a sum, over Cycles' diffuse, glossy and transmission, of its direct
+/// light, its indirect light or both, by that closure's colour, as a
+/// compositor puts Blender's passes back together. Caustics has none.
+const CYCLES_LIGHT_PASSES: [(&str, &[(&str, bool, bool)]); 5] = [
+    ("Diffuse", &[("diffuse", true, true)]),
+    ("Lighting", &[("diffuse", true, false), ("glossy", true, false)]),
+    ("GlobalIllumination", &[("diffuse", false, true), ("glossy", false, true)]),
+    ("Reflection", &[("glossy", true, true)]),
+    ("Refraction", &[("transmission", true, true)]),
+];
+
+/// The passes only Tequila's renderer writes, which a Cycles render goes
+/// without.
+const TEQUILA_ONLY_PASSES: &str = "Caustics, AmbientOcclusion, Shadow and Labels";
+
+/// Cryptomatte's layers of each kind: two ranks a layer, the six Tequila's
+/// renderer keeps.
+const CRYPTOMATTE_LAYERS: usize = tequila_render_core::cryptomatte::RANKS.div_ceil(2);
+
+/// What Cycles' passes come back as, named as Tequila's renderer names
+/// them. Read only for a render that asked for passes or light groups.
+fn cycles_passes(
+    session: &mut tequila_render_cycles::Session,
+    job: &BatchJob,
+    groups: &[String],
+    want_passes: bool,
+) -> Result<CyclesPasses, String> {
+    use tequila_core::spectrum::Spectrum;
+    use tequila_render_cycles::translate::{from_cycles, to_rendering};
+    let settings = &job.settings;
+    let (width, height) = (settings.width, settings.height);
+    let pixels = width * height;
+    let read = |session: &mut tequila_render_cycles::Session, name: &str, channels: usize| session.render_pass(name, channels, width, height);
+    let depth_z = read(session, "Depth", 1)?;
+    let position: Vec<_> = read(session, "Position", 3)?.chunks_exact(3).map(|p| from_cycles([p[0], p[1], p[2]])).collect();
+    let normal = read(session, "Normal", 3)?.chunks_exact(3).map(|n| from_cycles([n[0], n[1], n[2]])).collect();
+    let albedo = read(session, "Albedo", 3)?.chunks_exact(3).map(|a| to_rendering(a[0], a[1], a[2]).sanitized()).collect();
+    let eye = job.camera.position();
+    let depth = (0..pixels).map(|i| if depth_z[i] > 0.0 && depth_z[i] < 1e9 { (position[i] - eye).length() } else { f32::INFINITY }).collect();
+    let mut radiance = Vec::new();
+    let mut clown = Vec::new();
+    let mut mattes = Vec::new();
+    if want_passes {
+        let mut light = std::collections::HashMap::new();
+        for kind in ["diffuse", "glossy", "transmission"] {
+            for part in ["direct", "indirect", "color"] {
+                let name = format!("{kind}_{part}");
+                let image: Vec<Spectrum> = read(session, &name, 3)?.chunks_exact(3).map(|c| to_rendering(c[0], c[1], c[2]).sanitized()).collect();
+                light.insert(name, image);
+            }
+        }
+        for (name, terms) in CYCLES_LIGHT_PASSES {
+            let image = (0..pixels)
+                .map(|i| {
+                    terms.iter().fold(Spectrum::ZERO, |sum, &(kind, direct, indirect)| {
+                        let lit = |part: &str| light[&format!("{kind}_{part}")][i];
+                        let incoming = match (direct, indirect) {
+                            (true, true) => lit("direct") + lit("indirect"),
+                            (true, false) => lit("direct"),
+                            _ => lit("indirect"),
+                        };
+                        sum + incoming * lit("color")
+                    })
+                })
+                .collect();
+            radiance.push((name.to_string(), image));
+        }
+        // The object's id, one more than its instance's (`pass_id`).
+        clown = read(session, "Object", 1)?
+            .into_iter()
+            .map(|id| if id >= 0.5 { tequila_render_core::aov::clown_color(id.round() as u32 - 1) } else { Spectrum::ZERO })
+            .collect();
+        for (kind, names) in [("CryptoObject", &job.object_names), ("CryptoMaterial", &job.material_names)] {
+            let mut matte = tequila_render_core::cryptomatte::Cryptomatte::new(kind, width, height);
+            for name in names.iter() {
+                matte.register(name);
+            }
+            for layer in 0..CRYPTOMATTE_LAYERS {
+                let ranks = read(session, &format!("{kind}{layer:02}"), 4)?;
+                for (i, rank) in ranks.chunks_exact(4).enumerate() {
+                    for (id, coverage) in [(rank[0], rank[1]), (rank[2], rank[3])] {
+                        if coverage > 0.0 {
+                            matte.accumulate(i % width, i / width, id, coverage);
+                        }
+                    }
+                }
+            }
+            matte.finish(1);
+            mattes.push(matte);
+        }
+    }
+    let mut kept = Vec::with_capacity(groups.len());
+    for name in groups {
+        let image: Vec<Spectrum> = read(session, name, 3)?.chunks_exact(3).map(|c| to_rendering(c[0], c[1], c[2]).sanitized()).collect();
+        kept.push((name.clone(), image));
+    }
+    Ok(CyclesPasses { radiance, clown, depth, normal, position, albedo, mattes, groups: kept })
 }
 
 /// Render with Cycles on `engine`. An error here is Cycles' or the
@@ -561,6 +686,14 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
 
     let mut session = Session::new(engine.cycles_device(), 0, None)
         .map_err(|e| format!("Cycles could not start on {}: {e}", engine.label()))?;
+    // Passes and light groups, named as Tequila's renderer names them.
+    let want_passes = settings.effective_write_passes();
+    let keeping = want_passes || settings.relight;
+    let groups: Vec<String> = if keeping {
+        tequila_render_core::aov::AovSet::light_groups_for(&job.scene).light_paths.into_iter().map(|pass| pass.name).collect()
+    } else {
+        Vec::new()
+    };
     let view = translate::View {
         camera: job.camera,
         width: settings.width,
@@ -568,17 +701,48 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
         transparent: settings.alpha_mode.transparent_background(),
         ground_illumination: job.config.ground_illumination,
         light_materials: job.config.light_source_materials,
+        light_groups: keeping,
     };
-    let translation = translate::build(&mut session, &job.scene, &view)?;
+    let translation = if keeping {
+        let names = translate::Names { objects: job.object_names.clone(), materials: job.material_names.clone() };
+        translate::build_named(&mut session, &job.scene, &view, &names)?
+    } else {
+        translate::build(&mut session, &job.scene, &view)?
+    };
+    if keeping {
+        session.add_pass("Depth", "depth", 1, None)?;
+        session.add_pass("Position", "position", 3, None)?;
+        session.add_pass("Normal", "normal", 3, None)?;
+        session.add_pass("Albedo", "denoising_albedo", 3, None)?;
+        if want_passes {
+            session.cryptomatte(CRYPTOMATTE_LAYERS)?;
+            session.add_pass("Object", "object_id", 1, None)?;
+            for kind in ["diffuse", "glossy", "transmission"] {
+                for part in ["direct", "indirect", "color"] {
+                    let name = format!("{kind}_{part}");
+                    session.add_pass(&name, &name, 3, None)?;
+                }
+            }
+        }
+        // A light group is a combined pass kept to its group, as Blender
+        // makes them.
+        for name in &groups {
+            session.add_pass(name, "combined", 3, Some(name))?;
+        }
+    }
     for warning in &translation.warnings {
         eprintln!("Cycles: {warning}");
     }
     let under = translation
         .background_under
         .then(|| translate::background(&job.scene, &job.camera, settings.width, settings.height));
+    // Kept passes are Cycles' noisy ones. Its denoiser, which denoises every
+    // pass it can and drops their light groups, is left out, and the
+    // picture is denoised below against the passes' guides as the groups
+    // are.
     translate::configure(
         &mut session,
-        &translate::Quality::with_lighting(settings.adaptive, settings.denoise, settings.max_seconds.map(f64::from), &job.config)
+        &translate::Quality::with_lighting(settings.adaptive, settings.denoise && !keeping, settings.max_seconds.map(f64::from), &job.config)
             .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
             .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
     )?;
@@ -618,6 +782,10 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
     // What it reached, which a time limit or a cancel leaves short of what
     // was asked for.
     let rendered = if halt == Halt::Samples { total } else { reached.min(total) };
+    let passes = if keeping { Some(cycles_passes(&mut session, job, &groups, want_passes)?) } else { None };
+    let denoise_after = passes.as_ref().filter(|_| settings.denoise).map(|passes| {
+        (passes.albedo.iter().flat_map(|s| s.to_array()).collect::<Vec<f32>>(), passes.normal.iter().flat_map(|n| [n.x, n.y, n.z]).collect::<Vec<f32>>())
+    });
 
     // Cycles' film is premultiplied scene-linear Rec.709, which is what the
     // output takes, once back in the rendering space.
@@ -630,9 +798,28 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
         });
         alpha.push(if view.transparent { px[3].clamp(0.0, 1.0) } else { 1.0 });
     }
+    if let Some((albedo, normal)) = denoise_after {
+        let _ = events.send(BatchEvent::Stage { id: job.id, label: "Denoising" });
+        if let Ok(denoiser) = tequila_denoise::Denoiser::shared() {
+            let flat: Vec<f32> = color.iter().flat_map(|s| s.to_array()).collect();
+            let quality = tequila_denoise::DenoiseSettings {
+                quality: tequila_denoise::Quality::High,
+                strength: settings.denoise_strength,
+                prefilter_guides: settings.prefilter_guides,
+            };
+            if let Ok(clean) = denoiser.denoise(settings.width, settings.height, &flat, &albedo, &normal, quality) {
+                color = clean
+                    .data
+                    .chunks(3)
+                    .map(|c| tequila_core::spectrum::Spectrum::from_rendering_rgb(tequila_core::math::Vec3 { x: c[0], y: c[1], z: c[2] }))
+                    .collect();
+            }
+        }
+    }
     Ok(CyclesFrame {
         color,
         alpha,
+        passes,
         transparent: view.transparent,
         floor_reflection: translation.floor_reflection,
         started,
@@ -647,7 +834,7 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
 /// and save it.
 fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>, cancel: &AtomicBool) -> Result<BatchEvent, String> {
     let settings = &job.settings;
-    let CyclesFrame { mut color, mut alpha, transparent, floor_reflection, started, seconds, rendered, halt, stopped } = frame;
+    let CyclesFrame { mut color, mut alpha, passes, transparent, floor_reflection, started, seconds, rendered, halt, stopped } = frame;
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
     // The floor's reflection, which Cycles was left without: Tequila's,
     // through the same camera, laid over (`tequila_render_cpu::floor`).
@@ -733,19 +920,62 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         &fields,
         format,
     ));
+    // The light groups, with what Tequila laid over Cycles' picture - the
+    // floor's reflection, the backdrop under it - as one more, so the
+    // groups always add up to the picture saved.
+    let groups = passes.as_ref().map(|passes| {
+        let mut groups = passes.groups.clone();
+        let rest: Vec<tequila_core::spectrum::Spectrum> = (0..color.len())
+            .map(|i| groups.iter().fold(color[i], |left, (_, image)| left - image[i]))
+            .collect();
+        if rest.iter().any(|c| c.luminance().abs() > 1e-3) {
+            groups.push(("Other".to_string(), rest));
+        }
+        groups
+    });
+    let want_passes = settings.effective_write_passes();
     let output = RenderOutput {
         width: settings.width,
         height: settings.height,
         color,
         alpha,
-        layers: Vec::new(),
+        // Its light passes and light groups, as Tequila's renderer lays a
+        // layered file's out.
+        layers: match (&passes, &groups, want_passes) {
+            (Some(passes), Some(groups), true) => passes.radiance.iter().chain(groups.iter()).map(|(name, image)| (name.clone(), image.clone(), None)).collect(),
+            _ => Vec::new(),
+        },
         style: job.style,
         display: job.display.clone(),
         alpha_mode: output_alpha(settings),
     };
     let preview = output.to_rgba8();
-    output.write(&path, format).map_err(|e| e.to_string())?;
+    match (format, &passes) {
+        (tequila_format::output::ImageFormat::Exr(precision), Some(passes)) if want_passes => {
+            let (color, alpha) = output.matted();
+            let data = tequila_format::passes::DataLayers {
+                depth: Some(&passes.depth),
+                normal: Some(&passes.normal),
+                position: Some(&passes.position),
+                albedo: Some(&passes.albedo),
+                clown: Some(&passes.clown),
+            };
+            let named: Vec<(String, Vec<tequila_core::spectrum::Spectrum>)> = passes.radiance.iter().cloned().chain(groups.clone().unwrap_or_default()).collect();
+            let mattes: Vec<&tequila_render_core::cryptomatte::Cryptomatte> = passes.mattes.iter().collect();
+            tequila_format::passes::exr_from_layers(settings.width, settings.height, color, alpha, precision, &named, &data, &mattes)
+                .write(&path)
+                .map_err(|e| e.to_string())?;
+        }
+        _ => output.write(&path, format).map_err(|e| e.to_string())?,
+    }
     write_sidecars(&path, job, settings, rendered, seconds, halt)?;
+    let relight = match (passes, groups, settings.relight) {
+        (Some(passes), Some(groups), true) => {
+            let _ = events.send(BatchEvent::Stage { id: job.id, label: "Keeping light groups" });
+            Some(Box::new(Relight::from_groups(groups, &passes.albedo, &passes.normal, settings, &output, path.clone(), format)))
+        }
+        _ => None,
+    };
 
     Ok(BatchEvent::Finished {
         id: job.id,
@@ -757,7 +987,7 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         preview,
         halt,
         stopped,
-        relight: None,
+        relight,
     })
 }
 
@@ -832,6 +1062,56 @@ impl Relight {
                     }
                 }
                 (pass.name.clone(), image)
+            })
+            .collect();
+        Relight {
+            width,
+            height,
+            groups,
+            alpha: output.alpha.clone(),
+            style: output.style,
+            display: output.display.clone(),
+            alpha_mode: output.alpha_mode,
+            format,
+            path,
+        }
+    }
+
+    /// The same from groups another renderer made (Cycles'), denoised each
+    /// against `albedo` and `normal` as the image is - all but `Other`, what
+    /// Tequila laid over that renderer's picture, which is exact as it is.
+    fn from_groups(
+        groups: Vec<(String, Vec<tequila_core::spectrum::Spectrum>)>,
+        albedo: &[tequila_core::spectrum::Spectrum],
+        normal: &[tequila_core::math::Vec3],
+        settings: &RenderSettings,
+        output: &RenderOutput,
+        path: std::path::PathBuf,
+        format: tequila_format::output::ImageFormat,
+    ) -> Relight {
+        let (width, height) = (settings.width, settings.height);
+        let denoiser = settings.denoise.then(|| tequila_denoise::Denoiser::shared().ok()).flatten();
+        let albedo: Vec<f32> = albedo.iter().flat_map(|s| s.to_array()).collect();
+        let normal: Vec<f32> = normal.iter().flat_map(|n| [n.x, n.y, n.z]).collect();
+        let groups = groups
+            .into_iter()
+            .map(|(name, mut image)| {
+                if let (Some(denoiser), false) = (&denoiser, name == "Other") {
+                    let flat: Vec<f32> = image.iter().flat_map(|s| s.to_array()).collect();
+                    let quality = tequila_denoise::DenoiseSettings {
+                        quality: tequila_denoise::Quality::High,
+                        strength: settings.denoise_strength,
+                        prefilter_guides: settings.prefilter_guides,
+                    };
+                    if let Ok(clean) = denoiser.denoise(width, height, &flat, &albedo, &normal, quality) {
+                        image = clean
+                            .data
+                            .chunks(3)
+                            .map(|c| tequila_core::spectrum::Spectrum::from_rendering_rgb(tequila_core::math::Vec3 { x: c[0], y: c[1], z: c[2] }))
+                            .collect();
+                    }
+                }
+                (name, image)
             })
             .collect();
         Relight {
@@ -3074,6 +3354,166 @@ mod tests {
         assert!((a.0 - b.0).abs() < 1.5 && (a.1 - b.1).abs() < 1.5 && a.2.abs_diff(b.2) * 10 < a.2, "the panorama's sky is elsewhere: Tequila {a:?}, Cycles {b:?}");
     }
 
+    /// A Cycles render asked for passes keeps its engine, and its passes are
+    /// Tequila's: the depth and normal at each pixel are what Tequila's own
+    /// tracer finds along the same camera ray, and the light groups add up
+    /// to the picture. Cycles left passes and light groups to Tequila's
+    /// renderer, and said so. Skipped where Cycles is not installed or
+    /// predates passes.
+    #[test]
+    fn cycles_keeps_passes_tequila_would() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::intersect::Intersector;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        if !tequila_render_cycles::has_passes() {
+            eprintln!("skipped: this Cycles library predates passes");
+            return;
+        }
+        let directory = scratch("tequila-cycles-passes");
+        let (width, height) = (48, 36);
+        let settings = RenderSettings {
+            engine: RenderEngine::CyclesCpu,
+            width,
+            height,
+            max_samples: 16,
+            denoise: false,
+            write_passes: true,
+            relight: true,
+            format: tequila_scene::render::OutputFormat::Exr,
+            ..Default::default()
+        };
+        assert!(settings.effective_write_passes());
+        let mut job = job(1, &directory, settings);
+        // A lamp on a layer of its own, beside the environment: two groups.
+        let lamp = tequila_render_core::light::Light::new(tequila_render_core::light::LightKind::Point(tequila_render_core::light::PointLight {
+            position: vec3(1.5, 3.0, 2.0),
+            intensity: Spectrum::splat(8.0),
+            radius: 0.0,
+        }))
+        .with_layer(2);
+        job.scene = Arc::new((*job.scene).clone().with_lights(Arc::new(tequila_render_core::light::LightSet::new(vec![lamp]))));
+        job.object_names = vec!["Sphere".into(); job.scene.instances.len()];
+        job.material_names = vec!["Plastic".into(); job.scene.materials.len()];
+        assert_eq!(engine_for(&job.settings, false).0, RenderEngine::CyclesCpu, "passes sent the render to Tequila's renderer");
+        let (events, _heard) = std::sync::mpsc::channel();
+        let frame = render_cycles(&job, RenderEngine::CyclesCpu, &events, &AtomicBool::new(false)).expect("Cycles renders");
+        let passes = frame.passes.as_ref().expect("the passes");
+
+        // Along the same rays, through Tequila's own tracer.
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, (*job.scene).clone()).unwrap();
+        let aspect = width as f32 / height as f32;
+        let (mut both, mut near, mut facing, mut agree) = (0, 0, 0, 0);
+        for y in 0..height {
+            for x in 0..width {
+                let i = y * width + x;
+                let ray = job.camera.pick_ray(tequila_core::math::vec2((x as f32 + 0.5) / width as f32, (y as f32 + 0.5) / height as f32), aspect);
+                let hit = intersector.intersect(&ray);
+                let seen = passes.depth[i].is_finite();
+                agree += usize::from(seen == hit.is_some());
+                if let (Some(hit), true) = (hit, seen) {
+                    both += 1;
+                    near += usize::from((passes.depth[i] - hit.t).abs() < 0.02 * hit.t);
+                    // Averaged over the pixel's samples, shorter at an edge.
+                    facing += usize::from(passes.normal[i].try_normalize().is_some_and(|n| n.dot(hit.shading_normal) > 0.95));
+                }
+            }
+        }
+        eprintln!("{both} pixels hit in both; depth within 2% at {near}, normal within 18 degrees at {facing}; hit or missed alike at {agree} of {}", width * height);
+        assert!(both > 300, "the sphere was not in both");
+        assert!(agree * 100 >= width * height * 97, "Cycles' depth saw the sphere elsewhere");
+        assert!(near * 100 >= both * 95 && facing * 100 >= both * 95, "the depth or the normal is not Tequila's");
+
+        // The light groups add up to the picture, before Tequila lays
+        // anything over it.
+        let summed: Vec<Spectrum> = (0..width * height).map(|i| passes.groups.iter().fold(Spectrum::ZERO, |sum, (_, image)| sum + image[i])).collect();
+        let (mut difference, mut total) = (0.0f64, 0.0f64);
+        for (sum, beauty) in summed.iter().zip(&frame.color) {
+            difference += f64::from((sum.luminance() - beauty.luminance()).abs());
+            total += f64::from(beauty.luminance().abs());
+        }
+        eprintln!("light groups {:?}: off the picture by {:.4} of it", passes.groups.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), difference / total.max(1e-9));
+        assert!(difference < 0.02 * total, "the light groups do not add up to the picture");
+        let names: Vec<&str> = passes.groups.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["LightLayer2", "Environment"], "the light groups are not Tequila's");
+        let lamp_lit: f64 = passes.groups[0].1.iter().map(|c| f64::from(c.luminance())).sum();
+        assert!(lamp_lit > 0.05 * total, "the lamp's group holds none of its light");
+        assert!(passes.mattes.len() == 2 && passes.mattes[0].manifest().iter().any(|e| e.name == "Sphere"), "no object Cryptomatte named the sphere");
+        assert!(passes.mattes[0].coverage_of("Sphere", width / 2, height / 2) > 0.9, "the object Cryptomatte did not cover the sphere");
+
+        // And all the way through the queue: an EXR written, and the groups
+        // kept to relight with.
+        let renderer = BatchRenderer::new();
+        renderer.submit(job);
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { path, relight, .. } => {
+                assert!(path.ends_with(".exr") && std::fs::metadata(&path).is_ok_and(|m| m.len() > 1000), "no EXR at {path}");
+                let relight = relight.expect("the light groups, kept");
+                let kept: Vec<&str> = relight.groups.iter().map(|(n, _)| n.as_str()).collect();
+                assert!(kept.starts_with(&["LightLayer2", "Environment"]), "{kept:?}");
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Curvature and Occlusion nodes shade alike in Cycles and Tequila's
+    /// renderer: with the sphere's vertices given a curvature and an
+    /// occlusion that run from its foot to its top, each node's mask lies
+    /// over the sphere the same way in both, at the same levels. Cycles read
+    /// both as a flat half. Skipped where Cycles is not installed.
+    #[test]
+    fn curvature_and_occlusion_reach_cycles() {
+        use tequila_materials::graph::{CurvatureMode, MaterialGraph, Node, NodeKind};
+        use tequila_materials::material_type::MaterialType;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let shaped = |kind: NodeKind| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+                let node = graph.add_node(Node::new(kind.clone()));
+                let solo = graph.soloed_at(node, 0).expect("a value to show");
+                let program = solo.compile().expect("compiles");
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                scene.materials[0] = solo.material().clone();
+                // From the foot to the top: a curvature from -40 to 40 in
+                // the sphere's units, and an occlusion from closed to open.
+                let mut mesh = (*scene.meshes[0]).clone();
+                mesh.curvature = mesh.positions.iter().map(|p| 40.0 * p.y).collect();
+                mesh.occlusion = mesh.positions.iter().map(|p| (0.5 - 0.5 * p.y).clamp(0.0, 1.0)).collect();
+                scene.meshes[0] = Arc::new(mesh);
+            }
+        };
+        let mut wrong = Vec::new();
+        for (name, kind) in [
+            ("curvature-both", NodeKind::Curvature { mode: CurvatureMode::Both, radius: 0.02, contrast: 1.5 }),
+            ("curvature-convex", NodeKind::Curvature { mode: CurvatureMode::Convex, radius: 0.03, contrast: 1.0 }),
+            ("occlusion", NodeKind::Occlusion { radius: 0.01, contrast: 2.0 }),
+        ] {
+            let [tequila, cycles] = both_engines(&format!("shape-{name}"), shaped(kind));
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, sa), (mb, sb)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(&b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            let correlation = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+            eprintln!("{name}: correlation {correlation:.3}, Tequila {ma:.1} spread {sa:.1}, Cycles {mb:.1} spread {sb:.1}");
+            if sa < 10.0 || correlation < 0.97 || (ma - mb).abs() > 6.0 + 0.05 * ma {
+                wrong.push(format!("{name}: correlation {correlation:.3}, Tequila {ma:.1} spread {sa:.1}, Cycles {mb:.1} spread {sb:.1}"));
+            }
+        }
+        assert!(wrong.is_empty(), "these shade differently: {wrong:#?}");
+    }
+
     /// A flat label kept to one side prints on the faces looking that way and
     /// not on those behind, in both renderers alike: projected straight
     /// through a sphere along each axis in turn, where the camera looks it
@@ -4229,6 +4669,9 @@ mod tests {
                 (coords, 2)
             })),
             ("object-random", Box::new(|g| (add(g, "object_info", &[], &[]), 1))),
+            // Seen directly: a camera ray, and no reflection.
+            ("light-path-camera", Box::new(|g| (add(g, "light_path", &[], &[]), 0))),
+            ("light-path-glossy", Box::new(|g| (add(g, "light_path", &[], &[]), 3))),
             ("object-location", Box::new(move |g| {
                 let info = add(g, "object_info", &[], &[]);
                 absolute(g, info, 0)
@@ -4486,15 +4929,16 @@ mod tests {
     }
 
     /// Cycles on the graphics card is the default engine, and what Cycles
-    /// cannot make is Tequila's own renderer's: a render asking for light
-    /// groups, or with layers, goes to it whichever engine is picked, where
-    /// Cycles rendered the image alone and dropped the rest.
+    /// cannot make is Tequila's own renderer's: a render with layers goes to
+    /// it whichever engine is picked, and one asking for light groups does
+    /// only where the Cycles library predates passes.
     #[test]
     fn cycles_is_the_default_and_hands_on_what_it_cannot_make() {
         assert_eq!(RenderSettings::default().engine, RenderEngine::CyclesGpu);
         for engine in RenderEngine::ALL {
             let relit = RenderSettings { engine, relight: true, ..RenderSettings::default() };
-            assert_eq!(engine_for(&relit, false).0, RenderEngine::Tequila, "{engine:?} with light groups");
+            let by_tequila = engine == RenderEngine::Tequila || !tequila_render_cycles::has_passes() || cycles_here().is_err();
+            assert_eq!(engine_for(&relit, false).0 == RenderEngine::Tequila, by_tequila, "{engine:?} with light groups");
             let plain = RenderSettings { engine, ..RenderSettings::default() };
             assert_eq!(engine_for(&plain, true).0, RenderEngine::Tequila, "{engine:?} with layers");
         }

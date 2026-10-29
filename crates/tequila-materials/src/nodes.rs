@@ -37,6 +37,10 @@ pub enum ShaderNode {
     LayerWeight,
     Fresnel,
     ObjectInfo,
+    /// Which kind of ray reached the point: Cycles' Light Path node's ray
+    /// outputs, a switch between what the camera, a shadow, a bounce, a
+    /// reflection or glass sees.
+    LightPath,
     // ---- Texture -------------------------------------------------------
     Noise { dims: u8, fractal: FractalKind, normalize: bool },
     Voronoi { dims: u8, feature: VoronoiFeature, metric: VoronoiMetric, normalize: bool },
@@ -115,6 +119,16 @@ pub enum PointInput {
     ObjectLocation,
     /// A number from 0 to 1, the same over a part, different between parts.
     ObjectRandom,
+    /// 1 where the camera sees the point directly, else 0.
+    IsCameraRay,
+    /// 1 on a shadow ray, else 0.
+    IsShadowRay,
+    /// 1 after a diffuse bounce, else 0.
+    IsDiffuseRay,
+    /// 1 after a glossy bounce, in a reflection, else 0.
+    IsGlossyRay,
+    /// 1 seen through glass, else 0.
+    IsTransmissionRay,
 }
 
 /// One of a node's inputs.
@@ -300,6 +314,7 @@ impl ShaderNode {
             ShaderNode::LayerWeight,
             ShaderNode::Fresnel,
             ShaderNode::ObjectInfo,
+            ShaderNode::LightPath,
             ShaderNode::noise(),
             ShaderNode::voronoi(),
             ShaderNode::Wave { kind: WaveKind::Bands, direction: WaveDirection::X, profile: WaveProfile::Sine },
@@ -342,6 +357,7 @@ impl ShaderNode {
             ShaderNode::LayerWeight => "layer_weight",
             ShaderNode::Fresnel => "fresnel",
             ShaderNode::ObjectInfo => "object_info",
+            ShaderNode::LightPath => "light_path",
             ShaderNode::Noise { .. } => "noise_texture",
             ShaderNode::Voronoi { .. } => "voronoi_texture",
             ShaderNode::Wave { .. } => "wave_texture",
@@ -443,6 +459,7 @@ impl ShaderNode {
             ShaderNode::LayerWeight => "Layer Weight",
             ShaderNode::Fresnel => "Fresnel",
             ShaderNode::ObjectInfo => "Object Info",
+            ShaderNode::LightPath => "Light Path",
             ShaderNode::Noise { .. } => "Noise Texture",
             ShaderNode::Voronoi { .. } => "Voronoi Texture",
             ShaderNode::Wave { .. } => "Wave Texture",
@@ -480,9 +497,12 @@ impl ShaderNode {
 
     pub fn category(&self) -> NodeCategory {
         match self {
-            ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::LayerWeight | ShaderNode::Fresnel | ShaderNode::ObjectInfo => {
-                NodeCategory::Input
-            }
+            ShaderNode::TextureCoordinate
+            | ShaderNode::Geometry
+            | ShaderNode::LayerWeight
+            | ShaderNode::Fresnel
+            | ShaderNode::ObjectInfo
+            | ShaderNode::LightPath => NodeCategory::Input,
             ShaderNode::Noise { .. }
             | ShaderNode::Voronoi { .. }
             | ShaderNode::Wave { .. }
@@ -513,6 +533,7 @@ impl ShaderNode {
             ShaderNode::MapRange { .. } => "remap fit range",
             ShaderNode::LayerWeight => "facing fresnel edge rim",
             ShaderNode::ObjectInfo => "random variation per part",
+            ShaderNode::LightPath => "ray type camera shadow reflection glass switch",
             ShaderNode::TextureCoordinate => "uv object generated coordinates",
             _ => "",
         }
@@ -649,7 +670,7 @@ impl ShaderNode {
     pub fn inputs(&self) -> Vec<InputSpec> {
         use SocketType::*;
         match *self {
-            ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo => Vec::new(),
+            ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo | ShaderNode::LightPath => Vec::new(),
             ShaderNode::LayerWeight => vec![
                 ranged("Blend", "blend", 0.5, 0.0, 1.0),
                 surface_normal(),
@@ -834,6 +855,13 @@ impl ShaderNode {
             ShaderNode::LayerWeight => vec![output("Fresnel", "Fresnel", Float), output("Facing", "Facing", Float)],
             ShaderNode::Fresnel => vec![output("Fac", "Fac", Float)],
             ShaderNode::ObjectInfo => vec![output("Location", "Location", Vector), output("Random", "Random", Float)],
+            ShaderNode::LightPath => vec![
+                output("Is Camera Ray", "Is Camera Ray", Float),
+                output("Is Shadow Ray", "Is Shadow Ray", Float),
+                output("Is Diffuse Ray", "Is Diffuse Ray", Float),
+                output("Is Glossy Ray", "Is Glossy Ray", Float),
+                output("Is Transmission Ray", "Is Transmission Ray", Float),
+            ],
             ShaderNode::Noise { .. } => vec![output("Fac", "Fac", Float), output("Color", "Color", Color)],
             ShaderNode::Voronoi { feature, .. } => match feature {
                 VoronoiFeature::DistanceToEdge => vec![output("Distance", "Distance", Float)],
@@ -888,6 +916,7 @@ impl ShaderNode {
             ShaderNode::TextureCoordinate => &[Generated, ObjectNormal, Uv, Object, Reflection],
             ShaderNode::Geometry => &[Position, Normal, TrueNormal, Incoming, Backfacing],
             ShaderNode::ObjectInfo => &[ObjectLocation, ObjectRandom],
+            ShaderNode::LightPath => &[IsCameraRay, IsShadowRay, IsDiffuseRay, IsGlossyRay, IsTransmissionRay],
             _ => return None,
         };
         list.get(index as usize).copied()
@@ -915,7 +944,7 @@ impl ShaderNode {
         let colour = |rgb: [f32; 3]| Value::Color(Spectrum { r: rgb[0], g: rgb[1], b: rgb[2] });
         let vect = |p: [f32; 3]| Value::Vector(vec3(p[0], p[1], p[2]));
         match *self {
-            ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo => Value::Float(0.0),
+            ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo | ShaderNode::LightPath => Value::Float(0.0),
             ShaderNode::LayerWeight => {
                 let (blend, n, incoming, backfacing) = (f(0), v(1), v(2), f(3) > 0.5);
                 let cos = incoming[0] * n[0] + incoming[1] * n[1] + incoming[2] * n[2];

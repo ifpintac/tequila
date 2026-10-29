@@ -143,6 +143,9 @@ FSC_API FscNode fsc_mesh(FscSession *session,
  * space) per vertex, as an attribute named "tq_color" that an "attribute"
  * shader node reads. Returns 0 if the count is not the mesh's. */
 FSC_API int fsc_mesh_colors(FscSession *session, FscNode mesh, int vertex_count, const float *rgba);
+/* Four numbers a vertex, `rgba`, as the vertex attribute `name`: what an
+ * Attribute node of that name reads, interpolated across each triangle. */
+FSC_API int fsc_mesh_attribute(FscSession *session, FscNode mesh, const char *name, int vertex_count, const float *rgba);
 FSC_API FscNode fsc_object(FscSession *session,
                            FscNode mesh,
                            const float *matrix12,
@@ -255,6 +258,22 @@ FSC_API const char *fsc_status(FscSession *session);
 
 /* Remove every object, mesh, shader and image added so far, to rebuild. */
 FSC_API void fsc_clear(FscSession *session);
+
+/* Passes beside the combined image, for a final render (fsc_create). A pass
+ * of Cycles type `type` ("depth", "normal", "position", "denoising_albedo",
+ * "combined" with `lightgroup` for a light group's, ...) named `name` and `channels` wide; `lightgroup` names a
+ * light group's, else NULL. Read back after fsc_render with fsc_render_pass,
+ * rows top first, `count` floats (width * height * channels). */
+FSC_API int fsc_add_pass(FscSession *session, const char *name, const char *type, int channels, const char *lightgroup);
+/* Cryptomatte for objects and materials, `layers` RGBA layers each (two ranks
+ * a layer), kept as passes named CryptoObject00... and CryptoMaterial00.... */
+FSC_API int fsc_cryptomatte(FscSession *session, int layers);
+FSC_API int fsc_render_pass(FscSession *session, const char *name, float *out, int count);
+/* The object a node stands for - a light's, whose light group is its
+ * object's - to set sockets on. */
+FSC_API FscNode fsc_object_of(FscSession *session, FscNode node);
+/* A node's name: what Cryptomatte hashes an object or a shader by. */
+FSC_API int fsc_set_name(FscNode node, const char *name);
 
 #ifdef __cplusplus
 }

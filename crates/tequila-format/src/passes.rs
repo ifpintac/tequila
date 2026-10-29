@@ -212,6 +212,61 @@ pub fn exr_from_render(
 
 /// One Cryptomatte: its ranked layers, and the four metadata attributes the
 /// standard requires.
+/// The first-hit passes of a render made by another renderer, each a
+/// value a pixel, rows top first, as [`exr_from_render`] names them.
+#[derive(Clone, Copy, Default)]
+pub struct DataLayers<'a> {
+    /// The distance from the camera, infinite where nothing was hit.
+    pub depth: Option<&'a [f32]>,
+    pub normal: Option<&'a [tequila_core::math::Vec3]>,
+    pub position: Option<&'a [tequila_core::math::Vec3]>,
+    pub albedo: Option<&'a [Spectrum]>,
+    pub clown: Option<&'a [Spectrum]>,
+}
+
+/// A multi-layer EXR from passes another renderer made (Cycles'): the
+/// finished beauty and alpha unprefixed, the light groups and other
+/// radiance passes by name, the first-hit passes, and the Cryptomattes with
+/// their metadata - laid out, named and typed as [`exr_from_render`] writes
+/// Tequila's own.
+#[allow(clippy::too_many_arguments)]
+pub fn exr_from_layers(
+    width: usize,
+    height: usize,
+    color: Vec<Spectrum>,
+    alpha: Vec<f32>,
+    precision: Precision,
+    named: &[(String, Vec<Spectrum>)],
+    data: &DataLayers,
+    mattes: &[&Cryptomatte],
+) -> ExrImage {
+    let mut image = ExrImage::new(width, height);
+    image.push(Layer { name: String::new(), channels: Channels::Color(color), precision });
+    image.push(Layer { name: "A".into(), channels: Channels::Scalar(alpha), precision });
+    for (name, pixels) in named {
+        image.push(Layer { name: name.clone(), channels: Channels::Color(pixels.clone()), precision: Precision::Half });
+    }
+    if let Some(depth) = data.depth {
+        image.push(Layer { name: "Depth".into(), channels: Channels::Scalar(depth.to_vec()), precision: Precision::Full });
+    }
+    if let Some(normal) = data.normal {
+        image.push(Layer { name: "Normal".into(), channels: Channels::Vector(normal.to_vec()), precision: Precision::Half });
+    }
+    if let Some(position) = data.position {
+        image.push(Layer { name: "Position".into(), channels: Channels::Vector(position.to_vec()), precision: Precision::Full });
+    }
+    if let Some(albedo) = data.albedo {
+        image.push(Layer { name: "Albedo".into(), channels: Channels::Color(albedo.to_vec()), precision: Precision::Half });
+    }
+    if let Some(clown) = data.clown {
+        image.push(Layer { name: "Clown".into(), channels: Channels::Color(clown.to_vec()), precision: Precision::Half });
+    }
+    for matte in mattes {
+        write_cryptomatte(&mut image, matte);
+    }
+    image
+}
+
 fn write_cryptomatte(image: &mut ExrImage, matte: &Cryptomatte) {
     let key = matte.metadata_key();
     image

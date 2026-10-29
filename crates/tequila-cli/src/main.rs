@@ -1363,7 +1363,7 @@ fn render_with_cycles(
 
     let start = Instant::now();
     let mut session = Session::new(device, 0, std::env::var_os("TEQUILA_CYCLES_KERNELS").map(std::path::PathBuf::from).as_deref())?;
-    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination, light_materials: lighting.light_source_materials };
+    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination, light_materials: lighting.light_source_materials, light_groups: false };
     let translation = translate::build(&mut session, scene, &view)?;
     for warning in &translation.warnings {
         println!("  cycles: {warning}");

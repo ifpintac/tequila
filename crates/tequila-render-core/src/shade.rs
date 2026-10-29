@@ -24,7 +24,7 @@ use crate::material::Material;
 use tequila_materials::graph::{CompiledGraph, Instruction, TextureId, Value};
 use tequila_materials::material_type::{Param, ParamUi, ParamValue};
 use tequila_materials::nodes::PointInput;
-use tequila_texture::projection::SurfacePoint;
+use tequila_texture::projection::{RayKind, SurfacePoint};
 use tequila_texture::texture::Texture;
 use std::sync::Arc;
 
@@ -137,6 +137,11 @@ const MAX_ARGS: usize = 24;
 
 /// What a shading point says to a node that reads it - Blender's Texture
 /// Coordinate, Geometry and Object Info, as Cycles defines each.
+/// 1 for the kind of ray `ray` is, 0 for the others.
+fn ray_is(ray: RayKind, kind: RayKind) -> Value {
+    Value::Float(if ray == kind { 1.0 } else { 0.0 })
+}
+
 pub fn point_input(input: PointInput, point: &SurfacePoint) -> Value {
     use tequila_core::math::vec3;
     let world = &point.world;
@@ -159,6 +164,11 @@ pub fn point_input(input: PointInput, point: &SurfacePoint) -> Value {
         PointInput::Backfacing => Value::Float(if world.backfacing { 1.0 } else { 0.0 }),
         PointInput::ObjectLocation => Value::Vector(world.object_location),
         PointInput::ObjectRandom => Value::Float(world.object_random),
+        PointInput::IsCameraRay => ray_is(world.ray, RayKind::Camera),
+        PointInput::IsShadowRay => ray_is(world.ray, RayKind::Shadow),
+        PointInput::IsDiffuseRay => ray_is(world.ray, RayKind::Diffuse),
+        PointInput::IsGlossyRay => ray_is(world.ray, RayKind::Glossy),
+        PointInput::IsTransmissionRay => ray_is(world.ray, RayKind::Transmission),
     }
 }
 
@@ -387,6 +397,7 @@ mod tests {
                 generated: vec3(0.1, 0.2, 0.3),
                 object_location: vec3(1.0, 0.0, 0.0),
                 object_random: 0.42,
+                ray: Default::default(),
             },
         }
     }

@@ -154,6 +154,7 @@ impl CyclesView {
             transparent: false,
             ground_illumination: request.config.ground_illumination,
             light_materials: request.config.light_source_materials,
+            light_groups: false,
         };
         self.session.begin_edit();
         if let Some(changed) = &repainted {

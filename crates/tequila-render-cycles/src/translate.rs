@@ -61,6 +61,29 @@ pub struct View {
     /// The lighting's Light source materials: a glowing surface lights what
     /// is around it. Off, it glows for the camera and in reflections alone.
     pub light_materials: bool,
+    /// Put the lights, the environment and glowing parts in Cycles' light
+    /// groups, named as Tequila's are (`AovSet::light_groups_for`): each
+    /// light by its layer, `LightLayer0`..., the environment `Environment`,
+    /// glowing parts `Emissive`.
+    pub light_groups: bool,
+}
+
+/// A position or a direction from Cycles' Z-up world back into Tequila's.
+pub fn from_cycles(v: [f32; 3]) -> Vec3 {
+    vec3(v[0], v[2], -v[1])
+}
+
+/// The vertex attribute curvature and occlusion travel in, as Tequila's
+/// renderer measured them: red the curvature, green the occlusion.
+const SHAPE_ATTRIBUTE: &str = "tq_shape";
+
+/// What Cryptomatte names the objects and materials of a render by, by
+/// instance and by material, as Tequila's renderer names them
+/// (`Project::render_names`): Cycles hashes the names it is given.
+#[derive(Clone, Debug, Default)]
+pub struct Names {
+    pub objects: Vec<String>,
+    pub materials: Vec<String>,
 }
 
 /// How hard Cycles works on an image.
@@ -468,15 +491,28 @@ pub fn build(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Resul
 /// The same, reusing images `images` already sent to this session, and
 /// forgetting the ones this scene no longer uses.
 pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, images: &mut Images) -> Result<Translation, String> {
+    build_inner(session, scene, view, images, None)
+}
+
+/// [`build`], its objects and materials named for Cryptomatte.
+pub fn build_named(session: &mut Session, scene: &SceneSnapshot, view: &View, names: &Names) -> Result<Translation, String> {
+    build_inner(session, scene, view, &mut Images::default(), Some(names))
+}
+
+fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images: &mut Images, names: Option<&Names>) -> Result<Translation, String> {
     let mut out = Translation::default();
     // What updates since the last translation used is asked again below.
     images.used.clear();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials };
+    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: view.light_groups };
 
     // One Cycles shader per Tequila material.
     let mut shaders = Vec::with_capacity(scene.materials.len());
     for index in 0..scene.materials.len() {
-        shaders.push(builder.material(index, None)?);
+        let shader = builder.material(index, None)?;
+        if let Some(name) = names.and_then(|n| n.materials.get(index)) {
+            builder.session.set_name(shader, name)?;
+        }
+        shaders.push(shader);
     }
     builder.out.shaders = shaders.clone();
     let fallback = builder.fallback_shader()?;
@@ -619,6 +655,20 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         builder.session.set_int(object, "random_id", random_id as i32)?;
         if instance.holdout {
             builder.session.set_bool(object, "use_holdout", true)?;
+        }
+        if let Some(name) = names.and_then(|n| n.objects.get(builder.out.objects.len())) {
+            builder.session.set_name(object, name)?;
+        }
+        // A light's visible stand-in goes in its light's group; any other
+        // glowing part in the glowing parts'.
+        if view.light_groups {
+            let glows = scene.materials.get(instance.material.index()).is_some_and(|m| m.is_emissive());
+            if instance.light_proxy {
+                let layer = instance.light_layer.min(tequila_render_core::lpe::LAST_LAYER);
+                builder.session.set_string(object, "lightgroup", &format!("LightLayer{layer}"))?;
+            } else if glows {
+                builder.session.set_string(object, "lightgroup", "Emissive")?;
+            }
         }
         builder.out.objects.push(Some(object));
 
@@ -940,7 +990,7 @@ pub fn update_materials(
         return Ok(false);
     }
     let mut out = Translation::default();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials };
+    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials, light_groups: false };
     for &index in changed {
         builder.material(index, Some(shaders[index]))?;
     }
@@ -971,7 +1021,7 @@ pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Opt
 pub fn set_camera(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Result<Translation, String> {
     let mut out = Translation::default();
     let mut images = Images::default();
-    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials };
+    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: false };
     builder.camera(view)?;
     Ok(out)
 }
@@ -998,6 +1048,8 @@ struct Builder<'a> {
     turned: HashMap<Node, (Node, &'static str)>,
     /// [`View::light_materials`].
     light_materials: bool,
+    /// [`View::light_groups`].
+    light_groups: bool,
 }
 
 /// What the camera sees of a floor whose bounce the rest of the scene sees.
@@ -1208,6 +1260,15 @@ impl Builder<'_> {
                 })
                 .collect();
             self.session.mesh_colors(node, &rgba)?;
+        }
+        // Curvature and occlusion, as Tequila's renderer measured them a
+        // vertex (`Mesh::curvature`, `Mesh::occlusion`), for the nodes that
+        // read them (`Builder::shape`): the same numbers in both renderers.
+        let measured = |values: &[f32]| !values.is_empty() && values.len() == mesh.positions.len();
+        if (measured(&mesh.curvature) || measured(&mesh.occlusion)) && self.session.has_mesh_attributes() {
+            let at = |values: &[f32], i: usize| if measured(values) { values[i] } else { 0.0 };
+            let rgba: Vec<[f32; 4]> = (0..mesh.positions.len()).map(|i| [at(&mesh.curvature, i), at(&mesh.occlusion, i), 0.0, 1.0]).collect();
+            self.session.mesh_attribute(node, SHAPE_ATTRIBUTE, &rgba)?;
         }
         Ok(node)
     }
@@ -1840,6 +1901,8 @@ impl Builder<'_> {
                 }
                 Instruction::Input { dst, input } => (dst, self.point_input(shader, *input)?),
                 Instruction::VertexColor { dst } => (dst, self.vertex_colour(shader)?),
+                Instruction::Curvature { dst, mode, radius, contrast, .. } => (dst, self.curvature(shader, *mode, *radius, *contrast)?),
+                Instruction::Occlusion { dst, contrast, .. } => (dst, self.occlusion(shader, *contrast)?),
                 Instruction::Evaluate { dst, procedural, seed, mapping } => {
                     let slot = self.procedural(shader, procedural, *seed, mapping.as_deref())?;
                     (dst, slot.unwrap_or(Slot::Value(Value::Float(0.5))))
@@ -1989,6 +2052,58 @@ impl Builder<'_> {
     /// Tequila's renderer reads them. Cycles reads a missing attribute as
     /// transparent black, so its alpha chooses between it and white; a
     /// library built before vertex colours gives white everywhere.
+    /// One of what a vertex carries in [`SHAPE_ATTRIBUTE`]: its curvature
+    /// (`Red`) or its occlusion (`Green`), as Tequila's renderer measured
+    /// it. `None` from a library without vertex attributes.
+    fn shape(&mut self, shader: Shader, channel: &'static str) -> Result<Option<Slot>, String> {
+        if !self.session.has_mesh_attributes() {
+            self.out.warn("this Cycles library predates vertex attributes: curvature and occlusion read as nothing");
+            return Ok(None);
+        }
+        let attribute = self.session.node(shader, "attribute")?;
+        self.session.set_string(attribute, "attribute", SHAPE_ATTRIBUTE)?;
+        let split = self.session.node(shader, "separate_color")?;
+        self.session.connect(shader, attribute, "Color", split, "Color")?;
+        Ok(Some(Slot::Link(split, channel)))
+    }
+
+    /// A Curvature node as Tequila's renderer shades it
+    /// (`CurvatureMode::mask`): the vertex's mean curvature, in the part's
+    /// own units turned into the scene's by its scale (which Object Info's
+    /// colour carries), times the radius, kept to one side or both, about
+    /// the middle by the contrast.
+    fn curvature(&mut self, shader: Shader, mode: tequila_materials::graph::CurvatureMode, radius: f32, contrast: f32) -> Result<Slot, String> {
+        use tequila_materials::graph::CurvatureMode;
+        let Some(k) = self.shape(shader, "Red")? else {
+            return Ok(Slot::Value(Value::Float(mode.mask(0.0, radius, contrast))));
+        };
+        let info = self.session.node(shader, "object_info")?;
+        let split = self.session.node(shader, "separate_color")?;
+        self.session.connect(shader, info, "Color", split, "Color")?;
+        let k = self.float_op(shader, "divide", k, Slot::Link(split, "Red"))?;
+        let scaled = self.float_op(shader, "multiply", k, num(radius.max(0.0)))?;
+        let value = match mode {
+            CurvatureMode::Convex => self.clamped(shader, "multiply_add", scaled, num(1.0), num(0.0))?,
+            CurvatureMode::Concave => self.clamped(shader, "multiply_add", scaled, num(-1.0), num(0.0))?,
+            CurvatureMode::Both => self.clamped(shader, "multiply_add", scaled, num(0.5), num(0.5))?,
+        };
+        if contrast == 1.0 {
+            return Ok(value);
+        }
+        let contrast = contrast.max(0.0);
+        self.clamped(shader, "multiply_add", value, num(contrast), num(0.5 - 0.5 * contrast))
+    }
+
+    /// An Occlusion node as Tequila's renderer shades it (`occlusion_shape`):
+    /// the vertex's occluded fraction, raised to the contrast.
+    fn occlusion(&mut self, shader: Shader, contrast: f32) -> Result<Slot, String> {
+        let Some(occluded) = self.shape(shader, "Green")? else {
+            return Ok(Slot::Value(Value::Float(0.0)));
+        };
+        let occluded = self.clamped(shader, "multiply_add", occluded, num(1.0), num(0.0))?;
+        self.float_op(shader, "power", occluded, num(contrast.max(0.05)))
+    }
+
     fn vertex_colour(&mut self, shader: Shader) -> Result<Slot, String> {
         if !self.session.has_vertex_colours() {
             self.out.warn("this Cycles library predates vertex colours; they render white");
@@ -2065,6 +2180,11 @@ impl Builder<'_> {
                 let (n, o) = read(self, "object_info", "Random")?;
                 Slot::Link(n, o)
             }
+            PointInput::IsCameraRay => Slot::Link(read(self, "light_path", "Is Camera Ray")?.0, "Is Camera Ray"),
+            PointInput::IsShadowRay => Slot::Link(read(self, "light_path", "Is Shadow Ray")?.0, "Is Shadow Ray"),
+            PointInput::IsDiffuseRay => Slot::Link(read(self, "light_path", "Is Diffuse Ray")?.0, "Is Diffuse Ray"),
+            PointInput::IsGlossyRay => Slot::Link(read(self, "light_path", "Is Glossy Ray")?.0, "Is Glossy Ray"),
+            PointInput::IsTransmissionRay => Slot::Link(read(self, "light_path", "Is Transmission Ray")?.0, "Is Transmission Ray"),
         };
         self.points.insert(input, slot);
         Ok(slot)
@@ -3594,7 +3714,16 @@ impl Builder<'_> {
                 }
             }
         }
-        self.link_lights(&made)
+        self.link_lights(&made)?;
+        // Each light in the group of its layer, which is its object's.
+        if self.light_groups {
+            for &(index, node) in &made {
+                let layer = lights[index].layer.min(tequila_render_core::lpe::LAST_LAYER);
+                let object = self.session.object_of(node)?;
+                self.session.set_string(object, "lightgroup", &format!("LightLayer{layer}"))?;
+            }
+        }
+        Ok(())
     }
 
     /// Light linking (`LightLinks`), as Cycles keeps it: each part receives
@@ -3754,6 +3883,13 @@ impl Builder<'_> {
 
         let film = self.session.scene_node("background")?;
         self.session.set_bool(film, "transparent", transparent)?;
+        // The environment's light group: what the camera and every bounce
+        // see of the world, and the lamp it is sampled through.
+        if self.light_groups {
+            self.session.set_string(film, "lightgroup", "Environment")?;
+            let object = self.session.object_of(light)?;
+            self.session.set_string(object, "lightgroup", "Environment")?;
+        }
         if !environment.dome().is_infinite() {
             self.out.warn("a finite environment dome lights the scene, and shows in reflections, as an infinite one");
         }

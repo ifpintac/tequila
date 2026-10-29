@@ -198,6 +198,10 @@ class CaptureDriver : public OutputDriver {
   float *target = nullptr;
   bool written = false;
   const ShadowTint *tint = nullptr;
+  /* The passes kept beside the combined one, by name and width, and what
+   * the last render left of each, rows top first (fsc_render_pass). */
+  const std::vector<std::pair<std::string, int>> *passes = nullptr;
+  std::map<std::string, std::vector<float>> kept;
 
   void write_render_tile(const Tile &tile) override
   {
@@ -214,6 +218,21 @@ class CaptureDriver : public OutputDriver {
     for (int y = 0; y < h; y++) {
       memcpy(target + size_t(h - 1 - y) * row, pixels.data() + size_t(y) * row,
              row * sizeof(float));
+    }
+    if (passes != nullptr) {
+      for (const auto &[name, channels] : *passes) {
+        std::vector<float> buffer(size_t(w) * h * channels);
+        if (!tile.get_pass_pixels(name, channels, buffer.data())) {
+          continue;
+        }
+        std::vector<float> &out = kept[name];
+        out.resize(buffer.size());
+        const size_t pass_row = size_t(w) * channels;
+        for (int y = 0; y < h; y++) {
+          memcpy(out.data() + size_t(h - 1 - y) * pass_row, buffer.data() + size_t(y) * pass_row,
+                 pass_row * sizeof(float));
+        }
+      }
     }
     written = true;
   }
@@ -429,6 +448,8 @@ struct FscSession {
   /* A viewplane of the caller's (a shifted or orthographic camera), kept
    * over every fit to the picture's size; none while `left >= right`. */
   float viewplane[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  /* The passes a final render keeps beside the combined one. */
+  std::vector<std::pair<std::string, int>> kept;
 
   Scene *scene()
   {
@@ -961,6 +982,22 @@ int fsc_mesh_colors(FscSession *s, FscNode node, int vertex_count, const float *
   return 1;
 }
 
+int fsc_mesh_attribute(FscSession *s, FscNode node, const char *name, int vertex_count, const float *rgba)
+{
+  const EditLock lock(s);
+  Mesh *mesh = static_cast<Mesh *>(node);
+  if (mesh == nullptr || rgba == nullptr || name == nullptr || vertex_count != int(mesh->get_verts().size())) {
+    fail("a vertex attribute does not match the mesh's vertices");
+    return 0;
+  }
+  Attribute *attr = mesh->attributes.add(ustring(name), TypeRGBA, ATTR_ELEMENT_VERTEX);
+  float4 *value = attr->data_float4();
+  for (int i = 0; i < vertex_count; i++) {
+    value[i] = make_float4(rgba[4 * i], rgba[4 * i + 1], rgba[4 * i + 2], rgba[4 * i + 3]);
+  }
+  return 1;
+}
+
 FscNode fsc_object(FscSession *s, FscNode mesh, const float *m, unsigned visibility,
                    int shadow_catcher)
 {
@@ -1429,9 +1466,102 @@ void fsc_set_shadow_tint(FscSession *s, float r, float g, float b)
   }
 }
 
+int fsc_add_pass(FscSession *s, const char *name, const char *type, int channels, const char *lightgroup)
+{
+  if (s->capture == nullptr) {
+    fail("passes are kept by a final render's session, from fsc_create");
+    return 0;
+  }
+  const NodeEnum *types = Pass::get_type_enum();
+  if (!types->exists(ustring(type))) {
+    fail(string("no pass type ") + type);
+    return 0;
+  }
+  const EditLock lock(s);
+  Pass *pass = s->scene()->create_node<Pass>();
+  pass->set_name(ustring(name));
+  pass->set_type(PassType((*types)[ustring(type)]));
+  pass->set_mode(PassMode::NOISY);
+  if (lightgroup != nullptr && lightgroup[0] != '\0') {
+    pass->set_lightgroup(ustring(lightgroup));
+  }
+  s->kept.emplace_back(name, channels);
+  s->capture->passes = &s->kept;
+  return 1;
+}
+
+int fsc_cryptomatte(FscSession *s, int layers)
+{
+  if (s->capture == nullptr || layers < 1) {
+    fail("Cryptomatte is kept by a final render's session, with a layer or more");
+    return 0;
+  }
+  const EditLock lock(s);
+  Film *film = s->scene()->film;
+  film->set_cryptomatte_passes(CryptomatteType(CRYPT_OBJECT | CRYPT_MATERIAL));
+  film->set_cryptomatte_depth(layers);
+  /* Object's then material's, the order Cycles writes them in. */
+  for (const char *kind : {"CryptoObject", "CryptoMaterial"}) {
+    for (int layer = 0; layer < layers; layer++) {
+      char name[32];
+      snprintf(name, sizeof(name), "%s%02d", kind, layer);
+      Pass *pass = s->scene()->create_node<Pass>();
+      pass->set_name(ustring(name));
+      pass->set_type(PASS_CRYPTOMATTE);
+      pass->set_mode(PassMode::NOISY);
+      s->kept.emplace_back(name, 4);
+    }
+  }
+  s->capture->passes = &s->kept;
+  return 1;
+}
+
+int fsc_render_pass(FscSession *s, const char *name, float *out, int count)
+{
+  if (s->capture == nullptr) {
+    fail("no final render to read a pass of");
+    return 0;
+  }
+  const auto found = s->capture->kept.find(name);
+  if (found == s->capture->kept.end()) {
+    fail(string("the render kept no pass ") + name);
+    return 0;
+  }
+  if (found->second.size() != size_t(count)) {
+    fail(string("pass ") + name + " is not that size");
+    return 0;
+  }
+  memcpy(out, found->second.data(), size_t(count) * sizeof(float));
+  return 1;
+}
+
+FscNode fsc_object_of(FscSession *s, FscNode node)
+{
+  const EditLock lock(s);
+  Object *object = object_of(s, node);
+  if (object == nullptr) {
+    fail("no object holds that node");
+  }
+  return object;
+}
+
+int fsc_set_name(FscNode node, const char *name)
+{
+  if (node == nullptr) {
+    fail("no node");
+    return 0;
+  }
+  static_cast<Node *>(node)->name = ustring(name);
+  return 1;
+}
+
 void fsc_clear(FscSession *s)
 {
   s->catcher_pass = false;
+  s->kept.clear();
+  if (s->capture != nullptr) {
+    s->capture->kept.clear();
+  }
   s->pending.clear();
   s->images.clear();
   s->capture = nullptr;

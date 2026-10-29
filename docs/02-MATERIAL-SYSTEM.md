@@ -380,7 +380,7 @@ Add these (KeyShot lacks them; they cost little and are frequently needed): **Ma
 
 Tequila also has Blender's own shader nodes (`tequila_materials::nodes::ShaderNode`), evaluated with Cycles' algorithms. These are ported to Rust in `tequila_texture::cycles` from Cycles' SVM kernels, which are Apache-2.0 like Tequila. The nodes are:
 
-- **Input:** Texture Coordinate, Geometry, Layer Weight, Fresnel, Object Info.
+- **Input:** Texture Coordinate, Geometry, Layer Weight, Fresnel, Object Info, Light Path (Is Camera, Shadow, Diffuse, Glossy and Transmission Ray: 1 for the kind of ray that reached the point, a switch between what the camera, a shadow, a bounce, a reflection and glass see).
 - **Texture:** Noise (1–4D, all five fractal kinds, distortion, colour), Voronoi (1–4D, F1/F2/smooth F1/distance to edge/n-sphere radius, four metrics, fractal), Wave, Magic, Brick, Checker, Gradient, White Noise, Gabor (2D and 3D; value, phase and intensity: the streaks of brushed metal, wood figure and fibres).
 - **Colour:** Mix (float, vector, and colour with Blender's 19 blend modes), Hue/Saturation/Value, Brightness/Contrast, Gamma, Invert.
 - **Converter:** Math (all 41 operations), Vector Math (29), Map Range (4 interpolations), Clamp, Separate/Combine XYZ, Separate/Combine Color (RGB/HSV/HSL).
@@ -388,7 +388,9 @@ Tequila also has Blender's own shader nodes (`tequila_materials::nodes::ShaderNo
 
 A node can have several outputs, and a link names which one it leaves from (`Link::from_socket`). A texture's Vector input reads object space in scene units when nothing is wired to it, as Tequila's own patterns do. Layer Weight and Fresnel read the shading normal and the view. Geometry and Texture Coordinate give world vectors in Tequila's frame (Y up) and UVs with v up, as Blender has them.
 
-Both engines run the same algorithms, and the Cycles translation maps every node onto the identical Cycles node. Each node's output therefore lands on the same pixels at the same levels in both: `app/src/batch.rs` `blender_nodes_shade_alike_in_both_engines` checks 35 cases at a correlation of at least 0.97, and they come out at 0.999 or better.
+Both engines run the same algorithms, and the Cycles translation maps every node onto the identical Cycles node. Each node's output therefore lands on the same pixels at the same levels in both: `app/src/batch.rs` `blender_nodes_shade_alike_in_both_engines` checks 37 cases at a correlation of at least 0.97, and they come out at 0.999 or better.
+
+Tequila's own Curvature and Occlusion nodes reach Cycles as the numbers Tequila's renderer measured a vertex (`Mesh::curvature`, `Mesh::occlusion`), sent as a vertex attribute and shaped the same way (`curvature_and_occlusion_reach_cycles`): Cycles' own Ambient Occlusion and Pointiness measure something else, and the two renderers would part on every crease.
 
 A node can be **muted**, as in Blender. Each of its outputs then passes on the first wire into it that can carry that type, or nothing (`MaterialGraph::without_muted`).
 
