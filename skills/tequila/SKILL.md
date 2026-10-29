@@ -105,7 +105,7 @@ When the user wants something Tequila does not have - a panel with a button, som
 - A refused command comes back as an error message naming the field: read it, fix the request, try again.
 - A connection error means the outcome of that request is unknown. Do not repeat edits blindly: check `tequila_query {"what": "history"}` and the scene first.
 - A pattern or texture looks like nothing: the model's units are wrong, or the pattern `size` is far off the part's size.
-- Rendered view black, or "on the processor: the graphics card could not render": the graphics card or its driver cannot run Cycles; Tequila falls back to the processor. Suggest updating the graphics driver; carry on meanwhile.
+- Rendered view black, or "standing in for Cycles, which could not render": Cycles could not run (usually the graphics card or its driver); Tequila's own renderer draws the view on the processor instead. Suggest updating the graphics driver; carry on meanwhile.
 - A plugin "failed": `tequila_plugin_log` has the traceback; `tequila_plugin_list` shows `failure` (no Python, a syntax error, a crash).
 
 ## Reference

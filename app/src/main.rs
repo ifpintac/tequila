@@ -3245,7 +3245,7 @@ impl TequilaApp {
                 } else if let Some(orchestrator::EngineNote::Preparing(doing)) = &self.engine_note {
                     preparing_label(doing)
                 } else if let Some(orchestrator::EngineNote::FellBack { .. }) = &self.engine_note {
-                    format!("{} spp · on the processor: the graphics card could not render", image.samples)
+                    format!("{} spp · standing in for Cycles, which could not render", image.samples)
                 } else if image.converged_fraction >= 0.01 {
                     format!("{} spp · {:.0}% settled", image.samples, image.converged_fraction * 100.0)
                 } else {
@@ -3257,9 +3257,15 @@ impl TequilaApp {
         // What renders the view, named on the chip, which opens the choice:
         // the switch between the graphics card and the processor was only
         // in the Render window, where nobody looking at the viewport found it.
+        // Fallen back, it is Tequila's renderer that draws whichever engine
+        // was chosen, so that is the one named: the chosen engine beside the
+        // fallback read as Cycles on the graphics card and the processor at
+        // once.
         let engine = self.project.render_settings().engine;
+        let fell_back = matches!(self.engine_note, Some(orchestrator::EngineNote::FellBack { .. }));
         let detail = if rendered {
             let on = match engine {
+                _ if fell_back => "Tequila",
                 tequila_scene::render::RenderEngine::Tequila => "Tequila",
                 tequila_scene::render::RenderEngine::CyclesCpu => "Cycles · processor",
                 tequila_scene::render::RenderEngine::CyclesGpu => "Cycles · graphics card",
