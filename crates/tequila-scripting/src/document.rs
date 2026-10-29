@@ -17,7 +17,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "stop", "ui", "new", "open", "quit"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "stop", "ui", "new", "open", "quit"];
 pub const APP_QUERIES: &[&str] = &["api", "context", "scene", "nodes", "materials", "selection", "camera", "commands", "ui", "jobs", "history", "library"];
 pub const APP_LIMITS: &str = "No embedded Python interpreter. Screenshot completion is deferred: poll for the file. Paths refer to this computer. quit refuses unsaved work unless given save:true or discard:true.";
 

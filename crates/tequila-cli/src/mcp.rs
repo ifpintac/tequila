@@ -39,10 +39,11 @@ tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugi
 Every command is undoable, and the person watching sees each request in Tequila's console.";
 
 /// Tools that reach outside the open scene: gone when restricted.
-const UNRESTRICTED_ONLY: [&str; 9] = [
+const UNRESTRICTED_ONLY: [&str; 10] = [
     "tequila_request",
     "tequila_import",
     "tequila_material_save",
+    "tequila_studio_preset_save",
     "tequila_plugin_guide",
     "tequila_plugin_list",
     "tequila_plugin_write",
@@ -50,6 +51,9 @@ const UNRESTRICTED_ONLY: [&str; 9] = [
     "tequila_plugin_run",
     "tequila_plugin_log",
 ];
+/// What applying or saving a studio preset reads.
+const STUDIO_PRESET_FIELDS: [&str; 12] =
+    ["id", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress", "name", "family", "size", "description", "materials"];
 /// What a batch may hold when restricted: nothing that writes a file.
 const RESTRICTED_BATCH: [&str; 5] = ["apply", "frame", "look", "select", "ui"];
 
@@ -307,6 +311,18 @@ impl Bridge {
             }
             "tequila_queue" => self.request("queue", fields_of(arguments)).map(|v| text_value(&v)),
             "tequila_jobs" => self.request("query", vec![("what", "jobs".into())]).map(|v| text_value(&v)),
+            "tequila_studio_presets" => self.request("studio_preset", vec![("action", "list".into())]).map(|v| text_value(&v)),
+            "tequila_studio_preset_apply" | "tequila_studio_preset_save" => {
+                let action = if name == "tequila_studio_preset_apply" { "apply" } else { "save" };
+                let mut fields = vec![("action", Value::from(action))];
+                for key in STUDIO_PRESET_FIELDS {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("studio_preset", fields).map(|v| text_value(&v))
+            }
+            "tequila_studio_render_all" => self.request("studio_preset", vec![("action", "render_all".into())]).map(|v| text_value(&v)),
             "tequila_stop" => self.request("stop", vec![]).map(|v| text_value(&v)),
             "tequila_ui" => self.request("ui", fields_of(arguments)).map(|v| text_value(&v)),
             "tequila_import" => {
@@ -591,7 +607,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 32);
+        assert_eq!(tools.len(), 36);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -599,7 +615,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 23);
+        assert_eq!(restricted.len(), 26);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }

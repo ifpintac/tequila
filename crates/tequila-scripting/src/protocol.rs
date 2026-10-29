@@ -140,6 +140,11 @@ pub enum Operation {
     /// (`docs/livelink-protocol.md`): `hello`, `sync` or `camera`, read by
     /// the application, which owns the scene the sync applies to.
     LiveLink(Value),
+    /// `studio_preset`: Studio presets (`docs/studio-presets.md`) - `list`
+    /// them, `apply` one by `id`, `save` the current studio as one,
+    /// `install` or `export` a package, `delete` one, or `render_all`
+    /// views. Carried as sent; the application reads its fields.
+    StudioPreset(Value),
     /// The material library: putting presets on parts, and adding to the
     /// user's own - what a script or a plugin does with materials beyond
     /// the document. See [`LibraryRequest`].
@@ -245,6 +250,32 @@ pub struct LibraryRequest {
     pub tags: Vec<String>,
     pub path: Option<String>,
     pub size: Option<f32>,
+}
+
+/// The `studio_preset` operation's actions.
+pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", "install", "export", "render_all"];
+
+/// A `studio_preset.apply` naming an installed preset by `id` rather than
+/// carrying it: the preset read in, so the command is whole - what the
+/// journal records, and what replays.
+fn with_preset(command: Value) -> Result<Value, ProtocolError> {
+    if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") || command.get("preset").is_some() {
+        return Ok(command);
+    }
+    let Some(id) = command.get("id").and_then(|v| v.as_str()) else {
+        return Err(ProtocolError("studio_preset.apply needs an installed preset's \"id\", or the preset itself".into()));
+    };
+    let (presets, _) = tequila_format::studio_preset::list();
+    let Some(found) = presets.iter().find(|p| p.preset.id == id) else {
+        let ids: Vec<&str> = presets.iter().map(|p| p.preset.id.as_str()).collect();
+        return Err(ProtocolError(format!(
+            "no studio preset `{id}` is installed; there are {}",
+            if ids.is_empty() { "none".to_string() } else { ids.join(", ") }
+        )));
+    };
+    let Value::Object(mut map) = command else { return Err(ProtocolError("a command is an object".into())) };
+    map.insert("preset".into(), tequila_format::studio_preset::to_inline(&found.preset));
+    Ok(Value::Object(map))
 }
 
 /// The library's actions, for the protocol and its documentation.
@@ -526,7 +557,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             // reaching into the parsed value keeps exactly one decoder for
             // commands, which is what makes the journal's exhaustive
             // round-trip test cover this path too.
-            let command = video_label(field(value, "command")?)?;
+            let command = with_preset(video_label(field(value, "command")?)?)?;
             let text = json_write::to_string(&command);
             let command = tequila_format::journal::decode(&text)
                 .map_err(|e| ProtocolError(format!("the command could not be read: {e}")))?;
@@ -586,6 +617,16 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             },
         },
         "livelink" => Operation::LiveLink(value.clone()),
+        "studio_preset" => {
+            let action = string(value, "action")?.to_ascii_lowercase();
+            if !STUDIO_PRESET_ACTIONS.contains(&action.as_str()) {
+                return Err(ProtocolError(format!(
+                    "`{action}` is not a studio preset action; the actions are {}",
+                    STUDIO_PRESET_ACTIONS.join(", ")
+                )));
+            }
+            Operation::StudioPreset(value.clone())
+        }
         "library" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !LIBRARY_ACTIONS.contains(&action.as_str()) {
@@ -912,6 +953,10 @@ impl Operation {
             Operation::Project { action: ProjectAction::Open(path), .. } => format!("open {path}"),
             Operation::Ui(_) => "change panels".into(),
             Operation::LiveLink(message) => format!("LiveLink {}", message.get("message").and_then(|m| m.as_str()).unwrap_or("message")),
+            Operation::StudioPreset(request) => match request.get("id").and_then(|i| i.as_str()) {
+                Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+                None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+            },
             Operation::Export { format, path, .. } => format!("export {format} to {path}"),
             Operation::Queue(job) => match &job.name {
                 Some(name) => format!("queue render {name}"),

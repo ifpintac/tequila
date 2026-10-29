@@ -144,6 +144,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::Import { path, parent } => import(app, path, *parent),
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
+        Operation::StudioPreset(request) => studio_preset(app, request),
         Operation::Material(request) => material(app, request),
         Operation::Plugin(request) => plugin(app, request),
         Operation::Project { action, save: saving, discard } => project(app, action, *saving, *discard),
@@ -998,6 +999,150 @@ fn library(app: &mut TequilaApp, request: &tequila_scripting::protocol::LibraryR
             carry_out(app, outcome)
         }
         Err(error) => Reply::Failed(error),
+    }
+}
+
+/// Studio presets (`docs/studio-presets.md`): listed, applied by id, the
+/// scene's studio saved as one, installed, exported, deleted, and every view
+/// rendered.
+fn studio_preset(app: &mut TequilaApp, request: &Value) -> Reply {
+    use tequila_format::studio_preset::{self as presets, PresetSource};
+    let action = request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase();
+    let text = |key: &str| request.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let flag = |key: &str| request.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+    let id = || text("id").ok_or_else(|| format!("`{action}` needs the preset's \"id\""));
+    let describe = |file: &tequila_format::studio_preset::PresetFile, suggested: bool| {
+        let p = &file.preset;
+        let mut out = Object::new();
+        out.set("id", p.id.clone())
+            .set("name", p.name.clone())
+            .set("family", p.family.clone())
+            .set("size", p.size.clone())
+            .set("description", p.description.clone())
+            .set("source", if file.source == PresetSource::Builtin { "builtin" } else { "user" })
+            .set("path", file.path.display().to_string())
+            .set_some("thumbnail", file.thumbnail.as_ref().map(|t| t.display().to_string()))
+            .set("views", Value::Array(p.studios.iter().map(|s| Value::String(s.name.clone())).collect()))
+            .set("lights", p.lights.len() as f64)
+            .set("materials", Value::Array(p.materials.iter().map(|m| Value::String(m.definition.name.clone())).collect()))
+            .set("reference_radius_m", p.framing.reference_radius)
+            .set("suggested", suggested);
+        out.build()
+    };
+    match action.as_str() {
+        "list" => {
+            let (all, problems) = presets::list();
+            let radius = crate::studio_presets::product_radius(&app.project);
+            // Per family, the size framed nearest the product.
+            let mut suggested = std::collections::BTreeSet::new();
+            if let Some(radius) = radius {
+                let families: std::collections::BTreeSet<&str> = all.iter().map(|p| p.preset.family.as_str()).collect();
+                for family in families {
+                    if let Some(best) = tequila_scene::preset::nearest_size(all.iter().filter(|p| p.preset.family == family).map(|p| &p.preset), radius) {
+                        suggested.insert(best.id.clone());
+                    }
+                }
+            }
+            let mut out = Object::new();
+            out.set("presets", Value::Array(all.iter().map(|p| describe(p, suggested.contains(&p.preset.id))).collect()))
+                .set("problems", Value::Array(problems.into_iter().map(Value::String).collect()))
+                .set_some("product_radius_m", radius);
+            Reply::Value(out.build())
+        }
+        "apply" => {
+            let file = match id().and_then(|id| crate::studio_presets::find(&id)) {
+                Ok(file) => file,
+                Err(e) => return Reply::Failed(e),
+            };
+            let front = match text("front").map(|f| tequila_scene::preset::Front::from_key(&f).ok_or(f)) {
+                None => tequila_scene::preset::Front::PlusZ,
+                Some(Ok(front)) => front,
+                Some(Err(f)) => return Reply::Failed(format!("`{f}` is no front: +z, -z, +x or -x")),
+            };
+            let scale = match text("scale").map(|s| tequila_scene::preset::FramingScale::from_key(&s).ok_or(s)) {
+                None => None,
+                Some(Ok(scale)) => Some(scale),
+                Some(Err(s)) => return Reply::Failed(format!("`{s}` is no framing scale: cameras, cameras_and_lights or none")),
+            };
+            let options = tequila_scene::preset::ApplyOptions {
+                front,
+                scale,
+                keep_lights: flag("keep_lights"),
+                keep_cameras: flag("keep_cameras"),
+                keep_placement: flag("keep_placement"),
+            };
+            match crate::studio_presets::apply(&mut app.project, &file, options, flag("dress")) {
+                Ok(applied) => {
+                    app.camera.adopt(app.project.camera());
+                    app.submit();
+                    let mut out = Object::new();
+                    out.set("applied", file.preset.id.clone())
+                        .set("views", applied.views as f64)
+                        .set("lights", applied.lights as f64)
+                        .set("cameras", applied.cameras as f64)
+                        .set("scale", applied.scale)
+                        .set("dressed", applied.dressed as f64)
+                        .set("note", "one undo step; the first view is applied - studio.apply or queue studio=<name> for the others");
+                    Reply::Value(out.build())
+                }
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "save" => {
+            let what = crate::studio_presets::SaveAs {
+                name: text("name").unwrap_or_default(),
+                family: text("family").unwrap_or_default(),
+                size: text("size").unwrap_or_default(),
+                description: text("description").unwrap_or_default(),
+                materials: flag("materials"),
+            };
+            match crate::studio_presets::save(&app.project, &what, None) {
+                Ok(file) => {
+                    app.library.reload_studios();
+                    Reply::Value(describe(&file, false))
+                }
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "delete" => match id().and_then(|id| crate::studio_presets::find(&id)).and_then(|file| presets::delete(&file)) {
+            Ok(()) => {
+                app.library.reload_studios();
+                Reply::Done
+            }
+            Err(e) => Reply::Failed(e),
+        },
+        "install" => {
+            let Some(path) = text("path") else { return Reply::Failed("`install` needs the package's or the folder's \"path\"".into()) };
+            match presets::install(std::path::Path::new(&path), &crate::library_tab::user_library_path()) {
+                Ok(installed) => {
+                    app.library.reload();
+                    app.library.reload_studios();
+                    let mut out = Object::new();
+                    out.set("installed", installed.preset.preset.id.clone())
+                        .set("path", installed.preset.path.display().to_string())
+                        .set("materials", Value::Array(installed.materials.into_iter().map(Value::String).collect()));
+                    Reply::Value(out.build())
+                }
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "export" => {
+            let Some(path) = text("path") else { return Reply::Failed("`export` needs the \"path\" to write the package to".into()) };
+            match id().and_then(|id| crate::studio_presets::find(&id)).and_then(|file| presets::export(&file, std::path::Path::new(&path))) {
+                Ok(()) => Reply::Done,
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "render_all" => {
+            if app.project.document().studios.is_empty() {
+                return Reply::Failed("there are no Studios; apply a studio preset first".into());
+            }
+            let ids = app.queue_studios(None);
+            let mut out = Object::new();
+            out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>()).set("count", ids.len() as f64);
+            Reply::Value(out.build())
+        }
+        other => Reply::Failed(format!("`{other}` is not a studio preset action")),
     }
 }
 

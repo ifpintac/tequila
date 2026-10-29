@@ -113,6 +113,16 @@ pub enum LibraryAction {
     /// Make materials from a downloaded texture pack: `true` to pick a
     /// folder, `false` a ZIP or one of its maps.
     ImportTexturePack(bool),
+    /// Something asked of the Studios section.
+    Studio(crate::studio_shelf::StudioAction),
+}
+
+/// What the browser shows: materials, or whole studios.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Materials,
+    Studios,
 }
 
 pub struct LibraryTab {
@@ -156,6 +166,9 @@ pub struct LibraryTab {
     watched: (std::time::Instant, u64),
     /// The enabled plugins' material folders, and the plugins' names.
     plugin_folders: Vec<(std::path::PathBuf, String)>,
+    pub section: Section,
+    /// Studio presets, the other section.
+    pub studios: crate::studio_shelf::StudioShelf,
 }
 
 impl LibraryTab {
@@ -219,7 +232,14 @@ impl LibraryTab {
             confirm_delete: Default::default(),
             watched: (std::time::Instant::now(), folder_signature(&user_library_path())),
             plugin_folders: Vec::new(),
+            section: Section::Materials,
+            studios: Default::default(),
         }
+    }
+
+    /// Read the studio presets again, the next time they are shown.
+    pub fn reload_studios(&mut self) {
+        self.studios.reload();
     }
 
     /// The enabled plugins' materials: read again when the set changes.
@@ -329,6 +349,11 @@ impl LibraryTab {
         in_project: &BTreeSet<String>,
         selected: Option<&crate::library_dialogs::Selected>,
     ) -> Option<LibraryAction> {
+        crate::theme::segmented(ui, &mut self.section, &[(Section::Materials, "Materials"), (Section::Studios, "Studios")]);
+        ui.add_space(2.0);
+        if self.section == Section::Studios {
+            return self.studios.show(ui).map(LibraryAction::Studio);
+        }
         let mut action = self.dialogs(ui.ctx(), selected);
 
         if !self.problems.is_empty() {

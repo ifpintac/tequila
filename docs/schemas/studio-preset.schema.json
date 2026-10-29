@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ifpintac/tequila/docs/schemas/studio-preset.schema.json",
+  "title": "Tequila studio preset",
+  "description": "A studio preset's <id>.studio.json (docs/studio-presets.md). The environment, lighting, render, image_style, light and camera objects are as a project's scene.json writes them (docs/file-format.md); every path is relative to the preset's folder and stays inside it.",
+  "type": "object",
+  "required": ["format", "version", "id", "name"],
+  "properties": {
+    "format": { "const": "tequila.studio-preset" },
+    "version": { "type": "integer", "minimum": 1, "maximum": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$", "description": "Names the preset's folder." },
+    "name": { "type": "string", "minLength": 1 },
+    "family": { "type": "string", "description": "Presets of one family are one studio in several sizes." },
+    "size": { "type": "string", "description": "Small, Medium and Large sort in that order; others after." },
+    "description": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "preset_version": { "type": "string" },
+    "notes": { "type": "string" },
+    "thumbnail": { "$ref": "#/$defs/path" },
+    "environment": { "type": "object", "description": "As scene.json's environment, ground included (§3.3)." },
+    "lighting": { "type": "object", "description": "As scene.json's lighting (§3.3.1), custom.cycles included." },
+    "render": { "type": "object", "description": "As scene.json's render (§3.3.4). The project keeps its own output_directory, layers and region." },
+    "image_style": { "type": "object", "description": "As scene.json's image_style (§3.3.3)." },
+    "lights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["transform"],
+        "properties": {
+          "name": { "type": "string" },
+          "light": { "type": "object", "description": "A light as scene.json's tree writes it." },
+          "transform": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 16,
+            "maxItems": 16,
+            "description": "Row by row, in the studio's space: the product stands centred on the origin."
+          }
+        }
+      }
+    },
+    "cameras": { "type": "array", "items": { "type": "object", "description": "A cameras entry (§3.3.2), framed for the reference radius." } },
+    "studios": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "camera": { "type": "object" },
+          "environment": { "type": "object" },
+          "image_style": { "type": "object" },
+          "lights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["enabled"],
+              "properties": {
+                "name": { "type": "string" },
+                "layer": { "type": "integer", "minimum": 0 },
+                "enabled": { "type": "boolean" }
+              }
+            }
+          },
+          "product_yaw": { "type": "number", "description": "Radians, right-handed about +Y." },
+          "filename_suffix": { "type": "string" }
+        }
+      }
+    },
+    "framing": {
+      "type": "object",
+      "required": ["reference_radius_m"],
+      "properties": {
+        "reference_radius_m": { "type": "number", "exclusiveMinimum": 0, "description": "Half the product's bounding-box diagonal." },
+        "base_offset_m": { "type": "number" },
+        "scale": { "enum": ["cameras", "cameras_and_lights", "none"] }
+      }
+    },
+    "materials": { "type": "array", "items": { "$ref": "#/$defs/path" } },
+    "material_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pattern", "material"],
+        "properties": {
+          "pattern": { "type": "string", "description": "A part name, with * and ? wildcards." },
+          "material": { "type": "string", "description": "One of the preset's materials, by name." }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "not": { "anyOf": [{ "pattern": "^[/\\\\]" }, { "pattern": "(^|[/\\\\])\\.\\.([/\\\\]|$)" }, { "pattern": ":" }] },
+      "description": "Relative to the preset's folder, and inside it."
+    }
+  }
+}

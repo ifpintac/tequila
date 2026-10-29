@@ -205,7 +205,7 @@ impl Session {
             Operation::Export { format, path, live, photos, columns, rows, tilt, transparent } => {
                 self.export(format, path, *live, *photos, (*columns, *rows, *tilt), *transparent)
             }
-            Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) => {
+            Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) | Operation::StudioPreset(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
         }

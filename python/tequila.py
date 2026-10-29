@@ -209,6 +209,14 @@ class Client:
         'My Blue', category='Plastic')`, `fs.library.import_('shared.fsmat')`."""
         return Library(self)
 
+    @property
+    def studios(self):
+        """Studio presets - complete studios for a kind of product, by family
+        and size: `fs.studios.apply('product-studio-medium')`,
+        `fs.studios.save('My studio', family='Bottles', size='Tall')`,
+        `fs.studios.render_all()` for every view."""
+        return StudioPresets(self)
+
     def screenshot(self, path, *, viewport=False, window=None, timeout=30):
         """Wait for a new PNG of the window, or of just the viewport, or of
         another window: window='render', 'graph', 'shortcuts' or 'connect'.
@@ -576,6 +584,66 @@ class Library:
     def delete(self, name):
         """Remove one of the user's own presets. The shipped ones never."""
         return self._client.request('library', action='delete', name=name)
+
+
+class StudioPresets:
+    """Studio presets (docs/studio-presets.md): lights, cameras and views,
+    environment and floor, look and render settings, applied to the product
+    in one undo step and framed to its size."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def list(self):
+        """Every preset installed: id, name, family, size, views, and
+        `suggested` on the size in each family nearest the product."""
+        return self._client.request('studio_preset', action='list')['presets']
+
+    def suggested(self, family=None):
+        """The preset framed nearest the product - in `family`, or in the
+        first family that has one; None when there is no product."""
+        for preset in self.list():
+            if preset['suggested'] and (family is None or preset['family'].lower() == family.lower()):
+                return preset
+        return None
+
+    def apply(self, id, *, front=None, scale=None, keep_lights=False, keep_cameras=False,
+              keep_placement=False, dress=False):
+        """Apply the preset `id` as one undo step. `front` is the product's
+        side that faces the Main camera ('+z', '-z', '+x', '-x'); `scale` what
+        follows its size ('cameras', 'cameras_and_lights', 'none'); `dress`
+        puts the preset's materials on parts by their names."""
+        fields = {'action': 'apply', 'id': id, 'keep_lights': keep_lights, 'keep_cameras': keep_cameras,
+                  'keep_placement': keep_placement, 'dress': dress}
+        for key, value in (('front', front), ('scale', scale)):
+            if value is not None:
+                fields[key] = value
+        return self._client.request('studio_preset', **fields)
+
+    def save(self, name, *, family='', size='', description='', materials=False):
+        """The scene's studio - everything but the product - as a preset of
+        your own; `materials` keeps the project's materials with it."""
+        return self._client.request('studio_preset', action='save', name=name, family=family, size=size,
+                                    description=description, materials=materials)
+
+    def install(self, path):
+        """A studio preset package (.tqstudio), or a preset's folder or
+        .studio.json; its materials go into the material library too."""
+        return self._client.request('studio_preset', action='install', path=str(Path(path).resolve()))
+
+    def export(self, id, path):
+        """The preset `id` as a package, to share."""
+        return self._client.request('studio_preset', action='export', id=id, path=str(Path(path).resolve()))
+
+    def delete(self, id):
+        """Remove one of your own presets. The shipped ones never."""
+        return self._client.request('studio_preset', action='delete', id=id)
+
+    def render_all(self):
+        """Queue every view (Studio), one job each, named by the output
+        template ({product}_{view}_{date} in a preset's). Returns the job ids;
+        wait with wait_for_job()."""
+        return self._client.request('studio_preset', action='render_all')['jobs']
 
 
 class Recipes:

@@ -64,6 +64,8 @@ mod scene_tab;
 mod procedural_gpu;
 mod solid_gpu;
 mod studio_tab;
+mod studio_shelf;
+mod studio_presets;
 mod configurator_panel;
 mod templates_panel;
 mod texture_pack;
