@@ -1670,6 +1670,18 @@ fn floor_reflection(
         return None;
     }
     let origin = tequila_core::math::offset_ray_origin(hit.position, normal);
+    // A short reflection is gone above its fade, and most of what a floor
+    // mirrors is above it: one intersection says so before a whole path is
+    // traced and shaded to be thrown away. The first thing the ray meets is
+    // never further than what the path would shade, so this skips only what
+    // would have faded anyway.
+    if let Some(fade) = catcher.reflection_fade {
+        match intersector.intersect(&Ray::new(origin, reflected)) {
+            None => return None,
+            Some(first) if first.t * reflected.dot(normal) >= fade => return None,
+            Some(_) => {}
+        }
+    }
     // One bounce, not a recursion: a floor reflecting a floor reflecting a
     // floor is a hall of mirrors nobody asked for, and the second bounce is
     // below the noise floor of a render anyone would ship.
