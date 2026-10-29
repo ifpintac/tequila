@@ -66,6 +66,7 @@ fn lamp() -> Light {
         radiance: Spectrum::splat(400.0),
         disc: false,
         two_sided: false,
+        spread: std::f32::consts::PI,
     }))
 }
 

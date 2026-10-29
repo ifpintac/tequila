@@ -27,7 +27,7 @@ pub use tequila_color::blackbody_rgb;
 use tequila_render_core::camera::{Aperture, Camera, Projection};
 use tequila_render_core::ies::IesProfile;
 use tequila_render_core::light::{
-    AreaLight, IesLight, Light, LightKind, PointLight, SpotLight, Visibility,
+    AreaLight, DistantLight, IesLight, Light, LightKind, PointLight, SpotLight, Visibility,
 };
 use std::sync::Arc;
 
@@ -54,6 +54,11 @@ pub enum LightShape {
         outer_degrees: f32,
         falloff: f32,
     },
+    /// The sun: light from far away along the node's -Z, every ray parallel
+    /// but for the disc's own angle across, which softens its shadows - the
+    /// real sun's is about half a degree. Where it is does not matter, only
+    /// which way it points.
+    Sun { angle_degrees: f32 },
 }
 
 /// A light shape, with the photometric file an IES light needs.
@@ -74,6 +79,7 @@ impl LightShape {
             LightShape::Area { disc: true, .. } => "Disc",
             LightShape::Point { .. } => "Point",
             LightShape::Spot { .. } => "Spot",
+            LightShape::Sun { .. } => "Sun",
         }
     }
 }
@@ -93,12 +99,15 @@ pub enum Intensity {
     Nits(f32),
     /// Luminous intensity, in candela. The natural unit for a point source.
     Candela(f32),
+    /// Illuminance, in lux: what falls on a surface facing the light. The
+    /// natural unit for the sun, which has no size or distance to speak of.
+    Lux(f32),
 }
 
 impl Intensity {
     pub fn value(&self) -> f32 {
         match self {
-            Intensity::Lumens(v) | Intensity::Nits(v) | Intensity::Candela(v) => *v,
+            Intensity::Lumens(v) | Intensity::Nits(v) | Intensity::Candela(v) | Intensity::Lux(v) => *v,
         }
     }
 
@@ -107,6 +116,7 @@ impl Intensity {
             Intensity::Lumens(_) => Intensity::Lumens(value),
             Intensity::Nits(_) => Intensity::Nits(value),
             Intensity::Candela(_) => Intensity::Candela(value),
+            Intensity::Lux(_) => Intensity::Lux(value),
         }
     }
 
@@ -115,6 +125,7 @@ impl Intensity {
             Intensity::Lumens(_) => "lm",
             Intensity::Nits(_) => "nits",
             Intensity::Candela(_) => "cd",
+            Intensity::Lux(_) => "lx",
         }
     }
 
@@ -132,6 +143,9 @@ impl Intensity {
             // Candela is intensity per steradian; over a Lambertian emitter's
             // projected area that is radiance directly.
             Intensity::Candela(v) => v / area,
+            // Light leaving a Lambertian surface, its exitance: π times its
+            // radiance.
+            Intensity::Lux(v) => v / std::f32::consts::PI,
         }
     }
 
@@ -147,6 +161,7 @@ impl Intensity {
             Intensity::Candela(v) => *v,
             Intensity::Lumens(v) => v / 1000.0,
             Intensity::Nits(v) => v / 1000.0,
+            Intensity::Lux(v) => v / 1000.0,
         }
     }
 
@@ -157,9 +172,15 @@ impl Intensity {
             // Over the whole sphere.
             Intensity::Lumens(v) => v / (4.0 * std::f32::consts::PI),
             // A bare number with no area to scale it; treated as candela so
-            // the light is not silently black.
-            Intensity::Nits(v) => *v,
+            // the light is not silently black. Lux the same.
+            Intensity::Nits(v) | Intensity::Lux(v) => *v,
         }
+    }
+
+    /// Illuminance in lux, for the sun. Any other unit, which a sun has no
+    /// size or distance to turn into lux, at its nominal value.
+    pub fn lux(&self) -> f32 {
+        self.value()
     }
 }
 
@@ -190,6 +211,10 @@ pub struct LightSettings {
     /// The parts that cast its shadow (shadow linking), in the same shape:
     /// those named, or all but those. `None`: every part it lights.
     pub shadow_links: Option<LightLinking>,
+    /// An area or disc light's spread, in degrees: 180 is a plain panel,
+    /// less a softbox behind a grid, its light gathered into a beam that
+    /// wide. Its power stays what it was.
+    pub spread_degrees: f32,
 }
 
 /// What a light is kept to (light linking): the parts it lights, or the
@@ -226,6 +251,7 @@ impl Default for LightSettings {
             enabled: true,
             links: None,
             shadow_links: None,
+            spread_degrees: 180.0,
         }
     }
 }
@@ -248,7 +274,7 @@ impl LightSettings {
                 }
             }
             // A point has no area; the conversions treat it as a point source.
-            LightShape::Point { .. } | LightShape::Spot { .. } => 1.0,
+            LightShape::Point { .. } | LightShape::Spot { .. } | LightShape::Sun { .. } => 1.0,
         }
     }
 
@@ -260,9 +286,9 @@ impl LightSettings {
                 vec3(width * 0.5, height * 0.5, 0.0)
             }
             LightShape::Point { radius } => Vec3::splat(radius.max(1e-3)),
-            // A cone has no size of its own; a small marker is what there is
-            // to frame.
-            LightShape::Spot { .. } => Vec3::splat(1e-2),
+            // A cone has no size of its own, nor a sun; a small marker is
+            // what there is to frame.
+            LightShape::Spot { .. } | LightShape::Sun { .. } => Vec3::splat(1e-2),
         }
     }
 
@@ -304,8 +330,8 @@ impl LightSettings {
         // placement and the intensity the user set. It is deliberately not a
         // fifth shape: a luminaire with a photometric file is still a point in
         // space with an aiming axis, and the file only says how brightly it
-        // emits in each direction.
-        if let Some(profile) = profile {
+        // emits in each direction. A sun is not a fitting, and keeps its own.
+        if let Some(profile) = profile.filter(|_| !matches!(self.shape, LightShape::Sun { .. })) {
             // Aimed where the shape points, as the Lighting tab promises: a
             // panel faces +Z, so a file on one aims there - the luminaire
             // turned over about its width, keeping `right`, so an asymmetric
@@ -313,7 +339,7 @@ impl LightSettings {
             // turned a panel round the moment it was given one.
             let aim = match self.shape {
                 LightShape::Area { .. } => Vec3::Z,
-                LightShape::Point { .. } | LightShape::Spot { .. } => -Vec3::Z,
+                LightShape::Point { .. } | LightShape::Spot { .. } | LightShape::Sun { .. } => -Vec3::Z,
             };
             let direction = world.vector(aim).try_normalize().unwrap_or(aim);
             let right = world.vector(Vec3::X).try_normalize().unwrap_or(Vec3::X);
@@ -356,6 +382,7 @@ impl LightSettings {
                     radiance: Spectrum::ZERO,
                     disc,
                     two_sided,
+                    spread: self.spread_degrees.clamp(1.0, 180.0).to_radians(),
                 };
                 light.radiance = color * self.intensity.radiance_for_area(light.area());
                 LightKind::Area(light)
@@ -387,6 +414,11 @@ impl LightSettings {
                     falloff,
                 })
             }
+            LightShape::Sun { angle_degrees } => LightKind::Distant(DistantLight {
+                direction: world.vector(-Vec3::Z).try_normalize().unwrap_or(-Vec3::Z),
+                irradiance: color * self.intensity.lux(),
+                half_angle: (angle_degrees.clamp(0.0, 90.0) * 0.5).to_radians(),
+            }),
         };
         Some(
             Light::new(kind)

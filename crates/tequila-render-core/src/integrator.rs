@@ -1218,7 +1218,11 @@ pub fn trace_path_with_caustics(
         // that reaches here with one (any other passed it above). The analytic
         // light it stands for is already lighting the scene through next-event
         // estimation, and counting the proxy as well would double it.
-        if material.is_emissive() && !hit.is_backface(ray.direction) {
+        //
+        // With Light source materials off, a glowing surface lights nothing
+        // round it: met by a diffuse bounce, its light is left out. Seen
+        // directly, through glass or in a reflection it still glows.
+        if material.is_emissive() && !hit.is_backface(ray.direction) && (config.light_source_materials || seen_as != Seen::Diffuse) {
             // No emissive-geometry light sampling at M0, so there is no
             // light-sampling counterpart to weight against; M3 adds the light
             // BVH (§5.3) and this gains its MIS partner.
@@ -2586,7 +2590,13 @@ fn sample_analytic_lights(
     if config.shadows && light.visibility.shadow {
         // Stop just short of the light, or the emitter's own surface blocks
         // the ray it was traced towards.
-        let target = hit.position + sample.direction * (sample.distance * (1.0 - 1e-3));
+        // A sun is infinitely far: past everything in the scene will do.
+        let reach = if sample.distance.is_finite() {
+            sample.distance * (1.0 - 1e-3)
+        } else {
+            scene.bounds().bounding_radius().max(1.0) * 1e4
+        };
+        let target = hit.position + sample.direction * reach;
         // As above: out of the side the ray actually leaves by.
         let leaving = if below {
             -geometric_normal

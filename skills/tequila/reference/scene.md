@@ -51,7 +51,7 @@ That puts node 5 1 cm up (+Y is up) from where an identity transform has it. For
 {"command": "scene.add_light", "name": "Key", "light": {"shape": "Area", "width": 0.5, "height": 0.5, "intensity": 1500, "intensity_unit": "lm", "color": "#fff4e6"}}
 ```
 
-- `shape`: `Area` (a panel; `width`, `height`, `two_sided`), `Disc`, `Point` (`radius`), `Spot` (`inner_degrees`, `outer_degrees`, `falloff`). `intensity` in `lm` (lumens), `cd` (candela) or `nits`; `temperature` in kelvin instead of a colour.
+- `shape`: `Area` (a panel; `width`, `height`, `two_sided`), `Disc`, `Point` (`radius`), `Spot` (`inner_degrees`, `outer_degrees`, `falloff`), `Sun` (`angle_degrees`, the disc's width: 0.53 is the real sun, 0 hard shadows). `intensity` in `lm` (lumens), `cd` (candela), `nits`, or `lx` (lux, a sun's: a few hundred lights a product like a softbox); `temperature` in kelvin instead of a colour. A sun lights from far away along its local -Z wherever it is placed: only its rotation matters.
 - A new light sits at the origin: find its id in `tequila_nodes` (kind `light`) and place it with `scene.set_transform`. An area or disc light shines along its local **+Z** - the opposite of Blender, so negate the Y and Z columns of a Blender light's matrix. A spot aims along its local -Z, and so does a point light's `.ies` file; an area light's `.ies` file aims where the panel faces. 40 cm up, facing down:
 
 ```json

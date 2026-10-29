@@ -235,13 +235,22 @@ pub fn add_light_menu(ui: &mut egui::Ui, parent: Option<NodeId>) -> Option<Comma
                 falloff: 1.0,
             },
         ),
+        // The real sun's half a degree.
+        ("Sun", LightShape::Sun { angle_degrees: 0.53 }),
     ] {
         if ui.button(name).clicked() {
+            // A sun is given the light falling on things, in lux; the rest
+            // the light they give, in lumens.
+            let intensity = match shape {
+                LightShape::Sun { .. } => Intensity::Lux(500.0),
+                _ => LightSettings::default().intensity,
+            };
             chosen = Some(Command::AddLight {
                 parent,
                 name: shape.label().to_string(),
                 settings: Box::new(LightSettings {
                     shape,
+                    intensity,
                     ..Default::default()
                 }),
             });
@@ -285,6 +294,8 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             );
             ui.add(crate::field::Checkbox::new(disc, "Elliptical"));
             ui.add(crate::field::Checkbox::new(two_sided, "Two sided"));
+            ui.add(crate::field::Slider::new(&mut light.spread_degrees, 1.0..=180.0).text("Spread"))
+                .on_hover_text("How wide the light leaves the panel: 180 is a plain panel, less a softbox behind a grid, its light gathered into a narrower beam of the same power.");
         }
         LightShape::Point { radius } => {
             ui.add(
@@ -304,6 +315,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
                 crate::field::Slider::new(inner_degrees, 0.0..=*outer_degrees).text("Inner angle"),
             );
             ui.add(crate::field::Slider::new(falloff, 0.1..=8.0).text("Falloff"));
+        }
+        LightShape::Sun { angle_degrees } => {
+            ui.add(crate::field::Slider::new(angle_degrees, 0.0..=30.0).text("Angle"))
+                .on_hover_text("How wide the sun's disc is. Zero casts perfectly hard shadows; the real sun is half a degree. Where the light is does not matter, only which way it points.");
         }
     }
 
@@ -325,6 +340,7 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             Intensity::Lumens(amount),
             Intensity::Nits(amount),
             Intensity::Candela(amount),
+            Intensity::Lux(amount),
         ] {
             let selected =
                 std::mem::discriminant(&light.intensity) == std::mem::discriminant(&candidate);
@@ -355,9 +371,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
     }
 
     // ---- Photometry (§5.1) ----------------------------------------------
+    // Not for a sun, which is not a fitting.
     ui.add_space(4.0);
     let mut photometric = light.photometry.is_some();
-    if ui
+    if !matches!(light.shape, LightShape::Sun { .. }) && ui
         .add(crate::field::Checkbox::new(&mut photometric, "Photometric file"))
         .on_hover_text(
             "Use a manufacturer's measured distribution — an .ies file — instead of \

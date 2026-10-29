@@ -106,9 +106,41 @@ pub fn sample(u: f32) -> f32 {
     SHORTEST + (LONGEST - SHORTEST) * u.clamp(0.0, 1.0)
 }
 
+/// The index each of red, green and blue refracts at, for a renderer that
+/// splits light by colour channel rather than by wavelength (Cycles): the
+/// index at each channel's mean wavelength, the wavelengths weighted by how
+/// much of that channel each carries.
+pub fn channel_iors(ior: f32, abbe: f32) -> [f32; 3] {
+    static MEANS: OnceLock<[f32; 3]> = OnceLock::new();
+    let means = MEANS.get_or_init(|| {
+        let n = 1024;
+        let (mut weighted, mut total) = ([0.0f64; 3], [0.0f64; 3]);
+        for i in 0..n {
+            let wavelength = SHORTEST + (LONGEST - SHORTEST) * (i as f32 + 0.5) / n as f32;
+            let rgb = raw_rgb(wavelength);
+            for c in 0..3 {
+                weighted[c] += f64::from(rgb[c] * wavelength);
+                total[c] += f64::from(rgb[c]);
+            }
+        }
+        [0, 1, 2].map(|c| (weighted[c] / total[c]) as f32)
+    });
+    means.map(|wavelength| ior_at(ior, abbe, wavelength))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Split by channel, blue bends most and red least, green near the
+    /// stated index; with no Abbe number all three are that index.
+    #[test]
+    fn each_channel_bends_by_its_own_index() {
+        let [r, g, b] = channel_iors(1.5168, 64.17);
+        assert!(r < g && g < b, "blue must bend more than green, and green than red: {r} {g} {b}");
+        assert!((g - 1.5168).abs() < 0.005, "green is near the d line: {g}");
+        assert_eq!(channel_iors(1.5, 0.0), [1.5; 3], "no Abbe number, no dispersion");
+    }
 
     /// The index at the three lines reproduces the Abbe number it was given,
     /// and the stated index at the d line.

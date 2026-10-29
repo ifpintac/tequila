@@ -58,6 +58,9 @@ pub struct View {
     /// is there for the camera alone, to show shadows on; reflections,
     /// refraction and bounced light pass through it to the environment.
     pub ground_illumination: bool,
+    /// The lighting's Light source materials: a glowing surface lights what
+    /// is around it. Off, it glows for the camera and in reflections alone.
+    pub light_materials: bool,
 }
 
 /// How hard Cycles works on an image.
@@ -468,7 +471,7 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
     let mut out = Translation::default();
     // What updates since the last translation used is asked again below.
     images.used.clear();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new() };
+    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials };
 
     // One Cycles shader per Tequila material.
     let mut shaders = Vec::with_capacity(scene.materials.len());
@@ -796,6 +799,35 @@ fn ies_text(profile: &tequila_render_core::ies::IesProfile) -> String {
     text
 }
 
+/// A spot's blend as Cycles has it, from Tequila's penumbra. Cycles fades
+/// a spot by one smoothstep from the outer angle over `blend` of the way to
+/// the axis, measured in cosines; Tequila's renderer by the same smoothstep
+/// from the outer angle to the inner, raised to the falloff exponent. At an
+/// exponent of one the two are the same curve. Otherwise the blend is set
+/// so the edge takes away as much light as Tequila's does: the same total,
+/// but a steeper exponent's edge is a little brighter at its outer end in
+/// Cycles, and reaches a little further in towards the axis. A soft edge
+/// that already spans most of the cone may need more than the whole of it,
+/// which Cycles' spot cannot fade over: it is as soft as Cycles can make it,
+/// and brighter than Tequila's.
+fn spot_blend(spot: &tequila_render_core::light::SpotLight) -> f32 {
+    let outer = spot.outer_angle.max(1e-3);
+    let (cos_outer, cos_inner) = (outer.cos(), spot.inner_angle.min(outer).cos());
+    let penumbra = (cos_inner - cos_outer) / (1.0 - cos_outer).max(1e-6);
+    // The light Tequila's edge loses, over its width: a half for the plain
+    // smoothstep, more the steeper the exponent. Cycles' edge, `k` times as
+    // wide, loses a half of its width.
+    let steps = 64;
+    let lost: f32 = (0..steps)
+        .map(|i| {
+            let t = (i as f32 + 0.5) / steps as f32;
+            1.0 - (t * t * (3.0 - 2.0 * t)).powf(spot.falloff.max(0.0))
+        })
+        .sum::<f32>()
+        / steps as f32;
+    (penumbra * 2.0 * lost).clamp(0.0, 1.0)
+}
+
 /// A conductor's colour seen straight on (F0) and Cycles' edge tint for it:
 /// the exact Fresnel at 82 degrees over Schlick's from F0 there, which is
 /// what the principled shader's tint scales [Hoffman 2023].
@@ -902,12 +934,13 @@ pub fn update_materials(
     shaders: &[Node],
     changed: &[usize],
     images: &mut Images,
+    light_materials: bool,
 ) -> Result<bool, String> {
     if !session.can_reopen() || changed.iter().any(|&i| i >= shaders.len()) {
         return Ok(false);
     }
     let mut out = Translation::default();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new() };
+    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials };
     for &index in changed {
         builder.material(index, Some(shaders[index]))?;
     }
@@ -938,7 +971,7 @@ pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Opt
 pub fn set_camera(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Result<Translation, String> {
     let mut out = Translation::default();
     let mut images = Images::default();
-    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new() };
+    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials };
     builder.camera(view)?;
     Ok(out)
 }
@@ -963,6 +996,8 @@ struct Builder<'a> {
     /// A vector turned from Cycles' world into Tequila's, back to what it
     /// was turned from.
     turned: HashMap<Node, (Node, &'static str)>,
+    /// [`View::light_materials`].
+    light_materials: bool,
 }
 
 /// What the camera sees of a floor whose bounce the rest of the scene sees.
@@ -2919,6 +2954,73 @@ impl Builder<'_> {
         Ok(sum)
     }
 
+    /// Glass that disperses (an Abbe number), as Cycles can have it. It
+    /// has no dispersion of its own, so three glasses, each passing one
+    /// colour channel at the index that channel bends by
+    /// (`dispersion::channel_iors`), added: their reflections come to white
+    /// and their refractions part, in fringes where Tequila's renderer has
+    /// a spectrum. Each crossing tints by the square root of `base`, as
+    /// Cycles' principled glass does. `None` without an Abbe number, or for
+    /// a material that is more than `plain` glass, which disperses only in
+    /// Tequila's renderer.
+    fn dispersed_glass(
+        &mut self,
+        shader: Shader,
+        m: &Material,
+        plain: bool,
+        base: Slot,
+        roughness: Slot,
+        normal: Option<(Node, &'static str)>,
+    ) -> Result<Option<(Node, &'static str)>, String> {
+        if m.transmission_dispersion_abbe <= 0.0 {
+            return Ok(None);
+        }
+        if !plain {
+            self.out.warn("dispersion reaches Cycles for clear glass only: on this material it is left out");
+            return Ok(None);
+        }
+        let tint = match base {
+            Slot::Value(colour) => {
+                let c = colour.as_color();
+                Slot::Value(Value::Color(Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() }))
+            }
+            link => {
+                let root = self.session.node(shader, "gamma")?;
+                self.feed(shader, root, "Color", link, true)?;
+                self.session.set_float(root, "Gamma", 0.5)?;
+                Slot::Link(root, "Color")
+            }
+        };
+        let iors = tequila_materials::dispersion::channel_iors(m.specular_ior, m.transmission_dispersion_abbe);
+        let channels = [Spectrum { r: 1.0, g: 0.0, b: 0.0 }, Spectrum { r: 0.0, g: 1.0, b: 0.0 }, Spectrum { r: 0.0, g: 0.0, b: 1.0 }];
+        let mut sum: Option<(Node, &'static str)> = None;
+        for (ior, channel) in iors.into_iter().zip(channels) {
+            let glass = self.session.node(shader, "glass_bsdf")?;
+            self.session.set_string(glass, "distribution", "multi_ggx")?;
+            let colour = self.apply(shader, &NodeKind::Multiply, &[tint, Slot::Value(Value::Color(channel))], 0)?;
+            self.feed(shader, glass, "Color", colour, true)?;
+            self.feed(shader, glass, "Roughness", roughness, false)?;
+            self.session.set_float(glass, "IOR", ior)?;
+            if m.thin_film_weight > 0.0 {
+                self.session.set_float(glass, "Thin Film Thickness", m.thin_film_thickness * m.thin_film_weight)?;
+                self.session.set_float(glass, "Thin Film IOR", m.thin_film_ior)?;
+            }
+            if let Some((node, socket)) = normal {
+                self.session.connect(shader, node, socket, glass, "Normal")?;
+            }
+            sum = Some(match sum {
+                None => (glass, "BSDF"),
+                Some((node, socket)) => {
+                    let add = self.session.node(shader, "add_closure")?;
+                    self.session.connect(shader, node, socket, add, "Closure1")?;
+                    self.session.connect(shader, glass, "BSDF", add, "Closure2")?;
+                    (add, "Closure")
+                }
+            });
+        }
+        Ok(sum)
+    }
+
     /// Material `index`'s shader: a new one, or `reuse` built again.
     fn material(&mut self, index: usize, reuse: Option<Node>) -> Result<Node, String> {
         let material: &Material = &self.scene.materials[index];
@@ -3067,7 +3169,18 @@ impl Builder<'_> {
         self.feed(shader, bsdf, "sheen_tint", value(Param::FuzzColor, Value::Color(m.fuzz_color)), true)?;
         self.feed(shader, bsdf, "sheen_roughness", value(Param::FuzzRoughness, Value::Float(m.fuzz_roughness)), false)?;
         self.feed(shader, bsdf, "emission_color", value(Param::EmissionColor, Value::Color(m.emission_color)), true)?;
-        self.feed(shader, bsdf, "emission_strength", value(Param::EmissionLuminance, Value::Float(m.emission_luminance)), false)?;
+        // Light source materials off, a glowing surface lights nothing round
+        // it: no light sampling of it, and none of its light by a diffuse
+        // bounce, as Tequila's renderer leaves it out.
+        let mut strength = value(Param::EmissionLuminance, Value::Float(m.emission_luminance));
+        let glows = m.emission_luminance > 0.0 || driven.contains_key(&Param::EmissionLuminance);
+        if glows && !self.light_materials {
+            self.session.set_string(shader.0, "emission_sampling_method", "none")?;
+            let path = self.session.node(shader, "light_path")?;
+            let unlit = self.float_op(shader, "subtract", Slot::Value(Value::Float(1.0)), Slot::Link(path, "Is Diffuse Ray"))?;
+            strength = self.float_op(shader, "multiply", strength, unlit)?;
+        }
+        self.feed(shader, bsdf, "emission_strength", strength, false)?;
         // A thin shell's opacity cuts through the whole blend, below.
         if !thin {
             self.feed(shader, bsdf, "alpha", value(Param::Opacity, Value::Float(m.geometry_opacity)), false)?;
@@ -3160,6 +3273,24 @@ impl Builder<'_> {
 
         if !thin {
             let surface = if m.flake_weight > 1e-4 { self.flakes(shader, m, (bsdf, "BSDF"))? } else { (bsdf, "BSDF") };
+            // Clear glass that disperses, where it is nothing more.
+            let plain = transmissive
+                && m.transmission_weight >= 0.999
+                && m.coat_weight == 0.0
+                && m.fuzz_weight == 0.0
+                && m.subsurface_weight == 0.0
+                && m.emission_luminance == 0.0
+                && m.flake_weight <= 1e-4
+                && m.geometry_opacity >= 1.0
+                && m.specular_weight == 1.0
+                && m.specular_roughness_anisotropy == 0.0
+                && !metal
+                && decals.is_empty()
+                && ![Param::TransmissionWeight, Param::CoatWeight, Param::FuzzWeight, Param::SubsurfaceWeight, Param::EmissionLuminance, Param::Opacity, Param::Anisotropy]
+                    .iter()
+                    .any(|p| driven.contains_key(p));
+            let roughness = value(Param::SpecularRoughness, Value::Float(m.specular_roughness));
+            let surface = self.dispersed_glass(shader, m, plain, base, roughness, normal)?.unwrap_or(surface);
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
             return self.session.commit(shader);
         }
@@ -3376,11 +3507,21 @@ impl Builder<'_> {
                     self.light_flags(node, v.shadow)?;
                     made.push((index, node));
                 }
+                LightKind::Distant(sun) => {
+                    // Cycles' sun is its distant light, aimed along its -Z, its
+                    // strength the irradiance on a surface facing it, its angle
+                    // the disc's whole width.
+                    let node = self.session.light("distant", shader, &aimed(Vec3::ZERO, sun.direction), visibility)?;
+                    self.session.set_float(node, "angle", 2.0 * sun.half_angle)?;
+                    self.session.set_float3(node, "strength", rgb(sun.irradiance))?;
+                    self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
+                }
                 LightKind::Spot(spot) => {
                     let node = self.session.light("spot", shader, &aimed(spot.position, spot.direction), visibility)?;
                     let outer = spot.outer_angle.max(1e-3);
                     self.session.set_float(node, "spot_angle", 2.0 * outer)?;
-                    self.session.set_float(node, "spot_smooth", ((outer - spot.inner_angle) / outer).clamp(0.0, 1.0))?;
+                    self.session.set_float(node, "spot_smooth", spot_blend(spot))?;
                     let s = rgb(spot.intensity);
                     self.session.set_float3(node, "strength", [s[0] * four_pi, s[1] * four_pi, s[2] * four_pi])?;
                     self.light_flags(node, v.shadow)?;
@@ -3412,6 +3553,11 @@ impl Builder<'_> {
                         self.session.set_float(node, "sizeu", len_u)?;
                         self.session.set_float(node, "sizev", len_v)?;
                         self.session.set_bool(node, "ellipse", area.disc)?;
+                        // The grid's spread: Cycles' softbox, which Tequila's
+                        // renderer follows (`AreaLight::spread_attenuation`).
+                        if area.spread < std::f32::consts::PI {
+                            self.session.set_float(node, "spread", area.spread)?;
+                        }
                         let mut a = len_u * len_v;
                         if area.disc {
                             a *= std::f32::consts::FRAC_PI_4;
@@ -3969,6 +4115,36 @@ mod tests {
 
     /// Up is up: Tequila's +Y is Cycles' +Z, and the frame keeps its
     /// handedness, so a model is not mirrored on the way across.
+    /// A spot's blend makes Cycles' smoothstep Tequila's: the same curve
+    /// at a falloff of one, and as much light lost across the edge at three.
+    #[test]
+    fn a_spots_blend_follows_its_falloff() {
+        let spot = |falloff: f32| tequila_render_core::light::SpotLight {
+            position: Vec3::ZERO,
+            direction: -Vec3::Y,
+            intensity: Spectrum::ONE,
+            inner_angle: 0.3,
+            outer_angle: 0.5,
+            falloff,
+        };
+        let cycles = |spot: &tequila_render_core::light::SpotLight, cos: f32| {
+            let blend = spot_blend(spot);
+            let cos_outer = spot.outer_angle.cos();
+            let x = ((cos - cos_outer) / ((1.0 - cos_outer) * blend)).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x)
+        };
+        let linear = spot(1.0);
+        for angle in [0.32f32, 0.38, 0.42, 0.46, 0.49] {
+            let (a, b) = (linear.falloff_at(angle.cos()), cycles(&linear, angle.cos()));
+            assert!((a - b).abs() < 1e-3, "at {angle}: Tequila {a}, Cycles {b}");
+        }
+        // Steeper, as much light lost across the edge in both.
+        let steep = spot(3.0);
+        let lost = |f: &dyn Fn(f32) -> f32| (0..4000).map(|i| 1.0 - f(steep.outer_angle.cos() + (1.0 - steep.outer_angle.cos()) * (i as f32 + 0.5) / 4000.0)).sum::<f32>();
+        let (a, b) = (lost(&|cos| steep.falloff_at(cos)), lost(&|cos| cycles(&steep, cos)));
+        assert!((a / b - 1.0).abs() < 0.02, "the edge loses {a} in Tequila, {b} in Cycles");
+    }
+
     #[test]
     fn y_up_becomes_z_up_without_a_mirror() {
         let up = Y_UP_TO_Z_UP.transform_vector(Vec3::Y);

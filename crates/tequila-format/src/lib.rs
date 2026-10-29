@@ -1440,6 +1440,9 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
                 .set("outer_degrees", outer_degrees)
                 .set("falloff", falloff);
         }
+        LightShape::Sun { angle_degrees } => {
+            object.set("angle_degrees", angle_degrees);
+        }
     }
     object
         .set("color", color(settings.color))
@@ -1462,6 +1465,11 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     }
     if let Some(links) = &settings.shadow_links {
         object.set("shadow_links", linking_to_json(links));
+    }
+    // Only where it is not a plain panel's, so a file from before reads
+    // and writes as it was.
+    if settings.spread_degrees < 180.0 {
+        object.set("spread_degrees", settings.spread_degrees);
     }
     object.build()
 }
@@ -1501,6 +1509,9 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
             outer_degrees: number("outer_degrees", 35.0),
             falloff: number("falloff", 1.0),
         },
+        Some("Sun") => LightShape::Sun {
+            angle_degrees: number("angle_degrees", 0.53),
+        },
         shape => LightShape::Area {
             width: number("width", 1.0),
             height: number("height", 1.0),
@@ -1515,6 +1526,7 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
     settings.intensity = match value.get("intensity_unit").and_then(|v| v.as_str()) {
         Some("nits") => Intensity::Nits(amount),
         Some("cd") => Intensity::Candela(amount),
+        Some("lx") => Intensity::Lux(amount),
         _ => Intensity::Lumens(amount),
     };
     settings.temperature = value.get("temperature").and_then(|v| v.as_f32());
@@ -1532,6 +1544,7 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
     settings.enabled = flag("enabled", true);
     settings.links = value.get("links").map(read_linking);
     settings.shadow_links = value.get("shadow_links").map(read_linking);
+    settings.spread_degrees = number("spread_degrees", 180.0).clamp(1.0, 180.0);
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -3241,6 +3254,26 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&product)), product);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("links"), "{plain}");
+    }
+
+    /// A sun keeps its angle and its lux.
+    #[test]
+    fn a_sun_survives_a_round_trip() {
+        let sun = LightSettings {
+            shape: tequila_scene::lighting::LightShape::Sun { angle_degrees: 2.5 },
+            intensity: tequila_scene::lighting::Intensity::Lux(800.0),
+            ..LightSettings::default()
+        };
+        assert_eq!(read_light(&light_to_json(&sun)), sun);
+    }
+
+    /// A softbox's spread is kept, and a plain panel writes none.
+    #[test]
+    fn an_area_lights_spread_survives_a_round_trip() {
+        let gridded = LightSettings { spread_degrees: 40.0, ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&gridded)), gridded);
+        let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
+        assert!(!plain.contains("spread"), "{plain}");
     }
 
     /// Shadow links are kept beside the light's own, and apart from them.

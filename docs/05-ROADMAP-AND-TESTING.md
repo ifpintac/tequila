@@ -817,6 +817,26 @@ layers, regions, SPPM caustics), the app sends those renders to it
 automatically (`batch::engine_for`), and it renders where Cycles is not
 installed.
 
+Where the two still part, by design (each held by a test in `app/src/batch.rs`):
+
+- **Dispersion.** This Cycles has none, so clear glass with an Abbe number
+  is three glasses, one per colour channel at that channel's index
+  (`dispersion::channel_iors`): fringes in three colours where Tequila's
+  renderer has a spectrum. Glass with a coat, sheen, subsurface, emission,
+  labels or anisotropy disperses in Tequila's renderer only.
+- **Spot falloff.** Cycles fades a spot by one smoothstep from the outer
+  angle; Tequila's renderer raises it to the falloff exponent. At an exponent
+  of one they are the same curve; otherwise the blend loses as much light
+  across the edge, and a steeper exponent's edge is a little brighter at its
+  outer end in Cycles. An edge that already spans most of the cone cannot
+  widen past it, and comes out brighter.
+- **Light source materials.** Cycles samples a glowing surface as a light;
+  Tequila's renderer finds it only by the bounces that meet it, so firefly
+  rejection clips some of its light on what is near it. Off, neither lets a
+  diffuse bounce see it.
+- **The sun** is a light with no geometry in Tequila's renderer, as every
+  lamp is: a mirror does not show it, where Cycles' does.
+
 - [~] Shading layer ported to Slang (or the chosen shared-source mechanism), compiling to both targets (§01 §10.1).
       *Superseded:* one set of algorithms (Cycles') in both engines; no
       Slang port.

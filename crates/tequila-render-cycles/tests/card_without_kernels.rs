@@ -58,6 +58,7 @@ fn a_card_that_cannot_render_says_so() {
         height: 48,
         transparent: false,
         ground_illumination: false,
+        light_materials: true,
     };
     session.begin_edit();
     let built = translate::build_with(&mut session, &scene, &view, &mut translate::Images::default()).and_then(|_| {

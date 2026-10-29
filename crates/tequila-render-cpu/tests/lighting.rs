@@ -107,6 +107,7 @@ fn with_area_light(radiance: f32, half: f32, height: f32) -> SceneSnapshot {
         radiance: Spectrum::splat(radiance),
         disc: false,
         two_sided: false,
+        spread: std::f32::consts::PI,
     };
     SceneSnapshot::new(
         vec![Arc::new(floor(6.0))],
@@ -300,6 +301,7 @@ fn a_light_hidden_from_the_camera_still_lights() {
             radiance: Spectrum::splat(6.0),
             disc: false,
             two_sided: false,
+            spread: std::f32::consts::PI,
         }))
         .with_visibility(tequila_render_core::light::Visibility::HIDDEN);
         SceneSnapshot::new(
@@ -337,6 +339,7 @@ fn splitting_a_light_into_many_conserves_its_output() {
                     radiance: Spectrum::splat(each),
                     disc: false,
                     two_sided: false,
+                    spread: std::f32::consts::PI,
                 }))
             })
             .collect();
@@ -470,6 +473,7 @@ fn light_visibility_flags_restrict_the_lobes_a_light_reaches() {
                 radiance: Spectrum::splat(8.0),
                 disc: false,
                 two_sided: false,
+                spread: std::f32::consts::PI,
             },
         ))
         .with_visibility(visibility)])))
@@ -540,6 +544,7 @@ fn a_visible_light_is_seen_without_being_counted_twice() {
         radiance: Spectrum::splat(6.0),
         disc: false,
         two_sided: false,
+        spread: std::f32::consts::PI,
     };
     let proxy = Mesh::new(
         vec![
@@ -634,6 +639,7 @@ fn a_visible_light_does_not_shadow_the_rest_of_the_lighting() {
         radiance: Spectrum::splat(1.0),
         disc: false,
         two_sided: false,
+        spread: std::f32::consts::PI,
     };
     // Under a sky as well as the light, so there is something to shadow.
     // `Some(true)` hangs the light's stand-in where the light is, and

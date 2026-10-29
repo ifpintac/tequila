@@ -153,12 +153,13 @@ impl CyclesView {
             height: size.1,
             transparent: false,
             ground_illumination: request.config.ground_illumination,
+            light_materials: request.config.light_source_materials,
         };
         self.session.begin_edit();
         if let Some(changed) = &repainted {
             // A library that cannot rebuild a shader in place, or a shader that
             // would not build, translates everything instead.
-            match translate::update_materials(&mut self.session, &request.scene, &self.shaders, changed, &mut self.images) {
+            match translate::update_materials(&mut self.session, &request.scene, &self.shaders, changed, &mut self.images, request.config.light_source_materials) {
                 Ok(true) => {}
                 Ok(false) => rescene = true,
                 Err(error) => {

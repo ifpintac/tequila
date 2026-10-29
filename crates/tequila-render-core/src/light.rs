@@ -114,9 +114,36 @@ pub struct AreaLight {
     pub disc: bool,
     /// Emits from both sides.
     pub two_sided: bool,
+    /// The angle its light spreads over, in radians: pi is a plain panel's
+    /// whole hemisphere, less a softbox behind a grid, which aims it. Its
+    /// power stays the same, gathered into the narrower beam.
+    pub spread: f32,
 }
 
 impl AreaLight {
+    /// How much of its radiance leaves along a direction `cos_light` off
+    /// its normal, for a spread below pi: Cycles' softbox grid, the share of
+    /// the panel its slats leave uncovered at that angle, scaled so the
+    /// light's power is unchanged. One at a spread of pi.
+    pub fn spread_attenuation(&self, cos_light: f32) -> f32 {
+        if self.spread >= PI - 1e-4 {
+            return 1.0;
+        }
+        let half = 0.5 * self.spread.max(1e-3);
+        let tan_half = half.tan();
+        // Cycles' normalization, by its Taylor series where the angle is
+        // small enough for the difference to lose its digits.
+        let normalize = if half > 0.05 { 1.0 / (tan_half - half) } else { 3.0 / (half * half * half) };
+        let cos = cos_light.clamp(1e-6, 1.0);
+        let tan = (1.0 - cos * cos).max(0.0).sqrt() / cos;
+        ((tan_half - tan) * normalize).max(0.0)
+    }
+
+    /// The most [`AreaLight::spread_attenuation`] can be: straight out.
+    fn spread_peak(&self) -> f32 {
+        self.spread_attenuation(1.0)
+    }
+
     pub fn normal(&self) -> Vec3 {
         self.half_u.cross(self.half_v).normalize()
     }
@@ -168,9 +195,13 @@ impl AreaLight {
                     return None;
                 }
                 let distance = self.distance_along(from, direction, normal)?;
+                let spread = self.spread_attenuation(cos_light);
+                if spread <= 0.0 {
+                    return None;
+                }
                 Some(LightSample {
                     direction,
-                    radiance: self.radiance,
+                    radiance: self.radiance * spread,
                     distance,
                     pdf: 1.0 / rectangle.solid_angle,
                     is_delta: false,
@@ -215,10 +246,14 @@ impl AreaLight {
         // Area density to solid angle. This is the conversion the spherical
         // rectangle exists to avoid, and it is used only on the fallback path.
         let pdf = distance_squared / (cos_light * self.area().max(1e-12));
+        let spread = self.spread_attenuation(cos_light);
+        if spread <= 0.0 {
+            return None;
+        }
 
         Some(LightSample {
             direction,
-            radiance: self.radiance,
+            radiance: self.radiance * spread,
             distance,
             pdf,
             is_delta: false,
@@ -464,6 +499,54 @@ impl PointLight {
     }
 }
 
+/// A light from far away, the sun: every ray parallel, or within the small
+/// cone its disc spans when it has an angle, which softens its shadows. It
+/// lights by illuminance: `irradiance` falls on a surface facing it, however
+/// near or far.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DistantLight {
+    /// The way its light travels, normalized.
+    pub direction: Vec3,
+    /// Illuminance on a surface facing it, in lux, as a colour.
+    pub irradiance: Spectrum,
+    /// Half the angle its disc spans, in radians; zero is a delta.
+    pub half_angle: f32,
+}
+
+impl DistantLight {
+    /// For choosing it beside lights that have a power: its illuminance over
+    /// a disc a metre across, about what a product scene is.
+    pub fn power(&self) -> f32 {
+        self.irradiance.luminance() * PI * 0.25
+    }
+
+    pub fn is_delta(&self) -> bool {
+        self.half_angle <= 1e-5
+    }
+
+    pub fn sample(&self, _from: Vec3, u: Vec2) -> Option<LightSample> {
+        let towards = -self.direction;
+        if self.is_delta() {
+            return Some(LightSample { direction: towards, radiance: self.irradiance, distance: f32::INFINITY, pdf: 1.0, is_delta: true });
+        }
+        // Evenly over the cone of its disc, whose radiance is what makes
+        // `irradiance` fall on a surface facing it: L π sin²θ.
+        let cos_max = self.half_angle.cos();
+        let cos = 1.0 - u.x * (1.0 - cos_max);
+        let sin = (1.0 - cos * cos).max(0.0).sqrt();
+        let phi = TAU * u.y;
+        let direction = Onb::from_normal(towards).to_world(Vec3 { x: sin * phi.cos(), y: sin * phi.sin(), z: cos });
+        let sin_max = self.half_angle.sin();
+        Some(LightSample {
+            direction,
+            radiance: self.irradiance * (1.0 / (PI * sin_max * sin_max)),
+            distance: f32::INFINITY,
+            pdf: 1.0 / (TAU * (1.0 - cos_max)),
+            is_delta: false,
+        })
+    }
+}
+
 /// A spotlight: a point light inside a cone, with a soft edge.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpotLight {
@@ -610,6 +693,7 @@ pub enum LightKind {
     Point(PointLight),
     Spot(SpotLight),
     Ies(IesLight),
+    Distant(DistantLight),
 }
 
 /// Which instances a light lights (light linking): all of them, or only
@@ -690,6 +774,7 @@ impl Light {
             LightKind::Point(l) => l.power(),
             LightKind::Spot(l) => l.power(),
             LightKind::Ies(l) => l.power(),
+            LightKind::Distant(l) => l.power(),
         }
     }
 
@@ -702,6 +787,7 @@ impl Light {
             LightKind::Point(l) => l.sample(from, u),
             LightKind::Spot(l) => l.sample(from, u),
             LightKind::Ies(l) => l.sample(from, u),
+            LightKind::Distant(l) => l.sample(from, u),
         }
     }
 
@@ -710,7 +796,8 @@ impl Light {
     pub fn pdf(&self, from: Vec3, direction: Vec3) -> f32 {
         match &self.kind {
             LightKind::Area(l) => l.pdf(from, direction),
-            LightKind::Point(_) | LightKind::Spot(_) | LightKind::Ies(_) => 0.0,
+            // Nothing in the scene a BSDF ray could meet, the sun included.
+            LightKind::Point(_) | LightKind::Spot(_) | LightKind::Ies(_) | LightKind::Distant(_) => 0.0,
         }
     }
 
@@ -719,6 +806,7 @@ impl Light {
             LightKind::Area(_) => false,
             LightKind::Point(l) => l.radius <= 0.0,
             LightKind::Spot(_) | LightKind::Ies(_) => true,
+            LightKind::Distant(l) => l.is_delta(),
         }
     }
 
@@ -742,6 +830,7 @@ impl Light {
             LightKind::Point(l) if l.radius <= 0.0 => point(l.sample(from, Vec2::ZERO)),
             LightKind::Spot(l) => point(l.sample(from, Vec2::ZERO)),
             LightKind::Ies(l) => point(l.sample(from, Vec2::ZERO)),
+            LightKind::Distant(l) => l.irradiance.luminance().max(0.0) * cone_cosine(normal, -l.direction, l.half_angle.sin()),
             LightKind::Point(l) => {
                 let offset = l.position - from;
                 let distance = offset.length();
@@ -765,7 +854,8 @@ impl Light {
                 let (u, v) = (l.half_u.length(), l.half_v.length());
                 let reach = if l.disc { u.max(v) } else { (u * u + v * v).sqrt() };
                 let cosine = cone_cosine(normal, to_light / distance, reach / distance);
-                let radiance = l.radiance.luminance().max(0.0);
+                // A grid gathers the light into its beam, brightest straight out.
+                let radiance = l.radiance.luminance().max(0.0) * l.spread_peak();
                 if l.disc {
                     // Drawn by area: `cos_light · area / d²` per sample, and
                     // `cos_light / d²` is `h / d³` for a point `h` off the
@@ -853,7 +943,10 @@ pub struct LightSet {
 impl LightSet {
     pub fn new(lights: Vec<Light>) -> LightSet {
         let count = lights.len();
-        let strategy = if count > HIERARCHY_THRESHOLD {
+        // The hierarchy weighs lights by where they are, which a sun is not:
+        // with one in the scene, the table by power.
+        let distant = lights.iter().any(|l| matches!(l.kind, LightKind::Distant(_)));
+        let strategy = if count > HIERARCHY_THRESHOLD && !distant {
             SelectionStrategy::Hierarchy
         } else {
             SelectionStrategy::Alias
@@ -1216,6 +1309,8 @@ fn light_position(light: &Light) -> Vec3 {
         LightKind::Point(point) => point.position,
         LightKind::Spot(spot) => spot.position,
         LightKind::Ies(ies) => ies.position,
+        // Never in a hierarchy (`LightSet::new`).
+        LightKind::Distant(_) => Vec3::ZERO,
     }
 }
 
@@ -1228,6 +1323,7 @@ fn light_axis(light: &Light) -> Vec3 {
         LightKind::Point(_) => Vec3::Y,
         LightKind::Spot(spot) => spot.direction,
         LightKind::Ies(ies) => ies.direction,
+        LightKind::Distant(distant) => distant.direction,
     }
 }
 
@@ -1251,6 +1347,7 @@ fn light_spread(light: &Light) -> f32 {
         // table is not a cone. Claiming a spread of zero would let the
         // hierarchy cull a downlight from directly beneath it.
         LightKind::Ies(_) => std::f32::consts::PI,
+        LightKind::Distant(_) => 0.0,
     }
 }
 
@@ -1259,7 +1356,7 @@ fn light_spread(light: &Light) -> f32 {
 /// Capped at `pi/2` for the reason [`LightNode::theta_e`] gives.
 fn light_theta_e(light: &Light) -> f32 {
     match &light.kind {
-        LightKind::Area(_) | LightKind::Point(_) | LightKind::Ies(_) => {
+        LightKind::Area(_) | LightKind::Point(_) | LightKind::Ies(_) | LightKind::Distant(_) => {
             std::f32::consts::FRAC_PI_2
         }
         LightKind::Spot(spot) => spot.outer_angle.min(std::f32::consts::FRAC_PI_2),
@@ -1303,6 +1400,38 @@ fn build_alias(probabilities: &[f32]) -> Vec<(f32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A spread keeps an area light's power, gathered into its beam: over
+    /// the hemisphere, the attenuation weighted by the cosine averages to
+    /// one, straight out it is brighter, and past half the spread there is
+    /// nothing.
+    #[test]
+    fn a_spread_gathers_the_light_without_adding_any() {
+        for degrees in [10.0f32, 45.0, 90.0, 150.0] {
+            let light = AreaLight {
+                position: Vec3::ZERO,
+                half_u: Vec3::X,
+                half_v: Vec3::Y,
+                radiance: Spectrum::ONE,
+                disc: false,
+                two_sided: false,
+                spread: degrees.to_radians(),
+            };
+            // ∫ a(θ) cosθ sinθ dθ over the hemisphere, against a plain
+            // panel's 1/2.
+            let steps = 20000;
+            let total: f32 = (0..steps)
+                .map(|i| {
+                    let theta = (i as f32 + 0.5) / steps as f32 * std::f32::consts::FRAC_PI_2;
+                    light.spread_attenuation(theta.cos()) * theta.cos() * theta.sin() * std::f32::consts::FRAC_PI_2 / steps as f32
+                })
+                .sum();
+            assert!((total * 2.0 - 1.0).abs() < 0.02, "a {degrees} degree spread gave {} of the light", total * 2.0);
+            assert!(light.spread_attenuation(1.0) > 1.0, "straight out was no brighter at {degrees} degrees");
+            let outside = (degrees * 0.5 + 2.0).min(89.0).to_radians().cos();
+            assert_eq!(light.spread_attenuation(outside), 0.0, "light past a {degrees} degree spread");
+        }
+    }
 
     /// A row of point lights, evenly spaced along X.
     fn row(count: usize) -> LightSet {
@@ -1493,6 +1622,7 @@ mod tests {
             radiance: Spectrum::splat(10.0),
             disc: false,
             two_sided: false,
+            spread: std::f32::consts::PI,
         }
     }
 
