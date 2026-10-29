@@ -392,6 +392,8 @@ Both engines run the same algorithms, and the Cycles translation maps every node
 
 Tequila's own Curvature and Occlusion nodes reach Cycles as the numbers Tequila's renderer measured a vertex (`Mesh::curvature`, `Mesh::occlusion`), sent as a vertex attribute and shaped the same way (`curvature_and_occlusion_reach_cycles`): Cycles' own Ambient Occlusion and Pointiness measure something else, and the two renderers would part on every crease.
 
+**Mixing surfaces.** A **Shader** node is another surface, with the same parameter inputs as the material's own. Wired into a **Mix Shader** (its `Fac` the share of the shader) or an **Add Shader**, and that into the surface's **Layer** input, it mixes with the material's own surface; a Shader node's own Layer mixes it in turn. Two surfaces of a kind - neither or both metal, see-through, under the skin, coated, fuzzed or thin-walled, by the same amount (`same_lobes`) - mix as one, each parameter mixed (`MaterialGraph::mixed_per_parameter`), which is exact for them and costs nothing. Others are each a program of their own (`CompiledLayer`): Tequila's renderer shows a path one or the other as often as `Fac` says, or, added, each half the time counted twice (`shade::choose_layer`), which is the mix and the sum on average; Cycles mixes or adds their two closures. The other surface is a plain one of its parameters: labels, bump, flakes and a glass's dispersion are the material's own surface's. `mixed_shaders_shade_alike_in_both_renderers` holds a plastic mixed with a metal, and a glow added, to the same colour in both.
+
 A node can be **muted**, as in Blender. Each of its outputs then passes on the first wire into it that can carry that type, or nothing (`MaterialGraph::without_muted`).
 
 ---

@@ -257,6 +257,33 @@ fn legacy_controls(ui: &mut egui::Ui, project: &Project, kind: &mut NodeKind) ->
             hint(ui, "Passes its input straight through, to route a long wire tidily. Costs nothing to render.");
             false
         }
+        NodeKind::Shader(material) => {
+            hint(ui, "Another surface, to mix with the material's own: wire it into a Mix or Add Shader, and that into the surface's Layer.");
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("Start from");
+                egui::ComboBox::from_id_salt("shader-type").selected_text("a type…").show_ui(ui, |ui| {
+                    for kind in tequila_materials::material_type::MaterialType::ALL {
+                        if ui.selectable_label(false, kind.label()).clicked() {
+                            **material = kind.defaults();
+                            changed = true;
+                        }
+                    }
+                });
+            });
+            changed
+        }
+        NodeKind::MixShader { add } => {
+            hint(
+                ui,
+                if *add {
+                    "The surface it is wired into and the shader wired into it, added: a glow on top, a second coat of light."
+                } else {
+                    "Fac of the shader wired into it, over the surface it is wired into: 0 is the surface alone, 1 the shader alone. Two of a kind mix as one; others are each seen as often as Fac says."
+                },
+            );
+            false
+        }
         NodeKind::Surface(_) => {
             hint(ui, "The surface's values are in its body and in the Material tab. Wire nodes into its inputs here.");
             false

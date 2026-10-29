@@ -87,6 +87,7 @@ impl Family {
 pub fn family(kind: &NodeKind) -> Family {
     match kind {
         NodeKind::Surface(_) => Family::Output,
+        NodeKind::Shader(_) | NodeKind::MixShader { .. } => Family::Surface,
         NodeKind::Node(node) => match node.category() {
             NodeCategory::Input => Family::Input,
             NodeCategory::Texture => Family::Texture,
@@ -113,6 +114,7 @@ pub fn type_colour(ty: SocketType) -> egui::Color32 {
         SocketType::Color => egui::Color32::from_rgb(199, 199, 41),
         SocketType::Vector | SocketType::Normal => egui::Color32::from_rgb(99, 99, 199),
         SocketType::Bool => egui::Color32::from_rgb(204, 102, 217),
+        SocketType::Shader => egui::Color32::from_rgb(99, 199, 99),
     }
 }
 
@@ -133,7 +135,7 @@ pub fn title(node: &Node) -> String {
 
 pub fn node_width(kind: &NodeKind) -> f32 {
     match kind {
-        NodeKind::Surface(_) => 236.0,
+        NodeKind::Surface(_) | NodeKind::Shader(_) => 236.0,
         NodeKind::Reroute { .. } => REROUTE,
         NodeKind::Node(node) => match node.category() {
             NodeCategory::Texture => 192.0,
@@ -246,7 +248,13 @@ pub fn visible_inputs(node: &Node, id: NodeId, connected: &HashSet<(NodeId, Sock
         .filter(|(index, (socket, _, _))| match &node.kind {
             NodeKind::Surface(_) => match socket {
                 Socket::Param(p) => exposed.contains(p) || connected.contains(&(id, *socket)),
-                Socket::Input(_) => false,
+                // The Layer, for a Mix or Add Shader.
+                Socket::Input(_) => true,
+            },
+            // Another surface: what most mixes set, and whatever is wired.
+            NodeKind::Shader(_) => match socket {
+                Socket::Param(p) => SHADER_SHOWS.contains(p) || connected.contains(&(id, *socket)),
+                Socket::Input(_) => true,
             },
             kind => kind.shows_input(*index),
         })
@@ -254,9 +262,20 @@ pub fn visible_inputs(node: &Node, id: NodeId, connected: &HashSet<(NodeId, Sock
         .collect()
 }
 
+/// What a Shader node shows of its parameters before any is wired.
+const SHADER_SHOWS: [Param; 7] = [
+    Param::BaseColor,
+    Param::BaseMetalness,
+    Param::SpecularRoughness,
+    Param::TransmissionWeight,
+    Param::CoatWeight,
+    Param::EmissionLuminance,
+    Param::Opacity,
+];
+
 pub fn inline_of(node: &Node, index: usize, socket: Socket, ty: SocketType) -> Inline {
     match &node.kind {
-        NodeKind::Surface(_) => match socket {
+        NodeKind::Surface(_) | NodeKind::Shader(_) => match socket {
             Socket::Param(p) => match p.ui() {
                 ParamUi::Scalar => Inline::Number { range: p.range().map(|r| (r.low, r.high)) },
                 ParamUi::Color => Inline::Color,
@@ -276,6 +295,7 @@ pub fn inline_of(node: &Node, index: usize, socket: Socket, ty: SocketType) -> I
                 SocketType::Color => Inline::Color,
                 SocketType::Vector | SocketType::Normal => Inline::Vector,
                 SocketType::Bool => Inline::Bool,
+                SocketType::Shader => Inline::Label,
             }
         }
         NodeKind::Group(group) => Inline::Number { range: group.inputs().get(index).map(|i| (i.min, i.max)) },
@@ -288,8 +308,9 @@ pub fn inline_of(node: &Node, index: usize, socket: Socket, ty: SocketType) -> I
             SocketType::Float => Inline::Number { range: None },
             SocketType::Color => Inline::Color,
             SocketType::Bool => Inline::Bool,
-            // Coordinates come from a projection or the part.
-            SocketType::Vector | SocketType::Normal => Inline::Label,
+            // Coordinates come from a projection or the part; a surface
+            // from a Shader node.
+            SocketType::Vector | SocketType::Normal | SocketType::Shader => Inline::Label,
         },
     }
 }
@@ -460,7 +481,7 @@ fn with_component(old: Value, component: Option<u8>, new: Value) -> Value {
 pub fn input_value(graph: &MaterialGraph, node: NodeId, index: usize) -> Option<Value> {
     let n = graph.node(node)?;
     let (socket, ty, _) = *n.kind.inputs().get(index)?;
-    if let (NodeKind::Surface(material), Socket::Param(p)) = (&n.kind, socket) {
+    if let (NodeKind::Surface(material) | NodeKind::Shader(material), Socket::Param(p)) = (&n.kind, socket) {
         return Some(match p.read(material)? {
             ParamValue::Scalar(v) => Value::Float(v),
             ParamValue::Color(c) => Value::Color(c),
@@ -505,7 +526,7 @@ pub fn write(graph: &mut MaterialGraph, target: Target, value: Value) -> bool {
             let new = with_component(old, c, value);
             let Some(n) = graph.node_mut(node) else { return false };
             let Some((socket, ty, _)) = n.kind.inputs().get(index).copied() else { return false };
-            if let (NodeKind::Surface(material), Socket::Param(p)) = (&mut n.kind, socket) {
+            if let (NodeKind::Surface(material) | NodeKind::Shader(material), Socket::Param(p)) = (&mut n.kind, socket) {
                 let value = match (p.ui(), new) {
                     (ParamUi::Scalar, Value::Float(f)) => ParamValue::Scalar(f),
                     (ParamUi::Color, Value::Color(c)) => ParamValue::Color(c),

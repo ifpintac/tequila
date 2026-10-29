@@ -86,6 +86,10 @@ pub fn entries(project: &Project) -> Vec<Entry> {
         },
     );
     add("Occlusion", NodeKind::Occlusion { radius: tequila_materials::graph::DEFAULT_OCCLUSION_RADIUS, contrast: 1.0 });
+    // Mixing surfaces.
+    add("Shader", NodeKind::Shader(Box::new(tequila_materials::material_type::MaterialType::Plastic.defaults())));
+    add("Mix Shader", NodeKind::MixShader { add: false });
+    add("Add Shader", NodeKind::MixShader { add: true });
     add("Bubbles", NodeKind::Bubbles { count: 200, radius: 0.002, variation: 0.5, seed: 0 });
     add("Fuzz", NodeKind::Fuzz { length: 0.002, density: 400.0, thickness: 0.00002, lean: 0.35, curl: 0.3, seed: 0 });
     // Layout.

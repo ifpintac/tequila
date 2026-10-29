@@ -3514,6 +3514,64 @@ mod tests {
         assert!(wrong.is_empty(), "these shade differently: {wrong:#?}");
     }
 
+    /// A plastic mixed half and half with a metal shades alike in both
+    /// renderers - Tequila's sees one or the other at each bounce, Cycles
+    /// mixes its two closures - and is neither surface alone; an Add Shader
+    /// of a glow lights the same surface up alike in both. Cycles had no
+    /// way to mix two surfaces. Skipped where Cycles is not installed.
+    #[test]
+    fn mixed_shaders_shade_alike_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value, LAYER_INPUT};
+        use tequila_materials::material_type::MaterialType;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let red = tequila_render_core::material::Material { base_color: Spectrum { r: 0.8, g: 0.05, b: 0.05 }, ..MaterialType::Plastic.defaults() };
+        let gold = tequila_render_core::material::Material { base_metalness: 1.0, base_color: Spectrum { r: 1.0, g: 0.8, b: 0.35 }, specular_roughness: 0.25, ..MaterialType::Plastic.defaults() };
+        let glow = tequila_render_core::material::Material { emission_luminance: 1.5, emission_color: Spectrum { r: 0.2, g: 0.4, b: 1.0 }, base_color: Spectrum::ZERO, ..MaterialType::Plastic.defaults() };
+        let with = |a: tequila_render_core::material::Material, b: Option<(tequila_render_core::material::Material, f32, bool)>| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                let mut graph = MaterialGraph::from_material(a.clone());
+                if let Some((b, factor, add)) = b.clone() {
+                    let shader = graph.add_node(Node::new(NodeKind::Shader(Box::new(b))));
+                    let mut mix = Node::new(NodeKind::MixShader { add });
+                    mix.literals.insert(Socket::Input(0), Value::Float(factor));
+                    let mix = graph.add_node(mix);
+                    graph.connect(shader, mix, Socket::Input(1));
+                    graph.connect(mix, graph.output(), LAYER_INPUT);
+                }
+                let program = graph.compile().expect("compiles");
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                scene.materials[0] = graph.material().clone();
+            }
+        };
+        let shots = [
+            ("red", both_engines("mix-red", with(red.clone(), None))),
+            ("gold", both_engines("mix-gold", with(gold.clone(), None))),
+            ("half and half", both_engines("mix-half", with(red.clone(), Some((gold.clone(), 0.5, false))))),
+            ("plus a glow", both_engines("mix-glow", with(red.clone(), Some((glow.clone(), 0.0, true))))),
+        ];
+        let means: Vec<(&str, [[f64; 3]; 2])> = shots.iter().map(|(name, [t, c])| (*name, [channel_means(t), channel_means(c)])).collect();
+        for (name, [t, c]) in &means {
+            eprintln!("{name}: Tequila {t:.1?}, Cycles {c:.1?}");
+            for k in 0..3 {
+                assert!((t[k] - c[k]).abs() < 6.0 + 0.06 * t[k].max(c[k]), "{name}: Tequila {t:.1?}, Cycles {c:.1?}");
+            }
+        }
+        let [red, gold, half, glowing] = [&means[0].1, &means[1].1, &means[2].1, &means[3].1];
+        for engine in 0..2 {
+            // Between the two in each channel, as a mix is.
+            for k in 0..3 {
+                let (low, high) = (red[engine][k].min(gold[engine][k]), red[engine][k].max(gold[engine][k]));
+                assert!(half[engine][k] > low - 3.0 && half[engine][k] < high + 3.0, "the mix is outside its two surfaces");
+            }
+            assert!(glowing[engine][2] > red[engine][2] + 10.0, "the added glow lit nothing");
+        }
+    }
+
     /// A flat label kept to one side prints on the faces looking that way and
     /// not on those behind, in both renderers alike: projected straight
     /// through a sphere along each axis in turn, where the camera looks it

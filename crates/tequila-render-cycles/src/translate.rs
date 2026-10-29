@@ -2039,6 +2039,8 @@ impl Builder<'_> {
                             }
                             Slot::Link(from, name) => self.session.connect(shader, from, name, cycles, spec.cycles)?,
                         },
+                        // No Blender node of Tequila's takes a surface.
+                        tequila_materials::graph::SocketType::Shader => {}
                     }
                 }
                 self.nodes.insert(key, cycles);
@@ -3141,6 +3143,89 @@ impl Builder<'_> {
         Ok(sum)
     }
 
+    /// A surface mixed with the layers over it (Mix and Add Shader,
+    /// `CompiledLayer`): Cycles' Mix Shader by each layer's factor, or its
+    /// Add Shader, of `surface` and the layer's own. Each layer is a plain
+    /// principled surface of its parameters: its labels, bump, flakes and
+    /// glass's dispersion are the material's own surface's.
+    fn layered(&mut self, shader: Shader, program: &CompiledGraph, surface: (Node, &'static str), normal: Option<(Node, &'static str)>) -> Result<(Node, &'static str), String> {
+        let Some(layer) = &program.layer else { return Ok(surface) };
+        let other = self.plain_surface(shader, &layer.shader, normal)?;
+        let other = self.layered(shader, &layer.shader, other, normal)?;
+        if layer.add {
+            let add = self.session.node(shader, "add_closure")?;
+            self.session.connect(shader, surface.0, surface.1, add, "Closure1")?;
+            self.session.connect(shader, other.0, other.1, add, "Closure2")?;
+            return Ok((add, "Closure"));
+        }
+        let registers = self.program(shader, &layer.factor)?;
+        let factor = layer
+            .factor
+            .driven
+            .iter()
+            .find(|(p, _)| *p == Param::Opacity)
+            .and_then(|(_, r)| registers.get(&r.0).copied())
+            .unwrap_or(Slot::Value(Value::Float(layer.factor.constants.geometry_opacity)));
+        let mix = self.session.node(shader, "mix_closure")?;
+        self.feed(shader, mix, "Fac", factor, false)?;
+        self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;
+        self.session.connect(shader, other.0, other.1, mix, "Closure2")?;
+        Ok((mix, "Closure"))
+    }
+
+    /// A principled surface of `program`'s parameters alone: a layer's.
+    fn plain_surface(&mut self, shader: Shader, program: &CompiledGraph, normal: Option<(Node, &'static str)>) -> Result<(Node, &'static str), String> {
+        let registers = self.program(shader, program)?;
+        let driven: HashMap<Param, Slot> = program.driven.iter().filter_map(|(param, r)| registers.get(&r.0).map(|s| (*param, *s))).collect();
+        let m = &program.constants;
+        let value = |param: Param, constant: Value| driven.get(&param).copied().unwrap_or(Slot::Value(constant));
+        let bsdf = self.session.node(shader, "principled_bsdf")?;
+        let transmissive = m.transmission_weight >= 0.5 || driven.contains_key(&Param::TransmissionWeight);
+        let base = if transmissive {
+            let colour = value(Param::TransmissionColor, Value::Color(m.transmission_color));
+            let tint = value(Param::TransmissionTint, Value::Color(m.transmission_tint));
+            self.apply(shader, &NodeKind::Multiply, &[colour, tint], 0)?
+        } else {
+            value(Param::BaseColor, Value::Color(m.base_color * m.base_weight))
+        };
+        let metalness = value(Param::BaseMetalness, Value::Float(m.base_metalness));
+        let (base, edge) = if !transmissive && (m.base_metalness > 0.0 || driven.contains_key(&Param::BaseMetalness)) {
+            let (f0, f82) = conductor_colours(&m.metal_ior);
+            let tinted = self.apply(shader, &NodeKind::Multiply, &[base, Slot::Value(Value::Color(f0))], 0)?;
+            let base = self.apply(shader, &NodeKind::Mix, &[base, tinted, metalness], 0)?;
+            let specular = value(Param::SpecularColor, Value::Color(m.specular_color));
+            let edge = self.apply(shader, &NodeKind::Mix, &[specular, Slot::Value(Value::Color(f82)), metalness], 0)?;
+            (base, edge)
+        } else {
+            (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
+        };
+        self.feed(shader, bsdf, "base_color", base, true)?;
+        self.feed(shader, bsdf, "metallic", metalness, false)?;
+        self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
+        self.feed(shader, bsdf, "roughness", value(Param::SpecularRoughness, Value::Float(m.specular_roughness)), false)?;
+        self.feed(shader, bsdf, "ior", value(Param::SpecularIor, Value::Float(m.specular_ior)), false)?;
+        self.session.set_float(bsdf, "specular_ior_level", 0.5 * m.specular_weight)?;
+        self.feed(shader, bsdf, "specular_tint", edge, true)?;
+        self.feed(shader, bsdf, "transmission_weight", value(Param::TransmissionWeight, Value::Float(m.transmission_weight)), false)?;
+        self.feed(shader, bsdf, "subsurface_weight", value(Param::SubsurfaceWeight, Value::Float(m.subsurface_weight)), false)?;
+        self.session.set_float3(bsdf, "subsurface_radius", rgb(m.subsurface_radius))?;
+        self.session.set_float(bsdf, "subsurface_scale", 1.0)?;
+        self.feed(shader, bsdf, "coat_weight", value(Param::CoatWeight, Value::Float(m.coat_weight)), false)?;
+        self.feed(shader, bsdf, "coat_roughness", value(Param::CoatRoughness, Value::Float(m.coat_roughness)), false)?;
+        self.feed(shader, bsdf, "coat_ior", value(Param::CoatIor, Value::Float(m.coat_ior)), false)?;
+        self.feed(shader, bsdf, "coat_tint", value(Param::CoatColor, Value::Color(m.coat_color)), true)?;
+        self.feed(shader, bsdf, "sheen_weight", value(Param::FuzzWeight, Value::Float(m.fuzz_weight)), false)?;
+        self.feed(shader, bsdf, "sheen_tint", value(Param::FuzzColor, Value::Color(m.fuzz_color)), true)?;
+        self.feed(shader, bsdf, "sheen_roughness", value(Param::FuzzRoughness, Value::Float(m.fuzz_roughness)), false)?;
+        self.feed(shader, bsdf, "emission_color", value(Param::EmissionColor, Value::Color(m.emission_color)), true)?;
+        self.feed(shader, bsdf, "emission_strength", value(Param::EmissionLuminance, Value::Float(m.emission_luminance)), false)?;
+        self.feed(shader, bsdf, "alpha", value(Param::Opacity, Value::Float(m.geometry_opacity)), false)?;
+        if let Some((node, socket)) = normal {
+            self.session.connect(shader, node, socket, bsdf, "Normal")?;
+        }
+        Ok((bsdf, "BSDF"))
+    }
+
     /// Material `index`'s shader: a new one, or `reuse` built again.
     fn material(&mut self, index: usize, reuse: Option<Node>) -> Result<Node, String> {
         let material: &Material = &self.scene.materials[index];
@@ -3411,6 +3496,10 @@ impl Builder<'_> {
                     .any(|p| driven.contains_key(p));
             let roughness = value(Param::SpecularRoughness, Value::Float(m.specular_roughness));
             let surface = self.dispersed_glass(shader, m, plain, base, roughness, normal)?.unwrap_or(surface);
+            let surface = match program {
+                Some(program) => self.layered(shader, program, surface, normal)?,
+                None => surface,
+            };
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
             return self.session.commit(shader);
         }
@@ -3504,6 +3593,11 @@ impl Builder<'_> {
         self.session.connect(shader, hole, "BSDF", cut, "Closure1")?;
         // Flakes in it, as anywhere, over the lot but under the holes.
         let body = if m.flake_weight > 1e-4 { self.flakes(shader, m, (body, "Closure"))? } else { (body, "Closure") };
+        // And mixed with another surface, as a solid one is.
+        let body = match program {
+            Some(program) => self.layered(shader, program, body, normal)?,
+            None => body,
+        };
         self.session.connect(shader, body.0, body.1, cut, "Closure2")?;
         self.session.connect(shader, cut, "Closure", output, "Surface")?;
         self.session.commit(shader)

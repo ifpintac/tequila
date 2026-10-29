@@ -1118,7 +1118,17 @@ pub fn trace_path_with_caustics(
                 }
             }
         }
-        let material = match (scene.program(hit.material), &point) {
+        // A material mixed with another: the surface this path sees, and
+        // its weight when the two are added (`shade::choose_layer`).
+        let program = match (scene.program(hit.material), &point) {
+            (Some(program), Some(point)) if program.layer.is_some() => {
+                let (chosen, weight) = shade::choose_layer(program, &scene.textures, point, &mut shading_registers, &mut shading_scratch, sampler.next_unstructured());
+                throughput *= weight;
+                Some(chosen)
+            }
+            (program, _) => program.map(|p| p.as_ref()),
+        };
+        let material = match (program, &point) {
             (Some(program), Some(point)) => shade::shade(
                 program,
                 &scene.textures,

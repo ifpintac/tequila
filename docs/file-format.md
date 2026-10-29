@@ -496,7 +496,7 @@ A node:
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | number | File-local. Reassigned on load, and links are remapped with it. |
-| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`, `node` (a Blender shader node), `group`, and the rest of `NodeKind`. |
+| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`, `node` (a Blender shader node), `group`, `shader` (another surface, its `parameters` by key as a material's are), `mix_shader` and `add_shader` (wired from a `shader` to `input:1`, `mix_shader`'s factor on `input:0`, and into a surface's Layer, `input:0`), and the rest of `NodeKind`. |
 | `position` | number[2] | Editor layout only; never affects rendering. |
 | `label?` | string | User-assigned name. |
 | `literals?` | object[] | Values for unconnected inputs: `{socket, value}`. |

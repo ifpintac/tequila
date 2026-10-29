@@ -59,6 +59,9 @@ pub enum SocketType {
     Vector,
     Normal,
     Bool,
+    /// A surface, as a Shader node gives one and a Mix or Add Shader takes
+    /// one: links to nothing but another.
+    Shader,
 }
 
 impl SocketType {
@@ -91,6 +94,7 @@ impl SocketType {
             SocketType::Vector => "Vector",
             SocketType::Normal => "Normal",
             SocketType::Bool => "Bool",
+            SocketType::Shader => "Shader",
         }
     }
 }
@@ -246,8 +250,19 @@ pub enum Socket {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     /// The terminal surface node. Its inputs are the parameter block, and its
-    /// literals are the values the simple panel edits (§4.2).
+    /// literals are the values the simple panel edits (§4.2). Its Layer input
+    /// ([`LAYER_INPUT`]) takes a Mix or Add Shader, to mix it with another.
     Surface(Box<Material>),
+    /// Another surface, to mix with the material's own: the same parameter
+    /// inputs as [`NodeKind::Surface`], and the surface out, for a Mix or
+    /// Add Shader. Its own Layer input mixes it in turn.
+    Shader(Box<Material>),
+    /// Blender's Mix Shader, or with `add` its Add Shader: the shader wired
+    /// into it, over the surface it is wired into by `Fac` - or the two
+    /// added. Two surfaces of a kind (`same_lobes`) mix parameter by
+    /// parameter; others are each a program of their own, and a path sees
+    /// one or the other as the factor says.
+    MixShader { add: bool },
     /// A bend in a wire (`docs/04` §7): passes its input through unchanged.
     /// Carries the type of what feeds it, so the wire keeps its colour and
     /// its checks. Removed before compiling, so it costs nothing to render.
@@ -463,7 +478,7 @@ impl NodeKind {
     /// The node's inputs, in socket order.
     pub fn inputs(&self) -> Vec<(Socket, SocketType, &'static str)> {
         match self {
-            NodeKind::Surface(_) => Param::ALL
+            NodeKind::Surface(_) | NodeKind::Shader(_) => Param::ALL
                 .iter()
                 .map(|p| {
                     let ty = match p.ui() {
@@ -477,7 +492,13 @@ impl NodeKind {
                     };
                     (Socket::Param(*p), ty, p.label())
                 })
+                .chain(std::iter::once((LAYER_INPUT, SocketType::Shader, "Layer")))
                 .collect(),
+            NodeKind::MixShader { add: false } => vec![
+                (Socket::Input(0), SocketType::Float, "Fac"),
+                (Socket::Input(1), SocketType::Shader, "Shader"),
+            ],
+            NodeKind::MixShader { add: true } => vec![(Socket::Input(1), SocketType::Shader, "Shader")],
             NodeKind::Constant(_) | NodeKind::Mapping2d { .. } => Vec::new(),
             // A pattern is evaluated in object space unless a Mapping node is
             // wired here; the compiler has always looked for one, and without
@@ -545,6 +566,7 @@ impl NodeKind {
                         SocketType::Vector => "Vector",
                         SocketType::Normal => "Normal",
                         SocketType::Bool => "Flag",
+                        SocketType::Shader => "Shader",
                     };
                     vec![(name, ty)]
                 })
@@ -602,6 +624,7 @@ impl NodeKind {
     pub fn output_type(&self) -> Option<SocketType> {
         match self {
             NodeKind::Surface(_) => None,
+            NodeKind::Shader(_) | NodeKind::MixShader { .. } => Some(SocketType::Shader),
             // Changes the geometry, and gives the graph no value to wire.
             NodeKind::Bubbles { .. } | NodeKind::Fuzz { .. } => None,
             NodeKind::Constant(v) => Some(v.socket_type()),
@@ -654,6 +677,9 @@ impl NodeKind {
     pub fn label(&self) -> &'static str {
         match self {
             NodeKind::Surface(_) => "Surface",
+            NodeKind::Shader(_) => "Shader",
+            NodeKind::MixShader { add: false } => "Mix Shader",
+            NodeKind::MixShader { add: true } => "Add Shader",
             NodeKind::Constant(_) => "Constant",
             NodeKind::Mapping2d { .. } => "Mapping 2D",
             NodeKind::Gradient { .. } => "Gradient",
@@ -686,7 +712,7 @@ impl NodeKind {
     pub fn evaluate(&self, inputs: &[Value]) -> Value {
         let get = |i: usize| inputs.get(i).copied().unwrap_or(Value::Float(0.0));
         match self {
-            NodeKind::Surface(_) => Value::Float(0.0),
+            NodeKind::Surface(_) | NodeKind::Shader(_) | NodeKind::MixShader { .. } => Value::Float(0.0),
             NodeKind::Constant(v) => *v,
             NodeKind::Mapping2d { .. } => Value::Vector(Vec3::ZERO),
             // Varying by construction, so the constant folder never asks for
@@ -1134,7 +1160,7 @@ impl MaterialGraph {
             // A Blender node's vector, as Blender's viewer shows one; a
             // projection's coordinates are not a picture of anything.
             SocketType::Vector | SocketType::Normal => matches!(kind, NodeKind::Node(_) | NodeKind::Group(_)),
-            SocketType::Bool => false,
+            SocketType::Bool | SocketType::Shader => false,
         };
         if !showable {
             return None;
@@ -1435,6 +1461,22 @@ pub struct Requirements {
     pub fuzz: Option<FuzzRequest>,
 }
 
+impl Requirements {
+    /// What `other` needs as well: a surface mixed with another needs what
+    /// either does.
+    pub fn merge(&mut self, other: &Requirements) {
+        self.uv_sets.extend(other.uv_sets.iter().copied());
+        self.needs_tangents |= other.needs_tangents;
+        self.textures.extend(other.textures.iter().copied());
+        self.volumes.extend(other.volumes.iter().copied());
+        self.needs_medium |= other.needs_medium;
+        self.time_varying |= other.time_varying;
+        self.occlusion_radius_bits = self.occlusion_radius_bits.or(other.occlusion_radius_bits);
+        self.bubbles = self.bubbles.or(other.bubbles);
+        self.fuzz = self.fuzz.or(other.fuzz);
+    }
+}
+
 /// A Fuzz node's settings, comparable, for the snapshot to act on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FuzzRequest {
@@ -1503,6 +1545,9 @@ pub struct CompiledGraph {
     /// The topology this was compiled from. A graph whose topology hash still
     /// matches can reuse these instructions with patched literals.
     pub topology: u64,
+    /// Another surface this one is mixed with, when the two are not of a
+    /// kind: a Mix or Add Shader's.
+    pub layer: Option<Box<CompiledLayer>>,
 }
 
 impl CompiledGraph {
@@ -1546,6 +1591,7 @@ impl CompiledGraph {
             driven,
             requirements: self.requirements.clone(),
             topology: self.topology,
+            layer: self.layer.clone(),
         }
     }
 
@@ -1572,6 +1618,10 @@ impl MaterialGraph {
         // A group is the nodes inside it.
         if self.nodes.values().any(|n| matches!(n.kind, NodeKind::Group(_))) {
             return self.without_groups().compile();
+        }
+        // The surface mixed with another (Mix and Add Shader).
+        if let Some(layer) = self.layer_of(self.output) {
+            return self.compile_layered(layer);
         }
         let order = self.topological_order()?;
 
@@ -1608,6 +1658,12 @@ impl MaterialGraph {
         for id in &order {
             let node = &self.nodes[id];
             if *id == self.output {
+                continue;
+            }
+            // Another surface, and what mixes it in: programs of their own
+            // (`compile_layered`), never values here - nor a surface that
+            // is not the terminal, as the material's own is in a layer's.
+            if matches!(node.kind, NodeKind::Shader(_) | NodeKind::MixShader { .. } | NodeKind::Surface(_)) {
                 continue;
             }
             // A geometry node: a request for the snapshot, not an instruction.
@@ -1927,8 +1983,183 @@ impl MaterialGraph {
             driven,
             requirements,
             topology: self.topology_hash(),
+            layer: None,
         })
     }
+
+    /// The Mix or Add Shader layered over `surface`, and the shader in it.
+    fn layer_of(&self, surface: NodeId) -> Option<Layer> {
+        let mix = self.links.iter().find(|l| l.to == surface && l.to_socket == LAYER_INPUT)?.from;
+        let NodeKind::MixShader { add } = self.nodes.get(&mix)?.kind else { return None };
+        let shader = self.links.iter().find(|l| l.to == mix && l.to_socket == Socket::Input(1))?.from;
+        matches!(self.nodes.get(&shader)?.kind, NodeKind::Shader(_)).then_some(Layer { mix, shader, add })
+    }
+
+    fn shader_material(&self, node: NodeId) -> Option<&Material> {
+        match &self.nodes.get(&node)?.kind {
+            NodeKind::Shader(m) | NodeKind::Surface(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// A surface mixed with another. Two of a kind, mixed, are one surface
+    /// with each parameter mixed; otherwise each is a program of its own,
+    /// the factor a third, and a path sees one or the other
+    /// (`shade::choose_layer`).
+    fn compile_layered(&self, layer: Layer) -> Result<CompiledGraph, GraphError> {
+        let wired = |node: NodeId| self.links.iter().any(|l| l.to == node && LOBE_PARAMS.iter().any(|p| l.to_socket == Socket::Param(*p)));
+        let alike = match (self.shader_material(self.output), self.shader_material(layer.shader)) {
+            (Some(a), Some(b)) => same_lobes(a, b) && !wired(self.output) && !wired(layer.shader),
+            _ => false,
+        };
+        if alike && !layer.add {
+            return self.mixed_per_parameter(layer).compile();
+        }
+        let mut own = self.clone();
+        own.disconnect(self.output, LAYER_INPUT);
+        let mut compiled = own.compile()?;
+        let shader = self.with_surface(layer.shader).compile()?;
+        let factor = self.factor_graph(layer.mix).compile()?;
+        compiled.requirements.merge(&shader.requirements);
+        compiled.requirements.merge(&factor.requirements);
+        compiled.layer = Some(Box::new(CompiledLayer { shader, factor, add: layer.add }));
+        Ok(compiled)
+    }
+
+    /// The graph with `node`, a Shader node, as its surface: what that
+    /// surface compiles from. Labels are the material's own surface's.
+    fn with_surface(&self, node: NodeId) -> MaterialGraph {
+        let mut graph = self.clone();
+        if let Some(found) = graph.nodes.get_mut(&node) {
+            if let NodeKind::Shader(material) = &found.kind {
+                found.kind = NodeKind::Surface(material.clone());
+            }
+        }
+        graph.output = node;
+        // The terminal now, so its wire out goes.
+        graph.links.retain(|l| l.from != node);
+        graph.decals.clear();
+        graph
+    }
+
+    /// A graph whose surface's Opacity is `mix`'s factor, as a program: what
+    /// a path reads to choose between the two surfaces. An Add Shader's is
+    /// one.
+    fn factor_graph(&self, mix: NodeId) -> MaterialGraph {
+        let add = matches!(self.nodes.get(&mix).map(|n| &n.kind), Some(NodeKind::MixShader { add: true }));
+        let literal = self.nodes.get(&mix).and_then(|n| n.literals.get(&Socket::Input(0))).map_or(DEFAULT_MIX, |v| v.as_float());
+        let mut graph = self.clone();
+        graph.decals.clear();
+        let surface = graph.add_node(Node::new(NodeKind::Surface(Box::new(Material {
+            geometry_opacity: if add { 1.0 } else { literal.clamp(0.0, 1.0) },
+            ..Material::default()
+        }))));
+        graph.output = surface;
+        if !add {
+            if let Some(link) = self.links.iter().find(|l| l.to == mix && l.to_socket == Socket::Input(0)).copied() {
+                graph.connect_output(link.from, link.from_socket, surface, Socket::Param(Param::Opacity));
+            }
+        }
+        graph
+    }
+
+    /// Two surfaces of a kind mixed as one: each parameter that differs, or
+    /// is wired in either, a Mix of the two by the factor. A flag, a slot
+    /// and a metal preset do not blend, and stay the material's own.
+    fn mixed_per_parameter(&self, layer: Layer) -> MaterialGraph {
+        let mut graph = self.clone();
+        graph.disconnect(self.output, LAYER_INPUT);
+        let (Some(a), Some(b)) = (self.shader_material(self.output).cloned(), self.shader_material(layer.shader).cloned()) else {
+            return graph;
+        };
+        let factor = self.links.iter().find(|l| l.to == layer.mix && l.to_socket == Socket::Input(0)).copied();
+        let literal = self.nodes.get(&layer.mix).and_then(|n| n.literals.get(&Socket::Input(0))).copied().unwrap_or(Value::Float(DEFAULT_MIX));
+        let into = |node: NodeId, param: Param| self.links.iter().find(|l| l.to == node && l.to_socket == Socket::Param(param)).copied();
+        for &param in Param::ALL.iter() {
+            use crate::material_type::ParamUi;
+            if matches!(param.ui(), ParamUi::Flag | ParamUi::Slot | ParamUi::Metal | ParamUi::Vector) || param == Param::Tangent {
+                continue;
+            }
+            let (from_a, from_b) = (into(self.output, param), into(layer.shader, param));
+            let (Some(va), Some(vb)) = (param_literal(&a, param), param_literal(&b, param)) else { continue };
+            if from_a.is_none() && from_b.is_none() && va == vb {
+                continue;
+            }
+            let mut mix = Node::new(NodeKind::Mix);
+            mix.literals.insert(Socket::Input(0), va);
+            mix.literals.insert(Socket::Input(1), vb);
+            mix.literals.insert(Socket::Input(2), literal);
+            let mix = graph.add_node(mix);
+            if let Some(link) = from_a {
+                graph.connect_output(link.from, link.from_socket, mix, Socket::Input(0));
+            }
+            if let Some(link) = from_b {
+                graph.connect_output(link.from, link.from_socket, mix, Socket::Input(1));
+            }
+            if let Some(link) = factor {
+                graph.connect_output(link.from, link.from_socket, mix, Socket::Input(2));
+            }
+            graph.disconnect(self.output, Socket::Param(param));
+            graph.connect_output(mix, 0, self.output, Socket::Param(param));
+        }
+        graph
+    }
+}
+
+/// A surface's mix with another, compiled (`MaterialGraph::compile_layered`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CompiledLayer {
+    /// The other surface's program, which may itself be layered.
+    pub shader: CompiledGraph,
+    /// A program whose Opacity is the factor: the chance a path sees the
+    /// other surface rather than this one.
+    pub factor: CompiledGraph,
+    /// Added rather than mixed: each seen half the time, counted twice.
+    pub add: bool,
+}
+
+/// A Surface or Shader node's Layer input: the Mix or Add Shader that
+/// mixes it with another surface.
+pub const LAYER_INPUT: Socket = Socket::Input(0);
+
+/// A Mix Shader's factor with nothing wired to it: half of each.
+const DEFAULT_MIX: f32 = 0.5;
+
+/// A surface's layer: the Mix or Add Shader wired into its Layer input, and
+/// the Shader node wired into that.
+#[derive(Clone, Copy, Debug)]
+struct Layer {
+    mix: NodeId,
+    shader: NodeId,
+    add: bool,
+}
+
+/// Whether two surfaces scatter light the same way, so that mixing their
+/// parameters is mixing them: neither or both metal, see-through, under
+/// the skin, coated, fuzzed and thin-walled, by the same amount. What
+/// "the same type" is for a parameter block that every type shares.
+fn same_lobes(a: &Material, b: &Material) -> bool {
+    a.base_metalness == b.base_metalness
+        && a.transmission_weight == b.transmission_weight
+        && a.subsurface_weight == b.subsurface_weight
+        && a.coat_weight == b.coat_weight
+        && a.fuzz_weight == b.fuzz_weight
+        && a.geometry_thin_walled == b.geometry_thin_walled
+}
+
+/// The parameters [`same_lobes`] compares, which a wire into either surface
+/// would set apart.
+const LOBE_PARAMS: [Param; 5] = [Param::BaseMetalness, Param::TransmissionWeight, Param::SubsurfaceWeight, Param::CoatWeight, Param::FuzzWeight];
+
+/// A parameter as a graph value, for a node's literal.
+fn param_literal(material: &Material, param: Param) -> Option<Value> {
+    use crate::material_type::ParamValue;
+    Some(match param.read(material)? {
+        ParamValue::Scalar(v) => Value::Float(v),
+        ParamValue::Color(c) => Value::Color(c),
+        ParamValue::Flag(f) => Value::Bool(f),
+        ParamValue::Metal(_) => return None,
+    })
 }
 
 /// What an input of type `ty` reads with nothing wired, no literal and no
@@ -1939,6 +2170,8 @@ pub fn default_for(ty: SocketType) -> Value {
         SocketType::Color => Value::Color(Spectrum::ZERO),
         SocketType::Vector | SocketType::Normal => Value::Vector(Vec3::ZERO),
         SocketType::Bool => Value::Bool(false),
+        // A surface is no value; nothing reads one as a number.
+        SocketType::Shader => Value::Float(0.0),
     }
 }
 
@@ -1954,6 +2187,52 @@ fn write_param(material: &mut Material, param: Param, value: Value) {
         ParamUi::Slot | ParamUi::Metal => return,
     };
     param.write(material, written);
+}
+
+#[cfg(test)]
+mod mix_tests {
+    use super::*;
+    use crate::material_type::MaterialType;
+
+    /// A material mixed with a Shader node by a Mix Shader.
+    fn mixed(a: Material, b: Material, factor: f32, add: bool) -> MaterialGraph {
+        let mut graph = MaterialGraph::from_material(a);
+        let shader = graph.add_node(Node::new(NodeKind::Shader(Box::new(b))));
+        let mut mix = Node::new(NodeKind::MixShader { add });
+        mix.literals.insert(Socket::Input(0), Value::Float(factor));
+        let mix = graph.add_node(mix);
+        graph.connect(shader, mix, Socket::Input(1));
+        graph.connect(mix, graph.output(), LAYER_INPUT);
+        graph
+    }
+
+    /// Two surfaces of a kind mix as one, each parameter mixed: a red and a
+    /// blue plastic a quarter of the way is one plastic between them.
+    #[test]
+    fn two_of_a_kind_mix_parameter_by_parameter() {
+        let red = Material { base_color: Spectrum { r: 1.0, g: 0.0, b: 0.0 }, specular_roughness: 0.2, ..MaterialType::Plastic.defaults() };
+        let blue = Material { base_color: Spectrum { r: 0.0, g: 0.0, b: 1.0 }, specular_roughness: 0.6, ..MaterialType::Plastic.defaults() };
+        let compiled = mixed(red, blue, 0.25, false).compile().expect("compiles");
+        assert!(compiled.layer.is_none(), "two plastics were kept apart");
+        let c = compiled.constants.base_color;
+        assert!((c.r - 0.75).abs() < 1e-5 && (c.b - 0.25).abs() < 1e-5, "{c:?}");
+        assert!((compiled.constants.specular_roughness - 0.3).abs() < 1e-5);
+    }
+
+    /// Two of different kinds stay two programs, with the factor a third:
+    /// a plastic and a metal; and an Add Shader's even of a kind.
+    #[test]
+    fn different_kinds_stay_apart() {
+        let plastic = MaterialType::Plastic.defaults();
+        let metal = Material { base_metalness: 1.0, ..MaterialType::Plastic.defaults() };
+        let compiled = mixed(plastic.clone(), metal, 0.3, false).compile().expect("compiles");
+        let layer = compiled.layer.as_ref().expect("the metal kept apart");
+        assert!(!layer.add && (layer.factor.constants.geometry_opacity - 0.3).abs() < 1e-6);
+        assert_eq!(layer.shader.constants.base_metalness, 1.0);
+        assert_eq!(compiled.constants.base_metalness, plastic.base_metalness, "the surface's own changed");
+        let added = mixed(plastic.clone(), plastic, 0.3, true).compile().expect("compiles");
+        assert!(added.layer.as_ref().is_some_and(|l| l.add), "added plastics merged");
+    }
 }
 
 #[cfg(test)]
@@ -1979,6 +2258,7 @@ mod tests {
             driven: vec![(Param::BaseWeight, c), (Param::SpecularRoughness, d)],
             requirements: Default::default(),
             topology: 7,
+            layer: None,
         };
         let solid = full.restricted_to(&[Param::BaseWeight]);
         assert_eq!(solid.instructions.len(), 3, "the multiply and both of its inputs");
@@ -2526,7 +2806,8 @@ mod tests {
     }
 
     /// Every parameter must be reachable as a socket, or the graph cannot
-    /// express something the simple panel can.
+    /// express something the simple panel can; beside them, the Layer a
+    /// Mix or Add Shader goes into, and nothing else.
     #[test]
     fn every_parameter_is_a_socket_on_the_surface_node() {
         let surface = NodeKind::Surface(Box::new(Material::default()));
@@ -2538,7 +2819,8 @@ mod tests {
                 param.key()
             );
         }
-        assert_eq!(sockets.len(), Param::ALL.len());
+        assert!(sockets.contains(&LAYER_INPUT));
+        assert_eq!(sockets.len(), Param::ALL.len() + 1);
     }
 
     fn noise() -> Node {

@@ -176,6 +176,40 @@ pub fn point_input(input: PointInput, point: &SurfacePoint) -> Value {
 ///
 /// Returns the constants directly when the program is empty, which is the
 /// common case — see this module's header.
+/// Which of a mixed material's surfaces a path sees here (Mix and Add
+/// Shader, `CompiledLayer`): the material's own program or a layer's, by
+/// each layer's factor and `u` in [0, 1), and what to weigh the path by.
+/// A mix picks the other surface as often as its factor says, which is the
+/// mix on average; an add picks each half the time and counts it twice,
+/// which is the sum.
+pub fn choose_layer<'a>(
+    program: &'a CompiledGraph,
+    textures: &TextureTable,
+    point: &SurfacePoint,
+    registers: &mut Registers,
+    scratch: &mut Material,
+    mut u: f32,
+) -> (&'a CompiledGraph, f32) {
+    let (mut chosen, mut weight) = (program, 1.0f32);
+    while let Some(layer) = &chosen.layer {
+        let share = if layer.add {
+            0.5
+        } else {
+            shade(&layer.factor, textures, point, registers, scratch).geometry_opacity.clamp(0.0, 1.0)
+        };
+        if layer.add {
+            weight *= 2.0;
+        }
+        if u < share {
+            u = (u / share.max(1e-6)).min(0.999_999);
+            chosen = &layer.shader;
+        } else {
+            break;
+        }
+    }
+    (chosen, weight)
+}
+
 pub fn shade<'a>(
     program: &'a CompiledGraph,
     textures: &TextureTable,
