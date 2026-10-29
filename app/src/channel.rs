@@ -645,6 +645,55 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
             Err(why) => Reply::Failed(why),
         };
     }
+    if job.studios == Some(true) {
+        if app.project.document().studios.is_empty() {
+            return Reply::Failed("there are no Studios; set them with studio.set or apply a studio preset".into());
+        }
+        let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
+        let ids = app.queue_studios(Some(settings));
+        let mut out = Object::new();
+        out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>())
+            .set("count", ids.len() as f64)
+            .set("folder", folder.display().to_string())
+            .set("note", "one job per Studio, each view captured now; query jobs for progress");
+        return Reply::Value(out.build());
+    }
+    if let Some(wanted) = &job.studio {
+        let studios = &app.project.document().studios;
+        let Some(index) = studios
+            .iter()
+            .position(|s| &s.name == wanted)
+            .or_else(|| wanted.parse::<usize>().ok().filter(|&i| i < studios.len()))
+        else {
+            let names: Vec<&str> = studios.iter().map(|s| s.name.as_str()).collect();
+            return Reply::Failed(format!("there is no Studio `{wanted}`; there are {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+        };
+        // Applied for the render and taken back, as a batch of views is.
+        let before = app.project.last_studio.clone();
+        app.project.begin_group();
+        if let Err(error) = app.project.apply(tequila_scene::Command::ApplyStudio { index }) {
+            app.project.abandon_group();
+            return Reply::Failed(error.to_string());
+        }
+        let name = job.name.clone().unwrap_or_else(|| app.project.document().studios[index].name.clone());
+        let camera = app.project.document().cameras.active_index();
+        let (width, height, samples) = (settings.width, settings.height, settings.max_samples);
+        let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
+        let id = app.project.enqueue(name.clone(), camera, settings);
+        app.project.abandon_group();
+        app.project.last_studio = before;
+        app.camera.adopt(app.project.camera());
+        app.submit();
+        let mut out = Object::new();
+        out.set("job", id as f64)
+            .set("name", name)
+            .set("width", width as f64)
+            .set("height", height as f64)
+            .set("samples", samples as f64)
+            .set("folder", folder.display().to_string())
+            .set("note", "the Studio is captured now and the scene left as it was; query jobs for progress and the file");
+        return Reply::Value(out.build());
+    }
     if job.configurations == Some(true) {
         if app.project.document().configurator.is_empty() {
             return Reply::Failed("there is no configurator; set one with configurator.set".into());

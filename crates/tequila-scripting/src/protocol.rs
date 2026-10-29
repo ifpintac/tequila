@@ -307,6 +307,11 @@ pub struct QueueRender {
     /// Sent to the render nodes (the Render window's Network rendering)
     /// rather than rendered here.
     pub network: Option<bool>,
+    /// A Studio - a view - rendered as it says, by its name or its index:
+    /// applied for the render and taken back, so the scene is as it was.
+    pub studio: Option<String>,
+    /// Every Studio, one render each, named for its view.
+    pub studios: Option<bool>,
 }
 
 /// Where to put the camera. Every field is optional and starts from where
@@ -832,6 +837,12 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             engine: opt_string(value, "engine")?,
             configurations: opt_bool(value, "configurations")?,
             network: opt_bool(value, "network")?,
+            // A name, or an index given as a number.
+            studio: match value.get("studio") {
+                Some(v) if v.as_index().is_some() => v.as_index().map(|i| i.to_string()),
+                _ => opt_string(value, "studio")?,
+            },
+            studios: opt_bool(value, "studios")?,
         }),
         "stop" => Operation::Stop,
         "look" => Operation::Look(Look {

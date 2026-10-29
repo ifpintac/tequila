@@ -404,7 +404,12 @@ pub struct NameFields {
     /// (`TEQUILA_SPEC.md` §1.13); empty for an ordinary render.
     pub configuration: String,
     pub model_set: String,
+    /// The Studio - the view - rendered, its file-name suffix or its name;
+    /// `{view}` is the same.
     pub studio: String,
+    /// What the product is called: its top group's name, or the project's
+    /// when it has several. `{project}` where it is empty.
+    pub product: String,
     pub frame: Option<u32>,
     pub width: usize,
     pub height: usize,
@@ -437,7 +442,8 @@ pub fn expand_template(template: &str, fields: &NameFields) -> String {
             "camera" => Some(fields.camera.clone()),
             "configuration" => Some(fields.configuration.clone()),
             "model_set" => Some(fields.model_set.clone()),
-            "studio" => Some(fields.studio.clone()),
+            "studio" | "view" => Some(fields.studio.clone()),
+            "product" => Some(if fields.product.is_empty() { fields.project.clone() } else { fields.product.clone() }),
             "frame" => fields.frame.map(|f| format!("{f:04}")),
             "width" => Some(fields.width.to_string()),
             "height" => Some(fields.height.to_string()),

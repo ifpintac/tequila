@@ -645,6 +645,14 @@ fn studios_survive_a_round_trip() {
         image_style: None,
         model_set: Some(None),
         variants: Vec::new(),
+        // A view: lights switched by name and by layer, the product turned,
+        // and the name its image takes.
+        lights: vec![
+            tequila_scene::studio::LightOverride { target: tequila_scene::studio::LightTarget::Name("Strip L".into()), enabled: false },
+            tequila_scene::studio::LightOverride { target: tequila_scene::studio::LightTarget::Layer(2), enabled: true },
+        ],
+        product_yaw: Some(3.141593),
+        filename_suffix: Some("Rear".into()),
     };
     let untouched = Studio {
         model_set: None,
@@ -654,10 +662,13 @@ fn studios_survive_a_round_trip() {
     all_sets.variants = vec![(3, 0)];
     document.studios = vec![full, all_sets, untouched];
 
+    document.product_turn = tequila_scene::studio::ProductTurn { yaw: -0.942478, pivot: [0.01, -0.02] };
+
     let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
     assert_eq!(reopened.document.multi_materials, document.multi_materials);
     assert_eq!(reopened.document.model_sets, document.model_sets);
     assert_eq!(reopened.document.studios, document.studios);
+    assert_eq!(reopened.document.product_turn, document.product_turn);
 }
 
 /// The configurator survives a save and a reopen: every kind of option, a

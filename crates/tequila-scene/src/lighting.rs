@@ -463,6 +463,11 @@ impl CameraStore {
         self.cameras.get(index)
     }
 
+    /// The first saved camera of this name.
+    pub fn find(&self, name: &str) -> Option<usize> {
+        self.iter().find(|(_, c)| c.name == name).map(|(i, _)| i)
+    }
+
     pub fn select(&mut self, index: usize) {
         if index < self.cameras.len() {
             self.active = index;

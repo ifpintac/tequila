@@ -4966,7 +4966,11 @@ impl TequilaApp {
                     resubmit = true;
                 }
                 let action = tab.action.take();
+                let render_all = std::mem::take(&mut tab.render_all);
                 self.studio_tab = tab;
+                if render_all {
+                    self.queue_studios(None);
+                }
                 match action {
                     Some(configurator_panel::Action::Present) => self.start_presentation(),
                     Some(configurator_panel::Action::RenderAll) => self.plan_configuration_batch(),
@@ -5472,6 +5476,36 @@ impl TequilaApp {
         self.submit();
         self.render_window.open = true;
         self.project.status = format!("Queued {} configuration renders", queued.len());
+        queued
+    }
+
+    /// Every Studio rendered, one job each: each applied, captured and taken
+    /// back, so the queue holds the views and the document is as it was.
+    /// The file name takes each one's `{view}` when its template names none,
+    /// so five views are five files and not one written five times.
+    pub(crate) fn queue_studios(&mut self, settings: Option<tequila_scene::render::RenderSettings>) -> Vec<u64> {
+        let count = self.project.document().studios.len();
+        let mut settings = settings.unwrap_or_else(|| self.project.render_settings().clone());
+        if !settings.filename_template.contains("{studio}") && !settings.filename_template.contains("{view}") {
+            settings.filename_template.push_str("_{view}");
+        }
+        let before = self.project.last_studio.clone();
+        self.project.begin_group();
+        let mut queued = Vec::with_capacity(count);
+        for index in 0..count {
+            if self.project.apply(tequila_scene::Command::ApplyStudio { index }).is_err() {
+                continue;
+            }
+            let name = self.project.document().studios[index].name.clone();
+            let camera = self.project.document().cameras.active_index();
+            queued.push(self.project.enqueue(name, camera, settings.clone()));
+        }
+        self.project.abandon_group();
+        self.project.last_studio = before;
+        self.camera.adopt(self.project.camera());
+        self.submit();
+        self.render_window.open = true;
+        self.project.status = format!("Queued {} view renders", queued.len());
         queued
     }
 

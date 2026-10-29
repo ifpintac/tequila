@@ -288,7 +288,10 @@ class Client:
         engine ('tequila', 'cycles-cpu' or 'cycles-gpu'). With
         configurations=True, one job per valid combination of the
         configurator, named by its choices ({configuration} in filename).
-        Returns at once; poll jobs() or use wait_for_job()."""
+        studio='Right' (a name or index) renders one view as that Studio
+        says, leaving the scene as it was; studios=True renders every
+        view, one job each ({view} in filename). Returns at once; poll
+        jobs() or use wait_for_job()."""
         return self.request('queue', **job)
 
     def jobs(self):

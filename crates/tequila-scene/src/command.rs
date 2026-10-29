@@ -1683,12 +1683,19 @@ struct Reissue {
 /// What applying a Studio replaced.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StudioUndo {
-    camera: SavedCamera,
+    /// All of them, and which was active: a Studio's camera goes to the
+    /// saved camera of its name, which need not be the active one.
+    cameras: crate::lighting::CameraStore,
     environment: crate::document::EnvironmentSettings,
     image_style: tequila_color::ImageStyle,
     model_set: Option<usize>,
     multi_materials: Vec<crate::studio::MultiMaterial>,
     materials: Vec<(NodeId, Option<MaterialKey>)>,
+    /// Every light's on-or-off.
+    lights: Vec<(NodeId, bool)>,
+    /// The product's roots' transforms, and its turn.
+    transforms: Vec<(NodeId, Transform)>,
+    turn: crate::studio::ProductTurn,
 }
 
 impl StudioUndo {
@@ -1696,30 +1703,67 @@ impl StudioUndo {
     /// are filled in once the variants are applied.
     fn of(document: &SceneDocument) -> StudioUndo {
         StudioUndo {
-            camera: document.cameras.active().clone(),
+            cameras: document.cameras.clone(),
             environment: document.environment.clone(),
             image_style: document.image_style,
             model_set: document.model_sets.active,
             multi_materials: document.multi_materials.clone(),
             materials: Vec::new(),
+            lights: document
+                .tree
+                .iter()
+                .filter_map(|n| match &n.kind {
+                    NodeKind::Light { settings } => Some((n.id, settings.enabled)),
+                    _ => None,
+                })
+                .collect(),
+            transforms: crate::studio::product_roots(document)
+                .into_iter()
+                .filter_map(|id| document.tree.get(id).map(|n| (id, n.transform)))
+                .collect(),
+            turn: document.product_turn,
         }
     }
 
     fn restore(&self, document: &mut SceneDocument) {
         crate::studio::restore_materials(document, &self.materials);
-        *document.cameras.active_mut() = self.camera.clone();
+        document.cameras = self.cameras.clone();
         document.environment = self.environment.clone();
         document.image_style = self.image_style;
         document.model_sets.active = self.model_set;
         document.multi_materials = self.multi_materials.clone();
+        for &(id, enabled) in &self.lights {
+            if let Ok(node) = document.tree.get_mut(id) {
+                if let NodeKind::Light { settings } = &mut node.kind {
+                    settings.enabled = enabled;
+                }
+            }
+        }
+        for &(id, transform) in &self.transforms {
+            if let Ok(node) = document.tree.get_mut(id) {
+                node.transform = transform;
+            }
+        }
+        document.product_turn = self.turn;
     }
 }
 
 /// Make the scene what `studio` says, leaving its variants for
 /// [`crate::studio::apply_variants`] to assign.
 fn put_studio(document: &mut SceneDocument, studio: crate::studio::Studio) {
+    // To the saved camera of its name, made active, so a set of views
+    // shares the cameras it names rather than writing each over whichever
+    // camera was active; one without a namesake takes the active one's
+    // place, as it always did.
     if let Some(camera) = studio.camera {
+        if let Some(index) = document.cameras.find(&camera.name) {
+            document.cameras.select(index);
+        }
         *document.cameras.active_mut() = camera;
+    }
+    crate::studio::switch_lights(document, &studio.lights);
+    if let Some(yaw) = studio.product_yaw {
+        crate::studio::turn_product(document, yaw);
     }
     if let Some(environment) = studio.environment {
         document.environment = environment;

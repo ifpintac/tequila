@@ -1622,7 +1622,7 @@ fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
 }
 
 /// Placeholders a filename can use, in the order people reach for them.
-const TOKENS: &[&str] = &["project", "camera", "date", "time", "resolution", "samples"];
+const TOKENS: &[&str] = &["project", "product", "camera", "view", "date", "time", "resolution", "samples"];
 
 fn file_section(ui: &mut egui::Ui, settings: &mut RenderSettings, project: &Project) {
     ui.label(egui::RichText::new("Folder").color(crate::theme::dim()));

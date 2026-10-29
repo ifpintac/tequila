@@ -392,7 +392,7 @@
  },
  {
   "name": "tequila_queue",
-  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs.",
+  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -419,6 +419,14 @@
     },
     "camera": {
      "type": "integer"
+    },
+    "studio": {
+     "type": "string",
+     "description": "A Studio (a view) by name or index, applied for the render and taken back."
+    },
+    "studios": {
+     "type": "boolean",
+     "description": "Every Studio, one render each, named for its view."
     }
    },
    "required": [],

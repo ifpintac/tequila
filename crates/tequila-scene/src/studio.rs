@@ -89,6 +89,11 @@ impl ModelSets {
 
 /// A saved shot. Every part is optional, so a Studio can switch the camera
 /// and leave the lighting alone, or the reverse.
+///
+/// With [`lights`](Self::lights) and [`product_yaw`](Self::product_yaw) a
+/// Studio is a *view* of a studio: the product turned toward one camera,
+/// with the lights that view wants - Main, Right, Left, Rear and Top of one
+/// set of lamps, as a photographer's turntable gives them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Studio {
     pub name: String,
@@ -100,11 +105,72 @@ pub struct Studio {
     pub model_set: Option<Option<usize>>,
     /// Multi-Material id and the variant to make active.
     pub variants: Vec<(u64, usize)>,
+    /// Lights this Studio switches on or off, by name or by light layer, in
+    /// order, a later one winning; empty leaves every light as it is.
+    pub lights: Vec<LightOverride>,
+    /// How far the product is turned about its vertical axis, in radians,
+    /// right-handed about +Y (a turntable); `None` leaves it as it is. The
+    /// turn is the product's transform only - its geometry is never touched.
+    pub product_yaw: Option<f32>,
+    /// What an image of this Studio is named after, when every Studio is
+    /// rendered at once: "Right". `None` uses its name.
+    pub filename_suffix: Option<String>,
+}
+
+/// A light a Studio switches.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightOverride {
+    pub target: LightTarget,
+    pub enabled: bool,
+}
+
+/// Which lights a [`LightOverride`] means.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LightTarget {
+    /// Every light of this name.
+    Name(String),
+    /// Every light on this light layer (`LightSettings::layer`).
+    Layer(u8),
+}
+
+impl LightTarget {
+    /// Whether the light node `name`, on `layer`, is one of these.
+    pub fn matches(&self, name: &str, layer: u8) -> bool {
+        match self {
+            LightTarget::Name(n) => n == name,
+            LightTarget::Layer(l) => *l == layer,
+        }
+    }
+}
+
+impl Default for Studio {
+    fn default() -> Self {
+        Studio {
+            name: "Studio".into(),
+            camera: None,
+            environment: None,
+            image_style: None,
+            model_set: None,
+            variants: Vec::new(),
+            lights: Vec::new(),
+            product_yaw: None,
+            filename_suffix: None,
+        }
+    }
 }
 
 impl Studio {
-    /// A Studio of everything as it is now.
+    /// A Studio of everything as it is now: the shot, which lights are on,
+    /// and how the product is turned.
     pub fn capture(name: &str, document: &SceneDocument) -> Studio {
+        let mut lights: Vec<LightOverride> = Vec::new();
+        for node in document.tree.iter() {
+            if let crate::tree::NodeKind::Light { settings } = &node.kind {
+                if !lights.iter().any(|l| l.target == LightTarget::Name(node.name.clone())) {
+                    lights.push(LightOverride { target: LightTarget::Name(node.name.clone()), enabled: settings.enabled });
+                }
+            }
+        }
         Studio {
             name: name.into(),
             camera: Some(document.cameras.active().clone()),
@@ -112,6 +178,91 @@ impl Studio {
             image_style: Some(document.image_style),
             model_set: Some(document.model_sets.active),
             variants: document.multi_materials.iter().map(|m| (m.id, m.active)).collect(),
+            lights,
+            product_yaw: Some(document.product_turn.yaw),
+            filename_suffix: None,
+        }
+    }
+}
+
+/// How the product stands turned: the turn Studios gave it, and the vertical
+/// axis it was turned about.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ProductTurn {
+    /// Radians, right-handed about +Y; 0 is as it was placed.
+    pub yaw: f32,
+    /// Where the vertical axis it turns about stands, `[x, z]` in metres:
+    /// the product's centre when it was first turned, so turning it back
+    /// brings it back exactly.
+    pub pivot: [f32; 2],
+}
+
+/// Metadata key on a group of lights that belong to a studio rather than to
+/// the product: turning the product leaves them where they are.
+pub const STUDIO_LIGHTS: &str = "Studio lights";
+
+/// The roots of the product: every top-level node that is not a light, a
+/// cutaway, or a studio's own group of lights.
+pub fn product_roots(document: &SceneDocument) -> Vec<NodeId> {
+    document
+        .tree
+        .roots()
+        .iter()
+        .copied()
+        .filter(|&id| {
+            document.tree.try_get(id).is_ok_and(|node| {
+                !matches!(node.kind, crate::tree::NodeKind::Light { .. } | crate::tree::NodeKind::Cutaway { .. })
+                    && !node.metadata.contains_key(STUDIO_LIGHTS)
+            })
+        })
+        .collect()
+}
+
+/// Turn the product to `yaw` about its vertical axis, by the difference from
+/// the turn it has: its roots' transforms rotated about the axis through
+/// [`ProductTurn::pivot`], and nothing else moved.
+pub fn turn_product(document: &mut SceneDocument, yaw: f32) {
+    let current = document.product_turn;
+    let delta = yaw - current.yaw;
+    if delta.abs() < 1e-7 {
+        return;
+    }
+    let roots = product_roots(document);
+    let pivot = if current.yaw.abs() < 1e-7 {
+        let centre = crate::snapshot::visible_bounds(document).center();
+        if centre.x.is_finite() && centre.z.is_finite() { [centre.x, centre.z] } else { [0.0, 0.0] }
+    } else {
+        current.pivot
+    };
+    let at = tequila_core::math::vec3(pivot[0], 0.0, pivot[1]);
+    let turn = tequila_core::math::Mat4::translation(at)
+        * tequila_core::math::Mat4::rotation(tequila_core::math::Vec3::Y, delta)
+        * tequila_core::math::Mat4::translation(-at);
+    for root in roots {
+        if let Ok(node) = document.tree.get_mut(root) {
+            if let Some(turned) = tequila_core::math::Transform::from_matrix(turn * node.transform.matrix) {
+                node.transform = turned;
+            }
+        }
+    }
+    document.product_turn = ProductTurn { yaw, pivot };
+}
+
+/// Switch lights as `overrides` say, a later one winning.
+pub fn switch_lights(document: &mut SceneDocument, overrides: &[LightOverride]) {
+    if overrides.is_empty() {
+        return;
+    }
+    let ids: Vec<NodeId> = document.tree.iter().map(|n| n.id).collect();
+    for id in ids {
+        let Ok(node) = document.tree.get_mut(id) else { continue };
+        let name = node.name.clone();
+        if let crate::tree::NodeKind::Light { settings } = &mut node.kind {
+            for o in overrides {
+                if o.target.matches(&name, settings.layer) {
+                    settings.enabled = o.enabled;
+                }
+            }
         }
     }
 }

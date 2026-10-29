@@ -356,3 +356,119 @@ fn a_configuration_is_shown_in_one_step_and_undoes() {
     bus.undo(&mut document).unwrap();
     assert_eq!(document.difference_from(&before), None, "undo puts every part of it back");
 }
+
+// ---- Views: Studios that switch lights and turn the product --------------
+
+use tequila_scene::studio::{LightOverride, LightTarget};
+
+fn light(document: &mut SceneDocument, bus: &mut CommandBus, name: &str, layer: u8) -> NodeId {
+    let mut settings = tequila_scene::lighting::LightSettings::default();
+    settings.layer = layer;
+    bus.apply(document, Command::AddLight { parent: None, name: name.into(), settings: Box::new(settings) }).unwrap();
+    document.tree.iter().find(|n| n.name == name).map(|n| n.id).unwrap()
+}
+
+fn on(document: &SceneDocument, id: NodeId) -> bool {
+    match &document.tree.get(id).unwrap().kind {
+        NodeKind::Light { settings } => settings.enabled,
+        _ => panic!("not a light"),
+    }
+}
+
+fn close(a: tequila_core::math::Transform, b: tequila_core::math::Transform) -> bool {
+    (0..4).all(|r| (0..4).all(|c| (a.matrix.m[r][c] - b.matrix.m[r][c]).abs() < 1e-5))
+}
+
+/// A view switches the lights it names - by name and by layer - turns the
+/// product about its own vertical axis and leaves the lights where they
+/// stand, and goes to the saved camera of its camera's name. Switching back
+/// to the front view brings everything back, and undo takes each step back
+/// whole.
+#[test]
+fn a_view_switches_lights_turns_the_product_and_takes_its_camera() {
+    let (mut document, mut bus, _, _) = demo();
+    let key = light(&mut document, &mut bus, "Key", 0);
+    let strip = light(&mut document, &mut bus, "Strip L", 1);
+    let product = tequila_scene::studio::product_roots(&document);
+    assert!(!product.is_empty() && !product.contains(&key) && !product.contains(&strip), "lights are not the product");
+    let placed: Vec<_> = product.iter().map(|&id| document.tree.get(id).unwrap().transform).collect();
+    let lamp = document.tree.get(key).unwrap().transform;
+    let centre = tequila_scene::snapshot::visible_bounds(&document).center();
+
+    let main_camera = document.cameras.active().name.clone();
+    let mut rear = document.cameras.active().clone();
+    rear.name = "Rear".into();
+    rear.target = tequila_core::math::vec3(0.0, 0.1, -0.5);
+    bus.apply(&mut document, Command::AddCamera { camera: Box::new(rear.clone()) }).unwrap();
+    assert_eq!(document.cameras.active().name, main_camera);
+
+    let views = vec![
+        Studio {
+            name: "Main".into(),
+            lights: vec![LightOverride { target: LightTarget::Name("Strip L".into()), enabled: true }],
+            product_yaw: Some(0.0),
+            ..Studio::default()
+        },
+        Studio {
+            name: "Rear".into(),
+            camera: Some(rear.clone()),
+            lights: vec![LightOverride { target: LightTarget::Layer(1), enabled: false }],
+            product_yaw: Some(std::f32::consts::PI),
+            filename_suffix: Some("Rear".into()),
+            ..Studio::default()
+        },
+    ];
+    bus.apply(&mut document, Command::SetStudios { studios: views }).unwrap();
+
+    bus.apply(&mut document, Command::ApplyStudio { index: 1 }).unwrap();
+    assert!(!on(&document, strip), "the Rear view switches the strip's layer off");
+    assert!(on(&document, key), "a light no view names is left alone");
+    assert_eq!(document.cameras.active().name, "Rear", "the view goes to its camera's namesake");
+    assert_eq!(document.cameras.len(), 2, "and writes over nothing else");
+    for (&id, before) in product.iter().zip(&placed) {
+        assert!(!close(document.tree.get(id).unwrap().transform, *before), "the product is turned");
+    }
+    let turned = tequila_scene::snapshot::visible_bounds(&document).center();
+    assert!((turned.x - centre.x).abs() < 1e-4 && (turned.z - centre.z).abs() < 1e-4, "about its own axis: {centre:?} then {turned:?}");
+    assert!(close(document.tree.get(key).unwrap().transform, lamp), "the lights stay where they stand");
+
+    bus.apply(&mut document, Command::ApplyStudio { index: 0 }).unwrap();
+    assert!(on(&document, strip));
+    for (&id, before) in product.iter().zip(&placed) {
+        assert!(close(document.tree.get(id).unwrap().transform, *before), "turned back exactly");
+    }
+
+    bus.undo(&mut document).unwrap();
+    assert!(!on(&document, strip) && document.cameras.active().name == "Rear");
+    bus.undo(&mut document).unwrap();
+    assert!(on(&document, strip));
+    assert_eq!(document.cameras.active().name, main_camera);
+    assert_eq!(document.product_turn, tequila_scene::studio::ProductTurn::default());
+    for (&id, before) in product.iter().zip(&placed) {
+        assert!(close(document.tree.get(id).unwrap().transform, *before));
+    }
+}
+
+/// A Studio from before views - no lights, no turn - leaves the lights and
+/// the product as they are.
+#[test]
+fn a_studio_without_views_leaves_lights_and_product_alone() {
+    let (mut document, mut bus, _, _) = demo();
+    let strip = light(&mut document, &mut bus, "Strip L", 1);
+    bus.apply(&mut document, Command::SetLight {
+        node: strip,
+        settings: Box::new(tequila_scene::lighting::LightSettings { enabled: false, layer: 1, ..Default::default() }),
+    })
+    .unwrap();
+    let product = tequila_scene::studio::product_roots(&document);
+    let placed: Vec<_> = product.iter().map(|&id| document.tree.get(id).unwrap().transform).collect();
+    let mut old = Studio::capture("Old", &document);
+    old.lights.clear();
+    old.product_yaw = None;
+    bus.apply(&mut document, Command::SetStudios { studios: vec![old] }).unwrap();
+    bus.apply(&mut document, Command::ApplyStudio { index: 0 }).unwrap();
+    assert!(!on(&document, strip));
+    for (&id, before) in product.iter().zip(&placed) {
+        assert!(close(document.tree.get(id).unwrap().transform, *before));
+    }
+}

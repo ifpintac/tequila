@@ -385,6 +385,13 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
     if !document.studios.is_empty() {
         scene.set("studios", document.studios.iter().map(studio_to_json).collect::<Vec<_>>());
     }
+    // Only once a Studio has turned the product.
+    if document.product_turn != tequila_scene::studio::ProductTurn::default() {
+        let turn = &document.product_turn;
+        let mut object = Object::new();
+        object.set("yaw", turn.yaw).set("pivot", Value::Array(vec![Value::from(turn.pivot[0]), Value::from(turn.pivot[1])]));
+        scene.set("product_turn", object.build());
+    }
     if document.configurator != tequila_scene::configurator::Configurator::default() {
         scene.set("configurator", configurator_to_json(&document.configurator));
     }
@@ -802,7 +809,49 @@ pub(crate) fn studio_to_json(studio: &tequila_scene::studio::Studio) -> Value {
             })
             .collect::<Vec<_>>(),
     );
+    // Written only when there are some, so a Studio from before views is the
+    // same bytes it always was.
+    if !studio.lights.is_empty() {
+        object.set(
+            "lights",
+            studio
+                .lights
+                .iter()
+                .map(|o| {
+                    let mut entry = Object::new();
+                    match &o.target {
+                        tequila_scene::studio::LightTarget::Name(name) => entry.set("name", name.clone()),
+                        tequila_scene::studio::LightTarget::Layer(layer) => entry.set("layer", f64::from(*layer)),
+                    };
+                    entry.set("enabled", o.enabled);
+                    entry.build()
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    object.set_some("product_yaw", studio.product_yaw);
+    object.set_some("filename_suffix", studio.filename_suffix.clone());
     object.build()
+}
+
+/// A Studio's light switches, as [`studio_to_json`] writes them.
+fn read_light_overrides(value: Option<&Value>) -> Vec<tequila_scene::studio::LightOverride> {
+    use tequila_scene::studio::{LightOverride, LightTarget};
+    value
+        .map(|v| {
+            v.as_array()
+                .iter()
+                .filter_map(|entry| {
+                    let target = match (entry.get("name").and_then(|n| n.as_str()), entry.get("layer").and_then(|l| l.as_index())) {
+                        (Some(name), _) => LightTarget::Name(name.to_string()),
+                        (None, Some(layer)) => LightTarget::Layer(layer.min(255) as u8),
+                        (None, None) => return None,
+                    };
+                    Some(LightOverride { target, enabled: entry.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true) })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn read_studio(value: &Value) -> tequila_scene::studio::Studio {
@@ -828,6 +877,9 @@ pub(crate) fn read_studio(value: &Value) -> tequila_scene::studio::Studio {
                     .collect()
             })
             .unwrap_or_default(),
+        lights: read_light_overrides(value.get("lights")),
+        product_yaw: value.get("product_yaw").and_then(|v| v.as_f32()).filter(|v| v.is_finite()),
+        filename_suffix: value.get("filename_suffix").and_then(|v| v.as_str()).map(str::to_string),
     }
 }
 
@@ -2284,6 +2336,13 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         .get("studios")
         .map(|v| v.as_array().iter().map(read_studio).collect())
         .unwrap_or_default();
+    if let Some(turn) = root.get("product_turn") {
+        let pivot = turn.get("pivot").and_then(|p| p.as_f32_array()).unwrap_or_default();
+        document.product_turn = tequila_scene::studio::ProductTurn {
+            yaw: turn.get("yaw").and_then(|y| y.as_f32()).filter(|y| y.is_finite()).unwrap_or(0.0),
+            pivot: [pivot.first().copied().unwrap_or(0.0), pivot.get(1).copied().unwrap_or(0.0)],
+        };
+    }
     document.configurator = root.get("configurator").map(read_configurator).unwrap_or_default();
     document.measurements = root
         .get("measurements")
@@ -2338,7 +2397,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
     }
 
     // Unknown top-level scene fields.
-    const KNOWN_SCENE_FIELDS: [&str; 23] = [
+    const KNOWN_SCENE_FIELDS: [&str; 24] = [
         "format_version",
         "name",
         "units",
@@ -2357,6 +2416,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         "multi_materials",
         "model_sets",
         "studios",
+        "product_turn",
         "configurator",
         "material_templates",
         "tree",

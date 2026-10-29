@@ -233,6 +233,15 @@ pub fn commands() -> Vec<Command> {
                 image_style: None,
                 model_set: Some(None),
                 variants: vec![(7, 0)],
+                lights: vec![
+                    tequila_scene::studio::LightOverride {
+                        target: tequila_scene::studio::LightTarget::Name("Rim".into()),
+                        enabled: false,
+                    },
+                    tequila_scene::studio::LightOverride { target: tequila_scene::studio::LightTarget::Layer(1), enabled: true },
+                ],
+                product_yaw: Some(-0.942478),
+                filename_suffix: Some("Right".into()),
             }],
         },
         Command::ApplyStudio { index: 0 },

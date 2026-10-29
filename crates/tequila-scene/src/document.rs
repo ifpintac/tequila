@@ -308,6 +308,8 @@ pub struct SceneDocument {
     pub model_sets: crate::studio::ModelSets,
     /// Saved shots (§1.12).
     pub studios: Vec<crate::studio::Studio>,
+    /// How Studios have turned the product (`Studio::product_yaw`).
+    pub product_turn: crate::studio::ProductTurn,
     /// Rule-based bulk assignment (`docs/04` §3.3).
     pub material_templates: Vec<crate::templates::MaterialTemplate>,
     /// The product configurator built over the Studios, Model Sets and
@@ -421,6 +423,7 @@ impl SceneDocument {
             multi_materials: Vec::new(),
             model_sets: crate::studio::ModelSets::default(),
             studios: Vec::new(),
+            product_turn: crate::studio::ProductTurn::default(),
             material_templates: Vec::new(),
             configurator: Default::default(),
             sources: Sources::default(),
