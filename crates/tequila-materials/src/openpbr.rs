@@ -161,6 +161,16 @@ pub struct Material {
     /// is the bump-only approximation — the height shades as a bump and the
     /// silhouette does not change.
     pub displacement_detail: f32,
+    /// Rounded edges at render time, a radius in metres; 0 is sharp
+    /// ([`Param::EdgeRadius`](crate::material_type::Param::EdgeRadius)).
+    pub edge_radius: f32,
+    /// Probes the rounding takes per shading point.
+    pub edge_samples: f32,
+    /// The colour the medium inside glows with
+    /// ([`Param::VolumeEmissionColor`](crate::material_type::Param::VolumeEmissionColor)).
+    pub volume_emission_color: Spectrum,
+    /// How strongly, as radiance per metre travelled; 0 for no glow.
+    pub volume_emission_strength: f32,
 
     // --- emission --------------------------------------------------------
     /// Nits. Physical units, so an emissive panel and an area light of the
@@ -266,6 +276,10 @@ impl Default for Material {
             flake_normal: tequila_core::math::Vec3::Z,
 
             displacement_detail: 0.0005,
+            edge_radius: 0.0,
+            edge_samples: 8.0,
+            volume_emission_color: Spectrum::ONE,
+            volume_emission_strength: 0.0,
 
             emission_luminance: 0.0,
             emission_color: Spectrum::ONE,
@@ -402,6 +416,34 @@ impl Material {
             r: survive(self.transmission_color.r),
             g: survive(self.transmission_color.g),
             b: survive(self.transmission_color.b),
+        }
+    }
+
+    /// The light the medium gives off along `distance` of it, as seen from
+    /// where it starts: its glow ([`Param::VolumeEmissionStrength`]
+    /// (crate::material_type::Param::VolumeEmissionStrength), radiance per
+    /// metre) summed over the way, each bit of it dimmed by what the medium
+    /// absorbs between it and the start - `glow * (1 - e^(-s d)) / s` for
+    /// an absorption of `s` a metre, which [`transmittance_over`]
+    /// (Self::transmittance_over) is `e^(-s d)` of. Nothing without a glow.
+    pub fn emitted_over(&self, distance: f32) -> Spectrum {
+        if self.volume_emission_strength <= 0.0 || distance <= 0.0 || !distance.is_finite() {
+            return Spectrum::ZERO;
+        }
+        let glow = self.volume_emission_color * self.volume_emission_strength;
+        let per_metre = if self.transmission_depth > 0.0 { self.volume_density.max(0.0) / self.transmission_depth } else { 0.0 };
+        let along = |c: f32, g: f32| {
+            let absorbed = if c.is_finite() { -c.clamp(1e-6, 1.0).ln() * per_metre } else { 0.0 };
+            if absorbed * distance < 1e-5 {
+                g * distance
+            } else {
+                g * (1.0 - (-absorbed * distance).exp()) / absorbed
+            }
+        };
+        Spectrum {
+            r: along(self.transmission_color.r, glow.r),
+            g: along(self.transmission_color.g, glow.g),
+            b: along(self.transmission_color.b, glow.b),
         }
     }
 
@@ -680,6 +722,10 @@ impl Material {
 
         self.emission_luminance = positive(self.emission_luminance);
         self.emission_color = colour(self.emission_color);
+        self.edge_radius = positive(self.edge_radius);
+        self.edge_samples = if self.edge_samples.is_finite() { self.edge_samples.clamp(1.0, 32.0) } else { 8.0 };
+        self.volume_emission_color = colour(self.volume_emission_color);
+        self.volume_emission_strength = positive(self.volume_emission_strength);
 
         self.geometry_opacity = unit(self.geometry_opacity);
         self.geometry_occlusion = unit(self.geometry_occlusion);
@@ -777,6 +823,28 @@ fn walk_coefficients(albedo: f32, radius: f32, g: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A medium's glow along a path through it: the glow times the length
+    /// where nothing is absorbed, the glow over the absorption once the path
+    /// is long enough for the far end's light to be lost, and nothing
+    /// without a glow.
+    #[test]
+    fn a_medium_glows_by_its_path_through_it() {
+        let clear = Material {
+            transmission_weight: 1.0,
+            transmission_depth: 1.0,
+            transmission_color: Spectrum::ONE,
+            volume_emission_strength: 10.0,
+            ..Material::default()
+        };
+        assert!((clear.emitted_over(0.5).r - 5.0).abs() < 1e-4);
+        // 0.9 kept over a depth giving 60 a metre: Blender's absorption of
+        // 0.9 at density 600.
+        let absorbing = Material { transmission_color: Spectrum::splat(0.9), transmission_depth: -(0.9f32.ln()) / 60.0, ..clear };
+        assert!((absorbing.emitted_over(10.0).g - 10.0 / 60.0).abs() < 1e-4, "{:?}", absorbing.emitted_over(10.0));
+        assert!(absorbing.emitted_over(0.001).g < 10.0 * 0.001);
+        assert_eq!(Material::default().emitted_over(1.0), Spectrum::ZERO);
+    }
 
     /// Density thickens a medium and does nothing else: twice the density
     /// over a distance is the medium as described over twice the distance,

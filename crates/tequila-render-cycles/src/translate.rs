@@ -1098,6 +1098,22 @@ impl Builder<'_> {
                 None => (node, "Volume"),
             });
         }
+        // A glow inside: an emission on the volume output is Cycles' volume
+        // emission, radiance per metre, as Blender's Emission there is.
+        if m.volume_emission_strength > 0.0 {
+            let glow = self.session.node(shader, "emission")?;
+            self.session.set_float3(glow, "Color", rgb(m.volume_emission_color))?;
+            self.session.set_float(glow, "Strength", m.volume_emission_strength)?;
+            filled = Some(match filled {
+                Some((medium, socket)) => {
+                    let both = self.session.node(shader, "add_closure")?;
+                    self.session.connect(shader, medium, socket, both, "Closure1")?;
+                    self.session.connect(shader, glow, "Emission", both, "Closure2")?;
+                    (both, "Closure")
+                }
+                None => (glow, "Emission"),
+            });
+        }
         if let Some((node, socket)) = filled {
             self.session.connect(shader, node, socket, output, "Volume")?;
         }
@@ -3020,7 +3036,24 @@ impl Builder<'_> {
         }
 
         let mut normal: Option<(Node, &'static str)> = None;
-        match self.scene.bumps.get(index).and_then(|b| b.as_deref()) {
+        // Rounded edges: Cycles' Bevel, the normal the bump starts from as
+        // Blender chains them, or the surface's own where there is no bump.
+        // A normal map has no normal to start from, so none is rounded.
+        let bump = self.scene.bumps.get(index).and_then(|b| b.as_deref());
+        let bevel = if m.edge_radius > 0.0 {
+            if matches!(bump, Some(BumpSource::NormalMap { .. })) {
+                self.out.warn("rounded edges are left out under a normal map in Cycles");
+                None
+            } else {
+                let node = self.session.node(shader, "bevel")?;
+                self.session.set_float(node, "Radius", m.edge_radius)?;
+                self.session.set_int(node, "Samples", m.edge_samples.round().clamp(1.0, 32.0) as i32)?;
+                Some(node)
+            }
+        } else {
+            None
+        };
+        match bump {
             // Laid down by a projection of its own - a texture pack's
             // tri-planar - and decoded in that projection's frames.
             Some(BumpSource::NormalMap { texture, mapping, .. }) if mapping.projection != TextureProjection::Uv => {
@@ -3051,11 +3084,22 @@ impl Builder<'_> {
                     self.feed(shader, bump, "Height", height, false)?;
                     self.session.set_float(bump, "Distance", 1.0)?;
                     self.session.set_float(bump, "Strength", 1.0)?;
+                    if let Some(bevel) = bevel {
+                        self.session.connect(shader, bevel, "Normal", bump, "Normal")?;
+                    }
                     self.session.connect(shader, bump, "Normal", bsdf, "Normal")?;
                     normal = Some((bump, "Normal"));
+                } else if let Some(bevel) = bevel {
+                    self.session.connect(shader, bevel, "Normal", bsdf, "Normal")?;
+                    normal = Some((bevel, "Normal"));
                 }
             }
-            None => {}
+            None => {
+                if let Some(bevel) = bevel {
+                    self.session.connect(shader, bevel, "Normal", bsdf, "Normal")?;
+                    normal = Some((bevel, "Normal"));
+                }
+            }
         }
         // And the rotation turns the surface's own tangent, or the one the
         // graph draws.
@@ -3264,8 +3308,12 @@ impl Builder<'_> {
             if v.camera {
                 visibility |= ffi::VISIBLE_CAMERA;
             }
+            // Scattering in a volume goes with diffuse light, as Blender's
+            // Volume Scatter visibility is on wherever a lamp lights: left
+            // out, Cycles' milky liquids, smoke and frosted media took no
+            // light from any lamp, only from the environment.
             if v.diffuse {
-                visibility |= ffi::VISIBLE_DIFFUSE;
+                visibility |= ffi::VISIBLE_DIFFUSE | ffi::VISIBLE_SCATTER;
             }
             if v.specular {
                 visibility |= ffi::VISIBLE_GLOSSY;

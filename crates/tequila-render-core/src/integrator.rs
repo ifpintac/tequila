@@ -1009,7 +1009,19 @@ pub fn trace_path_with_caustics(
         // out of geometry that does not close, and attenuating it over the
         // distance to the environment would turn every open-sided glass part
         // black rather than admit the mesh is not a solid.
-        if let Some(volume) = media.top(None).and_then(|m| m.volume.as_ref()) {
+        if let Some((volume, ior)) = media.top(None).and_then(|m| m.volume.as_ref().map(|v| (v, m.ior))) {
+            // What the medium itself gives off along the way, a lit light
+            // guide's glow, before what it absorbs of the rest. Times the
+            // square of its index: refraction here divides light born inside
+            // by it on the way out, as light physically is, and Cycles and
+            // Blender's refraction do not, so without it a glowing part was
+            // twice as dim here as in a render through Cycles.
+            let glow = volume.emitted_over(hit.t) * (ior * ior).max(1.0);
+            if !glow.is_black() {
+                let emitted = throughput * glow;
+                radiance += emitted;
+                aovs.contribute(emitted, crate::lpe::EMISSIVE);
+            }
             throughput *= volume.transmittance_over(hit.t);
             if !throughput.is_finite() || throughput.is_black() {
                 break;

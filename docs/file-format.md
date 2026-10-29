@@ -427,6 +427,10 @@ is spelled exactly as the parameter is named there.
 | `flake_spread` | number | How far flakes may lean, 0 (flat) to 1 (sixty degrees). |
 | `flake_roughness` | number | Roughness of each flake's surface, 0 to 1. |
 | `displacement_detail` | number | Edge length, in scene units, the surface is subdivided to before the graph's Displacement height moves it. 0 is bump-only. |
+| `edge_radius` | number | Rounded edges at render time, a radius in metres (V-Ray's rounded corners, Cycles' Bevel); 0 is sharp. Cycles renders; Tequila's renderer leaves edges sharp. |
+| `edge_samples` | number | Probes the rounding takes per shading point, 1 to 32 (default 8). |
+| `volume_emission_color` | number[3] | The colour the medium inside glows with: a lit light guide or LED window, glowing from within. Needs a transmission depth. |
+| `volume_emission_strength` | number | How strongly, as radiance per metre travelled (Cycles' volume emission); 0 is no glow. |
 
 **Emission and geometry**
 

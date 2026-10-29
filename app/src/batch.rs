@@ -1457,6 +1457,181 @@ mod tests {
         }
     }
 
+    /// Rounded edges catch light a sharp edge cannot: a 2 cm white cube lit
+    /// from in front and above, at 45 degrees, in a black studio. Its top and
+    /// front faces see the lamp at 45 degrees; an edge rounded to 2 mm turns
+    /// squarely to it and is the brightest thing in the picture, where the
+    /// sharp edge has nothing brighter than the faces. Cycles, where it is
+    /// installed. (A lamp behind a face's plane lights it through no rounding:
+    /// Cycles takes no light from below a surface's true face.)
+    #[test]
+    fn rounded_edges_catch_light_in_cycles() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
+        use tequila_render_core::scene::Mesh;
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        // A closed cube a centimetre either side of its centre, flat-shaded.
+        let cube = {
+            let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+            for axis in 0..3 {
+                for sign in [-1.0f32, 1.0] {
+                    let n = [Vec3::X, Vec3::Y, Vec3::Z][axis] * sign;
+                    let (u, v) = match axis {
+                        0 => (Vec3::Y, Vec3::Z),
+                        1 => (Vec3::Z, Vec3::X),
+                        _ => (Vec3::X, Vec3::Y),
+                    };
+                    let (u, v) = if sign > 0.0 { (u, v) } else { (v, u) };
+                    let base = positions.len() as u32;
+                    for (a, b) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                        positions.push((n + u * a + v * b) * 0.01);
+                        normals.push(n);
+                    }
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            Mesh::new(positions, indices).with_normals(normals)
+        };
+        let lit = |radius: f32| -> f64 {
+            let directory = scratch(&format!("tequila-bevel-{radius}"));
+            let renderer = BatchRenderer::new();
+            let mut render = job(
+                1,
+                &directory,
+                RenderSettings { engine: RenderEngine::CyclesCpu, width: 96, height: 72, max_samples: 64, denoise: false, ..Default::default() },
+            );
+            let above = Light::new(LightKind::Point(PointLight { position: vec3(0.0, 0.02 + 0.2, 0.01 + 0.2), intensity: Spectrum::splat(0.06), radius: 0.0 }));
+            let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(vec![above])));
+            scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+            scene.background = Background::Environment;
+            scene.meshes[0] = Arc::new(cube.clone());
+            scene.instances[0].transform = tequila_core::math::Transform::translation(vec3(0.0, 0.01, 0.0));
+            scene.instances.truncate(1);
+            let m = &mut scene.materials[0];
+            m.base_color = Spectrum::splat(0.8);
+            m.specular_weight = 0.0;
+            m.coat_weight = 0.0;
+            m.edge_radius = radius;
+            scene.programs.clear();
+            render.scene = Arc::new(scene);
+            render.camera = Camera::look_at(vec3(0.0, 0.035, 0.06), vec3(0.0, 0.008, 0.0), Vec3::Y);
+            renderer.submit(render);
+            match wait_for_finish(&renderer) {
+                // The brightest twenty pixels, on average: the edge band
+                // when there is one, the faces otherwise.
+                BatchEvent::Finished { preview, .. } => {
+                    let mut levels: Vec<u32> = preview.chunks_exact(4).map(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])).collect();
+                    levels.sort_unstable_by(|a, b| b.cmp(a));
+                    levels[..20].iter().map(|&l| f64::from(l)).sum::<f64>() / 20.0
+                }
+                BatchEvent::Failed { message, .. } => panic!("{message}"),
+                _ => unreachable!(),
+            }
+        };
+        let (sharp, rounded) = (lit(0.0), lit(0.002));
+        assert!(sharp > 60.0, "the faces should be lit: {sharp:.1}");
+        assert!(sharp < 600.0, "the faces should not clip: {sharp:.1}");
+        assert!(rounded > sharp * 1.12, "rounded edges brightest at {rounded:.1}, sharp ones' brightest {sharp:.1}");
+    }
+
+    /// The demo sphere as a clear medium, `inside` it, in a black studio lit
+    /// by `lamps`, through `engine`: the picture's mean, 8-bit, summed over
+    /// its channels.
+    fn medium(engine: tequila_scene::render::RenderEngine, name: &str, lamps: Vec<tequila_render_core::light::Light>, inside: impl Fn(&mut tequila_materials::openpbr::Material)) -> f64 {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::LightSet;
+        let directory = scratch(&format!("tequila-medium-{name}-{}", engine.key()));
+        let renderer = BatchRenderer::new();
+        let mut render = job(1, &directory, RenderSettings { engine, width: 64, height: 48, max_samples: 96, denoise: false, ..Default::default() });
+        let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(lamps)));
+        scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+        scene.background = Background::Environment;
+        scene.instances.truncate(1);
+        let m = &mut scene.materials[0];
+        m.base_color = Spectrum::splat(0.96);
+        m.base_metalness = 0.0;
+        m.coat_weight = 0.0;
+        m.specular_roughness = 0.3;
+        m.specular_ior = 1.49;
+        m.transmission_weight = 1.0;
+        inside(m);
+        scene.programs.clear();
+        render.scene = Arc::new(scene);
+        render.config = IntegratorConfig { max_transmission_bounces: 12, ..IntegratorConfig::product() };
+        renderer.submit(render);
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { preview, .. } => {
+                preview.chunks_exact(4).map(|c| f64::from(c[0]) + f64::from(c[1]) + f64::from(c[2])).sum::<f64>() / (preview.len() / 4) as f64
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A medium that glows from within lights itself in a black studio with
+    /// no lamp - a lit light guide - and as much in Cycles as in Tequila's
+    /// renderer; without the glow it is dark.
+    #[test]
+    fn a_glowing_medium_glows_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        let mut glowing = Vec::new();
+        for engine in engines {
+            let absorbing = |m: &mut tequila_materials::openpbr::Material| {
+                // Blender's Volume Absorption 0.9 at density 600: 60 a metre.
+                m.transmission_color = Spectrum::splat(0.9);
+                m.transmission_depth = -(0.9f32.ln()) / 60.0;
+            };
+            let dark = medium(engine, "dark", Vec::new(), absorbing);
+            let lit = medium(engine, "glow", Vec::new(), |m| {
+                absorbing(m);
+                m.volume_emission_color = Spectrum::splat(1.0);
+                m.volume_emission_strength = 20.0;
+            });
+            assert!(dark < 1.0, "{engine:?}: dark without its glow, {dark:.2}");
+            assert!(lit > dark + 20.0, "{engine:?}: the glow lit {lit:.2}");
+            glowing.push(lit);
+        }
+        if let [tequila, cycles] = glowing[..] {
+            assert!((cycles / tequila - 1.0).abs() < 0.25, "Tequila's glow {tequila:.2}, Cycles' {cycles:.2}");
+        }
+    }
+
+    /// A lamp lights a scattering medium in Cycles as in Tequila's renderer:
+    /// a milky sphere under a lamp in a black studio. Cycles' lamps never
+    /// lit volume scattering, and the sphere was dark there.
+    #[test]
+    fn a_lamp_lights_a_scattering_medium_in_cycles() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::light::{Light, LightKind, PointLight};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let lamp = || vec![Light::new(LightKind::Point(PointLight { position: vec3(1.0, 2.0, 2.0), intensity: Spectrum::splat(40.0), radius: 0.1 }))];
+        let milky = |m: &mut tequila_materials::openpbr::Material| {
+            m.transmission_color = Spectrum::splat(0.95);
+            m.transmission_depth = 0.2;
+            m.transmission_scatter = Spectrum::splat(0.8);
+        };
+        let tequila = medium(RenderEngine::Tequila, "milk", lamp(), milky);
+        let cycles = medium(RenderEngine::CyclesCpu, "milk", lamp(), milky);
+        assert!(tequila > 5.0, "the lamp lit Tequila's milky sphere by only {tequila:.2}");
+        assert!(cycles > 0.5 * tequila, "the lamp lit Cycles' milky sphere {cycles:.2} against Tequila's {tequila:.2}");
+    }
+
     /// The mean of each channel of the demo scene with a black sphere on a
     /// catcher floor set up as `catcher`, under a grey sky and a lamp off to
     /// the side casting a shadow or not, through `engine`.
