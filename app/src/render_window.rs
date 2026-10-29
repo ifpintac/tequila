@@ -1854,7 +1854,7 @@ pub fn image_format(settings: &RenderSettings) -> ImageFormat {
         BitDepth::ThirtyTwo => tequila_format::psd::Depth::ThirtyTwo,
     };
     match settings.format {
-        OutputFormat::Png => ImageFormat::Png,
+        OutputFormat::Png => ImageFormat::Png(depth),
         OutputFormat::Jpeg => ImageFormat::Jpeg(settings.jpeg_quality),
         OutputFormat::Tiff => ImageFormat::Tiff(depth),
         OutputFormat::Psd => ImageFormat::Psd(depth),
@@ -1919,7 +1919,7 @@ mod tests {
             depth: BitDepth::ThirtyTwo,
             ..Default::default()
         };
-        assert!(matches!(image_format(&settings), ImageFormat::Png));
+        assert!(matches!(image_format(&settings), ImageFormat::Png(tequila_format::psd::Depth::Eight)));
 
         let exr = RenderSettings {
             format: OutputFormat::Exr,

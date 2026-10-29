@@ -738,6 +738,27 @@ impl ImageStyle {
             return out;
         }
 
+        let encoded = self.encoded(width, height, scene_linear, display);
+        let mut out = vec![255u8; count * 4];
+        out.par_chunks_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let source = &encoded[y * width..(y + 1) * width];
+                for (x, (pixel, v)) in row.chunks_exact_mut(4).zip(source).enumerate() {
+                    let threshold = dither_threshold(x, y);
+                    pixel[0] = quantize_dithered(v.x, threshold);
+                    pixel[1] = quantize_dithered(v.y, threshold);
+                    pixel[2] = quantize_dithered(v.z, threshold);
+                }
+            });
+        out
+    }
+
+    /// The general path of [`develop_through`](Self::develop_through) up to
+    /// the quantisation: graded, the spatial effects, display-encoded and
+    /// sharpened, as floats.
+    fn encoded(&self, width: usize, height: usize, scene_linear: &[Spectrum], display: &DisplayPipeline) -> Vec<Vec3> {
+        let count = width * height;
         let exposure_scale = f32::exp2(self.exposure);
         let mut graded: Vec<Spectrum> = Vec::with_capacity(count);
         scene_linear[..count]
@@ -780,18 +801,33 @@ impl ImageStyle {
             encoded = self.unsharp_mask(width, height, &encoded);
         }
 
-        let mut out = vec![255u8; count * 4];
-        out.par_chunks_mut(width * 4)
-            .enumerate()
-            .for_each(|(y, row)| {
-                let source = &encoded[y * width..(y + 1) * width];
-                for (x, (pixel, v)) in row.chunks_exact_mut(4).zip(source).enumerate() {
-                    let threshold = dither_threshold(x, y);
-                    pixel[0] = quantize_dithered(v.x, threshold);
-                    pixel[1] = quantize_dithered(v.y, threshold);
-                    pixel[2] = quantize_dithered(v.z, threshold);
-                }
-            });
+        encoded
+    }
+
+    /// [`develop_through`](Self::develop_through) at sixteen bits a channel,
+    /// for a 16-bit PNG or TIFF: the same grade, spatial effects and display
+    /// transform, quantised to 0-65535. No dither: at sixteen bits a step is
+    /// far below what banding needs. RGB, row-major from the top-left.
+    pub fn develop_through_wide(
+        &self,
+        width: usize,
+        height: usize,
+        scene_linear: &[Spectrum],
+        display: &DisplayPipeline,
+    ) -> Vec<u16> {
+        let count = width * height;
+        assert!(
+            scene_linear.len() >= count,
+            "develop: {} pixels for a {width}x{height} image",
+            scene_linear.len()
+        );
+        let encoded = self.encoded(width, height, scene_linear, display);
+        let mut out = vec![0u16; count * 3];
+        out.par_chunks_mut(3).zip(encoded.par_iter()).for_each(|(pixel, v)| {
+            for (channel, value) in pixel.iter_mut().zip([v.x, v.y, v.z]) {
+                *channel = (value.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+            }
+        });
         out
     }
 
@@ -1574,6 +1610,32 @@ mod tests {
                     difference.abs() <= 1,
                     "pixel {i} channel {channel}: {got:?} against {want:?}"
                 );
+            }
+        }
+    }
+
+    /// Sixteen bits is the same picture as eight, finer: the grade, the
+    /// spatial effects and the display transform all agree, with bloom and
+    /// a vignette on as with them off.
+    #[test]
+    fn sixteen_bits_develop_the_same_picture() {
+        let image: Vec<Spectrum> = (0..256)
+            .map(|i| Spectrum { r: (i % 16) as f32 * 0.2, g: 0.4, b: 8.0 / (i as f32 + 1.0) })
+            .collect();
+        let display = DisplayPipeline::Builtin(DisplayTransform::AgX);
+        let plain = ImageStyle { exposure: 0.3, contrast: 1.1, ..photographic() };
+        let effects = ImageStyle { bloom: 0.4, vignette: 0.5, sharpening: 0.3, ..plain };
+        for style in [plain, effects] {
+            let narrow = style.develop_through(16, 16, &image, &display);
+            let wide = style.develop_through_wide(16, 16, &image, &display);
+            assert_eq!(wide.len(), 16 * 16 * 3);
+            for i in 0..16 * 16 {
+                for channel in 0..3 {
+                    let eight = narrow[i * 4 + channel] as f32 / 255.0;
+                    let sixteen = wide[i * 3 + channel] as f32 / 65535.0;
+                    // Within a step of eight bits: the dither may round either way.
+                    assert!((eight - sixteen).abs() <= 1.01 / 255.0, "pixel {i} channel {channel}: {eight} against {sixteen}");
+                }
             }
         }
     }

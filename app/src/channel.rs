@@ -1583,7 +1583,7 @@ fn render_to_file(
     output
         .write(
             std::path::Path::new(path),
-            tequila_format::output::ImageFormat::Png,
+            tequila_format::output::ImageFormat::Png(tequila_format::psd::Depth::Eight),
         )
         .map_err(|e| e.to_string())?;
 

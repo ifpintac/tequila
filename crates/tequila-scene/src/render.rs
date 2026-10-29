@@ -92,7 +92,8 @@ impl OutputFormat {
     /// that cannot be written.
     pub fn depths(self) -> &'static [BitDepth] {
         match self {
-            OutputFormat::Png | OutputFormat::Jpeg => &[BitDepth::Eight],
+            OutputFormat::Png => &[BitDepth::Eight, BitDepth::Sixteen],
+            OutputFormat::Jpeg => &[BitDepth::Eight],
             OutputFormat::Exr => &[BitDepth::Sixteen, BitDepth::ThirtyTwo],
             OutputFormat::Tiff | OutputFormat::Psd => &BitDepth::ALL,
         }
