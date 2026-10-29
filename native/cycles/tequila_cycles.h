@@ -162,6 +162,13 @@ FSC_API FscNode fsc_light(FscSession *session,
 /* A perspective camera. matrix12 is camera to world with the camera looking
  * along +Z, +Y up (Cycles' convention). fov is the full angle in radians
  * across the image's shorter side. */
+/* Light linking: `membership` the receiver sets `node` (an object, or a
+ * light) lights as an emitter, a bit each; `receiver_set` the set it takes
+ * its light from as a receiver, 0 for every light's. */
+FSC_API int fsc_light_linking(FscSession *session,
+                              FscNode node,
+                              unsigned long long membership,
+                              unsigned receiver_set);
 FSC_API void fsc_camera(FscSession *session,
                         const float *matrix12,
                         float fov,

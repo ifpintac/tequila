@@ -1428,6 +1428,14 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     if let Some(photometry) = &settings.photometry {
         object.set("photometry", photometry.path.clone());
     }
+    if let Some(links) = &settings.links {
+        let mut linking = Object::new();
+        linking
+            .set("exclude", links.exclude)
+            .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
+            .set("product", links.product);
+        object.set("links", linking.build());
+    }
     object.build()
 }
 
@@ -1474,6 +1482,14 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
         .unwrap_or(0)
         .min(255) as u8;
     settings.enabled = flag("enabled", true);
+    settings.links = value.get("links").map(|links| tequila_scene::lighting::LightLinking {
+        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
+        nodes: links
+            .get("nodes")
+            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
+            .unwrap_or_default(),
+        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
+    });
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -3161,5 +3177,26 @@ mod hex_colour_tests {
         let red = choices[0].swatch.expect("a hex swatch");
         assert!((red[0] - 1.0).abs() < 1e-3 && red[1].abs() < 1e-3 && red[2].abs() < 1e-3, "{red:?}");
         assert_eq!(choices[1].swatch, Some([0.2, 0.2, 0.2]));
+    }
+}
+
+#[cfg(test)]
+mod light_link_tests {
+    use super::*;
+    use tequila_scene::lighting::LightLinking;
+
+    /// A light's linking is kept in the file, and a light without one
+    /// writes nothing new: a file from before reads as it was.
+    #[test]
+    fn a_lights_links_survive_a_round_trip() {
+        let linked = LightSettings {
+            links: Some(LightLinking { exclude: true, nodes: vec![tequila_scene::tree::NodeId(4), tequila_scene::tree::NodeId(9)], product: false }),
+            ..LightSettings::default()
+        };
+        assert_eq!(read_light(&light_to_json(&linked)), linked);
+        let product = LightSettings { links: Some(LightLinking { product: true, ..LightLinking::default() }), ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&product)), product);
+        let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
+        assert!(!plain.contains("links"), "{plain}");
     }
 }

@@ -120,6 +120,7 @@ api! {
     @optional {
         fsc_mesh_colors: fn(*mut Session, Node, c_int, *const f32) -> c_int;
         fsc_shader_reopen: fn(*mut Session, Node) -> c_int;
+        fsc_light_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
     }
 }
 

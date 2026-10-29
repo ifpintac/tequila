@@ -185,6 +185,23 @@ pub struct LightSettings {
     pub visibility: Visibility,
     pub layer: u8,
     pub enabled: bool,
+    /// The parts it is kept to (light linking); `None` lights everything.
+    pub links: Option<LightLinking>,
+}
+
+/// What a light is kept to (light linking): the parts it lights, or the
+/// parts it leaves out. A group stands for everything under it, and what
+/// a light does not light it does not shadow either.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LightLinking {
+    /// Leave these out, rather than light only these.
+    pub exclude: bool,
+    /// Parts and groups, by node.
+    pub nodes: Vec<crate::tree::NodeId>,
+    /// The product - everything in the scene but its lights - counts among
+    /// them. What a studio preset can say, since it cannot name a
+    /// product's parts.
+    pub product: bool,
 }
 
 impl Default for LightSettings {
@@ -203,6 +220,7 @@ impl Default for LightSettings {
             visibility: Visibility::default(),
             layer: 0,
             enabled: true,
+            links: None,
         }
     }
 }

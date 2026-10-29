@@ -612,6 +612,33 @@ pub enum LightKind {
     Ies(IesLight),
 }
 
+/// Which instances a light lights (light linking): all of them, or only
+/// some - a highlight strip for a product's edge that leaves the backdrop
+/// and the floor alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LightLinks {
+    #[default]
+    All,
+    /// Only these instances, by index, sorted.
+    Only(std::sync::Arc<[u32]>),
+    /// Every instance but these, by index, sorted.
+    AllBut(std::sync::Arc<[u32]>),
+}
+
+impl LightLinks {
+    pub fn lights(&self, instance: u32) -> bool {
+        match self {
+            LightLinks::All => true,
+            LightLinks::Only(these) => these.binary_search(&instance).is_ok(),
+            LightLinks::AllBut(these) => these.binary_search(&instance).is_err(),
+        }
+    }
+
+    pub fn is_all(&self) -> bool {
+        *self == LightLinks::All
+    }
+}
+
 /// A light in the scene, with the flags every light carries (§5.1).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Light {
@@ -620,6 +647,9 @@ pub struct Light {
     /// §5.5's light layers, for rendering a scene's lights as separate passes.
     pub layer: u8,
     pub enabled: bool,
+    /// The instances it lights, and shadows: a light that does not light the
+    /// floor casts no shadow on it.
+    pub links: LightLinks,
 }
 
 impl Light {
@@ -629,6 +659,7 @@ impl Light {
             visibility: Visibility::default(),
             layer: 0,
             enabled: true,
+            links: LightLinks::All,
         }
     }
 

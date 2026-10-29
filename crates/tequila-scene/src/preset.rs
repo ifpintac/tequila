@@ -374,6 +374,25 @@ pub fn document_materials(document: &SceneDocument, category: &str) -> Vec<Prese
         .collect()
 }
 
+/// A light's linking as a preset can keep it, without the parts of a
+/// product it will not be applied to: a light kept to some of the
+/// product's parts is kept to the product, and one leaving parts out
+/// keeps only the product it leaves out, or lights everything.
+fn portable_links(mut settings: LightSettings) -> LightSettings {
+    if let Some(links) = &mut settings.links {
+        if !links.nodes.is_empty() {
+            links.nodes.clear();
+            if !links.exclude {
+                links.product = true;
+            }
+        }
+        if links.exclude && !links.product {
+            settings.links = None;
+        }
+    }
+    settings
+}
+
 /// A Studio preset made from `document` as it is: everything but the
 /// product, framed for its product. Materials and rules are the caller's
 /// to add.
@@ -387,7 +406,7 @@ pub fn capture(document: &SceneDocument, id: &str, name: &str, family: &str, siz
         .filter_map(|node| match &node.kind {
             crate::tree::NodeKind::Light { settings } => Some(PresetLight {
                 name: node.name.clone(),
-                settings: (**settings).clone(),
+                settings: portable_links((**settings).clone()),
                 transform: document.placements().world(node.id).matrix,
             }),
             _ => None,
@@ -449,6 +468,20 @@ mod tests {
         assert!((Front::PlusX.yaw() + std::f32::consts::FRAC_PI_2).abs() < 1e-6);
         let turned = Mat4::rotation(Vec3::Y, Front::PlusX.yaw()).transform_vector(Vec3::X);
         assert!((turned - Vec3::Z).length() < 1e-5, "+X faces +Z once turned: {turned:?}");
+    }
+
+    /// A preset keeps a light's linking without the parts of the product
+    /// it came from: kept to some parts, it is kept to the product; leaving
+    /// parts out but not the product, it lights everything.
+    #[test]
+    fn a_presets_lights_keep_links_a_product_can_take() {
+        use crate::lighting::LightLinking;
+        let with = |links: LightLinking| portable_links(LightSettings { links: Some(links), ..LightSettings::default() }).links;
+        let part = crate::tree::NodeId(7);
+        assert_eq!(with(LightLinking { nodes: vec![part], ..LightLinking::default() }), Some(LightLinking { product: true, ..LightLinking::default() }));
+        assert_eq!(with(LightLinking { nodes: vec![part], exclude: true, ..LightLinking::default() }), None);
+        let product_only = LightLinking { product: true, ..LightLinking::default() };
+        assert_eq!(with(product_only.clone()), Some(product_only));
     }
 
     /// Of three sizes, the one framed nearest a product's size by ratio.

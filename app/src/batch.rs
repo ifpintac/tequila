@@ -2616,6 +2616,50 @@ mod tests {
         }
     }
 
+    /// A light kept to some parts lights those and no others, in both
+    /// renderers alike: with nothing else lighting the scene, a lamp kept to
+    /// one of two spheres and the same lamp kept to the other add up to the
+    /// lamp lighting both, each less than that, and Cycles agrees. Skipped
+    /// where Cycles is not installed or predates light linking.
+    #[test]
+    fn a_linked_light_lights_only_its_parts() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Environment;
+        use tequila_render_core::light::{Light, LightKind, LightLinks, LightSet, PointLight};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let lit = |links: LightLinks| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                // Side by side across the view: the camera's right is
+                // (3, 0, -2) normalized.
+                let right = vec3(3.0, 0.0, -2.0).normalize() * 0.65;
+                let mut second = scene.instances[0].clone();
+                second.id = tequila_core::ids::InstanceId(1);
+                second.transform = tequila_core::math::Transform::translation(right) * second.transform;
+                scene.instances[0].transform = tequila_core::math::Transform::translation(-right) * scene.instances[0].transform;
+                scene.instances.push(second);
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                let mut lamp = Light::new(LightKind::Point(PointLight { position: vec3(0.5, 3.0, 2.5), intensity: Spectrum::splat(6.0), radius: 0.05 }));
+                lamp.links = links.clone();
+                *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![lamp])));
+            }
+        };
+        let total = |image: &[u8]| image.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>();
+        let shots = [
+            both_engines("linked-all", lit(LightLinks::All)),
+            both_engines("linked-first", lit(LightLinks::Only(Arc::from([0u32])))),
+            both_engines("linked-second", lit(LightLinks::AllBut(Arc::from([0u32])))),
+        ];
+        for (engine, name) in [(0, "Tequila's renderer"), (1, "Cycles")] {
+            let [all, first, second] = [&shots[0], &shots[1], &shots[2]].map(|s| total(&s[engine]));
+            assert!(first < 0.9 * all && second < 0.9 * all, "{name}: a linked lamp lit both spheres ({first:.0}, {second:.0} of {all:.0})");
+            assert!(first > 0.05 * all && second > 0.05 * all, "{name}: a linked lamp lit nothing ({first:.0}, {second:.0} of {all:.0})");
+            assert!((first + second - all).abs() < 0.12 * all, "{name}: the two halves come to {:.0}, not {all:.0}", first + second);
+        }
+    }
+
     /// A flat label kept to one side prints on the faces looking that way and
     /// not on those behind, in both renderers alike: projected straight
     /// through a sphere along each axis in turn, where the camera looks it

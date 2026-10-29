@@ -1783,7 +1783,8 @@ fn shadow_at(
     };
     let mut total = sky;
     for (bound, light) in bounds.iter_mut().zip(lights) {
-        *bound = light.irradiance_bound(hit.position, normal);
+        // A light kept off the floor neither lights it nor shadows it.
+        *bound = if light.links.lights(hit.instance.0) { light.irradiance_bound(hit.position, normal) } else { 0.0 };
         total += *bound;
     }
     // Negated, so that a NaN bound is refused too.
@@ -2196,7 +2197,7 @@ fn medium_direct_light(
         // By power, not by the light tree: a point in a medium has no normal
         // for the tree to cull lights behind.
         let chosen = scene.lights.select(sampler.light_select());
-        if let Some((light, p_select)) = chosen.and_then(|(id, p)| Some((scene.lights.get(id)?, p))) {
+        if let Some((light, p_select)) = chosen.and_then(|(id, p)| Some((scene.lights.get(id)?, p))).filter(|(light, _)| light.links.lights(instance.0)) {
             if let Some(sample) = light.sample(at, sampler.light_sample()) {
                 if light.visibility.diffuse && !sample.radiance.is_black() && (sample.is_delta || sample.pdf > 0.0) {
                     let density = if sample.is_delta { p_select } else { sample.pdf * p_select };
@@ -2460,6 +2461,10 @@ fn sample_analytic_lights(
     let Some(light) = scene.lights.get(id) else {
         return (Spectrum::ZERO, 0);
     };
+    // Light linking: a light kept to other parts lights nothing here.
+    if !light.links.lights(hit.instance.0) {
+        return (Spectrum::ZERO, 0);
+    }
 
     // A dimension of its own, not the leftovers of the selection. Trying to
     // recover a variate from the coordinate the alias table consumed piles

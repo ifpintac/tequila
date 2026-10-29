@@ -395,6 +395,58 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             light.layer = layer;
         });
 
+    // ---- Light linking -----------------------------------------------------
+    crate::field::Fold::new("Light linking")
+        .id_salt("light-linking")
+        .default_open(light.links.is_some())
+        .show(ui, |ui| {
+            use tequila_scene::lighting::LightLinking;
+            let mut mode = match &light.links {
+                None => 0u8,
+                Some(links) if links.exclude => 2,
+                Some(_) => 1,
+            };
+            if crate::theme::segmented(ui, &mut mode, &[(0, "Everything"), (1, "Only"), (2, "All but")]) {
+                light.links = match mode {
+                    0 => None,
+                    _ => Some(LightLinking {
+                        exclude: mode == 2,
+                        ..light.links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
+                    }),
+                };
+            }
+            let Some(links) = &mut light.links else {
+                ui.label(egui::RichText::new("Lights every part, and shadows them all.").small().color(crate::theme::dim()));
+                return;
+            };
+            ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
+                .on_hover_text("Everything in the scene but its lights. What a studio preset keeps, since it cannot name a product's parts.");
+            let document = project.document();
+            let roots = tequila_scene::studio::product_roots(document);
+            if !links.product {
+                for &root in &roots {
+                    let name = document.tree.get(root).map(|n| n.name.clone()).unwrap_or_default();
+                    let mut on = links.nodes.contains(&root);
+                    if ui.add(crate::field::Checkbox::new(&mut on, name)).changed() {
+                        if on {
+                            links.nodes.push(root);
+                        } else {
+                            links.nodes.retain(|&n| n != root);
+                        }
+                    }
+                }
+            }
+            let deeper = links.nodes.iter().filter(|n| !roots.contains(n)).count();
+            if deeper > 0 {
+                ui.label(egui::RichText::new(format!("and {deeper} parts set by a script")).small().color(crate::theme::dim()));
+            }
+            ui.label(
+                egui::RichText::new("What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.")
+                    .small()
+                    .color(crate::theme::dim()),
+            );
+        });
+
     if light != before {
         let _ = project.apply(Command::SetLight {
             node,

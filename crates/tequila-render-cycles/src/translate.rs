@@ -3332,7 +3332,8 @@ impl Builder<'_> {
             [x.x, y.x, z.x, p.x, x.y, y.y, z.y, p.y, x.z, y.z, z.z, p.z]
         };
 
-        for light in lights {
+        let mut made = Vec::new();
+        for (index, light) in lights.iter().enumerate() {
             if !light.enabled {
                 continue;
             }
@@ -3361,6 +3362,7 @@ impl Builder<'_> {
                     let s = rgb(point.intensity);
                     self.session.set_float3(node, "strength", [s[0] * four_pi, s[1] * four_pi, s[2] * four_pi])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
                 LightKind::Spot(spot) => {
                     let node = self.session.light("spot", shader, &aimed(spot.position, spot.direction), visibility)?;
@@ -3370,6 +3372,7 @@ impl Builder<'_> {
                     let s = rgb(spot.intensity);
                     self.session.set_float3(node, "strength", [s[0] * four_pi, s[1] * four_pi, s[2] * four_pi])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
                 LightKind::Area(area) => {
                     // Tequila's area light faces cross(u, v); Cycles' its -Z.
@@ -3405,6 +3408,7 @@ impl Builder<'_> {
                         let s = rgb(area.radiance);
                         self.session.set_float3(node, "strength", [s[0] * k, s[1] * k, s[2] * k])?;
                         self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                     }
                 }
                 LightKind::Ies(ies) => {
@@ -3428,8 +3432,67 @@ impl Builder<'_> {
                     let s = rgb(ies.intensity);
                     self.session.set_float3(node, "strength", [s[0] * 177.83, s[1] * 177.83, s[2] * 177.83])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
             }
+        }
+        self.link_lights(&made)
+    }
+
+    /// Light linking (`LightLinks`), as Cycles keeps it: each part receives
+    /// from the set made of the linked lights that light it, and each
+    /// linked light is a member of the sets it lights. Set 0 is the parts
+    /// every linked light lights; Cycles has 64.
+    fn link_lights(&mut self, made: &[(usize, Node)]) -> Result<(), String> {
+        let scene = self.scene;
+        let lights = scene.lights.lights();
+        let linked: Vec<usize> = (0..lights.len()).filter(|&i| !lights[i].links.is_all()).take(64).collect();
+        if linked.is_empty() {
+            return Ok(());
+        }
+        if !self.session.has_light_linking() {
+            self.out.warn("light linking needs a newer Cycles library: here every light lights everything");
+            return Ok(());
+        }
+        let every = if linked.len() == 64 { u64::MAX } else { (1u64 << linked.len()) - 1 };
+        let mut sets: Vec<u64> = Vec::new();
+        let mut receivers = Vec::new();
+        for (instance, object) in self.out.objects.iter().enumerate() {
+            let Some(object) = *object else { continue };
+            let mut pattern = 0u64;
+            for (bit, &light) in linked.iter().enumerate() {
+                if lights[light].links.lights(instance as u32) {
+                    pattern |= 1 << bit;
+                }
+            }
+            if pattern == every {
+                continue;
+            }
+            let set = match sets.iter().position(|&p| p == pattern) {
+                Some(i) => i + 1,
+                None if sets.len() < 63 => {
+                    sets.push(pattern);
+                    sets.len()
+                }
+                None => continue,
+            };
+            receivers.push((object, set as u32));
+        }
+        if sets.len() == 63 {
+            self.out.warn("more than 63 different light links: some parts are lit by every light");
+        }
+        for (object, set) in receivers {
+            self.session.light_linking(object, u64::MAX, set)?;
+        }
+        for &(index, node) in made {
+            let Some(bit) = linked.iter().position(|&l| l == index) else { continue };
+            let mut membership = 1u64;
+            for (set, &pattern) in sets.iter().enumerate() {
+                if pattern & (1 << bit) != 0 {
+                    membership |= 1 << (set + 1);
+                }
+            }
+            self.session.light_linking(node, membership, 0)?;
         }
         Ok(())
     }

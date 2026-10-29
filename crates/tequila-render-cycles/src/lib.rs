@@ -351,6 +351,21 @@ impl Session {
         self.check(unsafe { send(self.raw, mesh.0, rgba.len() as c_int, rgba.as_ptr().cast()) })
     }
 
+    /// Whether this library sets Cycles' light linking.
+    pub fn has_light_linking(&self) -> bool {
+        self.api.fsc_light_linking.is_some()
+    }
+
+    /// An object's - or a light's - light linking: the receiver sets it
+    /// lights as an emitter (`membership`, a bit each), and the set it
+    /// takes its light from as a receiver (0 is every light's).
+    pub fn light_linking(&mut self, node: Node, membership: u64, receiver_set: u32) -> Result<(), String> {
+        let Some(link) = self.api.fsc_light_linking else {
+            return Err("this Cycles library predates light linking".into());
+        };
+        self.check(unsafe { link(self.raw, node.0, membership, receiver_set) })
+    }
+
     pub fn object(&mut self, mesh: Node, matrix: &[f32; 12], visibility: u32, shadow_catcher: bool) -> Result<Node, String> {
         let node = unsafe { (self.api.fsc_object)(self.raw, mesh.0, matrix.as_ptr(), visibility, shadow_catcher as c_int) };
         self.node_or_error(node)
