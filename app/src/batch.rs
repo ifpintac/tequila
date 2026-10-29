@@ -2348,13 +2348,15 @@ mod tests {
     /// As [`both_engines`], the whole scene and the camera with it `scale`
     /// times the size: the same picture of a smaller or larger world.
     fn both_engines_scaled(name: &str, scale: f32, change: impl Fn(&mut tequila_render_core::scene::SceneSnapshot)) -> [Vec<u8>; 2] {
-        both_engines_lit(name, scale, Lit { config: IntegratorConfig::product(), reject_fireflies: true }, change)
+        both_engines_lit(name, scale, Lit { config: IntegratorConfig::product(), reject_fireflies: true, camera: None }, change)
     }
 
-    /// The lighting [`both_engines_lit`] renders under.
+    /// The lighting [`both_engines_lit`] renders under, and the camera it
+    /// looks through when not the test job's.
     struct Lit {
         config: IntegratorConfig,
         reject_fireflies: bool,
+        camera: Option<tequila_render_core::camera::Camera>,
     }
 
     /// As [`both_engines_scaled`], under `lit`'s lighting.
@@ -2382,6 +2384,9 @@ mod tests {
                     instance.transform = resize * instance.transform;
                 }
                 render.camera = tequila_render_core::camera::Camera::look_at(vec3(2.0, 1.5, 3.0) * scale, vec3(0.0, 0.5, 0.0) * scale, Vec3::Y);
+            }
+            if let Some(camera) = lit.camera {
+                render.camera = camera;
             }
             render.scene = Arc::new(scene);
             // The everyday preset, not the test job's quick one: light
@@ -2889,7 +2894,7 @@ mod tests {
         // Without firefly rejection: Tequila's renderer finds a glow only by
         // the bounces that happen to meet it, which rejection takes for
         // fireflies and clips, where Cycles samples it as a light.
-        let lighting = |light_source_materials: bool| Lit { config: IntegratorConfig { light_source_materials, ..IntegratorConfig::product() }, reject_fireflies: false };
+        let lighting = |light_source_materials: bool| Lit { config: IntegratorConfig { light_source_materials, ..IntegratorConfig::product() }, reject_fireflies: false, camera: None };
         let on = both_engines_lit("light-materials-on", 1.0, lighting(true), beside);
         let off = both_engines_lit("light-materials-off", 1.0, lighting(false), beside);
         let (on_lit, off_lit) = (on.clone().map(|i| lit(&i)), off.clone().map(|i| lit(&i)));
@@ -2981,6 +2986,92 @@ mod tests {
             assert!((cycles / tequila - 1.0).abs() < 0.1, "the {name} softbox lit {cycles:.0} in Cycles, {tequila:.0} in Tequila's renderer");
         }
         assert!(gridded[0] > 1.2 * plain[0] && gridded[1] > 1.2 * plain[1], "a grid gathered no light into its beam: {plain:?} to {gridded:?}");
+    }
+
+    /// Orthographic, shifted and panoramic cameras frame the sphere in Cycles
+    /// where Tequila's renderer does: the box round its lit pixels is the
+    /// same in both, within a pixel or two, through each. Cycles rendered
+    /// every camera as plain perspective. Skipped where Cycles is not
+    /// installed.
+    #[test]
+    fn cameras_frame_alike_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::camera::{Camera, Projection};
+        use tequila_render_core::environment::Environment;
+        use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let lit = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+            scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+            let lamp = Light::new(LightKind::Point(PointLight { position: vec3(2.0, 4.0, 3.0), intensity: Spectrum::splat(30.0), radius: 0.0 }));
+            *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![lamp])));
+        };
+        // Where the lit pixels are: left, right, top, bottom.
+        let framed = |image: &[u8]| {
+            let (mut left, mut right, mut top, mut bottom) = (96usize, 0usize, 72usize, 0usize);
+            for (i, p) in image.chunks_exact(4).enumerate() {
+                if u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) > 60 {
+                    let (x, y) = (i % 96, i / 96);
+                    (left, right, top, bottom) = (left.min(x), right.max(x), top.min(y), bottom.max(y));
+                }
+            }
+            [left, right, top, bottom]
+        };
+        let looking = Camera::look_at(vec3(4.0, 2.5, 6.0), vec3(0.0, 1.0, 0.0), Vec3::Y);
+        let mut wrong = Vec::new();
+        for (name, projection) in [
+            ("orthographic", Projection::Orthographic { scale: 3.0 }),
+            ("shifted", Projection::Shift { focal_length_mm: 60.0, shift_x: 0.2, shift_y: -0.15 }),
+            ("panoramic", Projection::Equirectangular),
+        ] {
+            let camera = Camera { projection, ..looking };
+            let lit_by = Lit { config: IntegratorConfig::product(), reject_fireflies: true, camera: Some(camera) };
+            let [tequila, cycles] = both_engines_lit(&format!("camera-{name}"), 1.0, lit_by, lit);
+            let (a, b) = (framed(&tequila), framed(&cycles));
+            eprintln!("{name}: Tequila {a:?}, Cycles {b:?}");
+            assert!(a[1] > a[0] && a[3] > a[2], "{name}: Tequila's renderer shows no sphere");
+            if a.iter().zip(&b).any(|(x, y)| x.abs_diff(*y) > 2) {
+                wrong.push(format!("{name}: Tequila {a:?}, Cycles {b:?}"));
+            }
+        }
+        assert!(wrong.is_empty(), "framed differently: {wrong:#?}");
+
+        // And a panorama the right way round: a sky bright in one quarter
+        // only, and higher up than down, lands on the same columns and rows
+        // of both pictures.
+        use tequila_texture::image::{ColorSpace, Image};
+        let (w, h) = (64, 32);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let v = if x < w / 4 && y < h / 3 { 1.0 } else { 0.0 };
+                data.extend_from_slice(&[v, v, v]);
+            }
+        }
+        let sky = Arc::new(Environment::new(Arc::new(Image { width: w, height: h, channels: 3, color_space: ColorSpace::LinearSrgb, data }), 1.0));
+        let camera = Camera { projection: Projection::Equirectangular, ..looking };
+        let lit_by = Lit { config: IntegratorConfig::product(), reject_fireflies: true, camera: Some(camera) };
+        let [tequila, cycles] = both_engines_lit("camera-panorama-sky", 1.0, lit_by, move |scene| {
+            scene.instances.clear();
+            scene.environment = sky.clone();
+        });
+        // Where the light is, weighted by it, and how much of the picture is
+        // bright: a stray faint pixel moves neither.
+        let centre = |image: &[u8]| {
+            let (mut x, mut y, mut sum, mut bright) = (0.0, 0.0, 0.0, 0usize);
+            for (i, p) in image.chunks_exact(4).enumerate() {
+                let v = f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
+                (x, y, sum) = (x + v * (i % 96) as f64, y + v * (i / 96) as f64, sum + v);
+                bright += usize::from(v > 384.0);
+            }
+            (x / sum.max(1.0), y / sum.max(1.0), bright)
+        };
+        let (a, b) = (centre(&tequila), centre(&cycles));
+        eprintln!("panoramic sky: Tequila {a:?}, Cycles {b:?}");
+        assert!(a.2 > 50, "Tequila's panorama shows no sky");
+        assert!((a.0 - b.0).abs() < 1.5 && (a.1 - b.1).abs() < 1.5 && a.2.abs_diff(b.2) * 10 < a.2, "the panorama's sky is elsewhere: Tequila {a:?}, Cycles {b:?}");
     }
 
     /// A flat label kept to one side prints on the faces looking that way and

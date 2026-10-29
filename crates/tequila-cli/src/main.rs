@@ -1041,6 +1041,9 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         Some(camera) => camera,
         None => framing(options, document, aspect).0,
     };
+    // The camera's own exposure, as the application develops with it,
+    // unless --exposure says what it is.
+    let style = if options.exposure.is_some() { style } else { tequila_scene::lighting::developed_style(style, &camera) };
 
     let context = RenderContext {
         camera,

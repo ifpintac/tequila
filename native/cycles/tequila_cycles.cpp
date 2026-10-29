@@ -426,6 +426,9 @@ struct FscSession {
   ShadowTint tint;
   bool catcher_pass = false;
   std::vector<std::shared_ptr<const Pixels>> images;
+  /* A viewplane of the caller's (a shifted or orthographic camera), kept
+   * over every fit to the picture's size; none while `left >= right`. */
+  float viewplane[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
   Scene *scene()
   {
@@ -1080,6 +1083,21 @@ int fsc_shadow_linking(FscSession *s, FscNode node, unsigned long long membershi
   return 1;
 }
 
+/* The camera's viewplane for its picture's size: the caller's, or the one
+ * a plain perspective camera has. */
+static void fit_viewplane(FscSession *s, Camera *camera)
+{
+  camera->compute_auto_viewplane();
+  const float *v = s->viewplane;
+  if (v[0] < v[1] && v[2] < v[3]) {
+    camera->viewplane.left = v[0];
+    camera->viewplane.right = v[1];
+    camera->viewplane.bottom = v[2];
+    camera->viewplane.top = v[3];
+    camera->tag_modified();
+  }
+}
+
 void fsc_camera(FscSession *s, const float *m, float fov, int width, int height)
 {
   const EditLock lock(s);
@@ -1089,7 +1107,19 @@ void fsc_camera(FscSession *s, const float *m, float fov, int width, int height)
   camera->set_fov(fov);
   camera->set_full_width(width);
   camera->set_full_height(height);
-  camera->compute_auto_viewplane();
+  fit_viewplane(s, camera);
+  camera->need_flags_update = true;
+}
+
+void fsc_camera_viewplane(FscSession *s, float left, float right, float bottom, float top)
+{
+  const EditLock lock(s);
+  s->viewplane[0] = left;
+  s->viewplane[1] = right;
+  s->viewplane[2] = bottom;
+  s->viewplane[3] = top;
+  Camera *camera = s->scene()->camera;
+  fit_viewplane(s, camera);
   camera->need_flags_update = true;
 }
 
@@ -1111,7 +1141,7 @@ int fsc_render(FscSession *s, int width, int height, int samples, float *rgba,
     Camera *camera = s->scene()->camera;
     camera->set_full_width(width);
     camera->set_full_height(height);
-    camera->compute_auto_viewplane();
+    fit_viewplane(s, camera);
   }
 
   s->session_params.samples = samples;
@@ -1260,7 +1290,7 @@ void fsc_edit_end(FscSession *s, int width, int height, int samples)
     Camera *camera = s->scene()->camera;
     camera->set_full_width(width);
     camera->set_full_height(height);
-    camera->compute_auto_viewplane();
+    fit_viewplane(s, camera);
   }
   s->session_params.samples = samples;
   if (s->live) {

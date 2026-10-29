@@ -400,6 +400,16 @@ impl Session {
         unsafe { (self.api.fsc_camera)(self.raw, matrix.as_ptr(), fov, width as c_int, height as c_int) }
     }
 
+    /// The camera's viewplane, `[left, right, bottom, top]`, in place of the
+    /// one fitted to the picture; `None` for the fitted one. `false` from a
+    /// library that predates it, where every camera is fitted.
+    pub fn camera_viewplane(&mut self, viewplane: Option<[f32; 4]>) -> bool {
+        let Some(set) = self.api.fsc_camera_viewplane else { return false };
+        let [left, right, bottom, top] = viewplane.unwrap_or([0.0; 4]);
+        unsafe { set(self.raw, left, right, bottom, top) };
+        true
+    }
+
     /// The colour of a shadow catcher's shadow, in the working space: the
     /// images handed back mix towards it by how much the catcher is shadowed,
     /// where Cycles' own shadow is a darkening to black.

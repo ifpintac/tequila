@@ -1506,7 +1506,7 @@ impl eframe::App for TequilaApp {
         // about it when it changes. Sending it every frame would be harmless
         // but would lock a mutex the render thread reads, sixty times a second,
         // for nothing.
-        let style = self.project.image_style();
+        let style = self.project.developed_style(&self.camera.camera);
         if style != self.published_style {
             self.published_style = style;
             self.orchestrator.set_style(style);
@@ -1866,7 +1866,7 @@ impl TequilaApp {
                 selected: self.outlined.clone(),
                 pixels_per_point: ui.ctx().pixels_per_point(),
                 mode: self.view_mode.gpu().unwrap_or_default(),
-                exposure: 2f32.powf(self.project.image_style().exposure),
+                exposure: 2f32.powf(self.project.developed_style(&self.camera.camera).exposure),
                 model_edges: self.show_model_edges && self.presenting.is_none(),
             };
             ui.painter().add(self.solid.paint(rect, frame));

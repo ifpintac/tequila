@@ -174,7 +174,8 @@ reader and the writer being edited separately.
 | `scale` | number? | Vertical extent in scene units. Present for `Orthographic`. |
 | `shift_x`, `shift_y` | number? | Film-plane offset in fractions of the sensor. Present for `Shift`. |
 | `sensor_width_mm` | number | What the focal length is quoted against. 36 is full frame. |
-| `iso`, `shutter_speed_seconds` | number | The physical exposure of §01 §8.3. |
+| `iso`, `shutter_speed_seconds` | number | The physical exposure of §01 §8.3, with the f-number in `dof`. |
+| `physical_exposure` | bool? | Expose by them as a camera would, on top of the image's own exposure: twice the shutter time is a stop brighter, and so is one f-stop wider. Absent, false: they change nothing. |
 | `dof` | object | `{enabled, f_number, focus_distance, keep_focus, aperture, blades?, rotation?}`. `enabled` is false for a pinhole; `f_number` still carries the value the control returns to, because JSON has no infinity. `aperture` is `Circular` or `Bladed`. |
 
 ### 3.3.3 `image_style`

@@ -260,7 +260,7 @@ impl Project {
                 id, name, scene, camera: saved.camera,
                 pending_environment: self.environment.is_pending().then(|| self.document.environment.clone()),
                 settings: tequila_scene::render::RenderSettings { output_directory, ..settings },
-                config: self.integrator_config(), style: self.image_style(), display: self.display_pipeline(),
+                config: self.integrator_config(), style: self.developed_style(&saved.camera), display: self.display_pipeline(),
                 object_names, material_names, layers,
                 fields: tequila_format::output::NameFields {
                     project: crate::render_window::project_name(&self.document.meta.name, self.path.as_deref()),
@@ -700,7 +700,8 @@ impl Project {
         let (mut scene, _) = build_scene(&copy, environment, &mut self.meshes, &self.view);
         std::mem::swap(&mut copy.geometry, &mut self.document.geometry);
         scene.background = environment.background(&copy.environment);
-        Some((Arc::new(scene), copy.cameras.active().camera, copy.image_style, copy.lighting.config()))
+        let style = tequila_scene::lighting::developed_style(copy.image_style, &copy.cameras.active().camera);
+        Some((Arc::new(scene), copy.cameras.active().camera, style, copy.lighting.config()))
     }
 
     /// What the integrator should run with, from the Lighting tab.
@@ -712,6 +713,13 @@ impl Project {
     /// ray (§9.3).
     pub fn image_style(&self) -> tequila_color::ImageStyle {
         self.document.image_style
+    }
+
+    /// The grade as `camera` develops the image, its own exposure added
+    /// when it exposes physically: what renders and the viewport show. The
+    /// Image tab edits [`Project::image_style`], without the camera's.
+    pub fn developed_style(&self, camera: &tequila_render_core::camera::Camera) -> tequila_color::ImageStyle {
+        tequila_scene::lighting::developed_style(self.document.image_style, camera)
     }
 
     /// What turns scene-linear radiance into display values: the built-in

@@ -176,6 +176,10 @@ FSC_API int fsc_shadow_linking(FscSession *session,
                                FscNode node,
                                unsigned long long membership,
                                unsigned blocker_set);
+/* A viewplane of the caller's in place of the one fsc_camera fits to the
+ * picture - a shifted camera's, an orthographic one's in scene units - kept
+ * until replaced; left >= right goes back to the fitted one. */
+FSC_API void fsc_camera_viewplane(FscSession *session, float left, float right, float bottom, float top);
 FSC_API void fsc_camera(FscSession *session,
                         const float *matrix12,
                         float fov,

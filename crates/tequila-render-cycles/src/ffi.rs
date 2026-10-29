@@ -122,6 +122,7 @@ api! {
         fsc_shader_reopen: fn(*mut Session, Node) -> c_int;
         fsc_light_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
         fsc_shadow_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
+        fsc_camera_viewplane: fn(*mut Session, f32, f32, f32, f32);
     }
 }
 

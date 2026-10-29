@@ -437,6 +437,30 @@ impl LightSettings {
 }
 
 
+#[cfg(test)]
+mod exposure_tests {
+    use super::*;
+
+    /// A camera exposing physically adds its stops to the image's own:
+    /// twice the shutter time is one more; off, none, whatever it is set to.
+    #[test]
+    fn doubling_the_shutter_adds_a_stop() {
+        let style = tequila_color::ImageStyle { exposure: 0.5, ..tequila_color::ImageStyle::default() };
+        let camera = |seconds: f32, on: bool| Camera { f_number: 4.0, iso: 200.0, shutter_speed_seconds: seconds, physical_exposure: on, ..Camera::default() };
+        let (short, long) = (developed_style(style, &camera(1.0 / 100.0, true)), developed_style(style, &camera(1.0 / 50.0, true)));
+        assert!((long.exposure - short.exposure - 1.0).abs() < 1e-4, "{} then {}", short.exposure, long.exposure);
+        assert_eq!(developed_style(style, &camera(1.0 / 50.0, false)).exposure, 0.5);
+    }
+}
+
+/// The image style as `camera` develops it: with the camera's own exposure
+/// added, from its ISO, shutter and f-number, when it exposes physically
+/// ([`Camera::exposure_stops`]). What both renderers' pictures are graded
+/// with; the document keeps the style itself.
+pub fn developed_style(style: tequila_color::ImageStyle, camera: &Camera) -> tequila_color::ImageStyle {
+    tequila_color::ImageStyle { exposure: style.exposure + camera.exposure_stops(), ..style }
+}
+
 /// A saved viewpoint (`docs/04` §8).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedCamera {

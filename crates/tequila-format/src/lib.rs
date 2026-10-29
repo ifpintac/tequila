@@ -2067,6 +2067,10 @@ pub(crate) fn camera_to_json(saved: &SavedCamera) -> Value {
         .set("sensor_width_mm", camera.sensor_width_mm)
         .set("iso", camera.iso)
         .set("shutter_speed_seconds", camera.shutter_speed_seconds);
+    // Written only when on, so a file from before is unchanged.
+    if camera.physical_exposure {
+        object.set("physical_exposure", true);
+    }
     match camera.projection {
         Projection::Perspective { focal_length_mm } => {
             object.set("focal_length_mm", focal_length_mm);
@@ -2159,6 +2163,7 @@ pub(crate) fn read_camera(entry: &Value) -> SavedCamera {
     camera.sensor_width_mm = number("sensor_width_mm", camera.sensor_width_mm);
     camera.iso = number("iso", camera.iso);
     camera.shutter_speed_seconds = number("shutter_speed_seconds", camera.shutter_speed_seconds);
+    camera.physical_exposure = entry.get("physical_exposure").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if let Some(dof) = entry.get("dof") {
         let enabled = dof.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -3254,6 +3259,23 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&product)), product);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("links"), "{plain}");
+    }
+
+    /// A camera's physical exposure is kept, and one without writes none.
+    #[test]
+    fn a_cameras_physical_exposure_survives_a_round_trip() {
+        use tequila_scene::lighting::SavedCamera;
+        let saved = SavedCamera {
+            name: "Shot".into(),
+            camera: tequila_render_core::camera::Camera { physical_exposure: true, iso: 400.0, ..Default::default() },
+            target: tequila_core::math::Vec3::ZERO,
+        };
+        let text = json_write::to_string(&camera_to_json(&saved));
+        assert!(text.contains("physical_exposure"), "{text}");
+        let back = read_camera(&json::parse(text.as_bytes()).unwrap());
+        assert!(back.camera.physical_exposure && back.camera.iso == 400.0);
+        let plain = SavedCamera { camera: Default::default(), ..saved };
+        assert!(!json_write::to_string(&camera_to_json(&plain)).contains("physical_exposure"));
     }
 
     /// A sun keeps its angle and its lux.

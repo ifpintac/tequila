@@ -3797,6 +3797,22 @@ impl Builder<'_> {
             ],
         };
         let matrix = Y_UP_TO_Z_UP * camera.camera_to_world * flip;
+        // Cycles' panorama looks along its camera's +X, +Z up and +Y to the
+        // left: turned into the camera's frame, the middle of the picture is
+        // where the camera looks, as Tequila's equirectangular camera has it.
+        let matrix = if matches!(camera.projection, Projection::Equirectangular) {
+            let turn = Mat4 {
+                m: [
+                    [0.0, -1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            };
+            matrix * turn
+        } else {
+            matrix
+        };
         let vertical = camera.vertical_fov(aspect);
         // Cycles' angle spans the shorter side.
         let fov = if view.width >= view.height {
@@ -3804,17 +3820,38 @@ impl Builder<'_> {
         } else {
             2.0 * ((vertical * 0.5).tan() * aspect).atan()
         };
-        match camera.projection {
-            Projection::Perspective { .. } => {}
-            other => self.out.warn(format!("{other:?} cameras render as perspective")),
-        }
         self.session.camera(&rows(&matrix), fov, view.width, view.height);
+        // Cycles' viewplane, which the call above sets for a plain
+        // perspective: in the tangent of half the angle, across the shorter
+        // side, where Tequila measures a shift in widths and heights of the
+        // picture; in scene units for an orthographic camera.
+        let node = self.session.scene_node("camera")?;
+        let (half_width, half_height) = if view.width >= view.height { (aspect, 1.0) } else { (1.0, 1.0 / aspect) };
+        let viewplane = match camera.projection {
+            Projection::Shift { shift_x, shift_y, .. } => {
+                let (x, y) = (2.0 * shift_x * half_width, 2.0 * shift_y * half_height);
+                Some([-half_width + x, half_width + x, -half_height + y, half_height + y])
+            }
+            Projection::Orthographic { scale } => {
+                self.session.set_string(node, "camera_type", "orthograph")?;
+                let half = 0.5 * scale;
+                Some([-half * aspect, half * aspect, -half, half])
+            }
+            Projection::Equirectangular => {
+                self.session.set_string(node, "camera_type", "panorama")?;
+                self.session.set_string(node, "panorama_type", "equirectangular")?;
+                None
+            }
+            Projection::Perspective { .. } => None,
+        };
+        if !self.session.camera_viewplane(viewplane) && viewplane.is_some() {
+            self.out.warn("shifted and orthographic cameras need a newer Cycles library: here they render as a plain perspective");
+        }
 
         // Every value set every time, off included: the live viewport keeps
         // one camera node for its whole session, so depth of field turned
         // off, or a bladed aperture made round, stayed as it had been.
-        let node = self.session.scene_node("camera")?;
-        let focused = camera.f_number.is_finite();
+        let focused = camera.f_number.is_finite() && !matches!(camera.projection, Projection::Equirectangular);
         self.session.set_float(node, "aperturesize", if focused { camera.aperture_radius(aspect) } else { 0.0 })?;
         if focused {
             self.session.set_float(node, "focaldistance", camera.focus_distance)?;
