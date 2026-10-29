@@ -349,6 +349,12 @@ pub fn encode(command: &Command) -> String {
         Command::ApplyStudio { index } => {
             out.set("index", *index as f64);
         }
+        Command::TurnProduct { yaw } => {
+            out.set("yaw", *yaw);
+        }
+        Command::SetAnimation { animation } => {
+            out.set("animation", animation.as_deref().map_or(Value::Null, crate::animation_to_json));
+        }
         Command::ApplyStudioPreset { preset, options } => {
             out.set("preset", crate::studio_preset::to_inline(preset));
             let mut o = Object::new();
@@ -984,6 +990,18 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 },
             }
         }
+        "studio.turn_product" => Command::TurnProduct {
+            yaw: value
+                .get("yaw")
+                .and_then(|v| v.as_f32())
+                .ok_or_else(|| FormatError::Invalid("studio.turn_product names no yaw".into()))?,
+        },
+        "animation.set" => Command::SetAnimation {
+            animation: match value.get("animation") {
+                None | Some(Value::Null) => None,
+                Some(animation) => Some(Box::new(crate::read_animation(animation))),
+            },
+        },
         "studio.apply" => Command::ApplyStudio {
             index: value
                 .get("index")

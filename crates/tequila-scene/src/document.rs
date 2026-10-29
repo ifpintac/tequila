@@ -345,6 +345,8 @@ pub struct SceneDocument {
     pub studios: Vec<crate::studio::Studio>,
     /// How Studios have turned the product (`Studio::product_yaw`).
     pub product_turn: crate::studio::ProductTurn,
+    /// The product turning over frames, for a turntable; `None`, a still.
+    pub animation: Option<crate::animation::Animation>,
     /// Rule-based bulk assignment (`docs/04` §3.3).
     pub material_templates: Vec<crate::templates::MaterialTemplate>,
     /// The product configurator built over the Studios, Model Sets and
@@ -459,6 +461,7 @@ impl SceneDocument {
             model_sets: crate::studio::ModelSets::default(),
             studios: Vec::new(),
             product_turn: crate::studio::ProductTurn::default(),
+            animation: None,
             material_templates: Vec::new(),
             configurator: Default::default(),
             sources: Sources::default(),

@@ -24,6 +24,25 @@ pub struct StudioTab {
     pub reveal: bool,
     /// Render every Studio, one image each, asked for this frame.
     pub render_all: bool,
+    /// Render the turntable's frames, first to last, asked for this frame.
+    pub render_frames: Option<(u32, u32)>,
+    turntable: Turntable,
+}
+
+/// A turntable as the Turntable section sets one up, before it is made.
+struct Turntable {
+    frames: u32,
+    degrees: f32,
+    fps: f32,
+    ease: bool,
+    /// The frame to show.
+    frame: u32,
+}
+
+impl Default for Turntable {
+    fn default() -> Self {
+        Turntable { frames: 36, degrees: 360.0, fps: 24.0, ease: false, frame: 0 }
+    }
 }
 
 impl StudioTab {
@@ -42,6 +61,10 @@ impl StudioTab {
         {
             self.render_all = true;
         }
+        ui.add_space(6.0);
+        ui.separator();
+        crate::theme::section(ui, "Turntable");
+        camera_moved |= self.turntable(ui, project);
         ui.add_space(6.0);
         ui.separator();
         crate::theme::section(ui, "Model sets");
@@ -66,6 +89,63 @@ impl StudioTab {
             camera_moved = true;
         }
         camera_moved
+    }
+}
+
+impl StudioTab {
+    /// The product turning over frames: made from a count, an angle and a
+    /// rate, a frame shown, and every frame rendered. Returns true when
+    /// showing a frame turned the product.
+    fn turntable(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
+        use tequila_scene::animation::{Animation, Interpolation};
+        let draft = &mut self.turntable;
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut draft.frames).range(1..=3600).suffix(" frames"));
+            ui.add(egui::DragValue::new(&mut draft.degrees).range(-3600.0..=3600.0).suffix("°"));
+            ui.add(egui::DragValue::new(&mut draft.fps).range(1.0..=120.0).suffix(" fps"));
+        });
+        ui.add(crate::field::Checkbox::new(&mut draft.ease, "Ease in and out"))
+            .on_hover_text("Start and stop the turn gently, rather than at an even rate all the way.");
+        let existing = project.document().animation.clone();
+        ui.horizontal(|ui| {
+            let label = if existing.is_some() { "Replace turntable" } else { "Make turntable" };
+            if ui
+                .button(label)
+                .on_hover_text("The product turning through the angle over the frames, the frame after the last where the first began. One undo takes it back.")
+                .clicked()
+            {
+                let mut animation = Animation::turntable(draft.frames, draft.fps, draft.degrees);
+                if draft.ease {
+                    animation.interpolation = Interpolation::Ease;
+                }
+                let _ = project.apply(Command::SetAnimation { animation: Some(Box::new(animation)) });
+            }
+            if existing.is_some() && ui.button("Remove").clicked() {
+                let _ = project.apply(Command::SetAnimation { animation: None });
+            }
+        });
+        let Some(animation) = existing else {
+            ui.label(egui::RichText::new("A turntable renders the product turning, one numbered image a frame.").small().color(crate::theme::dim()));
+            return false;
+        };
+        let last = animation.frames.saturating_sub(1);
+        let mut moved = false;
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut draft.frame).range(0..=last).prefix("Frame "));
+            if ui.button("Show").on_hover_text("Turn the product to this frame. Undo turns it back.").clicked() {
+                if let Some(yaw) = animation.yaw_at(draft.frame.min(last)) {
+                    moved = project.apply(Command::TurnProduct { yaw }).is_ok();
+                }
+            }
+        });
+        if ui
+            .button(format!("Render {} frames", animation.frames))
+            .on_hover_text("Queue every frame, one image each, numbered by {frame} in the file name; the Render window renders a range. A frame already rendered is left out.")
+            .clicked()
+        {
+            self.render_frames = Some((0, last));
+        }
+        moved
     }
 }
 

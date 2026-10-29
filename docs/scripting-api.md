@@ -75,7 +75,7 @@ Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `mate
 
 ## Commands
 
-54 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+56 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -548,6 +548,30 @@ Make the scene what a Studio says, in one step.
 
 ```json
 { "command": "studio.apply", "index": 0 }
+```
+
+#### `studio.turn_product`
+
+Turn the product to `yaw` radians about its vertical axis, as a Studio's
+view or a frame of a turntable does; nothing else moves.
+
+`fs.commands.studio.turn_product(yaw=...)`
+
+```json
+{ "command": "studio.turn_product", "yaw": 0.5 }
+```
+
+### animation
+
+#### `animation.set`
+
+The product turning over frames, or `None` for a still. Setting it turns
+nothing until a frame is shown.
+
+`fs.commands.animation.set(animation=...)`
+
+```json
+{ "animation": { "fps": 24, "frames": 36, "interpolation": "linear", "keys": [ { "frame": 0, "product_yaw": 0 }, { "frame": 36, "product_yaw": 6.2831855 } ] }, "command": "animation.set" }
 ```
 
 ### configurator

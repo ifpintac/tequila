@@ -223,7 +223,41 @@ impl Project {
         configuration: String,
     ) -> u64 {
         let saved = self.document.cameras.get(camera).cloned();
-        self.enqueue_from(name, camera, saved, settings, configuration)
+        self.enqueue_from(name, camera, saved, settings, configuration, None)
+    }
+
+    /// [`Project::enqueue`] for frame `frame` of the animation, through the
+    /// active camera, which `{frame}` in the file name stands for.
+    pub fn enqueue_frame(&mut self, name: impl Into<String>, settings: tequila_scene::render::RenderSettings, frame: u32) -> u64 {
+        let camera = self.document.cameras.active_index();
+        let saved = self.document.cameras.get(camera).cloned();
+        self.enqueue_from(name, camera, saved, settings, String::new(), Some(frame))
+    }
+
+    /// Whether frame `frame` rendered with `settings` is already on disk,
+    /// under the name its render would take: a turntable stopped halfway is
+    /// finished by queueing it again.
+    pub fn frame_rendered(&self, settings: &tequila_scene::render::RenderSettings, frame: u32) -> bool {
+        let saved = self.document.cameras.active();
+        let mut fields = self.name_fields(saved.name.clone(), String::new(), Some(frame));
+        fields.width = settings.width;
+        fields.height = settings.height;
+        fields.samples = settings.max_samples;
+        let directory = crate::render_window::output_directory(settings, self.path.as_deref());
+        let format = crate::render_window::image_format(settings);
+        tequila_format::output::output_path(&directory, &settings.filename_template, &fields, format).exists()
+    }
+
+    /// What a render queued now names its file by.
+    fn name_fields(&self, camera: String, configuration: String, frame: Option<u32>) -> tequila_format::output::NameFields {
+        tequila_format::output::NameFields {
+            project: crate::render_window::project_name(&self.document.meta.name, self.path.as_deref()),
+            camera, configuration, date: crate::today(), time: crate::now(),
+            studio: self.last_studio.clone().unwrap_or_default(),
+            product: self.product_name(),
+            frame,
+            ..Default::default()
+        }
     }
 
     /// [`Project::enqueue`] from a camera of the caller's own rather than a
@@ -235,7 +269,7 @@ impl Project {
         settings: tequila_scene::render::RenderSettings,
     ) -> u64 {
         let active = self.document.cameras.active_index();
-        self.enqueue_from(name, active, Some(camera), settings, String::new())
+        self.enqueue_from(name, active, Some(camera), settings, String::new(), None)
     }
 
     fn enqueue_from(
@@ -245,6 +279,7 @@ impl Project {
         saved: Option<tequila_scene::lighting::SavedCamera>,
         settings: tequila_scene::render::RenderSettings,
         configuration: String,
+        frame: Option<u32>,
     ) -> u64 {
         let name = name.into();
         let id = self.queue.push(name.clone(), camera, settings.clone());
@@ -262,13 +297,7 @@ impl Project {
                 settings: tequila_scene::render::RenderSettings { output_directory, ..settings },
                 config: self.integrator_config(), style: self.developed_style(&saved.camera), display: self.display_pipeline(),
                 object_names, material_names, layers,
-                fields: tequila_format::output::NameFields {
-                    project: crate::render_window::project_name(&self.document.meta.name, self.path.as_deref()),
-                    camera: saved.name, configuration, date: crate::today(), time: crate::now(),
-                    studio: self.last_studio.clone().unwrap_or_default(),
-                    product: self.product_name(),
-                    ..Default::default()
-                },
+                fields: self.name_fields(saved.name, configuration, frame),
             };
             self.queued_snapshots.insert(id, job);
         }

@@ -1490,7 +1490,11 @@ impl eframe::App for TequilaApp {
         if std::mem::take(&mut window.cancel_requested) {
             self.batch.cancel();
         }
+        let frames = window.frames_requested.take();
         self.render_window = window;
+        if let Some((first, last)) = frames {
+            self.queue_frames(first, last, None);
+        }
         if !self.recoverable.is_empty() {
             self.recovery_window(ctx);
         }
@@ -4975,9 +4979,13 @@ impl TequilaApp {
                 }
                 let action = tab.action.take();
                 let render_all = std::mem::take(&mut tab.render_all);
+                let frames = tab.render_frames.take();
                 self.studio_tab = tab;
                 if render_all {
                     self.queue_studios(None);
+                }
+                if let Some((first, last)) = frames {
+                    self.queue_frames(first, last, None);
                 }
                 match action {
                     Some(configurator_panel::Action::Present) => self.start_presentation(),
@@ -5518,6 +5526,45 @@ impl TequilaApp {
         queued
     }
 
+    /// The animation's frames `first` to `last`, one job each: the product
+    /// turned to each frame's angle and captured, then turned back, so the
+    /// queue holds the frames and the document is as it was. The file name
+    /// takes `{frame}` when its template names none, and a frame whose file
+    /// is already there is left out, so a turntable stopped halfway is
+    /// finished by queueing it again.
+    pub(crate) fn queue_frames(&mut self, first: u32, last: u32, settings: Option<tequila_scene::render::RenderSettings>) -> Vec<u64> {
+        let Some(animation) = self.project.document().animation.clone() else {
+            self.project.status = "There is no animation to render: make a turntable in the Studio tab first".into();
+            return Vec::new();
+        };
+        let mut settings = settings.unwrap_or_else(|| self.project.render_settings().clone());
+        if !settings.filename_template.contains("{frame}") {
+            settings.filename_template.push_str("_{frame}");
+        }
+        self.project.begin_group();
+        let (mut queued, mut done) = (Vec::new(), 0);
+        for frame in animation.range(first, last) {
+            if self.project.frame_rendered(&settings, frame) {
+                done += 1;
+                continue;
+            }
+            let Some(yaw) = animation.yaw_at(frame) else { continue };
+            if self.project.apply(tequila_scene::Command::TurnProduct { yaw }).is_err() {
+                continue;
+            }
+            queued.push(self.project.enqueue_frame(format!("Frame {frame}"), settings.clone(), frame));
+        }
+        self.project.abandon_group();
+        self.camera.adopt(self.project.camera());
+        self.submit();
+        self.render_window.open = true;
+        self.project.status = match done {
+            0 => format!("Queued {} frames", queued.len()),
+            done => format!("Queued {} frames; {done} were already rendered", queued.len()),
+        };
+        queued
+    }
+
     /// What is shown, as a `.glb`. Returns its size and anything that did
     /// not export exactly.
     pub(crate) fn export_glb(&mut self, path: &std::path::Path) -> Result<(usize, Vec<String>), String> {
@@ -6017,6 +6064,38 @@ trait VecY {
 impl VecY for Vec3 {
     fn new_y(y: f32) -> Vec3 {
         tequila_core::math::vec3(0.0, y, 0.0)
+    }
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    /// A turntable's frames queue one job each, the product turned to each
+    /// frame and the document left as it was; a frame already rendered,
+    /// under the name its render would take, is left out.
+    #[test]
+    fn frames_queue_a_job_each_and_skip_what_is_rendered() {
+        let mut app = TequilaApp::for_tests();
+        let directory = std::env::temp_dir().join(format!("tequila-queue-frames-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut settings = app.project.render_settings().clone();
+        settings.output_directory = directory.display().to_string();
+        settings.filename_template = "turn_{frame}".into();
+        app.project.apply(tequila_scene::Command::SetRenderSettings { settings: Box::new(settings.clone()) }).unwrap();
+        app.project
+            .apply(tequila_scene::Command::SetAnimation { animation: Some(Box::new(tequila_scene::animation::Animation::turntable(3, 24.0, 360.0))) })
+            .unwrap();
+        let before = app.project.document().product_turn;
+        assert_eq!(app.queue_frames(0, 99, None).len(), 3, "a job a frame");
+        assert_eq!(app.project.document().product_turn, before, "queueing left the product turned");
+        // Frame 1 on disk, as its render would name it: left out next time.
+        let extension = crate::render_window::image_format(&settings).extension();
+        std::fs::write(directory.join(format!("turn_0001.{extension}")), b"rendered").unwrap();
+        assert!(app.project.frame_rendered(&settings, 1));
+        assert_eq!(app.queue_frames(0, 2, None).len(), 2, "the rendered frame was queued again");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }
 

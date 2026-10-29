@@ -393,6 +393,9 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
         object.set("yaw", turn.yaw).set("pivot", Value::Array(vec![Value::from(turn.pivot[0]), Value::from(turn.pivot[1])]));
         scene.set("product_turn", object.build());
     }
+    if let Some(animation) = &document.animation {
+        scene.set("animation", animation_to_json(animation));
+    }
     if document.configurator != tequila_scene::configurator::Configurator::default() {
         scene.set("configurator", configurator_to_json(&document.configurator));
     }
@@ -1412,6 +1415,48 @@ pub(crate) fn read_rays(value: Option<&Value>) -> tequila_scene::tree::Rays {
     }
 }
 
+/// A document's animation, as written to a project file.
+pub(crate) fn animation_to_json(animation: &tequila_scene::animation::Animation) -> Value {
+    let keys: Vec<Value> = animation
+        .keys
+        .iter()
+        .map(|k| {
+            let mut key = Object::new();
+            key.set("frame", k.frame as f64).set("product_yaw", k.product_yaw);
+            key.build()
+        })
+        .collect();
+    let mut out = Object::new();
+    out.set("frames", animation.frames as f64)
+        .set("fps", animation.fps)
+        .set("keys", Value::Array(keys))
+        .set("interpolation", animation.interpolation.key());
+    out.build()
+}
+
+pub(crate) fn read_animation(value: &Value) -> tequila_scene::animation::Animation {
+    use tequila_scene::animation::{Animation, Interpolation, TurnKey};
+    Animation {
+        frames: value.get("frames").and_then(|v| v.as_index()).unwrap_or(1).clamp(1, u32::MAX as usize) as u32,
+        fps: value.get("fps").and_then(|v| v.as_f32()).filter(|f| *f > 0.0).unwrap_or(24.0),
+        keys: value
+            .get("keys")
+            .map(|keys| {
+                keys.as_array()
+                    .iter()
+                    .filter_map(|k| {
+                        Some(TurnKey {
+                            frame: k.get("frame")?.as_index()?.min(u32::MAX as usize) as u32,
+                            product_yaw: k.get("product_yaw")?.as_f32().filter(|v| v.is_finite())?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        interpolation: value.get("interpolation").and_then(|v| v.as_str()).and_then(Interpolation::from_key).unwrap_or_default(),
+    }
+}
+
 pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     let mut object = Object::new();
     object.set("shape", settings.shape.label());
@@ -2420,6 +2465,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
             pivot: [pivot.first().copied().unwrap_or(0.0), pivot.get(1).copied().unwrap_or(0.0)],
         };
     }
+    document.animation = root.get("animation").map(read_animation);
     document.configurator = root.get("configurator").map(read_configurator).unwrap_or_default();
     document.measurements = root
         .get("measurements")

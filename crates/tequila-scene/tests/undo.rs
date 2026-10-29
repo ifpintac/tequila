@@ -570,6 +570,8 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetModelSets { .. }
         | Command::SetStudios { .. }
         | Command::ApplyStudio { .. }
+        | Command::TurnProduct { .. }
+        | Command::SetAnimation { .. }
         | Command::SetConfigurator { .. }
         | Command::Configure { .. }
         | Command::SetMaterialTemplates { .. }
@@ -730,6 +732,8 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::SetStudios { studios: Vec::new() },
         Command::ApplyStudio { index: 0 },
+        Command::TurnProduct { yaw: 0.5 },
+        Command::SetAnimation { animation: Some(Box::new(tequila_scene::animation::Animation::turntable(36, 24.0, 360.0))) },
         Command::ApplyStudioPreset {
             preset: Box::new(tequila_scene::preset::capture(&SceneDocument::new(), "test", "Test", "Tests", "Small")),
             options: tequila_scene::preset::ApplyOptions::default(),

@@ -56,6 +56,8 @@ CATALOG = (
     'scene.set_model_sets',
     'studio.set',
     'studio.apply',
+    'studio.turn_product',
+    'animation.set',
     'configurator.set',
     'configurator.choose',
     'material.set_templates',
@@ -401,6 +403,24 @@ class StudioCommands(_Commands):
         """
         return self._apply('studio.apply', {'index': index})
 
+    def turn_product(self, *, yaw=_UNSET):
+        r"""`studio.turn_product`: Turn the product to `yaw` radians about its vertical axis, as a Studio's view or a frame of a turntable does; nothing else moves.
+
+        { "command": "studio.turn_product", "yaw": 0.5 }
+        """
+        return self._apply('studio.turn_product', {'yaw': yaw})
+
+
+class AnimationCommands(_Commands):
+    """The `animation.*` commands."""
+
+    def set(self, *, animation=_UNSET):
+        r"""`animation.set`: The product turning over frames, or `None` for a still. Setting it turns nothing until a frame is shown.
+
+        { "animation": { "fps": 24, "frames": 36, "interpolation": "linear", "keys": [ { "frame": 0, "product_yaw": 0 }, { "frame": 36, "product_yaw": 6.2831855 } ] }, "command": "animation.set" }
+        """
+        return self._apply('animation.set', {'animation': animation})
+
 
 class ConfiguratorCommands(_Commands):
     """The `configurator.*` commands."""
@@ -508,6 +528,7 @@ class Commands:
         self.lighting = LightingCommands(client)
         self.environment = EnvironmentCommands(client)
         self.studio = StudioCommands(client)
+        self.animation = AnimationCommands(client)
         self.configurator = ConfiguratorCommands(client)
         self.camera = CameraCommands(client)
         self.image = ImageCommands(client)

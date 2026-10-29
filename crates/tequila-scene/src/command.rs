@@ -371,6 +371,13 @@ pub enum Command {
     SetStudios { studios: Vec<crate::studio::Studio> },
     /// `studio.apply` — make the scene what a Studio says, in one step.
     ApplyStudio { index: usize },
+    /// `studio.turn_product` — turn the product to `yaw` radians about its
+    /// vertical axis, as a Studio's view or a frame of a turntable does;
+    /// nothing else moves.
+    TurnProduct { yaw: f32 },
+    /// `animation.set` — the product turning over frames, or `None` for a
+    /// still. Setting it turns nothing until a frame is shown.
+    SetAnimation { animation: Option<Box<crate::animation::Animation>> },
     /// `configurator.set` — the configurator: its options, rules and
     /// layout. Setting it does not apply a configuration.
     SetConfigurator { configurator: Box<crate::configurator::Configurator> },
@@ -1037,6 +1044,8 @@ impl Command {
             Command::SetModelSets { .. } => "scene.set_model_sets",
             Command::SetStudios { .. } => "studio.set",
             Command::ApplyStudio { .. } => "studio.apply",
+            Command::TurnProduct { .. } => "studio.turn_product",
+            Command::SetAnimation { .. } => "animation.set",
             Command::SetConfigurator { .. } => "configurator.set",
             Command::Configure { .. } => "configurator.choose",
             Command::SetMaterialTemplates { .. } => "material.set_templates",
@@ -1054,7 +1063,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 54] = [
+    pub const CATALOG: [&'static str; 56] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1097,6 +1106,8 @@ impl Command {
         "scene.set_model_sets",
         "studio.set",
         "studio.apply",
+        "studio.turn_product",
+        "animation.set",
         "configurator.set",
         "configurator.choose",
         "material.set_templates",
@@ -1124,7 +1135,8 @@ impl Command {
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
-            Command::SetTransform { .. } => SceneChange::InstanceTransform,
+            Command::SetTransform { .. } | Command::TurnProduct { .. } => SceneChange::InstanceTransform,
+            Command::SetAnimation { .. } => SceneChange::SelectionChange,
             Command::SetVisibility { .. } | Command::SetRays { .. } => SceneChange::VisibilityToggle,
             Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
                 SceneChange::MaterialAssignment
@@ -1333,6 +1345,9 @@ enum Undo {
     MultiMaterials(Vec<crate::studio::MultiMaterial>, Vec<(NodeId, Option<MaterialKey>)>),
     ModelSets(Box<crate::studio::ModelSets>),
     Studios(Vec<crate::studio::Studio>),
+    /// The product's roots' transforms and its turn, before a turn.
+    ProductTurn { transforms: Vec<(NodeId, Transform)>, turn: crate::studio::ProductTurn },
+    Animation(Option<crate::animation::Animation>),
     MaterialTemplates(Vec<crate::templates::MaterialTemplate>),
     /// Everything a Studio can change, as it was.
     StudioApplied(Box<StudioUndo>),
@@ -2832,6 +2847,29 @@ fn execute(
             Ok(Undo::Studios(previous))
         }
 
+        Command::TurnProduct { yaw } => {
+            if !yaw.is_finite() {
+                return Err(CommandError::InvalidValue("a turn must be a number"));
+            }
+            let transforms = crate::studio::product_roots(document)
+                .into_iter()
+                .filter_map(|id| document.tree.get(id).map(|n| (id, n.transform)))
+                .collect();
+            let turn = document.product_turn;
+            crate::studio::turn_product(document, *yaw);
+            Ok(Undo::ProductTurn { transforms, turn })
+        }
+
+        Command::SetAnimation { animation } => {
+            if let Some(a) = animation {
+                if a.frames == 0 || !(a.fps > 0.0) || a.keys.iter().any(|k| !k.product_yaw.is_finite()) {
+                    return Err(CommandError::InvalidValue("an animation needs frames, a rate and keys that are numbers"));
+                }
+            }
+            let previous = std::mem::replace(&mut document.animation, animation.as_deref().cloned());
+            Ok(Undo::Animation(previous))
+        }
+
         Command::ApplyStudioPreset { preset, options } => match reissue.composite {
             // Redo: the steps it took, with the identifiers they had.
             Some(steps) => {
@@ -3254,6 +3292,17 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::ProductTurn { transforms, turn } => {
+            for (id, transform) in transforms {
+                document.tree.get_mut(*id)?.transform = *transform;
+            }
+            document.product_turn = *turn;
+            Ok(())
+        }
+        Undo::Animation(previous) => {
+            document.animation = previous.clone();
+            Ok(())
+        }
         Undo::Studios(studios) => {
             document.studios = studios.clone();
             Ok(())

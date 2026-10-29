@@ -11,6 +11,7 @@
 
 #![warn(missing_debug_implementations)]
 
+pub mod animation;
 pub mod apply;
 pub mod bench;
 pub mod bubbles;

@@ -245,6 +245,8 @@ pub fn commands() -> Vec<Command> {
             }],
         },
         Command::ApplyStudio { index: 0 },
+        Command::TurnProduct { yaw: 0.5 },
+        Command::SetAnimation { animation: Some(Box::new(tequila_scene::animation::Animation::turntable(36, 24.0, 360.0))) },
         Command::ApplyStudioPreset {
             preset: Box::new({
                 let mut preset = tequila_scene::preset::capture(&tequila_scene::SceneDocument::new(), "sample-studio", "Sample Studio", "Samples", "Small");
