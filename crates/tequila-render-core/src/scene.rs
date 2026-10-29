@@ -185,6 +185,19 @@ pub struct ShadowCatcher {
     /// with Reflections up - and was a full catcher all the same: the shadow
     /// the person had switched off stayed, under the reflection.
     pub shadows: bool,
+    /// The reflection's alpha follows its brightness as displayed rather than
+    /// its share of the pixel, so its dark parts are transparent: a picture
+    /// on a white page shows the reflection's tint and never a grey band
+    /// (V-Ray's matte "alpha contribution", Blender's compositor fix).
+    pub reflection_luminance_alpha: bool,
+    /// What the product sees of the floor and the camera never does: an
+    /// emission of this radiance, the soft white sweep of a photo studio
+    /// that lifts the faces that mirror the floor. `None` for none.
+    pub bounce: Option<Spectrum>,
+    /// How far from the product the bounce darkens toward the contact line,
+    /// like ambient occlusion over that distance, in scene units; 0 for not
+    /// at all.
+    pub bounce_falloff: f32,
 }
 
 impl Default for ShadowCatcher {
@@ -198,6 +211,9 @@ impl Default for ShadowCatcher {
             occlusion_only: false,
             occlusion_radius: 1.0,
             shadows: true,
+            reflection_luminance_alpha: false,
+            bounce: None,
+            bounce_falloff: 0.0,
         }
     }
 }

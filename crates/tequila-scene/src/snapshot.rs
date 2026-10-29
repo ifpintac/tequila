@@ -569,7 +569,12 @@ pub fn snapshot_with(
     // it is a property of the environment, not a thing in the scene tree —
     // and picking it must therefore select nothing rather than the last part.
     if let Some(mut catcher) = ground_catcher(&document.environment.ground) {
-        catcher.reflection_fade = reflection_fade(document.environment.ground.reflection_length, || visible_bounds(document).max.y);
+        let ground = &document.environment.ground;
+        catcher.reflection_fade = if ground.reflection_fade_distance > 0.0 {
+            Some(ground.reflection_fade_distance)
+        } else {
+            reflection_fade(ground.reflection_length, || visible_bounds(document).max.y)
+        };
         if let Some(ground) = cache.ground(document.environment.ground.size, || {
             fitted_ground_extent(document)
         }) {
@@ -948,7 +953,8 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
     if !ground.enabled {
         return None;
     }
-    if !ground.shadows && ground.reflections <= 0.0 {
+    // A floor kept only for its bounce is still a floor: the product sees it.
+    if !ground.shadows && ground.reflections <= 0.0 && !ground.bounce {
         return None;
     }
     Some(ShadowCatcher {
@@ -965,6 +971,9 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
         occlusion_only: ground.shadows && ground.occlusion_shadows,
         occlusion_radius: 1.0,
         shadows: ground.shadows,
+        reflection_luminance_alpha: ground.reflection_alpha == crate::document::ReflectionAlpha::Luminance,
+        bounce: (ground.bounce && ground.bounce_strength > 0.0).then(|| ground.bounce_color * ground.bounce_strength),
+        bounce_falloff: ground.bounce_contact_falloff.max(0.0),
     })
 }
 
@@ -1067,6 +1076,55 @@ mod tests {
         document.environment.ground.reflection_length = 0.5;
         let top = visible_bounds(&document).max.y;
         assert_eq!(floor(&document).reflection_fade, Some(top));
+    }
+
+    /// A fade distance is the same height under a product of any size, where
+    /// a reflection length is a share of the product's: the same studio fades
+    /// alike under every product it is applied to (V-Ray's Dim distance).
+    #[test]
+    fn a_fade_distance_is_the_same_under_any_product() {
+        let floor = |document: &SceneDocument| {
+            let (scene, _) = snapshot(document, crate::environment::EnvironmentCache::new().environment(&document.environment), &mut MeshCache::new());
+            scene.instances.iter().find_map(|i| i.shadow_catcher).expect("a floor").reflection_fade
+        };
+        let small = |scale: f32| {
+            let mut document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
+            document.environment.ground.reflections = 1.0;
+            document.environment.ground.reflection_length = 0.25;
+            for root in document.tree.roots().to_vec() {
+                let node = document.tree.get_mut(root).expect("a root");
+                node.transform = Transform::from_matrix(tequila_core::math::Mat4::scale(Vec3::splat(scale)) * node.transform.matrix).expect("invertible");
+            }
+            document
+        };
+        let (mut once, mut twice) = (small(1.0), small(2.0));
+        assert_ne!(floor(&once), floor(&twice), "a length is a share of the product's height");
+        for document in [&mut once, &mut twice] {
+            document.environment.ground.reflection_fade_distance = 0.0075;
+        }
+        assert_eq!(floor(&once), Some(0.0075));
+        assert_eq!(floor(&twice), Some(0.0075));
+    }
+
+    /// A floor kept only for its bounce is still in the scene, and carries
+    /// the bounce's radiance and falloff; without a bounce it carries none.
+    #[test]
+    fn a_bounce_reaches_the_floor() {
+        let mut document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
+        document.environment.ground.shadows = false;
+        document.environment.ground.reflections = 0.0;
+        let floor = |document: &SceneDocument| {
+            let (scene, _) = snapshot(document, crate::environment::EnvironmentCache::new().environment(&document.environment), &mut MeshCache::new());
+            scene.instances.iter().find_map(|i| i.shadow_catcher)
+        };
+        assert!(floor(&document).is_none(), "no shadow, no reflection, no bounce: no floor");
+        document.environment.ground.bounce = true;
+        document.environment.ground.bounce_strength = 0.8;
+        document.environment.ground.bounce_contact_falloff = 0.0075;
+        let catcher = floor(&document).expect("a floor for the bounce");
+        assert_eq!(catcher.bounce, Some(tequila_core::spectrum::Spectrum::splat(0.8)));
+        assert_eq!(catcher.bounce_falloff, 0.0075);
+        assert!(!catcher.reflection_luminance_alpha);
     }
     use tequila_core::math::{vec3, Transform, Vec3};
 

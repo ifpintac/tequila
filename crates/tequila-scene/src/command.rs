@@ -479,7 +479,13 @@ pub enum EnvParam {
     GroundReflections,
     GroundReflectionBlur,
     GroundReflectionLength,
+    GroundReflectionFadeDistance,
     GroundReflectionFresnel,
+    GroundReflectionAlpha,
+    GroundBounce,
+    GroundBounceStrength,
+    GroundBounceColor,
+    GroundBounceContactFalloff,
     GroundFlatten,
     GroundSize,
 }
@@ -493,6 +499,8 @@ pub enum EnvValue {
     Mode(BackgroundMode),
     /// A file path, or `None` for "not set".
     Path(Option<String>),
+    /// One of a fixed set of named options, [`EnvParam::choices`].
+    Choice(&'static str),
 }
 
 impl EnvValue {
@@ -528,7 +536,7 @@ pub struct EnvUi {
 }
 
 impl EnvParam {
-    pub const ALL: [EnvParam; 19] = [
+    pub const ALL: [EnvParam; 25] = [
         EnvParam::Rotation,
         EnvParam::Brightness,
         EnvParam::Contrast,
@@ -545,10 +553,25 @@ impl EnvParam {
         EnvParam::GroundReflections,
         EnvParam::GroundReflectionBlur,
         EnvParam::GroundReflectionLength,
+        EnvParam::GroundReflectionFadeDistance,
         EnvParam::GroundReflectionFresnel,
+        EnvParam::GroundReflectionAlpha,
+        EnvParam::GroundBounce,
+        EnvParam::GroundBounceStrength,
+        EnvParam::GroundBounceColor,
+        EnvParam::GroundBounceContactFalloff,
         EnvParam::GroundFlatten,
         EnvParam::GroundSize,
     ];
+
+    /// The options a [`EnvValue::Choice`] field offers: its keys, as
+    /// written, and their labels. Empty for every other field.
+    pub const fn choices(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            EnvParam::GroundReflectionAlpha => &[("coverage", "By coverage"), ("luminance", "By brightness")],
+            _ => &[],
+        }
+    }
 
     /// The name used in the file format, the journal and the scripting API.
     pub const fn key(self) -> &'static str {
@@ -569,7 +592,13 @@ impl EnvParam {
             EnvParam::GroundReflections => "ground_reflections",
             EnvParam::GroundReflectionBlur => "ground_reflection_blur",
             EnvParam::GroundReflectionLength => "ground_reflection_length",
+            EnvParam::GroundReflectionFadeDistance => "ground_reflection_fade_distance",
             EnvParam::GroundReflectionFresnel => "ground_reflection_fresnel",
+            EnvParam::GroundReflectionAlpha => "ground_reflection_alpha",
+            EnvParam::GroundBounce => "ground_bounce",
+            EnvParam::GroundBounceStrength => "ground_bounce_strength",
+            EnvParam::GroundBounceColor => "ground_bounce_color",
+            EnvParam::GroundBounceContactFalloff => "ground_bounce_contact_falloff",
             EnvParam::GroundFlatten => "ground_flatten",
             EnvParam::GroundSize => "ground_size",
         }
@@ -607,7 +636,13 @@ impl EnvParam {
             EnvParam::GroundReflections => ("ground", "reflections"),
             EnvParam::GroundReflectionBlur => ("ground", "reflection_blur"),
             EnvParam::GroundReflectionLength => ("ground", "reflection_length"),
+            EnvParam::GroundReflectionFadeDistance => ("ground", "reflection_fade_distance"),
             EnvParam::GroundReflectionFresnel => ("ground", "reflection_fresnel"),
+            EnvParam::GroundReflectionAlpha => ("ground", "reflection_alpha"),
+            EnvParam::GroundBounce => ("ground", "bounce"),
+            EnvParam::GroundBounceStrength => ("ground", "bounce_strength"),
+            EnvParam::GroundBounceColor => ("ground", "bounce_color"),
+            EnvParam::GroundBounceContactFalloff => ("ground", "bounce_contact_falloff"),
             EnvParam::GroundFlatten => ("ground", "flatten"),
             EnvParam::GroundSize => ("ground", "size"),
         }
@@ -679,9 +714,33 @@ impl EnvParam {
                 label: "Reflection length",
                 range: (0.0, 1.0),
             },
+            EnvParam::GroundReflectionFadeDistance => EnvUi {
+                label: "Fade distance",
+                range: (0.0, 1.0),
+            },
             EnvParam::GroundReflectionFresnel => EnvUi {
                 label: "Fainter seen from above",
                 range: (0.0, 0.0),
+            },
+            EnvParam::GroundReflectionAlpha => EnvUi {
+                label: "Reflection alpha",
+                range: (0.0, 0.0),
+            },
+            EnvParam::GroundBounce => EnvUi {
+                label: "Floor bounce",
+                range: (0.0, 0.0),
+            },
+            EnvParam::GroundBounceStrength => EnvUi {
+                label: "Bounce brightness",
+                range: (0.0, 20.0),
+            },
+            EnvParam::GroundBounceColor => EnvUi {
+                label: "Bounce colour",
+                range: (0.0, 1.0),
+            },
+            EnvParam::GroundBounceContactFalloff => EnvUi {
+                label: "Contact falloff",
+                range: (0.0, 1.0),
             },
             EnvParam::GroundFlatten => EnvUi {
                 label: "Flatten ground",
@@ -713,7 +772,13 @@ impl EnvParam {
             EnvParam::GroundReflections => EnvValue::Scalar(settings.ground.reflections),
             EnvParam::GroundReflectionBlur => EnvValue::Scalar(settings.ground.reflection_blur),
             EnvParam::GroundReflectionLength => EnvValue::Scalar(settings.ground.reflection_length),
+            EnvParam::GroundReflectionFadeDistance => EnvValue::Scalar(settings.ground.reflection_fade_distance),
             EnvParam::GroundReflectionFresnel => EnvValue::Flag(settings.ground.reflection_fresnel),
+            EnvParam::GroundReflectionAlpha => EnvValue::Choice(settings.ground.reflection_alpha.key()),
+            EnvParam::GroundBounce => EnvValue::Flag(settings.ground.bounce),
+            EnvParam::GroundBounceStrength => EnvValue::Scalar(settings.ground.bounce_strength),
+            EnvParam::GroundBounceColor => EnvValue::Color(settings.ground.bounce_color),
+            EnvParam::GroundBounceContactFalloff => EnvValue::Scalar(settings.ground.bounce_contact_falloff),
             EnvParam::GroundFlatten => EnvValue::Flag(settings.ground.flatten),
             EnvParam::GroundSize => EnvValue::Scalar(settings.ground.size),
         }
@@ -776,7 +841,31 @@ impl EnvParam {
                     settings.ground.reflection_length = v.clamp(0.0, 1.0);
                 }
             }
+            (EnvParam::GroundReflectionFadeDistance, v) => {
+                if let Some(v) = v.as_scalar() {
+                    // A length, so only the floor of the range binds: a big
+                    // product's fade may be longer than the slider shows.
+                    settings.ground.reflection_fade_distance = v.max(0.0);
+                }
+            }
             (EnvParam::GroundReflectionFresnel, EnvValue::Flag(f)) => settings.ground.reflection_fresnel = *f,
+            (EnvParam::GroundReflectionAlpha, EnvValue::Choice(c)) => {
+                if let Some(alpha) = crate::document::ReflectionAlpha::from_key(c) {
+                    settings.ground.reflection_alpha = alpha;
+                }
+            }
+            (EnvParam::GroundBounce, EnvValue::Flag(f)) => settings.ground.bounce = *f,
+            (EnvParam::GroundBounceStrength, v) => {
+                if let Some(v) = v.as_scalar() {
+                    settings.ground.bounce_strength = v.max(0.0);
+                }
+            }
+            (EnvParam::GroundBounceColor, EnvValue::Color(c)) => settings.ground.bounce_color = *c,
+            (EnvParam::GroundBounceContactFalloff, v) => {
+                if let Some(v) = v.as_scalar() {
+                    settings.ground.bounce_contact_falloff = v.max(0.0);
+                }
+            }
             (EnvParam::GroundFlatten, EnvValue::Flag(f)) => settings.ground.flatten = *f,
             (EnvParam::GroundSize, v) => {
                 if let Some(v) = scalar(v) {

@@ -578,6 +578,10 @@ fn every_environment_parameter_survives_a_round_trip() {
                 BackgroundMode::Color
             }),
             EnvValue::Path(_) => EnvValue::Path(Some("assets/somewhere/thing.hdr".to_string())),
+            // Another of its options.
+            EnvValue::Choice(c) => EnvValue::Choice(
+                param.choices().iter().map(|(key, _)| *key).find(|key| key != c).expect("a choice of one"),
+            ),
         }
     };
 

@@ -683,6 +683,7 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         // reflection's fade put dark specks on a light backdrop and grain in
         // a transparent one.
         let shares = smooth_alpha(settings.width, settings.height, layer.pixels().iter().map(|p| p.alpha()).collect(), settings.denoise);
+        let bright = tequila_render_cpu::floor::alpha_by_brightness(&job.scene);
         for (i, &share) in shares.iter().enumerate() {
             if share > 0.0 {
                 let reflection = tequila_core::spectrum::Spectrum::from_rendering_rgb(tequila_core::math::vec3(
@@ -690,6 +691,8 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
                     reflected[3 * i + 1].max(0.0),
                     reflected[3 * i + 2].max(0.0),
                 ));
+                let (reflection, share) =
+                    if bright { tequila_render_cpu::floor::by_brightness(reflection, share, job.style.exposure) } else { (reflection, share) };
                 (color[i], alpha[i]) = tequila_render_cpu::floor::lay_reflection(color[i], alpha[i], reflection, share);
             }
         }

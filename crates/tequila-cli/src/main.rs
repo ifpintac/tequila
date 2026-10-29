@@ -1231,6 +1231,7 @@ fn render_with_cycles(
         // Each pixel's share, denoised as the colour is: as sampled, a
         // blurred reflection's fade put specks on a light backdrop.
         let shares = smooth_alpha(width, height, layer.pixels().iter().map(|p| p.alpha()).collect(), denoise);
+        let bright = tequila_render_cpu::floor::alpha_by_brightness(&scene);
         for (i, &share) in shares.iter().enumerate() {
             if share > 0.0 {
                 let reflection = tequila_core::spectrum::Spectrum::from_rendering_rgb(vec3(
@@ -1241,6 +1242,8 @@ fn render_with_cycles(
                 // Premultiplied to lay over, straight again for the file.
                 let before = alpha[i];
                 let premultiplied = if keep_alpha { scene_linear[i] * before } else { scene_linear[i] };
+                let (reflection, share) =
+                    if bright { tequila_render_cpu::floor::by_brightness(reflection, share, style.exposure) } else { (reflection, share) };
                 let (colour, after) = tequila_render_cpu::floor::lay_reflection(premultiplied, before, reflection, share);
                 alpha[i] = after;
                 scene_linear[i] = if keep_alpha && after > 1e-6 { colour * (1.0 / after) } else { colour };

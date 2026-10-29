@@ -321,6 +321,8 @@ fn scale_environment(environment: &mut EnvironmentSettings, s: f32) {
     environment.size *= s;
     environment.height *= s;
     environment.ground.size *= s;
+    environment.ground.reflection_fade_distance *= s;
+    environment.ground.bounce_contact_falloff *= s;
 }
 
 /// Everything [`rescale`] changes, as it was before: undo puts it back

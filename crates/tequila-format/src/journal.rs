@@ -287,6 +287,7 @@ pub fn encode(command: &Command) -> String {
                 EnvValue::Mode(m) => Value::from(m.label()),
                 EnvValue::Path(Some(p)) => Value::from(p.clone()),
                 EnvValue::Path(None) => Value::Null,
+                EnvValue::Choice(c) => Value::from(*c),
             };
             out.set("parameter", parameter.param.key()).set("value", value);
         }
@@ -829,6 +830,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                     .and_then(|s| crate::BackgroundMode::ALL.into_iter().find(|m| m.label() == s))
                     .map(EnvValue::Mode),
                 EnvValue::Path(_) => Some(EnvValue::Path(raw.as_str().map(|s| s.to_string()))),
+                EnvValue::Choice(_) => raw
+                    .as_str()
+                    .and_then(|s| param.choices().iter().find(|(key, _)| *key == s))
+                    .map(|(key, _)| EnvValue::Choice(key)),
             };
             let shaped = shaped.ok_or_else(|| {
                 FormatError::Invalid(format!("`{named}` was given a value of the wrong kind"))

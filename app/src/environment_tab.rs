@@ -64,7 +64,13 @@ const GROUPS: [(&str, &[EnvParam]); 3] = [
             EnvParam::GroundReflections,
             EnvParam::GroundReflectionBlur,
             EnvParam::GroundReflectionLength,
+            EnvParam::GroundReflectionFadeDistance,
             EnvParam::GroundReflectionFresnel,
+            EnvParam::GroundReflectionAlpha,
+            EnvParam::GroundBounce,
+            EnvParam::GroundBounceStrength,
+            EnvParam::GroundBounceColor,
+            EnvParam::GroundBounceContactFalloff,
             EnvParam::GroundFlatten,
             EnvParam::GroundSize,
         ],
@@ -219,16 +225,25 @@ impl EnvironmentTab {
             EnvParam::Backplate => settings.background == BackgroundMode::Backplate,
             // Everything below the master switch is greyed out when there is
             // no floor for it to describe.
-            EnvParam::GroundShadows | EnvParam::GroundReflections | EnvParam::GroundFlatten => {
+            EnvParam::GroundShadows | EnvParam::GroundReflections | EnvParam::GroundFlatten | EnvParam::GroundBounce => {
                 settings.ground.enabled
+            }
+            EnvParam::GroundBounceStrength | EnvParam::GroundBounceColor | EnvParam::GroundBounceContactFalloff => {
+                settings.ground.enabled && settings.ground.bounce
+            }
+            // A length set in millimetres takes over from the share of the
+            // product's height, so the share is greyed out while it is set.
+            EnvParam::GroundReflectionLength => {
+                settings.ground.enabled && settings.ground.reflections > 0.0 && settings.ground.reflection_fade_distance <= 0.0
             }
             EnvParam::GroundShadowColor | EnvParam::GroundOcclusion => {
                 settings.ground.enabled && settings.ground.shadows
             }
             // The reflection's look, once there is a reflection to look at.
-            EnvParam::GroundReflectionBlur | EnvParam::GroundReflectionLength | EnvParam::GroundReflectionFresnel => {
-                settings.ground.enabled && settings.ground.reflections > 0.0
-            }
+            EnvParam::GroundReflectionBlur
+            | EnvParam::GroundReflectionFadeDistance
+            | EnvParam::GroundReflectionFresnel
+            | EnvParam::GroundReflectionAlpha => settings.ground.enabled && settings.ground.reflections > 0.0,
             EnvParam::GroundSize => {
                 settings.ground.enabled
                     && (settings.ground.shadows || settings.ground.reflections > 0.0)
@@ -237,6 +252,24 @@ impl EnvironmentTab {
         };
 
         match current {
+            // Small lengths, stored in metres like every length and shown in
+            // millimetres, the size they are set at: 7.5 mm, not 0.0075.
+            EnvValue::Scalar(value)
+                if matches!(param, EnvParam::GroundReflectionFadeDistance | EnvParam::GroundBounceContactFalloff) =>
+            {
+                let mut mm = value * 1000.0;
+                let response = ui.add_enabled(
+                    enabled,
+                    crate::field::Slider::new(&mut mm, 0.0..=50.0)
+                        .text(ui_hints.label)
+                        .suffix(" mm")
+                        .unit(crate::numeric::Unit::Millimetres)
+                        .clamping(egui::SliderClamping::Never),
+                );
+                if response.changed() {
+                    edits.push(EnvironmentParameter::scalar(param, (mm / 1000.0).max(0.0)));
+                }
+            }
             EnvValue::Scalar(value) => {
                 let mut v = value;
                 let (lo, hi) = ui_hints.range;
@@ -281,6 +314,15 @@ impl EnvironmentTab {
                 let options: Vec<(BackgroundMode, &str)> = BackgroundMode::ALL.iter().map(|m| (*m, m.label())).collect();
                 if crate::theme::segmented(ui, &mut next, &options) {
                     edits.push(EnvironmentParameter::new(param, EnvValue::Mode(next)));
+                }
+            }
+            EnvValue::Choice(choice) => {
+                ui.add_enabled(enabled, egui::Label::new(egui::RichText::new(ui_hints.label).color(crate::theme::p().text_dim)));
+                let mut next = choice;
+                let options: Vec<(&'static str, &str)> = param.choices().iter().map(|(key, label)| (*key, *label)).collect();
+                let changed = ui.add_enabled_ui(enabled, |ui| crate::theme::segmented(ui, &mut next, &options)).inner;
+                if changed {
+                    edits.push(EnvironmentParameter::new(param, EnvValue::Choice(next)));
                 }
             }
             EnvValue::Path(path) => {

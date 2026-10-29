@@ -381,7 +381,7 @@ class StudioCommands(_Commands):
     def set(self, *, studios=_UNSET):
         r"""`studio.set`: The list of Studios. Editing a Studio does not apply it.
 
-        { "command": "studio.set", "studios": [ { "environment": { "background": { "color": [0.05, 0.05, 0.05], "image": null, "mode": "Environment" }, "brightness": 1, "contrast": 1, "ground": { "enabled": true, "flatten": false, "occlusion_shadows": false, "reflection_blur": 0, "reflection_fresnel": false, "reflection_length": 1, "reflections": 0, "shadow_color": [0, 0, 0], "shadows": true, "size": 0 }, "height": 0, "image": null, "rotation": 1.25, "size": 0 }, "model_set": null, "name": "Hero", "variants": [ { "active": 0, "multi_material": 7 } ] } ] }
+        { "command": "studio.set", "studios": [ { "environment": { "background": { "color": [0.05, 0.05, 0.05], "image": null, "mode": "Environment" }, "brightness": 1, "contrast": 1, "ground": { "bounce": false, "bounce_color": [1, 1, 1], "bounce_contact_falloff": 0, "bounce_strength": 1, "enabled": true, "flatten": false, "occlusion_shadows": false, "reflection_alpha": "coverage", "reflection_blur": 0, "reflection_fade_distance": 0, "reflection_fresnel": false, "reflection_length": 1, "reflections": 0, "shadow_color": [0, 0, 0], "shadows": true, "size": 0 }, "height": 0, "image": null, "rotation": 1.25, "size": 0 }, "model_set": null, "name": "Hero", "variants": [ { "active": 0, "multi_material": 7 } ] } ] }
         """
         return self._apply('studio.set', {'studios': studios})
 

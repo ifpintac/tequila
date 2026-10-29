@@ -177,9 +177,34 @@ pub struct GroundSettings {
     /// product, lower is a short reflection that only meets the floor. The
     /// studio photographer's faded reflection, under the product.
     pub reflection_length: f32,
+    /// How far up the reflection fades out, in metres above the floor; 0
+    /// leaves it to [`reflection_length`](Self::reflection_length). V-Ray's
+    /// "Dim distance": a fade of 7.5 mm stays 7.5 mm whatever the product's
+    /// size, where the length is a share of its height and so fades
+    /// differently under every product.
+    pub reflection_fade_distance: f32,
     /// Weaken the reflection where the floor is seen from above, as a real
     /// glossy floor's is (Fresnel), rather than the same everywhere.
     pub reflection_fresnel: bool,
+    /// What the reflection's alpha follows. Its share of the pixel by
+    /// default; its brightness for pictures placed on any background, where
+    /// the dark parts of a reflection otherwise come out as a grey band.
+    pub reflection_alpha: ReflectionAlpha,
+    /// A floor only the product sees: its reflections and the light it
+    /// bounces take this glow, while the camera sees the floor exactly as
+    /// before. A photo studio's white sweep, invisible in the picture; it
+    /// lifts metal and anodised faces that mirror the floor and would
+    /// otherwise mirror black.
+    pub bounce: bool,
+    /// The bounce's brightness, in nits.
+    pub bounce_strength: f32,
+    /// The bounce's colour.
+    pub bounce_color: Spectrum,
+    /// How far from the product the bounce darkens toward the contact line,
+    /// in metres, like ambient occlusion over that distance; 0 for not at
+    /// all. It keeps the bottom of each face a little darker, as a real
+    /// floor's light is.
+    pub bounce_contact_falloff: f32,
     /// Project the below-horizon part of the environment flat onto the ground
     /// (`G`), so the floor does not visibly curve away.
     pub flatten: bool,
@@ -200,10 +225,43 @@ impl Default for GroundSettings {
             reflections: 0.0,
             reflection_blur: 0.0,
             reflection_length: 1.0,
+            reflection_fade_distance: 0.0,
             reflection_fresnel: false,
+            reflection_alpha: ReflectionAlpha::Coverage,
+            bounce: false,
+            bounce_strength: 1.0,
+            bounce_color: Spectrum::splat(1.0),
+            bounce_contact_falloff: 0.0,
             flatten: false,
             size: 0.0,
         }
+    }
+}
+
+/// What the ground reflection's alpha follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReflectionAlpha {
+    /// Its share of the pixel, whatever its brightness: what it always was.
+    #[default]
+    Coverage,
+    /// Its brightness as displayed: a dark reflection is transparent, a
+    /// bright one keeps its colour, and over black it is the same picture.
+    Luminance,
+}
+
+impl ReflectionAlpha {
+    pub const ALL: [ReflectionAlpha; 2] = [ReflectionAlpha::Coverage, ReflectionAlpha::Luminance];
+
+    /// The name in the file format and the scripting API.
+    pub const fn key(self) -> &'static str {
+        match self {
+            ReflectionAlpha::Coverage => "coverage",
+            ReflectionAlpha::Luminance => "luminance",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<ReflectionAlpha> {
+        ReflectionAlpha::ALL.into_iter().find(|a| a.key() == key)
     }
 }
 

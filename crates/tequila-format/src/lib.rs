@@ -1298,6 +1298,7 @@ fn environment_to_json(environment: &EnvironmentSettings) -> Value {
             EnvValue::Flag(v) => Value::from(v),
             EnvValue::Color(c) => color(c),
             EnvValue::Mode(m) => Value::from(m.label()),
+            EnvValue::Choice(c) => Value::from(c),
             EnvValue::Path(p) => match p {
                 Some(path) => Value::from(path),
                 // Written as null rather than omitted: the absence has to be
@@ -2452,6 +2453,10 @@ fn read_environment(root: &Value) -> EnvironmentSettings {
                 .and_then(|s| BackgroundMode::ALL.into_iter().find(|m| m.label() == s))
                 .map(EnvValue::Mode),
             EnvValue::Path(_) => Some(EnvValue::Path(value.as_str().map(|s| s.to_string()))),
+            EnvValue::Choice(_) => value
+                .as_str()
+                .and_then(|s| param.choices().iter().find(|(key, _)| *key == s))
+                .map(|(key, _)| EnvValue::Choice(key)),
         };
         if let Some(read) = read {
             param.write(&mut settings, &read);
