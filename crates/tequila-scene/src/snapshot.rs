@@ -1069,13 +1069,22 @@ fn ground_mesh(extent: f32) -> RenderMesh {
 /// World-space bounds of everything a snapshot would contain, for framing the
 /// camera. Empty when nothing is visible.
 pub fn visible_bounds(document: &SceneDocument) -> tequila_core::math::Aabb {
+    bounds_where(document, |_| true)
+}
+
+/// The bounds of the shown parts at or beneath `roots`.
+pub fn visible_bounds_under(document: &SceneDocument, roots: &[NodeId]) -> tequila_core::math::Aabb {
+    bounds_where(document, |id| roots.iter().any(|&root| root == id || document.tree.is_descendant_of(id, root)))
+}
+
+fn bounds_where(document: &SceneDocument, include: impl Fn(NodeId) -> bool) -> tequila_core::math::Aabb {
     let mut bounds = tequila_core::math::Aabb::EMPTY;
     let placed = document.placements();
     for node in document.tree.iter() {
         let NodeKind::Part { mesh } = node.kind else {
             continue;
         };
-        if !placed.shown(node.id) {
+        if !placed.shown(node.id) || !include(node.id) {
             continue;
         }
         if let Some(source) = document.geometry.get(mesh) {

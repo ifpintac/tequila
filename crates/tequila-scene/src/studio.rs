@@ -254,7 +254,9 @@ pub fn turned(document: &SceneDocument, yaw: f32) -> (Vec<(NodeId, tequila_core:
     }
     let roots = product_roots(document);
     let pivot = if current.yaw.abs() < 1e-7 {
-        let centre = crate::snapshot::visible_bounds(document).center();
+        // The product's own parts: a studio's card beside it is no part of
+        // its centre.
+        let centre = crate::snapshot::visible_bounds_under(document, &roots).center();
         if centre.x.is_finite() && centre.z.is_finite() { [centre.x, centre.z] } else { [0.0, 0.0] }
     } else {
         current.pivot
@@ -327,6 +329,52 @@ pub fn restore_materials(document: &mut SceneDocument, previous: &[(NodeId, Opti
 mod tests {
     use super::*;
     use crate::tree::NodeKind;
+
+    /// The product turns about its own centre. A part in a studio's group
+    /// beside it neither moves the axis nor turns with it.
+    #[test]
+    fn the_product_turns_about_its_own_centre() {
+        use tequila_core::math::{vec3, Transform};
+        let mut document = SceneDocument::new();
+        let mesh = crate::geometry::Mesh::new(
+            vec![vec3(-1.0, 0.0, -1.0), vec3(1.0, 0.0, -1.0), vec3(1.0, 1.0, 1.0)],
+            vec![0, 1, 2],
+        );
+        let (meshes, _, ids) = crate::command::reserve_keys(&document, 1, 0, 1);
+        let mut product = crate::tree::SceneNode::new(ids[0], "Product", NodeKind::Part { mesh: meshes[0] });
+        product.transform = Transform::translation(vec3(2.0, 0.0, 0.0));
+        crate::CommandBus::new()
+            .apply(
+                &mut document,
+                crate::Command::Import {
+                    payload: Box::new(crate::command::ImportPayload {
+                        meshes: vec![(meshes[0], mesh)],
+                        textures: Vec::new(),
+                        materials: Vec::new(),
+                        nodes: vec![product],
+                        roots: vec![ids[0]],
+                    }),
+                },
+            )
+            .unwrap();
+        let studio = document.add_node(None, "Studio", NodeKind::Group).unwrap();
+        document.tree.get_mut(studio).unwrap().metadata.insert(STUDIO_LIGHTS.into(), "test".into());
+        let card = document.add_node(Some(studio), "Card", NodeKind::Part { mesh: meshes[0] }).unwrap();
+        let placed = Transform::translation(vec3(0.0, 0.0, 8.0));
+        document.tree.get_mut(card).unwrap().transform = placed;
+
+        let centre = |document: &SceneDocument| crate::snapshot::visible_bounds_under(document, &[ids[0]]).center();
+        let before = centre(&document);
+        for yaw in [std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+            turn_product(&mut document, yaw);
+            let after = centre(&document);
+            assert!(
+                (after.x - before.x).abs() < 1e-4 && (after.z - before.z).abs() < 1e-4,
+                "turned {yaw}, the product swung off its centre: {before:?} to {after:?}"
+            );
+        }
+        assert_eq!(document.tree.get(card).unwrap().transform, placed, "the studio's card turned with the product");
+    }
 
     #[test]
     fn a_node_in_no_set_is_always_seen_and_members_follow_the_active_set() {

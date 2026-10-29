@@ -541,7 +541,6 @@ impl SceneTree {
         false
     }
 
-    /// `id` followed by every descendant, parents before children.
     /// The rays that see `id`: its own, limited by every ancestor's.
     pub fn rays_of(&self, id: NodeId) -> Rays {
         let mut rays = Rays::default();
@@ -553,6 +552,7 @@ impl SceneTree {
         rays
     }
 
+    /// `id` followed by every descendant, parents before children.
     pub fn descendants_and_self(&self, id: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
         let mut stack = vec![id];
