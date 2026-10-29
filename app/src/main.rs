@@ -4985,6 +4985,7 @@ impl TequilaApp {
             ProjectTab::Scene => {
                 let mut tab = std::mem::take(&mut self.scene_tab);
                 tab.show(ui, &mut self.project);
+                tab.rays_panel(ui, &mut self.project);
                 ui.add_space(4.0);
                 ui.separator();
                 theme::section(ui, "Metadata");

@@ -529,6 +529,7 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
         .set("transform", matrix_to_json(node.transform))
         .set("visible", node.visible)
         .set("locked", node.locked)
+        .set_some("rays", (!node.rays.is_default()).then(|| rays_to_json(&node.rays)))
         .set(
             "children",
             node.children
@@ -1383,6 +1384,34 @@ fn environment_to_json(environment: &EnvironmentSettings) -> Value {
 /// stored the converted values would silently change meaning the day the
 /// conversion is corrected, and there would be no way to tell a light that was
 /// authored at 1500 lm from one that happened to land there.
+/// Which rays see a node: every flag, written only where some is not the
+/// default.
+pub(crate) fn rays_to_json(rays: &tequila_scene::tree::Rays) -> Value {
+    let mut out = Object::new();
+    out.set("camera", rays.camera)
+        .set("diffuse", rays.diffuse)
+        .set("glossy", rays.glossy)
+        .set("transmission", rays.transmission)
+        .set("shadow", rays.shadow)
+        .set("holdout", rays.holdout);
+    out.build()
+}
+
+/// The rays a node's `rays` names; absent, every ray, no holdout.
+pub(crate) fn read_rays(value: Option<&Value>) -> tequila_scene::tree::Rays {
+    let default = tequila_scene::tree::Rays::default();
+    let Some(value) = value else { return default };
+    let flag = |key: &str, fallback: bool| value.get(key).and_then(|v| v.as_bool()).unwrap_or(fallback);
+    tequila_scene::tree::Rays {
+        camera: flag("camera", default.camera),
+        diffuse: flag("diffuse", default.diffuse),
+        glossy: flag("glossy", default.glossy),
+        transmission: flag("transmission", default.transmission),
+        shadow: flag("shadow", default.shadow),
+        holdout: flag("holdout", default.holdout),
+    }
+}
+
 pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     let mut object = Object::new();
     object.set("shape", settings.shape.label());
@@ -2885,6 +2914,7 @@ fn read_tree(
             .get("locked")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        node.rays = read_rays(value.get("rays"));
         node.material = value
             .get("material")
             .and_then(|v| v.as_str())
@@ -3198,5 +3228,27 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&product)), product);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("links"), "{plain}");
+    }
+}
+
+#[cfg(test)]
+mod rays_tests {
+    use super::*;
+    use tequila_scene::tree::Rays;
+
+    /// A node's rays are kept in the file, and a node seen by every ray
+    /// writes nothing new.
+    #[test]
+    fn a_nodes_rays_survive_and_default_ones_write_nothing() {
+        let rays = Rays { camera: false, transmission: false, holdout: true, ..Rays::default() };
+        assert_eq!(read_rays(Some(&rays_to_json(&rays))), rays);
+        assert_eq!(read_rays(None), Rays::default());
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let plain = json_write::to_string(&node_to_json(document.tree.iter().next().unwrap(), &Preserved::default()));
+        assert!(!plain.contains("\"rays\""), "{plain}");
+        let mut node = document.tree.iter().next().unwrap().clone();
+        node.rays = rays;
+        let written = node_to_json(&node, &Preserved::default());
+        assert_eq!(read_rays(written.get("rays")), rays);
     }
 }

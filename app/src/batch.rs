@@ -2620,6 +2620,34 @@ mod tests {
         }
     }
 
+    /// A held-out part is a hole in the picture where the camera sees it,
+    /// in both renderers: the sphere's middle goes from lit to nothing.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_held_out_part_is_a_hole_in_both_renderers() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let middle = |image: &[u8]| -> f64 {
+            let (mut sum, mut n) = (0.0, 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    let i = (y * 96 + x) * 4;
+                    sum += f64::from(image[i]) + f64::from(image[i + 1]) + f64::from(image[i + 2]);
+                    n += 1.0;
+                }
+            }
+            sum / n
+        };
+        let [plain_t, plain_c] = both_engines("holdout-off", |_| {});
+        let [held_t, held_c] = both_engines("holdout-on", |scene| scene.instances[0].holdout = true);
+        for (name, plain, held) in [("Tequila's renderer", middle(&plain_t), middle(&held_t)), ("Cycles", middle(&plain_c), middle(&held_c))] {
+            assert!(plain > 60.0, "{name}: the sphere is not lit: {plain:.1}");
+            assert!(held < 8.0, "{name}: a held-out sphere still shows: {held:.1} where it was {plain:.1}");
+        }
+    }
+
     /// A light kept to some parts lights those and no others, in both
     /// renderers alike: with nothing else lighting the scene, a lamp kept to
     /// one of two spheres and the same lamp kept to the other add up to the

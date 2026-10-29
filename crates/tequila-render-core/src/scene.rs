@@ -232,6 +232,15 @@ pub struct Instance {
     pub material: MaterialId,
     pub visible_to_camera: bool,
     pub casts_shadows: bool,
+    /// Seen by the light other surfaces gather, their reflections, and what
+    /// shows through their glass; a part none of these see is passed
+    /// through by such rays, as one hidden from the camera is by its.
+    pub seen_by_diffuse: bool,
+    pub seen_by_glossy: bool,
+    pub seen_by_transmission: bool,
+    /// Cut out of the picture: where the camera sees it, nothing, with no
+    /// alpha, for compositing (Cycles' holdout).
+    pub holdout: bool,
     /// Set when this instance is a shadow catcher rather than a surface.
     pub shadow_catcher: Option<ShadowCatcher>,
     /// This geometry stands in for an analytic light: it is *seen*, but it does
@@ -259,6 +268,10 @@ impl Instance {
             material,
             visible_to_camera: true,
             casts_shadows: true,
+            seen_by_diffuse: true,
+            seen_by_glossy: true,
+            seen_by_transmission: true,
+            holdout: false,
             shadow_catcher: None,
             light_proxy: false,
             light_layer: 0,

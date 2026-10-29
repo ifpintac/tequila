@@ -513,10 +513,15 @@ pub fn snapshot_with(
         };
 
         let instance_id = InstanceId(instances.len() as u32);
-        instances.push(
-            Instance::new(instance_id, mesh_id, material_id)
-                .with_transform(placed.world(node.id)),
-        );
+        let mut instance = Instance::new(instance_id, mesh_id, material_id).with_transform(placed.world(node.id));
+        let rays = document.tree.rays_of(node.id);
+        instance.visible_to_camera = rays.camera;
+        instance.casts_shadows = rays.shadow;
+        instance.seen_by_diffuse = rays.diffuse;
+        instance.seen_by_glossy = rays.glossy;
+        instance.seen_by_transmission = rays.transmission;
+        instance.holdout = rays.holdout;
+        instances.push(instance);
         instance_meshes.push(Some(mesh));
         mapping.nodes.push(node.id);
         mapping.instances.insert(node.id, instance_id);
@@ -1585,6 +1590,25 @@ mod tests {
         let (r, _) = texel(MapRole::Color);
         assert!((r - 0.2158).abs() < 2e-3, "colour read 128 as {r}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Which rays see a part come from it and every group above it, and
+    /// reach its instance; one undo puts them back.
+    #[test]
+    fn a_parts_rays_reach_its_instance_with_its_groups() {
+        use crate::tree::Rays;
+        let (mut document, mut bus, ids) = assembly(2);
+        bus.apply(&mut document, Command::set_rays(ids[0], Rays { glossy: false, ..Rays::default() })).unwrap();
+        bus.apply(&mut document, Command::set_rays(ids[1], Rays { shadow: false, holdout: true, ..Rays::default() })).unwrap();
+        assert_eq!(document.tree.rays_of(ids[1]), Rays { glossy: false, shadow: false, holdout: true, ..Rays::default() });
+        let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO)), &mut MeshCache::new());
+        let first = &scene.instances[mapping.instance_of(ids[1]).unwrap().0 as usize];
+        assert!(!first.seen_by_glossy && !first.casts_shadows && first.holdout && first.visible_to_camera && first.seen_by_diffuse);
+        let second = &scene.instances[mapping.instance_of(ids[2]).unwrap().0 as usize];
+        assert!(!second.seen_by_glossy && second.casts_shadows && !second.holdout, "the group's limit reaches every part under it");
+        bus.undo(&mut document).unwrap();
+        bus.undo(&mut document).unwrap();
+        assert!(document.tree.rays_of(ids[1]).is_default());
     }
 
     /// A light's links become the instances under what they name: the

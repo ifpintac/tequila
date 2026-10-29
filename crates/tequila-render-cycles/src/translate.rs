@@ -563,6 +563,15 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         if !instance.casts_shadows {
             visibility &= !ffi::VISIBLE_SHADOW;
         }
+        if !instance.seen_by_diffuse {
+            visibility &= !(ffi::VISIBLE_DIFFUSE | ffi::VISIBLE_SCATTER);
+        }
+        if !instance.seen_by_glossy {
+            visibility &= !ffi::VISIBLE_GLOSSY;
+        }
+        if !instance.seen_by_transmission {
+            visibility &= !ffi::VISIBLE_TRANSMISSION;
+        }
         // A shadow-catching floor is no surface to anything but the camera,
         // unless the ground is meant to light the product: Cycles' floor
         // would otherwise show in every reflection and through every glass,
@@ -605,6 +614,9 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         // Object Info's Random, as Tequila's renderer draws it.
         let random_id = SceneSnapshot::object_random_id(instance.id.index());
         builder.session.set_int(object, "random_id", random_id as i32)?;
+        if instance.holdout {
+            builder.session.set_bool(object, "use_holdout", true)?;
+        }
         builder.out.objects.push(Some(object));
 
         // A reflecting floor reflects nothing here: the caller lays

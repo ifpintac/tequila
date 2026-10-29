@@ -75,7 +75,7 @@ Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `mate
 
 ## Commands
 
-53 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+54 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -333,6 +333,17 @@ unlocked.
 
 ```json
 { "command": "scene.set_locked", "states": [ { "node": 2, "value": true } ] }
+```
+
+#### `scene.set_rays`
+
+Which rays see each node (`Rays`): camera, diffuse, glossy, transmission and
+shadow, and holdout.
+
+`fs.commands.scene.set_rays(states=...)`
+
+```json
+{ "command": "scene.set_rays", "states": [ { "node": 2, "rays": { "camera": true, "diffuse": true, "glossy": false, "holdout": true, "shadow": true, "transmission": true } } ] }
 ```
 
 #### `scene.set_pivot`

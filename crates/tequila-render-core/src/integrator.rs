@@ -580,6 +580,9 @@ pub fn trace_path_with_caustics(
     // (see `catcher_view_through`): through mirrors always, through near
     // mirrors fading out with their roughness.
     let mut catcher_view = !config.in_floor_reflection;
+    // What kind of ray this is, for the parts some rays do not see
+    // (`Instance::seen_by_diffuse` and the rest).
+    let mut seen_as = if config.in_floor_reflection { Seen::FloorMirror } else { Seen::Camera };
     // Accumulated relative IOR squared. §3.1: omitting this from Russian
     // roulette "makes glass unnecessarily noisy".
     let mut eta_scale = 1.0f32;
@@ -860,14 +863,20 @@ pub fn trace_path_with_caustics(
         // ray goes straight through, as through a hole, and every other ray
         // still meets it — so what is hidden goes on casting its shadows,
         // lighting its neighbours and showing in their reflections, and the
-        // layer composites back over the rest without a seam.
-        if bounce == 0
-            && crossings < MAX_CUTOUT_CROSSINGS
-            && scene
-                .instances
-                .get(hit.instance.0 as usize)
-                .is_some_and(|i| !i.visible_to_camera)
-        {
+        // layer composites back over the rest without a seam. A part some
+        // other kind of ray does not see is passed through by it the same
+        // way: a card the camera cannot see but reflections can, a part
+        // that shows in no glass.
+        let unseen = |i: &crate::scene::Instance| match seen_as {
+            Seen::Camera => bounce == 0 && !i.visible_to_camera,
+            // The floor's own reflection: a reflection, and as the camera
+            // sees it, so a render layer's hidden parts stay out of it too.
+            Seen::FloorMirror => bounce == 0 && (!i.visible_to_camera || !i.seen_by_glossy),
+            Seen::Diffuse => !i.seen_by_diffuse,
+            Seen::Glossy => !i.seen_by_glossy,
+            Seen::Transmission => !i.seen_by_transmission,
+        };
+        if crossings < MAX_CUTOUT_CROSSINGS && scene.instances.get(hit.instance.0 as usize).is_some_and(unseen) {
             crossings += 1;
             let (geometric, _) = hit.facing_forward(ray.direction);
             ray = Ray::new(
@@ -883,6 +892,12 @@ pub fn trace_path_with_caustics(
             out.position = hit.position;
             out.object_id = hit.instance.0;
             out.material_id = hit.material.0;
+            // Held out: a hole in the picture where the camera sees it,
+            // nothing and no alpha, for what is composited in its place.
+            if scene.instances.get(hit.instance.0 as usize).is_some_and(|i| i.holdout) {
+                out.coverage = 0.0;
+                break;
+            }
         }
 
         // ---- Shadow catcher --------------------------------------------
@@ -1423,6 +1438,13 @@ pub fn trace_path_with_caustics(
         let Some(sample) = bsdf.sample(wo, sampler.bsdf_direction(), sampler.bsdf_lobe()) else {
             break;
         };
+        seen_as = if sample.is_transmission {
+            Seen::Transmission
+        } else if sample.flags.contains(BsdfFlags::DIFFUSE) {
+            Seen::Diffuse
+        } else {
+            Seen::Glossy
+        };
         // What the photons cover from here on. A mirror-smooth lobe of this
         // surface (a clear coat) was not in their estimate, which reads the
         // BSDF, so a path leaving by one is still this path's to count.
@@ -1540,6 +1562,17 @@ pub fn trace_path_with_caustics(
         out.normal = -ray.direction;
     }
     out
+}
+
+/// The kind of ray a path is, as a part's visibility names them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Seen {
+    Camera,
+    /// The first ray of the floor's reflection.
+    FloorMirror,
+    Diffuse,
+    Glossy,
+    Transmission,
 }
 
 /// The chance that a path reflected off `material` still sees a shadow

@@ -25,6 +25,7 @@ CATALOG = (
     'scene.set_transform',
     'scene.set_visibility',
     'scene.set_locked',
+    'scene.set_rays',
     'scene.set_pivot',
     'scene.reparent',
     'scene.group',
@@ -247,6 +248,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_locked", "states": [ { "node": 2, "value": true } ] }
         """
         return self._apply('scene.set_locked', {'states': states})
+
+    def set_rays(self, *, states=_UNSET):
+        r"""`scene.set_rays`: Which rays see each node (`Rays`): camera, diffuse, glossy, transmission and shadow, and holdout.
+
+        { "command": "scene.set_rays", "states": [ { "node": 2, "rays": { "camera": true, "diffuse": true, "glossy": false, "holdout": true, "shadow": true, "transmission": true } } ] }
+        """
+        return self._apply('scene.set_rays', {'states': states})
 
     def set_pivot(self, *, pivots=_UNSET):
         r"""`scene.set_pivot`: The point a node rotates and scales about.

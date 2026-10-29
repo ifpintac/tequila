@@ -93,6 +93,21 @@ pub fn encode(command: &Command) -> String {
         Command::SetLocked { states } => {
             out.set("states", flags(states));
         }
+        Command::SetRays { states } => {
+            out.set(
+                "states",
+                Value::Array(
+                    states
+                        .iter()
+                        .map(|(node, rays)| {
+                            let mut entry = Object::new();
+                            entry.set("node", node.0).set("rays", crate::rays_to_json(rays));
+                            entry.build()
+                        })
+                        .collect(),
+                ),
+            );
+        }
         Command::SetPivot { pivots } => {
             out.set(
                 "pivots",
@@ -505,6 +520,17 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
         "scene.set_locked" => Command::SetLocked {
             states: read_flags(&value)?,
         },
+        "scene.set_rays" => {
+            let mut states = Vec::new();
+            for entry in value.get("states").map(|s| s.as_array()).unwrap_or(&[]) {
+                let id = entry
+                    .get("node")
+                    .and_then(|v| v.as_index())
+                    .ok_or_else(|| FormatError::Invalid("a state names no node".into()))?;
+                states.push((NodeId(id as u64), crate::read_rays(entry.get("rays"))));
+            }
+            Command::SetRays { states }
+        }
         "scene.set_pivot" => {
             let mut pivots = Vec::new();
             for entry in value.get("pivots").map(|p| p.as_array()).unwrap_or(&[]) {

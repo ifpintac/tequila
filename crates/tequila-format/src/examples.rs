@@ -356,6 +356,7 @@ pub fn commands() -> Vec<Command> {
         Command::set_transform(ids[1], Transform::translation(vec3(1.5, -2.25, 0.125))),
         Command::set_visibility(ids[1], false),
         Command::set_locked(ids[1], true),
+        Command::set_rays(ids[1], tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() }),
         Command::Reparent {
             node: ids[1],
             parent: Some(ids[0]),

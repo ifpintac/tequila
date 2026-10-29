@@ -167,6 +167,9 @@ pub enum Command {
     /// `scene.set_locked` — a lock per node: a locked node, and everything
     /// under it, refuses edits until unlocked.
     SetLocked { states: Vec<(NodeId, bool)> },
+    /// `scene.set_rays` — which rays see each node (`Rays`): camera,
+    /// diffuse, glossy, transmission and shadow, and holdout.
+    SetRays { states: Vec<(NodeId, crate::tree::Rays)> },
     /// `scene.set_pivot` — the point a node rotates and scales about.
     ///
     /// `None` clears it, returning the node to the gizmo's derived pivot
@@ -974,6 +977,10 @@ impl Command {
         }
     }
 
+    pub fn set_rays(node: NodeId, rays: crate::tree::Rays) -> Command {
+        Command::SetRays { states: vec![(node, rays)] }
+    }
+
     pub fn set_locked(node: NodeId, locked: bool) -> Command {
         Command::SetLocked {
             states: vec![(node, locked)],
@@ -997,6 +1004,7 @@ impl Command {
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
             Command::SetLocked { .. } => "scene.set_locked",
+            Command::SetRays { .. } => "scene.set_rays",
             Command::SetPivot { .. } => "scene.set_pivot",
             Command::Reparent { .. } => "scene.reparent",
             Command::Group { .. } => "scene.group",
@@ -1046,7 +1054,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 53] = [
+    pub const CATALOG: [&'static str; 54] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1058,6 +1066,7 @@ impl Command {
         "scene.set_transform",
         "scene.set_visibility",
         "scene.set_locked",
+        "scene.set_rays",
         "scene.set_pivot",
         "scene.reparent",
         "scene.group",
@@ -1116,7 +1125,7 @@ impl Command {
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
             Command::SetTransform { .. } => SceneChange::InstanceTransform,
-            Command::SetVisibility { .. } => SceneChange::VisibilityToggle,
+            Command::SetVisibility { .. } | Command::SetRays { .. } => SceneChange::VisibilityToggle,
             Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
                 SceneChange::MaterialAssignment
             }
@@ -1269,6 +1278,7 @@ enum Undo {
     Transforms(Vec<(NodeId, Transform)>),
     Visibility(Vec<(NodeId, bool)>),
     Locked(Vec<(NodeId, bool)>),
+    Rays(Vec<(NodeId, crate::tree::Rays)>),
     Pivots(Vec<(NodeId, Option<Vec3>)>),
     Parent {
         node: NodeId,
@@ -2316,6 +2326,18 @@ fn execute(
             Ok(Undo::Locked(previous))
         }
 
+        Command::SetRays { states } => {
+            for (node, _) in states {
+                document.tree.try_get(*node)?;
+            }
+            let mut previous = Vec::with_capacity(states.len());
+            for (node, rays) in states {
+                previous.push((*node, document.tree.get_mut(*node)?.rays));
+                document.tree.get_mut(*node)?.rays = *rays;
+            }
+            Ok(Undo::Rays(previous))
+        }
+
         Command::Reparent {
             node,
             parent,
@@ -3054,6 +3076,12 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
         Undo::Locked(previous) => {
             for (node, locked) in previous {
                 document.tree.get_mut(*node)?.locked = *locked;
+            }
+            Ok(())
+        }
+        Undo::Rays(previous) => {
+            for (node, rays) in previous {
+                document.tree.get_mut(*node)?.rays = *rays;
             }
             Ok(())
         }

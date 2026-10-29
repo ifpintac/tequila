@@ -21,6 +21,7 @@ Every `{"command": ...}` here goes through `tequila_apply`, or several at once a
 ```
 
 - **Hide and show:** `{"command": "scene.set_visibility", "states": [{"node": 3, "value": true}, {"node": 4, "value": false}]}` - one command for many nodes, so "isolate these" is one undo step: list every part, true for the ones to keep.
+- **Seen by some rays only:** `{"command": "scene.set_rays", "states": [{"node": 3, "rays": {"camera": false, "diffuse": true, "glossy": true, "transmission": true, "shadow": true, "holdout": false}}]}` - send all six. `camera: false` keeps a part out of the picture but in its reflections and light (a bounce card); `glossy: false` keeps it out of reflections; `shadow: false` stops its shadow; `holdout: true` cuts a transparent hole where the camera sees it, for compositing. A group's rays apply to every part in it.
 - **A model that came in as one lump** (an STL, an OBJ without groups): `{"command": "scene.split_parts", "node": 4}` makes one part per connected piece.
 - **Renaming many parts** (`Body.001` → `Body`): read the names, then one `tequila_batch` of `scene.rename`s.
 - **Selecting** for the user to see: `tequila_select {"nodes": [3, 4]}`; `tequila_frame {"all": false}` frames them.

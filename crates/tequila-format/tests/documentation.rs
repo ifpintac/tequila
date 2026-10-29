@@ -48,6 +48,7 @@ fn document_with_everything() -> SceneDocument {
     part.pivot = Some(vec3(0.25, 0.0, -0.5));
     part.locked = true;
     part.visible = false;
+    part.rays = tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() };
 
     bus.apply(
         &mut document,

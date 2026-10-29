@@ -688,6 +688,8 @@ impl SceneDocument {
                 format!("{id} visible: {} vs {}", a.visible, b.visible)
             } else if a.locked != b.locked {
                 format!("{id} locked: {} vs {}", a.locked, b.locked)
+            } else if a.rays != b.rays {
+                format!("{id} rays: {:?} vs {:?}", a.rays, b.rays)
             } else if a.metadata != b.metadata {
                 format!("{id} metadata: {:?} vs {:?}", a.metadata, b.metadata)
             } else if a.children != b.children {

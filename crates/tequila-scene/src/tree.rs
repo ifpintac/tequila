@@ -88,6 +88,46 @@ impl NodeKind {
     }
 }
 
+/// Which rays see a part, and everything under it: the camera, the light
+/// others' surfaces gather (diffuse), their reflections (glossy), what shows
+/// through glass (transmission), and shadows. And holdout, which cuts the
+/// part out of the picture with no alpha, for compositing. A part none of
+/// whose rays see it still blocks nothing and lights nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rays {
+    pub camera: bool,
+    pub diffuse: bool,
+    pub glossy: bool,
+    pub transmission: bool,
+    pub shadow: bool,
+    pub holdout: bool,
+}
+
+impl Default for Rays {
+    fn default() -> Self {
+        Rays { camera: true, diffuse: true, glossy: true, transmission: true, shadow: true, holdout: false }
+    }
+}
+
+impl Rays {
+    pub fn is_default(&self) -> bool {
+        *self == Rays::default()
+    }
+
+    /// A node's own under its parent's: seen only by what sees both, held
+    /// out if either is.
+    pub fn under(self, parent: Rays) -> Rays {
+        Rays {
+            camera: self.camera && parent.camera,
+            diffuse: self.diffuse && parent.diffuse,
+            glossy: self.glossy && parent.glossy,
+            transmission: self.transmission && parent.transmission,
+            shadow: self.shadow && parent.shadow,
+            holdout: self.holdout || parent.holdout,
+        }
+    }
+}
+
 /// One node of the scene tree.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneNode {
@@ -99,6 +139,8 @@ pub struct SceneNode {
     pub transform: Transform,
     pub visible: bool,
     pub locked: bool,
+    /// The rays that see it (`Rays`); its parent's limit it too.
+    pub rays: Rays,
     pub material: Option<MaterialKey>,
     /// CAD attributes and user annotations. Ordered, so the document
     /// serializes identically every time (§4.1).
@@ -140,6 +182,7 @@ impl SceneNode {
             transform: Transform::IDENTITY,
             visible: true,
             locked: false,
+            rays: Rays::default(),
             material: None,
             metadata: BTreeMap::new(),
             children: Vec::new(),
@@ -499,6 +542,17 @@ impl SceneTree {
     }
 
     /// `id` followed by every descendant, parents before children.
+    /// The rays that see `id`: its own, limited by every ancestor's.
+    pub fn rays_of(&self, id: NodeId) -> Rays {
+        let mut rays = Rays::default();
+        let mut current = Some(id);
+        while let Some(node) = current.and_then(|c| self.get(c)) {
+            rays = rays.under(node.rays);
+            current = node.parent;
+        }
+        rays
+    }
+
     pub fn descendants_and_self(&self, id: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
         let mut stack = vec![id];
