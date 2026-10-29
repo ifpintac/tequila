@@ -81,6 +81,16 @@ pub struct Quality {
     /// Whether the denoiser cleans its guides first: Cycles' "accurate"
     /// prefilter, or none.
     pub prefilter: bool,
+    /// The lighting's Light Paths beyond the two limits above
+    /// (`IntegratorConfig::cycles`).
+    pub transport: tequila_render_core::settings::CyclesTransport,
+    /// A clamp on direct light of its own: with it, [`clamp`](Self::clamp)
+    /// is the indirect one alone.
+    pub clamp_direct: Option<f32>,
+    /// The render's pixel filter; `None` is Cycles' Film default.
+    pub pixel_filter: Option<tequila_render_core::settings::PixelFilter>,
+    /// The render's adaptive-sampling threshold; `None` is Cycles' own.
+    pub adaptive_threshold: Option<f32>,
 }
 
 impl Quality {
@@ -96,7 +106,22 @@ impl Quality {
             reject_fireflies: true,
             clamp: None,
             prefilter: true,
+            transport: config.cycles,
+            clamp_direct: None,
+            pixel_filter: None,
+            adaptive_threshold: None,
         }
+    }
+
+    /// With the render settings' direct clamp, pixel filter and adaptive
+    /// threshold, each `None` leaving Cycles as it was.
+    pub fn with_render_controls(
+        self,
+        clamp_direct: Option<f32>,
+        pixel_filter: Option<tequila_render_core::settings::PixelFilter>,
+        adaptive_threshold: Option<f32>,
+    ) -> Quality {
+        Quality { clamp_direct, pixel_filter, adaptive_threshold, ..self }
     }
 
     /// With the render settings' firefly rejection, clamp and prefilter,
@@ -119,45 +144,98 @@ struct BounceLimits {
 /// asks: the Jewelry preset's twelve. A gem's inner reflections are glossy
 /// bounces to Cycles, and at Blender's four a diamond went dark. Tequila
 /// counts passes through glass apart; Cycles counts them in the total.
+///
+/// Diffuse or glossy bounces given on their own (`CyclesTransport`) are
+/// taken as they are, and `bounces` is then the total for every kind
+/// together, as Blender's Total is.
 fn bounce_limits(quality: &Quality) -> BounceLimits {
     let (bounces, through) = (quality.bounces as i32, quality.transmission_bounces as i32);
+    let t = &quality.transport;
+    let explicit = t.diffuse_bounces.is_some() || t.glossy_bounces.is_some();
     BounceLimits {
-        total: (bounces + through).max(12),
-        diffuse: bounces.max(4),
-        glossy: bounces.max(4),
+        total: if explicit { bounces.max(1) } else { (bounces + through).max(12) },
+        diffuse: t.diffuse_bounces.map_or(bounces.max(4), |d| d as i32),
+        glossy: t.glossy_bounces.map_or(bounces.max(4), |g| g as i32),
         transmission: through.max(12),
     }
+}
+
+/// A setting for one of Cycles' scene nodes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Setting {
+    Int(i32),
+    Float(f32),
+    Bool(bool),
+    Text(&'static str),
+}
+
+/// What [`configure`] sets, node by node: the integrator's and the film's,
+/// as `(node, socket, value)`. Apart from the session so it can be checked.
+pub fn settings(quality: &Quality) -> Vec<(&'static str, &'static str, Setting)> {
+    use Setting::*;
+    let limits = bounce_limits(quality);
+    let t = &quality.transport;
+    let transparent = t.transparent_bounces.map_or(8, |b| b as i32);
+    let mut out = vec![
+        ("integrator", "max_bounce", Int(limits.total)),
+        ("integrator", "max_diffuse_bounce", Int(limits.diffuse)),
+        ("integrator", "max_glossy_bounce", Int(limits.glossy)),
+        ("integrator", "max_transmission_bounce", Int(limits.transmission)),
+        ("integrator", "transparent_max_bounce", Int(transparent)),
+        // No Russian roulette through see-through surfaces. A path that
+        // reaches a shadow-catching floor through them gives the floor its
+        // strength before the roulette's survivors are made up for the paths
+        // it ended, so the floor behind half-transparent glass came out
+        // darker by the odds of surviving: an eighth of the light, through a
+        // sphere half there. (Blender's default, 0, has the same fault.)
+        ("integrator", "transparent_min_bounce", Int(transparent)),
+        ("integrator", "filter_glossy", Float(t.filter_glossy.unwrap_or(1.0).max(0.0))),
+        ("integrator", "use_adaptive_sampling", Bool(quality.adaptive)),
+        ("integrator", "use_denoise", Bool(quality.denoise)),
+    ];
+    if let Some(volume) = t.volume_bounces {
+        out.push(("integrator", "max_volume_bounce", Int(volume as i32)));
+    }
+    if let Some(on) = t.caustics_reflective {
+        out.push(("integrator", "caustics_reflective", Bool(on)));
+    }
+    if let Some(on) = t.caustics_refractive {
+        out.push(("integrator", "caustics_refractive", Bool(on)));
+    }
+    // Cycles reads 0 as no clamp. A direct clamp of its own leaves the other
+    // for indirect light alone, firefly rejection's 10 when there is none.
+    let rejection = if quality.reject_fireflies { 10.0 } else { 0.0 };
+    let (direct, indirect) = match (quality.clamp_direct, quality.clamp) {
+        (Some(direct), clamp) => (direct.max(0.0), clamp.map_or(rejection, |c| c.max(0.0))),
+        (None, Some(clamp)) => (clamp.max(0.0), clamp.max(0.0)),
+        (None, None) => (0.0, rejection),
+    };
+    out.push(("integrator", "sample_clamp_direct", Float(direct)));
+    out.push(("integrator", "sample_clamp_indirect", Float(indirect)));
+    // `DenoiserPrefilter` in Cycles' device/denoise.h: 1 none, 3 accurate.
+    out.push(("integrator", "denoiser_prefilter", Int(if quality.prefilter { 3 } else { 1 })));
+    if let Some(threshold) = quality.adaptive_threshold {
+        out.push(("integrator", "adaptive_threshold", Float(threshold.max(1e-6))));
+    }
+    if let Some(filter) = quality.pixel_filter {
+        out.push(("film", "filter_type", Text(filter.kind.key())));
+        out.push(("film", "filter_width", Float(if filter.width > 0.0 { filter.width } else { 1.0 })));
+    }
+    out
 }
 
 /// Set the integrator up as Blender does by default, so a scene renders here
 /// as it would there, with `quality` on top.
 pub fn configure(session: &mut Session, quality: &Quality) -> Result<(), String> {
-    let integrator = session.scene_node("integrator")?;
-    let limits = bounce_limits(quality);
-    session.set_int(integrator, "max_bounce", limits.total)?;
-    session.set_int(integrator, "max_diffuse_bounce", limits.diffuse)?;
-    session.set_int(integrator, "max_glossy_bounce", limits.glossy)?;
-    session.set_int(integrator, "max_transmission_bounce", limits.transmission)?;
-    session.set_int(integrator, "transparent_max_bounce", 8)?;
-    // No Russian roulette through see-through surfaces. A path that reaches
-    // a shadow-catching floor through them gives the floor its strength
-    // before the roulette's survivors are made up for the paths it ended,
-    // so the floor behind half-transparent glass came out darker by the
-    // odds of surviving: an eighth of the light, through a sphere half
-    // there. (Blender's default, 0, has the same fault.)
-    session.set_int(integrator, "transparent_min_bounce", 8)?;
-    session.set_float(integrator, "filter_glossy", 1.0)?;
-    session.set_bool(integrator, "use_adaptive_sampling", quality.adaptive)?;
-    session.set_bool(integrator, "use_denoise", quality.denoise)?;
-    // Cycles reads 0 as no clamp.
-    let (direct, indirect) = match quality.clamp {
-        Some(clamp) => (clamp.max(0.0), clamp.max(0.0)),
-        None => (0.0, if quality.reject_fireflies { 10.0 } else { 0.0 }),
-    };
-    session.set_float(integrator, "sample_clamp_direct", direct)?;
-    session.set_float(integrator, "sample_clamp_indirect", indirect)?;
-    // `DenoiserPrefilter` in Cycles' device/denoise.h: 1 none, 3 accurate.
-    session.set_int(integrator, "denoiser_prefilter", if quality.prefilter { 3 } else { 1 })?;
+    for (node, socket, value) in settings(quality) {
+        let node = session.scene_node(node)?;
+        match value {
+            Setting::Int(v) => session.set_int(node, socket, v)?,
+            Setting::Float(v) => session.set_float(node, socket, v)?,
+            Setting::Bool(v) => session.set_bool(node, socket, v)?,
+            Setting::Text(v) => session.set_string(node, socket, v)?,
+        }
+    }
     session.set_time_limit(quality.seconds);
     Ok(())
 }
@@ -3437,6 +3515,91 @@ mod tests {
         assert_eq!(jewelry, BounceLimits { total: 28, diffuse: 12, glossy: 12, transmission: 16 });
         let quick = bounce_limits(&Quality::with_lighting(true, false, None, &IntegratorConfig::performance()));
         assert_eq!(quick, BounceLimits { total: 12, diffuse: 4, glossy: 4, transmission: 12 });
+    }
+
+    /// What Cycles is told with none of the finer controls set is what it
+    /// was always told, and each one set reaches its own socket, as a studio
+    /// that has to match Blender's Light Paths, clamping and Film sets them:
+    /// total 16 with diffuse 4, glossy 8, transmission 12, transparent 16,
+    /// volume 0, Filter Glossy 0.5, direct light unclamped and indirect at
+    /// 10, Blackman-Harris 1.5 px.
+    #[test]
+    fn the_finer_controls_reach_cycles_and_change_nothing_unset() {
+        use tequila_render_core::settings::{CyclesTransport, IntegratorConfig, PixelFilter, PixelFilterKind};
+        let find = |all: &[(&str, &str, Setting)], node: &str, socket: &str| {
+            all.iter().find(|(n, s, _)| *n == node && *s == socket).map(|(_, _, v)| v.clone())
+        };
+        let plain = settings(&Quality::with_lighting(true, true, None, &IntegratorConfig::product()).with_clamping(true, None, true));
+        for (socket, value) in [
+            ("max_bounce", Setting::Int(14)),
+            ("max_diffuse_bounce", Setting::Int(6)),
+            ("max_glossy_bounce", Setting::Int(6)),
+            ("max_transmission_bounce", Setting::Int(12)),
+            ("transparent_max_bounce", Setting::Int(8)),
+            ("transparent_min_bounce", Setting::Int(8)),
+            ("filter_glossy", Setting::Float(1.0)),
+            ("sample_clamp_direct", Setting::Float(0.0)),
+            ("sample_clamp_indirect", Setting::Float(10.0)),
+        ] {
+            assert_eq!(find(&plain, "integrator", socket), Some(value), "{socket} with nothing set");
+        }
+        for socket in ["max_volume_bounce", "caustics_reflective", "caustics_refractive", "adaptive_threshold"] {
+            assert_eq!(find(&plain, "integrator", socket), None, "{socket} sent with nothing set");
+        }
+        assert!(plain.iter().all(|(node, _, _)| *node != "film"), "the film was touched with no filter set");
+        // An old clamp still holds for direct and indirect light alike.
+        let clamped = settings(&Quality::with_lighting(true, true, None, &IntegratorConfig::product()).with_clamping(true, Some(4.0), true));
+        assert_eq!(find(&clamped, "integrator", "sample_clamp_direct"), Some(Setting::Float(4.0)));
+
+        let mut config = IntegratorConfig { max_bounces: 16, max_transmission_bounces: 12, ..IntegratorConfig::product() };
+        config.cycles = CyclesTransport {
+            diffuse_bounces: Some(4),
+            glossy_bounces: Some(8),
+            transparent_bounces: Some(16),
+            volume_bounces: Some(0),
+            filter_glossy: Some(0.5),
+            caustics_reflective: Some(true),
+            caustics_refractive: Some(true),
+        };
+        let studio = settings(
+            &Quality::with_lighting(true, true, None, &config).with_clamping(true, None, true).with_render_controls(
+                Some(0.0),
+                Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 }),
+                Some(0.01),
+            ),
+        );
+        for (node, socket, value) in [
+            ("integrator", "max_bounce", Setting::Int(16)),
+            ("integrator", "max_diffuse_bounce", Setting::Int(4)),
+            ("integrator", "max_glossy_bounce", Setting::Int(8)),
+            ("integrator", "max_transmission_bounce", Setting::Int(12)),
+            ("integrator", "transparent_max_bounce", Setting::Int(16)),
+            ("integrator", "max_volume_bounce", Setting::Int(0)),
+            ("integrator", "filter_glossy", Setting::Float(0.5)),
+            ("integrator", "caustics_reflective", Setting::Bool(true)),
+            ("integrator", "caustics_refractive", Setting::Bool(true)),
+            ("integrator", "sample_clamp_direct", Setting::Float(0.0)),
+            ("integrator", "sample_clamp_indirect", Setting::Float(10.0)),
+            ("integrator", "adaptive_threshold", Setting::Float(0.01)),
+            ("film", "filter_type", Setting::Text("blackman_harris")),
+            ("film", "filter_width", Setting::Float(1.5)),
+        ] {
+            assert_eq!(find(&studio, node, socket), Some(value), "{node}.{socket}");
+        }
+        // And Cycles takes every one of them: a socket it does not have is an
+        // error. Where Cycles is installed.
+        match crate::available() {
+            Ok(()) => {
+                let mut session = crate::Session::new("CPU", 1, None).expect("a session");
+                configure(&mut session, &Quality::with_lighting(true, true, None, &config).with_clamping(true, None, true).with_render_controls(
+                    Some(0.0),
+                    Some(PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }),
+                    Some(0.01),
+                ))
+                .expect("Cycles takes every setting");
+            }
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
     }
 
     /// The byte encoding loses nothing it can keep: a value from a byte on

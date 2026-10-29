@@ -23,6 +23,33 @@ use crate::project::Project;
 #[derive(Default)]
 pub struct LightingTab {}
 
+/// A count Cycles takes that may be left to it: ticked, the number given;
+/// unticked, `automatic`, shown greyed out as what it will be.
+fn optional_count(ui: &mut egui::Ui, label: &str, value: &mut Option<u32>, automatic: u32) {
+    ui.horizontal(|ui| {
+        let mut set = value.is_some();
+        if ui.add(crate::field::Checkbox::new(&mut set, label)).changed() {
+            *value = set.then_some(automatic);
+        }
+        match value {
+            Some(count) => {
+                ui.add(egui::DragValue::new(count).range(0..=128));
+            }
+            None => {
+                ui.label(egui::RichText::new(automatic.to_string()).color(crate::theme::dim()));
+            }
+        }
+    });
+}
+
+/// A switch Cycles takes that may be left to it (on, there).
+fn optional_flag(ui: &mut egui::Ui, label: &str, value: &mut Option<bool>) {
+    let mut on = value.unwrap_or(true);
+    if ui.add(crate::field::Checkbox::new(&mut on, label)).changed() {
+        *value = Some(on);
+    }
+}
+
 impl LightingTab {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) {
         let lighting = project.document().lighting.clone();
@@ -103,6 +130,39 @@ impl LightingTab {
                     crate::field::Slider::new(&mut config.regularization_roughness, 0.0..=0.4)
                         .text("Roughness floor"),
                 );
+
+                let unset = tequila_render_core::settings::CyclesTransport::NONE;
+                crate::field::Fold::new("Advanced (Cycles)")
+                    .id_salt("lighting-cycles-light-paths")
+                    .default_open(config.cycles != unset)
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Blender's Light Paths, for a studio that must match one. Unticked, Cycles takes \
+                                 what it always has; with diffuse or glossy set, Ray bounces is the total.",
+                            )
+                            .small()
+                            .color(crate::theme::dim()),
+                        );
+                        let automatic = config.max_bounces.max(4);
+                        optional_count(ui, "Diffuse bounces", &mut config.cycles.diffuse_bounces, automatic);
+                        optional_count(ui, "Glossy bounces", &mut config.cycles.glossy_bounces, automatic);
+                        optional_count(ui, "Transparent bounces", &mut config.cycles.transparent_bounces, 8);
+                        optional_count(ui, "Volume bounces", &mut config.cycles.volume_bounces, 7);
+                        ui.horizontal(|ui| {
+                            let mut set = config.cycles.filter_glossy.is_some();
+                            if ui.add(crate::field::Checkbox::new(&mut set, "Filter glossy")).changed() {
+                                config.cycles.filter_glossy = set.then_some(1.0);
+                            }
+                            if let Some(blur) = &mut config.cycles.filter_glossy {
+                                ui.add(egui::DragValue::new(blur).range(0.0..=10.0).speed(0.05));
+                            }
+                        })
+                        .response
+                        .on_hover_text("Blur glossy reflections seen after a diffuse bounce, which cuts their noise. Blender's is 0.5; unticked, 1.");
+                        optional_flag(ui, "Reflective caustics", &mut config.cycles.caustics_reflective);
+                        optional_flag(ui, "Refractive caustics", &mut config.cycles.caustics_refractive);
+                    });
 
                 if config != before {
                     // Touching any of these leaves the preset behind — the

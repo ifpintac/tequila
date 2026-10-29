@@ -175,6 +175,7 @@ fn known_unwritten(path: &str) -> &'static [&'static str] {
     match path {
         "environment" => &["image", "sky", "pins"],
         "units" => &["metres_per_unit", "meters_per_unit"],
+        "lighting.custom" => &["cycles"],
         _ => &[],
     }
 }
@@ -1470,7 +1471,37 @@ pub(crate) fn integrator_to_json(config: &IntegratorConfig) -> Value {
             "russian_roulette_start_bounce",
             config.russian_roulette_start_bounce as f64,
         );
+    // Only when something is set, so a project that sets none is the same
+    // bytes it always was.
+    if config.cycles != tequila_render_core::settings::CyclesTransport::NONE {
+        let c = &config.cycles;
+        let mut cycles = Object::new();
+        cycles
+            .set_some("diffuse_bounces", c.diffuse_bounces.map(f64::from))
+            .set_some("glossy_bounces", c.glossy_bounces.map(f64::from))
+            .set_some("transparent_bounces", c.transparent_bounces.map(f64::from))
+            .set_some("volume_bounces", c.volume_bounces.map(f64::from))
+            .set_some("filter_glossy", c.filter_glossy.map(f64::from))
+            .set_some("caustics_reflective", c.caustics_reflective)
+            .set_some("caustics_refractive", c.caustics_refractive);
+        object.set("cycles", cycles.build());
+    }
     object.build()
+}
+
+fn read_cycles_transport(value: Option<&Value>) -> tequila_render_core::settings::CyclesTransport {
+    let Some(value) = value else { return tequila_render_core::settings::CyclesTransport::NONE };
+    let count = |key: &str| value.get(key).and_then(|v| v.as_index()).map(|v| v as u32);
+    let flag = |key: &str| value.get(key).and_then(|v| v.as_bool());
+    tequila_render_core::settings::CyclesTransport {
+        diffuse_bounces: count("diffuse_bounces"),
+        glossy_bounces: count("glossy_bounces"),
+        transparent_bounces: count("transparent_bounces"),
+        volume_bounces: count("volume_bounces"),
+        filter_glossy: value.get("filter_glossy").and_then(|v| v.as_f32()).map(|v| v.max(0.0)),
+        caustics_reflective: flag("caustics_reflective"),
+        caustics_refractive: flag("caustics_refractive"),
+    }
 }
 
 pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> IntegratorConfig {
@@ -1520,6 +1551,9 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         pixel_spread: default.pixel_spread,
         in_floor_reflection: false,
         floor_reflection_only: false,
+        cycles: read_cycles_transport(value.get("cycles")),
+        // The render's, set per render.
+        pixel_filter: default.pixel_filter,
     }
 }
 
@@ -1634,6 +1668,22 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         Some(clamp) => object.set("clamp_indirect", clamp),
         None => object.set("clamp_indirect", Value::Null),
     };
+    match settings.clamp_direct {
+        Some(clamp) => object.set("clamp_direct", clamp),
+        None => object.set("clamp_direct", Value::Null),
+    };
+    match settings.adaptive_threshold {
+        Some(threshold) => object.set("adaptive_threshold", threshold),
+        None => object.set("adaptive_threshold", Value::Null),
+    };
+    match settings.pixel_filter {
+        Some(filter) => {
+            let mut f = Object::new();
+            f.set("type", filter.kind.key()).set("width_px", filter.width);
+            object.set("pixel_filter", f.build())
+        }
+        None => object.set("pixel_filter", Value::Null),
+    };
     match settings.region {
         Some(region) => object.set(
             "region",
@@ -1707,6 +1757,13 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
         prefilter_guides: flag("prefilter_guides", default.prefilter_guides),
         reject_fireflies: flag("reject_fireflies", default.reject_fireflies),
         clamp_indirect: value.get("clamp_indirect").and_then(|v| v.as_f32()),
+        clamp_direct: value.get("clamp_direct").and_then(|v| v.as_f32()).map(|v| v.max(0.0)),
+        adaptive_threshold: value.get("adaptive_threshold").and_then(|v| v.as_f32()).filter(|v| *v > 0.0),
+        pixel_filter: value.get("pixel_filter").and_then(|f| {
+            let kind = tequila_render_core::settings::PixelFilterKind::from_key(f.get("type")?.as_str()?)?;
+            let width = f.get("width_px").and_then(|w| w.as_f32()).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(1.0);
+            Some(tequila_render_core::settings::PixelFilter { kind, width })
+        }),
         region: value.get("region").and_then(|v| {
             let parts = v.as_array();
             if parts.len() < 4 {

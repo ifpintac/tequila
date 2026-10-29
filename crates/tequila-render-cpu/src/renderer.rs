@@ -136,6 +136,9 @@ pub fn render_pass_with_aovs(
         config,
         ..context.clone()
     };
+    // Where in or around its pixel each sample goes: one pixel's box unless
+    // the render asks for another filter.
+    let filter = context.config.pixel_filter.sampler();
 
     // Hand each tile a raw pointer to the shared buffer. The tiles partition
     // the image, so no two ever touch the same pixel.
@@ -197,7 +200,7 @@ pub fn render_pass_with_aovs(
                     // Filter importance sampling (§4.5): jitter the film point
                     // by the filter kernel rather than weighting afterwards,
                     // which keeps accumulation a plain running mean.
-                    let jitter = sampler.pixel_jitter();
+                    let jitter = filter.place(sampler.pixel_jitter());
                     let film = Vec2 {
                         x: (x as f32 + jitter.x) / width as f32,
                         y: (y as f32 + jitter.y) / height as f32,

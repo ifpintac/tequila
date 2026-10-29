@@ -714,6 +714,38 @@ fn render_layers_survive_a_round_trip() {
     assert_eq!(reopened.document.render.layers, document.render.layers);
 }
 
+/// The finer Cycles controls survive a save and a reopen - the lighting's
+/// Light Paths and the render's direct clamp, pixel filter and adaptive
+/// threshold - and a project that sets none of them writes no Light Paths
+/// at all, so it is the same bytes it always was.
+#[test]
+fn the_finer_cycles_controls_survive_a_round_trip() {
+    use tequila_render_core::settings::{CyclesTransport, IntegratorConfig, LightingSettings, PixelFilter, PixelFilterKind};
+    let plain = SceneDocument::new();
+    let text = write(&plain, &Preserved::default());
+    assert!(!String::from_utf8_lossy(&text).contains("\"cycles\""), "Light Paths written for a project that sets none");
+
+    let mut document = SceneDocument::new();
+    let mut custom = IntegratorConfig { max_bounces: 16, max_transmission_bounces: 12, ..IntegratorConfig::product() };
+    custom.cycles = CyclesTransport {
+        diffuse_bounces: Some(4),
+        glossy_bounces: Some(8),
+        transparent_bounces: Some(16),
+        volume_bounces: Some(0),
+        filter_glossy: Some(0.5),
+        caustics_reflective: Some(false),
+        caustics_refractive: Some(true),
+    };
+    document.lighting = LightingSettings { preset: None, custom };
+    document.render.clamp_direct = Some(0.0);
+    document.render.clamp_indirect = Some(10.0);
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 });
+    document.render.adaptive_threshold = Some(0.01);
+    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    assert_eq!(reopened.document.lighting.custom.cycles, document.lighting.custom.cycles);
+    assert_eq!(reopened.document.render, document.render);
+}
+
 /// Measurements survive a save and a reopen, ends on parts and in the
 /// world alike, hidden ones included.
 #[test]

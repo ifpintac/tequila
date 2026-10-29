@@ -279,8 +279,10 @@ fn run(
     });
 
     let mut config = job.config.clone();
+    // The render's pixel filter, a box of one pixel unless it asks for another.
+    config.pixel_filter = settings.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
     config.adaptive_sampling_threshold = if settings.adaptive {
-        config.adaptive_sampling_threshold
+        settings.adaptive_threshold.unwrap_or(config.adaptive_sampling_threshold)
     } else {
         // Zero retires nothing, which is how "adaptive off" is expressed
         // without the renderer needing a second switch.
@@ -576,7 +578,8 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
     translate::configure(
         &mut session,
         &translate::Quality::with_lighting(settings.adaptive, settings.denoise, settings.max_seconds.map(f64::from), &job.config)
-            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides),
+            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
+            .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
     )?;
 
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Rendering" });

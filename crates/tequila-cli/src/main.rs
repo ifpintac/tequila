@@ -1185,7 +1185,8 @@ fn render_with_cycles(
     // the Render window renders it; otherwise Cycles' defaults.
     let quality = match project {
         Some(settings) => translate::Quality::with_lighting(settings.adaptive, denoise, settings.max_seconds.map(f64::from), lighting)
-            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides),
+            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
+            .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
         None => translate::Quality::with_lighting(true, denoise, None, lighting),
     };
     translate::configure(&mut session, &quality)?;

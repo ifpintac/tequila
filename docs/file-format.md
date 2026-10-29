@@ -157,6 +157,7 @@ reader and the writer being edited separately.
 |---|---|---|
 | `preset` | string? | `Performance`, `Basic`, `Product`, `Interior` or `Jewelry`. **Null means Custom** — Custom is modelled as the absence of a preset rather than as a sixth one, so a document can say both which preset was chosen and that the scene no longer matches it. |
 | `custom` | object | The integrator configuration Custom uses. Kept even while a preset is selected, so switching away and back does not discard a tuned setup. Field names match `IntegratorConfig`. |
+| `custom.cycles` | object? | Blender's Light Paths for Cycles, written only when one is set: `{diffuse_bounces, glossy_bounces, transparent_bounces, volume_bounces, filter_glossy, caustics_reflective, caustics_refractive}`, each optional. Unset, Cycles gets what it always did (diffuse and glossy = `max_bounces`, at least 4; transparent 8; Filter Glossy 1; its own volume bounces and caustics). With diffuse or glossy set, `max_bounces` is the total, as Blender's Total is. |
 
 ### 3.3.2 `cameras` entries
 
@@ -212,6 +213,9 @@ these are read when Render is pressed and not before.
 | `prefilter_guides` | boolean | Filter the albedo and normal guides first. Worth it at low sample counts, where the guides are themselves noisy. |
 | `reject_fireflies` | boolean | Outlier rejection (§01 §3.5). |
 | `clamp_indirect` | number? | A hard ceiling on one sample's luminance, or null. Separate from rejection because it is a different trade: rejection is adaptive and keeps the estimator nearly unbiased, a clamp is blunt and removes energy the Clamped Energy pass then has to account for. §3.5 allows it only as an explicit choice. |
+| `clamp_direct` | number? | A ceiling on direct light of its own, 0 for none, or null. Null, `clamp_indirect` holds for direct light too, as it always did; set, the two are apart, as Blender's are, and `clamp_indirect` (or firefly rejection's 10) is the indirect one alone. |
+| `pixel_filter` | object? | `{type, width_px}`: `box`, `gaussian` or `blackman_harris`, in pixels as Cycles' Film takes them, or null for one pixel's box (both renderers' default; Blender's is Blackman-Harris 1.5). |
+| `adaptive_threshold` | number? | The noise below which a pixel stops taking samples, or null for the renderer's own (Cycles 0.01). |
 | `region` | number[4]? | `[x, y, width, height]`, or null for the whole image (§01 §9.5). |
 | `format` | string | `png`, `jpeg`, `tiff`, `exr` or `psd`. |
 | `depth` | string | `8`, `16` or `32`. A depth the format cannot hold is corrected on load rather than obeyed. |
