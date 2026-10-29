@@ -2692,6 +2692,50 @@ mod tests {
         }
     }
 
+    /// A light's shadow links keep its shadow to some parts, in both
+    /// renderers alike: a lamp beside two spheres, the near one in line
+    /// between it and the far one, leaves the far one dark - until its
+    /// shadow links leave the near one out, when its light gets through.
+    /// Kept to the near one, nothing changes. Skipped where Cycles is not
+    /// installed or predates shadow linking.
+    #[test]
+    fn a_shadow_linked_part_casts_no_shadow() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Environment;
+        use tequila_render_core::light::{Light, LightKind, LightLinks, LightSet, PointLight};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let shadowed = |blockers: LightLinks| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                // Side by side across the view, the lamp far off to the left
+                // in line with both.
+                let right = vec3(3.0, 0.0, -2.0).normalize();
+                let mut second = scene.instances[0].clone();
+                second.id = tequila_core::ids::InstanceId(1);
+                second.transform = tequila_core::math::Transform::translation(right * 0.65) * second.transform;
+                scene.instances[0].transform = tequila_core::math::Transform::translation(-right * 0.65) * scene.instances[0].transform;
+                scene.instances.push(second);
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                let mut lamp = Light::new(LightKind::Point(PointLight { position: -right * 5.0 + vec3(0.0, 0.5, 0.0), intensity: Spectrum::splat(25.0), radius: 0.02 }));
+                lamp.shadow_links = blockers.clone();
+                *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![lamp])));
+            }
+        };
+        let total = |image: &[u8]| image.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>();
+        let shots = [
+            both_engines("shadow-linked-all", shadowed(LightLinks::All)),
+            both_engines("shadow-linked-far", shadowed(LightLinks::Only(Arc::from([1u32])))),
+            both_engines("shadow-linked-near", shadowed(LightLinks::AllBut(Arc::from([1u32])))),
+        ];
+        for (engine, name) in [(0, "Tequila's renderer"), (1, "Cycles")] {
+            let [all, far, near] = [&shots[0], &shots[1], &shots[2]].map(|s| total(&s[engine]));
+            assert!(far > 1.3 * all, "{name}: the near sphere still shadowed the far one ({far:.0} against {all:.0})");
+            assert!((near - all).abs() < 0.05 * all, "{name}: kept to the near sphere, the shadow changed ({near:.0} against {all:.0})");
+        }
+    }
+
     /// A flat label kept to one side prints on the faces looking that way and
     /// not on those behind, in both renderers alike: projected straight
     /// through a sphere along each axis in turn, where the camera looks it

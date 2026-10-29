@@ -377,20 +377,22 @@ pub fn document_materials(document: &SceneDocument, category: &str) -> Vec<Prese
 /// A light's linking as a preset can keep it, without the parts of a
 /// product it will not be applied to: a light kept to some of the
 /// product's parts is kept to the product, and one leaving parts out
-/// keeps only the product it leaves out, or lights everything.
+/// keeps only the product it leaves out, or lights everything. Its shadow
+/// links the same way.
 fn portable_links(mut settings: LightSettings) -> LightSettings {
-    if let Some(links) = &mut settings.links {
-        if !links.nodes.is_empty() {
-            links.nodes.clear();
-            if !links.exclude {
-                links.product = true;
-            }
-        }
-        if links.exclude && !links.product {
-            settings.links = None;
+    settings.links = settings.links.and_then(portable);
+    settings.shadow_links = settings.shadow_links.and_then(portable);
+    settings
+}
+
+fn portable(mut links: crate::lighting::LightLinking) -> Option<crate::lighting::LightLinking> {
+    if !links.nodes.is_empty() {
+        links.nodes.clear();
+        if !links.exclude {
+            links.product = true;
         }
     }
-    settings
+    (!links.exclude || links.product).then_some(links)
 }
 
 /// A Studio preset made from `document` as it is: everything but the
@@ -482,6 +484,8 @@ mod tests {
         assert_eq!(with(LightLinking { nodes: vec![part], exclude: true, ..LightLinking::default() }), None);
         let product_only = LightLinking { product: true, ..LightLinking::default() };
         assert_eq!(with(product_only.clone()), Some(product_only));
+        let shadows = portable_links(LightSettings { shadow_links: Some(LightLinking { nodes: vec![part], ..LightLinking::default() }), ..LightSettings::default() });
+        assert_eq!(shadows.shadow_links, Some(LightLinking { product: true, ..LightLinking::default() }), "shadow links kept a product's part");
     }
 
     /// Of three sizes, the one framed nearest a product's size by ratio.

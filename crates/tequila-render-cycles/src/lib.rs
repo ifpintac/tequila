@@ -366,6 +366,21 @@ impl Session {
         self.check(unsafe { link(self.raw, node.0, membership, receiver_set) })
     }
 
+    /// Whether this library sets Cycles' shadow linking.
+    pub fn has_shadow_linking(&self) -> bool {
+        self.api.fsc_shadow_linking.is_some()
+    }
+
+    /// An object's - or a light's - shadow linking: the blocker sets that
+    /// cast its shadow as an emitter (`membership`, a bit each), and the set
+    /// it belongs to as a blocker (0 blocks every light).
+    pub fn shadow_linking(&mut self, node: Node, membership: u64, blocker_set: u32) -> Result<(), String> {
+        let Some(link) = self.api.fsc_shadow_linking else {
+            return Err("this Cycles library predates shadow linking".into());
+        };
+        self.check(unsafe { link(self.raw, node.0, membership, blocker_set) })
+    }
+
     pub fn object(&mut self, mesh: Node, matrix: &[f32; 12], visibility: u32, shadow_catcher: bool) -> Result<Node, String> {
         let node = unsafe { (self.api.fsc_object)(self.raw, mesh.0, matrix.as_ptr(), visibility, shadow_catcher as c_int) };
         self.node_or_error(node)

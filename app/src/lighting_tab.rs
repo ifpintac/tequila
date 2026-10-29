@@ -395,28 +395,64 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             light.layer = layer;
         });
 
-    // ---- Light linking -----------------------------------------------------
-    crate::field::Fold::new("Light linking")
-        .id_salt("light-linking")
-        .default_open(light.links.is_some())
+    // ---- Light and shadow linking -------------------------------------------
+    linking_fold(
+        ui,
+        project,
+        ("Light linking", "light-linking"),
+        &mut light.links,
+        "Lights every part, and shadows them all.",
+        "What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.",
+    );
+    linking_fold(
+        ui,
+        project,
+        ("Shadow linking", "shadow-linking"),
+        &mut light.shadow_links,
+        "Every part casts its shadow.",
+        "The parts that cast its shadow. The rest let its light through, so a prop can stand in its beam without shadowing the product.",
+    );
+
+    if light != before {
+        let _ = project.apply(Command::SetLight {
+            node,
+            settings: Box::new(light),
+        });
+    }
+    true
+}
+
+/// A light's links, for its light or for its shadow: everything, only
+/// some parts, or all but some. `title` is the fold's name and id.
+fn linking_fold(
+    ui: &mut egui::Ui,
+    project: &Project,
+    (title, salt): (&str, &str),
+    links: &mut Option<tequila_scene::lighting::LightLinking>,
+    everything: &str,
+    note: &str,
+) {
+    crate::field::Fold::new(title)
+        .id_salt(salt)
+        .default_open(links.is_some())
         .show(ui, |ui| {
             use tequila_scene::lighting::LightLinking;
-            let mut mode = match &light.links {
+            let mut mode = match &*links {
                 None => 0u8,
                 Some(links) if links.exclude => 2,
                 Some(_) => 1,
             };
             if crate::theme::segmented(ui, &mut mode, &[(0, "Everything"), (1, "Only"), (2, "All but")]) {
-                light.links = match mode {
+                *links = match mode {
                     0 => None,
                     _ => Some(LightLinking {
                         exclude: mode == 2,
-                        ..light.links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
+                        ..links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
                     }),
                 };
             }
-            let Some(links) = &mut light.links else {
-                ui.label(egui::RichText::new("Lights every part, and shadows them all.").small().color(crate::theme::dim()));
+            let Some(links) = links else {
+                ui.label(egui::RichText::new(everything).small().color(crate::theme::dim()));
                 return;
             };
             ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
@@ -440,18 +476,6 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             if deeper > 0 {
                 ui.label(egui::RichText::new(format!("and {deeper} parts set by a script")).small().color(crate::theme::dim()));
             }
-            ui.label(
-                egui::RichText::new("What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.")
-                    .small()
-                    .color(crate::theme::dim()),
-            );
+            ui.label(egui::RichText::new(note).small().color(crate::theme::dim()));
         });
-
-    if light != before {
-        let _ = project.apply(Command::SetLight {
-            node,
-            settings: Box::new(light),
-        });
-    }
-    true
 }

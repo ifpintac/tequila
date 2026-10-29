@@ -187,11 +187,15 @@ pub struct LightSettings {
     pub enabled: bool,
     /// The parts it is kept to (light linking); `None` lights everything.
     pub links: Option<LightLinking>,
+    /// The parts that cast its shadow (shadow linking), in the same shape:
+    /// those named, or all but those. `None`: every part it lights.
+    pub shadow_links: Option<LightLinking>,
 }
 
 /// What a light is kept to (light linking): the parts it lights, or the
 /// parts it leaves out. A group stands for everything under it, and what
-/// a light does not light it does not shadow either.
+/// a light does not light it does not shadow either. The same shape says
+/// which parts cast a light's shadow (shadow linking).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LightLinking {
     /// Leave these out, rather than light only these.
@@ -221,6 +225,7 @@ impl Default for LightSettings {
             layer: 0,
             enabled: true,
             links: None,
+            shadow_links: None,
         }
     }
 }

@@ -626,6 +626,9 @@ pub enum LightLinks {
 }
 
 impl LightLinks {
+    /// Whether the links take in `instance`: as a light's links, whether
+    /// the light lights it; as its shadow links, whether it casts the
+    /// light's shadow.
     pub fn lights(&self, instance: u32) -> bool {
         match self {
             LightLinks::All => true,
@@ -650,6 +653,9 @@ pub struct Light {
     /// The instances it lights, and shadows: a light that does not light the
     /// floor casts no shadow on it.
     pub links: LightLinks,
+    /// The instances that cast its shadow (shadow linking); the others let
+    /// its light by.
+    pub shadow_links: LightLinks,
 }
 
 impl Light {
@@ -660,6 +666,7 @@ impl Light {
             layer: 0,
             enabled: true,
             links: LightLinks::All,
+            shadow_links: LightLinks::All,
         }
     }
 

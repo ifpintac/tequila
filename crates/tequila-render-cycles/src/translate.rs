@@ -3454,26 +3454,41 @@ impl Builder<'_> {
     /// Light linking (`LightLinks`), as Cycles keeps it: each part receives
     /// from the set made of the linked lights that light it, and each
     /// linked light is a member of the sets it lights. Set 0 is the parts
-    /// every linked light lights; Cycles has 64.
+    /// every linked light lights; Cycles has 64. Shadow linking the same
+    /// way, with blocker sets: each part blocks the lights whose shadow it
+    /// casts.
     fn link_lights(&mut self, made: &[(usize, Node)]) -> Result<(), String> {
+        self.link_sets(made, false)?;
+        self.link_sets(made, true)
+    }
+
+    /// One of [`Self::link_lights`]' two halves: the lights' `links`, or
+    /// with `shadows` their `shadow_links`.
+    fn link_sets(&mut self, made: &[(usize, Node)], shadows: bool) -> Result<(), String> {
         let scene = self.scene;
         let lights = scene.lights.lights();
-        let linked: Vec<usize> = (0..lights.len()).filter(|&i| !lights[i].links.is_all()).take(64).collect();
+        let links = |light: usize| if shadows { &lights[light].shadow_links } else { &lights[light].links };
+        let linked: Vec<usize> = (0..lights.len()).filter(|&i| !links(i).is_all()).take(64).collect();
         if linked.is_empty() {
             return Ok(());
         }
-        if !self.session.has_light_linking() {
-            self.out.warn("light linking needs a newer Cycles library: here every light lights everything");
+        let (supported, missing) = if shadows {
+            (self.session.has_shadow_linking(), "shadow linking needs a newer Cycles library: here every part casts every light's shadow")
+        } else {
+            (self.session.has_light_linking(), "light linking needs a newer Cycles library: here every light lights everything")
+        };
+        if !supported {
+            self.out.warn(missing);
             return Ok(());
         }
         let every = if linked.len() == 64 { u64::MAX } else { (1u64 << linked.len()) - 1 };
         let mut sets: Vec<u64> = Vec::new();
-        let mut receivers = Vec::new();
+        let mut members = Vec::new();
         for (instance, object) in self.out.objects.iter().enumerate() {
             let Some(object) = *object else { continue };
             let mut pattern = 0u64;
             for (bit, &light) in linked.iter().enumerate() {
-                if lights[light].links.lights(instance as u32) {
+                if links(light).lights(instance as u32) {
                     pattern |= 1 << bit;
                 }
             }
@@ -3488,13 +3503,21 @@ impl Builder<'_> {
                 }
                 None => continue,
             };
-            receivers.push((object, set as u32));
+            members.push((object, set as u32));
         }
         if sets.len() == 63 {
-            self.out.warn("more than 63 different light links: some parts are lit by every light");
+            self.out.warn(if shadows {
+                "more than 63 different shadow links: some parts cast every light's shadow"
+            } else {
+                "more than 63 different light links: some parts are lit by every light"
+            });
         }
-        for (object, set) in receivers {
-            self.session.light_linking(object, u64::MAX, set)?;
+        for (object, set) in members {
+            if shadows {
+                self.session.shadow_linking(object, u64::MAX, set)?;
+            } else {
+                self.session.light_linking(object, u64::MAX, set)?;
+            }
         }
         for &(index, node) in made {
             let Some(bit) = linked.iter().position(|&l| l == index) else { continue };
@@ -3504,7 +3527,11 @@ impl Builder<'_> {
                     membership |= 1 << (set + 1);
                 }
             }
-            self.session.light_linking(node, membership, 0)?;
+            if shadows {
+                self.session.shadow_linking(node, membership, 0)?;
+            } else {
+                self.session.light_linking(node, membership, 0)?;
+            }
         }
         Ok(())
     }

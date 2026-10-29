@@ -1041,24 +1041,42 @@ FscNode fsc_light(FscSession *s, const char *type, FscNode shader, const float *
   return light;
 }
 
+/* The Object a node stands for: itself, or the object holding it - a light
+ * is handed out as its Light, and the link sets are its Object's. */
+static Object *object_of(FscSession *s, FscNode node)
+{
+  Node *given = static_cast<Node *>(node);
+  for (Object *candidate : s->scene()->objects) {
+    if (static_cast<Node *>(candidate) == given || static_cast<Node *>(candidate->get_geometry()) == given) {
+      return candidate;
+    }
+  }
+  return nullptr;
+}
+
 int fsc_light_linking(FscSession *s, FscNode node, unsigned long long membership, unsigned receiver_set)
 {
   const EditLock lock(s);
-  Node *given = static_cast<Node *>(node);
-  /* A light is handed out as its Light; the sets are its Object's. */
-  Object *object = nullptr;
-  for (Object *candidate : s->scene()->objects) {
-    if (static_cast<Node *>(candidate) == given || static_cast<Node *>(candidate->get_geometry()) == given) {
-      object = candidate;
-      break;
-    }
-  }
+  Object *object = object_of(s, node);
   if (object == nullptr) {
     fail("light linking: no such object");
     return 0;
   }
   object->set_light_set_membership(membership);
   object->set_receiver_light_set(receiver_set);
+  return 1;
+}
+
+int fsc_shadow_linking(FscSession *s, FscNode node, unsigned long long membership, unsigned blocker_set)
+{
+  const EditLock lock(s);
+  Object *object = object_of(s, node);
+  if (object == nullptr) {
+    fail("shadow linking: no such object");
+    return 0;
+  }
+  object->set_shadow_set_membership(membership);
+  object->set_blocker_shadow_set(blocker_set);
   return 1;
 }
 

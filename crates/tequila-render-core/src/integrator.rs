@@ -8,6 +8,7 @@
 pub mod caustics;
 
 use crate::intersect::{Hit, Intersector};
+use crate::light::LightLinks;
 use crate::scene::ShadowCatcher;
 use crate::shade;
 use crate::settings::IntegratorConfig;
@@ -1856,7 +1857,7 @@ fn shadow_at(
                 continue;
             };
             if chance < sample.keep || (last && sample.keep > 0.0) {
-                return blocked_towards(intersector, hit, normal, sample.direction, sample.distance);
+                return blocked_towards(intersector, hit, normal, sample.direction, sample.distance, &LightLinks::All);
             }
             continue;
         }
@@ -1885,7 +1886,7 @@ fn shadow_at(
         let keep = sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density / bound;
         if chance < keep || (last && keep > 0.0) {
             return if light.visibility.shadow {
-                blocked_towards(intersector, hit, normal, sample.direction, sample.distance)
+                blocked_towards(intersector, hit, normal, sample.direction, sample.distance, &light.shadow_links)
             } else {
                 0.0
             };
@@ -1935,7 +1936,7 @@ fn occlusion_at(
     let direction = onb.to_world(local);
     // Bounded: occlusion is about what is *near*, and letting it reach the
     // whole scene turns a contact shadow into a second, wrong drop shadow.
-    blocked_towards(intersector, hit, normal, direction, radius.max(1e-3))
+    blocked_towards(intersector, hit, normal, direction, radius.max(1e-3), &LightLinks::All)
 }
 
 /// How much of a shadow ray survives the surfaces between its ends.
@@ -1958,21 +1959,26 @@ fn occlusion_at(
 /// The camera path cannot do this, because a ray has to end up somewhere
 /// specific to keep going; only a shadow ray, whose two ends are already
 /// known, can take the average instead of a sample.
+///
+/// `blockers` are the parts that cast this light's shadow (shadow linking);
+/// the rest let it by. Every part, for a light without shadow links, takes
+/// the one `occluded` as before.
 fn shadow_transmittance(
     intersector: &dyn Intersector,
     from: Vec3,
     from_normal: Vec3,
     to: Vec3,
     to_normal: Vec3,
+    blockers: &LightLinks,
 ) -> f32 {
-    if !intersector.scene().has_cutouts() {
+    if !intersector.scene().has_cutouts() && blockers.is_all() {
         return if intersector.occluded(from, from_normal, to, to_normal) {
             0.0
         } else {
             1.0
         };
     }
-    cutout_transmittance(intersector, from, from_normal, to, to_normal)
+    cutout_transmittance(intersector, from, from_normal, to, to_normal, blockers)
 }
 
 /// [`shadow_transmittance`] in a scene with cutouts: every surface on the
@@ -1987,6 +1993,7 @@ fn cutout_transmittance(
     from_normal: Vec3,
     to: Vec3,
     to_normal: Vec3,
+    blockers: &LightLinks,
 ) -> f32 {
     let scene = intersector.scene();
     let ray = crate::intersect::shadow_ray(from, from_normal, to, to_normal);
@@ -2007,9 +2014,10 @@ fn cutout_transmittance(
         };
 
         // A part that casts no shadow is open to a shadow ray whatever its
-        // opacity, as it is to `occluded` on the way in.
+        // opacity, as it is to `occluded` on the way in - and so is one
+        // this light's shadow links leave out.
         let opacity = match scene.opacity_of(hit.material) {
-            _ if !scene.casts_shadows(hit.instance) => 0.0,
+            _ if !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => 0.0,
             Some(constant) => constant,
             None => {
                 let (registers, material) = scratch.get_or_insert_with(|| {
@@ -2137,6 +2145,7 @@ fn blocked_towards(
     normal: Vec3,
     direction: Vec3,
     distance: f32,
+    blockers: &LightLinks,
 ) -> f32 {
     let reach = if distance.is_finite() {
         distance * (1.0 - 1e-3)
@@ -2153,7 +2162,7 @@ fn blocked_towards(
     // the same question the lighting does and takes the same answer: the
     // share that gets through. It used to split at half, so a part more than
     // half open left the floor lit and one less than half open, black.
-    1.0 - shadow_transmittance(intersector, hit.position, normal, target, -direction)
+    1.0 - shadow_transmittance(intersector, hit.position, normal, target, -direction, blockers)
 }
 
 /// Where a flight through a medium ends.
@@ -2230,7 +2239,7 @@ fn medium_direct_light(
     if let Some(light) = scene.environment.sample_from(at, sampler.light_sample()) {
         if light.pdf > 0.0 && !light.radiance.is_black() {
             let through = if config.shadows {
-                medium_transmittance(intersector, at, light.direction, reach(light.distance), instance, walk, field, sampler)
+                medium_transmittance(intersector, at, light.direction, reach(light.distance), instance, walk, field, sampler, &LightLinks::All)
             } else {
                 Spectrum::ONE
             };
@@ -2249,7 +2258,7 @@ fn medium_direct_light(
                 if light.visibility.diffuse && !sample.radiance.is_black() && (sample.is_delta || sample.pdf > 0.0) {
                     let density = if sample.is_delta { p_select } else { sample.pdf * p_select };
                     let through = if config.shadows && light.visibility.shadow {
-                        medium_transmittance(intersector, at, sample.direction, reach(sample.distance), instance, walk, field, sampler)
+                        medium_transmittance(intersector, at, sample.direction, reach(sample.distance), instance, walk, field, sampler, &light.shadow_links)
                     } else {
                         Spectrum::ONE
                     };
@@ -2267,8 +2276,9 @@ fn medium_direct_light(
 /// What survives from a point inside `instance`'s medium to `reach` along
 /// `direction`: the medium's transmittance over every stretch inside it —
 /// exact where it is homogeneous, by ratio tracking where a Volume Map varies
-/// it — and nothing at all if anything else is in the way. The medium's own
-/// surface is index-matched, so crossing it bends nothing.
+/// it — and nothing at all if anything else is in the way, of the parts
+/// `blockers` names. The medium's own surface is index-matched, so crossing
+/// it bends nothing.
 #[allow(clippy::too_many_arguments)]
 fn medium_transmittance(
     intersector: &dyn Intersector,
@@ -2279,6 +2289,7 @@ fn medium_transmittance(
     walk: &tequila_materials::openpbr::SubsurfaceMedium,
     field: Option<&crate::density::DensityField>,
     sampler: &mut Sampler,
+    blockers: &LightLinks,
 ) -> Spectrum {
     let scene = intersector.scene();
     let sigma = walk.extinction;
@@ -2342,7 +2353,7 @@ fn medium_transmittance(
             None => return through,
             // The medium's own surface, and anything that casts no shadow,
             // are passed; anything else is in the way.
-            Some(hit) if hit.instance == instance || !scene.casts_shadows(hit.instance) => {
+            Some(hit) if hit.instance == instance || !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => {
                 if hit.instance == instance {
                     inside = !inside;
                 }
@@ -2463,6 +2474,7 @@ fn sample_environment_light(
             leaving,
             target,
             -light.direction,
+            &LightLinks::All,
         );
         if visibility <= 0.0 {
             return Spectrum::ZERO;
@@ -2587,6 +2599,7 @@ fn sample_analytic_lights(
             leaving,
             target,
             -sample.direction,
+            &light.shadow_links,
         );
         if visibility <= 0.0 {
             return (Spectrum::ZERO, 0);
@@ -3172,6 +3185,7 @@ mod tests {
                 -Vec3::Y,
                 vec3(0.0, -5.0, 0.0),
                 Vec3::Y,
+                &LightLinks::All,
             )
         };
         for cutouts in [false, true] {
@@ -3222,6 +3236,7 @@ mod tests {
                 &clear,
                 None,
                 &mut Sampler::new(0, 0, 0, 1),
+                &LightLinks::All,
             )
         };
         assert_eq!(reaches(true), Spectrum::ZERO, "a part that casts shadows let light by");

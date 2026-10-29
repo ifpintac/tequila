@@ -169,6 +169,13 @@ FSC_API int fsc_light_linking(FscSession *session,
                               FscNode node,
                               unsigned long long membership,
                               unsigned receiver_set);
+/* Shadow linking: `membership` the blocker sets that cast the shadow of
+ * `node` as an emitter, a bit each; `blocker_set` the set `node` belongs to
+ * as a blocker, 0 for the set that blocks every light. */
+FSC_API int fsc_shadow_linking(FscSession *session,
+                               FscNode node,
+                               unsigned long long membership,
+                               unsigned blocker_set);
 FSC_API void fsc_camera(FscSession *session,
                         const float *matrix12,
                         float fov,

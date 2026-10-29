@@ -1458,14 +1458,33 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
         object.set("photometry", photometry.path.clone());
     }
     if let Some(links) = &settings.links {
-        let mut linking = Object::new();
-        linking
-            .set("exclude", links.exclude)
-            .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
-            .set("product", links.product);
-        object.set("links", linking.build());
+        object.set("links", linking_to_json(links));
+    }
+    if let Some(links) = &settings.shadow_links {
+        object.set("shadow_links", linking_to_json(links));
     }
     object.build()
+}
+
+/// A light's links, for its light (`links`) or its shadow (`shadow_links`).
+fn linking_to_json(links: &tequila_scene::lighting::LightLinking) -> Value {
+    let mut linking = Object::new();
+    linking
+        .set("exclude", links.exclude)
+        .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
+        .set("product", links.product);
+    linking.build()
+}
+
+fn read_linking(links: &Value) -> tequila_scene::lighting::LightLinking {
+    tequila_scene::lighting::LightLinking {
+        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
+        nodes: links
+            .get("nodes")
+            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
+            .unwrap_or_default(),
+        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
+    }
 }
 
 pub(crate) fn read_light(value: &Value) -> LightSettings {
@@ -1511,14 +1530,8 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
         .unwrap_or(0)
         .min(255) as u8;
     settings.enabled = flag("enabled", true);
-    settings.links = value.get("links").map(|links| tequila_scene::lighting::LightLinking {
-        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
-        nodes: links
-            .get("nodes")
-            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
-            .unwrap_or_default(),
-        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
-    });
+    settings.links = value.get("links").map(read_linking);
+    settings.shadow_links = value.get("shadow_links").map(read_linking);
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -3228,6 +3241,20 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&product)), product);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("links"), "{plain}");
+    }
+
+    /// Shadow links are kept beside the light's own, and apart from them.
+    #[test]
+    fn a_lights_shadow_links_survive_a_round_trip() {
+        let shadows = LightSettings {
+            links: Some(LightLinking { product: true, ..LightLinking::default() }),
+            shadow_links: Some(LightLinking { exclude: true, nodes: vec![tequila_scene::tree::NodeId(7)], product: false }),
+            ..LightSettings::default()
+        };
+        let back = read_light(&light_to_json(&shadows));
+        assert_eq!(back, shadows);
+        let only = LightSettings { shadow_links: shadows.shadow_links.clone(), ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&only)).links, None, "shadow links became light links");
     }
 }
 

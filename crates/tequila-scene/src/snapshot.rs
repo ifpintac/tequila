@@ -599,10 +599,15 @@ pub fn snapshot_with(
         cache.converted.retain(|key, _| used.contains(key));
     }
 
-    // Light linking: each linked light's parts, as the instances under them.
+    // Light and shadow linking: each linked light's parts, as the instances
+    // under them.
     for (light, node) in lights.iter_mut().zip(&light_nodes) {
-        if let Some(linking) = document.tree.get(*node).and_then(|n| n.light()).and_then(|s| s.links.as_ref()) {
+        let Some(settings) = document.tree.get(*node).and_then(|n| n.light()) else { continue };
+        if let Some(linking) = &settings.links {
             light.links = linked_instances(document, &mapping, linking);
+        }
+        if let Some(linking) = &settings.shadow_links {
+            light.shadow_links = linked_instances(document, &mapping, linking);
         }
     }
 
@@ -1636,6 +1641,22 @@ mod tests {
         assert!(!links.lights(parts[1]) && links.lights(parts[0]) && links.lights(parts[2]), "{links:?}");
         let (links, parts, _) = linked(&mut document, &mut bus, LightLinking { nodes: vec![ids[0]], ..LightLinking::default() });
         assert_eq!(links, LightLinks::Only(parts.into()), "a group stands for its parts");
+    }
+
+    /// A light's shadow links name instances the way its links do, and
+    /// apart from them: kept to one part's shadow, it still lights them all.
+    #[test]
+    fn a_lights_shadow_links_name_the_instances_under_them() {
+        use crate::lighting::{LightLinking, LightSettings};
+        use tequila_render_core::light::LightLinks;
+        let (mut document, mut bus, ids) = assembly(3);
+        let settings = LightSettings { shadow_links: Some(LightLinking { nodes: vec![ids[2]], ..LightLinking::default() }), ..LightSettings::default() };
+        bus.apply(&mut document, Command::AddLight { parent: None, name: "Key".into(), settings: Box::new(settings) }).unwrap();
+        let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO)), &mut MeshCache::new());
+        let light = scene.lights.lights().last().unwrap();
+        let second = mapping.instance_of(ids[2]).unwrap().0;
+        assert_eq!(light.shadow_links, LightLinks::Only(vec![second].into()));
+        assert!(light.links.is_all(), "shadow links kept the light to some parts");
     }
 
     #[test]
