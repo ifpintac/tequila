@@ -136,7 +136,7 @@ TOOLS = [
          "Apply an installed studio preset as ONE undo step: its lights, cameras and views (Studios), environment and floor, "
          "look and render settings, framed to the product's size and the product stood on its floor. The first view is "
          "applied; tequila_studio_render_all renders them all.",
-         {'id': {'type': 'string'},
+         {'preset': {'type': 'string', 'description': "The preset's id, from tequila_studio_presets."},
           'front': {'type': 'string', 'enum': ['+z', '-z', '+x', '-x'],
                     'description': "The product's side that should face the Main camera (default +z)."},
           'scale': {'type': 'string', 'enum': ['cameras', 'cameras_and_lights', 'none'],
@@ -145,7 +145,7 @@ TOOLS = [
           'keep_cameras': {'type': 'boolean'},
           'keep_placement': {'type': 'boolean', 'description': 'Leave the product where it is.'},
           'dress': {'type': 'boolean', 'description': "Also put the preset's materials on parts by their names (its material rules)."}},
-         ['id']),
+         ['preset']),
     tool('tequila_studio_preset_save',
          "Keep the scene's studio - everything but the product - as a studio preset of the person's own, framed for the product it has now.",
          {'name': {'type': 'string'}, 'family': {'type': 'string'}, 'size': {'type': 'string'},
@@ -422,8 +422,8 @@ class Bridge:
     def tool_studio_presets(self):
         return text(self.request('studio_preset', action='list'))
 
-    def tool_studio_preset_apply(self, id, **options):
-        return text(self.request('studio_preset', action='apply', id=id, **options))
+    def tool_studio_preset_apply(self, preset, **options):
+        return text(self.request('studio_preset', action='apply', preset=preset, **options))
 
     def tool_studio_preset_save(self, name, **details):
         return text(self.request('studio_preset', action='save', name=name, **details))

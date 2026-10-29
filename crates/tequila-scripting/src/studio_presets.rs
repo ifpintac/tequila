@@ -88,9 +88,13 @@ pub fn save_as(request: &Value) -> SaveAs {
     }
 }
 
-/// The preset a request names by its `id`, installed.
+/// The installed preset a request names: its id, as `preset` - `id` is
+/// the request's own on the wire.
 pub fn named(request: &Value, action: &str) -> Result<PresetFile, String> {
-    let id = request.get("id").and_then(|v| v.as_str()).ok_or_else(|| format!("`{action}` needs the preset's \"id\""))?;
+    let id = request
+        .get("preset")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("`{action}` needs the installed preset's id, as \"preset\""))?;
     presets::find(id)
 }
 

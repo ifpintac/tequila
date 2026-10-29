@@ -459,8 +459,9 @@
   "inputSchema": {
    "type": "object",
    "properties": {
-    "id": {
-     "type": "string"
+    "preset": {
+     "type": "string",
+     "description": "The preset's id, from tequila_studio_presets."
     },
     "front": {
      "type": "string",
@@ -497,7 +498,7 @@
     }
    },
    "required": [
-    "id"
+    "preset"
    ],
    "additionalProperties": false
   }

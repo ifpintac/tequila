@@ -141,7 +141,7 @@ pub enum Operation {
     /// the application, which owns the scene the sync applies to.
     LiveLink(Value),
     /// `studio_preset`: Studio presets (`docs/studio-presets.md`) - `list`
-    /// them, `apply` one by `id`, `save` the current studio as one,
+    /// them, `apply` an installed one (its id as `preset`), `save` the current studio as one,
     /// `install` or `export` a package, `delete` one, or `render_all`
     /// views. Carried as sent; the application reads its fields.
     StudioPreset(Value),
@@ -259,11 +259,17 @@ pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", 
 /// carrying it: the preset read in, so the command is whole - what the
 /// journal records, and what replays.
 fn with_preset(command: Value) -> Result<Value, ProtocolError> {
-    if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") || command.get("preset").is_some() {
+    if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
         return Ok(command);
     }
-    let Some(id) = command.get("id").and_then(|v| v.as_str()) else {
-        return Err(ProtocolError("studio_preset.apply needs an installed preset's \"id\", or the preset itself".into()));
+    // The preset itself, or an installed one's id in its place.
+    let id = match command.get("preset") {
+        Some(Value::String(id)) => id.clone(),
+        Some(_) => return Ok(command),
+        None => match command.get("id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return Err(ProtocolError("studio_preset.apply needs an installed preset's id as \"preset\", or the preset itself".into())),
+        },
     };
     let (presets, _) = tequila_format::studio_preset::list();
     let Some(found) = presets.iter().find(|p| p.preset.id == id) else {
@@ -274,6 +280,7 @@ fn with_preset(command: Value) -> Result<Value, ProtocolError> {
         )));
     };
     let Value::Object(mut map) = command else { return Err(ProtocolError("a command is an object".into())) };
+    map.remove("id");
     map.insert("preset".into(), tequila_format::studio_preset::to_inline(&found.preset));
     Ok(Value::Object(map))
 }
@@ -953,7 +960,7 @@ impl Operation {
             Operation::Project { action: ProjectAction::Open(path), .. } => format!("open {path}"),
             Operation::Ui(_) => "change panels".into(),
             Operation::LiveLink(message) => format!("LiveLink {}", message.get("message").and_then(|m| m.as_str()).unwrap_or("message")),
-            Operation::StudioPreset(request) => match request.get("id").and_then(|i| i.as_str()) {
+            Operation::StudioPreset(request) => match request.get("preset").and_then(|i| i.as_str()) {
                 Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
             },

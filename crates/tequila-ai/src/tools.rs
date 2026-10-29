@@ -224,12 +224,12 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         }
         "tequila_studio_presets" => raw(with("studio_preset", vec![("action".into(), text("list"))])),
         "tequila_studio_preset_apply" => {
-            arguments.get("id").and_then(|v| v.as_str()).ok_or("say which studio preset: its id")?;
+            arguments.get("preset").and_then(|v| v.as_str()).ok_or("say which studio preset: its id, as preset")?;
             raw(with(
                 "studio_preset",
                 [("action".to_string(), text("apply"))]
                     .into_iter()
-                    .chain(pick(arguments, &["id", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress"]))
+                    .chain(pick(arguments, &["preset", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress"]))
                     .collect(),
             ))
         }
@@ -417,7 +417,7 @@ mod tests {
                 "tequila_plugin_write" => args(r#"{"id":"my.x","files":{"main.py":""}}"#),
                 "tequila_plugin_enable" | "tequila_plugin_log" => args(r#"{"id":"my.x"}"#),
                 "tequila_plugin_run" => args(r#"{"id":"my.x","command":"go"}"#),
-                "tequila_studio_preset_apply" => args(r#"{"id":"studio"}"#),
+                "tequila_studio_preset_apply" => args(r#"{"preset":"studio"}"#),
                 "tequila_studio_preset_save" => args(r#"{"name":"Mine"}"#),
                 _ => args("{}"),
             };

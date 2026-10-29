@@ -53,7 +53,7 @@ const UNRESTRICTED_ONLY: [&str; 10] = [
 ];
 /// What applying or saving a studio preset reads.
 const STUDIO_PRESET_FIELDS: [&str; 12] =
-    ["id", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress", "name", "family", "size", "description", "materials"];
+    ["preset", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress", "name", "family", "size", "description", "materials"];
 /// What a batch may hold when restricted: nothing that writes a file.
 const RESTRICTED_BATCH: [&str; 5] = ["apply", "frame", "look", "select", "ui"];
 

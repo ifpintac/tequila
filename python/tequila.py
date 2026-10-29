@@ -613,7 +613,7 @@ class StudioPresets:
         side that faces the Main camera ('+z', '-z', '+x', '-x'); `scale` what
         follows its size ('cameras', 'cameras_and_lights', 'none'); `dress`
         puts the preset's materials on parts by their names."""
-        fields = {'action': 'apply', 'id': id, 'keep_lights': keep_lights, 'keep_cameras': keep_cameras,
+        fields = {'action': 'apply', 'preset': id, 'keep_lights': keep_lights, 'keep_cameras': keep_cameras,
                   'keep_placement': keep_placement, 'dress': dress}
         for key, value in (('front', front), ('scale', scale)):
             if value is not None:
@@ -633,11 +633,11 @@ class StudioPresets:
 
     def export(self, id, path):
         """The preset `id` as a package, to share."""
-        return self._client.request('studio_preset', action='export', id=id, path=str(Path(path).resolve()))
+        return self._client.request('studio_preset', action='export', preset=id, path=str(Path(path).resolve()))
 
     def delete(self, id):
         """Remove one of your own presets. The shipped ones never."""
-        return self._client.request('studio_preset', action='delete', id=id)
+        return self._client.request('studio_preset', action='delete', preset=id)
 
     def render_all(self):
         """Queue every view (Studio), one job each, named by the output

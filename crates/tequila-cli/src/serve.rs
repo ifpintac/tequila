@@ -886,7 +886,7 @@ mod tests {
         let listed = value(&mut s, r#"{"op":"studio_preset","action":"list"}"#);
         let ours = listed.get("presets").unwrap().as_array().iter().find(|p| p.get("id").and_then(Value::as_str) == Some("headless-test")).cloned().unwrap();
         assert_eq!(ours.get("views").map(|v| v.as_array().len()), Some(2));
-        let applied = value(&mut s, r#"{"op":"studio_preset","action":"apply","id":"headless-test"}"#);
+        let applied = value(&mut s, r#"{"op":"studio_preset","action":"apply","preset":"headless-test"}"#);
         let scale = applied.get("scale").and_then(Value::as_f64).unwrap();
         assert!((scale - 2.0).abs() < 0.05, "a product twice the size: {scale}");
         assert_eq!(s.document.studios.len(), 2);
@@ -901,7 +901,7 @@ mod tests {
         assert_eq!(paths.len(), 2);
         assert!(paths[0].ends_with("shot_Front.png") && paths[1].ends_with("shot_High.png"), "{paths:?}");
         assert!(paths.iter().all(|p| Path::new(p).is_file()));
-        assert!(matches!(ask(&mut s, r#"{"op":"studio_preset","action":"apply","id":"nowhere"}"#), Reply::Failed(_)));
+        assert!(matches!(ask(&mut s, r#"{"op":"studio_preset","action":"apply","preset":"nowhere"}"#), Reply::Failed(_)));
         std::env::remove_var("TEQUILA_STUDIO_PRESETS");
         let _ = std::fs::remove_dir_all(&folder);
     }

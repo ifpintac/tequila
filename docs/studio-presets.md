@@ -78,10 +78,10 @@ for job in fs.studios.render_all():
 | Request | Fields |
 |---|---|
 | `{"op": "studio_preset", "action": "list"}` | Every preset installed. Each lists its `views`, `reference_radius_m`, and `suggested`. |
-| `"action": "apply"` | `id`. Optional: `front` (`+z`, `-z`, `+x`, `-x`), `scale` (`cameras`, `cameras_and_lights`, `none`), `keep_lights`, `keep_cameras`, `keep_placement`, `dress`. |
+| `"action": "apply"` | `preset`: the installed preset's id. Optional: `front` (`+z`, `-z`, `+x`, `-x`), `scale` (`cameras`, `cameras_and_lights`, `none`), `keep_lights`, `keep_cameras`, `keep_placement`, `dress`. |
 | `"action": "save"` | `name`, and optionally `family`, `size`, `description`, `materials`. |
-| `"action": "install"` / `"export"` | `path` (and `id` to export). |
-| `"action": "delete"` | `id`. Only your own presets. |
+| `"action": "install"` / `"export"` | `path` (and `preset` to export). |
+| `"action": "delete"` | `preset`. Only your own presets. |
 | `"action": "render_all"` | Queues every view. Returns `jobs`. |
 
 A headless session (`tequila.open()`) answers the same requests. There,
@@ -100,7 +100,7 @@ tequila -i product.step --studio-preset product-studio-small --front -z --dress 
 resolution, samples, alpha, and 16 bits when the preset asks for them.
 `--all-studios` also works on a saved project that has Studios.
 
-As a command, `{"command": "studio_preset.apply", "id": "...", "options": {...}}`
+As a command, `{"command": "studio_preset.apply", "preset": "<id>", "options": {...}}`
 applies an installed preset by its id. The journal records the whole preset
 in the command, so a replay doesn't depend on what's installed. The MCP
 bridges offer `tequila_studio_presets`, `tequila_studio_preset_apply`,
