@@ -429,6 +429,20 @@ fn a_short_reflection_fades_with_height() {
     assert!(strongest(&short) > 0.9 * strongest(&full), "the reflection weakened at the floor too: {} of {}", strongest(&short), strongest(&full));
 }
 
+/// The floor's reflection shows the product as it is, lit by the floor's
+/// bounce: with a bounce on, the mirrored panel is brighter, as the panel
+/// itself is. Left out of the reflection, a face the bounce lifted was
+/// mirrored as dark as without it.
+#[test]
+fn the_reflection_shows_the_product_lit_by_the_bounce() {
+    let mirror = ShadowCatcher { reflections: 1.0, ..Default::default() };
+    let bounced = ShadowCatcher { bounce: Some(Spectrum::splat(0.8)), ..mirror.clone() };
+    let plain = render_layer(scene(Some(mirror), true), 32);
+    let lit = render_layer(scene(Some(bounced), true), 32);
+    let light = |image: &Framebuffer| image.pixels().iter().map(|p| p.mean().luminance()).sum::<f32>();
+    assert!(light(&lit) > 1.2 * light(&plain), "the bounce did not reach the reflection: {} against {}", light(&lit), light(&plain));
+}
+
 fn changed_pixels(a: &Framebuffer, b: &Framebuffer) -> usize {
     let mut changed = 0;
     for y in 0..SIZE {
