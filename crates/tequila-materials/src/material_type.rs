@@ -2302,7 +2302,7 @@ mod exposed_parameters_do_something {
     const IMPLEMENTED_OUTSIDE_THE_BSDF: &[(Param, &str)] = &[
         (
             Param::EdgeRadius,
-            "rounded edges are Cycles' Bevel, which probes the geometry around              the shading point; Tequila's renderer leaves edges sharp. Covered              by the app's `rounded_edges_catch_light_in_cycles`, against a render.",
+            "rounded edges bend the shading normal before the BSDF is built, by              probing the geometry around the shading point (Cycles' Bevel, and              tequila-render-core's `bevel`). Covered by the app's              `rounded_edges_catch_light_in_both_renderers`, against a render.",
         ),
         (
             Param::VolumeEmissionColor,

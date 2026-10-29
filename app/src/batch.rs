@@ -1461,20 +1461,17 @@ mod tests {
     /// from in front and above, at 45 degrees, in a black studio. Its top and
     /// front faces see the lamp at 45 degrees; an edge rounded to 2 mm turns
     /// squarely to it and is the brightest thing in the picture, where the
-    /// sharp edge has nothing brighter than the faces. Cycles, where it is
-    /// installed. (A lamp behind a face's plane lights it through no rounding:
-    /// Cycles takes no light from below a surface's true face.)
+    /// sharp edge has nothing brighter than the faces. In Tequila's renderer,
+    /// and in Cycles where it is installed. (A lamp behind a face's plane
+    /// lights it through no rounding: Cycles takes no light from below a
+    /// surface's true face.)
     #[test]
-    fn rounded_edges_catch_light_in_cycles() {
+    fn rounded_edges_catch_light_in_both_renderers() {
         use tequila_core::spectrum::Spectrum;
         use tequila_render_core::environment::{Background, Environment};
         use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
         use tequila_render_core::scene::Mesh;
         use tequila_scene::render::RenderEngine;
-        if let Err(why) = tequila_render_cycles::available() {
-            eprintln!("skipped: {why}");
-            return;
-        }
         // A closed cube a centimetre either side of its centre, flat-shaded.
         let cube = {
             let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
@@ -1497,13 +1494,13 @@ mod tests {
             }
             Mesh::new(positions, indices).with_normals(normals)
         };
-        let lit = |radius: f32| -> f64 {
-            let directory = scratch(&format!("tequila-bevel-{radius}"));
+        let lit = |engine: RenderEngine, radius: f32| -> f64 {
+            let directory = scratch(&format!("tequila-bevel-{}-{radius}", engine.key()));
             let renderer = BatchRenderer::new();
             let mut render = job(
                 1,
                 &directory,
-                RenderSettings { engine: RenderEngine::CyclesCpu, width: 96, height: 72, max_samples: 64, denoise: false, ..Default::default() },
+                RenderSettings { engine, width: 96, height: 72, max_samples: 64, denoise: false, ..Default::default() },
             );
             let above = Light::new(LightKind::Point(PointLight { position: vec3(0.0, 0.02 + 0.2, 0.01 + 0.2), intensity: Spectrum::splat(0.06), radius: 0.0 }));
             let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(vec![above])));
@@ -1533,10 +1530,17 @@ mod tests {
                 _ => unreachable!(),
             }
         };
-        let (sharp, rounded) = (lit(0.0), lit(0.002));
-        assert!(sharp > 60.0, "the faces should be lit: {sharp:.1}");
-        assert!(sharp < 600.0, "the faces should not clip: {sharp:.1}");
-        assert!(rounded > sharp * 1.12, "rounded edges brightest at {rounded:.1}, sharp ones' brightest {sharp:.1}");
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(_) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let (sharp, rounded) = (lit(engine, 0.0), lit(engine, 0.002));
+            assert!(sharp > 60.0, "{engine:?}: the faces should be lit: {sharp:.1}");
+            assert!(sharp < 600.0, "{engine:?}: the faces should not clip: {sharp:.1}");
+            assert!(rounded > sharp * 1.12, "{engine:?}: rounded edges brightest at {rounded:.1}, sharp ones' brightest {sharp:.1}");
+        }
     }
 
     /// The demo sphere as a clear medium, `inside` it, in a black studio lit

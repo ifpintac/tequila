@@ -18,6 +18,7 @@
 #![warn(missing_debug_implementations)]
 
 pub mod aov;
+pub mod bevel;
 pub mod camera;
 pub mod cryptomatte;
 pub mod cutaway;

@@ -1123,6 +1123,20 @@ pub fn trace_path_with_caustics(
             material
         };
 
+        // Rounded edges (Cycles' Bevel): near a sharp edge the normal leans
+        // toward the next face. On the surface the camera sees, where it
+        // shows, and with the material's own count of probes: fewer, and the
+        // probes that miss the next face pull the average back toward the
+        // sharp edge, a highlight half there. Past that first surface it
+        // cost Tequila's renderer 40% on a product all of whose parts are
+        // rounded. The bump bends what it leaves, as Bevel feeds Cycles'
+        // Bump.
+        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 {
+            crate::bevel::rounded_normal(intersector, &hit, shading_normal, material.edge_radius, material.edge_samples as u32, sampler)
+        } else {
+            shading_normal
+        };
+
         // Bump and normal maps (§02 §5.4) bend the normal the BSDF is built
         // around; the geometric one, which offsets rays and guards against
         // leaks, stays as it was.
