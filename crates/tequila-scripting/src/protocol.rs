@@ -324,6 +324,8 @@ pub struct UiChange {
     /// Help > Check for updates, open. Opening it asks GitHub for the
     /// latest release.
     pub updates: Option<bool>,
+    /// The Assistant's Connect an AI window, open: AI apps and providers.
+    pub connect: Option<bool>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
@@ -872,6 +874,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             about: opt_bool(value, "about")?,
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
+            connect: opt_bool(value, "connect")?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),

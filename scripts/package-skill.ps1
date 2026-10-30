@@ -9,7 +9,7 @@ param([string]$Out)
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-if (-not $Out) { $Out = Join-Path $projectRoot 'dist\Tequila-Claude-Skill.zip' }
+if (-not $Out) { $Out = Join-Path $projectRoot 'dist\Tequila-Skill.zip' }
 
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) "tequila-skill-$PID"
 if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }

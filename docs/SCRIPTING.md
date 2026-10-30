@@ -155,7 +155,7 @@ is available from the console, the wire protocol and the Python client.
 | `look front` | `{"op":"look","view":"front"}` | Uses a standard view: front, back, left, right, top, bottom or iso. |
 | `look yaw=35 pitch=20 distance=1.5` | `{"op":"look","yaw":35,...}` | Orbits around `at`, or around the current target if `at` is not given. |
 | `look from=[x,y,z] at=[x,y,z] focal=85` | `{"op":"look","from":[...],"at":[...]}` | Puts the eye at `from`, pointing at `at`. Every camera move is undoable. |
-| `show material` / `hide console` | `{"op":"ui","tab":"material","console":false}` | Opens and closes panels: `render_window`, `console`, `inspector`, `library`, `full_viewport`, `help`, `frame` (the viewport at the render's shape, on by default), and Inspector tabs (`configurator` opens the Studios tab at the configurator); `present` enters or leaves Presentation mode; `about` opens Help > About; `start_screen` opens or closes the start screen; `updates` opens Help > Check for updates, which asks GitHub for the latest release; `viewport` picks `wireframe`, `solid`, `material` or `rendered`; `mode` (`light`, `dark`, `auto`) and `theme` (`graphite`, `ocean`, `orchid`, `ember`, `meadow`, `rose`) change the look for the session without saving it; `appearance` opens the picker. |
+| `show material` / `hide console` | `{"op":"ui","tab":"material","console":false}` | Opens and closes panels: `render_window`, `console`, `inspector`, `library`, `full_viewport`, `help`, `frame` (the viewport at the render's shape, on by default), and Inspector tabs (`configurator` opens the Studios tab at the configurator); `present` enters or leaves Presentation mode; `about` opens Help > About; `start_screen` opens or closes the start screen; `updates` opens Help > Check for updates, which asks GitHub for the latest release; `connect` opens the Assistant's Connect an AI window; `viewport` picks `wireframe`, `solid`, `material` or `rendered`; `mode` (`light`, `dark`, `auto`) and `theme` (`graphite`, `ocean`, `orchid`, `ember`, `meadow`, `rose`) change the look for the session without saving it; `appearance` opens the picker. |
 | `viewport rendered` | `{"op":"ui","viewport":"rendered"}` | Switches the viewport between rendered and solid. |
 | | `{"op":"query","what":"api"}` → `procedurals` | Every pattern at its defaults, in the exact shape `material.set_procedural` takes as `procedural`. An unknown `kind` is refused rather than read as "detach". |
 | | `{"op":"ui","graph":3}` | Opens the Material Graph editor on material 3; `"graph":false` closes it. |
@@ -199,8 +199,9 @@ configured output location.
 
 ## The built-in Assistant
 
-To ask for changes in plain language inside Tequila, using Claude, OpenAI,
-a local model or your company's AI, see `docs/ASSISTANT.md`. It uses the same
+To ask for changes in plain language inside Tequila, using OpenAI, Claude,
+Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq, a model on this computer
+or your company's AI, see `docs/ASSISTANT.md`. It uses the same
 scripting requests described here.
 
 ## Plugins
@@ -216,7 +217,8 @@ library is reachable from scripts too: `docs/materials-authoring.md`.
 Tequila's command-line program is a Model Context Protocol server:
 `tequila-cli --mcp`. It lets an AI app use Tequila directly, and needs
 nothing else installed - no Python. MCP apps that launch local servers can
-start it: the Claude desktop app, Claude Code, Cursor and others. Its tools
+start it: the Claude app, Claude Code, Cursor, VS Code with GitHub Copilot,
+OpenAI's Codex, Gemini CLI, Windsurf, LM Studio and others. Its tools
 cover reading the scene, applying commands and batches, undo, camera, panels,
 background renders, screenshots, procedural materials from recipes
 (`tequila_material_*`) and writing plugins (`tequila_plugin_*`).
@@ -224,21 +226,32 @@ background renders, screenshots, procedural materials from recipes
 assistant sees the result of what it did. Everything it
 sends also appears in Tequila's console as it happens.
 
-**The Claude app:** in Tequila, open the Assistant, click **Connect an AI…**,
-then **Connect the Claude app**. Tequila adds itself to the Claude app's
-settings, keeping everything else there (the original is kept beside it as
-`claude_desktop_config.json.before-tequila`). Quit the Claude app fully and
-open it again. Asked to do something in Tequila, it then uses these tools
-rather than clicking around the screen.
+**Connecting an app:** in Tequila, open the Assistant, click **Connect an
+AI…**. Under *AI apps on this computer*, each app Tequila finds has a
+**Connect** button that adds Tequila to that app's settings, keeping
+everything else there. The original is kept beside it as
+`<file>.before-tequila`. A settings file that is not plain JSON, one with
+comments say, is left alone and reported, for Tequila to be added by hand.
 
-**Claude Code:** the same window's **Copy for Claude Code** copies the command,
-which is:
+| App | Settings Tequila is added to | Then |
+|---|---|---|
+| Claude (desktop) | `claude_desktop_config.json`, every copy the app keeps | Quit it fully and open it again |
+| Cursor | `~/.cursor/mcp.json` | Settings → MCP: turn Tequila on if asked |
+| VS Code (GitHub Copilot) | `mcp.json` in VS Code's user folder, under `servers` | Copilot Chat, agent mode: Tequila's tools are in the tools list |
+| Codex (OpenAI) | `~/.codex/config.toml`, a `[mcp_servers.tequila]` table | New sessions have the tools; `/mcp` lists them |
+| Gemini CLI | `~/.gemini/settings.json` | New sessions have the tools; `/mcp` lists them |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Refresh its MCP servers, or restart it |
+| LM Studio | `~/.lmstudio/mcp.json` | Turn the tequila tools on in a chat, with a model that calls tools |
+| Claude Code | none: **Copy the command** | Paste it into a terminal |
+
+Claude Code's command is:
 
 ```powershell
 claude mcp add tequila -- "C:/Users/you/AppData/Local/Programs/Tequila/tequila-cli.exe" --mcp
 ```
 
-By hand, in `claude_desktop_config.json`:
+**Any other MCP app** (Zed, Cline, Continue, Jan, AnythingLLM and others):
+**Copy the settings** gives the entry most of them read:
 
 ```json
 {
@@ -251,16 +264,23 @@ By hand, in `claude_desktop_config.json`:
 }
 ```
 
+**ChatGPT** reaches MCP servers only over the internet. OpenAI's Secure MCP
+Tunnel connects it to Tequila without opening anything on this computer to
+the internet: see `docs/ASSISTANT.md`. Or connect an OpenAI key to Tequila's
+own Assistant.
+
 `python/tequila_mcp.py` is the same bridge in Python, standard library only,
 for a checkout without a built `tequila-cli`.
 
 **The Tequila skill** teaches the AI how to work in Tequila - the shots
 people ask for, materials, recipes, scene work, configurators, plugins and
-scripts. It ships as `Tequila-Claude-Skill.zip` beside Tequila: in the
-Claude app, **Settings → Capabilities → Skills → Upload skill** (the
-Assistant's **Connect an AI…** window has **Show the skill file**). For Claude
-Code, the same window's **Add it to Claude Code** unpacks it into
-`~/.claude/skills/tequila`.
+scripts. It is an Agent Skill (a folder with a `SKILL.md`), which the Claude
+app, Claude Code, Codex and other apps read, and it ships as
+`Tequila-Skill.zip` beside Tequila. In the Claude app: **Settings →
+Capabilities → Skills → Upload skill** (the **Connect an AI…** window has
+**Show the skill file**). For Claude Code and Codex, the window's **Add the
+skill** unpacks it into `~/.claude/skills/tequila` or
+`~/.codex/skills/tequila`.
 
 `--restricted` (for anything reached from outside this computer) leaves out
 the tools that reach beyond the open scene - raw requests, imports, saving

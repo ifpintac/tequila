@@ -109,12 +109,12 @@ pub struct Assistant {
     providers_open: bool,
     draft: Option<Draft>,
     focus_input: bool,
-    /// Whether the Claude app lists Tequila, and when that was last looked
-    /// at: its settings file is read every few seconds while the window is
-    /// open, not every frame.
-    claude_app: Option<(std::time::Instant, bool)>,
-    /// What connecting the Claude app last said.
-    claude_message: Option<Result<String, String>>,
+    /// Each AI app: whether it is installed and lists Tequila, and when that
+    /// was last looked at. Their settings files are read every few seconds
+    /// while the window is open, not every frame.
+    apps: Option<(std::time::Instant, Vec<(crate::connect_apps::App, bool, bool)>)>,
+    /// What connecting an app last said.
+    apps_message: Option<Result<String, String>>,
 }
 
 impl Assistant {
@@ -465,7 +465,7 @@ impl Assistant {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Assistant").strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Providers…").on_hover_text("Connect Claude, OpenAI, a local model or your company's AI").clicked() {
+                    if ui.small_button("Providers…").on_hover_text("Connect OpenAI, Claude, Gemini, a local model or your company's AI").clicked() {
                         self.providers_open = true;
                     }
                     if ui.small_button("New chat").on_hover_text("Start a fresh conversation").clicked() && !self.working() {
@@ -606,6 +606,14 @@ impl Assistant {
         self.providers_open
     }
 
+    /// Open or close the Connect an AI window.
+    pub fn set_providers_open(&mut self, open: bool) {
+        self.providers_open = open;
+        if !open {
+            self.draft = None;
+        }
+    }
+
     pub fn providers_window(&mut self, ctx: &egui::Context) {
         if !self.providers_open {
             return;
@@ -625,7 +633,7 @@ impl Assistant {
                     self.edit_draft(ui);
                     return;
                 }
-                self.claude_app_section(ui);
+                self.apps_section(ui);
                 ui.separator();
                 ui.label(egui::RichText::new("Tequila's Assistant").strong());
                 if self.settings.providers.is_empty() {
@@ -690,81 +698,122 @@ impl Assistant {
         }
     }
 
-    /// The Claude desktop app, connected to Tequila's tools in one click,
-    /// so asked to work in Tequila it uses them rather than the mouse.
-    fn claude_app_section(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("The Claude app").strong());
+    /// The AI apps on this computer, connected to Tequila's tools in one
+    /// click, so asked to work in Tequila they use them rather than the
+    /// mouse.
+    fn apps_section(&mut self, ui: &mut egui::Ui) {
+        use crate::connect_apps::App;
+        let dim = crate::theme::dim();
+        ui.label(egui::RichText::new("AI apps on this computer").strong());
         ui.label(
             egui::RichText::new(
-                "Lets the Claude desktop app work in Tequila through its tools - exact, fast and undoable - \
-                 instead of clicking around the screen.",
+                "Lets an AI app work in Tequila through its tools - exact, fast and undoable - \
+                 instead of clicking around the screen. Any app that speaks MCP can.",
             )
             .small()
-            .color(crate::theme::dim()),
+            .color(dim),
         );
-        let Some(program) = crate::connect_claude::server_program() else {
+        let Some(program) = crate::connect_apps::server_program() else {
             ui.label(
-                egui::RichText::new("Tequila's command-line program is not beside the application, so the Claude app cannot be connected from here.")
+                egui::RichText::new("Tequila's command-line program is not beside the application, so no app can be connected from here.")
                     .small()
-                    .color(crate::theme::dim()),
+                    .color(dim),
             );
             return;
         };
-        let paths = crate::connect_claude::config_paths();
-        let stale = self.claude_app.is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(3));
+        let stale = self.apps.as_ref().is_none_or(|(at, _)| at.elapsed() > std::time::Duration::from_secs(3));
         if stale {
-            let connected = paths.iter().any(|path| crate::connect_claude::is_connected(path, &program));
-            self.claude_app = Some((std::time::Instant::now(), connected));
+            let status = App::ALL
+                .iter()
+                .map(|&app| (app, app.installed(), app.settings().iter().any(|path| app.is_connected(path, &program))))
+                .collect();
+            self.apps = Some((std::time::Instant::now(), status));
         }
-        let connected = self.claude_app.is_some_and(|(_, c)| c);
-        ui.horizontal_wrapped(|ui| {
-            if connected {
-                ui.colored_label(crate::theme::p().success, "Connected");
-            }
-            if ui.button(if connected { "Connect again" } else { "Connect the Claude app" }).clicked() {
-                let failures: Vec<String> = paths.iter().filter_map(|path| crate::connect_claude::connect(path, &program).err()).collect();
-                self.claude_message = Some(if failures.is_empty() {
-                    Ok("Done. Quit the Claude app completely (right-click its icon by the clock, Quit) and open it again; \
-                        then ask it to do something in Tequila."
-                        .into())
-                } else {
-                    Err(failures.join("\n"))
+        let status = self.apps.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
+        let skill = crate::connect_apps::skill_file();
+        let mut row = |ui: &mut egui::Ui, app: App, connected: bool| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(app.name()).strong());
+                if connected {
+                    ui.colored_label(crate::theme::p().success, "Connected");
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let (Some(skills), Some(skill)) = (app.skills(), &skill) {
+                        if ui.small_button("Add the skill").on_hover_text(skills.join("tequila").display().to_string()).clicked() {
+                            self.apps_message = Some(crate::connect_apps::install_skill(skill, &skills).map(|folder| {
+                                format!("Tequila's skill is in {}: new {} sessions use it.", folder.display(), app.name())
+                            }));
+                        }
+                    }
+                    match app.command(&program) {
+                        Some(command) => {
+                            if ui.small_button("Copy the command").on_hover_text(&command).clicked() {
+                                ui.ctx().copy_text(command);
+                                self.apps_message = Some(Ok(format!("Copied. {}", app.after())));
+                            }
+                        }
+                        None => {
+                            if ui.small_button(if connected { "Connect again" } else { "Connect" }).clicked() {
+                                let failures: Vec<String> =
+                                    app.settings().iter().filter_map(|path| app.connect(path, &program).err()).collect();
+                                self.apps_message = Some(if failures.is_empty() {
+                                    Ok(format!("{} is connected. {}", app.name(), app.after()))
+                                } else {
+                                    Err(failures.join("\n"))
+                                });
+                                self.apps = None;
+                            }
+                        }
+                    }
                 });
-                self.claude_app = None;
-            }
-            if ui
-                .small_button("Copy for Claude Code")
-                .on_hover_text(crate::connect_claude::claude_code_command(&program))
-                .clicked()
-            {
-                ui.ctx().copy_text(crate::connect_claude::claude_code_command(&program));
-                self.claude_message = Some(Ok("Copied. Paste it into a terminal where Claude Code runs.".into()));
+            });
+        };
+        let (here, elsewhere): (Vec<_>, Vec<_>) = status.iter().partition(|(_, installed, _)| *installed);
+        for (app, _, connected) in &here {
+            row(ui, *app, *connected);
+        }
+        if here.is_empty() {
+            ui.label(egui::RichText::new("None of the apps below is on this computer yet.").small().color(dim));
+        }
+        if !elsewhere.is_empty() {
+            egui::CollapsingHeader::new(egui::RichText::new("Other apps").small()).id_salt("other-ai-apps").show(ui, |ui| {
+                for (app, _, connected) in &elsewhere {
+                    row(ui, *app, *connected);
+                }
+            });
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Any other MCP app:").small().color(dim));
+            if ui.small_button("Copy the settings").on_hover_text("The mcpServers entry most apps read, with Tequila's program").clicked() {
+                ui.ctx().copy_text(crate::connect_apps::generic_settings(&program));
+                self.apps_message = Some(Ok("Copied: paste it into the app's MCP settings.".into()));
             }
         });
-        // The skill that teaches Claude to work in Tequila: what to look at
+        ui.label(
+            egui::RichText::new(
+                "ChatGPT reaches MCP servers over the internet: OpenAI's Secure MCP Tunnel connects it (see the Assistant guide), \
+                 or connect an OpenAI key below for Tequila's own Assistant.",
+            )
+            .small()
+            .color(dim),
+        );
+        // The skill that teaches an AI to work in Tequila: what to look at
         // first, the library, colours, floor reflections, renders.
-        if let Some(skill) = crate::connect_claude::skill_file() {
+        if let Some(skill) = &skill {
             ui.horizontal_wrapped(|ui| {
                 ui.label(
-                    egui::RichText::new("Better results: add Tequila's skill to Claude: in its Settings, Capabilities, Skills, upload the file.")
+                    egui::RichText::new("Better results: add Tequila's skill. In the Claude app, Settings, Capabilities, Skills: upload the file.")
                         .small()
-                        .color(crate::theme::dim()),
+                        .color(dim),
                 );
                 if ui.small_button("Show the skill file").clicked() {
                     crate::library_tab::reveal(&skill.to_string_lossy());
                 }
-                if let Some(skills) = crate::connect_claude::claude_code_skills() {
-                    if ui.small_button("Add it to Claude Code").on_hover_text(skills.join("tequila").display().to_string()).clicked() {
-                        self.claude_message = Some(crate::connect_claude::install_skill(&skill, &skills).map(|folder| {
-                            format!("Added to Claude Code's skills ({}): new Claude Code sessions use it.", folder.display())
-                        }));
-                    }
-                }
             });
         }
-        match &self.claude_message {
+        match &self.apps_message {
             Some(Ok(text)) => {
-                ui.label(egui::RichText::new(text).small().color(crate::theme::p().success));
+                ui.add(egui::Label::new(egui::RichText::new(text).small().color(crate::theme::p().success)).wrap());
             }
             Some(Err(text)) => {
                 ui.add(egui::Label::new(egui::RichText::new(text).small().color(crate::theme::p().danger)).wrap());

@@ -126,7 +126,7 @@ cp -R plugins/examples "$resources/plugins"
 cp docs/SCRIPTING.md "$resources/SCRIPTING.md"
 cp docs/plugins.md "$resources/PLUGINS.md"
 cp docs/materials-authoring.md "$resources/MATERIALS.md"
-python3 scripts/package-skill.py "$resources/Tequila-Claude-Skill.zip" >/dev/null
+python3 scripts/package-skill.py "$resources/Tequila-Skill.zip" >/dev/null
 cp LICENSE NOTICE THIRD_PARTY_LICENSES.md TRADEMARKS.md "$resources/"
 
 # The licences: the SDKs' own notices, every Rust crate's, and the ones a

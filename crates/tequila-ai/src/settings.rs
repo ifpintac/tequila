@@ -133,9 +133,9 @@ mod tests {
 
     #[test]
     fn settings_round_trip_with_the_key_encrypted() {
-        let mut claude = Provider::presets().remove(0);
+        let mut claude = Provider::preset("claude").unwrap();
         claude.key = Key::Stored("sk-ant-very-secret".into());
-        let mut local = Provider::presets().remove(2);
+        let mut local = Provider::preset("ollama").unwrap();
         local.key = Key::Env("OLLAMA_KEY".into());
         let settings = Settings { providers: vec![claude, local], active: Some("claude".into()) };
 
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn new_ids_do_not_collide() {
-        let settings = Settings { providers: vec![Provider::presets().remove(0)], active: None };
+        let settings = Settings { providers: vec![Provider::preset("claude").unwrap()], active: None };
         assert_eq!(settings.new_id("Claude"), "claude-2");
         assert_eq!(settings.new_id("Uliverse AI"), "uliverse-ai");
     }

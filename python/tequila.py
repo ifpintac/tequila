@@ -284,8 +284,8 @@ class Client:
     def ui(self, **changes):
         """Open or close panels: render_window, console, inspector, library,
         full_viewport, help, start_screen, updates (Help > Check for
-        updates, which asks GitHub), frame (the render's shape in the
-        viewport) (bools), tab='material', graph=<material> or
+        updates, which asks GitHub), connect (Connect an AI: AI apps and
+        providers), frame (the render's shape in the viewport) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
         'meadow'|'rose'."""

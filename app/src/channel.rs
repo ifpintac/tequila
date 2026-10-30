@@ -471,6 +471,10 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(open) = change.start_screen {
         app.start_screen.open = open;
     }
+    if let Some(open) = change.connect {
+        app.start_screen.open &= !open;
+        app.assistant.set_providers_open(open);
+    }
     match change.updates {
         Some(true) => {
             app.start_screen.open = false;

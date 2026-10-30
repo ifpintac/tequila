@@ -71,9 +71,12 @@ Questions, bugs, ideas and renders: join the
 - **Sharing** - web export (live 3D or pre-rendered), a spin viewer, and glTF
   and USD export; a full-screen presentation mode.
 - **Cutaways**, measurements, model sets and a configurator.
-- **AI apps and automation** - connect the Claude app in one click and let it
-  set up materials, lighting and renders, make materials from a description,
-  or write plugins; a built-in Assistant for Claude, OpenAI or a local model;
+- **AI apps and automation** - connect Claude, Cursor, VS Code (GitHub
+  Copilot), Codex, Gemini CLI, Windsurf or LM Studio in one click, or any
+  other MCP app, and let it set up materials, lighting and renders, make
+  materials from a description, or write plugins; a built-in Assistant for
+  OpenAI, Claude, Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq or a local
+  model;
   Python scripting, plugins, a command-line renderer, and a Blender live link.
 
 Animation is not part of Tequila yet.
@@ -109,8 +112,8 @@ cargo test --workspace --release
 
 ## Documentation
 
-- [Scripting and AI apps](docs/SCRIPTING.md) - Python, the command line, MCP
-  for Claude and other AI apps
+- [Scripting and AI apps](docs/SCRIPTING.md) - Python, the command line, and
+  MCP for AI apps
 - [Writing plugins](docs/plugins.md)
 - [Making materials](docs/materials-authoring.md)
 - [The specification](docs/TEQUILA_SPEC.md) and the [roadmap and status](docs/05-ROADMAP-AND-TESTING.md)

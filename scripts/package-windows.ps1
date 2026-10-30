@@ -115,7 +115,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/materials-authoring.md') -Destination (Join-Path $packagePath 'MATERIALS.md')
     # The Claude skill for working in Tequila, to upload to a Claude account
     # (Connect an AI says so).
-    & (Join-Path $PSScriptRoot 'package-skill.ps1') -Out (Join-Path $packagePath 'Tequila-Claude-Skill.zip') | Out-Null
+    & (Join-Path $PSScriptRoot 'package-skill.ps1') -Out (Join-Path $packagePath 'Tequila-Skill.zip') | Out-Null
     # The example plugins: read-only, and off until turned on (the .bundled
     # file marks the folder as Tequila's own).
     Copy-Item -LiteralPath (Join-Path $projectRoot 'plugins/examples') -Destination (Join-Path $packagePath 'plugins') -Recurse
@@ -191,10 +191,12 @@ Faster final renders: Render settings > Engine > Cycles (graphics card).
 The viewport pauses while minimized or exporting and resumes automatically.
 Closing prompts you to save unsaved work and warns about an active export.
 
-AI apps: Assistant > Connect an AI... > Connect the Claude app lets Claude
+AI apps: Assistant > Connect an AI... connects Claude, Cursor, VS Code
+(GitHub Copilot), Codex, Gemini CLI, Windsurf, LM Studio or any MCP app, to
 work in Tequila - materials, procedural materials from a description,
-lighting, renders, even plugins. Tequila-Claude-Skill.zip teaches it how
-(upload it in Claude's Settings > Capabilities > Skills).
+lighting, renders, even plugins. Tequila-Skill.zip teaches it how (an Agent
+Skill: upload it in Claude's Settings > Capabilities > Skills, or Add the
+skill for Claude Code and Codex).
 Plugins: Plugins > Manage plugins... (PLUGINS.md says how to write one).
 Guides: SCRIPTING.md, PLUGINS.md, MATERIALS.md, also under Help > Guides.
 If Tequila closes unexpectedly, the next launch shows what happened; Copy

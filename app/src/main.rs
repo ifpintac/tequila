@@ -19,7 +19,7 @@ mod axis_legend;
 mod channel;
 use tequila_core::clock;
 mod color_picker;
-mod connect_claude;
+mod connect_apps;
 mod crash;
 mod console;
 mod cutaway_panel;
@@ -681,7 +681,7 @@ fn render_pixels(points: (usize, usize), scale: f32) -> (usize, usize) {
 /// The guides on the Help menu: title, the file beside a packaged Tequila,
 /// its source in `docs`, and what it is about.
 const GUIDES: [(&str, &str, &str, &str); 3] = [
-    ("Scripting and AI apps", "SCRIPTING.md", "SCRIPTING.md", "Driving Tequila from Python, the console, Claude and other AI apps"),
+    ("Scripting and AI apps", "SCRIPTING.md", "SCRIPTING.md", "Driving Tequila from Python, the console and AI apps"),
     ("Writing plugins", "PLUGINS.md", "plugins.md", "Panels, commands and automations of your own, in Python"),
     ("Making materials", "MATERIALS.md", "materials-authoring.md", "Library materials, recipes and material packages"),
 ];
@@ -3150,7 +3150,7 @@ impl TequilaApp {
                     if icons::tip(
                         icons::toggle(ui, icons::Icon::Assistant, "Assistant", self.assistant.open, named),
                         "Assistant",
-                        "Ask an AI — Claude, OpenAI, a local model or your company's — to set up the scene",
+                        "Ask an AI to set up the scene: OpenAI, Claude, Gemini, a local model or your company's",
                         "",
                     )
                     .clicked()

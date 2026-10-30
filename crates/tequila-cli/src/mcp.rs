@@ -1,8 +1,8 @@
 //! `tequila --mcp`: Tequila's tools for an AI app, over the Model Context
 //! Protocol.
 //!
-//! An AI app on this computer - the Claude desktop app, Claude Code, Cursor -
-//! starts this program and talks JSON-RPC to it over standard input and
+//! An AI app on this computer - the Claude app, Cursor, VS Code with GitHub
+//! Copilot, Codex, Gemini CLI, LM Studio and others - starts this program and talks JSON-RPC to it over standard input and
 //! output; it turns tool calls into requests on the scripting channel of the
 //! Tequila that is open, and hands screenshots and renders back as images,
 //! so the AI can see its work. Everything it does shows in Tequila's

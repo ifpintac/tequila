@@ -1283,7 +1283,10 @@ mod tests {
         let key = graph_key(&first.entries[0].graph);
         first.queued.push(0);
         first.render_queued(&context);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        // A guard against a worker that never finishes, not a measure of
+        // speed: alone it takes seconds, and beside the rest of the suite,
+        // sharing the processor with hundreds of tests, over a minute.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
         while !first.preview_job.as_ref().expect("the first launch renders it").is_finished() {
             assert!(std::time::Instant::now() < deadline, "preview worker timed out");
             std::thread::sleep(std::time::Duration::from_millis(10));
