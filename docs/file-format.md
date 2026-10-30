@@ -247,12 +247,19 @@ cleared.
 
 Tequila reads a config's `FileTransform` (`.cube`, `.spi1d`, `.spimtx`),
 `MatrixTransform`, `ExponentTransform`, `ExponentWithLinearTransform`,
-`RangeTransform`, `LogTransform`, `CDLTransform`, `GroupTransform` and
-`ColorSpaceTransform`. It does **not** implement OCIO v2's `BuiltinTransform`
-registry, which is defined by the library's own C++ rather than by a file; a
-config that uses one is reported as unsupported and the built-in transforms
-stay available, rather than the image being quietly developed through an
-incomplete pipeline.
+`RangeTransform`, `LogTransform`, `LogAffineTransform`, `LogCameraTransform`,
+`CDLTransform`, `GroupTransform`, `ColorSpaceTransform` and `BuiltinTransform`,
+along with OCIO v2's display colour spaces, view transforms, shared views,
+looks and aliases, so the ACES studio config works as it is. The `display` and
+`view` of `color_management` are names the config defines; for that config
+they are, for example, `sRGB - Display` and `ACES 1.0 - SDR Video`.
+
+`BuiltinTransform` covers the ACES 1.x output transforms (SDR, HDR and the
+D60/D65 simulations), the ACES log encodings and looks, the display encodings
+and the common camera log curves. The ACES 2.0 output transforms of OCIO 2.4
+are not implemented: a view that uses one, or any transform Tequila cannot
+build, is reported by name and the built-in transforms stay available, rather
+than the image being quietly developed through an incomplete pipeline.
 
 ### 3.3.5 `pins` entries
 

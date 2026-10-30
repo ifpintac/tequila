@@ -1,0 +1,717 @@
+ocio_profile_version: 2.1
+
+# A hand-written subset of the Academy / ASWF "ACES Studio Config"
+# (studio-config-v1.0.0_aces-v1.3_ocio-v2.1), for Tequila's tests.
+#
+# The published file could not be fetched where this was written, so this is
+# not a copy of it. It is written to the same structure and with the same
+# names: the roles, the scene-referred and display-referred colour spaces,
+# the shared views, the view transforms and the BuiltinTransform styles a
+# real ACES config uses, and the matrices the generated configs carry
+# (derived from the primaries, which is how the generator makes them). The
+# camera spaces that the 2.1 config defines without a builtin (ARRI LogC4)
+# are written the same way it writes them, as a LogCameraTransform.
+#
+# What is left out is everything the subset does not need to exercise: most
+# texture spaces, the Venice, BMD and DaVinci camera spaces, file and viewing
+# rules beyond the default, and the long descriptions.
+
+environment:
+  {}
+search_path: ""
+strictparsing: true
+luma: [0.2126, 0.7152, 0.0722]
+name: studio-config-v1.0.0_aces-v1.3_ocio-v2.1
+description: |
+  Academy Color Encoding System - Studio Config [COLORSPACES v1.0.0] [ACES v1.3] [OCIO v2.1]
+  ------------------------------------------------------------------------------------------
+
+  This "OpenColorIO" config is geared toward studios requiring a config that includes a wide variety of camera colorspaces, displays and looks.
+
+roles:
+  aces_interchange: ACES2065-1
+  cie_xyz_d65_interchange: CIE-XYZ-D65
+  color_picking: sRGB - Texture
+  color_timing: ACEScct
+  compositing_log: ACEScct
+  data: Raw
+  matte_paint: ACEScct
+  scene_linear: ACEScg
+  texture_paint: sRGB - Texture
+
+file_rules:
+  - !<Rule> {name: Default, colorspace: ACES2065-1}
+
+shared_views:
+  - !<View> {name: ACES 1.0 - SDR Video, view_transform: ACES 1.0 - SDR Video, display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.0 - SDR Video (D60 sim on D65), view_transform: ACES 1.0 - SDR Video (D60 sim on D65), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - SDR Video (P3 lim), view_transform: ACES 1.1 - SDR Video (P3 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - SDR Video (Rec.709 lim), view_transform: ACES 1.1 - SDR Video (Rec.709 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim), view_transform: ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (2000 nits & Rec.2020 lim), view_transform: ACES 1.1 - HDR Video (2000 nits & Rec.2020 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (4000 nits & Rec.2020 lim), view_transform: ACES 1.1 - HDR Video (4000 nits & Rec.2020 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (1000 nits & P3 lim), view_transform: ACES 1.1 - HDR Video (1000 nits & P3 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (2000 nits & P3 lim), view_transform: ACES 1.1 - HDR Video (2000 nits & P3 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Video (4000 nits & P3 lim), view_transform: ACES 1.1 - HDR Video (4000 nits & P3 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.0 - SDR Cinema, view_transform: ACES 1.0 - SDR Cinema, display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - SDR Cinema (D60 sim on D65), view_transform: ACES 1.1 - SDR Cinema (D60 sim on D65), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - SDR Cinema (Rec.709 lim), view_transform: ACES 1.1 - SDR Cinema (Rec.709 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.0 - SDR Cinema (D60 sim on DCI), view_transform: ACES 1.0 - SDR Cinema (D60 sim on DCI), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - SDR Cinema (D65 sim on DCI), view_transform: ACES 1.1 - SDR Cinema (D65 sim on DCI), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: ACES 1.1 - HDR Cinema (108 nits & P3 lim), view_transform: ACES 1.1 - HDR Cinema (108 nits & P3 lim), display_colorspace: <USE_DISPLAY_NAME>}
+  - !<View> {name: Un-tone-mapped, view_transform: Un-tone-mapped, display_colorspace: <USE_DISPLAY_NAME>}
+
+displays:
+  sRGB - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Video, ACES 1.0 - SDR Video (D60 sim on D65), Un-tone-mapped]
+  Display P3 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Video, ACES 1.0 - SDR Video (D60 sim on D65), Un-tone-mapped]
+  Rec.1886 Rec.709 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Video, ACES 1.0 - SDR Video (D60 sim on D65), Un-tone-mapped]
+  Rec.1886 Rec.2020 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Video, ACES 1.1 - SDR Video (P3 lim), ACES 1.1 - SDR Video (Rec.709 lim), Un-tone-mapped]
+  Rec.2100-HLG - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (1000 nits & P3 lim), Un-tone-mapped]
+  Rec.2100-PQ - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (2000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (4000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (1000 nits & P3 lim), ACES 1.1 - HDR Video (2000 nits & P3 lim), ACES 1.1 - HDR Video (4000 nits & P3 lim), Un-tone-mapped]
+  ST2084-P3-D65 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.1 - HDR Video (1000 nits & P3 lim), ACES 1.1 - HDR Video (2000 nits & P3 lim), ACES 1.1 - HDR Video (4000 nits & P3 lim), ACES 1.1 - HDR Cinema (108 nits & P3 lim), Un-tone-mapped]
+  P3-D60 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Cinema, Un-tone-mapped]
+  P3-D65 - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Cinema, ACES 1.1 - SDR Cinema (D60 sim on D65), ACES 1.1 - SDR Cinema (Rec.709 lim), Un-tone-mapped]
+  P3-DCI - Display:
+    - !<View> {name: Raw, colorspace: Raw}
+    - !<Views> [ACES 1.0 - SDR Cinema (D60 sim on DCI), ACES 1.1 - SDR Cinema (D65 sim on DCI), Un-tone-mapped]
+
+active_displays: [sRGB - Display, Display P3 - Display, Rec.1886 Rec.709 - Display, Rec.1886 Rec.2020 - Display, Rec.2100-HLG - Display, Rec.2100-PQ - Display, ST2084-P3-D65 - Display, P3-D60 - Display, P3-D65 - Display, P3-DCI - Display]
+active_views: [ACES 1.0 - SDR Video, ACES 1.0 - SDR Video (D60 sim on D65), ACES 1.1 - SDR Video (P3 lim), ACES 1.1 - SDR Video (Rec.709 lim), ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (2000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (4000 nits & Rec.2020 lim), ACES 1.1 - HDR Video (1000 nits & P3 lim), ACES 1.1 - HDR Video (2000 nits & P3 lim), ACES 1.1 - HDR Video (4000 nits & P3 lim), ACES 1.0 - SDR Cinema, ACES 1.1 - SDR Cinema (D60 sim on D65), ACES 1.1 - SDR Cinema (Rec.709 lim), ACES 1.0 - SDR Cinema (D60 sim on DCI), ACES 1.1 - SDR Cinema (D65 sim on DCI), ACES 1.1 - HDR Cinema (108 nits & P3 lim), Un-tone-mapped, Raw]
+inactive_colorspaces: [CIE-XYZ-D65, sRGB - Display, Display P3 - Display, Rec.1886 Rec.709 - Display, Rec.1886 Rec.2020 - Display, Rec.2100-HLG - Display, Rec.2100-PQ - Display, ST2084-P3-D65 - Display, P3-D60 - Display, P3-D65 - Display, P3-DCI - Display]
+
+default_view_transform: Un-tone-mapped
+
+looks:
+  - !<Look>
+    name: ACES 1.3 Reference Gamut Compression
+    aliases: [aces_rgc]
+    process_space: ACES2065-1
+    description: |
+      LMT (applied in ACES2065-1) to compress scene-referred values from common cameras into the AP1 gamut
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:LMT.Academy.ReferenceGamutCompress.a1.v1.0
+    transform: !<BuiltinTransform> {style: ACES-LMT - ACES 1.3 Reference Gamut Compression}
+
+  - !<Look>
+    name: Blue Light Artifact Fix
+    aliases: [blue_light_artifact_fix]
+    process_space: ACES2065-1
+    description: |
+      LMT for desaturating blue hues to reduce clipping artifacts
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:LMT.Academy.BlueLightArtifactFix.a1.1.0
+    transform: !<BuiltinTransform> {style: ACES-LMT - BLUE_LIGHT_ARTIFACT_FIX}
+
+view_transforms:
+  - !<ViewTransform>
+    name: ACES 1.0 - SDR Video
+    description: |
+      Component of ACES Output Transforms for SDR D65 video
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ODT.Academy.RGBmonitor_100nits_dim.a1.0.3
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ODT.Academy.Rec709_100nits_dim.a1.0.3
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ODT.Academy.Rec2020_100nits_dim.a1.0.3
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO_1.0}
+
+  - !<ViewTransform>
+    name: ACES 1.0 - SDR Video (D60 sim on D65)
+    description: Component of ACES Output Transforms for SDR D65 video simulating D60 white
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO-D60sim-D65_1.0}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - SDR Video (P3 lim)
+    description: Component of ACES Output Transforms for SDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO-P3lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - SDR Video (Rec.709 lim)
+    description: Component of ACES Output Transforms for SDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO-REC709lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (1000 nits & Rec.2020 lim)
+    description: Component of ACES Output Transforms for 1000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-1000nit-15nit-REC2020lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (2000 nits & Rec.2020 lim)
+    description: Component of ACES Output Transforms for 2000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-2000nit-15nit-REC2020lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (4000 nits & Rec.2020 lim)
+    description: Component of ACES Output Transforms for 4000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-4000nit-15nit-REC2020lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (1000 nits & P3 lim)
+    description: Component of ACES Output Transforms for 1000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-1000nit-15nit-P3lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (2000 nits & P3 lim)
+    description: Component of ACES Output Transforms for 2000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-2000nit-15nit-P3lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Video (4000 nits & P3 lim)
+    description: Component of ACES Output Transforms for 4000 nit HDR D65 video
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-VIDEO-4000nit-15nit-P3lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.0 - SDR Cinema
+    description: Component of ACES Output Transforms for SDR cinema
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-CINEMA_1.0}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - SDR Cinema (D60 sim on D65)
+    description: Component of ACES Output Transforms for SDR D65 cinema simulating D60 white
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-CINEMA-D60sim-D65_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - SDR Cinema (Rec.709 lim)
+    description: Component of ACES Output Transforms for SDR cinema
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-CINEMA-REC709lim_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.0 - SDR Cinema (D60 sim on DCI)
+    description: Component of ACES Output Transforms for SDR DCI cinema simulating D60 white
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-CINEMA-D60sim-DCI_1.0}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - SDR Cinema (D65 sim on DCI)
+    description: Component of ACES Output Transforms for SDR DCI cinema simulating D65 white
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-CINEMA-D65sim-DCI_1.1}
+
+  - !<ViewTransform>
+    name: ACES 1.1 - HDR Cinema (108 nits & P3 lim)
+    description: Component of ACES Output Transforms for 108 nit HDR D65 cinema
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - HDR-CINEMA-108nit-7.2nit-P3lim_1.1}
+
+  - !<ViewTransform>
+    name: Un-tone-mapped
+    from_scene_reference: !<BuiltinTransform> {style: UTILITY - ACES-AP0_to_CIE-XYZ-D65_BFD}
+
+display_colorspaces:
+  - !<ColorSpace>
+    name: CIE-XYZ-D65
+    aliases: [cie_xyz_d65]
+    family: ""
+    equalitygroup: ""
+    bitdepth: 32f
+    description: The "CIE XYZ (D65)" display connection colorspace.
+    isdata: false
+    encoding: display-linear
+    allocation: uniform
+
+  - !<ColorSpace>
+    name: sRGB - Display
+    aliases: [srgb_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to sRGB (piecewise EOTF)
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_sRGB}
+
+  - !<ColorSpace>
+    name: Display P3 - Display
+    aliases: [displayp3_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Apple Display P3
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_DisplayP3}
+
+  - !<ColorSpace>
+    name: Rec.1886 Rec.709 - Display
+    aliases: [rec1886_rec709_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Rec.1886/Rec.709 (HD video)
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_REC.1886-REC.709}
+
+  - !<ColorSpace>
+    name: Rec.1886 Rec.2020 - Display
+    aliases: [rec1886_rec2020_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Rec.1886/Rec.2020 (UHD video)
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_REC.1886-REC.2020}
+
+  - !<ColorSpace>
+    name: Rec.2100-HLG - Display
+    aliases: [rec2100_hlg_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Rec.2100-HLG, 1000 nit
+    isdata: false
+    categories: [file-io]
+    encoding: hdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_REC.2100-HLG-1000nit}
+
+  - !<ColorSpace>
+    name: Rec.2100-PQ - Display
+    aliases: [rec2100_pq_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Rec.2100-PQ
+    isdata: false
+    categories: [file-io]
+    encoding: hdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_REC.2100-PQ}
+
+  - !<ColorSpace>
+    name: ST2084-P3-D65 - Display
+    aliases: [st2084_p3d65_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to ST-2084 (PQ), P3-D65 primaries
+    isdata: false
+    categories: [file-io]
+    encoding: hdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_ST2084-P3-D65}
+
+  - !<ColorSpace>
+    name: P3-D60 - Display
+    aliases: [p3d60_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Gamma 2.6, P3-D60 (Bradford adaptation)
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_G2.6-P3-D60-BFD}
+
+  - !<ColorSpace>
+    name: P3-D65 - Display
+    aliases: [p3d65_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Gamma 2.6, P3-D65
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_G2.6-P3-D65}
+
+  - !<ColorSpace>
+    name: P3-DCI - Display
+    aliases: [p3_dci_display]
+    family: Display
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert CIE XYZ (D65 white) to Gamma 2.6, P3-DCI (DCI white with Bradford adaptation)
+    isdata: false
+    categories: [file-io]
+    encoding: sdr-video
+    allocation: uniform
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_G2.6-P3-DCI-BFD}
+
+colorspaces:
+  - !<ColorSpace>
+    name: ACES2065-1
+    aliases: [aces2065_1, ACES - ACES2065-1, lin_ap0]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: The "Academy Color Encoding System" reference colorspace.
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+
+  - !<ColorSpace>
+    name: ACEScc
+    aliases: [ACES - ACEScc, acescc_ap1]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: |
+      Convert ACEScc to ACES2065-1
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ACEScsc.Academy.ACEScc_to_ACES.a1.0.3
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ACEScc_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: ACEScct
+    aliases: [ACES - ACEScct, acescct_ap1]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: |
+      Convert ACEScct to ACES2065-1
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ACEScsc.Academy.ACEScct_to_ACES.a1.0.3
+    isdata: false
+    categories: [file-io, working-space]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ACEScct_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: ACEScg
+    aliases: [ACES - ACEScg, lin_ap1]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: |
+      Convert ACEScg to ACES2065-1
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ACEScsc.Academy.ACEScg_to_ACES.a1.0.3
+    isdata: false
+    categories: [file-io, working-space, texture]
+    encoding: scene-linear
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ACEScg_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: ADX10
+    aliases: [Input - ADX - ADX10]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: |
+      Convert ADX10 to ACES2065-1
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ACEScsc.Academy.ADX10_to_ACES.a1.0.3
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ADX10_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: ADX16
+    aliases: [Input - ADX - ADX16]
+    family: ACES
+    equalitygroup: ""
+    bitdepth: 32f
+    description: |
+      Convert ADX16 to ACES2065-1
+
+      ACEStransformID: urn:ampas:aces:transformId:v1.5:ACEScsc.Academy.ADX16_to_ACES.a1.0.3
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ADX16_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Linear ARRI Wide Gamut 3
+    aliases: [lin_arri_wide_gamut_3, Input - ARRI - Linear - ALEXA Wide Gamut, lin_alexawide]
+    family: Input/ARRI
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Linear ARRI Wide Gamut 3 to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+    to_scene_reference: !<MatrixTransform> {matrix: [0.680205505106279, 0.236136601606481, 0.0836578932872399, 0, 0.0854149797421403, 1.01747087860704, -0.102885858349182, 0, 0.00205652166929683, -0.0625625003847921, 1.0605059787155, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: ARRI LogC3 (EI800)
+    aliases: [arri_logc3_ei800, Input - ARRI - V3 LogC (EI800) - Wide Gamut, logc3ei800_alexawide]
+    family: Input/ARRI
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ARRI LogC3 (EI800) to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: ARRI_ALEXA-LOGC-EI800-AWG_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Linear ARRI Wide Gamut 4
+    aliases: [lin_arri_wide_gamut_4, lin_awg4]
+    family: Input/ARRI
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Linear ARRI Wide Gamut 4 to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+    to_scene_reference: !<MatrixTransform> {name: Linear ARRI Wide Gamut 4 to ACES2065-1, matrix: [0.750957362824734, 0.144422786709757, 0.104619850465509, 0, 0.000821837079380141, 1.007397584885, -0.00821942196438363, 0, -0.000499952143533471, -0.000854177231436972, 1.00135412937497, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: ARRI LogC4
+    aliases: [arri_logc4]
+    family: Input/ARRI
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ARRI LogC4 to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<GroupTransform>
+      name: ARRI LogC4 to ACES2065-1
+      children:
+        - !<LogCameraTransform> {name: ARRI LogC4 Log (arbitrary units) to Linear, base: 2, log_side_slope: 0.0647954196341293, log_side_offset: -0.295908392682586, lin_side_slope: 2231.82630906769, lin_side_offset: 64, lin_side_break: -0.0180569961199113, direction: inverse}
+        - !<MatrixTransform> {name: Linear ARRI Wide Gamut 4 to ACES2065-1, matrix: [0.750957362824734, 0.144422786709757, 0.104619850465509, 0, 0.000821837079380141, 1.007397584885, -0.00821942196438363, 0, -0.000499952143533471, -0.000854177231436972, 1.00135412937497, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: CanonLog2 CinemaGamut D55
+    aliases: [canonlog2_cinemagamut_d55, Input - Canon - Canon-Log2 - Cinema Gamut Daylight, canonlog2_cgamutday]
+    family: Input/Canon
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Canon Log 2 Cinema Gamut (Daylight) to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: CANON_CLOG2-CGAMUT_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: CanonLog3 CinemaGamut D55
+    aliases: [canonlog3_cinemagamut_d55, Input - Canon - Canon-Log3 - Cinema Gamut Daylight, canonlog3_cgamutday]
+    family: Input/Canon
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Canon Log 3 Cinema Gamut (Daylight) to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: CANON_CLOG3-CGAMUT_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Linear CinemaGamut D55
+    aliases: [lin_cinemagamut_d55, Input - Canon - Linear - Canon Cinema Gamut Daylight, lin_canoncgamutday]
+    family: Input/Canon
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Linear Canon Cinema Gamut (Daylight) to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+    to_scene_reference: !<MatrixTransform> {matrix: [0.763064455, 0.149021161, 0.087914384, 0, 0.003657457, 1.10696038, -0.110617837, 0, -0.009407794, -0.218383305, 1.227791099, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: V-Log V-Gamut
+    aliases: [vlog_vgamut, Input - Panasonic - V-Log - V-Gamut]
+    family: Input/Panasonic
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Panasonic V-Log - V-Gamut to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: PANASONIC_VLOG-VGAMUT_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Log3G10 REDWideGamutRGB
+    aliases: [log3g10_redwidegamutrgb, Input - RED - REDLog3G10 - REDWideGamutRGB, rl3g10_rwg]
+    family: Input/RED
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert RED Log3G10 REDWideGamutRGB to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: RED_LOG3G10-RWG_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Linear REDWideGamutRGB
+    aliases: [lin_redwidegamutrgb, Input - RED - Linear - REDWideGamutRGB, lin_rwg]
+    family: Input/RED
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Linear REDWideGamutRGB to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+    to_scene_reference: !<MatrixTransform> {matrix: [0.785058804068092, 0.0838587565440846, 0.131082439382823, 0, 0.0231738348454756, 1.08789754919233, -0.111071384037806, 0, -0.0737604353682082, -0.314590072290208, 1.38835050765842, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: S-Log3 S-Gamut3
+    aliases: [slog3_sgamut3, Input - Sony - S-Log3 - S-Gamut3]
+    family: Input/Sony
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Sony S-Log3 S-Gamut3 to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: SONY_SLOG3-SGAMUT3_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: S-Log3 S-Gamut3.Cine
+    aliases: [slog3_sgamut3cine, Input - Sony - S-Log3 - S-Gamut3.Cine]
+    family: Input/Sony
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Sony S-Log3 S-Gamut3.Cine to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: log
+    allocation: uniform
+    to_scene_reference: !<BuiltinTransform> {style: SONY_SLOG3-SGAMUT3.CINE_to_ACES2065-1}
+
+  - !<ColorSpace>
+    name: Linear S-Gamut3
+    aliases: [lin_sgamut3, Input - Sony - Linear - S-Gamut3]
+    family: Input/Sony
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert Linear S-Gamut3 to ACES2065-1
+    isdata: false
+    categories: [file-io]
+    encoding: scene-linear
+    allocation: lg2
+    allocationvars: [-8, 5, 0.00390625]
+    to_scene_reference: !<MatrixTransform> {matrix: [0.75298259539984, 0.143370216235557, 0.103647188364603, 0, 0.0217076974414429, 1.01531883550528, -0.0370265329467195, 0, -0.00941605274963355, 0.00337041785882367, 1.00604563489081, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: Linear P3-D65
+    aliases: [lin_p3d65, Utility - Linear - P3-D65, lin_displayp3]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ACES2065-1 to linear P3 primaries, D65 white point
+    isdata: false
+    categories: [file-io, working-space]
+    encoding: scene-linear
+    allocation: uniform
+    from_scene_reference: !<GroupTransform>
+      name: AP0 to Linear P3-D65
+      children:
+        - !<MatrixTransform> {matrix: [2.02490528596679, -0.689069761034766, -0.335835524932019, 0, -0.183597032256178, 1.28950620775902, -0.105909175502841, 0, 0.00905856112234766, -0.0592796840575522, 1.0502211229352, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: Linear Rec.2020
+    aliases: [lin_rec2020, Utility - Linear - Rec.2020]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ACES2065-1 to linear Rec.2020 primaries, D65 white point
+    isdata: false
+    categories: [file-io, working-space]
+    encoding: scene-linear
+    allocation: uniform
+    from_scene_reference: !<GroupTransform>
+      name: AP0 to Linear Rec.2020
+      children:
+        - !<MatrixTransform> {matrix: [1.49040952054172, -0.26617091926613, -0.224238601275593, 0, -0.0801674998722558, 1.18216712109757, -0.10199962122531, 0, 0.00322763119162216, -0.0347764757450576, 1.03154884455344, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: Linear Rec.709 (sRGB)
+    aliases: [lin_rec709_srgb, Utility - Linear - Rec.709, lin_rec709, lin_srgb, Utility - Linear - sRGB]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ACES2065-1 to linear Rec.709 primaries, D65 white point
+    isdata: false
+    categories: [file-io, working-space]
+    encoding: scene-linear
+    allocation: uniform
+    from_scene_reference: !<GroupTransform>
+      name: AP0 to Linear Rec.709 (sRGB)
+      children:
+        - !<MatrixTransform> {matrix: [2.52168618674388, -1.13413098823972, -0.387555198504164, 0, -0.276479914229922, 1.37271908766826, -0.096239173438334, 0, -0.0153780649660342, -0.152975335867399, 1.16835340083343, 0, 0, 0, 0, 1]}
+
+  - !<ColorSpace>
+    name: Gamma 2.2 Rec.709 - Texture
+    aliases: [g22_rec709_tx, Utility - Gamma 2.2 - Rec.709 - Texture, g22_rec709]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ACES2065-1 to 2.2 gamma-corrected Rec.709 primaries, D65 white point
+    isdata: false
+    categories: [file-io, texture]
+    encoding: sdr-video
+    allocation: uniform
+    from_scene_reference: !<GroupTransform>
+      name: AP0 to Gamma 2.2 Rec.709 - Texture
+      children:
+        - !<MatrixTransform> {matrix: [2.52168618674388, -1.13413098823972, -0.387555198504164, 0, -0.276479914229922, 1.37271908766826, -0.096239173438334, 0, -0.0153780649660342, -0.152975335867399, 1.16835340083343, 0, 0, 0, 0, 1]}
+        - !<ExponentTransform> {value: 2.2, style: pass_thru, direction: inverse}
+
+  - !<ColorSpace>
+    name: sRGB - Texture
+    aliases: [srgb_tx, Utility - sRGB - Texture, srgb_texture, Input - Generic - sRGB - Texture]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: Convert ACES2065-1 to sRGB
+    isdata: false
+    categories: [file-io, texture]
+    allocation: uniform
+    from_scene_reference: !<GroupTransform>
+      name: AP0 to sRGB Rec.709
+      children:
+        - !<MatrixTransform> {matrix: [2.52168618674388, -1.13413098823972, -0.387555198504164, 0, -0.276479914229922, 1.37271908766826, -0.096239173438334, 0, -0.0153780649660342, -0.152975335867399, 1.16835340083343, 0, 0, 0, 0, 1]}
+        - !<ExponentWithLinearTransform> {gamma: 2.4, offset: 0.055, direction: inverse}
+
+  - !<ColorSpace>
+    name: Raw
+    aliases: [Utility - Raw]
+    family: Utility
+    equalitygroup: ""
+    bitdepth: 32f
+    description: The utility "Raw" colorspace.
+    isdata: true
+    categories: [file-io, texture]
+    allocation: uniform
