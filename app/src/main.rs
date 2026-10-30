@@ -64,6 +64,7 @@ mod scene_tab;
 mod procedural_gpu;
 mod solid_gpu;
 mod start_screen;
+mod uv_editor;
 mod studio_tab;
 mod studio_shelf;
 mod studio_presets;
@@ -461,6 +462,8 @@ struct TequilaApp {
     interacting: bool,
     show_help: bool,
     show_about: bool,
+    /// The UV editor window: a part's layout, and a label placed on it.
+    uv_editor: uv_editor::UvEditor,
     /// What went wrong last time, or in a worker just now, or from Help.
     crash_window: crash::CrashWindow,
     /// The status line last noted for a crash report.
@@ -905,6 +908,7 @@ impl TequilaApp {
             interacting: false,
             show_help: false,
             show_about: false,
+            uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
             noted_status: String::new(),
             show_hud: false,
@@ -1506,6 +1510,17 @@ impl eframe::App for TequilaApp {
         if self.show_about {
             self.about_window(ctx);
         }
+        // A label's UV editor button, from the Labels tab.
+        let request = ctx.data_mut(|d| {
+            let id = egui::Id::new(uv_editor::OPEN);
+            let request = d.get_temp::<(tequila_scene::MaterialKey, usize)>(id);
+            d.remove::<(tequila_scene::MaterialKey, usize)>(id);
+            request
+        });
+        if let Some((material, label)) = request {
+            self.uv_editor.edit(material, label);
+        }
+        uv_editor::show(ctx, &mut self.uv_editor, &mut self.project);
         self.start_screen_window(ctx);
         self.updates_window(ctx);
         // TEQUILA_CRASH_TEST: crash on purpose, once the window is up, to
@@ -3024,6 +3039,16 @@ impl TequilaApp {
                     }
                     if ui.button("Frame all").on_hover_text("Shift+F").clicked() {
                         self.frame(true);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui
+                        .button("UV editor")
+                        .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels on it by hand")
+                        .clicked()
+                    {
+                        self.uv_editor.open = true;
+                        self.uv_editor.label = None;
                         ui.close_menu();
                     }
                 });

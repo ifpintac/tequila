@@ -178,6 +178,16 @@ pub fn show(
                         {
                             place_request = Some(index);
                         }
+                        // Placed by hand on the part's layout, which can put it
+                        // on any face, where a flat projection looks down an
+                        // axis.
+                        if ui
+                            .button("UV editor")
+                            .on_hover_text("Place this label on the part's UV layout by hand: drag, scale and turn it, or fit it to a face. Unwraps the part if it has no layout.")
+                            .clicked()
+                        {
+                            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(crate::uv_editor::OPEN), (key, index)));
+                        }
                     });
                     crate::field::Fold::new("Placement & finish")
                         .id_salt("placement")
