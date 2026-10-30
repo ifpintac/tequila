@@ -64,9 +64,11 @@ jobs:
         run: bash scripts/fetch-third-party.sh
 
       # OpenCASCADE takes most of an hour to build and changes only with its
-      # version: kept between runs.
-      - name: Cache OpenCASCADE
-        uses: actions/cache@v4
+      # version: kept between runs, and kept as soon as it is built, so a
+      # later step failing does not throw the hour away.
+      - name: Restore OpenCASCADE
+        id: occt-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.OCCT_WORK }}/install
           key: occt-8.0.1-linux-x64-${{ hashFiles('native/occt/build-occt-library.sh') }}
@@ -74,13 +76,22 @@ jobs:
       - name: OpenCASCADE
         run: bash native/occt/build-occt-library.sh "$OCCT_WORK"
 
+      - name: Keep OpenCASCADE
+        if: steps.occt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.OCCT_WORK }}/install
+          key: occt-8.0.1-linux-x64-${{ hashFiles('native/occt/build-occt-library.sh') }}
+
       - name: STEP reader (OpenCASCADE)
         run: OCCT_DIR="$OCCT_WORK/install" bash native/occt/build-occt.sh
 
       # Cycles' sources, Blender's libraries and the build, kept between
-      # runs, keyed on what decides them.
-      - name: Cache Cycles
-        uses: actions/cache@v4
+      # runs, keyed on what decides them - and kept once built, as
+      # OpenCASCADE is.
+      - name: Restore Cycles
+        id: cycles-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.CYCLES_WORK }}
           key: cycles-linux-x64-${{ hashFiles('native/cycles/**') }}
@@ -101,6 +112,13 @@ jobs:
 
       - name: Cycles
         run: bash native/cycles/build-cycles.sh "$CYCLES_WORK"
+
+      - name: Keep Cycles
+        if: steps.cycles-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CYCLES_WORK }}
+          key: cycles-linux-x64-${{ hashFiles('native/cycles/**') }}
 
       - name: Package
         env:
