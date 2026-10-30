@@ -10,13 +10,17 @@
 #                          (where tequila.open() and Connect an AI look)
 #   lib*.so*               Embree, TBB and Open Image Denoise, found by the
 #                          programs' rpath ($ORIGIN, .cargo/config.toml)
+#   cycles/                Cycles, when built (native/cycles/build-cycles.sh),
+#                          with its GPU kernels in cycles/lib
+#   occt/                  OpenCASCADE's STEP reader, when built
+#                          (native/occt/build-occt.sh)
 #   assets/                the material library, studio presets, samples
 #   python/, plugins/      the scripting module and the example plugins
 #   install.sh             puts Tequila in the desktop's application menu
 #   BUILD.txt, licences    which version this is, and whose code is in it
 #
-# Renders use Tequila's own renderer, and STEP files are read by its own
-# reader: Cycles and OpenCASCADE's reader are not built for Linux yet.
+# Without Cycles, renders use Tequila's own renderer; without the OpenCASCADE
+# helper, STEP files are read by Tequila's own reader.
 #
 # Usage:  bash scripts/package-linux.sh [--skip-build]
 # Result: dist/Tequila-Linux-<stamp>/Tequila and
@@ -68,6 +72,45 @@ if command -v patchelf >/dev/null; then
     done
 else
     echo "patchelf not found: the libraries keep the rpath their SDK gave them" >&2
+fi
+
+# Cycles, when it has been built: the library and what it brings in cycles/,
+# where Tequila looks beside itself, finding Embree, TBB and OIDN one folder
+# up rather than a second copy; Blender 5.0.1's GPU kernels, which the
+# release workflow fetches into the work folder, in cycles/lib.
+cycles_work="${TEQUILA_CYCLES_WORK:-$(cd "$root/.." && pwd)/cycles-spike}"
+cycles_bin="$cycles_work/cycles/build/bin"
+with_cycles=0
+if [ -f "$cycles_bin/libtequila_cycles.so" ]; then
+    mkdir -p "$out/cycles"
+    for f in "$cycles_bin"/*.so*; do
+        case "$(basename "$f")" in
+            libembree*|libtbb*|libOpenImageDenoise*) ;;
+            *) cp -a "$f" "$out/cycles/" ;;
+        esac
+    done
+    if command -v patchelf >/dev/null; then
+        patchelf --set-rpath '$ORIGIN:$ORIGIN/..' "$out/cycles/libtequila_cycles.so"
+    fi
+    if [ -d "$cycles_work/kernels/lib" ]; then
+        cp -R "$cycles_work/kernels/lib" "$out/cycles/lib"
+    fi
+    with_cycles=1
+    echo "Cycles included from $cycles_bin"
+else
+    echo "Cycles not built; packaging without it (renders use Tequila's own engine)"
+fi
+
+# OpenCASCADE's STEP reader, when it has been built: a program of its own
+# with its libraries, in occt/ beside the programs, where Tequila looks.
+occt_built="$root/native/occt/build/occt"
+with_occt=0
+if [ -f "$occt_built/tequila-occt" ]; then
+    cp -R "$occt_built" "$out/occt"
+    with_occt=1
+    echo "The OpenCASCADE STEP reader included from $occt_built"
+else
+    echo "The OpenCASCADE STEP reader not built; STEP files are read by Tequila's own reader"
 fi
 
 # The material library, the studio presets, the sample scenes (the folder's
@@ -155,9 +198,17 @@ Updating: Help > Check for updates fetches the newer one; unpack it in
 place of this folder. Your materials, plugins and settings are kept in
 ~/.config/Tequila and stay.
 
-Renders use Tequila's own renderer on the processor. Cycles and the
-OpenCASCADE STEP reader are not in the Linux version yet: STEP files are read
-by Tequila's own reader.
+$(if [ "$with_cycles" = 1 ]; then
+    echo "Renders use Cycles on an NVIDIA (CUDA, OptiX) or AMD (HIP) graphics card"
+    echo "when there is one, or Tequila's own renderer on the processor."
+else
+    echo "Renders use Tequila's own renderer on the processor."
+fi)
+$(if [ "$with_occt" = 1 ]; then
+    echo "STEP files are read by OpenCASCADE (occt/)."
+else
+    echo "STEP files are read by Tequila's own reader."
+fi)
 
 tequila-cli is the command-line renderer; with --worker it is a render node
 for network rendering. python/ holds the scripting module.
