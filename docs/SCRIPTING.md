@@ -337,7 +337,7 @@ Operations:
 | `texture_set` | `path` (a folder, a ZIP, or one of its maps), optional `nodes` | Make materials from a PBR texture pack and put the first on `nodes`, or on the selection |
 | `save` | optional `path` | Save the project |
 | `screenshot` | `path`, optional `viewport` or `window` | Deferred window PNG; one pending capture at a time |
-| `render` | `path`, `width`, `height`, `samples` | Synchronous PNG render |
+| `render` | `path`, `width`, `height`, `samples`, `wireframe` | Synchronous PNG render. `"wireframe": true` draws the model's edges instead, with the project's Wireframe settings (`render.set_settings` → `wireframe: {edges: mesh\|model, hidden: faint\|hidden\|shown, line_width, line_colour, background_top, background_bottom}`): no ray tracing, a second or two at any size. The console's `render out.png 1920x1080 wireframe` and Python's `render(path, wireframe=True)` say the same. |
 | `undo`, `redo` | none | Existing document history |
 
 Paths refer to the app's computer. Python helpers resolve them absolutely.

@@ -366,6 +366,7 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - **Queue**: add still/animation/configurator-batch jobs; reorder; pause/resume; per-job progress with time remaining; render locally or send to network workers. Jobs persist across app restarts.
 - **Gallery**: browse completed renders with their settings; compare two renders side-by-side or with an A/B wipe; re-open a render's settings into the current scene ("restore these settings"); reveal in file browser.
 - **Progress during render**: live image with sample count, elapsed and estimated remaining time, and cancel/pause. A rendering job must never block the UI or the viewport.
+- **Render wireframe**: beside Render, the same job drawn as the model's edges instead of traced - in a second or two, sharp at any size, into the same folder under the same name template. The Wireframe section chooses every triangle's edges (the viewport's Wireframe) or the parts' own edges and outline (a line drawing), hidden lines faint, hidden or shown, the line width in pixels of the image, and the colours, with Dark and Paper presets; a file with alpha leaves the background out. The project's own settings stay a photo, so the next Render renders. From the command line, `--wireframe` (`--edges`, `--hidden-lines`, `--line-width`, `--paper`).
 
 ---
 

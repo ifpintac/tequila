@@ -16,6 +16,7 @@ pub mod floor;
 pub mod preview;
 pub mod renderer;
 pub mod silhouette;
+pub mod wireframe;
 
 pub use embree::{Device, EmbreeIntersector};
 pub use preview::{

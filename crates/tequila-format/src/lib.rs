@@ -1839,6 +1839,20 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         .set("write_xmp", settings.write_xmp)
         .set("write_text_metadata", settings.write_text_metadata);
     object.set("relight", settings.relight);
+    object.set("kind", settings.kind.key());
+    let wireframe = &settings.wireframe;
+    // Four places, which is finer than eight bits: an f32 widened to f64
+    // writes 0.11 as 0.10999999940395355.
+    let colour = |c: [f32; 3]| Value::Array(c.iter().map(|v| Value::from((*v as f64 * 1e4).round() / 1e4)).collect());
+    let mut lines = Object::new();
+    lines
+        .set("edges", wireframe.edges.key())
+        .set("hidden", wireframe.hidden.key())
+        .set("line_width", wireframe.line_width)
+        .set("line_colour", colour(wireframe.line_colour))
+        .set("background_top", colour(wireframe.background_top))
+        .set("background_bottom", colour(wireframe.background_bottom));
+    object.set("wireframe", lines.build());
     object.set(
         "layers",
         settings
@@ -1942,6 +1956,12 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
             .and_then(|v| v.as_str())
             .and_then(tequila_scene::render::RenderEngine::from_key)
             .unwrap_or_default(),
+        kind: value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_scene::render::RenderKind::from_key)
+            .unwrap_or_default(),
+        wireframe: read_wireframe(value.get("wireframe")),
         width: dimension(0, default.width),
         height: dimension(1, default.height),
         dpi: number("dpi", default.dpi),
@@ -2020,6 +2040,36 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+/// A wireframe's look; what is missing or out of range is the default's.
+fn read_wireframe(value: Option<&Value>) -> tequila_scene::render::WireframeSettings {
+    use tequila_scene::render::{HiddenLines, WireEdges, WireframeSettings};
+    let default = WireframeSettings::default();
+    let Some(value) = value else {
+        return default;
+    };
+    let colour = |key: &str, fallback: [f32; 3]| {
+        let parts = value.get(key).map(|v| v.as_array()).unwrap_or(&[]);
+        let channel = |i: usize| parts.get(i).and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+        match (channel(0), channel(1), channel(2)) {
+            (Some(r), Some(g), Some(b)) => [r, g, b],
+            _ => fallback,
+        }
+    };
+    WireframeSettings {
+        edges: value.get("edges").and_then(|v| v.as_str()).and_then(WireEdges::from_key).unwrap_or(default.edges),
+        hidden: value.get("hidden").and_then(|v| v.as_str()).and_then(HiddenLines::from_key).unwrap_or(default.hidden),
+        line_width: value
+            .get("line_width")
+            .and_then(|v| v.as_f32())
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .map(|w| w.min(64.0))
+            .unwrap_or(default.line_width),
+        line_colour: colour("line_colour", default.line_colour),
+        background_top: colour("background_top", default.background_top),
+        background_bottom: colour("background_bottom", default.background_bottom),
     }
 }
 
@@ -3298,6 +3348,36 @@ mod engine_tests {
         assert_eq!(read_render_settings_value(&old).engine, RenderEngine::CyclesGpu);
         let unknown = json::parse(br#"{"engine":"lux"}"#).unwrap();
         assert_eq!(read_render_settings_value(&unknown).engine, RenderEngine::CyclesGpu);
+    }
+
+    /// A wireframe's look is kept, a job's kind with it, and a project from
+    /// before there were wireframes renders photos with the default look.
+    #[test]
+    fn a_wireframe_is_kept_and_old_projects_render_photos() {
+        use tequila_scene::render::{HiddenLines, RenderKind, WireEdges, WireframeSettings};
+        let settings = RenderSettings {
+            kind: RenderKind::Wireframe,
+            wireframe: WireframeSettings {
+                edges: WireEdges::Model,
+                hidden: HiddenLines::Hidden,
+                line_width: 2.5,
+                line_colour: [0.1, 0.2, 0.3],
+                background_top: [0.9, 0.8, 0.7],
+                background_bottom: [0.6, 0.5, 0.4],
+            },
+            ..RenderSettings::default()
+        };
+        let again = read_render_settings_value(&render_settings_to_json(&settings));
+        assert_eq!(again.kind, RenderKind::Wireframe);
+        assert_eq!(again.wireframe, settings.wireframe);
+        let old = json::parse(br#"{"resolution":[640,480],"max_samples":64}"#).unwrap();
+        let old = read_render_settings_value(&old);
+        assert_eq!(old.kind, RenderKind::Photo);
+        assert_eq!(old.wireframe, WireframeSettings::default());
+        let odd = json::parse(br#"{"kind":"sketch","wireframe":{"edges":"curves","line_width":-3,"line_colour":[2,0.5]}}"#).unwrap();
+        let odd = read_render_settings_value(&odd);
+        assert_eq!(odd.kind, RenderKind::Photo, "a kind this build does not know renders a photo");
+        assert_eq!(odd.wireframe, WireframeSettings::default(), "and nonsense in the look is the default's");
     }
 }
 

@@ -23,7 +23,7 @@ use tequila_render_core::scene::SceneSnapshot;
 use tequila_render_core::scheduler::ProgressiveSchedule;
 use tequila_render_core::settings::IntegratorConfig;
 use tequila_render_cpu::{render_pass_with_aovs, Device, EmbreeIntersector, RenderContext};
-use tequila_scene::render::{AlphaMode, Halt, RenderEngine, RenderSettings};
+use tequila_scene::render::{AlphaMode, Halt, HiddenLines, RenderEngine, RenderKind, RenderSettings};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -224,6 +224,9 @@ fn run(
             return Err("The render region does not contain any image pixels".into());
         }
     }
+    if settings.kind == RenderKind::Wireframe {
+        return render_wireframe(&job, events);
+    }
     if let Some(environment) = job.pending_environment.take() {
         let mut cache = tequila_scene::environment::EnvironmentCache::new();
         let lighting = cache.environment(&environment);
@@ -370,25 +373,7 @@ fn run(
     }
 
     // ---- The file ------------------------------------------------------
-    let directory = if settings.output_directory.trim().is_empty() {
-        crate::render_window::fallback_directory()
-    } else {
-        std::path::PathBuf::from(settings.output_directory.trim())
-    };
-    std::fs::create_dir_all(&directory)
-        .map_err(|e| format!("{} could not be made: {e}", directory.display()))?;
-
-    let mut fields = job.fields.clone();
-    fields.width = settings.width;
-    fields.height = settings.height;
-    fields.samples = samples;
-    let format = crate::render_window::image_format(settings);
-    let path = tequila_format::output::first_free(tequila_format::output::output_path(
-        &directory,
-        &settings.filename_template,
-        &fields,
-        format,
-    ));
+    let (path, format) = output_file(&job, samples)?;
 
     let (color, alpha) = develop(&framebuffer, settings, settings.alpha_mode.transparent_background());
     let (color, alpha) = if settings.alpha_mode == AlphaMode::Silhouette {
@@ -496,6 +481,93 @@ fn run(
         halt,
         stopped: stopped || cancel.load(Ordering::Acquire),
         relight,
+    })
+}
+
+/// Where a finished job's image goes, and in what format: the render's
+/// folder, made if need be, and a name from its template that no file has.
+fn output_file(job: &BatchJob, samples: u32) -> Result<(std::path::PathBuf, tequila_format::output::ImageFormat), String> {
+    let settings = &job.settings;
+    let directory = if settings.output_directory.trim().is_empty() {
+        crate::render_window::fallback_directory()
+    } else {
+        std::path::PathBuf::from(settings.output_directory.trim())
+    };
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| format!("{} could not be made: {e}", directory.display()))?;
+
+    let mut fields = job.fields.clone();
+    fields.width = settings.width;
+    fields.height = settings.height;
+    fields.samples = samples;
+    let format = crate::render_window::image_format(settings);
+    let path = tequila_format::output::first_free(tequila_format::output::output_path(
+        &directory,
+        &settings.filename_template,
+        &fields,
+        format,
+    ));
+    Ok((path, format))
+}
+
+/// A wireframe of `scene` from `camera` as its file will hold it, drawn by
+/// `tequila_render_cpu::wireframe` from the lines `tequila_scene::wireframe`
+/// gathers. Developed through plain sRGB with no look: a drawing is not
+/// lit, and its colours are the ones it was given.
+pub(crate) fn wireframe_output(scene: &SceneSnapshot, camera: &Camera, settings: &RenderSettings) -> Result<RenderOutput, String> {
+    let (width, height) = (settings.width, settings.height);
+    let look = &settings.wireframe;
+    let lines = tequila_scene::wireframe::lines(scene, camera, look.edges);
+    let coverage = if lines.is_empty() {
+        tequila_render_cpu::wireframe::Coverage { width, height, front: vec![0.0; width * height], behind: vec![0.0; width * height], strokes: 0 }
+    } else {
+        let device = Device::shared().map_err(|e| e.to_string())?;
+        let intersector = EmbreeIntersector::build(&device, tequila_scene::wireframe::visible_scene(scene)).map_err(|e| e.to_string())?;
+        tequila_render_cpu::wireframe::draw(&intersector, camera, width, height, &lines, look.line_width, look.hidden != HiddenLines::Hidden)?
+    };
+    let (color, alpha) = tequila_scene::wireframe::composite(
+        width,
+        height,
+        &coverage.front,
+        &coverage.behind,
+        look,
+        settings.alpha_mode.transparent_background(),
+    );
+    let srgb = tequila_color::DisplayTransform::Srgb;
+    Ok(RenderOutput {
+        width,
+        height,
+        color,
+        alpha,
+        layers: Vec::new(),
+        style: ImageStyle { display: srgb, ..ImageStyle::default() },
+        display: DisplayPipeline::Builtin(srgb),
+        alpha_mode: output_alpha(settings),
+    })
+}
+
+/// A wireframe job: drawn in a second or two rather than rendered, and
+/// written through the same output, file name and sidecars as a render.
+fn render_wireframe(job: &BatchJob, events: &Sender<BatchEvent>) -> Result<BatchEvent, String> {
+    let started = Instant::now();
+    let _ = events.send(BatchEvent::Stage { id: job.id, label: "Drawing the wireframe" });
+    let output = wireframe_output(&job.scene, &job.camera, &job.settings)?;
+    let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
+    let (path, format) = output_file(job, 0)?;
+    output.write(&path, format).map_err(|e| e.to_string())?;
+    let seconds = started.elapsed().as_secs_f64();
+    write_sidecars(&path, job, &job.settings, 0, seconds, Halt::Samples)?;
+    Ok(BatchEvent::Finished {
+        id: job.id,
+        path: path.to_string_lossy().to_string(),
+        width: job.settings.width,
+        height: job.settings.height,
+        samples: 0,
+        seconds,
+        preview: output.to_rgba8(),
+        halt: Halt::Samples,
+        stopped: false,
+        relight: None,
     })
 }
 
@@ -5044,6 +5116,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).unwrap();
         directory
+    }
+
+    /// A wireframe job is drawn, not rendered, and written as a render is:
+    /// its file at its size, the ground the colour it was given, and the
+    /// edges across it - the ground under the demo's sphere left out.
+    #[test]
+    fn a_wireframe_job_draws_the_edges_in_the_colours_it_was_given() {
+        use tequila_scene::render::{RenderKind, WireframeSettings};
+        let directory = scratch("tequila-batch-wireframe");
+        let renderer = BatchRenderer::new();
+        let settings = RenderSettings {
+            kind: RenderKind::Wireframe,
+            width: 160,
+            height: 100,
+            wireframe: WireframeSettings::LIGHT,
+            filename_template: "{project}_{camera}".into(),
+            ..Default::default()
+        };
+        renderer.submit(job(7, &directory, settings));
+        let (path, samples) = match wait_for_finish(&renderer) {
+            BatchEvent::Finished { path, samples, .. } => (path, samples),
+            BatchEvent::Failed { message, .. } => panic!("the wireframe failed: {message}"),
+            _ => unreachable!(),
+        };
+        assert_eq!(samples, 0, "a drawing takes no samples");
+        let image = tequila_texture::image::Image::load_raw(&path).expect("the drawing reads");
+        assert_eq!((image.width, image.height), (160, 100));
+        let pixel = |x: usize, y: usize| {
+            let i = (y * image.width + x) * image.channels;
+            [image.data[i], image.data[i + 1], image.data[i + 2]]
+        };
+        assert!(pixel(0, 0).iter().all(|c| (c - 1.0).abs() < 1.0 / 255.0), "paper white where nothing is: {:?}", pixel(0, 0));
+        let inked = (0..image.height).flat_map(|y| (0..image.width).map(move |x| (x, y))).filter(|&(x, y)| pixel(x, y)[0] < 0.5).count();
+        assert!(inked > 200, "the sphere's edges are drawn: {inked} dark pixels");
+        assert!(inked < 160 * 100 / 2, "and not the ground's: {inked} dark pixels");
     }
 
     fn wait_for_finish(renderer: &BatchRenderer) -> BatchEvent {

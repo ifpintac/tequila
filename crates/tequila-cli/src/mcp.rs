@@ -298,15 +298,16 @@ impl Bridge {
             "tequila_render" => {
                 let path = temporary("tequila-mcp-render", "png");
                 let number = |key: &str, default: f64| Value::Number(get(key).and_then(|v| v.as_f64()).unwrap_or(default));
-                let result = self.request(
-                    "render",
-                    vec![
-                        ("path", path.to_string_lossy().into_owned().into()),
-                        ("width", number("width", 640.0)),
-                        ("height", number("height", 400.0)),
-                        ("samples", number("samples", 32.0)),
-                    ],
-                )?;
+                let mut fields = vec![
+                    ("path", path.to_string_lossy().into_owned().into()),
+                    ("width", number("width", 640.0)),
+                    ("height", number("height", 400.0)),
+                    ("samples", number("samples", 32.0)),
+                ];
+                if get("wireframe").and_then(|v| v.as_bool()) == Some(true) {
+                    fields.push(("wireframe", Value::Bool(true)));
+                }
+                let result = self.request("render", fields)?;
                 image(&path, &one_line(&result))
             }
             "tequila_queue" => self.request("queue", fields_of(arguments)).map(|v| text_value(&v)),

@@ -196,7 +196,7 @@ impl Session {
             Operation::Save { path } => self.save(path.as_deref()),
             Operation::Frame { all } => self.frame(*all),
             Operation::Look(look) => self.look(look),
-            Operation::Render { path, width, height, samples } => self.render(path, *width, *height, *samples),
+            Operation::Render { path, width, height, samples, wireframe } => self.render(path, *width, *height, *samples, *wireframe),
             Operation::Batch { operations, atomic } => self.batch(operations, *atomic),
             Operation::Library(request) => self.library(request),
             Operation::Material(request) => self.material(request),
@@ -619,8 +619,9 @@ impl Session {
         options
     }
 
-    fn render(&mut self, path: &str, width: usize, height: usize, samples: u32) -> Reply {
-        let options = self.render_options(Some(width), Some(height), Some(samples));
+    fn render(&mut self, path: &str, width: usize, height: usize, samples: u32, wireframe: bool) -> Reply {
+        let mut options = self.render_options(Some(width), Some(height), Some(samples));
+        options.wireframe |= wireframe;
         let start = std::time::Instant::now();
         match render_one(&options, &self.document, path, None) {
             Ok(()) => {
@@ -628,7 +629,8 @@ impl Session {
                 out.set("path", absolute(Path::new(path)))
                     .set("width", width as f64)
                     .set("height", height as f64)
-                    .set("samples", samples as f64)
+                    .set("samples", if options.wireframe { 0.0 } else { samples as f64 })
+                    .set("wireframe", options.wireframe)
                     .set("seconds", start.elapsed().as_secs_f64());
                 Reply::Value(out.build())
             }

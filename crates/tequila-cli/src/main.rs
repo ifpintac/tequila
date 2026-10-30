@@ -131,6 +131,13 @@ struct Options {
     token: Option<String>,
     /// Render on these nodes instead of here: host[:port], comma-separated.
     farm: Option<String>,
+    /// Draw a wireframe of the model rather than render it, and how.
+    wireframe: bool,
+    wire_edges: Option<tequila_scene::render::WireEdges>,
+    hidden_lines: Option<tequila_scene::render::HiddenLines>,
+    line_width: Option<f32>,
+    /// Dark lines on white, rather than the viewport's light on dark.
+    paper: bool,
 }
 
 impl Default for Options {
@@ -187,6 +194,11 @@ impl Default for Options {
             worker_name: None,
             token: None,
             farm: None,
+            wireframe: false,
+            wire_edges: None,
+            hidden_lines: None,
+            line_width: None,
+            paper: false,
         }
     }
 }
@@ -230,6 +242,15 @@ usage: tequila [options]
                         what is around them (--no-caustics to turn off)
       --silhouette      cut out along the product's outline: glass stays
                         solid, the floor and its shadow go (implies alpha)
+
+A wireframe, drawn rather than rendered - in a second or two, at any size:
+      --wireframe       draw the model's edges instead of rendering it (a
+                        project saved for a wireframe draws one anyway)
+      --edges E         mesh: every triangle's edge (default); model: the
+                        parts' own edges and their outline, a line drawing
+      --hidden-lines H  faint (default), hidden or shown
+      --line-width PX   in pixels of the image (default 1.5)
+      --paper           dark lines on white, not light lines on dark
 
 From a project's own setup:
       --camera NAME     a saved camera, by name or number from 0
@@ -311,6 +332,35 @@ fn parse_args() -> Result<Options, String> {
                 options.output_set = true;
             }
             "--silhouette" => options.silhouette = true,
+            "--wireframe" => options.wireframe = true,
+            "--edges" => {
+                let text = value()?;
+                options.wire_edges = Some(
+                    tequila_scene::render::WireEdges::from_key(&text).ok_or_else(|| format!("--edges is mesh or model, not {text:?}"))?,
+                );
+                options.wireframe = true;
+            }
+            "--hidden-lines" => {
+                let text = value()?;
+                options.hidden_lines = Some(
+                    tequila_scene::render::HiddenLines::from_key(&text)
+                        .ok_or_else(|| format!("--hidden-lines is faint, hidden or shown, not {text:?}"))?,
+                );
+                options.wireframe = true;
+            }
+            "--line-width" => {
+                let text = value()?;
+                let width: f32 = text.trim().parse().map_err(|_| format!("--line-width takes pixels: not {text:?}"))?;
+                if !(width.is_finite() && width > 0.0 && width <= 64.0) {
+                    return Err(format!("--line-width is from a little over 0 to 64 pixels, not {text}"));
+                }
+                options.line_width = Some(width);
+                options.wireframe = true;
+            }
+            "--paper" => {
+                options.paper = true;
+                options.wireframe = true;
+            }
             "--camera" => options.camera = Some(value()?),
             "--studio" => options.studio = Some(value()?),
             "--model-set" => options.model_set = Some(value()?),
@@ -1109,6 +1159,19 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     // its environment behind the product whatever had been chosen.
     scene.background = environments.background(&document.environment);
     let triangles = scene.triangle_count();
+    // A wireframe is drawn, not traced: none of what follows applies.
+    if options.wireframe || (project && settings.kind == tequila_scene::render::RenderKind::Wireframe) {
+        let camera = saved_camera.unwrap_or_else(|| framing(options, document, width as f32 / height as f32).0);
+        let mut look = if project { settings.wireframe } else { tequila_scene::render::WireframeSettings::default() };
+        if options.paper {
+            look = tequila_scene::render::WireframeSettings { edges: look.edges, hidden: look.hidden, line_width: look.line_width, ..tequila_scene::render::WireframeSettings::LIGHT };
+        }
+        look.edges = options.wire_edges.unwrap_or(look.edges);
+        look.hidden = options.hidden_lines.unwrap_or(look.hidden);
+        look.line_width = options.line_width.unwrap_or(look.line_width);
+        let wide = project && settings.effective_depth() != tequila_scene::render::BitDepth::Eight;
+        return draw_wireframe(output, &device, &scene, &camera, width, height, &look, keep_alpha || silhouette, wide);
+    }
     let (cycles, cycles_device, why) = engine_choice(options.cycles, options.device.as_deref(), project.then_some(&settings), &tequila_render_cycles::devices);
     if let Some(why) = why {
         println!("  {why}");
@@ -1457,6 +1520,44 @@ fn render_with_cycles(
         built.as_secs_f32() * 1000.0,
         render_time.as_secs_f32()
     );
+    Ok(())
+}
+
+/// A wireframe of `scene` from `camera` to `output`, as the render queue
+/// draws one (the application's `batch::wireframe_output`): plain sRGB, so
+/// the lines and the ground are the colours they were given.
+#[allow(clippy::too_many_arguments)]
+fn draw_wireframe(
+    output: &str,
+    device: &Arc<Device>,
+    scene: &tequila_render_core::scene::SceneSnapshot,
+    camera: &Camera,
+    width: usize,
+    height: usize,
+    look: &tequila_scene::render::WireframeSettings,
+    transparent: bool,
+    wide: bool,
+) -> Result<(), String> {
+    let start = Instant::now();
+    let lines = tequila_scene::wireframe::lines(scene, camera, look.edges);
+    println!("drawing a wireframe {width}x{height}: {} edges", lines.len());
+    let (front, behind) = if lines.is_empty() {
+        (vec![0.0; width * height], vec![0.0; width * height])
+    } else {
+        let intersector = EmbreeIntersector::build(device, tequila_scene::wireframe::visible_scene(scene))?;
+        let behind = look.hidden != tequila_scene::render::HiddenLines::Hidden;
+        let coverage = tequila_render_cpu::wireframe::draw(&intersector, camera, width, height, &lines, look.line_width, behind)?;
+        (coverage.front, coverage.behind)
+    };
+    let (color, alpha) = tequila_scene::wireframe::composite(width, height, &front, &behind, look, transparent);
+    let style = tequila_color::ImageStyle { display: DisplayTransform::Srgb, ..tequila_color::ImageStyle::default() };
+    if transparent {
+        let color = straight(width, height, color, alpha.clone(), style);
+        finish_image(output, width, height, &color, Some(&alpha), &style, wide)?;
+    } else {
+        finish_image(output, width, height, &color, None, &style, wide)?;
+    }
+    println!("wrote {output} ({width}x{height}) in {:.2} s", start.elapsed().as_secs_f32());
     Ok(())
 }
 

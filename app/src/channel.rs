@@ -200,11 +200,16 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             }
             Reply::Value(out.build())
         }
+        Operation::Render { path, width, height, wireframe: true, .. } => match wireframe_to_file(app, path, *width, *height) {
+            Ok(value) => Reply::Value(value),
+            Err(error) => Reply::Failed(error),
+        },
         Operation::Render {
             path,
             width,
             height,
             samples,
+            ..
         } => match render_to_file(app, path, *width, *height, *samples) {
             Ok(value) => Reply::Value(value),
             Err(error) => Reply::Failed(error),
@@ -1423,6 +1428,29 @@ fn absolute(path: &std::path::Path) -> String {
 /// the right trade for a scripted render: the client asked for a finished
 /// picture and has nothing to do until it exists, and a progress protocol for
 /// an operation nobody is watching would be machinery for its own sake.
+/// A wireframe of the view to a PNG, as Render wireframe draws one: the
+/// document's Wireframe settings, at the size asked for.
+fn wireframe_to_file(app: &mut TequilaApp, path: &str, width: usize, height: usize) -> Result<Value, String> {
+    if !(1..=16384).contains(&width) || !(1..=16384).contains(&height) {
+        return Err("width and height must be between 1 and 16384 pixels".into());
+    }
+    let started = std::time::Instant::now();
+    let settings = tequila_scene::render::RenderSettings { width, height, ..app.project.document().render.clone() };
+    let scene = app.project.scene();
+    let output = crate::batch::wireframe_output(&scene, &app.camera.camera, &settings)?;
+    output
+        .write(std::path::Path::new(path), tequila_format::output::ImageFormat::Png(tequila_format::psd::Depth::Eight))
+        .map_err(|e| e.to_string())?;
+    let mut out = Object::new();
+    out.set("path", absolute(std::path::Path::new(path)))
+        .set("width", width as f64)
+        .set("height", height as f64)
+        .set("wireframe", true)
+        .set("edges", settings.wireframe.edges.key())
+        .set("seconds", started.elapsed().as_secs_f64());
+    Ok(out.build())
+}
+
 fn render_to_file(
     app: &mut TequilaApp,
     path: &str,
