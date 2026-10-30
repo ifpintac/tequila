@@ -61,7 +61,7 @@ jobs:
           version = release['tagName'].removeprefix('v')
           title = release['name'] or f'Tequila {version}'
           lines = [f'# {title} is out', release['url']]
-          for system, ending in (('Windows', '.exe'), ('Mac', '.dmg')):
+          for system, ending in (('Windows', '.exe'), ('Mac', '.dmg'), ('Linux', '.tar.gz')):
               for name in names:
                   if name.startswith('Tequila') and name.endswith(ending):
                       lines.append(f'- **{system}:** {name}')
