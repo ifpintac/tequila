@@ -428,7 +428,7 @@ Track implementation against this. Section references point to where the "how" i
 - [ ] All render passes/AOVs incl. spec-compliant Cryptomatte (§12)
 - [x] OIDN denoising with albedo/normal guides (§13) — temporal stability at M5
 - [~] Scene-linear ACEScg pipeline + display transforms (§7). OCIO v2 itself at M3.
-- [ ] Optional spectral rendering (hero wavelength) for dispersion (§7.4)
+- [x] Optional spectral rendering (hero wavelength) for dispersion (§7.4): the Render window's Spectral, Auto by default
 - [x] Dirty-state taxonomy and restart policy (§9.3)
 - [x] Region rendering (§9.5)
 - [~] GPU backend with verified statistical parity to CPU (§10): Cycles (OptiX/CUDA) is the GPU engine; measured agreement with Tequila's renderer in `docs/05` M9, not yet a CI gate

@@ -395,6 +395,10 @@ pub struct RenderSettings {
     pub kind: RenderKind,
     /// How a wireframe looks, kept for the next one.
     pub wireframe: WireframeSettings,
+    /// Whether Tequila's renderer traces wavelengths or RGB (`docs/01`
+    /// §7.4): by default spectral only where something disperses light.
+    /// Cycles renders RGB whatever this says.
+    pub spectral: tequila_render_core::settings::SpectralMode,
     pub width: usize,
     pub height: usize,
     /// Dots per inch, for the print-size calculator. Carried even though the
@@ -485,6 +489,7 @@ impl Default for RenderSettings {
             engine: RenderEngine::default(),
             kind: RenderKind::Photo,
             wireframe: WireframeSettings::default(),
+            spectral: tequila_render_core::settings::SpectralMode::Auto,
             width: 1920,
             height: 1080,
             dpi: 300.0,

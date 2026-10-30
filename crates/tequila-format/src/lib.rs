@@ -1774,6 +1774,8 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         cycles: read_cycles_transport(value.get("cycles")),
         // The render's, set per render.
         pixel_filter: default.pixel_filter,
+        spectral: default.spectral,
+        spectral_companions: default.spectral_companions,
     }
 }
 
@@ -1876,6 +1878,7 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         .set("background_top", colour(wireframe.background_top))
         .set("background_bottom", colour(wireframe.background_bottom));
     object.set("wireframe", lines.build());
+    object.set("spectral", settings.spectral.key());
     object.set(
         "layers",
         settings
@@ -1985,6 +1988,13 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
             .and_then(tequila_scene::render::RenderKind::from_key)
             .unwrap_or_default(),
         wireframe: read_wireframe(value.get("wireframe")),
+        // A project from before the choice, or naming one this build does
+        // not know, is Auto: spectral where something disperses.
+        spectral: value
+            .get("spectral")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_render_core::settings::SpectralMode::from_key)
+            .unwrap_or_default(),
         width: dimension(0, default.width),
         height: dimension(1, default.height),
         dpi: number("dpi", default.dpi),
@@ -3419,6 +3429,22 @@ mod engine_tests {
         let odd = read_render_settings_value(&odd);
         assert_eq!(odd.kind, RenderKind::Photo, "a kind this build does not know renders a photo");
         assert_eq!(odd.wireframe, WireframeSettings::default(), "and nonsense in the look is the default's");
+    }
+
+    /// Whether a render is spectral is kept, and a project from before the
+    /// choice, or naming one this build does not know, is Auto: spectral
+    /// where something disperses, as a new project is.
+    #[test]
+    fn spectral_is_kept_and_old_projects_are_auto() {
+        use tequila_render_core::settings::SpectralMode;
+        for spectral in SpectralMode::ALL {
+            let saved = render_settings_to_json(&RenderSettings { spectral, ..RenderSettings::default() });
+            assert_eq!(read_render_settings_value(&saved).spectral, spectral);
+        }
+        let old = json::parse(br#"{"resolution":[640,480],"max_samples":64}"#).unwrap();
+        assert_eq!(read_render_settings_value(&old).spectral, SpectralMode::Auto);
+        let unknown = json::parse(br#"{"spectral":"sometimes"}"#).unwrap();
+        assert_eq!(read_render_settings_value(&unknown).spectral, SpectralMode::Auto);
     }
 }
 

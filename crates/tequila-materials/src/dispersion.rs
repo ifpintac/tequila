@@ -7,14 +7,14 @@
 //!
 //! §7.4 asks for hero-wavelength sampling [Wilkie et al. 2014]: four
 //! wavelengths per path, the three companions dropped at the first dispersive
-//! refraction, where they would each go a different way. What is here is
-//! that scheme after its first dispersive event, which is where it matters:
-//! one wavelength, carried as the RGB its colour would register as, and
-//! normalized so the wavelengths average to exact white. The difference is
-//! colour noise before a path reaches a gem, and the spectral upsampling of
-//! RGB surfaces [Jakob & Hanika 2019], which needs a precomputed table this
-//! build does not carry; surfaces met after the split filter the path by
-//! their RGB, which is exact for neutral ones.
+//! refraction, where they would each go a different way. That is Tequila's
+//! renderer's spectral mode (`tequila-render-core`'s `spectral`), which an
+//! Auto render uses wherever something disperses. What is here serves both:
+//! the index at a wavelength, and for an RGB path (Spectral off) the scheme
+//! after its first dispersive event — one wavelength, carried as the RGB its
+//! colour would register as, normalized so the wavelengths average to exact
+//! white, with the surfaces met after the split filtering the path by their
+//! RGB, which is exact only for neutral ones.
 
 use tequila_core::spectrum::Spectrum;
 use std::sync::OnceLock;

@@ -355,6 +355,9 @@ pub struct SceneSnapshot {
     /// and walking all of them once a path to find that out is the cost this
     /// exists to remove.
     transmissive: bool,
+    /// Whether any material disperses light, which decides whether an
+    /// `Auto` render is spectral ([`SceneSnapshot::has_dispersion`]).
+    dispersive: DispersionCache,
 }
 
 /// [`SceneSnapshot::emitters`], worked out once. A copy starts without it:
@@ -367,6 +370,36 @@ impl Clone for EmitterCache {
     fn clone(&self) -> Self {
         EmitterCache::default()
     }
+}
+
+/// [`SceneSnapshot::has_dispersion`], worked out the first time it is asked:
+/// once per render, rather than once per path walking every material. A copy
+/// starts without it, as [`EmitterCache`] does, since materials are what a
+/// copy is made to change.
+#[derive(Debug, Default)]
+struct DispersionCache(std::sync::OnceLock<bool>);
+
+impl Clone for DispersionCache {
+    fn clone(&self) -> Self {
+        DispersionCache::default()
+    }
+}
+
+/// Whether a parameter block refracts with an Abbe number: the materials a
+/// path meets as the integrator disperses them.
+#[inline]
+fn disperses(material: &Material) -> bool {
+    material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0
+}
+
+/// The same for a graph: its folded constants, or what it computes, or the
+/// surface it is mixed with.
+fn program_disperses(program: &CompiledGraph) -> bool {
+    use tequila_materials::material_type::Param;
+    let driven = |wanted: Param| program.driven.iter().any(|(param, _)| *param == wanted);
+    let transmits = program.constants.transmission_weight > 0.0 || driven(Param::TransmissionWeight);
+    let abbe = program.constants.transmission_dispersion_abbe > 0.0 || driven(Param::Abbe);
+    (transmits && abbe) || program.layer.as_ref().is_some_and(|layer| program_disperses(&layer.shader))
 }
 
 /// Whether this parameter block describes a surface light can pass through
@@ -408,6 +441,7 @@ impl SceneSnapshot {
             cutters: Arc::new(Vec::new()),
             emitters: EmitterCache::default(),
             transmissive: materials.iter().any(Material::is_transmissive),
+            dispersive: DispersionCache::default(),
             materials,
         }
     }
@@ -445,6 +479,18 @@ impl SceneSnapshot {
         self.transmissive
     }
 
+    /// Whether any material disperses light (glass or a gem with an Abbe
+    /// number), so that an `Auto` render traces wavelengths
+    /// ([`crate::settings::SpectralMode`]).
+    pub fn has_dispersion(&self) -> bool {
+        *self.dispersive.0.get_or_init(|| {
+            self.materials.iter().enumerate().any(|(i, material)| match self.programs.get(i).and_then(|p| p.as_ref()) {
+                Some(program) => program_disperses(program),
+                None => disperses(material),
+            })
+        })
+    }
+
     /// Whether a surface of this instance stops a shadow ray. One with its
     /// shadow switched off — a light's visible stand-in, say — is passed by
     /// every query that asks what is in the way, however it asks.
@@ -467,6 +513,7 @@ impl SceneSnapshot {
         textures: Arc<TextureTable>,
     ) -> Self {
         self.emitters = EmitterCache::default();
+        self.dispersive = DispersionCache::default();
         // Recomputed rather than or-ed in: a graph can fold opacity to a
         // constant, and the folded value is the one that shades, so the
         // material block alone is not the whole answer once programs exist.

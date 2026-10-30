@@ -501,13 +501,8 @@ impl Material {
         }
         // Density thickens the medium: the same colour and scatter reached in
         // a shorter distance.
-        let depth = self.transmission_depth / self.volume_density.max(1e-6);
-        let per_channel = |colour: f32, scatter: f32| -> (f32, f32) {
-            let absorption = -colour.clamp(1e-4, 1.0).ln() / depth;
-            let scattering = scatter.max(0.0) / depth;
-            let extinction = absorption + scattering;
-            (extinction, if extinction > 0.0 { scattering / extinction } else { 0.0 })
-        };
+        let depth = self.volume_depth();
+        let per_channel = |colour: f32, scatter: f32| volume_coefficients(colour, scatter, depth);
         let (c, s) = (self.transmission_color, self.transmission_scatter);
         let (r, g, b) = (per_channel(c.r, s.r), per_channel(c.g, s.g), per_channel(c.b, s.b));
         Some(SubsurfaceMedium {
@@ -515,6 +510,13 @@ impl Material {
             albedo: Spectrum { r: r.1, g: g.1, b: b.1 },
             anisotropy: self.transmission_scatter_anisotropy.clamp(-0.95, 0.95),
         })
+    }
+
+    /// The depth at which a volume reaches its transmission colour, its
+    /// density taken in: the same colour and scatter reached in a shorter
+    /// distance where it is denser.
+    pub fn volume_depth(&self) -> f32 {
+        self.transmission_depth / self.volume_density.max(1e-6)
     }
 
     /// The colour a quick preview shades the surface with: the base, and
@@ -782,6 +784,16 @@ impl SurfaceFrame {
     }
 }
 
+/// A clear volume's extinction and single-scattering albedo, one channel of
+/// it (§2.2): the transmission colour `colour` reached at `depth` sets the
+/// absorption, and `scatter`, in inverse depths, the scattering.
+pub fn volume_coefficients(colour: f32, scatter: f32, depth: f32) -> (f32, f32) {
+    let absorption = -colour.clamp(1e-4, 1.0).ln() / depth;
+    let scattering = scatter.max(0.0) / depth;
+    let extinction = absorption + scattering;
+    (extinction, if extinction > 0.0 { scattering / extinction } else { 0.0 })
+}
+
 /// A random walk's extinction and single-scattering albedo for a surface
 /// albedo `albedo`, a mean free path `radius` and an anisotropy `g`.
 ///
@@ -791,7 +803,12 @@ impl SurfaceFrame {
 /// Kutz & Burley 2016, "Practical and Controllable Subsurface Scattering for
 /// Production Path Tracing"] extended to anisotropy by Wrenninge, Villemin &
 /// Hery. See THIRD_PARTY_LICENSES.md.
-fn walk_coefficients(albedo: f32, radius: f32, g: f32) -> (f32, f32) {
+///
+/// Public, and one channel at a time, so that a spectral path can make the
+/// medium per wavelength from the colour's spectrum: the remap is far from
+/// linear, and making it per channel and then upsampling the result gives a
+/// different colour from the one asked for.
+pub fn walk_coefficients(albedo: f32, radius: f32, g: f32) -> (f32, f32) {
     let (g2, g3, g4, g5, g6, g7) = (g * g, g * g * g, g.powi(4), g.powi(5), g.powi(6), g.powi(7));
     let a = 1.8260523782 - 1.28451056436 * g - 1.79904629312 * g2 + 9.19393289202 * g3 - 22.8215585862 * g4
         + 32.0234874259 * g5 - 23.6264803333 * g6 + 7.21067002658 * g7;
