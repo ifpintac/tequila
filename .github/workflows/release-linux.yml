@@ -16,10 +16,6 @@ on:
         default: ""
   release:
     types: [published]
-  # While Cycles and OpenCASCADE are proved on their branch; removed before
-  # it merges.
-  push:
-    branches: [phase-3-linux]
 
 permissions:
   contents: write

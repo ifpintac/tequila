@@ -388,10 +388,11 @@ fn re_developing_a_1080p_frame_is_fast_enough_to_drag_a_slider() {
 
     // Six times was measured on x86. Apple silicon's memory runs the bare
     // pass at a fraction of that cost - 1.7 to 2 ms against AgX's 14 on an
-    // M3 Max - so the same AgX is seven to eight times it there (6.9 on
-    // GitHub's Mac runner), and the test failed on every Mac with nothing
-    // wrong. Ten still catches a serial pass, at twenty-four.
-    let limit = if cfg!(target_arch = "aarch64") { 10.0 } else { 6.0 };
+    // M3 Max - so the same AgX is seven to eight times it there (6.9 to 11.3
+    // on GitHub's shared Mac runner, from one run to the next, with the AgX
+    // code unchanged), and the test failed on every Mac with nothing wrong.
+    // Fourteen still catches a serial pass, at twenty-four.
+    let limit = if cfg!(target_arch = "aarch64") { 14.0 } else { 6.0 };
     assert!(
         agx < floor * limit,
         "the AgX pass costs {:.1} ms against {:.1} ms for the same pass with no \
