@@ -284,6 +284,8 @@ fn an_image_develops_through_the_studio_config() {
 #[test]
 fn the_gamut_compression_look_applies_in_a_view() {
     let text = std::fs::read_to_string(fixture()).unwrap();
+    // As checked out: on Windows with CRLF, which the edits below would miss.
+    let text = text.replace("\r\n", "\n");
     let text = text.replace(
         "  - !<View> {name: Un-tone-mapped, view_transform: Un-tone-mapped, display_colorspace: <USE_DISPLAY_NAME>}",
         "  - !<View> {name: Un-tone-mapped, view_transform: Un-tone-mapped, display_colorspace: <USE_DISPLAY_NAME>}\n  - !<View> {name: Un-tone-mapped (RGC), view_transform: Un-tone-mapped, display_colorspace: <USE_DISPLAY_NAME>, looks: ACES 1.3 Reference Gamut Compression}",
