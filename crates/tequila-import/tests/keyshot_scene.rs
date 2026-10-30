@@ -324,7 +324,9 @@ fn scene() -> Vec<u8> {
         o.f32("radius", 15.0).f32("width", 20.0).f32("height", 40.0).f32("corner_radius", 0.0).f32("rotation", 10.0);
         o.i32("falloff_type", if circle { 19 } else { 32 }).f32("falloff", 0.5).f32("azimuth", azimuth).f32("inclination", inclination).bool("half", false).end(0x20);
     };
-    pin(&mut objects, 6, "Softbox", 4, false, 45.0, 30.0);
+    // KeyShot's inclination runs down from the horizon: the softbox is
+    // 30 degrees up, the strip 10 down.
+    pin(&mut objects, 6, "Softbox", 4, false, 45.0, -30.0);
     pin(&mut objects, 7, "Strip", 5, true, -90.0, 10.0);
     objects.object(8, "lux.env.group", "").flags(0).bool("enabled", true).i32s("children", &[6, 7]).end(0x20);
     objects.object(9, "lux.env.image_map", "").flags(0).i32("size.width", 4000).i32("size.height", 2000).obj_link("background", 3).obj_link("pins", 8).end(0x20);

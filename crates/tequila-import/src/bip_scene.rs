@@ -1354,7 +1354,7 @@ fn environment(file: &File, o: &Container, backdrop: Option<Spectrum>, notes: &m
         e.pins.push(pin(file, p, notes));
     }
     if !e.pins.is_empty() {
-        notes.push("HDRI-editor pins are placed by azimuth and elevation in degrees, azimuth 0 looking down -Z, and sized in degrees across; KeyShot's own units for them are not documented, so this is the best reading");
+        notes.push("HDRI-editor pins are placed by azimuth and inclination in degrees, azimuth 0 looking down -Z and inclination down from the horizon, and sized in degrees across; KeyShot's own units for them are not documented, so this is read from how its own previews of scenes are lit");
     }
     e
 }
@@ -1372,7 +1372,12 @@ fn pin(file: &File, p: &Container, notes: &mut Notes) -> Pin {
     let mut out = Pin {
         name: if p.name.trim().is_empty() { "Pin".into() } else { p.name.clone() },
         shape: if circle { PinShape::Ellipse } else { PinShape::Rectangle },
-        direction: pins::direction_from(degrees("azimuth", 0.0), degrees("inclination", 0.0)),
+        // KeyShot's inclination is measured down from the horizon, as down
+        // a picture of the sky: read as an elevation, the soft key over a
+        // product went under the floor and a small fill below it came over
+        // the top, casting a long shadow KeyShot's own render of the scene
+        // does not have.
+        direction: pins::direction_from(degrees("azimuth", 0.0), -degrees("inclination", 0.0)),
         angular_size: Vec2 { x: size.x.clamp(1e-3, std::f32::consts::TAU), y: size.y.clamp(1e-3, std::f32::consts::TAU) },
         roll: if circle { 0.0 } else { degrees("rotation", 0.0) },
         softness: p.f32("falloff").unwrap_or(0.4).clamp(0.0, 1.0),
