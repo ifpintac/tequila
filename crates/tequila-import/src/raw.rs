@@ -133,6 +133,93 @@ pub struct RawScene {
     /// file that imports with a warning is still an import; §4.2 asks for
     /// "reject-with-explanation" only where the data cannot be trusted.
     pub warnings: Vec<String>,
+    /// What a scene file holds beside its model - cameras, lighting, the
+    /// look, variants - for a format that has them (a KeyShot scene).
+    pub setup: Option<Box<RawSetup>>,
+}
+
+/// A scene's setup as its file gives it: lengths in the file's units,
+/// placed where the file put them, nodes and materials by their place in
+/// the [`RawScene`]. The import brings it into metres with the model and
+/// moves its cameras with it when the model is set on the floor.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RawSetup {
+    pub cameras: Vec<tequila_scene::lighting::SavedCamera>,
+    /// Which of them the view was in.
+    pub active_camera: Option<usize>,
+    /// The environment in use.
+    pub environment: Option<tequila_scene::document::EnvironmentSettings>,
+    /// Saved shots: the scene's other cameras and environments.
+    pub studios: Vec<tequila_scene::studio::Studio>,
+    pub image_style: Option<tequila_color::ImageStyle>,
+    pub render: Option<tequila_scene::render::RenderSettings>,
+    /// Switchable material variants, by material and by node.
+    pub multi_materials: Vec<RawMultiMaterial>,
+    pub model_sets: Vec<RawModelSet>,
+    pub active_model_set: Option<usize>,
+}
+
+/// Material variants on parts, by place in the [`RawScene`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawMultiMaterial {
+    pub name: String,
+    pub variants: Vec<usize>,
+    pub active: usize,
+    pub parts: Vec<usize>,
+}
+
+/// A named selection of nodes, by place in the [`RawScene`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawModelSet {
+    pub name: String,
+    pub nodes: Vec<usize>,
+}
+
+impl RawSetup {
+    /// Every length scaled by `k`: positions, focus, the orthographic
+    /// frame, the dome and the floor.
+    pub fn rescale(&mut self, k: f32) {
+        let camera = |c: &mut tequila_scene::lighting::SavedCamera| {
+            let m = &mut c.camera.camera_to_world.m;
+            for row in m.iter_mut().take(3) {
+                row[3] *= k;
+            }
+            c.target = c.target * k;
+            if c.camera.focus_distance.is_finite() {
+                c.camera.focus_distance *= k;
+            }
+            if let tequila_render_core::camera::Projection::Orthographic { scale } = &mut c.camera.projection {
+                *scale *= k;
+            }
+        };
+        let environment = |e: &mut tequila_scene::document::EnvironmentSettings| {
+            e.size *= k;
+            e.height *= k;
+            e.ground.size *= k;
+        };
+        self.cameras.iter_mut().for_each(camera);
+        if let Some(e) = &mut self.environment {
+            environment(e);
+        }
+        for studio in &mut self.studios {
+            if let Some(c) = &mut studio.camera {
+                camera(c);
+            }
+            if let Some(e) = &mut studio.environment {
+                environment(e);
+            }
+        }
+    }
+
+    /// The cameras raised by `dy`, with a model that was.
+    pub fn lift(&mut self, dy: f32) {
+        let camera = |c: &mut tequila_scene::lighting::SavedCamera| {
+            c.camera.camera_to_world.m[1][3] += dy;
+            c.target.y += dy;
+        };
+        self.cameras.iter_mut().for_each(camera);
+        self.studios.iter_mut().filter_map(|s| s.camera.as_mut()).for_each(camera);
+    }
 }
 
 impl RawScene {

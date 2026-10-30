@@ -1242,6 +1242,12 @@ impl MaterialGraph {
                 *texture = map(*texture);
             }
         }
+        // Its labels read pictures by the same ids: renumbered with the
+        // nodes, or a label imported or taken from the library shows a
+        // picture that is not its own.
+        for decal in &mut self.decals {
+            decal.texture = map(decal.texture);
+        }
     }
 
     /// Check the graph without compiling it, for the editor's live feedback.

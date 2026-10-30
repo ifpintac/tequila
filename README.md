@@ -53,7 +53,8 @@ Questions, bugs, ideas and renders: join the
   OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
   colours and units; very large models; re-tessellate and re-import that
   keep your work. Send models from Blender (live), SolidWorks and ZBrush
-  ([integrations](integrations)).
+  ([integrations](integrations)). Open KeyShot scenes (`.ksp`, `.bip`) with
+  their materials, lighting and cameras ([notes](docs/keyshot-import.md)).
 - **Materials** - a library of 309 procedural materials (plastics, metals,
   glass, paints with flakes, fabrics, gems, liquids with bubbles, wood,
   stone...), a node editor, labels and decals, texture packs, KeyShot

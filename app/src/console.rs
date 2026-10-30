@@ -213,6 +213,16 @@ impl Console {
         self.focus = true;
     }
 
+    /// Notes on something done outside the console, written where they
+    /// can be read in full: an import's warnings, which the status line has
+    /// room for only one of.
+    pub fn notes(&mut self, summary: &str, notes: &[String]) {
+        self.push(Kind::Info, summary);
+        for note in notes {
+            self.push(Kind::Info, &format!("    · {note}"));
+        }
+    }
+
     /// A request that came in over the socket, written where it can be seen.
     ///
     /// `steps` are the parts of a batch, one line each, so thirty changes to

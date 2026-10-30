@@ -27,6 +27,8 @@
 //! PLY, 3DS, Collada and 3MF are M8's business, alongside the CAD kernels.
 
 pub mod axf;
+mod bip;
+pub mod bip_scene;
 pub mod gltf;
 pub mod hdf5;
 pub mod ifc;
@@ -150,6 +152,108 @@ pub struct ImportReport {
     /// units; negative for down. Zero when it already stood there or
     /// [`ImportOptions::place_on_ground`] was off.
     pub lifted: f32,
+    /// What a scene file holds beside its model - cameras, lighting, the
+    /// look, variants - given the document's keys. `None` for a format that
+    /// holds only a model.
+    pub setup: Option<Box<SceneSetup>>,
+}
+
+/// A scene file's setup (`raw::RawSetup`), in metres, moved with its model,
+/// its nodes and materials given the document's keys.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneSetup {
+    pub cameras: Vec<tequila_scene::lighting::SavedCamera>,
+    pub active_camera: Option<usize>,
+    pub environment: Option<tequila_scene::document::EnvironmentSettings>,
+    pub studios: Vec<tequila_scene::studio::Studio>,
+    pub image_style: Option<tequila_color::ImageStyle>,
+    pub render: Option<tequila_scene::render::RenderSettings>,
+    /// Their ids are given when they are added to a document.
+    pub multi_materials: Vec<tequila_scene::studio::MultiMaterial>,
+    pub model_sets: Vec<tequila_scene::studio::ModelSet>,
+    pub active_model_set: Option<usize>,
+}
+
+impl SceneSetup {
+    /// What importing the scene into another adds beside its model: its
+    /// variants, its model sets and its cameras. The rest - its lighting,
+    /// its look, its Studios - is the scene's staging, which an import into
+    /// another scene leaves as that scene has it; opening the scene takes
+    /// all of it ([`SceneSetup::apply`]).
+    pub fn commands(&self, document: &SceneDocument) -> Vec<Command> {
+        let mut out = Vec::new();
+        if !self.multi_materials.is_empty() {
+            let mut list = document.multi_materials.clone();
+            let mut next = list.iter().map(|m| m.id).max().map_or(1, |m| m + 1);
+            for multi in &self.multi_materials {
+                list.push(tequila_scene::studio::MultiMaterial { id: next, ..multi.clone() });
+                next += 1;
+            }
+            out.push(Command::SetMultiMaterials { multi_materials: list });
+        }
+        if !self.model_sets.is_empty() {
+            let mut sets = document.model_sets.clone();
+            sets.sets.extend(self.model_sets.iter().cloned());
+            out.push(Command::SetModelSets { model_sets: Box::new(sets) });
+        }
+        for camera in &self.cameras {
+            out.push(Command::AddCamera { camera: Box::new(camera.clone()) });
+        }
+        out
+    }
+
+    /// All of it onto a document made from the scene: its cameras with the
+    /// one it was saved looking through active, its environment, look,
+    /// render settings, Studios, variants and model sets.
+    pub fn apply(&self, document: &mut SceneDocument) {
+        document.multi_materials = self.multi_materials.iter().enumerate().map(|(i, m)| tequila_scene::studio::MultiMaterial { id: i as u64 + 1, ..m.clone() }).collect();
+        if !self.model_sets.is_empty() {
+            document.model_sets = tequila_scene::studio::ModelSets { sets: self.model_sets.clone(), active: self.active_model_set.filter(|&a| a < self.model_sets.len()) };
+        }
+        if !self.cameras.is_empty() {
+            document.cameras = tequila_scene::lighting::CameraStore::from_cameras(self.cameras.clone());
+            if let Some(active) = self.active_camera {
+                document.cameras.select(active);
+            }
+        }
+        if let Some(environment) = &self.environment {
+            document.environment = environment.clone();
+        }
+        if let Some(style) = self.image_style {
+            document.image_style = style;
+        }
+        if let Some(render) = &self.render {
+            document.render = render.clone();
+        }
+        document.studios = self.studios.clone();
+    }
+}
+
+/// Open a scene file - a KeyShot `.ksp` or `.bip` - as a document of its
+/// own: its model where the file put it, on the file's own floor, and its
+/// whole setup (`SceneSetup::apply`). The file's faces are divided at
+/// `quality`.
+pub fn open_scene(path: &Path, quality: step::Tessellation) -> Result<(SceneDocument, ImportReport), ImportError> {
+    let model = read_file_with(path, quality)?;
+    let mut document = SceneDocument::new();
+    // Where the file stood it: a scene's cameras are composed around it.
+    let options = ImportOptions { place_on_ground: false, ..Default::default() };
+    let (command, report) = build_read(&document, None, model, &options)?;
+    let mut bus = tequila_scene::CommandBus::new();
+    bus.apply(&mut document, command).map_err(|e| ImportError::Malformed(format!("the scene did not build: {e}")))?;
+    if let Some(setup) = &report.setup {
+        setup.apply(&mut document);
+    }
+    if !report.unit_was_guessed && report.source_unit != LengthUnit::Unspecified {
+        document.units = tequila_scene::SceneUnits::new(report.source_unit);
+    }
+    Ok((document, report))
+}
+
+/// Whether a file opens as a scene of its own ([`open_scene`]) rather than
+/// as a project: a KeyShot scene, by its extension.
+pub fn is_scene_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ksp") || e.eq_ignore_ascii_case("bip"))
 }
 
 /// Read a file and build the `Command::Import` that adds it to `document`.
@@ -217,7 +321,15 @@ pub const MOST_KEPT: usize = 64 * 1024 * 1024;
 /// Read a STEP file's bytes at `quality`: what re-dividing a model from its
 /// kept source does. `path` is where it came from, if known.
 pub fn read_cad(bytes: &[u8], name: &str, path: Option<std::path::PathBuf>, quality: step::Tessellation) -> Result<ReadModel, ImportError> {
-    let scene = if iges::looks_like(bytes) { iges::read_with(bytes, name, quality)? } else { step::read_with(bytes, name, quality)? };
+    let scene = if bip_scene::looks_like(bytes) {
+        bip_scene::read(bytes, name, bip_scene::Pictures::Folder(path.as_deref().and_then(|p| p.parent())), quality)?
+    } else if bip_scene::is_package(bytes) {
+        bip_scene::read_package(bytes, name, quality)?
+    } else if iges::looks_like(bytes) {
+        iges::read_with(bytes, name, quality)?
+    } else {
+        step::read_with(bytes, name, quality)?
+    };
     Ok(ReadModel { scene, name: name.to_string(), directory: path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())), path, brep: None })
 }
 
@@ -259,6 +371,10 @@ pub fn read_file_with(path: &Path, quality: step::Tessellation) -> Result<ReadMo
     let scene = match extension.as_str() {
         "step" | "stp" => step::read_with(&bytes, &name, quality)?,
         "igs" | "iges" => iges::read_with(&bytes, &name, quality)?,
+        // A scene's pictures stay where they are beside it; a package's
+        // are written out beside the package, as a glTF's are.
+        "bip" => bip_scene::read(&bytes, &name, bip_scene::Pictures::Folder(path.parent()), quality)?,
+        "ksp" => bip_scene::read_package(&bytes, &name, quality)?,
         _ => read_format(&bytes, &extension, &name, &sibling)?,
     };
     let file = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
@@ -427,6 +543,8 @@ pub fn read_format(
         "step" | "stp" => step::read(bytes, name),
         "igs" | "iges" => iges::read(bytes, name),
         "ifc" => ifc::read(bytes, name),
+        "bip" => bip_scene::read(bytes, name, bip_scene::Pictures::Sibling(sibling), step::Tessellation::default()),
+        "ksp" => bip_scene::read_package(bytes, name, step::Tessellation::default()),
         // Named explicitly so the message can say what to do. Falling
         // through to `UnknownFormat` would suggest a typo rather than a
         // deliberate decision.
@@ -634,9 +752,25 @@ fn finish_build(
             transform
         };
         let kept_at: std::collections::HashMap<_, usize> = mesh_keys.iter().enumerate().map(|(i, &k)| (k, i)).collect();
+        // What is shown stands on the floor: a hidden variant beside it,
+        // larger or lower, must not lift the model off it. Only when
+        // something is shown at all.
+        let shown = |mut i: usize| loop {
+            if !nodes[i].visible {
+                return false;
+            }
+            match nodes[i].parent.and_then(|p| index_of.get(&p).copied()) {
+                Some(p) => i = p,
+                None => return true,
+            }
+        };
+        let any_shown = (0..nodes.len()).any(|i| matches!(nodes[i].kind, NodeKind::Part { .. }) && shown(i));
         let mut lowest = f32::INFINITY;
         for (i, node) in nodes.iter().enumerate() {
             let NodeKind::Part { mesh } = node.kind else { continue };
+            if any_shown && !shown(i) {
+                continue;
+            }
             let Some(&kept) = kept_at.get(&mesh) else { continue };
             let world = world(i);
             // The box's lowest corner is the part's lowest point only when
@@ -670,6 +804,35 @@ fn finish_build(
     report.nodes = nodes.len();
     report.meshes_kept = meshes.len();
     report.triangles = meshes.iter().map(|m| m.triangle_count()).sum();
+
+    // The scene's setup, with the document's keys, its cameras moved with
+    // the model.
+    if let Some(raw) = &scene.setup {
+        let mut raw = (**raw).clone();
+        raw.lift(report.lifted);
+        let parts = |list: &[usize]| list.iter().filter_map(|&i| node_ids.get(i).copied()).collect::<Vec<_>>();
+        report.setup = Some(Box::new(SceneSetup {
+            cameras: raw.cameras,
+            active_camera: raw.active_camera,
+            environment: raw.environment,
+            studios: raw.studios,
+            image_style: raw.image_style,
+            render: raw.render,
+            multi_materials: raw
+                .multi_materials
+                .iter()
+                .map(|m| tequila_scene::studio::MultiMaterial {
+                    id: 0,
+                    name: m.name.clone(),
+                    variants: m.variants.iter().filter_map(|&v| material_keys.get(v).copied()).collect(),
+                    active: m.active,
+                    parts: parts(&m.parts),
+                })
+                .collect(),
+            model_sets: raw.model_sets.iter().map(|s| tequila_scene::studio::ModelSet { name: s.name.clone(), nodes: parts(&s.nodes), always_visible: false }).collect(),
+            active_model_set: raw.active_model_set,
+        }));
+    }
 
     // Texture ids, and the materials renumbered onto them.
     //
@@ -883,6 +1046,9 @@ fn rescale(scene: &mut RawScene, ratio: f64) {
         for p in &mut mesh.edge_lines {
             *p = *p * k;
         }
+    }
+    if let Some(setup) = &mut scene.setup {
+        setup.rescale(k);
     }
     let Some(scale) = Transform::from_matrix(Mat4::scale(Vec3::splat(k))) else {
         return;

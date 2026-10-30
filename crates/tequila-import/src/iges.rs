@@ -500,6 +500,149 @@ fn basis(knots: &[f64], degree: usize, count: usize, t: f64) -> (usize, Vec<f64>
     (span, b)
 }
 
+/// A rational B-spline curve from `t0` to `t1` as pieces, one a knot span:
+/// its points homogeneous, already multiplied by their weights.
+fn nurbs_pieces(knots: Vec<f64>, degree: usize, points: Vec<[f64; 4]>, t0: f64, t1: f64) -> Vec<Piece> {
+    let curve = Arc::new((knots.clone(), points));
+    spans(&knots, t0, t1)
+        .into_iter()
+        .map(|(a, b)| {
+            let curve = curve.clone();
+            Piece::new(
+                move |t| {
+                    let (knots, points) = &*curve;
+                    let (span, weights) = basis(knots, degree, points.len(), t);
+                    let mut h = [0.0; 4];
+                    for (j, w) in weights.iter().enumerate() {
+                        let p = points[span - degree + j];
+                        for c in 0..4 {
+                            h[c] += w * p[c];
+                        }
+                    }
+                    [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
+                },
+                a,
+                b,
+                degree.max(1) * 2 - 1,
+            )
+        })
+        .collect()
+}
+
+/// A rational B-spline surface, its points homogeneous and multiplied by
+/// their weights, u varying fastest: IGES's 128 and KeyShot's faces alike.
+fn nurbs_surface(ku: Vec<f64>, kv: Vec<f64>, (d1, d2): (usize, usize), (c1, c2): (usize, usize), points: Vec<[f64; 4]>, domain: [f64; 4]) -> Surface {
+    let span_counts = [spans(&ku, domain[0], domain[1]).len(), spans(&kv, domain[2], domain[3]).len()];
+    let data = Arc::new((ku, kv, points));
+    Surface {
+        at: Arc::new(move |u, v| {
+            let (ku, kv, points) = &*data;
+            let (su, bu) = basis(ku, d1, c1, u);
+            let (sv, bv) = basis(kv, d2, c2, v);
+            let mut h = [0.0; 4];
+            for (j, wv) in bv.iter().enumerate() {
+                for (i, wu) in bu.iter().enumerate() {
+                    let p = points[(su - d1 + i) + (sv - d2 + j) * c1];
+                    let w = wu * wv;
+                    for c in 0..4 {
+                        h[c] += w * p[c];
+                    }
+                }
+            }
+            [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
+        }),
+        domain,
+        spans: [span_counts[0] * d1.max(1), span_counts[1] * d2.max(1)],
+        invert: None,
+        period: [None, None],
+        native: true,
+    }
+}
+
+/// A trimmed NURBS face given as numbers rather than as IGES entities: what
+/// KeyShot's scenes store their faces as (`crate::bip_scene`).
+pub(crate) struct NurbsFace {
+    pub degree: [usize; 2],
+    pub knots: [Vec<f64>; 2],
+    /// `[x·w, y·w, z·w, w]`, u varying fastest.
+    pub points: Vec<[f64; 4]>,
+    /// u0, u1, v0, v1.
+    pub domain: [f64; 4],
+    /// Its loops, outer first, each of curves end to end in the surface's
+    /// parameters; none for a face that is its whole surface.
+    pub loops: Vec<Vec<NurbsCurve>>,
+}
+
+/// A trimming curve in a surface's parameters.
+pub(crate) struct NurbsCurve {
+    pub degree: usize,
+    pub knots: Vec<f64>,
+    /// `[u·w, v·w, 0, w]`.
+    pub points: Vec<[f64; 4]>,
+    pub range: [f64; 2],
+}
+
+impl NurbsCurve {
+    /// Whether the numbers hold together: a knot for every point and order,
+    /// rising, and the range within them. A curve that does not would index
+    /// past its points.
+    fn sound(&self) -> bool {
+        sound_spline(&self.knots, self.degree, self.points.len())
+            && self.range.iter().all(|t| t.is_finite())
+            && self.range[1] > self.range[0]
+            && self.points.iter().all(|p| p.iter().all(|c| c.is_finite()) && p[3] > 0.0)
+    }
+}
+
+fn sound_spline(knots: &[f64], degree: usize, count: usize) -> bool {
+    degree >= 1 && count > degree && knots.len() == count + degree + 1 && knots.iter().all(|k| k.is_finite()) && knots.windows(2).all(|w| w[1] >= w[0])
+}
+
+/// A divided face: points and normals in the surface's space, triangles,
+/// and its edges as pairs of end points.
+pub(crate) struct Divided {
+    pub positions: Vec<[f64; 3]>,
+    pub normals: Vec<[f64; 3]>,
+    pub triangles: Vec<[u32; 3]>,
+    pub edges: Vec<[f64; 3]>,
+    /// Each point's surface parameters, for the face's own UVs.
+    pub params: Vec<[f64; 2]>,
+}
+
+/// Divide a trimmed NURBS face at `tolerance`, as IGES's own faces are:
+/// constrained Delaunay over its loops and a grid as fine as its bend asks,
+/// normals from the surface, and its boundary as edges. `None` for numbers
+/// that do not hold together, or a face that came out empty.
+pub(crate) fn divide_nurbs(face: NurbsFace, tolerance: f64) -> Option<Divided> {
+    let NurbsFace { degree, knots, points, domain, loops } = face;
+    let count = [knots[0].len().checked_sub(degree[0] + 1)?, knots[1].len().checked_sub(degree[1] + 1)?];
+    if !sound_spline(&knots[0], degree[0], count[0]) || !sound_spline(&knots[1], degree[1], count[1]) || points.len() != count[0] * count[1] {
+        return None;
+    }
+    if !points.iter().all(|p| p.iter().all(|c| c.is_finite()) && p[3] > 0.0) {
+        return None;
+    }
+    let inside = |k: &[f64], d: usize, n: usize, a: f64, b: f64| a.is_finite() && b.is_finite() && b > a && a >= k[d] - 1e-9 * (1.0 + a.abs()) && b <= k[n] + 1e-9 * (1.0 + b.abs());
+    if !inside(&knots[0], degree[0], count[0], domain[0], domain[1]) || !inside(&knots[1], degree[1], count[1], domain[2], domain[3]) || !(tolerance > 0.0 && tolerance.is_finite()) {
+        return None;
+    }
+    let [ku, kv] = knots;
+    let surface = nurbs_surface(ku, kv, (degree[0], degree[1]), (count[0], count[1]), points, domain);
+    let mut segments = Vec::with_capacity(loops.len());
+    for l in loops {
+        if !l.iter().all(NurbsCurve::sound) {
+            return None;
+        }
+        segments.push(l.into_iter().map(|c| Segment::Params(nurbs_pieces(c.knots, c.degree, c.points, c.range[0], c.range[1]))).collect());
+    }
+    let face = Face { surface, loops: segments, reversed: false, colour: None, body: None, name: None };
+    let meshed = tessellate(&face, tolerance);
+    if meshed.triangles.is_empty() {
+        return None;
+    }
+    Some(Divided { positions: meshed.positions, normals: meshed.normals, triangles: meshed.triangles, edges: meshed.edges, params: meshed.params })
+}
+
 /// The distinct knot spans of a B-spline between `t0` and `t1`.
 fn spans(knots: &[f64], t0: f64, t1: f64) -> Vec<(f64, f64)> {
     let mut breaks: Vec<f64> = knots.iter().copied().filter(|k| *k > t0 && *k < t1).collect();
@@ -689,6 +832,8 @@ struct Meshed {
     normals: Vec<P3>,
     triangles: Vec<[u32; 3]>,
     edges: Vec<P3>,
+    /// Each point's surface parameters.
+    params: Vec<P2>,
 }
 
 /// Loops that go once round a closed surface (a cylinder's two end
@@ -940,6 +1085,7 @@ fn tessellate(face: &Face, tolerance: f64) -> Meshed {
         let uv = [q[0] / stretch[0], q[1] / stretch[1]];
         let (p, su, sv) = s.derivatives(uv);
         meshed.positions.push(p);
+        meshed.params.push(uv);
         let n = normalized(cross(su, sv)).unwrap_or([0.0; 3]);
         meshed.normals.push(if face.reversed { scale(n, -1.0) } else { n });
     }
@@ -1193,30 +1339,7 @@ impl Reader {
                     self.skip(126);
                     return None;
                 }
-                let curve = Arc::new((knots.clone(), points));
-                spans(&knots, v0, v1)
-                    .into_iter()
-                    .map(|(a, b)| {
-                        let curve = curve.clone();
-                        Piece::new(
-                            move |t| {
-                                let (knots, points) = &*curve;
-                                let (span, weights) = basis(knots, degree, points.len(), t);
-                                let mut h = [0.0; 4];
-                                for (j, w) in weights.iter().enumerate() {
-                                    let p = points[span - degree + j];
-                                    for c in 0..4 {
-                                        h[c] += w * p[c];
-                                    }
-                                }
-                                [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
-                            },
-                            a,
-                            b,
-                            degree.max(1) * 2 - 1,
-                        )
-                    })
-                    .collect()
+                nurbs_pieces(knots, degree, points, v0, v1)
             }
             other => {
                 self.skip(other);
@@ -1270,31 +1393,7 @@ impl Reader {
                     self.skip(128);
                     return None;
                 }
-                let span_counts = [spans(&ku, domain[0], domain[1]).len(), spans(&kv, domain[2], domain[3]).len()];
-                let data = Arc::new((ku, kv, points));
-                Surface {
-                    at: Arc::new(move |u, v| {
-                        let (ku, kv, points) = &*data;
-                        let (su, bu) = basis(ku, d1, c1, u);
-                        let (sv, bv) = basis(kv, d2, c2, v);
-                        let mut h = [0.0; 4];
-                        for (j, wv) in bv.iter().enumerate() {
-                            for (i, wu) in bu.iter().enumerate() {
-                                let p = points[(su - d1 + i) + (sv - d2 + j) * c1];
-                                let w = wu * wv;
-                                for c in 0..4 {
-                                    h[c] += w * p[c];
-                                }
-                            }
-                        }
-                        [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
-                    }),
-                    domain,
-                    spans: [span_counts[0] * d1.max(1), span_counts[1] * d2.max(1)],
-                    invert: None,
-                    period: [None, None],
-                    native: true,
-                }
+                nurbs_surface(ku, kv, (d1, d2), (c1, c2), points, domain)
             }
             108 => {
                 let normal = normalized([n(0), n(1), n(2)])?;

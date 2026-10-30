@@ -772,6 +772,24 @@ under M10's spectral item).
       property sets become searchable metadata; units, Z up and far-off
       georeferenced coordinates are handled. Not read: swept disks,
       revolved solids, NURBS (`IfcAdvancedBrep`) - listed in a warning.
+- [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
+      opened as a project of their own (File > Open, a drop, the start
+      screen, `tequila -i`) or imported into one (File > Import, the
+      scripting `import`). Tequila's own reader of the token stream
+      (`tequila-import/src/bip.rs`): every token skipped by its size when
+      unknown and said in a warning, the compressed chunk inflated, fuzzed
+      by truncation and corruption. The scene tree with its names,
+      placements and hidden variants; an object's trimmed NURBS faces
+      divided by the IGES divider at the import presets, in parallel,
+      turned to look the way KeyShot's own mesh of the object looks,
+      their boundaries kept as model edges; materials
+      through the `.kmp` converter with labels, measured metals and
+      emissive power; multi-materials as variants; HDRI-editor
+      environments rebuilt from their pins; every camera with its lens,
+      orthographic frame and depth of field; the image style and the
+      render's size and samples. Where KeyShot's own units are not known
+      (pin sizes, gradient stops, tone mapping) the reading is a best guess
+      and the import's warnings say so.
 - [x] Metadata panel, metadata-based selection, CSV export. The Scene tab
       searches `Field = value` (also `!=`, `:` contains, wildcards), a panel
       edits the selection's fields as one undo step, and Export CSV writes the
