@@ -195,6 +195,10 @@ impl Lit {
     }
 }
 
+/// One in how many vertices past the first surface the camera sees take a
+/// manifold sample, each counted as many times (`manifold`).
+const MANIFOLD_PAST_BOUNCE: f32 = 4.0;
+
 /// How many cutout surfaces one ray may cross before it gives up.
 ///
 /// A bound, not a budget: crossings are free in the sense that matters — they
@@ -1723,9 +1727,16 @@ fn trace<C: PathColour>(
             // A lamp's light through glass that bends it, which the shadow
             // ray above stopped at: the path through the glass solved for
             // (`manifold`). The same lamp and point on it, the other paths
-            // from it.
-            let (manifold_direct, manifold_layer, crossed) = if config.manifold_caustics() && !bent {
-                manifold::sample_caustic(
+            // from it. At every surface the camera sees, and past a bounce
+            // one time in `MANIFOLD_PAST_BOUNCE`, counted that many times
+            // over: a walk costs tens of rays where a shadow ray costs one,
+            // and the caustic a bounce carries is dim beside the one the
+            // camera sees.
+            let manifold_here = config.manifold_caustics()
+                && !bent
+                && (specular_chain || sampler.next_unstructured() * MANIFOLD_PAST_BOUNCE < 1.0);
+            let (manifold_direct, manifold_layer, crossed) = if manifold_here {
+                let (lit, layer, crossed) = manifold::sample_caustic(
                     intersector,
                     config,
                     &hit,
@@ -1738,7 +1749,9 @@ fn trace<C: PathColour>(
                     transmission_bounces,
                     sampler,
                     passes,
-                )
+                );
+                let scale = if specular_chain { 1.0 } else { MANIFOLD_PAST_BOUNCE };
+                (Lit { diffuse: lit.diffuse * scale, glossy: lit.glossy * scale, through: lit.through }, layer, crossed)
             } else {
                 (Lit::default(), 0, 0)
             };
