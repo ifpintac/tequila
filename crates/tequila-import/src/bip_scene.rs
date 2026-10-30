@@ -46,6 +46,13 @@ use tequila_scene::studio::Studio;
 /// Visibility: bit 14 of a part's or a group's flags.
 const VISIBLE: u32 = 0x4000;
 
+/// Bit 22 of a group's flags: an object KeyShot has made a mesh of its own
+/// of - split to wear more than one material, its name with `_triangles`
+/// after it - and shows that mesh in its place. Its visibility bit stays
+/// set, so read alone it put the object back, in the same place as the
+/// mesh: a board over the screen that had been split off it.
+const REPLACED: u32 = 0x40_0000;
+
 /// A multi-material: bit 11 of a material's flags.
 const MULTI: u32 = 0x0800;
 
@@ -603,7 +610,7 @@ impl Builder<'_> {
                 None => self.notes.push(format!("{}'s placement could not be inverted; it was left where its file put it", g.name)),
             }
         }
-        let visible = set || g.flags().is_some_and(|f| f & VISIBLE != 0);
+        let visible = set || g.flags().is_some_and(|f| f & VISIBLE != 0 && f & REPLACED == 0);
         node.hidden = !visible;
         if let Some(file) = g.text("source file") {
             node.metadata.insert("KeyShot source file".into(), file.to_string());

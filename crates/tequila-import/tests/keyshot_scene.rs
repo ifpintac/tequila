@@ -389,6 +389,11 @@ fn scene() -> Vec<u8> {
     b.begin(0x2a, "Screen(2)").id(8).flags(0x0005_4408);
     part(&mut b, "Face", 9, 102, 5, true);
     b.end(0x2c);
+    // An object KeyShot has replaced with a mesh of its own, split to wear
+    // two materials: its visibility bit still set, and bit 22 with it.
+    b.begin(0x2a, "Panel(5)").id(16).flags(0x0045_4408);
+    part(&mut b, "Face", 17, 104, 6, true);
+    b.end(0x2c);
     b.end(0x2c);
     b.token(0x2f, b"group_local_transform");
     b.token(0x30, &STAND_UP.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>());
@@ -518,6 +523,7 @@ fn the_tree_reads_with_names_placements_and_visibility() {
     assert!((up - Vec3::Y).length() < 1e-5, "{up:?}");
     assert!((model.transform.point(Vec3::ZERO).y - 300.0).abs() < 1e-3);
     assert!(scene.nodes[index("Variant")].hidden, "the variant is shown");
+    assert!(scene.nodes[index("Panel(5)")].hidden, "an object KeyShot replaced with its own mesh is shown as well");
     let body = index("Body(1)");
     assert!(scene.nodes[body].mesh.is_none(), "an object of two materials is a group");
     let parts: Vec<_> = scene.nodes.iter().filter(|n| n.parent == Some(body)).collect();
@@ -618,7 +624,8 @@ fn every_material_kind_maps() {
         .expect("a placement");
     assert_eq!(mapping.projection, tequila_texture::projection::Projection::Planar);
     // A point on the label, in the part's own metres, lands where KeyShot's
-    // frame puts it: a quarter across, three quarters up.
+    // frame puts it: a quarter across, three quarters up - a quarter down
+    // from the top, where Tequila's v starts.
     let point = tequila_texture::projection::SurfacePoint {
         position: vec3(0.025, 0.075, 0.0),
         normal: Vec3::Z,
@@ -632,7 +639,7 @@ fn every_material_kind_maps() {
         world: Default::default(),
     };
     let at = mapping.project(&point)[0].coords;
-    assert!((at.u - 0.25).abs() < 1e-4 && (at.v - 0.75).abs() < 1e-4, "the label lands at {} {}", at.u, at.v);
+    assert!((at.u - 0.25).abs() < 1e-4 && (at.v - 0.25).abs() < 1e-4, "the label lands at {} {}", at.u, at.v);
     assert_eq!(mapping.wrap_u, tequila_texture::mip::Wrap::Clamp, "a label does not tile");
 
     // A printed label is one of Tequila's labels, placed the same way.

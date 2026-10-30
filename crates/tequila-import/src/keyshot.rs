@@ -1383,7 +1383,21 @@ impl Build<'_> {
     /// origin, looking down its second axis, its width along the third and
     /// its height along the first: how a scene's label lands on the part it
     /// was made for.
+    ///
+    /// KeyShot's v runs up its picture and Tequila's down it, as OBJ's does
+    /// against glTF's, so the picture is turned over in its square once it
+    /// is placed: read as KeyShot's, every screen and label in a scene came
+    /// in upside down. A box mapping keeps Tequila's own way up on each face.
     fn scene_mapping(&mut self, s: &Shader) -> Mapping {
+        let mapping = self.keyshot_placement(s);
+        match mapping.projection {
+            Projection::TriPlanar => mapping,
+            _ => mapping.mirrored(false),
+        }
+    }
+
+    /// [`Self::scene_mapping`] as KeyShot has it, v up the picture.
+    fn keyshot_placement(&mut self, s: &Shader) -> Mapping {
         let positive = |v: Option<f32>| v.map(f32::abs).filter(|v| *v > 1e-6);
         let su = positive(s.number("uv_scale_u")).unwrap_or(1.0);
         let sv = positive(s.number("uv_scale_v")).unwrap_or(su);
