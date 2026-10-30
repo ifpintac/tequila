@@ -54,9 +54,12 @@ if [ "$(uname -s)" = "Linux" ]; then
     link=()
     for name in "${libs[@]}"; do link+=("-l$name"); done
     # Its libraries in libs/ beside it, found there wherever it is unpacked.
+    # The linker looks for what each library itself needs (TKGeomAlgo,
+    # TKHLR, TKBO) by -rpath-link, not -L.
     g++ -std=c++17 -O2 -DNDEBUG \
         -I"$occt/include/opencascade" "$here/tequila_occt.cpp" \
         -L"$occt_lib" "${link[@]}" \
+        -Wl,-rpath-link,"$occt_lib" \
         -Wl,-rpath,'$ORIGIN/libs' \
         -o "$out/tequila-occt"
     # Every OpenCASCADE library it loads, with the links its name goes by,
