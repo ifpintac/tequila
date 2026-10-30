@@ -642,7 +642,7 @@ pub(crate) fn divide_nurbs(face: NurbsFace, tolerance: f64) -> Option<Divided> {
         }
         segments.push(l.into_iter().map(|c| Segment::Params(nurbs_pieces(c.knots, c.degree, c.points, c.range[0], c.range[1]))).collect());
     }
-    let face = Face { surface, loops: segments, reversed: false, colour: None, body: None, name: None };
+    let face = Face { surface, loops: segments, reversed: false, colour: None, body: None, name: None, layers: Vec::new() };
     let meshed = tessellate(&face, tolerance);
     if meshed.triangles.is_empty() {
         return None;
