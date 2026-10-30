@@ -656,7 +656,13 @@ impl Pixel {
         let kept = if original > 1e-12 { (radiance.luminance() / original).clamp(0.0, 1.0) } else { 1.0 };
         let background = result.background * kept;
 
-        if reject_fireflies && self.samples >= FIREFLY_MIN_SAMPLES {
+        // A sample whose camera ray met a fibre is not judged at all. A
+        // fibre is finer than a pixel, so the few samples of it that catch a
+        // glint are the fibre's share of the pixel, not outliers: judged by
+        // the pixel's spread, which the surface between the fibres keeps
+        // narrow, they were clipped, and fur came out 15% darker than in
+        // Cycles.
+        if reject_fireflies && !result.fine && self.samples >= FIREFLY_MIN_SAMPLES {
             // Only what the path found by sampling is judged. The background
             // is what the camera sees, the same however often it looks, and a
             // shadow catcher's floor is that background darkened, never

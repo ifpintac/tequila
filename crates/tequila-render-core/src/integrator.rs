@@ -84,6 +84,10 @@ pub struct PathResult {
     /// An image with alpha leaves it out, since there the background is
     /// transparent; one without keeps it.
     pub background: Spectrum,
+    /// The camera ray met one of §4.4's fibres first: something finer than
+    /// a pixel, whose glints are a few of its samples by right rather than
+    /// outliers among them (see `Framebuffer`'s firefly rejection).
+    pub fine: bool,
 }
 
 /// The light-path machinery a path carries while it is traced.
@@ -717,6 +721,13 @@ fn trace<C: PathColour>(
     }
     let mut bounce = 0u32;
     let mut transmission_bounces = 0u32;
+    // Light that went on through a fibre (§4.4's Fuzz) rather than back off
+    // it: counted as a transmission and not against the bounces, as Cycles
+    // counts its hair's. A felt is many fibres deep, and its colour is the
+    // light that wanders through them; at the bounces a surface needs, the
+    // pile of a felt ball came out a twelfth darker and less saturated than
+    // in Cycles, and with them counted apart they agree to 2%.
+    let mut fibre_passes = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth
     // budget, or a row of chain-link fences would go black. Counted only so
@@ -1294,6 +1305,9 @@ fn trace<C: PathColour>(
         // interface of it: it scatters all round itself, and a path that
         // passes through one stays where it was.
         let fibre = scene.fibre_at(&hit, ray.direction);
+        if bounce == 0 {
+            out.fine = fibre.is_some();
+        }
         let boundary = is_boundary(base) && fibre.is_none();
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
@@ -1496,7 +1510,7 @@ fn trace<C: PathColour>(
             aovs.contribute(colour.rgb(contribution), group);
         }
 
-        if bounce >= config.max_bounces {
+        if bounce - fibre_passes >= config.max_bounces {
             break;
         }
 
@@ -1883,12 +1897,23 @@ fn trace<C: PathColour>(
             throughput = colour.hero_alone(throughput);
             alone = true;
         }
-        if sample.is_transmission {
-            eta_scale *= sample.eta * sample.eta;
+        // At a fibre, by the lobe the path took - through it, or off it -
+        // whichever side of the facing normal that leaves by.
+        let through = match &fibre {
+            Some(_) => sample.flags.contains(BsdfFlags::TRANSMISSION),
+            None => sample.is_transmission,
+        };
+        if fibre.is_some() && through {
+            fibre_passes += 1;
+        }
+        if through {
             transmission_bounces += 1;
             if transmission_bounces > config.max_transmission_bounces {
                 break;
             }
+        }
+        if sample.is_transmission {
+            eta_scale *= sample.eta * sample.eta;
             // Crossing the interface enters the instance or leaves it. A
             // thin-walled surface stands for a shell with no inside to be in,
             // so passing through one leaves the path where it was — which is

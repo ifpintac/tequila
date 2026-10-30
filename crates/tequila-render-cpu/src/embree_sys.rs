@@ -123,6 +123,22 @@ impl Default for RTCHit {
     }
 }
 
+/// What Embree hands a filter callback: the hits in question, in
+/// structure-of-arrays form `n` wide (`RTCRayN`, `RTCHitN`), and for an
+/// instanced geometry in its object space. Setting a `valid` entry to 0
+/// rejects that hit, and the query goes on to the next.
+#[repr(C)]
+pub struct RTCFilterFunctionNArguments {
+    pub valid: *mut i32,
+    pub geometry_user_ptr: *mut c_void,
+    pub context: *mut c_void,
+    pub ray: *mut c_void,
+    pub hit: *mut c_void,
+    pub n: u32,
+}
+
+pub type RTCFilterFunctionN = Option<unsafe extern "C" fn(args: *const RTCFilterFunctionNArguments)>;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RTCRayHit {
@@ -171,6 +187,9 @@ extern "C" {
     );
     pub fn rtcSetGeometryInstancedScene(geometry: RTCGeometry, scene: RTCScene);
     pub fn rtcSetGeometryMask(geometry: RTCGeometry, mask: u32);
+    pub fn rtcSetGeometryUserData(geometry: RTCGeometry, ptr: *mut c_void);
+    pub fn rtcSetGeometryIntersectFilterFunction(geometry: RTCGeometry, filter: RTCFilterFunctionN);
+    pub fn rtcSetGeometryOccludedFilterFunction(geometry: RTCGeometry, filter: RTCFilterFunctionN);
     pub fn rtcSetGeometryTransform(
         geometry: RTCGeometry,
         time_step: u32,

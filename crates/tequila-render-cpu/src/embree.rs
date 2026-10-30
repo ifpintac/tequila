@@ -570,6 +570,11 @@ fn fibre_scene(
         if masks {
             sys::rtcSetGeometryMask(geom, u32::MAX);
         }
+        // The buffers outlive the geometry (they move into the scene below),
+        // so the filter may read the fibres through this pointer.
+        sys::rtcSetGeometryUserData(geom, Arc::as_ptr(&buffers) as *mut std::ffi::c_void);
+        sys::rtcSetGeometryIntersectFilterFunction(geom, Some(leave_the_fibre));
+        sys::rtcSetGeometryOccludedFilterFunction(geom, Some(leave_the_fibre));
         sys::rtcCommitGeometry(geom);
         sys::rtcAttachGeometry(blas, geom);
         sys::rtcReleaseGeometry(geom);
@@ -579,6 +584,53 @@ fn fibre_scene(
             return Err(format!("Embree error {code} while building a fibre BVH"));
         }
         Ok(RawScene { handle: blas, _device: device.clone(), _buffers: vec![buffers], _children: Vec::new() })
+    }
+}
+
+/// A ray leaving a fibre does not meet that fibre again.
+///
+/// The fibre's BSDF is the whole of what happens at it - the reflection,
+/// the passes through and the bounces inside - so a path it scatters, and
+/// a light sample from it, leaves it as from a point. A ribbon facing each
+/// ray has no inside to leave by: a ray from its surface running near the
+/// fibre's length stays within its width, and Embree's own avoidance, the
+/// fibre's width either side of the origin, does not reach far enough to
+/// let it go, so such a ray met its own fibre again a little further along
+/// and was shaded by it twice, or shadowed by it.
+///
+/// So a hit is refused on a fibre whose centre line the ray starts within
+/// its radius of, half as much again for rounding: the segments the ray
+/// leaves from and the next, and nothing further along a curling fibre,
+/// which does shade itself. In the fibres' own space, as Embree hands an
+/// instance's ray to its filter.
+unsafe extern "C" fn leave_the_fibre(args: *const sys::RTCFilterFunctionNArguments) {
+    use tequila_render_core::scene::Fibres;
+    let args = &*args;
+    let buffers = &*(args.geometry_user_ptr as *const VertexBuffers);
+    let n = args.n as usize;
+    let ray = args.ray as *const f32;
+    let hit = args.hit as *const u32;
+    for i in 0..n {
+        let valid = args.valid.add(i);
+        if *valid == 0 {
+            continue;
+        }
+        let origin = Vec3 { x: *ray.add(i), y: *ray.add(n + i), z: *ray.add(2 * n + i) };
+        let segment = *hit.add(5 * n + i) as usize;
+        let first = segment / Fibres::SEGMENTS * Fibres::POINTS;
+        let Some(points) = buffers.positions.get(first..first + Fibres::POINTS) else {
+            continue;
+        };
+        let on_it = points.windows(2).any(|ends| {
+            let (a, b) = (Vec3 { x: ends[0][0], y: ends[0][1], z: ends[0][2] }, Vec3 { x: ends[1][0], y: ends[1][1], z: ends[1][2] });
+            let along = b - a;
+            let t = ((origin - a).dot(along) / along.length_squared().max(1e-30)).clamp(0.0, 1.0);
+            let radius = ends[0][3] * (1.0 - t) + ends[1][3] * t;
+            (origin - (a + along * t)).length() <= radius * 1.5
+        });
+        if on_it {
+            *valid = 0;
+        }
     }
 }
 
@@ -851,20 +903,74 @@ mod tests {
         assert!((fibre.offset + 0.2).abs() < 0.02, "offset {}", fibre.offset);
         assert_eq!(fibre.random, 0.25);
         assert!(bvh.intersect(&Ray::new(vec3(0.06, 0.5, 5.0), down)).is_none(), "past the fibre's edge");
+        for x in [0.02f32, 0.03, 0.04, 0.045, 0.048, 0.049, 0.0495, 0.051] {
+            eprintln!("x {x}: {}", bvh.intersect(&Ray::new(vec3(x, 0.5, 5.0), down)).is_some());
+        }
         assert!(bvh.occluded(vec3(0.0, 0.5, 5.0), down, vec3(0.0, 0.5, -5.0), -down));
     }
 
     /// A ray leaving a fibre, whichever way, does not meet the fibre it
-    /// left: Embree's ribbons ignore their own width at a ray's origin.
+    /// left - across it, and along it, where a ribbon facing the ray would
+    /// otherwise be met again a little further up - and a shadow ray from it
+    /// is not shadowed by it. A fibre further off still is met.
     #[test]
     fn a_ray_leaving_a_fibre_does_not_meet_it_again() {
-        let scene = scene_with(vec![one_fibre()], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))]);
+        let mut beside = one_fibre();
+        if let Some(fibres) = beside.fibres.as_mut() {
+            let mut moved = (**fibres).clone();
+            for p in &mut moved.points {
+                p.x += 0.3;
+            }
+            *fibres = Arc::new(moved);
+        }
+        let scene = scene_with(
+            vec![one_fibre(), beside],
+            vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0)), Instance::new(InstanceId(1), MeshId(1), MaterialId(0))],
+        );
         let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
-        let hit = bvh.intersect(&Ray::new(vec3(0.0, 0.5, 5.0), vec3(0.0, 0.0, -1.0))).unwrap();
-        for direction in [vec3(0.0, 0.0, -1.0), vec3(0.3, 0.2, -1.0), vec3(-1.0, 0.0, 0.1), vec3(0.0, 0.0, 1.0)] {
+        let hit = bvh.intersect(&Ray::new(vec3(0.01, 0.5, 5.0), vec3(0.0, 0.0, -1.0))).unwrap();
+        assert_eq!(hit.instance, InstanceId(0));
+        for direction in [
+            vec3(0.0, 0.0, -1.0),
+            vec3(0.3, 0.2, -1.0),
+            vec3(-1.0, 0.0, 0.1),
+            vec3(0.0, 0.0, 1.0),
+            vec3(0.0, 1.0, -0.02),
+            vec3(0.01, -1.0, 0.03),
+        ] {
             let leaving = Ray::new(hit.position, direction.normalize());
             assert!(bvh.intersect(&leaving).is_none(), "met the same fibre again going {direction:?}");
+            let far = hit.position + direction.normalize() * 10.0;
+            assert!(!bvh.occluded(hit.position, hit.geometric_normal, far, -direction.normalize()), "shadowed by its own fibre going {direction:?}");
         }
+        let across = bvh.intersect(&Ray::new(hit.position, vec3(1.0, 0.0, 0.0))).expect("the fibre beside it");
+        assert_eq!(across.instance, InstanceId(1));
+    }
+
+    /// A part's whole budget of fibres - a quarter of a million, a million
+    /// segments - builds in a fraction of a second, which is what lets the
+    /// interactive view keep them: it builds its BVH again at every edit
+    /// that is not a move.
+    #[test]
+    fn a_parts_whole_budget_of_fibres_builds_quickly() {
+        use tequila_render_core::scene::Fibres;
+        const COUNT: usize = 250_000;
+        let mut fibres = Fibres::default();
+        for i in 0..COUNT {
+            let (x, z) = ((i % 500) as f32 * 0.002, (i / 500) as f32 * 0.002);
+            for k in 0..Fibres::POINTS {
+                fibres.points.push(vec3(x + k as f32 * 0.0003, k as f32 * 0.001, z));
+                fibres.radii.push(0.00002);
+            }
+            fibres.random.push(0.5);
+        }
+        let scene = scene_with(vec![Mesh::of_fibres(fibres)], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))]);
+        let start = std::time::Instant::now();
+        let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
+        let took = start.elapsed();
+        eprintln!("{COUNT} fibres built in {:.0} ms", took.as_secs_f64() * 1000.0);
+        assert!(took.as_secs_f64() < 2.0, "{COUNT} fibres took {took:?}");
+        assert!(bvh.intersect(&Ray::new(vec3(0.5006, 0.002, 5.0), vec3(0.0, 0.0, -1.0))).is_some());
     }
 
     /// A part with its shadow switched off is still seen — by the camera, in

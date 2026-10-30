@@ -298,6 +298,20 @@ mod tests {
         }
     }
 
+    /// A part's whole budget grows fast enough to leave fibres in the
+    /// interactive view: the snapshot grows them only when their settings
+    /// or the part's mesh change, and that edit should not stall it.
+    #[test]
+    fn a_parts_whole_budget_grows_quickly() {
+        let sphere = crate::demo::uv_sphere(1.0, 96, 48);
+        let start = std::time::Instant::now();
+        let fur = grow(&sphere, 1.0, &request(0.003, 5000.0, 0.5)).expect("fibres");
+        let took = start.elapsed();
+        assert_eq!(fibres_of(&fur).count(), MOST);
+        eprintln!("{MOST} fibres grown in {:.0} ms", took.as_secs_f64() * 1000.0);
+        assert!(took.as_secs_f64() < 2.0, "{MOST} fibres took {took:?}");
+    }
+
     /// Nothing asked for, nothing grown.
     #[test]
     fn no_density_grows_nothing() {

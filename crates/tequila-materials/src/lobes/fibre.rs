@@ -255,7 +255,14 @@ impl Bsdf for Fibre {
             // fibre's edge can leave behind it, and TT straight through.
             is_transmission: wi.z < 0.0,
             eta: 1.0,
-            flags: BsdfFlags::REFLECTION | BsdfFlags::TRANSMISSION | BsdfFlags::GLOSSY,
+            // The lobe it took: off the surface, or through the fibre (TT,
+            // TRT and the rest, as Cycles labels them), which is what the
+            // integrator counts the bounce by.
+            flags: if p == 0 {
+                BsdfFlags::REFLECTION | BsdfFlags::GLOSSY
+            } else {
+                BsdfFlags::TRANSMISSION | BsdfFlags::GLOSSY
+            },
         })
     }
 
