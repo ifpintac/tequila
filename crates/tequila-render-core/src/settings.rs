@@ -29,7 +29,10 @@ pub struct IntegratorConfig {
     /// [`crate::integrator::caustics`]): photons traced from the lights
     /// through glass, liquids, gems and mirrors onto what is around them,
     /// read by the camera path at the first surface it sees that is not
-    /// mirror-smooth. Off, such light is found only by chance.
+    /// mirror-smooth. Off, shadow rays pass clear glass instead
+    /// ([`Self::light_through_glass`]), as KeyShot's renderer does with its
+    /// caustics off, and light focused by anything else is found only by
+    /// chance.
     pub caustics: bool,
     /// Portal sampling and increased NEE weighting for enclosed scenes.
     pub interior_mode: bool,
@@ -66,6 +69,11 @@ pub struct IntegratorConfig {
     /// as a ratio of the backdrop, so on a black one nothing shows). Never
     /// saved.
     pub floor_reflection_only: bool,
+    /// Set on the path traced for what plain glass the camera sees reflects,
+    /// split off the camera's path there (`integrator::trace`): it splits
+    /// no glass of its own, and the sky it reaches is a reflection's, not
+    /// the backdrop the camera sees. Never saved.
+    pub reflected: bool,
     /// What Cycles is told beyond the above (Blender's Light Paths): `None`
     /// throughout is what it was always told.
     pub cycles: CyclesTransport,
@@ -340,6 +348,15 @@ impl Default for IntegratorConfig {
 }
 
 impl IntegratorConfig {
+    /// Whether shadow rays pass clear glass ([`crate::scene::Pane`]), so
+    /// what is behind a pane or inside a bottle is lit through it. Not with
+    /// the caustics pass, whose photons already carry the light glass lets
+    /// by: a shadow ray that passed it too would count that light twice.
+    #[inline]
+    pub fn light_through_glass(&self) -> bool {
+        !self.caustics
+    }
+
     /// Values shared by every preset. §3.4 fixes Russian roulette at bounce 3:
     /// "earlier termination adds variance at little speed gain in typical
     /// product scenes". §3.5 fixes the roughness floor at 0.09.
@@ -361,6 +378,7 @@ impl IntegratorConfig {
             pixel_spread: DEFAULT_PIXEL_SPREAD,
             in_floor_reflection: false,
             floor_reflection_only: false,
+            reflected: false,
             cycles: CyclesTransport::NONE,
             pixel_filter: PixelFilter::BOX,
             spectral: SpectralMode::Auto,

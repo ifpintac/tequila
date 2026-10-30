@@ -358,6 +358,22 @@ pub struct SceneSnapshot {
     /// Whether any material disperses light, which decides whether an
     /// `Auto` render is spectral ([`SceneSnapshot::has_dispersion`]).
     dispersive: DispersionCache,
+    /// The clear glass among the materials, by material, which shadow rays
+    /// pass ([`Pane`]). Empty when there is none, which is what keeps a
+    /// scene without glass on the one any-hit query per shadow ray.
+    panes: PaneCache,
+}
+
+/// [`SceneSnapshot::pane`]'s table, worked out the first time it is asked
+/// for, as [`DispersionCache`] is: the materials are public, and a preview
+/// changes one in place after the snapshot is made.
+#[derive(Debug, Default)]
+struct PaneCache(std::sync::OnceLock<Vec<Option<Pane>>>);
+
+impl Clone for PaneCache {
+    fn clone(&self) -> Self {
+        PaneCache::default()
+    }
 }
 
 /// [`SceneSnapshot::emitters`], worked out once. A copy starts without it:
@@ -413,6 +429,204 @@ fn is_cut_out(material: &Material) -> bool {
     material.geometry_opacity < 0.999
 }
 
+/// Clear glass as a shadow ray meets it ([`SceneSnapshot::pane`]): how much
+/// light it lets by on the way straight through.
+///
+/// KeyShot's renderer, with its caustics off, lets light through glass to
+/// what is behind it, and so does this one: a shadow ray stopped by every
+/// pane leaves what is under a display cover or inside a bottle lit only by
+/// the paths that happen to refract into a light, which on a product is a
+/// screen of white speckle on black. Straight on is exact for a pane or a
+/// flat slab, whose two refractions cancel, and close for anything else.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pane {
+    /// What reaches the transmission lobe: its weight, less what metal and
+    /// cutout there are.
+    weight: f32,
+    /// The opacity a cutout has, the rest passing untouched.
+    opacity: f32,
+    ior: f32,
+    coat: f32,
+    coat_ior: f32,
+    /// The surface's tint at each crossing, the square root of its colour,
+    /// as the transmission lobe has it.
+    tint: Spectrum,
+    /// The volume behind the surface, for Beer-Lambert between the way in
+    /// and the way out: its colour, and the distance that colour is reached
+    /// in. `None` for glass with no depth, tinted at the surface alone.
+    volume: Option<(Spectrum, f32)>,
+    /// An infinitely thin shell, which light leaves straight on.
+    thin: bool,
+    /// Glass and nothing else: all transmission, solid, no coat, film,
+    /// fuzz or flakes, and a plain white reflection. What it does with
+    /// light is the interface's Fresnel alone, which [`Pane::split`] can
+    /// then do without the surface's BSDF.
+    plain: bool,
+}
+
+impl Pane {
+    /// The glass a parameter block is, if it is glass a shadow ray can pass:
+    /// mirror-smooth, scattering nothing inside or under its surface.
+    /// Frosted glass blurs what is behind it, so light straight through it
+    /// is not what reaches the far side, and it stays solid to shadows.
+    pub fn of(material: &Material) -> Option<Pane> {
+        let index_matched = material.specular_ior <= 1.0 + 1e-3;
+        let smooth = index_matched
+            || tequila_materials::microfacet::Ggx::from_roughness(
+                material.specular_roughness.clamp(0.0, 1.0),
+                material.specular_roughness_anisotropy,
+            )
+            .is_smooth();
+        let weight = material.transmission_weight.clamp(0.0, 1.0) * (1.0 - material.base_metalness.clamp(0.0, 1.0));
+        if weight <= 1e-4
+            || !smooth
+            || material.subsurface_weight > 1e-4
+            || !material.transmission_scatter.is_black()
+        {
+            return None;
+        }
+        let has_depth = !material.geometry_thin_walled && material.transmission_depth > 0.0;
+        let c = if has_depth {
+            material.transmission_tint
+        } else {
+            material.transmission_color * material.transmission_tint
+        };
+        let plain = weight >= 0.999
+            && material.geometry_opacity >= 0.999
+            && material.coat_weight <= 1e-3
+            && material.thin_film_weight <= 1e-3
+            && material.fuzz_weight <= 1e-3
+            && material.flake_weight <= 1e-3
+            && (material.specular_weight - 1.0).abs() <= 1e-3
+            && material.specular_color == Spectrum::ONE
+            && material.transmission_dispersion_abbe <= 0.0;
+        Some(Pane {
+            weight,
+            opacity: material.geometry_opacity.clamp(0.0, 1.0),
+            ior: material.specular_ior.max(1.0),
+            coat: material.coat_weight.clamp(0.0, 1.0),
+            coat_ior: material.coat_ior.max(1.0),
+            tint: Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() },
+            volume: has_depth.then(|| (material.transmission_color, material.volume_depth())),
+            thin: material.geometry_thin_walled,
+            plain,
+        })
+    }
+
+    /// The two ways light leaves plain glass ([`Self::plain`]) met from
+    /// `wo`, in the shading frame with the surface facing it: what it
+    /// reflects, and the way through with what that carries, as the
+    /// transmission lobe would weigh its sample were it always chosen.
+    /// `eta` is the index ahead over the index behind. `None` for glass
+    /// that is not plain, and where all of the light is reflected.
+    pub fn split(&self, wo: Vec3, eta: f32) -> Option<(f32, tequila_materials::bsdf::BsdfSample)> {
+        if !self.plain || wo.z <= 0.0 {
+            return None;
+        }
+        let reflected = tequila_materials::fresnel::dielectric(wo.z, eta);
+        if reflected >= 1.0 {
+            return None;
+        }
+        let (wi, scale, crossing) = if self.thin {
+            (-wo, 1.0, 1.0)
+        } else {
+            // Snell, about the normal the ray arrives against.
+            let sin2_t = (1.0 - wo.z * wo.z).max(0.0) / (eta * eta);
+            if sin2_t >= 1.0 {
+                return None;
+            }
+            let cos_t = (1.0 - sin2_t).sqrt();
+            (-wo / eta + Vec3::Z * (wo.z / eta - cos_t), 1.0 / (eta * eta), eta)
+        };
+        let cos = wi.z.abs();
+        if cos <= 0.0 {
+            return None;
+        }
+        Some((
+            reflected,
+            tequila_materials::bsdf::BsdfSample {
+                wi,
+                f: self.tint * ((1.0 - reflected) * scale / cos),
+                pdf: 1.0,
+                is_delta: true,
+                is_transmission: true,
+                eta: crossing,
+                flags: tequila_materials::bsdf::BsdfFlags::TRANSMISSION | tequila_materials::bsdf::BsdfFlags::DELTA,
+            },
+        ))
+    }
+
+    /// The same for a graph: from its folded constants, as long as nothing
+    /// that decides what passes is computed per point and no other surface
+    /// is mixed in.
+    fn of_program(program: &CompiledGraph) -> Option<Pane> {
+        use tequila_materials::material_type::Param;
+        let varies = program.driven.iter().any(|(param, _)| {
+            matches!(
+                param,
+                Param::BaseMetalness
+                    | Param::SpecularRoughness
+                    | Param::SpecularIor
+                    | Param::Anisotropy
+                    | Param::TransmissionWeight
+                    | Param::TransmissionColor
+                    | Param::TransmissionDepth
+                    | Param::TransmissionTint
+                    | Param::TransmissionScatter
+                    | Param::VolumeDensity
+                    | Param::SubsurfaceWeight
+                    | Param::CoatWeight
+                    | Param::CoatIor
+                    | Param::Opacity
+            )
+        });
+        if varies || program.layer.is_some() {
+            return None;
+        }
+        Pane::of(&program.constants)
+    }
+
+    /// The light through the surface, met at `cos` to its normal: what the
+    /// coat and the interface do not reflect, tinted. The same index from
+    /// either side, since straight on a ray inside meets the far face at
+    /// the angle it met the near one, where a refracted ray would have
+    /// turned back to it.
+    pub fn crossing(&self, cos: f32) -> Spectrum {
+        let cos = cos.abs().clamp(0.0, 1.0);
+        let surface = 1.0 - tequila_materials::fresnel::dielectric(cos, self.ior);
+        let coat = 1.0 - self.coat * tequila_materials::fresnel::dielectric(cos, self.coat_ior);
+        let glass = self.tint * (self.weight * surface * coat);
+        Spectrum::splat(1.0 - self.opacity) + glass * self.opacity
+    }
+
+    /// What `distance` of the volume behind the surface lets by.
+    pub fn inside(&self, distance: f32) -> Spectrum {
+        match self.volume {
+            Some((colour, depth)) if depth > 0.0 && distance > 0.0 => {
+                let exponent = distance / depth;
+                let survive = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0).powf(exponent) } else { 0.0 };
+                Spectrum { r: survive(colour.r), g: survive(colour.g), b: survive(colour.b) }
+            }
+            _ => Spectrum::ONE,
+        }
+    }
+
+    /// Whether the volume behind the surface absorbs.
+    pub fn has_volume(&self) -> bool {
+        self.volume.is_some()
+    }
+}
+
+/// The panes by material, or none at all when no material is one.
+fn panes(each: impl Iterator<Item = Option<Pane>>) -> Vec<Option<Pane>> {
+    let panes: Vec<Option<Pane>> = each.collect();
+    if panes.iter().any(Option::is_some) {
+        panes
+    } else {
+        Vec::new()
+    }
+}
+
 impl SceneSnapshot {
     pub fn new(
         meshes: Vec<Arc<Mesh>>,
@@ -442,6 +656,7 @@ impl SceneSnapshot {
             emitters: EmitterCache::default(),
             transmissive: materials.iter().any(Material::is_transmissive),
             dispersive: DispersionCache::default(),
+            panes: PaneCache::default(),
             materials,
         }
     }
@@ -470,6 +685,27 @@ impl SceneSnapshot {
     #[inline]
     pub fn has_cutouts(&self) -> bool {
         self.cutouts
+    }
+
+    /// Whether any material is clear glass a shadow ray can pass ([`Pane`]).
+    #[inline]
+    pub fn has_panes(&self) -> bool {
+        !self.panes().is_empty()
+    }
+
+    /// The glass a material is to a shadow ray, if it is clear glass.
+    #[inline]
+    pub fn pane(&self, id: MaterialId) -> Option<&Pane> {
+        self.panes().get(id.index()).and_then(Option::as_ref)
+    }
+
+    fn panes(&self) -> &[Option<Pane>] {
+        self.panes.0.get_or_init(|| {
+            panes(self.materials.iter().enumerate().map(|(i, material)| match self.programs.get(i).and_then(|p| p.as_ref()) {
+                Some(program) => Pane::of_program(program),
+                None => Pane::of(material),
+            }))
+        })
     }
 
     /// Whether any material refracts, so which side of a surface a path is on
@@ -540,6 +776,7 @@ impl SceneSnapshot {
                 None => material.is_transmissive(),
             }
         });
+        self.panes = PaneCache::default();
         self.bumps = programs
             .iter()
             .map(|program| {

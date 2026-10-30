@@ -1771,6 +1771,7 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         pixel_spread: default.pixel_spread,
         in_floor_reflection: false,
         floor_reflection_only: false,
+        reflected: false,
         cycles: read_cycles_transport(value.get("cycles")),
         // The render's, set per render.
         pixel_filter: default.pixel_filter,
