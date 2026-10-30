@@ -129,6 +129,7 @@ api! {
         fsc_object_of: fn(*mut Session, Node) -> Node;
         fsc_set_name: fn(Node, *const c_char) -> c_int;
         fsc_mesh_attribute: fn(*mut Session, Node, *const c_char, c_int, *const f32) -> c_int;
+        fsc_curves: fn(*mut Session, c_int, c_int, *const f32, *const f32, *const f32, Node) -> Node;
     }
 }
 
