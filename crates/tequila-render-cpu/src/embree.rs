@@ -160,6 +160,12 @@ impl EmbreeIntersector {
         let mut mesh_scenes: Vec<Option<Arc<RawScene>>> = vec![None; scene.meshes.len()];
 
         for (mesh_index, mesh) in scene.meshes.iter().enumerate() {
+            if let Some(fibres) = &mesh.fibres {
+                if fibres.segment_count() > 0 {
+                    mesh_scenes[mesh_index] = Some(Arc::new(fibre_scene(device, fibres, masks)?));
+                }
+                continue;
+            }
             if mesh.triangle_count() == 0 {
                 continue;
             }
@@ -391,6 +397,9 @@ impl EmbreeIntersector {
         let instance = self.scene.instances.get(instance_index)?;
         let mesh = self.scene.meshes.get(instance.mesh.index())?;
         let primitive = rh.hit.prim_id as usize;
+        if let Some(fibres) = &mesh.fibres {
+            return Self::resolve_fibre(ray, rh, instance_index, instance, fibres);
+        }
         if primitive >= mesh.triangle_count() {
             return None;
         }
@@ -455,6 +464,42 @@ impl EmbreeIntersector {
         })
     }
 
+    /// A hit on a fibre: a ribbon facing the ray, so its normal is the way
+    /// back along the ray, square to the fibre. Where across the fibre it
+    /// was met is the BSDF's to work out (`SceneSnapshot::fibre_at`), from
+    /// the curve's parameter along the segment kept in `uv`.
+    fn resolve_fibre(
+        ray: &Ray,
+        rh: &sys::RTCRayHit,
+        instance_index: usize,
+        instance: &tequila_render_core::scene::Instance,
+        fibres: &tequila_render_core::scene::Fibres,
+    ) -> Option<Hit> {
+        let segment = rh.hit.prim_id as usize;
+        if segment >= fibres.segment_count() {
+            return None;
+        }
+        let first = tequila_render_core::scene::Fibres::segment_start(segment);
+        let tangent = instance
+            .transform
+            .vector(fibres.points[first + 1] - fibres.points[first])
+            .try_normalize()
+            .unwrap_or(Vec3::Y);
+        let back = -ray.direction;
+        let facing = (back - tangent * tangent.dot(back)).try_normalize().unwrap_or(back);
+        let t = rh.ray.tfar;
+        Some(Hit {
+            t,
+            position: ray.at(t),
+            geometric_normal: facing,
+            shading_normal: facing,
+            uv: Vec2 { x: rh.hit.u, y: rh.hit.v },
+            instance: InstanceId(instance_index as u32),
+            material: MaterialId(instance.material.0),
+            primitive: segment as u32,
+        })
+    }
+
     fn to_embree_ray(ray: &Ray, mask: u32) -> sys::RTCRay {
         sys::RTCRay {
             org_x: ray.origin.x,
@@ -470,6 +515,70 @@ impl EmbreeIntersector {
             id: 0,
             flags: 0,
         }
+    }
+}
+
+/// A bottom-level scene of fibres: one flat linear curve per segment, its
+/// two control points the segment's ends with their radii.
+fn fibre_scene(
+    device: &Arc<Device>,
+    fibres: &tequila_render_core::scene::Fibres,
+    masks: bool,
+) -> Result<RawScene, String> {
+    use tequila_render_core::scene::Fibres;
+    let buffers = Arc::new(VertexBuffers {
+        positions: fibres
+            .points
+            .iter()
+            .zip(&fibres.radii)
+            .map(|(p, r)| [p.x, p.y, p.z, *r])
+            .collect(),
+        // Each segment by the point it starts at. Consecutive within a
+        // fibre and not across two, which is how Embree tells for itself
+        // which segments join.
+        indices: (0..fibres.segment_count()).map(|s| Fibres::segment_start(s) as u32).collect(),
+    });
+    // SAFETY: as for a mesh's BLAS: the buffers move into the returned
+    // scene and outlive it.
+    unsafe {
+        let blas = sys::rtcNewScene(device.raw());
+        if blas.is_null() {
+            return Err("failed to create an Embree scene".into());
+        }
+        sys::rtcSetSceneBuildQuality(blas, sys::RTC_BUILD_QUALITY_HIGH);
+        let geom = sys::rtcNewGeometry(device.raw(), sys::RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE);
+        sys::rtcSetSharedGeometryBuffer(
+            geom,
+            sys::RTC_BUFFER_TYPE_VERTEX,
+            0,
+            sys::RTC_FORMAT_FLOAT4,
+            buffers.positions.as_ptr().cast(),
+            0,
+            std::mem::size_of::<[f32; 4]>(),
+            buffers.positions.len(),
+        );
+        sys::rtcSetSharedGeometryBuffer(
+            geom,
+            sys::RTC_BUFFER_TYPE_INDEX,
+            0,
+            sys::RTC_FORMAT_UINT,
+            buffers.indices.as_ptr().cast(),
+            0,
+            std::mem::size_of::<u32>(),
+            buffers.indices.len(),
+        );
+        if masks {
+            sys::rtcSetGeometryMask(geom, u32::MAX);
+        }
+        sys::rtcCommitGeometry(geom);
+        sys::rtcAttachGeometry(blas, geom);
+        sys::rtcReleaseGeometry(geom);
+        sys::rtcCommitScene(blas);
+        if let Some(code) = device.take_error() {
+            sys::rtcReleaseScene(blas);
+            return Err(format!("Embree error {code} while building a fibre BVH"));
+        }
+        Ok(RawScene { handle: blas, _device: device.clone(), _buffers: vec![buffers], _children: Vec::new() })
     }
 }
 
@@ -715,6 +824,47 @@ mod tests {
             vec3(9.0, 9.0, -5.0),
             vec3(0.0, 0.0, 1.0)
         ));
+    }
+
+    /// One straight fibre up the y axis, 0.05 thick, as a mesh of fibres.
+    fn one_fibre() -> Mesh {
+        use tequila_render_core::scene::Fibres;
+        let points: Vec<Vec3> = (0..Fibres::POINTS).map(|i| vec3(0.0, i as f32 / (Fibres::POINTS - 1) as f32, 0.0)).collect();
+        Mesh::of_fibres(Fibres { radii: vec![0.05; points.len()], points, random: vec![0.25] })
+    }
+
+    /// A fibre is met where it stands, facing the ray, and the hit says how
+    /// far across it the ray was: a fifth of the way out, on the side the
+    /// fibre's frame calls negative. A ray past its edge misses, and its
+    /// shadow falls.
+    #[test]
+    fn a_fibre_is_met_across_its_width() {
+        let scene = scene_with(vec![one_fibre()], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))]);
+        let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
+        let down = vec3(0.0, 0.0, -1.0);
+        let hit = bvh.intersect(&Ray::new(vec3(0.01, 0.5, 5.0), down)).expect("the ray crosses the fibre");
+        assert!((hit.t - 5.0).abs() < 0.06, "t = {}", hit.t);
+        assert!((hit.geometric_normal - vec3(0.0, 0.0, 1.0)).length() < 1e-4, "{:?}", hit.geometric_normal);
+        let fibre = bvh.scene().fibre_at(&hit, down).expect("a fibre hit");
+        assert!((fibre.tangent - Vec3::Y).length() < 1e-4);
+        // Across is facing × tangent = -x, and the ray passed at +x.
+        assert!((fibre.offset + 0.2).abs() < 0.02, "offset {}", fibre.offset);
+        assert_eq!(fibre.random, 0.25);
+        assert!(bvh.intersect(&Ray::new(vec3(0.06, 0.5, 5.0), down)).is_none(), "past the fibre's edge");
+        assert!(bvh.occluded(vec3(0.0, 0.5, 5.0), down, vec3(0.0, 0.5, -5.0), -down));
+    }
+
+    /// A ray leaving a fibre, whichever way, does not meet the fibre it
+    /// left: Embree's ribbons ignore their own width at a ray's origin.
+    #[test]
+    fn a_ray_leaving_a_fibre_does_not_meet_it_again() {
+        let scene = scene_with(vec![one_fibre()], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))]);
+        let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
+        let hit = bvh.intersect(&Ray::new(vec3(0.0, 0.5, 5.0), vec3(0.0, 0.0, -1.0))).unwrap();
+        for direction in [vec3(0.0, 0.0, -1.0), vec3(0.3, 0.2, -1.0), vec3(-1.0, 0.0, 0.1), vec3(0.0, 0.0, 1.0)] {
+            let leaving = Ray::new(hit.position, direction.normalize());
+            assert!(bvh.intersect(&leaving).is_none(), "met the same fibre again going {direction:?}");
+        }
     }
 
     /// A part with its shadow switched off is still seen — by the camera, in

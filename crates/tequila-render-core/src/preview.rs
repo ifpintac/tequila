@@ -130,11 +130,17 @@ pub fn backdrop(film: Vec2) -> Spectrum {
 /// `film` is the normalized film position, used for the backdrop sweep — so
 /// the gradient is fixed to the frame, the way a real cyclorama is fixed to
 /// the studio rather than to the camera's rotation.
-/// Ignore the synthetic render floor when inspecting or selecting solids.
+/// Ignore the synthetic render floor when inspecting or selecting solids,
+/// and a part's fibres (§4.4's Fuzz): what is under them is the solid, and
+/// a preview of shape is no place for fur.
 pub fn intersect_solid(intersector: &dyn Intersector, mut ray: Ray) -> Option<crate::intersect::Hit> {
     loop {
         let hit = intersector.intersect(&ray)?;
-        if intersector.scene().instances.get(hit.instance.0 as usize).is_none_or(|i| i.shadow_catcher.is_none()) {
+        let scene = intersector.scene();
+        let solid = scene.instances.get(hit.instance.0 as usize).is_none_or(|i| {
+            i.shadow_catcher.is_none() && scene.meshes.get(i.mesh.index()).is_none_or(|m| m.fibres.is_none())
+        });
+        if solid {
             return Some(hit);
         }
         let next = hit.t + 1e-5 * hit.t.abs().max(1.0);
