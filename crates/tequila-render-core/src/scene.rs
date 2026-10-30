@@ -343,6 +343,8 @@ pub struct SceneSnapshot {
     /// then every query takes exactly the path it took before cutaways
     /// existed.
     cutters: Arc<Vec<crate::cutaway::Cutter>>,
+    /// The glowing triangles, worked out the first time they are asked for.
+    emitters: EmitterCache,
     /// Whether any material in the scene refracts.
     ///
     /// Cached for the same reason [`Self::cutouts`] is, and spending the same
@@ -353,6 +355,18 @@ pub struct SceneSnapshot {
     /// and walking all of them once a path to find that out is the cost this
     /// exists to remove.
     transmissive: bool,
+}
+
+/// [`SceneSnapshot::emitters`], worked out once. A copy starts without it:
+/// copying is how a snapshot is changed, and what glows where may be what
+/// changed.
+#[derive(Debug, Default)]
+struct EmitterCache(std::sync::OnceLock<crate::emitters::Emitters>);
+
+impl Clone for EmitterCache {
+    fn clone(&self) -> Self {
+        EmitterCache::default()
+    }
 }
 
 /// Whether this parameter block describes a surface light can pass through
@@ -392,6 +406,7 @@ impl SceneSnapshot {
             bounds,
             cutouts: materials.iter().any(is_cut_out),
             cutters: Arc::new(Vec::new()),
+            emitters: EmitterCache::default(),
             transmissive: materials.iter().any(Material::is_transmissive),
             materials,
         }
@@ -400,7 +415,14 @@ impl SceneSnapshot {
     /// Cut the scene with these volumes.
     pub fn with_cutters(mut self, cutters: Vec<crate::cutaway::Cutter>) -> Self {
         self.cutters = Arc::new(cutters);
+        self.emitters = EmitterCache::default();
         self
+    }
+
+    /// The glowing triangles, which next-event estimation samples alongside
+    /// the lights.
+    pub fn emitters(&self) -> &crate::emitters::Emitters {
+        self.emitters.0.get_or_init(|| crate::emitters::Emitters::build(self))
     }
 
     /// The cutaway volumes, usually none.
@@ -444,6 +466,7 @@ impl SceneSnapshot {
         programs: Vec<Option<Arc<CompiledGraph>>>,
         textures: Arc<TextureTable>,
     ) -> Self {
+        self.emitters = EmitterCache::default();
         // Recomputed rather than or-ed in: a graph can fold opacity to a
         // constant, and the folded value is the one that shades, so the
         // material block alone is not the whole answer once programs exist.

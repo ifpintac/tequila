@@ -3171,10 +3171,9 @@ mod tests {
         let glowing = |image: &[u8]| {
             image.chunks_exact(4).enumerate().filter(|(i, _)| i % 96 >= 60).map(|(_, p)| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>()
         };
-        // Without firefly rejection: Tequila's renderer finds a glow only by
-        // the bounces that happen to meet it, which rejection takes for
-        // fireflies and clips, where Cycles samples it as a light.
-        let lighting = |light_source_materials: bool| Lit { config: IntegratorConfig { light_source_materials, ..IntegratorConfig::product() }, reject_fireflies: false, camera: None };
+        // With firefly rejection, as a render has it: both renderers sample
+        // the glow as a light, so no rare, heavy hit is left to clip.
+        let lighting = |light_source_materials: bool| Lit { config: IntegratorConfig { light_source_materials, ..IntegratorConfig::product() }, reject_fireflies: true, camera: None };
         let on = both_engines_lit("light-materials-on", 1.0, lighting(true), beside);
         let off = both_engines_lit("light-materials-off", 1.0, lighting(false), beside);
         let (on_lit, off_lit) = (on.clone().map(|i| lit(&i)), off.clone().map(|i| lit(&i)));
@@ -3183,7 +3182,7 @@ mod tests {
             assert!(off_lit[engine] < 0.2 * on_lit[engine], "{name}: with light source materials off the glow still lit its neighbour ({:.0} of {:.0})", off_lit[engine], on_lit[engine]);
             assert!(glowing(&off[engine]) > 0.8 * glowing(&on[engine]), "{name}: with light source materials off the glow went out");
         }
-        assert!((on_lit[1] / on_lit[0] - 1.0).abs() < 0.1, "the glow lit its neighbour {:.0} in Tequila's renderer, {:.0} in Cycles", on_lit[0], on_lit[1]);
+        assert!((on_lit[1] / on_lit[0] - 1.0).abs() < 0.03, "the glow lit its neighbour {:.0} in Tequila's renderer, {:.0} in Cycles", on_lit[0], on_lit[1]);
     }
 
     /// A sun lights alike in Cycles and Tequila's renderer, sharp or with an

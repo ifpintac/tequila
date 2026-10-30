@@ -843,10 +843,14 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
   across the edge, and a steeper exponent's edge is a little brighter at its
   outer end in Cycles. An edge that already spans most of the cone cannot
   widen past it, and comes out brighter.
-- **Light source materials.** Cycles samples a glowing surface as a light;
-  Tequila's renderer finds it only by the bounces that meet it, so firefly
-  rejection clips some of its light on what is near it. Off, neither lets a
-  diffuse bounce see it.
+- **Light source materials.** Both sample a glowing surface as a light,
+  Tequila's renderer through a tree of the glowing triangles
+  (`render-core/src/emitters.rs`), so the light a glow throws on what is near
+  it agrees with firefly rejection on. Tequila's renderer still leaves to
+  the bounces alone a glow a graph drives, a mixed surface's, a part some
+  kind of ray passes through, and every glow in a scene with a cutaway; they
+  are noisier there than in Cycles. Off, neither lets a diffuse bounce see
+  it.
 - **The sun** is a light with no geometry in Tequila's renderer, as every
   lamp is: a mirror does not show it, where Cycles' does.
 

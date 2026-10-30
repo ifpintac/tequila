@@ -4,9 +4,10 @@
 //! that it delivers the *right* amount of light, and there is an independent way
 //! to check that: a rectangular area light and a rectangle of emissive geometry
 //! in the same place with the same radiance are the same physical object,
-//! reached by two entirely different code paths — one through next-event
-//! estimation and the light's own sampling, the other through BSDF sampling
-//! finding the emitter by chance. They must converge to the same image.
+//! reached by two entirely different code paths — one through the light's
+//! own sampler, the other through the glowing triangles' sampling and BSDF
+//! sampling finding the emitter, weighed against each other by MIS. They must
+//! converge to the same image.
 //!
 //! That comparison is worth far more than a threshold, because it shares almost
 //! no code between the two sides. A sampler checked against its own density
@@ -14,7 +15,7 @@
 //! different estimator of the same quantity does not.
 
 use tequila_core::ids::{InstanceId, MaterialId, MeshId};
-use tequila_core::math::{vec3, Vec3};
+use tequila_core::math::{vec3, Mat4, Transform, Vec3};
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::MaterialType;
 use tequila_materials::openpbr::Material;
@@ -122,39 +123,34 @@ fn with_area_light(radiance: f32, half: f32, height: f32) -> SceneSnapshot {
 
 /// The same floor, lit by a rectangle of emissive geometry in the same place.
 fn with_emissive_panel(radiance: f32, half: f32, height: f32) -> SceneSnapshot {
+    with_placed_panel(radiance, panel(half, half, height), Transform::default(), matte())
+}
+
+/// A floor of `ground` lit by `mesh` glowing at `radiance`, placed by
+/// `placement`.
+fn with_placed_panel(radiance: f32, mesh: Mesh, placement: Transform, ground: Material) -> SceneSnapshot {
     let emitter = Material {
         emission_color: Spectrum::ONE,
         emission_luminance: radiance,
         ..MaterialType::Emissive.defaults()
     };
     SceneSnapshot::new(
-        vec![Arc::new(floor(6.0)), Arc::new(panel(half, half, height))],
+        vec![Arc::new(floor(6.0)), Arc::new(mesh)],
         vec![
             Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
-            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)),
+            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(placement),
         ],
-        vec![matte(), emitter],
+        vec![ground, emitter],
         dark(),
     )
 }
 
-/// The comparison this file exists for.
-///
-/// Two independent routes to the same physical answer: next-event estimation
-/// through the light's spherical-rectangle sampler, and BSDF sampling stumbling
-/// onto an emissive triangle. If the light's radiometry is wrong by a factor —
-/// a missing cosine, a solid angle mistaken for an area — these disagree, and
-/// nothing else in the suite would notice.
-#[test]
-fn an_area_light_matches_the_same_light_as_emissive_geometry() {
-    let (radiance, half, height) = (6.0, 1.0, 2.0);
-
-    let analytic = render(with_area_light(radiance, half, height), 256);
-    let geometric = render(with_emissive_panel(radiance, half, height), 4096);
-
-    // Compare only the floor, and only where both routes see it: the emissive
-    // panel is visible to the camera in one image and absent from the other,
-    // and that difference is expected rather than an error.
+/// How far apart two renders of the floor are: the mean relative difference
+/// over the lower half of the image, where both see the floor and only the
+/// floor, and how many pixels that was.
+fn floor_difference(analytic: &Framebuffer, geometric: &Framebuffer) -> (f32, usize) {
+    // The emissive panel is visible to the camera in one image and absent
+    // from the other, and that difference is expected rather than an error.
     let mut compared = 0;
     let mut total_error = 0.0f32;
     for y in (SIZE / 2)..SIZE {
@@ -168,14 +164,106 @@ fn an_area_light_matches_the_same_light_as_emissive_geometry() {
             compared += 1;
         }
     }
+    (total_error / compared.max(1) as f32, compared)
+}
 
+/// The comparison this file exists for.
+///
+/// Two independent routes to the same physical answer: next-event estimation
+/// through the light's spherical-rectangle sampler, and an emissive triangle
+/// found by its own light sample or by BSDF sampling. If the light's
+/// radiometry is wrong by a factor — a missing cosine, a solid angle mistaken
+/// for an area — these disagree, and nothing else in the suite would notice.
+#[test]
+fn an_area_light_matches_the_same_light_as_emissive_geometry() {
+    let (radiance, half, height) = (6.0, 1.0, 2.0);
+
+    let analytic = render(with_area_light(radiance, half, height), 256);
+    let geometric = render(with_emissive_panel(radiance, half, height), 4096);
+
+    let (error, compared) = floor_difference(&analytic, &geometric);
     assert!(compared > 200, "only {compared} pixels were comparable");
-    let error = total_error / compared as f32;
     assert!(
         error < 0.06,
         "an analytic area light and the same light as geometry differ by {:.1}% \
          on average across {compared} pixels; one of the two routes has the \
          radiometry wrong",
+        error * 100.0
+    );
+}
+
+/// A small, bright panel, as much light as the big one in a twentieth of
+/// its width: an LED window, which bounces alone rarely find.
+const SMALL: (f32, f32, f32) = (600.0, 0.1, 2.0);
+
+/// A glowing surface is sampled as a light: a small bright panel matches the
+/// same rectangle as an area light at the area light's own sample count.
+/// Found by bounces alone it is a scatter of rare, heavy hits.
+#[test]
+fn emissive_geometry_is_sampled_as_a_light() {
+    let (radiance, half, height) = SMALL;
+    let analytic = render(with_area_light(radiance, half, height), 256);
+    let geometric = render(with_emissive_panel(radiance, half, height), 256);
+    let (error, compared) = floor_difference(&analytic, &geometric);
+    assert!(compared > 200, "only {compared} pixels were comparable");
+    assert!(
+        error < 0.06,
+        "at 256 samples the glowing panel and the area light differ by {:.1}% on average; \
+         the panel is not being sampled as a light",
+        error * 100.0
+    );
+}
+
+/// On a glossy floor a bounce finds the panel about as often as a light
+/// sample does, and the two share its light by MIS. Weights that do not add
+/// up to one show as the reflection too bright or too dark against the area
+/// light's, which only a light sample finds.
+#[test]
+fn a_glow_in_a_glossy_floor_matches_the_area_light() {
+    let (radiance, half, height) = (6.0, 1.0, 2.0);
+    let glossy = Material {
+        base_color: Spectrum::splat(0.9),
+        specular_roughness: 0.3,
+        ..MaterialType::Metal.defaults()
+    };
+    let mut lamp = with_area_light(radiance, half, height);
+    lamp.materials[0] = glossy.clone();
+    let analytic = render(lamp, 1024);
+    let geometric = render(
+        with_placed_panel(radiance, panel(half, half, height), Transform::default(), glossy),
+        1024,
+    );
+    let (error, compared) = floor_difference(&analytic, &geometric);
+    assert!(compared > 200, "only {compared} pixels were comparable");
+    assert!(
+        error < 0.08,
+        "the glossy floor's reflection of the glowing panel differs from the area light's by {:.1}%",
+        error * 100.0
+    );
+}
+
+/// A glow is placed by its part's transform: a panel half as wide, stretched
+/// to twice its width and mirrored, which turns its winding over, lights as
+/// the same rectangle as an area light does. The area chosen over is the
+/// placed one, and so is the side that glows.
+#[test]
+fn a_placed_glow_lights_by_its_placed_size() {
+    let (radiance, half, height) = SMALL;
+    let analytic = render(with_area_light(radiance, half, height), 256);
+    let geometric = render(
+        with_placed_panel(
+            radiance,
+            panel(half / 2.0, half, height),
+            Transform::from_matrix(Mat4::scale(vec3(-2.0, 1.0, 1.0))).expect("invertible"),
+            matte(),
+        ),
+        256,
+    );
+    let (error, compared) = floor_difference(&analytic, &geometric);
+    assert!(compared > 200, "only {compared} pixels were comparable");
+    assert!(
+        error < 0.06,
+        "the stretched, mirrored panel differs from the area light by {:.1}%",
         error * 100.0
     );
 }
