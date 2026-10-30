@@ -39,7 +39,7 @@ fn assembly() -> (SceneDocument, CommandBus, Vec<NodeId>, Vec<MaterialKey>) {
         let mut node = SceneNode::new(ids[i], *name, NodeKind::Part { mesh: meshes[0] });
         node.material = Some(materials[*material]);
         if *name == "Bracket" {
-            node.metadata.insert("Layer".into(), "HARDWARE".into());
+            node.layers.push("HARDWARE".into());
         }
         nodes.push(node);
     }

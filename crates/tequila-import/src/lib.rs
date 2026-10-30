@@ -582,6 +582,7 @@ fn finish_build(
         node.parent = source.parent.map(|p| node_ids[p]).or(parent);
         node.transform = source.transform;
         node.metadata = source.metadata.clone();
+        node.layers = source.layers.clone();
         if source.hidden {
             node.visible = false;
         }

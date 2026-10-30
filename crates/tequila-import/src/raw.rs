@@ -43,6 +43,8 @@ pub struct RawNode {
     /// Index into [`RawScene::meshes`]; `None` for a pure grouping node.
     pub mesh: Option<usize>,
     pub metadata: BTreeMap<String, String>,
+    /// The CAD layers the file put it on, in the file's order.
+    pub layers: Vec<String>,
     /// Switched off in the file: a CAD part on a layer that is turned off.
     pub hidden: bool,
 }
@@ -55,6 +57,7 @@ impl RawNode {
             transform: Transform::IDENTITY,
             mesh: Some(mesh),
             metadata: BTreeMap::new(),
+            layers: Vec::new(),
             hidden: false,
         }
     }
@@ -66,6 +69,7 @@ impl RawNode {
             transform: Transform::IDENTITY,
             mesh: None,
             metadata: BTreeMap::new(),
+            layers: Vec::new(),
             hidden: false,
         }
     }

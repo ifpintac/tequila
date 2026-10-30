@@ -26,6 +26,7 @@ pub mod document;
 pub mod environment;
 pub mod geometry;
 pub mod gizmo;
+pub mod layers;
 pub mod lighting;
 pub mod livelink;
 pub mod material;

@@ -5159,6 +5159,7 @@ impl TequilaApp {
                 ui.separator();
                 theme::section(ui, "Metadata");
                 tab.metadata_panel(ui, &mut self.project);
+                tab.layers_panel(ui, &mut self.project);
                 let update = tab.update_request.take();
                 let retessellate = tab.retessellate_request.take();
                 let units = tab.units_request.take();

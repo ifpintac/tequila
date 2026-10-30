@@ -1765,6 +1765,38 @@ mod handler_tests {
         assert!(named.iter().all(|id| document.sources.get(id).is_some()), "the model names a source the project does not keep");
     }
 
+    /// A script sees a CAD file's layers and attributes - each node's, and
+    /// the scene's list of layers with whether they are shown - and shows a
+    /// switched-off layer by name, as one command.
+    #[test]
+    fn a_script_reads_layers_and_metadata_and_shows_a_layer() {
+        let mut app = TequilaApp::for_tests();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/tequila-import/tests/data/layers.step").replace('\\', "/");
+        let reply = ask(&mut app, &format!(r#"{{"op":"import","path":"{path}"}}"#));
+        assert!(!matches!(reply, Reply::Failed(_)), "{reply:?}");
+        let layer = |app: &mut TequilaApp, name: &str| -> String {
+            let context = value(app, r#"{"op":"query","what":"context"}"#);
+            let layers = context.get("scene").and_then(|s| s.get("layers")).expect("the scene lists its layers").as_array().to_vec();
+            let entry = layers.iter().find(|l| l.get("name").and_then(Value::as_str) == Some(name)).unwrap_or_else(|| panic!("no layer {name}: {layers:?}"));
+            assert!(!entry.get("nodes").unwrap().as_array().is_empty());
+            entry.get("shown").and_then(Value::as_str).unwrap().to_string()
+        };
+        assert_eq!(layer(&mut app, "Outer"), "all");
+        assert_eq!(layer(&mut app, "Construction"), "none");
+
+        let nodes = value(&mut app, r#"{"op":"query","what":"nodes"}"#);
+        let node = |name: &str| nodes.get("nodes").unwrap().as_array().iter().find(|n| n.get("name").and_then(Value::as_str) == Some(name)).cloned().unwrap();
+        let part = node("Box");
+        let on: Vec<&str> = part.get("layers").unwrap().as_array().iter().filter_map(Value::as_str).collect();
+        assert_eq!(on, ["Outer"]);
+        assert_eq!(node("Housing").get("metadata").and_then(|m| m.get("Finish")).and_then(Value::as_str), Some("Mold-Tech 11010"));
+
+        value(&mut app, r#"{"op":"apply","command":{"command":"scene.set_layer_visibility","layer":"Construction","visible":true}}"#);
+        assert_eq!(layer(&mut app, "Construction"), "all");
+        let message = failure(&mut app, r#"{"op":"apply","command":{"command":"scene.set_layer_visibility","layer":"Hatching","visible":false}}"#);
+        assert!(message.contains("Hatching"), "{message}");
+    }
+
     /// A file that does not say its unit comes in at the unit its size
     /// suggests, from a script as from the File menu: 120 by 80 is
     /// millimetres, so 0.12 m wide, not 120 m.

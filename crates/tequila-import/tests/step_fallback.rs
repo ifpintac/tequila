@@ -35,9 +35,9 @@ fn truck_reads_layers_and_attributes_too() {
     assert_eq!(housing.metadata.get("Description").map(String::as_str), Some("Front housing"));
     assert_eq!(housing.metadata.get("Definition").map(String::as_str), Some("Production release"));
     assert_eq!(housing.metadata.get("Finish").map(String::as_str), Some("Mold-Tech 11010"));
-    assert_eq!(node("Box").metadata.get("Layer").map(String::as_str), Some("Outer"));
+    assert_eq!(node("Box").layers, ["Outer"]);
     assert_eq!(node("Box").metadata.get("Material").map(String::as_str), Some("ABS"));
     assert!(!node("Box").hidden);
-    assert_eq!(node("Pin").metadata.get("Layer").map(String::as_str), Some("Construction"));
+    assert_eq!(node("Pin").layers, ["Construction"]);
     assert!(node("Pin").hidden);
 }

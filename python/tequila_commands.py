@@ -24,6 +24,7 @@ CATALOG = (
     'scene.rename',
     'scene.set_transform',
     'scene.set_visibility',
+    'scene.set_layer_visibility',
     'scene.set_locked',
     'scene.set_rays',
     'scene.set_pivot',
@@ -198,7 +199,7 @@ class SceneCommands(_Commands):
     def reimport(self, *, payload=_UNSET):
         r"""`scene.reimport`: An updated version of an imported model, matched to it part by part (`crate::reimport`).
 
-        { "command": "scene.reimport", "payload": { "added": { "materials": [], "meshes": [ { "data": "RlNNRVNIAAABAAAAAwAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAABAAAAAgAAAAAAAAA=", "key": 1 } ], "nodes": [ { "children": [], "id": 51, "kind": "Part", "locked": false, "mesh": 1, "name": "Lid", "parent": 1, "path_key": "Bracket#1/Lid#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], "visible": true } ], "roots": [51] }, "hidden": [3], "updates": [ { "material": 1, "mesh": 1, "metadata": { "Revision": "B" }, "node": 2, "path_key": "Bracket#1/Housing#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1, 0, 0, 0, 0, 1] }, { "metadata": {}, "node": 1, "path_key": "Bracket#1" } ] } }
+        { "command": "scene.reimport", "payload": { "added": { "materials": [], "meshes": [ { "data": "RlNNRVNIAAABAAAAAwAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAABAAAAAgAAAAAAAAA=", "key": 1 } ], "nodes": [ { "children": [], "id": 51, "kind": "Part", "layers": [ "Outer" ], "locked": false, "mesh": 1, "name": "Lid", "parent": 1, "path_key": "Bracket#1/Lid#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], "visible": true } ], "roots": [51] }, "hidden": [3], "updates": [ { "layers": [ "Outer", "Shell, inner" ], "material": 1, "mesh": 1, "metadata": { "Revision": "B" }, "node": 2, "path_key": "Bracket#1/Housing#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1, 0, 0, 0, 0, 1] }, { "metadata": {}, "node": 1, "path_key": "Bracket#1" } ] } }
         """
         return self._apply('scene.reimport', {'payload': payload})
 
@@ -243,6 +244,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_visibility", "states": [ { "node": 2, "value": false } ] }
         """
         return self._apply('scene.set_visibility', {'states': states})
+
+    def set_layer_visibility(self, *, layer=_UNSET, visible=_UNSET):
+        r"""`scene.set_layer_visibility`: Every node on a CAD layer, as the file named it, shown or hidden as one step.
+
+        { "command": "scene.set_layer_visibility", "layer": "Construction", "visible": false }
+        """
+        return self._apply('scene.set_layer_visibility', {'layer': layer, 'visible': visible})
 
     def set_locked(self, *, states=_UNSET):
         r"""`scene.set_locked`: A lock per node: a locked node, and everything under it, refuses edits until unlocked.

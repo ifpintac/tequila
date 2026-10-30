@@ -51,7 +51,8 @@ Questions, bugs, ideas and renders: join the
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
   OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
-  colours and units; very large models; re-tessellate and re-import that
+  colours and units, and a CAD file's attributes and layers (shown and
+  hidden as groups); very large models; re-tessellate and re-import that
   keep your work. Send models from Blender (live), SolidWorks and ZBrush
   ([integrations](integrations)).
 - **Materials** - a library of 309 procedural materials (plastics, metals,

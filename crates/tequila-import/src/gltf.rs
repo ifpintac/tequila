@@ -1805,6 +1805,7 @@ fn read_nodes(
                 _ => None,
             },
             metadata: Default::default(),
+            layers: Vec::new(),
             hidden: false,
         };
         // §6.5: "Retain all imported attributes per node." glTF puts them in

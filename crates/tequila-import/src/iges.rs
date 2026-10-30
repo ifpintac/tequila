@@ -16,11 +16,12 @@
 //!   104, 106, 102, 112, 126);
 //! * transformation matrices, colours (by number or a 314 definition),
 //!   names (406 form 15, or an entity's label), subfigures (308 placed by
-//!   408, meshed once and shared), and the length unit.
+//!   408, meshed once and shared), and the length unit;
+//! * levels, IGES's layers, as each part's layers ("Level 5").
 //!
 //! A surface model has no bodies, only so many separate faces. Faces that
-//! meet at their corners and share a colour are gathered into one part,
-//! which is what the model drew as one body; a solid is one part.
+//! meet at their corners and share a colour and levels are gathered into
+//! one part, which is what the model drew as one body; a solid is one part.
 //!
 //! Each face is divided in its own parameter space: constrained Delaunay
 //! over its trimming loops and a grid fine enough for the chord tolerance,
@@ -30,7 +31,9 @@
 //! closed surface's seam is not an edge and is left out.
 //!
 //! Not read: offset curves and surfaces, and the drafting entities.
-//! Compressed and binary IGES are refused by name.
+//! Compressed and binary IGES are refused by name. Where OpenCASCADE's
+//! helper is installed, it reads a file this reader cannot read whole
+//! ([`read_with`]).
 
 use crate::raw::{RawMesh, RawNode, RawScene};
 use crate::step::Tessellation;
@@ -110,6 +113,9 @@ struct Entity {
     form: i64,
     matrix: u64,
     colour: i64,
+    /// Its level: a number, or (negative) a pointer to a definition levels
+    /// property (406 form 1) listing several.
+    level: i64,
     blanked: bool,
     dependent: bool,
     label: String,
@@ -276,6 +282,7 @@ fn parse(bytes: &[u8]) -> Result<File, String> {
                 form: int(&field8(b, 4)),
                 matrix: int(&field8(a, 6)).max(0) as u64,
                 colour: int(&field8(b, 2)),
+                level: int(&field8(a, 4)),
                 blanked: &status[0..2] == "01",
                 dependent: &status[2..4] != "00",
                 label: field8(b, 7),
@@ -656,6 +663,8 @@ struct Face {
     /// The solid it is a face of, where the file says.
     body: Option<u64>,
     name: Option<String>,
+    /// The levels of the entity that drew it, as layers.
+    layers: Vec<String>,
 }
 
 impl Face {
@@ -1472,6 +1481,31 @@ impl Reader {
         })
     }
 
+    /// An entity's levels, as layers: IGES's layers are numbered levels,
+    /// named "Level 5" as OpenCASCADE's reading of the file names them, so
+    /// a file reads the same by either. One level, or a definition levels
+    /// property (406 form 1) listing several; level 0 is none.
+    fn levels(&self, e: &Entity) -> Vec<String> {
+        let numbers: Vec<i64> = if e.level > 0 {
+            vec![e.level]
+        } else if e.level < 0 {
+            match self.get(e.level.unsigned_abs()).filter(|p| p.kind == 406 && p.form == 1) {
+                Some(p) => (0..Reader::int(p, 0).max(0) as usize).map(|i| Reader::int(p, 1 + i)).collect(),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let mut out: Vec<String> = Vec::new();
+        for number in numbers.into_iter().filter(|n| *n > 0) {
+            let name = format!("Level {number}");
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        out
+    }
+
     /// An entity's name: a name property (406 form 15) among the pointers
     /// after its `used` parameters, or its label.
     fn name(&self, e: &Entity, used: usize) -> Option<String> {
@@ -1528,12 +1562,13 @@ impl Reader {
                     colour: self.colour(e).or_else(|| surface_entity.and_then(|s| self.colour(s))),
                     body: None,
                     name: self.name(e, 4 + inner),
+                    layers: Vec::new(),
                 });
             }
             128 | 118 | 120 | 122 => {
                 let Some(surface) = self.surface(de, 0) else { return };
                 if surface.bounded() {
-                    out.push(Face { surface, loops: Vec::new(), reversed: false, colour: self.colour(e), body: None, name: Some(e.label.clone()).filter(|l| !l.is_empty()) });
+                    out.push(Face { surface, loops: Vec::new(), reversed: false, colour: self.colour(e), body: None, name: Some(e.label.clone()).filter(|l| !l.is_empty()), layers: Vec::new() });
                 }
             }
             108 if e.form == 1 => {
@@ -1542,7 +1577,7 @@ impl Reader {
                 // The plane's own matrix placed the surface; its boundary
                 // is in the same space before it.
                 let boundary = boundary.into_iter().map(|p| p.mapped(&self.placement(e))).collect();
-                out.push(Face { surface, loops: vec![vec![Segment::Model(boundary)]], reversed: false, colour: self.colour(e), body: None, name: None });
+                out.push(Face { surface, loops: vec![vec![Segment::Model(boundary)]], reversed: false, colour: self.colour(e), body: None, name: None, layers: Vec::new() });
             }
             186 => {
                 let reversed = Reader::int(e, 1) == 0;
@@ -1563,7 +1598,9 @@ impl Reader {
             108 => {}
             other => self.skip(other),
         }
+        let layers = self.levels(e);
         for face in &mut out[start..] {
+            face.layers = layers.clone();
             if placement != Affine::IDENTITY && matches!(e.kind, 144 | 186 | 514) {
                 face.surface = face.surface.clone().mapped(&placement);
                 for segment in face.loops.iter_mut().flatten() {
@@ -1622,13 +1659,15 @@ impl Reader {
                 colour: self.colour(face),
                 body: Some(body),
                 name: None,
+                layers: Vec::new(),
             });
         }
     }
 }
 
 /// Faces gathered into bodies: a solid's are one body; the rest, by the
-/// corners they share, colour by colour.
+/// corners they share, colour by colour and level by level, so a body is
+/// on the layers each of its faces is on.
 fn bodies(faces: &[Face], tolerance: f64) -> Vec<Vec<usize>> {
     let mut parent: Vec<usize> = (0..faces.len()).collect();
     fn root(parent: &mut [usize], mut i: usize) -> usize {
@@ -1660,7 +1699,7 @@ fn bodies(faces: &[Face], tolerance: f64) -> Vec<Vec<usize>> {
                 for dy in -1..=1 {
                     for dz in -1..=1 {
                         for &(j, q) in cells.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).into_iter().flatten() {
-                            if j != i && faces[j].colour == face.colour && length(sub(q, corner)) <= tolerance {
+                            if j != i && faces[j].colour == face.colour && faces[j].layers == face.layers && length(sub(q, corner)) <= tolerance {
                                 matches.push(j);
                             }
                         }
@@ -1687,7 +1726,40 @@ pub fn read(bytes: &[u8], name: &str) -> Result<RawScene, ImportError> {
 }
 
 /// Read an IGES file, dividing its surfaces at `quality`.
+///
+/// Tequila's own reader reads it, and OpenCASCADE's (`crate::occt`, where
+/// its helper is installed) only when that reader cannot read the file or
+/// leaves some of it out. Not the other way about, as for STEP: the two lay
+/// out a surface model differently - Tequila gathers faces that meet into
+/// bodies, OpenCASCADE keeps a part a surface - and a model already in a
+/// project is updated, and divided again, by matching its parts' names, so
+/// a reader that changed under it would cost every part its material.
 pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawScene, ImportError> {
+    let own = read_own(bytes, name, quality);
+    let short = match &own {
+        Ok((_, None)) => return own.map(|(scene, _)| scene),
+        Ok((_, Some(short))) => short.clone(),
+        Err(error) => format!("could not read it ({error})"),
+    };
+    let Some(helper) = crate::occt::helper() else {
+        return own.map(|(scene, _)| scene);
+    };
+    let reading = crate::step::Reading::start();
+    let read = crate::occt::read(&helper, bytes, crate::occt::Format::Iges, quality.chord(), quality.angle(), &reading.report());
+    match read.map(|read| crate::step::from_occt_iges(read, name, quality)) {
+        Ok(Ok(mut scene)) => {
+            scene.warnings.insert(0, format!("Tequila's own reader {short}, so OpenCASCADE read the file"));
+            Ok(scene)
+        }
+        // OpenCASCADE could not do better: what Tequila's reader made of
+        // it, or why it could not, stands.
+        _ => own.map(|(scene, _)| scene),
+    }
+}
+
+/// The file read by Tequila's own reader, and what it left out, if it left
+/// out anything.
+fn read_own(bytes: &[u8], name: &str, quality: Tessellation) -> Result<(RawScene, Option<String>), ImportError> {
     let file = parse(bytes).map_err(|e| ImportError::Malformed(format!("this is not an IGES file Tequila can read: {e}")))?;
     let reader = Reader { entities: file.entities, skipped: RefCell::new(BTreeMap::new()) };
 
@@ -1745,7 +1817,7 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
     let mut warnings = Vec::new();
     let mut failed = 0usize;
     // A container's bodies as meshes, named.
-    let mut mesh_container = |faces: &[Face], scene: &mut RawScene, counter: &mut usize| -> Vec<usize> {
+    let mut mesh_container = |faces: &[Face], scene: &mut RawScene, counter: &mut usize| -> Vec<(usize, Vec<String>)> {
         use rayon::prelude::*;
         let groups = bodies(faces, model_size * 1e-5);
         let tolerances: Vec<f64> = groups
@@ -1791,7 +1863,7 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
                 }
             });
             scene.meshes.push(mesh);
-            out.push(scene.meshes.len() - 1);
+            out.push((scene.meshes.len() - 1, first.layers.clone()));
         }
         out
     };
@@ -1799,14 +1871,15 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
     let mut counter = 0;
     scene.nodes.push(RawNode::group(name));
     scene.roots.push(0);
-    for mesh in mesh_container(&top_faces, &mut scene, &mut counter) {
+    for (mesh, layers) in mesh_container(&top_faces, &mut scene, &mut counter) {
         let mut node = RawNode::part(scene.meshes[mesh].name.clone(), mesh);
         node.parent = Some(0);
+        node.layers = layers;
         scene.nodes.push(node);
     }
     // Subfigures: each definition meshed once, placed where each instance
     // puts it.
-    let mut placed_meshes: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
+    let mut placed_meshes: BTreeMap<u64, Vec<(usize, Vec<String>)>> = BTreeMap::new();
     for (definition, faces) in &definitions {
         placed_meshes.insert(*definition, mesh_container(faces, &mut scene, &mut counter));
     }
@@ -1820,22 +1893,28 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
         let mut group = RawNode::group(Reader::text(d, 1).or_else(|| reader.name(e, 5)).unwrap_or_else(|| "Subfigure".into()));
         group.parent = Some(0);
         group.transform = local.then(&reader.placement(e)).to_transform(file.scale);
+        group.layers = reader.levels(e);
         scene.nodes.push(group);
         let parent = scene.nodes.len() - 1;
-        for &mesh in placed_meshes.get(&definition).into_iter().flatten() {
-            let mut node = RawNode::part(scene.meshes[mesh].name.clone(), mesh);
+        for (mesh, layers) in placed_meshes.get(&definition).into_iter().flatten() {
+            let mut node = RawNode::part(scene.meshes[*mesh].name.clone(), *mesh);
             node.parent = Some(parent);
+            node.layers = layers.clone();
             scene.nodes.push(node);
         }
     }
 
+    // What was left out, also for `read_with` to ask OpenCASCADE about.
+    let mut short = None;
     if failed > 0 {
         warnings.push(format!("{failed} faces could not be divided and are missing"));
+        short = Some(format!("could not divide {failed} faces"));
     }
     let skipped = reader.skipped.borrow();
     if !skipped.is_empty() {
         let list: Vec<String> = skipped.iter().map(|(k, n)| format!("type {k} ×{n}")).collect();
         warnings.push(format!("entities Tequila does not read were left out: {}", list.join(", ")));
+        short = Some(format!("does not read {}", list.join(", ")));
     }
     if scene.meshes.is_empty() {
         return Err(ImportError::Malformed(format!(
@@ -1845,7 +1924,7 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
     }
     scene.warnings = warnings;
     scene.tessellation = Some(quality.label().to_string());
-    Ok(scene)
+    Ok((scene, short))
 }
 
 #[cfg(test)]
@@ -2225,6 +2304,7 @@ mod tests {
             colour: None,
             body: None,
             name: None,
+            layers: Vec::new(),
         };
         let mesh = to_mesh(&tessellate(&face, 0.01));
         let expected = TAU * 5.0 * 10.0;
@@ -2245,9 +2325,36 @@ mod tests {
             period: [Some(TAU), None],
             native: false,
         };
-        let face = Face { surface, loops: vec![vec![Segment::Model(circle_at(0.0, 5.0, 1.0))]], reversed: false, colour: None, body: None, name: None };
+        let face = Face { surface, loops: vec![vec![Segment::Model(circle_at(0.0, 5.0, 1.0))]], reversed: false, colour: None, body: None, name: None, layers: Vec::new() };
         let mesh = to_mesh(&tessellate(&face, 0.005));
         let expected = PI * 5.0 * 50f64.sqrt();
         assert!((area(&mesh) - expected).abs() < expected * 5e-3, "area {} not {expected}", area(&mesh));
+    }
+
+    /// An entity on one level is on that layer; one whose level points at a
+    /// definition levels property is on each it lists, once.
+    #[test]
+    fn levels_are_layers_one_or_several() {
+        let entity = |kind: u32, form: i64, level: i64, params: Vec<f64>| Entity {
+            kind,
+            form,
+            matrix: 0,
+            colour: 0,
+            level,
+            blanked: false,
+            dependent: false,
+            label: String::new(),
+            params: params.into_iter().map(Value::Number).collect(),
+        };
+        let mut entities = BTreeMap::new();
+        entities.insert(1, entity(406, 1, 0, vec![3.0, 5.0, 200.0, 5.0]));
+        entities.insert(3, entity(128, 0, -1, Vec::new()));
+        entities.insert(5, entity(128, 0, 12, Vec::new()));
+        entities.insert(7, entity(128, 0, 0, Vec::new()));
+        let reader = Reader { entities, skipped: RefCell::new(BTreeMap::new()) };
+        let levels = |de: u64| reader.levels(reader.get(de).unwrap());
+        assert_eq!(levels(3), ["Level 5", "Level 200"]);
+        assert_eq!(levels(5), ["Level 12"]);
+        assert!(levels(7).is_empty());
     }
 }

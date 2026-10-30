@@ -19,11 +19,11 @@ call "%VCVARS%" >nul || exit /b 1
 if not exist "%OUT%" mkdir "%OUT%"
 if not exist "%OUT%\occt" mkdir "%OUT%\occt"
 
-set LIBS=TKernel.lib TKMath.lib TKG2d.lib TKG3d.lib TKGeomBase.lib TKBRep.lib TKTopAlgo.lib TKMesh.lib TKShHealing.lib TKXSBase.lib TKDE.lib TKDESTEP.lib TKXCAF.lib TKLCAF.lib TKCAF.lib TKCDF.lib TKRWMesh.lib TKService.lib TKV3d.lib TKVCAF.lib
+set LIBS=TKernel.lib TKMath.lib TKG2d.lib TKG3d.lib TKGeomBase.lib TKBRep.lib TKTopAlgo.lib TKMesh.lib TKShHealing.lib TKXSBase.lib TKDE.lib TKDESTEP.lib TKDEIGES.lib TKXCAF.lib TKLCAF.lib TKCAF.lib TKCDF.lib TKRWMesh.lib TKService.lib TKV3d.lib TKVCAF.lib
 cl /nologo /std:c++17 /O2 /EHsc /MD /DNDEBUG /I"%OCCT%\inc" "%HERE%tequila_occt.cpp" /Fo"%OUT%\\" /Fe"%OUT%\occt\tequila-occt.exe" /link /LIBPATH:"%OCCT%\win64\vc14\lib" %LIBS% || exit /b 1
 
 rem OCCT's libraries the helper loads, and theirs.
-for %%d in (TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo TKBRep TKTopAlgo TKPrim TKBO TKHLR TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKXCAF TKLCAF TKCAF TKCDF TKVCAF TKService TKV3d TKRWMesh) do (
+for %%d in (TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo TKBRep TKTopAlgo TKPrim TKBO TKHLR TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKDEIGES TKBool TKXCAF TKLCAF TKCAF TKCDF TKVCAF TKService TKV3d TKRWMesh) do (
   copy /y "%OCCT%\win64\vc14\bin\%%d.dll" "%OUT%\occt\" >nul || exit /b 1
 )
 for %%d in (tbb-2021.13.0-x64\bin\tbb12.dll jemalloc-vc14-64\bin\jemalloc.dll openvr-1.14.15-64\bin\win64\openvr_api.dll freeimage-3.18.0-x64\bin\FreeImage.dll freetype-2.13.3-x64\bin\freetype.dll ffmpeg-3.3.4-64\bin\avcodec-57.dll ffmpeg-3.3.4-64\bin\avformat-57.dll ffmpeg-3.3.4-64\bin\avutil-55.dll ffmpeg-3.3.4-64\bin\swscale-4.dll) do (

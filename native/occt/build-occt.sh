@@ -24,7 +24,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="$here/build/occt"
 # The same libraries build-occt.bat links.
-libs=(TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKTopAlgo TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKXCAF TKLCAF TKCAF TKCDF TKRWMesh TKService TKV3d TKVCAF)
+libs=(TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKTopAlgo TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKDEIGES TKXCAF TKLCAF TKCAF TKCDF TKRWMesh TKService TKV3d TKVCAF)
 
 # The one check that matters: it reads a STEP file.
 check() {

@@ -75,7 +75,7 @@ Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `mate
 
 ## Commands
 
-56 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+57 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -252,7 +252,7 @@ An updated version of an imported model, matched to it part by part
 `fs.commands.scene.reimport(payload=...)`
 
 ```json
-{ "command": "scene.reimport", "payload": { "added": { "materials": [], "meshes": [ { "data": "RlNNRVNIAAABAAAAAwAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAABAAAAAgAAAAAAAAA=", "key": 1 } ], "nodes": [ { "children": [], "id": 51, "kind": "Part", "locked": false, "mesh": 1, "name": "Lid", "parent": 1, "path_key": "Bracket#1/Lid#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], "visible": true } ], "roots": [51] }, "hidden": [3], "updates": [ { "material": 1, "mesh": 1, "metadata": { "Revision": "B" }, "node": 2, "path_key": "Bracket#1/Housing#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1, 0, 0, 0, 0, 1] }, { "metadata": {}, "node": 1, "path_key": "Bracket#1" } ] } }
+{ "command": "scene.reimport", "payload": { "added": { "materials": [], "meshes": [ { "data": "RlNNRVNIAAABAAAAAwAAAAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAABAAAAAgAAAAAAAAA=", "key": 1 } ], "nodes": [ { "children": [], "id": 51, "kind": "Part", "layers": [ "Outer" ], "locked": false, "mesh": 1, "name": "Lid", "parent": 1, "path_key": "Bracket#1/Lid#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], "visible": true } ], "roots": [51] }, "hidden": [3], "updates": [ { "layers": [ "Outer", "Shell, inner" ], "material": 1, "mesh": 1, "metadata": { "Revision": "B" }, "node": 2, "path_key": "Bracket#1/Housing#1", "transform": [1, 0, 0, 0, 0, 1, 0, 0.5, 0, 0, 1, 0, 0, 0, 0, 1] }, { "metadata": {}, "node": 1, "path_key": "Bracket#1" } ] } }
 ```
 
 #### `scene.add_group`
@@ -322,6 +322,17 @@ menu item, with the first press appearing to do nothing.
 
 ```json
 { "command": "scene.set_visibility", "states": [ { "node": 2, "value": false } ] }
+```
+
+#### `scene.set_layer_visibility`
+
+Every node on a CAD layer, as the file named it, shown or hidden as one
+step.
+
+`fs.commands.scene.set_layer_visibility(layer=..., visible=...)`
+
+```json
+{ "command": "scene.set_layer_visibility", "layer": "Construction", "visible": false }
 ```
 
 #### `scene.set_locked`
