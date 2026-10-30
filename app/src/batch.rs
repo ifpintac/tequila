@@ -582,8 +582,9 @@ pub(crate) fn cycles_here() -> &'static Result<bool, String> {
     static CYCLES: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
     CYCLES.get_or_init(|| {
         // The kinds the graphics-card engine renders on
-        // (`RenderEngine::cycles_device`): Metal on a Mac, NVIDIA's elsewhere.
-        let usable = |kind: &str| if cfg!(target_os = "macos") { kind == "METAL" } else { kind == "CUDA" || kind == "OPTIX" };
+        // (`RenderEngine::cycles_device`): Metal on a Mac, NVIDIA's or AMD's
+        // elsewhere.
+        let usable = |kind: &str| if cfg!(target_os = "macos") { kind == "METAL" } else { matches!(kind, "CUDA" | "OPTIX" | "HIP") };
         tequila_render_cycles::devices().map(|devices| devices.iter().any(|(kind, _, _)| usable(kind)))
     })
 }

@@ -1394,9 +1394,13 @@ fn engine_choice(
     if device.is_some() || settings.engine != RenderEngine::CyclesGpu {
         return (true, named(settings.engine.cycles_device()), None);
     }
-    let has = |kind: &str| found.iter().any(|(k, _, _)| k == kind);
     let wanted = settings.engine.cycles_device();
-    let card = if has(wanted) { Some(wanted) } else if !cfg!(target_os = "macos") && has("CUDA") { Some("CUDA") } else { None };
+    // "GPU" is the best card there is, as a session would choose it.
+    let card = if wanted == "GPU" {
+        tequila_render_cycles::best_of(found.iter().map(|(k, _, _)| k.as_str()))
+    } else {
+        found.iter().any(|(k, _, _)| k == wanted).then_some(wanted)
+    };
     match card {
         Some(card) => (true, card.to_string(), None),
         None => (true, "CPU".into(), Some("Cycles found no graphics card it can use, so it renders on the processor".into())),
@@ -1671,7 +1675,8 @@ mod engine_tests {
     fn a_project_renders_with_its_own_engine() {
         let with = |engine| RenderSettings { engine, ..Default::default() };
         let gpu = with(RenderEngine::CyclesGpu);
-        let card = RenderEngine::CyclesGpu.cycles_device().to_string();
+        // The card a session would use: Metal on a Mac, OptiX here.
+        let card = if cfg!(target_os = "macos") { "METAL" } else { "OPTIX" }.to_string();
         let with_card = || -> Devices { Ok(vec![(card.clone(), "a graphics card".into(), "0".into()), ("CPU".into(), "the processor".into(), "1".into())]) };
         let processor_only = || -> Devices { Ok(vec![("CPU".into(), "the processor".into(), "0".into())]) };
         let missing = || -> Devices { Err("tequila_cycles.dll is not installed".into()) };
@@ -1689,5 +1694,12 @@ mod engine_tests {
         let (cycles, _, why) = engine_choice(None, None, Some(&region), &with_card);
         assert!(!cycles && why.is_some(), "a region is Tequila's renderer's");
         assert_eq!(engine_choice(None, None, None, &with_card), (false, "CPU".into(), None), "a model");
+        if !cfg!(target_os = "macos") {
+            let card = |kind: &str| (kind.to_string(), "a graphics card".to_string(), "0".to_string());
+            let amd = || -> Devices { Ok(vec![card("HIP"), card("CPU")]) };
+            assert_eq!(engine_choice(None, None, Some(&gpu), &amd).1, "HIP", "an AMD card renders with HIP");
+            let both = || -> Devices { Ok(vec![card("HIP"), card("CUDA")]) };
+            assert_eq!(engine_choice(None, None, Some(&gpu), &both).1, "CUDA", "NVIDIA's before AMD's");
+        }
     }
 }

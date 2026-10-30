@@ -860,8 +860,11 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
 - [~] wgpu compute wavefront path tracer: stage kernels, SoA path state, material sorting.
       *Superseded* by Cycles' own GPU integrator.
 - [x] OptiX backend (NVIDIA hardware RT): Cycles' OptiX device.
-- [~] HIP RT backend (AMD): Cycles has it; this build ships the NVIDIA
-      kernels only.
+- [x] HIP backend (AMD): Cycles' HIP device, loaded at run time, with
+      Blender 5.0.1's HIP kernels, on Windows and Linux; the GPU denoiser
+      takes OIDN's HIP device on an AMD card. *Done 2026-10-30, untested on
+      an AMD card here* (an RTX 2060 machine). HIP RT, AMD's hardware ray
+      tracing, is left off: it needs AMD's HIP RT library beside Cycles.
 - [~] Texture streaming with LRU device residency; graceful CPU fallback on VRAM exhaustion.
       Cycles' texture handling; a render with no usable card falls back to
       Cycles on the processor (`batch::engine_for`).
@@ -869,8 +872,12 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       in the app's tests wherever Cycles is installed, and the whole-image
       agreement is measured above; neither is a CI gate yet, which needs
       the Cycles library on the CI machine.
-- [~] Multi-GPU support: Cycles' device list supports it; the app picks
-      one device.
+- [x] Multi-GPU support: the graphics-card engine renders on every card of
+      the best kind there is (OptiX, else CUDA, else HIP; Metal on a Mac)
+      together, as Cycles' multi-device, as Blender does with several
+      enabled. `TEQUILA_CYCLES_ONE_DEVICE` keeps it to the first, for a card
+      that misbehaves. *Done 2026-10-30; one card here, so the multi-device
+      path is Cycles' own, unexercised by this build's tests.*
 
 **Exit criterion:** GPU backend produces images matching CPU within tolerance on the parity suite, at ≥ 8× CPU throughput on the benchmark scene.
 

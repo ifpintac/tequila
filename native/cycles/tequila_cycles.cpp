@@ -406,17 +406,28 @@ Transform to_transform(const float *m)
   return t;
 }
 
-bool device_from_name(const char *name, DeviceInfo &out)
+/* A device by name. A kind - CUDA, OPTIX, HIP, METAL - takes every card of
+ * that kind, rendering together as Blender does with several enabled: a
+ * second card was left idle. TEQUILA_CYCLES_ONE_DEVICE keeps to the first,
+ * for when one of them misbehaves. An id is that device alone. */
+bool device_from_name(const char *name, int threads, bool background, DeviceInfo &out)
 {
   const DeviceType type = Device::type_from_string(name);
   if (type != DEVICE_NONE) {
     vector<DeviceInfo> devices = Device::available_devices(DEVICE_MASK(type));
-    if (!devices.empty()) {
-      out = devices.front();
-      return true;
+    if (devices.empty()) {
+      fail(string("no ") + name + " device is available");
+      return false;
     }
-    fail(string("no ") + name + " device is available");
-    return false;
+    const bool one = getenv("TEQUILA_CYCLES_ONE_DEVICE") != nullptr;
+    /* The processor is one device however many cores it has. */
+    if (devices.size() > 1 && type != DEVICE_CPU && !one) {
+      out = Device::get_multi_device(devices, threads, background);
+    }
+    else {
+      out = devices.front();
+    }
+    return true;
   }
   for (const DeviceInfo &info : Device::available_devices()) {
     if (info.id == name) {
@@ -1259,7 +1270,7 @@ static FscSession *create(const char *device, int threads, const char *kernel_di
   init_once(kernel_dir);
 
   auto s = std::make_unique<FscSession>();
-  if (!device_from_name(device ? device : "CPU", s->session_params.device)) {
+  if (!device_from_name(device ? device : "CPU", threads, !live, s->session_params.device)) {
     return nullptr;
   }
   s->session_params.background = !live;

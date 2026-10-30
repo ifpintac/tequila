@@ -218,13 +218,14 @@ impl RenderEngine {
     }
 
     /// The Cycles device it renders on. On the graphics card: Metal on a Mac;
-    /// elsewhere OptiX - an NVIDIA card's ray-tracing cores - which
-    /// `tequila_render_cycles` falls back from to plain CUDA where OptiX
-    /// will not start.
+    /// elsewhere "GPU", which `tequila_render_cycles` makes the best kind of
+    /// card there is - OptiX on an NVIDIA card's ray-tracing cores, CUDA on
+    /// another NVIDIA card, HIP on an AMD one - every card of that kind at
+    /// once, and plain CUDA where OptiX will not start.
     pub fn cycles_device(self) -> &'static str {
         match self {
             RenderEngine::CyclesGpu if cfg!(target_os = "macos") => "METAL",
-            RenderEngine::CyclesGpu => "OPTIX",
+            RenderEngine::CyclesGpu => "GPU",
             _ => "CPU",
         }
     }

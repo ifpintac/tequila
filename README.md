@@ -18,7 +18,7 @@ Get the newest version from the **[Releases page](../../releases/latest)**:
 
 | | File | Needs |
 |---|---|---|
-| **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) renders on the graphics card; any other computer renders on the processor. |
+| **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) or an AMD one (RDNA, Radeon RX 5000 series or newer) renders on the graphics card, every card at once when there are several; any other computer renders on the processor. |
 | **Mac** | `Tequila-<version>.dmg` | A Mac with Apple's own chips (M1 or newer) and a recent macOS. |
 | **Linux** | `Tequila-<version>-linux-x86_64.tar.gz` | 64-bit Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). Unpack it anywhere and run `./Tequila`; `./install.sh` adds it to the application menu. Renders with Tequila's own renderer: Cycles is not in the Linux version yet. |
 

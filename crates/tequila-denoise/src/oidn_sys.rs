@@ -20,6 +20,7 @@ pub const OIDN_DEVICE_TYPE_DEFAULT: i32 = 0;
 /// The CPU device, the only one that can read plain host pointers.
 pub const OIDN_DEVICE_TYPE_CPU: i32 = 1;
 pub const OIDN_DEVICE_TYPE_CUDA: i32 = 3;
+pub const OIDN_DEVICE_TYPE_HIP: i32 = 4;
 pub const OIDN_DEVICE_TYPE_METAL: i32 = 5;
 
 pub const OIDN_FORMAT_FLOAT3: i32 = 3;

@@ -17,6 +17,7 @@ pub mod translate;
 
 use std::ffi::{c_int, c_void, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 /// A Cycles node, as a session handed it out. Opaque, so only a session
 /// makes one: the methods that take one pass it to C, and taking a bare
@@ -55,6 +56,38 @@ pub fn devices() -> Result<Vec<(String, String, String)>, String> {
             Some((parts.next()?.to_string(), parts.next()?.to_string(), parts.next()?.to_string()))
         })
         .collect())
+}
+
+/// The kind of graphics card Cycles renders on here, best first: OptiX on an
+/// NVIDIA card with ray-tracing cores, CUDA on any other NVIDIA card, HIP
+/// on an AMD one, Metal on a Mac - or none. Asked once: listing the devices
+/// wakes every graphics driver.
+pub fn best_gpu() -> Option<&'static str> {
+    static BEST: OnceLock<Option<&'static str>> = OnceLock::new();
+    *BEST.get_or_init(|| {
+        let found = devices().ok()?;
+        best_of(found.iter().map(|(kind, _, _)| kind.as_str()))
+    })
+}
+
+/// The best of the device kinds listed, as [`best_gpu`] chooses.
+pub fn best_of<'a>(kinds: impl Iterator<Item = &'a str> + Clone) -> Option<&'static str> {
+    ["OPTIX", "CUDA", "HIP", "METAL"].into_iter().find(|wanted| kinds.clone().any(|kind| kind == *wanted))
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::best_of;
+
+    #[test]
+    fn the_best_card_is_chosen_whoever_made_it() {
+        assert_eq!(best_of(["CPU", "CUDA", "OPTIX"].into_iter()), Some("OPTIX"));
+        assert_eq!(best_of(["CPU", "CUDA"].into_iter()), Some("CUDA"));
+        assert_eq!(best_of(["HIP", "CPU"].into_iter()), Some("HIP"), "an AMD card");
+        assert_eq!(best_of(["HIP", "CUDA"].into_iter()), Some("CUDA"));
+        assert_eq!(best_of(["METAL", "CPU"].into_iter()), Some("METAL"));
+        assert_eq!(best_of(["CPU"].into_iter()), None, "the processor is not a card");
+    }
 }
 
 /// The folder holding Cycles' `lib/` of GPU kernels: `explicit`, else
@@ -136,6 +169,12 @@ impl Session {
     }
 
     fn create(device: &str, threads: usize, kernels: Option<&std::path::Path>, live: bool) -> Result<Session, String> {
+        // "GPU": whichever kind of card this computer has, every one of it.
+        let device = if device.eq_ignore_ascii_case("GPU") {
+            best_gpu().ok_or_else(|| "Cycles found no graphics card it can use".to_string())?
+        } else {
+            device
+        };
         match Session::create_on(device, threads, kernels, live) {
             // OptiX needs RTX hardware and a recent driver; CUDA runs on any
             // NVIDIA card Cycles supports, a little slower.
