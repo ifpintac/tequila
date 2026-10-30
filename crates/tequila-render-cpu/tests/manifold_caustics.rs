@@ -40,11 +40,12 @@ fn plain() -> IntegratorConfig {
     IntegratorConfig { caustics: true, caustics_method: CausticsMethod::Photons, regularization_start_bounce: u32::MAX, ..IntegratorConfig::product() }
 }
 
-/// With the bounces the closed forms below describe: the floor lit
-/// straight through the glass, and none of the light the floor and the
-/// glass reflect between them.
-fn single(config: IntegratorConfig) -> IntegratorConfig {
-    IntegratorConfig { max_bounces: 3, ..config }
+/// With the bounces the closed forms below describe, through glass the
+/// path crosses `crossings` times: the floor lit straight through the
+/// glass, and none of the light the floor and the glass reflect between
+/// them.
+fn single(config: IntegratorConfig, crossings: u32) -> IntegratorConfig {
+    IntegratorConfig { max_bounces: crossings + 1, ..config }
 }
 
 /// A box with a normal per face, for glass whose faces the walk steps
@@ -234,7 +235,7 @@ fn a_point_light_through_a_slab_of_glass_brings_what_it_should() {
     let intersector = EmbreeIntersector::build(&device, scene(vec![(slab, glass())], vec![lamp], Spectrum::ZERO)).expect("builds");
     for x in [0.0f32, 0.3, 0.8, 1.5] {
         let r = (x * x + ASIDE * ASIDE).sqrt();
-        let seen = floor_at(&intersector, &single(manifold()), x, ASIDE, 0.25, 16);
+        let seen = floor_at(&intersector, &single(manifold(), 2), x, ASIDE, 0.25, 16);
         let expected = ALBEDO / std::f32::consts::PI * through_slab(10.0, height, r);
         println!("r {r}: {seen:.5} against {expected:.5}");
         assert!((seen / expected - 1.0).abs() < 0.01, "at {r} from the foot of the lamp the floor had {seen:.5}, not {expected:.5}");
@@ -242,6 +243,157 @@ fn a_point_light_through_a_slab_of_glass_brings_what_it_should() {
         let without = floor_at(&intersector, &plain(), x, ASIDE, 0.25, 16);
         assert!(without < expected * 0.05, "the slab let a point light by without the manifold sample: {without:.5}");
     }
+}
+
+/// The same through a slab of glass with a layer of water inside it: four
+/// crossings, two of them between glass and water, whose index each takes
+/// from the media the path is in (1.5 to 1.33, not 1.33 to air). Each layer
+/// widens the cone a ray at `theta` leaves in by its depth times the
+/// tangent it crosses it at, and each interface lets by what its Fresnel
+/// does not reflect.
+#[test]
+fn a_point_light_through_water_in_glass_brings_what_it_should() {
+    let height = 2.0;
+    let lamp = Light::new(LightKind::Point(PointLight { position: vec3(0.0, height, 0.0), intensity: Spectrum::splat(10.0), radius: 0.0 }));
+    let glass_block = block(vec3(-3.0, 0.5, -3.0), vec3(3.0, 0.62, 3.0));
+    let water_block = block(vec3(-2.5, 0.53, -2.5), vec3(2.5, 0.59, 2.5));
+    let water = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, specular_ior: 1.33, ..MaterialType::Liquid.defaults() };
+    let device = Device::shared().expect("an Embree device");
+    let intersector =
+        EmbreeIntersector::build(&device, scene(vec![(glass_block, glass()), (water_block, water)], vec![lamp], Spectrum::ZERO)).expect("builds");
+    // From the floor up: air, glass, water, glass, air, each with its depth
+    // and index.
+    let layers = [(0.5f32, 1.0f32), (0.03, 1.5), (0.06, 1.33), (0.03, 1.5), (height - 0.62, 1.0)];
+    let angle_in = |theta: f32, n: f32| (theta.sin() / n).asin();
+    let reach = |theta: f32| layers.iter().map(|&(depth, n)| depth * angle_in(theta, n).tan()).sum::<f32>();
+    let through = |theta: f32| {
+        layers.windows(2).map(|pair| 1.0 - tequila_materials::fresnel::dielectric(angle_in(theta, pair[0].1).cos(), pair[1].1 / pair[0].1)).product::<f32>()
+    };
+    for x in [0.0f32, 0.25, 0.6] {
+        let r = (x * x + ASIDE * ASIDE).sqrt();
+        let (mut low, mut high) = (0.0f32, 1.5f32);
+        for _ in 0..60 {
+            let mid = 0.5 * (low + high);
+            if reach(mid) < r {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        let theta = 0.5 * (low + high);
+        let step = 1e-3f32;
+        let dr = (reach(theta + step) - reach((theta - step).max(0.0))) / (theta + step - (theta - step).max(0.0));
+        let expected = ALBEDO / std::f32::consts::PI * 10.0 * through(theta) * theta.sin() / (r * dr);
+        let seen = floor_at(&intersector, &single(manifold(), 4), x, ASIDE, 0.25, 8);
+        println!("r {r}: {seen:.5} against {expected:.5}");
+        assert!((seen / expected - 1.0).abs() < 0.01, "through water in glass at {r} the floor had {seen:.5}, not {expected:.5}");
+    }
+}
+
+/// A surface of revolution about the vertical: `profile`, (radius, height)
+/// from a point on the axis to another, smooth.
+fn lathe(profile: &[(f32, f32)], around: usize) -> Mesh {
+    let last = profile.len() - 1;
+    let mut positions = Vec::new();
+    let mut rings = Vec::new();
+    for (i, &(r, y)) in profile.iter().enumerate() {
+        rings.push(positions.len() as u32);
+        if i == 0 || i == last {
+            positions.push(vec3(0.0, y, 0.0));
+        } else {
+            for j in 0..around {
+                let phi = j as f32 / around as f32 * std::f32::consts::TAU;
+                positions.push(vec3(r * phi.cos(), y, r * phi.sin()));
+            }
+        }
+    }
+    let at = |ring: usize, j: usize| if ring == 0 || ring == last { rings[ring] } else { rings[ring] + j as u32 };
+    let mut indices = Vec::new();
+    for i in 0..last {
+        for j in 0..around {
+            let k = (j + 1) % around;
+            let (a, b, c, d) = (at(i, j), at(i, k), at(i + 1, j), at(i + 1, k));
+            if i != 0 {
+                indices.extend_from_slice(&[a, c, b]);
+            }
+            if i + 1 != last {
+                indices.extend_from_slice(&[b, c, d]);
+            }
+        }
+    }
+    let mut mesh = Mesh::new(positions, indices);
+    mesh.compute_smooth_normals();
+    mesh
+}
+
+/// A quarter circle about `centre` from angle `from` to `to`, in degrees.
+fn arc(centre: (f32, f32), radius: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
+    (0..=6)
+        .map(|i| {
+            let a = (from + (to - from) * i as f32 / 6.0).to_radians();
+            (centre.0 + radius * a.cos(), centre.1 + radius * a.sin())
+        })
+        .collect()
+}
+
+/// A lamp shines through a small perfume flacon - a rounded block of glass,
+/// a centimetre and a half thick at the sides, with a scent inside - onto
+/// the floor behind it, and the manifold sample finds a good part of the
+/// light path tracing finds there, bouncing off the floor and through the
+/// flacon into a glowing ball where the lamp is; never more. Not all of
+/// it: the flacon is a cylinder lens, and where two paths through it join
+/// the same two points the walk finds the one its seed leads to, 45% of the
+/// light here (measured). Four crossings, two of them between glass and
+/// liquid, where landing each a few hundredths of a millimetre off moves the
+/// answer a long way: aimed from beside where it started, near the origin,
+/// every projection did, the walk stalled, and it found 0.6%.
+#[test]
+fn a_lamp_shines_through_a_perfume_flacon() {
+    let mut outer = vec![(0.0, 0.0)];
+    outer.extend(arc((0.05, 0.012), 0.012, -90.0, 0.0));
+    outer.extend(arc((0.05, 0.128), 0.012, 0.0, 90.0));
+    outer.extend([(0.03, 0.142), (0.0, 0.142)]);
+    let mut inner = vec![(0.0, 0.016)];
+    inner.extend(arc((0.034, 0.03), 0.014, -90.0, 0.0));
+    inner.extend(arc((0.034, 0.1), 0.014, 0.0, 90.0));
+    inner.push((0.0, 0.114));
+    let scent = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, specular_ior: 1.36, ..MaterialType::Liquid.defaults() };
+    let flacon = || vec![(lathe(&outer, 128), glass()), (lathe(&inner, 128), scent.clone())];
+    // A ball of light a centimetre and a half across, and the lamp the same
+    // size and as bright: a sphere of radiance L has intensity L pi r^2.
+    let (lamp_at, radius, radiance) = (vec3(0.42, 0.5, -0.52), 0.015f32, 2000.0f32);
+    let lamp = Light::new(LightKind::Point(PointLight { position: lamp_at, intensity: Spectrum::splat(radiance * std::f32::consts::PI * radius * radius), radius }));
+    let mut ball = tequila_scene::demo::uv_sphere(radius, 32, 16);
+    for p in &mut ball.positions {
+        *p += lamp_at;
+    }
+    let glow = Material { emission_color: Spectrum::ONE, emission_luminance: radiance, ..MaterialType::Emissive.defaults() };
+    let device = Device::shared().expect("an Embree device");
+    let solved = EmbreeIntersector::build(&device, scene(flacon(), vec![lamp], Spectrum::ZERO)).expect("builds");
+    let mut parts = flacon();
+    parts.push((ball, glow));
+    let traced = EmbreeIntersector::build(&device, scene(parts, Vec::new(), Spectrum::ZERO)).expect("builds");
+    // Points on the floor in the flacon's shadow: where no light reaches it
+    // with the glass solid.
+    let through = vec3(0.0, 0.06, 0.0);
+    let towards = (through - lamp_at).normalize();
+    let centre = lamp_at + towards * (-lamp_at.y / towards.y);
+    let (mut by_manifold, mut by_paths, mut points) = (0.0f64, 0.0f64, 0);
+    for i in 0..16 {
+        for j in 0..16 {
+            let (x, z) = (centre.x + (i as f32 - 7.5) * 0.012, centre.z + (j as f32 - 7.5) * 0.012);
+            if x * x + z * z < 0.07 * 0.07 || floor_at(&solved, &plain(), x, z, 0.002, 4) > 1e-4 {
+                continue;
+            }
+            points += 1;
+            by_manifold += f64::from(floor_at(&solved, &manifold(), x, z, 0.002, 64));
+            by_paths += f64::from(floor_at(&traced, &plain(), x, z, 0.002, 4096));
+        }
+    }
+    println!("behind the flacon ({points} points): {by_manifold:.4} by the manifold sample, {by_paths:.4} by path tracing");
+    assert!(points > 20, "no shadow to look in: {points} points");
+    let share = by_manifold / by_paths;
+    assert!(share > 0.35 && share < 1.05, "behind the flacon the manifold sample found {share:.3} of the light path tracing does");
 }
 
 #[test]
@@ -259,7 +411,7 @@ fn the_sun_through_a_slab_of_glass_brings_what_it_should() {
     let intersector = EmbreeIntersector::build(&device, scene(vec![(slab, glass())], vec![sun], Spectrum::ZERO)).expect("builds");
     let expected = ALBEDO / std::f32::consts::PI * 5.0 * angle.cos() * two_faces(angle.cos());
     for x in [-0.5f32, 0.0, 0.7] {
-        let seen = floor_at(&intersector, &single(manifold()), x, 0.2, 0.25, 8);
+        let seen = floor_at(&intersector, &single(manifold(), 2), x, 0.2, 0.25, 8);
         println!("x {x}: {seen:.5} against {expected:.5}");
         assert!((seen / expected - 1.0).abs() < 0.01, "the sun through the slab gave the floor {seen:.5}, not {expected:.5}");
     }

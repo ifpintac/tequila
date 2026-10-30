@@ -441,15 +441,21 @@ fn step(crossings: &[Crossing], dx: &mut [Vec2; MAX_CROSSINGS]) -> bool {
 /// still a path to solve for; whether it is blocked is asked once it is
 /// found.
 fn project(intersector: &dyn Intersector, from: Vec3, from_normal: Vec3, towards: Vec3, instance: InstanceId) -> Option<Hit> {
-    let offset = towards - from;
+    let leaving = if (towards - from).dot(from_normal) >= 0.0 { from_normal } else { -from_normal };
+    // Aimed from where the ray starts, off the surface, not from the point
+    // it was offset from: near the origin the offset is a fixed few
+    // hundredths of a millimetre, and a ray parallel to the line aimed along
+    // lands that far beside the point every time - which the walk then
+    // spends every step putting back, short of the answer for ever.
+    let origin = offset_ray_origin(from, leaving);
+    let offset = towards - origin;
     let distance = offset.length();
     if !(distance > 0.0) {
         return None;
     }
     let direction = offset / distance;
-    let leaving = if direction.dot(from_normal) >= 0.0 { from_normal } else { -from_normal };
     let mut ray = Ray {
-        origin: offset_ray_origin(from, leaving),
+        origin,
         direction,
         t_min: 0.0,
         t_max: distance * PROJECTION_DISTANCE_MULTIPLIER,
