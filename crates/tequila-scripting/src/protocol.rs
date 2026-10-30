@@ -329,6 +329,8 @@ pub struct UiChange {
     pub updates: Option<bool>,
     /// The Assistant's Connect an AI window, open: AI apps and providers.
     pub connect: Option<bool>,
+    /// The UV editor, open on the selected part.
+    pub uv_editor: Option<bool>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
@@ -879,6 +881,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
             connect: opt_bool(value, "connect")?,
+            uv_editor: opt_bool(value, "uv_editor")?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),

@@ -97,7 +97,7 @@ class MaterialCommands(_Commands):
     def set_decals(self, *, decals=_UNSET, material=_UNSET):
         r"""`material.set_decals`: A material's whole stack of labels at once.
 
-        { "command": "material.set_decals", "decals": [ { "enabled": true, "mapping": { "axis": "z", "blend_sharpness": 6, "flip_u": false, "flip_v": false, "offset": [0, 0], "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rotation": 0, "scale": [1, 1, 1], "uv_set": 0, "wrap_u": "repeat", "wrap_v": "repeat" }, "metallic": false, "name": "Logo", "opacity": 1, "roughness": 0.35, "texture": 1 } ], "material": 1 }
+        { "command": "material.set_decals", "decals": [ { "enabled": true, "mapping": { "axis": "z", "blend_sharpness": 6, "flip_u": false, "flip_v": false, "offset": [0, 0], "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": true, "rotation": 0, "scale": [1, 1, 1], "uv_set": 0, "wrap_u": "repeat", "wrap_v": "repeat" }, "metallic": false, "name": "Logo", "opacity": 1, "roughness": 0.35, "texture": 1 } ], "material": 1 }
         """
         return self._apply('material.set_decals', {'decals': decals, 'material': material})
 
@@ -164,12 +164,12 @@ class MaterialCommands(_Commands):
         """
         return self._apply('material.set_gradient', {'gradient': gradient, 'material': material, 'param': param})
 
-    def set_mapping(self, *, axis=_UNSET, blend_sharpness=_UNSET, flip_u=_UNSET, flip_v=_UNSET, material=_UNSET, offset=_UNSET, param=_UNSET, pivot=_UNSET, projection=_UNSET, real_world_units=_UNSET, rotation=_UNSET, scale=_UNSET, uv_set=_UNSET, wrap_u=_UNSET, wrap_v=_UNSET):
+    def set_mapping(self, *, axis=_UNSET, blend_sharpness=_UNSET, flip_u=_UNSET, flip_v=_UNSET, material=_UNSET, offset=_UNSET, param=_UNSET, pivot=_UNSET, projection=_UNSET, real_world_units=_UNSET, rigid=_UNSET, rotation=_UNSET, scale=_UNSET, uv_set=_UNSET, wrap_u=_UNSET, wrap_v=_UNSET):
         r"""`material.set_mapping`: How a parameter's texture is laid onto the surface: the projection, the scale, the rotation and the rest of §5.3's shared controls.
 
-        { "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
+        { "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
         """
-        return self._apply('material.set_mapping', {'axis': axis, 'blend_sharpness': blend_sharpness, 'flip_u': flip_u, 'flip_v': flip_v, 'material': material, 'offset': offset, 'param': param, 'pivot': pivot, 'projection': projection, 'real_world_units': real_world_units, 'rotation': rotation, 'scale': scale, 'uv_set': uv_set, 'wrap_u': wrap_u, 'wrap_v': wrap_v})
+        return self._apply('material.set_mapping', {'axis': axis, 'blend_sharpness': blend_sharpness, 'flip_u': flip_u, 'flip_v': flip_v, 'material': material, 'offset': offset, 'param': param, 'pivot': pivot, 'projection': projection, 'real_world_units': real_world_units, 'rigid': rigid, 'rotation': rotation, 'scale': scale, 'uv_set': uv_set, 'wrap_u': wrap_u, 'wrap_v': wrap_v})
 
     def set_multi_materials(self, *, multi_materials=_UNSET):
         r"""`material.set_multi_materials`: The whole list, and the active variant of each assigned to its parts.

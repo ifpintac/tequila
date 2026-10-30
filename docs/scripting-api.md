@@ -101,7 +101,7 @@ A material's whole stack of labels at once.
 `fs.commands.material.set_decals(decals=..., material=...)`
 
 ```json
-{ "command": "material.set_decals", "decals": [ { "enabled": true, "mapping": { "axis": "z", "blend_sharpness": 6, "flip_u": false, "flip_v": false, "offset": [0, 0], "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rotation": 0, "scale": [1, 1, 1], "uv_set": 0, "wrap_u": "repeat", "wrap_v": "repeat" }, "metallic": false, "name": "Logo", "opacity": 1, "roughness": 0.35, "texture": 1 } ], "material": 1 }
+{ "command": "material.set_decals", "decals": [ { "enabled": true, "mapping": { "axis": "z", "blend_sharpness": 6, "flip_u": false, "flip_v": false, "offset": [0, 0], "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": true, "rotation": 0, "scale": [1, 1, 1], "uv_set": 0, "wrap_u": "repeat", "wrap_v": "repeat" }, "metallic": false, "name": "Logo", "opacity": 1, "roughness": 0.35, "texture": 1 } ], "material": 1 }
 ```
 
 #### `material.assign`
@@ -205,10 +205,10 @@ The colour ramp a parameter's procedural is read through.
 How a parameter's texture is laid onto the surface: the projection, the
 scale, the rotation and the rest of §5.3's shared controls.
 
-`fs.commands.material.set_mapping(axis=..., blend_sharpness=..., flip_u=..., flip_v=..., material=..., offset=..., param=..., pivot=..., projection=..., real_world_units=..., rotation=..., scale=..., uv_set=..., wrap_u=..., wrap_v=...)`
+`fs.commands.material.set_mapping(axis=..., blend_sharpness=..., flip_u=..., flip_v=..., material=..., offset=..., param=..., pivot=..., projection=..., real_world_units=..., rigid=..., rotation=..., scale=..., uv_set=..., wrap_u=..., wrap_v=...)`
 
 ```json
-{ "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
+{ "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
 ```
 
 #### `material.set_multi_materials`

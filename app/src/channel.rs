@@ -488,6 +488,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         Some(false) => app.updates.open = false,
         None => {}
     }
+    if let Some(open) = change.uv_editor {
+        app.start_screen.open &= !open;
+        app.uv_editor.open = open;
+        if open {
+            app.uv_editor.label = None;
+        }
+    }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }
