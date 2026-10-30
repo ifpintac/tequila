@@ -16,9 +16,6 @@ on:
         default: ""
   release:
     types: [published]
-  # While the Linux build is proved on its branch; removed before it merges.
-  push:
-    branches: [linux-release]
 
 permissions:
   contents: write
