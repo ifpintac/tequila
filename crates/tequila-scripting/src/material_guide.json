@@ -49,6 +49,7 @@
   "transmission_color": "The tint of see-through materials.",
   "subsurface_weight": "0-1 light scattering under the surface (wax, skin, soap).",
   "fuzz_weight": "0-1 soft sheen of fibres (velvet, felt).",
+  "fuzz_density": "Real fibres grown out of the surface, to the square centimetre: a few for a peach, hundreds for felt or a tennis ball, 0 for none. With fuzz_length and fuzz_thickness in metres (0.002, 0.00004), fuzz_lean and fuzz_curl 0-1; they wear fuzz_color.",
   "thin_film_weight": "0-1 iridescent film, with thin_film_thickness in nanometres (200-900).",
   "flake_weight": "0-1 metallic flakes in a paint, with flake_size in metres and flake_color.",
   "emission_luminance": "Glow, in nits; emission_color its colour.",

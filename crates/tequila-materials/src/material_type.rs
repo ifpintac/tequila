@@ -1431,7 +1431,10 @@ impl Param {
     pub fn hint(self) -> Option<&'static str> {
         match self {
             Param::FuzzDensity => Some(
-                "Real fibres grown out of the surface, to the square centimetre, in the Sheen Color and                  Sheen Roughness: felt's halo, a tennis ball's nap, velvet's pile. 0 grows none. They render                  in both renderers and in the Rendered view, not in the Solid one; a part grows at most                  250,000, so dense fibres on a large part come out sparser.",
+                "Real fibres grown out of the surface, to the square centimetre, in the Sheen Color and \
+                 Sheen Roughness: felt's halo, a tennis ball's nap, velvet's pile. 0 grows none. They render \
+                 in both renderers and in the Rendered view; the Solid view and the preview sphere show the \
+                 sheen alone. A part grows at most 250,000, so dense fibres on a large part come out sparser.",
             ),
             Param::FuzzLength => Some("How long each fibre is, give or take a third."),
             Param::FuzzThickness => Some("How wide each fibre is at its root; it tapers to a fifth of that at its tip."),
