@@ -812,10 +812,47 @@ highlight edges). Not the §01 §10.4 per-pixel gate, which assumed one
 integrator under two backends; a statistical one between two integrators.
 
 Tequila's own renderer stays: it is the reference, it makes what Cycles
-in this build does not (render passes, light groups and relighting,
-layers, regions, SPPM caustics), the app sends those renders to it
-automatically (`batch::engine_for`), and it renders where Cycles is not
-installed.
+in this build does not (layers, regions, SPPM caustics), the app sends
+those renders to it automatically (`batch::engine_for`), and it renders
+where Cycles is not installed.
+
+Passes and light groups come from Cycles' film (`batch::cycles_passes`),
+named and laid out as Tequila's are: depth (the distance from the camera,
+from Cycles' position pass), normal, position, albedo, clown, the object
+and material Cryptomattes (Cycles hashes the names Tequila gives its
+objects and shaders), the light groups for relighting - with what Tequila
+lays over Cycles' picture, the floor's reflection and the backdrop, as one
+more, `Other`, so they add up to it - and Diffuse, Lighting,
+GlobalIllumination, Reflection and Refraction from Cycles' diffuse, glossy
+and transmission passes, direct and indirect, by colour. Caustics,
+AmbientOcclusion, Shadow and Labels stay Tequila's renderer's, and the job
+says so. `cycles_keeps_passes_tequila_would` holds the depth and normal to
+what Tequila's tracer finds along the same rays, and the groups to the
+picture.
+
+Where the two still part, by design (each held by a test in `app/src/batch.rs`):
+
+- **Dispersion.** This Cycles has none, so clear glass with an Abbe number
+  is three glasses, one per colour channel at that channel's index
+  (`dispersion::channel_iors`): fringes in three colours where Tequila's
+  renderer has a spectrum. Glass with a coat, sheen, subsurface, emission,
+  labels or anisotropy disperses in Tequila's renderer only.
+- **Spot falloff.** Cycles fades a spot by one smoothstep from the outer
+  angle; Tequila's renderer raises it to the falloff exponent. At an exponent
+  of one they are the same curve; otherwise the blend loses as much light
+  across the edge, and a steeper exponent's edge is a little brighter at its
+  outer end in Cycles. An edge that already spans most of the cone cannot
+  widen past it, and comes out brighter.
+- **Light source materials.** Both sample a glowing surface as a light,
+  Tequila's renderer through a tree of the glowing triangles
+  (`render-core/src/emitters.rs`), so the light a glow throws on what is near
+  it agrees with firefly rejection on. Tequila's renderer still leaves to
+  the bounces alone a glow a graph drives, a mixed surface's, a part some
+  kind of ray passes through, and every glow in a scene with a cutaway; they
+  are noisier there than in Cycles. Off, neither lets a diffuse bounce see
+  it.
+- **The sun** is a light with no geometry in Tequila's renderer, as every
+  lamp is: a mirror does not show it, where Cycles' does.
 
 - [~] Shading layer ported to Slang (or the chosen shared-source mechanism), compiling to both targets (§01 §10.1).
       *Superseded:* one set of algorithms (Cycles') in both engines; no

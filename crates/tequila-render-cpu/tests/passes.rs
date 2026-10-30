@@ -122,8 +122,12 @@ fn camera() -> Camera {
 
 /// Render, returning the beauty buffer and the passes beside it.
 fn render(set: &AovSet, samples: u32) -> (Framebuffer, AovBuffers) {
+    render_scene(scene(), set, samples)
+}
+
+fn render_scene(snapshot: SceneSnapshot, set: &AovSet, samples: u32) -> (Framebuffer, AovBuffers) {
     let device = Device::shared().expect("an Embree device");
-    let intersector = EmbreeIntersector::build(&device, scene()).expect("builds");
+    let intersector = EmbreeIntersector::build(&device, snapshot).expect("builds");
     let mut framebuffer = Framebuffer::new(SIZE, SIZE);
     let mut aovs = AovBuffers::new(SIZE, SIZE, set);
     let context = RenderContext {
@@ -160,6 +164,27 @@ fn pass_index(set: &AovSet, name: &str) -> usize {
 /// contributions added in a different order.
 #[test]
 fn beauty_is_the_sum_of_its_first_bounce_components() {
+    components_add_up(scene());
+}
+
+/// The same with the scene lit by a lamp instead, whose light only a light
+/// sample finds. Such a sample was routed as if the path had not yet met the
+/// surface that took it, so a lamp's light on the first surface the camera
+/// saw was in Beauty and in no component pass.
+#[test]
+fn a_lamps_light_is_in_the_components_too() {
+    use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
+    let mut snapshot = scene();
+    snapshot.materials[3].emission_luminance = 0.0;
+    let lamp = Light::new(LightKind::Point(PointLight {
+        position: vec3(0.0, 2.5, 1.0),
+        intensity: Spectrum::splat(20.0),
+        radius: 0.0,
+    }));
+    components_add_up(snapshot.with_lights(Arc::new(LightSet::new(vec![lamp]))));
+}
+
+fn components_add_up(snapshot: SceneSnapshot) {
     let mut set = AovSet::standard();
     // The first-bounce partition: diffuse, specular reflection, glossy
     // reflection, transmission. Glossy is not in §12's table — the table names
@@ -170,7 +195,7 @@ fn beauty_is_the_sum_of_its_first_bounce_components() {
         .push(tequila_render_core::aov::LightPathPass::new("Glossy", "C<RG>.*L").unwrap());
     set.cryptomatte = false;
 
-    let (framebuffer, aovs) = render(&set, 128);
+    let (framebuffer, aovs) = render_scene(snapshot, &set, 128);
     let samples = framebuffer.min_samples();
     assert!(samples > 0);
 

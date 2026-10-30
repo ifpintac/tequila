@@ -246,16 +246,19 @@ pub struct Appearance {
     pub size: Size,
     /// The welcome card has been put away.
     pub welcome_seen: bool,
+    /// The start screen is not shown at launch.
+    pub start_screen_hidden: bool,
 }
 
 impl Appearance {
     fn to_text(self) -> String {
         format!(
-            "mode={}\ntheme={}\nsize={}\nwelcome={}\n",
+            "mode={}\ntheme={}\nsize={}\nwelcome={}\nstart={}\n",
             self.mode.key(),
             self.flavor.key(),
             self.size.key(),
-            if self.welcome_seen { "seen" } else { "new" }
+            if self.welcome_seen { "seen" } else { "new" },
+            if self.start_screen_hidden { "hide" } else { "show" }
         )
     }
 
@@ -270,6 +273,7 @@ impl Appearance {
                 "theme" => out.flavor = Flavor::ALL.into_iter().find(|f| f.key() == value).unwrap_or_default(),
                 "size" => out.size = Size::ALL.into_iter().find(|s| s.key() == value).unwrap_or_default(),
                 "welcome" => out.welcome_seen = value == "seen",
+                "start" => out.start_screen_hidden = value == "hide",
                 _ => {}
             }
         }
@@ -1045,7 +1049,7 @@ mod tests {
     /// failing.
     #[test]
     fn appearance_round_trips() {
-        let a = Appearance { mode: Mode::Light, flavor: Flavor::Orchid, size: Size::Large, welcome_seen: true };
+        let a = Appearance { mode: Mode::Light, flavor: Flavor::Orchid, size: Size::Large, welcome_seen: true, start_screen_hidden: true };
         assert_eq!(Appearance::from_text(&a.to_text()), a);
         assert_eq!(Appearance::from_text("mode=sepia\ntheme=\ngarbage\n"), Appearance::default());
     }

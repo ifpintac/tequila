@@ -248,7 +248,12 @@ impl EmbreeIntersector {
                 else {
                     continue;
                 };
-                if !instance.visible_to_camera && !instance.casts_shadows {
+                if !instance.visible_to_camera
+                    && !instance.casts_shadows
+                    && !instance.seen_by_diffuse
+                    && !instance.seen_by_glossy
+                    && !instance.seen_by_transmission
+                {
                     continue;
                 }
 

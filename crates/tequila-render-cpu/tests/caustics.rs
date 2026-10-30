@@ -66,6 +66,7 @@ fn lamp() -> Light {
         radiance: Spectrum::splat(400.0),
         disc: false,
         two_sided: false,
+        spread: std::f32::consts::PI,
     }))
 }
 
@@ -244,4 +245,48 @@ fn a_floor_without_shadows_shows_no_caustic() {
     let with = brightest(&render_from(on_catcher(true), true, 32, camera));
     assert!(without < plain * 1.5 + 0.05, "a floor without shadows caught a caustic: {without} against {plain} without photons");
     assert!(with > without * 3.0, "a floor with shadows lost its caustic: {with} against {without}");
+}
+
+/// A lamp's caustic on the floor is in the Caustics pass, and the
+/// first-bounce components still add up to the picture. With a lamp alone the
+/// path tracer finds no caustic through glass, so what caustics add to Beauty
+/// is the photons'; read before the floor's own event, it was in Beauty and
+/// in no component.
+#[test]
+fn a_caustic_is_in_the_caustics_pass() {
+    use tequila_render_core::aov::{AovSet, LightPathPass};
+    use tequila_render_core::framebuffer::AovBuffers;
+    use tequila_render_cpu::render_pass_with_aovs;
+
+    let mut set = AovSet::standard();
+    set.light_paths.push(LightPathPass::new("Glossy", "C<RG>.*L").unwrap());
+    set.cryptomatte = false;
+    let index = |name: &str| set.light_paths.iter().position(|pass| pass.name == name).unwrap();
+    let totals = |caustics: bool| {
+        let device = Device::shared().expect("an Embree device");
+        let intersector = EmbreeIntersector::build(&device, scene(Environment::uniform(Spectrum::ZERO), vec![lamp()])).expect("builds");
+        let mut framebuffer = Framebuffer::new(SIZE, SIZE);
+        let mut aovs = AovBuffers::new(SIZE, SIZE, &set);
+        let context = RenderContext {
+            camera: tequila_render_core::camera::Camera::look_at(vec3(0.0, 2.6, 2.4), vec3(0.0, -0.75, 0.0), Vec3::Y),
+            config: IntegratorConfig { caustics, ..IntegratorConfig::product() },
+            reject_fireflies: false,
+            ..RenderContext::default()
+        };
+        for _ in 0..64 {
+            render_pass_with_aovs(&intersector, &mut framebuffer, Some((&mut aovs, &set)), &context, &ProgressiveSchedule::default(), 1);
+        }
+        let samples = framebuffer.min_samples();
+        let total = |name: &str| -> f64 {
+            let pass = index(name);
+            (0..SIZE).flat_map(|y| (0..SIZE).map(move |x| (x, y))).map(|(x, y)| aovs.passes.mean(pass, x, y, samples).luminance() as f64).sum()
+        };
+        let parts = ["Diffuse", "Reflection", "Refraction", "Glossy"].map(|name| total(name)).iter().sum::<f64>();
+        (total("Beauty"), total("Caustics"), parts)
+    };
+    let (plain, _, _) = totals(false);
+    let (beauty, caustic, parts) = totals(true);
+    assert!(beauty > plain * 1.02, "caustics added nothing: {plain} without, {beauty} with");
+    assert!(caustic > 0.5 * (beauty - plain), "the Caustics pass holds {caustic} of the {} the photons brought", beauty - plain);
+    assert!((parts - beauty).abs() < 1e-3 * beauty, "the components add up to {parts}, the picture to {beauty}");
 }

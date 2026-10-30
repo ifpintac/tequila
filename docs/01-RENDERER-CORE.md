@@ -272,7 +272,7 @@ CI asserts: rendering the same scene twice at the same sample count produces bit
 | **Point** | Delta. Single direction; no MIS partner. | Delta (∞); MIS weight 1 on the light-sampling side, and BSDF sampling can never hit it. |
 | **Spot** | Delta direction with cone falloff. Smooth-step penumbra between inner and outer cone angles. | Delta. |
 | **IES** | Point or area light modulated by an imported photometric distribution. Parse IESNA LM-63 (1986/1991/1995/2002 profiles). Build a 2D CDF over the goniometric grid and importance-sample it. | 2D CDF PDF × delta position, or × area PDF for an area-IES hybrid. |
-| **Emissive geometry** | Uniform area sampling of triangles, weighted by triangle area × emission luminance in the light BVH (§5.3). | Area → solid angle conversion. |
+| **Emissive geometry** | Uniform area sampling of triangles, chosen through a light BVH of their own (§5.3) weighted by triangle area × emission luminance. A glow the same all over its part only; one a graph drives is found by BSDF sampling alone. | Area → solid angle conversion. |
 | **Environment** | §5.2. | §5.2. |
 
 All lights carry: colour (spectrum or RGB), intensity with **physical units** (§7.5), a visibility flag set (camera / diffuse / specular / shadow), and a **light layer ID** (§5.5).
@@ -304,6 +304,8 @@ Implement a **light BVH with importance-based traversal** [Conty Estevez & Kulla
 - Return the selected light and the product of traversal probabilities as `p_select`.
 
 For scenes below ~8 lights, use a simple **power-weighted alias table** — it's cheaper and the BVH's benefit is nil. Choose the strategy at scene-build time based on light count and log which was chosen.
+
+As built, emissive triangles have a tree of their own (`emitters.rs`), sampled beside the analytic lights with a shadow ray of its own, always as a tree: two parts millimetres apart see each other's near side a hundred times brighter than the far side, and a power-weighted table picks the near triangles no more often. It is a separate tree because an emitter takes MIS and an analytic light does not: a BSDF ray that hits a glow needs its triangle's `p_select` from the vertex it left, which the tree gives by walking up from the triangle's leaf, and a lamp's can never be asked for.
 
 ### 5.4 Light visibility flags
 

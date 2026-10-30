@@ -235,13 +235,22 @@ pub fn add_light_menu(ui: &mut egui::Ui, parent: Option<NodeId>) -> Option<Comma
                 falloff: 1.0,
             },
         ),
+        // The real sun's half a degree.
+        ("Sun", LightShape::Sun { angle_degrees: 0.53 }),
     ] {
         if ui.button(name).clicked() {
+            // A sun is given the light falling on things, in lux; the rest
+            // the light they give, in lumens.
+            let intensity = match shape {
+                LightShape::Sun { .. } => Intensity::Lux(500.0),
+                _ => LightSettings::default().intensity,
+            };
             chosen = Some(Command::AddLight {
                 parent,
                 name: shape.label().to_string(),
                 settings: Box::new(LightSettings {
                     shape,
+                    intensity,
                     ..Default::default()
                 }),
             });
@@ -285,6 +294,8 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             );
             ui.add(crate::field::Checkbox::new(disc, "Elliptical"));
             ui.add(crate::field::Checkbox::new(two_sided, "Two sided"));
+            ui.add(crate::field::Slider::new(&mut light.spread_degrees, 1.0..=180.0).text("Spread"))
+                .on_hover_text("How wide the light leaves the panel: 180 is a plain panel, less a softbox behind a grid, its light gathered into a narrower beam of the same power.");
         }
         LightShape::Point { radius } => {
             ui.add(
@@ -304,6 +315,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
                 crate::field::Slider::new(inner_degrees, 0.0..=*outer_degrees).text("Inner angle"),
             );
             ui.add(crate::field::Slider::new(falloff, 0.1..=8.0).text("Falloff"));
+        }
+        LightShape::Sun { angle_degrees } => {
+            ui.add(crate::field::Slider::new(angle_degrees, 0.0..=30.0).text("Angle"))
+                .on_hover_text("How wide the sun's disc is. Zero casts perfectly hard shadows; the real sun is half a degree. Where the light is does not matter, only which way it points.");
         }
     }
 
@@ -325,6 +340,7 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             Intensity::Lumens(amount),
             Intensity::Nits(amount),
             Intensity::Candela(amount),
+            Intensity::Lux(amount),
         ] {
             let selected =
                 std::mem::discriminant(&light.intensity) == std::mem::discriminant(&candidate);
@@ -355,9 +371,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
     }
 
     // ---- Photometry (§5.1) ----------------------------------------------
+    // Not for a sun, which is not a fitting.
     ui.add_space(4.0);
     let mut photometric = light.photometry.is_some();
-    if ui
+    if !matches!(light.shape, LightShape::Sun { .. }) && ui
         .add(crate::field::Checkbox::new(&mut photometric, "Photometric file"))
         .on_hover_text(
             "Use a manufacturer's measured distribution — an .ies file — instead of \
@@ -395,28 +412,64 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             light.layer = layer;
         });
 
-    // ---- Light linking -----------------------------------------------------
-    crate::field::Fold::new("Light linking")
-        .id_salt("light-linking")
-        .default_open(light.links.is_some())
+    // ---- Light and shadow linking -------------------------------------------
+    linking_fold(
+        ui,
+        project,
+        ("Light linking", "light-linking"),
+        &mut light.links,
+        "Lights every part, and shadows them all.",
+        "What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.",
+    );
+    linking_fold(
+        ui,
+        project,
+        ("Shadow linking", "shadow-linking"),
+        &mut light.shadow_links,
+        "Every part casts its shadow.",
+        "The parts that cast its shadow. The rest let its light through, so a prop can stand in its beam without shadowing the product.",
+    );
+
+    if light != before {
+        let _ = project.apply(Command::SetLight {
+            node,
+            settings: Box::new(light),
+        });
+    }
+    true
+}
+
+/// A light's links, for its light or for its shadow: everything, only
+/// some parts, or all but some. `title` is the fold's name and id.
+fn linking_fold(
+    ui: &mut egui::Ui,
+    project: &Project,
+    (title, salt): (&str, &str),
+    links: &mut Option<tequila_scene::lighting::LightLinking>,
+    everything: &str,
+    note: &str,
+) {
+    crate::field::Fold::new(title)
+        .id_salt(salt)
+        .default_open(links.is_some())
         .show(ui, |ui| {
             use tequila_scene::lighting::LightLinking;
-            let mut mode = match &light.links {
+            let mut mode = match &*links {
                 None => 0u8,
                 Some(links) if links.exclude => 2,
                 Some(_) => 1,
             };
             if crate::theme::segmented(ui, &mut mode, &[(0, "Everything"), (1, "Only"), (2, "All but")]) {
-                light.links = match mode {
+                *links = match mode {
                     0 => None,
                     _ => Some(LightLinking {
                         exclude: mode == 2,
-                        ..light.links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
+                        ..links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
                     }),
                 };
             }
-            let Some(links) = &mut light.links else {
-                ui.label(egui::RichText::new("Lights every part, and shadows them all.").small().color(crate::theme::dim()));
+            let Some(links) = links else {
+                ui.label(egui::RichText::new(everything).small().color(crate::theme::dim()));
                 return;
             };
             ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
@@ -440,18 +493,6 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             if deeper > 0 {
                 ui.label(egui::RichText::new(format!("and {deeper} parts set by a script")).small().color(crate::theme::dim()));
             }
-            ui.label(
-                egui::RichText::new("What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.")
-                    .small()
-                    .color(crate::theme::dim()),
-            );
+            ui.label(egui::RichText::new(note).small().color(crate::theme::dim()));
         });
-
-    if light != before {
-        let _ = project.apply(Command::SetLight {
-            node,
-            settings: Box::new(light),
-        });
-    }
-    true
 }

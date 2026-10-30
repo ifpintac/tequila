@@ -48,6 +48,7 @@ fn document_with_everything() -> SceneDocument {
     part.pivot = Some(vec3(0.25, 0.0, -0.5));
     part.locked = true;
     part.visible = false;
+    part.rays = tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() };
 
     bus.apply(
         &mut document,
@@ -108,6 +109,7 @@ fn document_with_everything() -> SceneDocument {
     };
     document.studios = vec![tequila_scene::studio::Studio::capture("Hero", &document)];
     document.product_turn = tequila_scene::studio::ProductTurn { yaw: 0.9, pivot: [0.0, 0.0] };
+    document.animation = Some(tequila_scene::animation::Animation::turntable(36, 24.0, 360.0));
     document.configurator = tequila_scene::configurator::Configurator::draft(&document);
     document.material_templates = vec![tequila_scene::templates::MaterialTemplate {
         name: "Fasteners".into(),

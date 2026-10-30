@@ -93,6 +93,8 @@ struct Options {
     all_configurations: bool,
     /// Every Studio - every view - each to its own file.
     all_studios: bool,
+    /// The animation's frames, first to last, each to its own file.
+    frames: Option<(u32, u32)>,
     /// A studio preset to apply first: an installed one's id, or its folder
     /// or `.studio.json`; how the product faces it, and whether it dresses
     /// the product by its rules.
@@ -163,6 +165,7 @@ impl Default for Options {
             configuration: None,
             all_configurations: false,
             all_studios: false,
+            frames: None,
             studio_preset: None,
             front: None,
             dress: false,
@@ -240,6 +243,9 @@ From a project's own setup:
       --all-studios     render every Studio (every view), each to the
                         output name with {view} in it - or, without -o,
                         to the project's own output folder and name
+      --frames A-B      render the project's turntable, frames A to B (or
+                        one frame, A), each to the output name with
+                        {frame} in it; a frame already there is skipped
       --studio-preset P apply a studio preset first: an installed one's id,
                         or its folder or .studio.json; the render then
                         takes the preset's settings
@@ -311,6 +317,7 @@ fn parse_args() -> Result<Options, String> {
             "--configuration" => options.configuration = Some(value()?),
             "--all-configurations" => options.all_configurations = true,
             "--all-studios" => options.all_studios = true,
+            "--frames" => options.frames = Some(frame_range(&value()?)?),
             "--studio-preset" => options.studio_preset = Some(value()?),
             "--front" => options.front = Some(value()?),
             "--dress" => options.dress = true,
@@ -726,7 +733,7 @@ fn run(options: &Options) -> Result<(), String> {
 
     // An export-only run renders nothing more, unless it asked for every
     // configuration.
-    let rendering = options.all_configurations || options.all_studios || !exporting || options.output_set;
+    let rendering = options.all_configurations || options.all_studios || options.frames.is_some() || !exporting || options.output_set;
     if !rendering {
         Ok(())
     } else if options.farm.is_some() {
@@ -735,6 +742,8 @@ fn run(options: &Options) -> Result<(), String> {
         each_configuration(options, &document, &options.output)
     } else if options.all_studios {
         each_studio(options, &document, options.output_set.then_some(options.output.as_str())).map(|_| ())
+    } else if let Some((first, last)) = options.frames {
+        each_frame(options, &document, options.output_set.then_some(options.output.as_str()), first, last).map(|_| ())
     } else {
         render_one(options, &document, &options.output, None)
     }
@@ -806,6 +815,80 @@ pub(crate) fn each_studio(options: &Options, document: &tequila_scene::SceneDocu
         };
         let path = path.to_string_lossy().into_owned();
         println!("view {}/{}: {}", index + 1, document.studios.len(), studio.name);
+        render_one(options, &copy, &path, None)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// `A-B`, or one frame `A`.
+fn frame_range(text: &str) -> Result<(u32, u32), String> {
+    let number = |s: &str| s.trim().parse::<u32>().map_err(|_| format!("--frames takes A-B, frame numbers: not {text:?}"));
+    match text.split_once('-') {
+        Some((first, last)) => {
+            let (first, last) = (number(first)?, number(last)?);
+            if last < first {
+                return Err(format!("--frames {text}: the last frame comes before the first"));
+            }
+            Ok((first, last))
+        }
+        None => number(text).map(|frame| (frame, frame)),
+    }
+}
+
+/// Render frames `first` to `last` of the project's animation, the product
+/// turned to each, to `template` with `{frame}` in it (added when it names
+/// none), or to the project's own output folder and name. A frame whose file
+/// is already there is skipped, so a turntable stopped halfway is finished
+/// by running the same command again.
+pub(crate) fn each_frame(options: &Options, document: &tequila_scene::SceneDocument, template: Option<&str>, first: u32, last: u32) -> Result<Vec<String>, String> {
+    use tequila_format::output::{expand_template, output_path, ImageFormat, NameFields};
+    let Some(animation) = &document.animation else {
+        return Err("the project has no turntable to render; make one in the Studio tab first".into());
+    };
+    let (date, time) = (tequila_core::clock::date(), tequila_core::clock::time_for_filename());
+    let frames = animation.range(first, last);
+    let count = frames.clone().count();
+    let mut written = Vec::new();
+    for frame in frames {
+        let mut copy = document.clone();
+        let yaw = animation.yaw_at(frame).unwrap_or(0.0);
+        tequila_scene::CommandBus::new()
+            .apply(&mut copy, tequila_scene::Command::TurnProduct { yaw })
+            .map_err(|e| format!("frame {frame}: {e}"))?;
+        let settings = &copy.render;
+        let fields = NameFields {
+            project: if copy.meta.name.is_empty() { "Tequila".into() } else { copy.meta.name.clone() },
+            camera: copy.cameras.active().name.clone(),
+            product: tequila_scene::studio::product_name(&copy),
+            frame: Some(frame),
+            width: options.width.unwrap_or(settings.width),
+            height: options.height.unwrap_or(settings.height),
+            samples: options.samples.unwrap_or(settings.max_samples),
+            date: date.clone(),
+            time: time.clone(),
+            ..Default::default()
+        };
+        let path = match template {
+            Some(template) => {
+                let path = std::path::Path::new(template);
+                let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let stem = if stem.contains("{frame}") { stem } else { format!("{stem}_{{frame}}") };
+                let extension = path.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "png".into());
+                path.with_file_name(format!("{}.{extension}", expand_template(&stem, &fields)))
+            }
+            None => {
+                let directory = if settings.output_directory.is_empty() { std::path::PathBuf::from(".") } else { std::path::PathBuf::from(&settings.output_directory) };
+                let template = if settings.filename_template.contains("{frame}") { settings.filename_template.clone() } else { format!("{}_{{frame}}", settings.filename_template) };
+                output_path(&directory, &template, &fields, ImageFormat::Png(tequila_format::psd::Depth::Eight))
+            }
+        };
+        if path.exists() {
+            println!("frame {frame}: {} is already there", path.display());
+            continue;
+        }
+        let path = path.to_string_lossy().into_owned();
+        println!("frame {frame} ({}/{count})", written.len() + 1);
         render_one(options, &copy, &path, None)?;
         written.push(path);
     }
@@ -1041,6 +1124,9 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         Some(camera) => camera,
         None => framing(options, document, aspect).0,
     };
+    // The camera's own exposure, as the application develops with it,
+    // unless --exposure says what it is.
+    let style = if options.exposure.is_some() { style } else { tequila_scene::lighting::developed_style(style, &camera) };
 
     let context = RenderContext {
         camera,
@@ -1277,7 +1363,7 @@ fn render_with_cycles(
 
     let start = Instant::now();
     let mut session = Session::new(device, 0, std::env::var_os("TEQUILA_CYCLES_KERNELS").map(std::path::PathBuf::from).as_deref())?;
-    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination };
+    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination, light_materials: lighting.light_source_materials, light_groups: false };
     let translation = translate::build(&mut session, scene, &view)?;
     for warning in &translation.warnings {
         println!("  cycles: {warning}");

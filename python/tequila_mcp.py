@@ -1,7 +1,7 @@
 """An MCP server that lets an AI app drive a running Tequila.
 
-Model Context Protocol clients — Claude Desktop, Claude Code, Cursor and
-others — start this program and talk to it over stdin/stdout. It turns their
+Model Context Protocol clients — the Claude app, Cursor, VS Code with GitHub
+Copilot, Codex, Gemini CLI, Windsurf, LM Studio and others — start this program and talk to it over stdin/stdout. It turns their
 tool calls into requests on Tequila's local scripting channel, and hands
 screenshots and renders back as images, so the assistant can see what it did.
 

@@ -321,6 +321,92 @@ fn read_u32(bytes: &[u8], at: usize) -> Result<u32, ZipError> {
 
 /// The end-of-central-directory record is at the end, but a trailing comment
 /// may follow it, so it has to be searched for backwards.
+/// One member of the archive in `file`, read through its central directory
+/// without reading the rest: `None` when there is no member of that name.
+///
+/// For a small member of a large archive, a project's preview, which a start
+/// screen shows ten of where each project can be hundreds of megabytes. The
+/// member is at most `limit` bytes, and refused when it says it is more.
+pub fn read_member(
+    file: &mut (impl std::io::Read + std::io::Seek),
+    name: &str,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, ZipError> {
+    use std::io::{Read, SeekFrom};
+    let io = |e: std::io::Error| ZipError::Malformed(format!("the archive could not be read: {e}"));
+    let length = file.seek(SeekFrom::End(0)).map_err(io)? as usize;
+    // The end record, within a comment's length of the end.
+    let tail_start = length.saturating_sub(22 + 65535);
+    let mut tail = vec![0u8; length - tail_start];
+    file.seek(SeekFrom::Start(tail_start as u64)).map_err(io)?;
+    file.read_exact(&mut tail).map_err(io)?;
+    let end = find_end_of_central_directory(&tail)?;
+    let count = u16::from_le_bytes([tail[end + 10], tail[end + 11]]) as usize;
+    let directory_size = read_u32(&tail, end + 12)? as usize;
+    let directory_offset = read_u32(&tail, end + 16)? as usize;
+    if directory_offset + directory_size > length {
+        return Err(ZipError::Malformed("the central directory runs past the end of the file".into()));
+    }
+    let mut directory = vec![0u8; directory_size];
+    file.seek(SeekFrom::Start(directory_offset as u64)).map_err(io)?;
+    file.read_exact(&mut directory).map_err(io)?;
+
+    let mut at = 0usize;
+    for _ in 0..count {
+        if at + CENTRAL_HEADER_SIZE > directory.len() || read_u32(&directory, at)? != CENTRAL_HEADER {
+            return Err(ZipError::Malformed(format!("expected a directory entry at byte {}", directory_offset + at)));
+        }
+        let field = |offset: usize| u16::from_le_bytes([directory[at + offset], directory[at + offset + 1]]) as usize;
+        let (method, name_length, extra_length, comment_length) = (field(10) as u16, field(28), field(30), field(32));
+        let name_end = at + 46 + name_length;
+        if name_end > directory.len() {
+            return Err(ZipError::Malformed("a member name runs past the directory".into()));
+        }
+        if &directory[at + 46..name_end] == name.as_bytes() {
+            let crc = read_u32(&directory, at + 16)?;
+            let compressed = read_u32(&directory, at + 20)? as usize;
+            let uncompressed = read_u32(&directory, at + 24)? as usize;
+            let local_offset = read_u32(&directory, at + 42)? as usize;
+            if method != STORED && method != DEFLATED {
+                return Err(ZipError::Unsupported(format!("`{name}` is compressed with method {method}")));
+            }
+            if compressed > limit || uncompressed > limit {
+                return Err(ZipError::Malformed(format!("`{name}` is larger than the {limit} bytes asked for")));
+            }
+            let mut header = [0u8; LOCAL_HEADER_SIZE];
+            file.seek(SeekFrom::Start(local_offset as u64)).map_err(io)?;
+            file.read_exact(&mut header).map_err(io)?;
+            if read_u32(&header, 0)? != LOCAL_HEADER {
+                return Err(ZipError::Malformed(format!("`{name}` has no local header at byte {local_offset}")));
+            }
+            let skip = u16::from_le_bytes([header[26], header[27]]) as u64 + u16::from_le_bytes([header[28], header[29]]) as u64;
+            let start = local_offset as u64 + LOCAL_HEADER_SIZE as u64 + skip;
+            if start as usize + compressed > length {
+                return Err(ZipError::Malformed(format!("`{name}` runs past the end of the file")));
+            }
+            let mut stored = vec![0u8; compressed];
+            file.seek(SeekFrom::Start(start)).map_err(io)?;
+            file.read_exact(&mut stored).map_err(io)?;
+            let data = if method == STORED {
+                stored
+            } else {
+                let mut data = Vec::with_capacity(uncompressed);
+                flate2::read::DeflateDecoder::new(stored.as_slice())
+                    .take(uncompressed as u64 + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|_| ZipError::Corrupt { name: name.to_string() })?;
+                data
+            };
+            if data.len() != uncompressed || crc32(&data) != crc {
+                return Err(ZipError::Corrupt { name: name.to_string() });
+            }
+            return Ok(Some(data));
+        }
+        at = name_end + extra_length + comment_length;
+    }
+    Ok(None)
+}
+
 fn find_end_of_central_directory(bytes: &[u8]) -> Result<usize, ZipError> {
     if bytes.len() < 22 {
         return Err(ZipError::Malformed(
@@ -358,6 +444,23 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    /// One member read on its own is the member the whole archive holds,
+    /// and a member that is not there is `None`, not an error.
+    #[test]
+    fn one_member_is_read_without_the_rest() {
+        let mut writer = super::ZipWriter::new();
+        writer.add("scene.json", b"{}".to_vec());
+        writer.add("geometry/m.fsmesh", vec![7u8; 100_000]);
+        writer.add("preview.png", b"a picture".to_vec());
+        let bytes = writer.finish();
+        let mut file = std::io::Cursor::new(bytes.clone());
+        assert_eq!(super::read_member(&mut file, "preview.png", 1 << 20).unwrap().as_deref(), Some(&b"a picture"[..]));
+        assert_eq!(super::read_member(&mut file, "thumbnail.png", 1 << 20).unwrap(), None);
+        assert!(super::read_member(&mut file, "geometry/m.fsmesh", 1000).is_err(), "a member over the limit was read");
+        let whole = super::ZipArchive::read(&bytes).unwrap();
+        assert_eq!(super::read_member(&mut file, "geometry/m.fsmesh", 1 << 20).unwrap().as_deref(), whole.get("geometry/m.fsmesh"));
+    }
+
     use super::*;
 
     /// More members than plain ZIP can count is refused before writing,

@@ -61,8 +61,16 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 
 [Run]
 Filename: "{app}\Tequila.exe"; Description: "{cm:LaunchProgram,Tequila}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Tequila.exe"; Flags: nowait; Check: Relaunch
 
 [Code]
+// Started by Tequila's own updater (/relaunch=yes), which closed itself so
+// its files could be replaced: open it again once the update is in.
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|no}') = 'yes';
+end;
+
 const
   Uninstall = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{EDD88596-57CD-4475-98DD-4D3B719E8AB3}_is1';
 

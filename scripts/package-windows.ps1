@@ -115,7 +115,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs/materials-authoring.md') -Destination (Join-Path $packagePath 'MATERIALS.md')
     # The Claude skill for working in Tequila, to upload to a Claude account
     # (Connect an AI says so).
-    & (Join-Path $PSScriptRoot 'package-skill.ps1') -Out (Join-Path $packagePath 'Tequila-Claude-Skill.zip') | Out-Null
+    & (Join-Path $PSScriptRoot 'package-skill.ps1') -Out (Join-Path $packagePath 'Tequila-Skill.zip') | Out-Null
     # The example plugins: read-only, and off until turned on (the .bundled
     # file marks the folder as Tequila's own).
     Copy-Item -LiteralPath (Join-Path $projectRoot 'plugins/examples') -Destination (Join-Path $packagePath 'plugins') -Recurse
@@ -123,6 +123,11 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/library') -Destination $assetsPath -Recurse
     # The built-in studio presets, found beside the library.
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/studios') -Destination $assetsPath -Recurse
+    # The sample scenes the start screen opens; the folder's model files are
+    # the tests' fixtures.
+    $samplesPath = Join-Path $assetsPath 'samples'
+    New-Item -ItemType Directory -Path $samplesPath | Out-Null
+    Copy-Item -Path (Join-Path $projectRoot 'assets/samples/*.tequila') -Destination $samplesPath
     foreach ($name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_LICENSES.md', 'TRADEMARKS.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $packagePath
     }
@@ -186,10 +191,12 @@ Faster final renders: Render settings > Engine > Cycles (graphics card).
 The viewport pauses while minimized or exporting and resumes automatically.
 Closing prompts you to save unsaved work and warns about an active export.
 
-AI apps: Assistant > Connect an AI... > Connect the Claude app lets Claude
+AI apps: Assistant > Connect an AI... connects Claude, Cursor, VS Code
+(GitHub Copilot), Codex, Gemini CLI, Windsurf, LM Studio or any MCP app, to
 work in Tequila - materials, procedural materials from a description,
-lighting, renders, even plugins. Tequila-Claude-Skill.zip teaches it how
-(upload it in Claude's Settings > Capabilities > Skills).
+lighting, renders, even plugins. Tequila-Skill.zip teaches it how (an Agent
+Skill: upload it in Claude's Settings > Capabilities > Skills, or Add the
+skill for Claude Code and Codex).
 Plugins: Plugins > Manage plugins... (PLUGINS.md says how to write one).
 Guides: SCRIPTING.md, PLUGINS.md, MATERIALS.md, also under Help > Guides.
 If Tequila closes unexpectedly, the next launch shows what happened; Copy
@@ -200,7 +207,11 @@ a render node for network rendering (Render window > Network rendering).
 python\ holds the scripting module: tequila.open() needs no open window.
 '@ | Set-Content -LiteralPath (Join-Path $packagePath 'START-HERE.txt') -Encoding utf8
     $revision = & git rev-parse HEAD
-    "Source: $revision`nBuilt: $(Get-Date -Format o)`nIncludes current working-tree changes." |
+    # The release's version, as its installer and tag are named: the
+    # package's stamp, 20261021-093000, as 2026.10.21.0930. Help > Check for
+    # updates compares it with the latest release's.
+    $version = '{0}.{1}.{2}.{3}' -f $stamp.Substring(0, 4), $stamp.Substring(4, 2), $stamp.Substring(6, 2), $stamp.Substring(9, 4)
+    "Source: $revision`nVersion: $version`nBuilt: $(Get-Date -Format o)`nIncludes current working-tree changes." |
         Set-Content -LiteralPath (Join-Path $packagePath 'BUILD.txt') -Encoding utf8
     $archivePath = "$packagePath.zip"
     # The zip format cannot date anything before 1980, and some crates ship

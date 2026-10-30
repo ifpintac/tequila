@@ -419,6 +419,9 @@ fn point_input(input: PointInput) -> Option<(String, Ty)> {
         PointInput::Backfacing => (float4("fs_in_backfacing".into()), Ty::Float),
         PointInput::ObjectLocation => (vec4_of("fs_in_object_location".into()), Ty::Vector),
         PointInput::ObjectRandom => (float4("fs_in_object_random".into()), Ty::Float),
+        // The viewport's preview is what the camera sees, directly.
+        PointInput::IsCameraRay => (float4("1.0".into()), Ty::Float),
+        PointInput::IsShadowRay | PointInput::IsDiffuseRay | PointInput::IsGlossyRay | PointInput::IsTransmissionRay => (float4("0.0".into()), Ty::Float),
     })
 }
 
@@ -505,7 +508,7 @@ fn shader_node(node: &ShaderNode, a: &[Arg], output: u8, memo: &mut Memo) -> Opt
     let v = |i: usize| get(i).v();
     let b = |x: bool| if x { "true" } else { "false" };
     Some(match *node {
-        ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo => float4("0.0".into()),
+        ShaderNode::TextureCoordinate | ShaderNode::Geometry | ShaderNode::ObjectInfo | ShaderNode::LightPath => float4("0.0".into()),
         ShaderNode::LayerWeight => {
             let cos = format!("dot({}, {})", v(2), v(1));
             if output == 0 {

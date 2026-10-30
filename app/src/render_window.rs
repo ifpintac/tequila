@@ -331,6 +331,11 @@ pub struct RenderWindow {
     /// direct call because the renderer is the application's, not this
     /// window's.
     pub cancel_requested: bool,
+    /// The animation's frames to render, first and last, asked for this
+    /// frame and queued by the application, which turns the product.
+    pub frames_requested: Option<(u32, u32)>,
+    /// The frame range shown, until the animation changes; `None`, all.
+    frames: Option<(u32, u32)>,
     pub preview_job: Option<u64>,
     pub preview: Option<egui::TextureHandle>,
     /// Where past renders are remembered between sessions, once known.
@@ -381,6 +386,8 @@ impl Default for RenderWindow {
             lock_ratio: false,
             rendering: false,
             cancel_requested: false,
+            frames_requested: None,
+            frames: None,
             preview_job: None,
             preview: None,
             history_file: None,
@@ -754,6 +761,25 @@ impl RenderWindow {
                 )
                 .on_hover_text("A name for this render in the queue. Defaults to the camera's name.");
                 ui.label(egui::RichText::new("Name").color(crate::theme::dim()));
+                // A turntable's frames, numbered by {frame} in the file name;
+                // added right to left, so they read "Frames 0 to 35".
+                if let Some(animation) = project.document().animation.as_ref() {
+                    let last = animation.frames.saturating_sub(1);
+                    let (mut first, mut final_frame) = self.frames.unwrap_or((0, last));
+                    ui.separator();
+                    if ui
+                        .button("Render frames")
+                        .on_hover_text("Queue these frames of the turntable, one image each, numbered by {frame} in the file name. A frame already rendered is left out, so a stopped turntable is finished by asking again.")
+                        .clicked()
+                    {
+                        self.frames_requested = Some((first.min(last), final_frame.min(last).max(first.min(last))));
+                    }
+                    ui.add(egui::DragValue::new(&mut final_frame).range(0..=last));
+                    ui.label(egui::RichText::new("to").color(crate::theme::dim()));
+                    ui.add(egui::DragValue::new(&mut first).range(0..=last));
+                    ui.label(egui::RichText::new("Frames").color(crate::theme::dim()));
+                    self.frames = Some((first.min(last), final_frame.min(last)));
+                }
                 if self.rendering {
                     // Stop, not abandon: the job writes whatever it has reached.
                     if ui.button("Stop & save").on_hover_text("Stop the current render and save the image as it is now").clicked() {

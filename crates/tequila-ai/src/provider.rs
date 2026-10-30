@@ -140,11 +140,13 @@ pub struct Provider {
 }
 
 impl Provider {
-    /// Starting points for the providers people are most likely to add. The
+    /// Starting points for the providers people are most likely to add:
+    /// the big services, the gateways to many models, models on this
+    /// computer, and a company's own. All but Claude speak OpenAI's API. The
     /// model is left empty where a default would only be a guess that goes
     /// stale — "Fetch models" asks the service what it actually has.
     pub fn presets() -> Vec<Provider> {
-        let make = |id: &str, name: &str, kind: Kind, url: &str, model: &str| Provider {
+        let make = |id: &str, name: &str, kind: Kind, url: &str, model: &str, vision: bool| Provider {
             id: id.into(),
             name: name.into(),
             kind,
@@ -152,15 +154,27 @@ impl Provider {
             model: model.into(),
             key: Key::None,
             key_header: String::new(),
-            vision: true,
+            vision,
             max_tokens: 4096,
         };
         vec![
-            make("claude", "Claude", Kind::Anthropic, Kind::Anthropic.default_url(), "claude-opus-5-5"),
-            make("openai", "OpenAI", Kind::OpenAi, Kind::OpenAi.default_url(), ""),
-            make("ollama", "Ollama (on this computer)", Kind::OpenAi, "http://localhost:11434/v1", ""),
-            make("custom", "Company AI (e.g. Uliverse)", Kind::OpenAi, "", ""),
+            make("openai", "OpenAI", Kind::OpenAi, Kind::OpenAi.default_url(), "", true),
+            make("claude", "Claude", Kind::Anthropic, Kind::Anthropic.default_url(), "claude-opus-5-5", true),
+            make("gemini", "Google Gemini", Kind::OpenAi, "https://generativelanguage.googleapis.com/v1beta/openai", "", true),
+            make("openrouter", "OpenRouter (many models)", Kind::OpenAi, "https://openrouter.ai/api/v1", "", true),
+            make("mistral", "Mistral", Kind::OpenAi, "https://api.mistral.ai/v1", "", true),
+            make("deepseek", "DeepSeek", Kind::OpenAi, "https://api.deepseek.com/v1", "", false),
+            make("xai", "xAI (Grok)", Kind::OpenAi, "https://api.x.ai/v1", "", true),
+            make("groq", "Groq", Kind::OpenAi, "https://api.groq.com/openai/v1", "", false),
+            make("ollama", "Ollama (on this computer)", Kind::OpenAi, "http://localhost:11434/v1", "", true),
+            make("lmstudio", "LM Studio (on this computer)", Kind::OpenAi, "http://localhost:1234/v1", "", true),
+            make("custom", "Company AI (e.g. Uliverse)", Kind::OpenAi, "", "", true),
         ]
+    }
+
+    /// The preset with this id.
+    pub fn preset(id: &str) -> Option<Provider> {
+        Provider::presets().into_iter().find(|p| p.id == id)
     }
 
     fn base(&self) -> &str {
@@ -258,7 +272,7 @@ mod tests {
     use super::*;
 
     fn provider(kind: Kind, url: &str) -> Provider {
-        Provider { base_url: url.into(), kind, model: "m".into(), ..Provider::presets().remove(0) }
+        Provider { base_url: url.into(), kind, model: "m".into(), ..Provider::preset("claude").unwrap() }
     }
 
     #[test]

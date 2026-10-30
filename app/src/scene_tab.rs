@@ -266,6 +266,41 @@ impl SceneTab {
         tree.depth_first().into_iter().filter(|id| keep.contains(id)).collect()
     }
 
+    /// Which rays see the selected parts (`Rays`): what the camera,
+    /// reflections, other surfaces and glass see of them, their shadows,
+    /// and holdout. Folded away until wanted.
+    pub fn rays_panel(&mut self, ui: &mut egui::Ui, project: &mut Project) {
+        let document = project.document();
+        let selected: Vec<NodeId> = project
+            .selection
+            .nodes()
+            .filter(|&id| document.tree.get(id).is_some_and(|n| !matches!(n.kind, tequila_scene::tree::NodeKind::Light { .. })))
+            .collect();
+        let Some(first) = selected.first().and_then(|&id| document.tree.get(id)) else { return };
+        let before = first.rays;
+        let mut rays = before;
+        crate::field::Fold::new("Visible to")
+            .id_salt("part-rays")
+            .default_open(!before.is_default())
+            .show(ui, |ui| {
+                ui.add(crate::field::Checkbox::new(&mut rays.camera, "Camera"));
+                ui.add(crate::field::Checkbox::new(&mut rays.glossy, "Reflections"))
+                    .on_hover_text("Shows in other parts' reflections and the floor's. Off, and a prop stays in the picture without showing in the product's finish.");
+                ui.add(crate::field::Checkbox::new(&mut rays.diffuse, "Light it bounces"))
+                    .on_hover_text("Lights other surfaces by the light it bounces onto them.");
+                ui.add(crate::field::Checkbox::new(&mut rays.transmission, "Through glass"));
+                ui.add(crate::field::Checkbox::new(&mut rays.shadow, "Casts shadows"));
+                ui.add(crate::field::Checkbox::new(&mut rays.holdout, "Holdout"))
+                    .on_hover_text("Cut out of the picture where the camera sees it: nothing there, with no alpha, for compositing something in its place.");
+                if selected.len() > 1 {
+                    ui.label(egui::RichText::new(format!("For all {} selected", selected.len())).small().color(crate::theme::dim()));
+                }
+            });
+        if rays != before {
+            let _ = project.apply(tequila_scene::Command::SetRays { states: selected.iter().map(|&id| (id, rays)).collect() });
+        }
+    }
+
     /// The metadata panel, which shares the search box: a field clicked
     /// there becomes a search here.
     pub fn metadata_panel(&mut self, ui: &mut egui::Ui, project: &mut Project) {

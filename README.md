@@ -21,8 +21,12 @@ Get the newest version from the **[Releases page](../../releases/latest)**:
 | **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) renders on the graphics card; any other computer renders on the processor. |
 | **Mac** | `Tequila-<version>.dmg` | A Mac with Apple's own chips (M1 or newer) and a recent macOS. |
 
-To update, download the newer one and install it over the old: your
-materials, plugins and settings are kept. Plugins are written in Python, so
+To update, choose **Help > Check for updates**: Tequila fetches the newer
+version from this page, checks it against the SHA-256 GitHub lists for it,
+and installs it (on a Mac it opens the disk image, for Tequila to be dragged
+into Applications). It also looks once a day when it starts, which the same
+window can turn off. Or download the newer one and install it over the old.
+Either way your materials, plugins and settings are kept. Plugins are written in Python, so
 they need Python 3 on the computer (on a Mac, it comes with Apple's command
 line tools).
 
@@ -67,9 +71,12 @@ Questions, bugs, ideas and renders: join the
 - **Sharing** - web export (live 3D or pre-rendered), a spin viewer, and glTF
   and USD export; a full-screen presentation mode.
 - **Cutaways**, measurements, model sets and a configurator.
-- **AI apps and automation** - connect the Claude app in one click and let it
-  set up materials, lighting and renders, make materials from a description,
-  or write plugins; a built-in Assistant for Claude, OpenAI or a local model;
+- **AI apps and automation** - connect Claude, Cursor, VS Code (GitHub
+  Copilot), Codex, Gemini CLI, Windsurf or LM Studio in one click, or any
+  other MCP app, and let it set up materials, lighting and renders, make
+  materials from a description, or write plugins; a built-in Assistant for
+  OpenAI, Claude, Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq or a local
+  model;
   Python scripting, plugins, a command-line renderer, and a Blender live link.
 
 Animation is not part of Tequila yet.
@@ -105,8 +112,8 @@ cargo test --workspace --release
 
 ## Documentation
 
-- [Scripting and AI apps](docs/SCRIPTING.md) - Python, the command line, MCP
-  for Claude and other AI apps
+- [Scripting and AI apps](docs/SCRIPTING.md) - Python, the command line, and
+  MCP for AI apps
 - [Writing plugins](docs/plugins.md)
 - [Making materials](docs/materials-authoring.md)
 - [The specification](docs/TEQUILA_SPEC.md) and the [roadmap and status](docs/05-ROADMAP-AND-TESTING.md)

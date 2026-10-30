@@ -25,6 +25,7 @@ needs no compressor.
 project.tequila
 ├── manifest.json              what is inside, and what wrote it
 ├── scene.json                 the scene: hierarchy, units, environment
+├── preview.png                a small picture of it, optional
 ├── materials/
 │   └── mat_00000001.json      one file per material
 ├── geometry/
@@ -32,6 +33,13 @@ project.tequila
 └── sources/
     └── <id>.step              a CAD file kept with the project (.iges for IGES)
 ```
+
+`preview.png` is a small picture of the project, at most 512 pixels across,
+as the application's viewport showed it when it last saved the file. A start
+screen or a file browser shows it without reading the rest of the archive.
+It is optional: a writer without a picture to give leaves it out, and a
+reader that does not show one ignores it. A writer keeps the one a file was
+opened with when it has no new one.
 
 A `sources/` member is a CAD file's own bytes (`.step` or `.iges`, as the file
 was), kept so a model can be divided
@@ -109,6 +117,7 @@ the whole project.
 | `material_templates` | object[]? | Rule-based assignment (`docs/04` §3.3): `[{name, rules}]`, each rule `{match, material, …}`. `match` is `name` or `material` with a `pattern` (a case-insensitive wildcard: `*` any run, `?` any one character), `colour` with `color` and `tolerance` (the current material's base colour, which is where a CAD colour lands), or `metadata` with a `key` and a value `pattern` — a CAD layer is a metadata field. The first rule to match a part decides it. Omitted when there are none. |
 | `studios` | object[]? | Saved shots (§1.12): `[{name, camera?, environment?, image_style?, model_set?, variants, lights?, product_yaw?, filename_suffix?}]`. Each part present is applied; an absent one is left alone. `camera` is a `cameras` entry, `environment` and `image_style` are as at the top level, `model_set` is an index or null for "show every set", and `variants` is `[{multi_material, active}]`. Omitted when there are none. A Studio is also a *view*: `lights` switches lights on or off as `[{name, enabled}]` or `[{layer, enabled}]`, a later entry winning (absent leaves every light as it is); `product_yaw` turns the product about its vertical axis, radians right-handed about +Y, through its transform only (absent leaves it); `filename_suffix` is what `{view}` and `{studio}` stand for when it is rendered (absent: its name). A Studio's camera goes to the saved camera of its name, made active; one with no namesake takes the active camera's place, as before views. |
 | `product_turn` | object? | `{yaw, pivot}`: how Studios have turned the product, radians, and the `[x, z]` of the vertical axis it turns about (its centre when first turned), so turning back is exact. Absent until a Studio turns it. |
+| `animation` | object? | The product turning over frames, a turntable: `{frames, fps, keys, interpolation}`. `frames` is how many, numbered from 0; `keys` are `{frame, product_yaw}` in radians, interpolated between (`interpolation` `linear` or `ease`) and held before the first and after the last. A frame is rendered with the product turned as `product_turn` turns it. Absent: a still. |
 | `configurator` | object? | The product configurator (§1.13): `{title, subtitle, placement, options, rules, current}`. `placement` is `left`, `right` or `bottom`, where the picker sits in Presentation mode. Each option is `{id, name, drives, style, choices}`: `drives` is `material` (with `multi_material`, an id; a choice's `target` is a variant index), `model_set` (`target` is a set index) or `studio` (`target` is a Studio index); `style` is `swatches`, `buttons` or `list`; each choice is `{label, target, swatch?}` with `swatch` a linear RGB triple, absent to take the variant's colour. Each rule is `{option, choice, kind, other, other_choice}` (options by id, choices by index) with `kind` `excludes` or `requires`. `current` is the choice shown for each option, in order. Omitted when there is no configurator. |
 | `tree` | object[] | Every node, in depth-first order. §3.4. |
 | `roots` | number[] | Node ids with no parent, in order. |
@@ -174,7 +183,8 @@ reader and the writer being edited separately.
 | `scale` | number? | Vertical extent in scene units. Present for `Orthographic`. |
 | `shift_x`, `shift_y` | number? | Film-plane offset in fractions of the sensor. Present for `Shift`. |
 | `sensor_width_mm` | number | What the focal length is quoted against. 36 is full frame. |
-| `iso`, `shutter_speed_seconds` | number | The physical exposure of §01 §8.3. |
+| `iso`, `shutter_speed_seconds` | number | The physical exposure of §01 §8.3, with the f-number in `dof`. |
+| `physical_exposure` | bool? | Expose by them as a camera would, on top of the image's own exposure: twice the shutter time is a stop brighter, and so is one f-stop wider. Absent, false: they change nothing. |
 | `dof` | object | `{enabled, f_number, focus_distance, keep_focus, aperture, blades?, rotation?}`. `enabled` is false for a pinhole; `f_number` still carries the value the control returns to, because JSON has no infinity. `aperture` is `Circular` or `Bladed`. |
 
 ### 3.3.3 `image_style`
@@ -278,9 +288,10 @@ Each is a light, a picture or a gradient painted onto the environment sphere.
 | `transform` | number[16] | §3.5. |
 | `visible` | boolean | This node's own flag. A node is drawn only if it *and* every ancestor are visible. |
 | `locked` | boolean | Locked nodes refuse edits. Inherited the same way. |
+| `rays?` | object | Which rays see the node and everything under it: `{camera, diffuse, glossy, transmission, shadow, holdout}`. Each is a boolean. A part a kind of ray does not see is passed through by that ray: a card the camera cannot see but reflections can, a part that shows in no glass, one that casts no shadow. `holdout` cuts it out of the picture where the camera sees it, with no alpha, for compositing. A node's are limited by its ancestors'. Absent, every ray sees it and it is not held out. |
 | `children` | number[] | Child ids, in display order. |
 | `mesh` | string? | Required when `kind` is `Part`; names a `geometry/<id>.fsmesh` member. |
-| `light` | object? | Required when `kind` is a light shape. `{shape, color, intensity, intensity_unit, layer, enabled, visible_to_camera, affects_diffuse, affects_specular, casts_shadows, temperature?}` plus the shape's own fields: `width`/`height`/`two_sided` for `Area` and `Disc`, `radius` for `Point`, `inner_degrees`/`outer_degrees`/`falloff` for `Spot`. `intensity_unit` is `lm`, `nits` or `cd`. An optional `photometry` names a `.ies` file whose measured distribution replaces the shape's own falloff (§01 §5.1) — the path, never the file's contents, since a photometric file is a manufacturer's and is shared between projects. An optional `links` keeps the light to some parts (light linking): `{exclude, nodes, product}`. With `exclude` false it lights only `nodes` and the parts under them, and with `product` the product (everything but the scene's lights); with `exclude` true it lights everything but those. What a light does not light it does not shadow, so a light kept to the product casts no shadow on the floor. Absent, the light lights everything. Written in the units the user set, never in the radiance the sampler wants: a file holding converted values would change meaning the day a conversion is corrected. A light's *placement* is the node's `transform` like any other node's — an `Area` or `Disc` panel spans local X and Y and emits along local +Z, the opposite of Blender's area lights; a `Spot` aims along local -Z. A `photometry` file aims where its shape does: +Z on a panel, -Z on a `Point` or `Spot`. |
+| `light` | object? | Required when `kind` is a light shape. `{shape, color, intensity, intensity_unit, layer, enabled, visible_to_camera, affects_diffuse, affects_specular, casts_shadows, temperature?}` plus the shape's own fields: `width`/`height`/`two_sided` for `Area` and `Disc`, `radius` for `Point`, `inner_degrees`/`outer_degrees`/`falloff` for `Spot`, `angle_degrees` for `Sun` (the width of its disc; it lights from far away along the node's -Z, wherever the node is). `intensity_unit` is `lm`, `nits`, `cd` or `lx` (lux, the light falling on a surface facing it: a sun's unit; on a panel it is the light leaving it). An optional `photometry` names a `.ies` file whose measured distribution replaces the shape's own falloff (§01 §5.1) — the path, never the file's contents, since a photometric file is a manufacturer's and is shared between projects. An optional `links` keeps the light to some parts (light linking): `{exclude, nodes, product}`. With `exclude` false it lights only `nodes` and the parts under them, and with `product` the product (everything but the scene's lights); with `exclude` true it lights everything but those. What a light does not light it does not shadow, so a light kept to the product casts no shadow on the floor. Absent, the light lights everything. An optional `shadow_links`, in the same shape, keeps its *shadow* to some parts (shadow linking): the parts it names cast the light's shadow (or, with `exclude`, all but those), and the rest let its light through. Absent, every part casts it. An `Area` or `Disc` light may have a `spread_degrees` below 180: a softbox behind a grid, its light gathered into a beam that wide with its power unchanged (absent, 180, a plain panel). Written in the units the user set, never in the radiance the sampler wants: a file holding converted values would change meaning the day a conversion is corrected. A light's *placement* is the node's `transform` like any other node's — an `Area` or `Disc` panel spans local X and Y and emits along local +Z, the opposite of Blender's area lights; a `Spot` aims along local -Z. A `photometry` file aims where its shape does: +Z on a panel, -Z on a `Point` or `Spot`. |
 | `cutaway` | object? | Required when `kind` is `Cutaway`. `{shape, enabled, cap, cap_color?}`: `shape` is `plane`, `box`, `sphere` or `cylinder`, in the node's own space — the half-space in front of `z = 0` along +Z, the cube from -1 to 1, the unit sphere, or radius 1 about Z from z = -1 to 1 — so the `transform` sizes and places it. `cap` is `own` (a cut face in the material of the part it cuts) or `color`, with `cap_color` linear RGB. Everything inside the volume is removed from the render and cut solids are capped (`docs/02` §3). A part whose material is of type Cutaway cuts with its own mesh instead, and has no node kind of its own. |
 | `material` | string? | Names a `materials/<id>.json` member. Absent means unassigned. |
 | `metadata` | object? | String-to-string. CAD attributes and user annotations, kept verbatim. |
@@ -493,7 +504,7 @@ A node:
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | number | File-local. Reassigned on load, and links are remapped with it. |
-| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`, `node` (a Blender shader node), `group`, and the rest of `NodeKind`. |
+| `kind` | string | `constant`, `mapping_2d`, `image_texture`, `mix`, `multiply`, `add`, `invert`, `remap`, `clamp`, `node` (a Blender shader node), `group`, `shader` (another surface, its `parameters` by key as a material's are), `mix_shader` and `add_shader` (wired from a `shader` to `input:1`, `mix_shader`'s factor on `input:0`, and into a surface's Layer, `input:0`), and the rest of `NodeKind`. |
 | `position` | number[2] | Editor layout only; never affects rendering. |
 | `label?` | string | User-assigned name. |
 | `literals?` | object[] | Values for unconnected inputs: `{socket, value}`. |

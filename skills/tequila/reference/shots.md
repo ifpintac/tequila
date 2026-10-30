@@ -57,6 +57,10 @@ A studio preset brings lights, cameras and views, the floor and the look in one 
 - `tequila_studio_render_all` renders every view, one file each. Only when asked for renders.
 - `tequila_studio_preset_save {"name": "..."}` keeps the current studio as the person's own preset.
 
+## A turntable
+
+The product turning, a numbered image a frame: `{"command": "animation.set", "animation": {"frames": 36, "fps": 24, "keys": [{"frame": 0, "product_yaw": 0}, {"frame": 36, "product_yaw": 6.2832}], "interpolation": "linear"}}` (radians; `"ease"` starts and stops gently; the key after the last frame is where the first began, so none repeats). `{"command": "studio.turn_product", "yaw": 1.5708}` shows one angle. The person renders the frames from the Studio tab or the Render window; a frame already rendered is left out, so asking again finishes a stopped turntable.
+
 ## Jewellery and glass
 
 `{"command": "lighting.set_preset", "preset": "Jewelry"}` gives the deeper light paths gems and glass need; then gem presets (Diamond, Ruby, Sapphire Blue…) or glass ones.

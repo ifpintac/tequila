@@ -232,6 +232,15 @@ pub struct Instance {
     pub material: MaterialId,
     pub visible_to_camera: bool,
     pub casts_shadows: bool,
+    /// Seen by the light other surfaces gather, their reflections, and what
+    /// shows through their glass; a part none of these see is passed
+    /// through by such rays, as one hidden from the camera is by its.
+    pub seen_by_diffuse: bool,
+    pub seen_by_glossy: bool,
+    pub seen_by_transmission: bool,
+    /// Cut out of the picture: where the camera sees it, nothing, with no
+    /// alpha, for compositing (Cycles' holdout).
+    pub holdout: bool,
     /// Set when this instance is a shadow catcher rather than a surface.
     pub shadow_catcher: Option<ShadowCatcher>,
     /// This geometry stands in for an analytic light: it is *seen*, but it does
@@ -259,6 +268,10 @@ impl Instance {
             material,
             visible_to_camera: true,
             casts_shadows: true,
+            seen_by_diffuse: true,
+            seen_by_glossy: true,
+            seen_by_transmission: true,
+            holdout: false,
             shadow_catcher: None,
             light_proxy: false,
             light_layer: 0,
@@ -330,6 +343,8 @@ pub struct SceneSnapshot {
     /// then every query takes exactly the path it took before cutaways
     /// existed.
     cutters: Arc<Vec<crate::cutaway::Cutter>>,
+    /// The glowing triangles, worked out the first time they are asked for.
+    emitters: EmitterCache,
     /// Whether any material in the scene refracts.
     ///
     /// Cached for the same reason [`Self::cutouts`] is, and spending the same
@@ -340,6 +355,18 @@ pub struct SceneSnapshot {
     /// and walking all of them once a path to find that out is the cost this
     /// exists to remove.
     transmissive: bool,
+}
+
+/// [`SceneSnapshot::emitters`], worked out once. A copy starts without it:
+/// copying is how a snapshot is changed, and what glows where may be what
+/// changed.
+#[derive(Debug, Default)]
+struct EmitterCache(std::sync::OnceLock<crate::emitters::Emitters>);
+
+impl Clone for EmitterCache {
+    fn clone(&self) -> Self {
+        EmitterCache::default()
+    }
 }
 
 /// Whether this parameter block describes a surface light can pass through
@@ -379,6 +406,7 @@ impl SceneSnapshot {
             bounds,
             cutouts: materials.iter().any(is_cut_out),
             cutters: Arc::new(Vec::new()),
+            emitters: EmitterCache::default(),
             transmissive: materials.iter().any(Material::is_transmissive),
             materials,
         }
@@ -387,7 +415,14 @@ impl SceneSnapshot {
     /// Cut the scene with these volumes.
     pub fn with_cutters(mut self, cutters: Vec<crate::cutaway::Cutter>) -> Self {
         self.cutters = Arc::new(cutters);
+        self.emitters = EmitterCache::default();
         self
+    }
+
+    /// The glowing triangles, which next-event estimation samples alongside
+    /// the lights.
+    pub fn emitters(&self) -> &crate::emitters::Emitters {
+        self.emitters.0.get_or_init(|| crate::emitters::Emitters::build(self))
     }
 
     /// The cutaway volumes, usually none.
@@ -431,6 +466,7 @@ impl SceneSnapshot {
         programs: Vec<Option<Arc<CompiledGraph>>>,
         textures: Arc<TextureTable>,
     ) -> Self {
+        self.emitters = EmitterCache::default();
         // Recomputed rather than or-ed in: a graph can fold opacity to a
         // constant, and the folded value is the one that shades, so the
         // material block alone is not the whole answer once programs exist.
@@ -760,6 +796,7 @@ impl SceneSnapshot {
                 generated: self.generated_at(hit, object),
                 object_location: transform.point(Vec3::ZERO),
                 object_random: Self::object_random(hit.instance.index()),
+                ray: Default::default(),
             },
             position: object,
             // Renormalized because the inverse transpose does not preserve

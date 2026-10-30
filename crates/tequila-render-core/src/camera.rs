@@ -70,6 +70,10 @@ pub struct Camera {
     /// When set, the focus distance is re-derived from the camera-target
     /// distance whenever the camera moves — KeyShot's "Keep Focus" (§8.1).
     pub keep_focus: bool,
+    /// Expose by ISO, shutter and f-number as a camera would
+    /// ([`Camera::exposure_scale`]), on top of the image's own exposure. Off,
+    /// they change nothing, which is how every camera before them renders.
+    pub physical_exposure: bool,
 }
 
 impl Default for Camera {
@@ -86,6 +90,7 @@ impl Default for Camera {
             iso: 100.0,
             shutter_speed_seconds: 1.0 / 100.0,
             keep_focus: false,
+            physical_exposure: false,
         }
     }
 }
@@ -190,6 +195,16 @@ impl Camera {
         // The 1/16 calibration constant is the standard "K = 12.5" reflected
         // -light meter convention rearranged for scene-linear radiance.
         f32::exp2(-ev) * 16.0
+    }
+
+    /// The stops this camera adds to the image's exposure: its
+    /// [`Camera::exposure_scale`] when it exposes physically, none otherwise.
+    pub fn exposure_stops(&self) -> f32 {
+        if self.physical_exposure {
+            self.exposure_scale().log2()
+        } else {
+            0.0
+        }
     }
 
     /// A deterministic ray for picking and for the gizmo.

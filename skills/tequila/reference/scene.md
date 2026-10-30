@@ -21,6 +21,7 @@ Every `{"command": ...}` here goes through `tequila_apply`, or several at once a
 ```
 
 - **Hide and show:** `{"command": "scene.set_visibility", "states": [{"node": 3, "value": true}, {"node": 4, "value": false}]}` - one command for many nodes, so "isolate these" is one undo step: list every part, true for the ones to keep.
+- **Seen by some rays only:** `{"command": "scene.set_rays", "states": [{"node": 3, "rays": {"camera": false, "diffuse": true, "glossy": true, "transmission": true, "shadow": true, "holdout": false}}]}` - send all six. `camera: false` keeps a part out of the picture but in its reflections and light (a bounce card); `glossy: false` keeps it out of reflections; `shadow: false` stops its shadow; `holdout: true` cuts a transparent hole where the camera sees it, for compositing. A group's rays apply to every part in it.
 - **A model that came in as one lump** (an STL, an OBJ without groups): `{"command": "scene.split_parts", "node": 4}` makes one part per connected piece.
 - **Renaming many parts** (`Body.001` → `Body`): read the names, then one `tequila_batch` of `scene.rename`s.
 - **Selecting** for the user to see: `tequila_select {"nodes": [3, 4]}`; `tequila_frame {"all": false}` frames them.
@@ -50,13 +51,14 @@ That puts node 5 1 cm up (+Y is up) from where an identity transform has it. For
 {"command": "scene.add_light", "name": "Key", "light": {"shape": "Area", "width": 0.5, "height": 0.5, "intensity": 1500, "intensity_unit": "lm", "color": "#fff4e6"}}
 ```
 
-- `shape`: `Area` (a panel; `width`, `height`, `two_sided`), `Disc`, `Point` (`radius`), `Spot` (`inner_degrees`, `outer_degrees`, `falloff`). `intensity` in `lm` (lumens), `cd` (candela) or `nits`; `temperature` in kelvin instead of a colour.
+- `shape`: `Area` (a panel; `width`, `height`, `two_sided`), `Disc`, `Point` (`radius`), `Spot` (`inner_degrees`, `outer_degrees`, `falloff`), `Sun` (`angle_degrees`, the disc's width: 0.53 is the real sun, 0 hard shadows). `intensity` in `lm` (lumens), `cd` (candela), `nits`, or `lx` (lux, a sun's: a few hundred lights a product like a softbox); `temperature` in kelvin instead of a colour. A sun lights from far away along its local -Z wherever it is placed: only its rotation matters.
 - A new light sits at the origin: find its id in `tequila_nodes` (kind `light`) and place it with `scene.set_transform`. An area or disc light shines along its local **+Z** - the opposite of Blender, so negate the Y and Z columns of a Blender light's matrix. A spot aims along its local -Z, and so does a point light's `.ies` file; an area light's `.ies` file aims where the panel faces. 40 cm up, facing down:
 
 ```json
 {"command": "scene.set_transform", "transforms": [{"node": 7, "matrix": [1,0,0,0, 0,0,-1,0.4, 0,1,0,0, 0,0,0,1]}]}
 ```
 
+- **Light and shadow linking:** a light's `links` keeps it to some parts, its `shadow_links` keeps its shadow to some: `{"exclude": false, "nodes": [3], "product": false}` (only these), `"exclude": true` (all but these), `"product": true` for the whole product. A light kept to the product lights nothing else, the floor included; shadow links leaving a prop out let the light through it.
 - `scene.set_light` changes everything but its place. Lights in the scene add to the environment; for most product shots the environment and a lighting preset are enough (`shots.md`).
 
 ## Cutaways and measurements

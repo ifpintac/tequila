@@ -479,6 +479,21 @@ fn a_reflection_faded_by_distance_shows_near_the_product() {
     assert!(strongest(&near) < 0.8 * strongest(&full), "as strong as the full mirror: {} of {}", strongest(&near), strongest(&full));
 }
 
+/// A part reflections do not see is missing from the floor's reflection,
+/// and only from that: the reflection of the panel goes when it is hidden
+/// from glossy rays.
+#[test]
+fn a_part_reflections_do_not_see_is_not_in_the_floor() {
+    let mirror = ShadowCatcher { reflections: 1.0, ..Default::default() };
+    let seen = render_layer(scene(Some(mirror.clone()), true), 32);
+    let mut hidden = scene(Some(mirror), true);
+    hidden.instances[1].seen_by_glossy = false;
+    let unseen = render_layer(hidden, 32);
+    let total = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).sum::<f32>();
+    assert!(total(&seen) > 1.0, "the panel is not in the floor at all");
+    assert!(total(&unseen) < 0.02 * total(&seen), "hidden from reflections, it still shows: {} of {}", total(&unseen), total(&seen));
+}
+
 fn changed_pixels(a: &Framebuffer, b: &Framebuffer) -> usize {
     let mut changed = 0;
     for y in 0..SIZE {

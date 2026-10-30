@@ -88,7 +88,7 @@ impl PluginsWindow {
                 });
                 hint(
                     ui,
-                    "Or have an AI write it: ask the Assistant, or the Claude app once connected (Assistant, Connect an AI…), for what it should do - \"a panel that renames the selected parts with a prefix\". It writes the plugin here, and you turn it on.",
+                    "Or have an AI write it: ask the Assistant, or an AI app once connected (Assistant, Connect an AI…), for what it should do - \"a panel that renames the selected parts with a prefix\". It writes the plugin here, and you turn it on.",
                 );
                 if !plugins.problems.is_empty() {
                     ui.colored_label(crate::theme::p().busy, format!("{} plugin(s) could not be read", plugins.problems.len()))

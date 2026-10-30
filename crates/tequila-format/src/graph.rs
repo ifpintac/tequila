@@ -136,7 +136,11 @@ fn node_to_json(id: NodeId, node: &Node) -> Value {
     object.set("id", id.0 as f64).set("kind", kind_name(&node.kind));
 
     match &node.kind {
-        NodeKind::Surface(_) => {}
+        NodeKind::Surface(_) | NodeKind::MixShader { .. } => {}
+        // Another surface: its parameters by key, as a material's are.
+        NodeKind::Shader(material) => {
+            object.set("parameters", parameters_to_json(material));
+        }
         NodeKind::Constant(value) => {
             object.set("value", value_to_json(*value));
         }
@@ -349,6 +353,47 @@ pub(crate) fn read_graph(
     Ok(graph)
 }
 
+/// A Shader node's parameters, by key: numbers, colours and flags. A metal
+/// preset is not a value a Shader node keeps.
+fn parameters_to_json(material: &Material) -> Value {
+    use tequila_materials::material_type::ParamValue;
+    let mut object = Object::new();
+    for param in Param::ALL.iter() {
+        match param.read(material) {
+            Some(ParamValue::Scalar(v)) => {
+                object.set(param.key(), v);
+            }
+            Some(ParamValue::Color(c)) => {
+                object.set(param.key(), Value::Array(vec![Value::from(c.r), Value::from(c.g), Value::from(c.b)]));
+            }
+            Some(ParamValue::Flag(f)) => {
+                object.set(param.key(), f);
+            }
+            Some(ParamValue::Metal(_)) | None => {}
+        }
+    }
+    object.build()
+}
+
+fn read_parameters(value: Option<&Value>) -> Material {
+    use tequila_materials::material_type::{ParamUi, ParamValue};
+    let mut material = Material::default();
+    let Some(value) = value else { return material };
+    for param in Param::ALL.iter() {
+        let Some(entry) = value.get(param.key()) else { continue };
+        let read = match param.ui() {
+            ParamUi::Color | ParamUi::Vector => read_spectrum(entry).map(ParamValue::Color),
+            ParamUi::Flag => entry.as_bool().map(ParamValue::Flag),
+            ParamUi::Scalar => entry.as_f32().filter(|v| v.is_finite()).map(ParamValue::Scalar),
+            ParamUi::Slot | ParamUi::Metal => None,
+        };
+        if let Some(read) = read {
+            param.write(&mut material, read);
+        }
+    }
+    material
+}
+
 fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
     let kind_text = value
         .get("kind")
@@ -356,6 +401,9 @@ fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
         .ok_or_else(|| FormatError::Invalid(format!("{name}: a node has no kind")))?;
 
     let kind = match kind_text {
+        "shader" => NodeKind::Shader(Box::new(read_parameters(value.get("parameters")))),
+        "mix_shader" => NodeKind::MixShader { add: false },
+        "add_shader" => NodeKind::MixShader { add: true },
         "constant" => NodeKind::Constant(
             value
                 .get("value")
@@ -582,6 +630,9 @@ fn read_vec2(value: Option<&Value>) -> Option<Vec2> {
 fn kind_name(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Surface(_) => "surface",
+        NodeKind::Shader(_) => "shader",
+        NodeKind::MixShader { add: false } => "mix_shader",
+        NodeKind::MixShader { add: true } => "add_shader",
         NodeKind::Constant(_) => "constant",
         NodeKind::Mapping2d { .. } => "mapping_2d",
         NodeKind::ImageTexture { .. } => "image_texture",
@@ -1681,5 +1732,25 @@ mod tests {
         }
         assert_eq!(socket_from_name("nonsense"), None);
         assert_eq!(socket_from_name("param:no_such_parameter"), None);
+    }
+
+    /// A graph mixing its surface with another keeps the other's parameters
+    /// and the mix, and compiles as it did.
+    #[test]
+    fn a_mixed_graph_survives_a_round_trip() {
+        use tequila_materials::graph::{Node, LAYER_INPUT};
+        let mut graph = MaterialGraph::from_material(Material::default());
+        let gold = Material { base_metalness: 1.0, base_color: Spectrum { r: 1.0, g: 0.8, b: 0.3 }, ..Material::default() };
+        let shader = graph.add_node(Node::new(NodeKind::Shader(Box::new(gold))));
+        let mut mix = Node::new(NodeKind::MixShader { add: false });
+        mix.literals.insert(Socket::Input(0), tequila_materials::graph::Value::Float(0.4));
+        let mix = graph.add_node(mix);
+        graph.connect(shader, mix, Socket::Input(1));
+        graph.connect(mix, graph.output(), LAYER_INPUT);
+        let json = graph_to_json(&graph).expect("a graph worth writing");
+        let back = read_graph(Some(&json), graph.material().clone(), "mixed").expect("reads back");
+        let (a, b) = (graph.compile().unwrap(), back.compile().unwrap());
+        assert_eq!(a.layer, b.layer, "the mix or the other surface changed");
+        assert!(b.layer.is_some());
     }
 }

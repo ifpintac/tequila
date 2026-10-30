@@ -30,17 +30,28 @@ Click **Providers…**, choose a starting point, fill in the form, and click
 
 | Provider | Type | Address | Key |
 |---|---|---|---|
-| **Claude** | Anthropic | `https://api.anthropic.com` | An Anthropic API key (console.anthropic.com) |
 | **OpenAI** | OpenAI-compatible | `https://api.openai.com/v1` | An OpenAI API key (platform.openai.com) |
+| **Claude** | Anthropic | `https://api.anthropic.com` | An Anthropic API key (console.anthropic.com) |
+| **Google Gemini** | OpenAI-compatible | `https://generativelanguage.googleapis.com/v1beta/openai` | A Gemini API key (aistudio.google.com) |
+| **OpenRouter**, hundreds of models behind one key | OpenAI-compatible | `https://openrouter.ai/api/v1` | An OpenRouter key (openrouter.ai) |
+| **Mistral** | OpenAI-compatible | `https://api.mistral.ai/v1` | A Mistral key (console.mistral.ai) |
+| **DeepSeek**, text only | OpenAI-compatible | `https://api.deepseek.com/v1` | A DeepSeek key (platform.deepseek.com) |
+| **xAI (Grok)** | OpenAI-compatible | `https://api.x.ai/v1` | An xAI key (console.x.ai) |
+| **Groq** | OpenAI-compatible | `https://api.groq.com/openai/v1` | A Groq key (console.groq.com) |
 | **Ollama**, free, on this computer | OpenAI-compatible | `http://localhost:11434/v1` | None |
+| **LM Studio**, free, on this computer | OpenAI-compatible | `http://localhost:1234/v1` | None |
 | **Your company's AI** (e.g. Uliverse) | usually OpenAI-compatible | from your IT/AI team | from your IT/AI team |
+
+A model that cannot look at images still works, without checking its own
+screenshots: untick **The model can see images** for it. DeepSeek's and
+Groq's presets start that way.
 
 **Fetch models** asks the service which models it has; pick one from the
 list. Several providers can be connected at once. The drop-down at the top of
 the panel switches between them, even in the middle of a conversation.
 
-An API key is not the same as a ChatGPT or Claude subscription. The APIs are
-billed separately, per use, by OpenAI and Anthropic.
+An API key is not the same as a ChatGPT, Claude or Gemini subscription. The
+APIs are billed separately, per use, by each company.
 
 ### Only have a key?
 
@@ -108,10 +119,12 @@ caller chooses. Developer mode is available to ChatGPT Plus, Pro, Business,
 Enterprise and Education accounts on the web. The tunnel needs Tunnels
 permissions on your OpenAI platform organization.
 
-## The Claude app, Claude Code, Cursor
+## AI apps on this computer
 
-These start Tequila's MCP bridge (`tequila-cli --mcp`) themselves. For the
-Claude desktop app, **Connect an AI… → Connect the Claude app** does the
-setting up; restart the Claude app afterwards. Without it, the Claude app has
-no Tequila tools and falls back to clicking around the screen. See
+The Claude app, Cursor, VS Code with GitHub Copilot, OpenAI's Codex, Gemini
+CLI, Windsurf, LM Studio and Claude Code start Tequila's MCP bridge
+(`tequila-cli --mcp`) themselves. **Connect an AI…** lists the ones on this
+computer, each with a **Connect** button (Claude Code's is a command to
+copy), and **Copy the settings** for any other MCP app. Without it, an app
+has no Tequila tools and may fall back to clicking around the screen. See
 `docs/SCRIPTING.md`, section *Connecting an AI app (MCP)*.

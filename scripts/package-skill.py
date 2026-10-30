@@ -30,7 +30,7 @@ Ids and keys in the examples are placeholders: read the real ones from the scene
 
 
 def main():
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'dist' / 'Tequila-Claude-Skill.zip'
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / 'dist' / 'Tequila-Skill.zip'
     out.parent.mkdir(parents=True, exist_ok=True)
     skill = ROOT / 'skills' / 'tequila'
     reference = (ROOT / 'docs' / 'scripting-api.md').read_text(encoding='utf-8')

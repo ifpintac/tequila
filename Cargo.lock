@@ -3605,6 +3605,7 @@ dependencies = [
  "raw-window-handle",
  "rayon",
  "rfd",
+ "ring",
  "tequila-ai",
  "tequila-color",
  "tequila-core",
@@ -3619,6 +3620,7 @@ dependencies = [
  "tequila-scene",
  "tequila-scripting",
  "tequila-texture",
+ "ureq",
 ]
 
 [[package]]

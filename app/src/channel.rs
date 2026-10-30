@@ -468,6 +468,21 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(help) = change.help {
         app.show_help = help;
     }
+    if let Some(open) = change.start_screen {
+        app.start_screen.open = open;
+    }
+    if let Some(open) = change.connect {
+        app.start_screen.open &= !open;
+        app.assistant.set_providers_open(open);
+    }
+    match change.updates {
+        Some(true) => {
+            app.start_screen.open = false;
+            app.updates.open_window();
+        }
+        Some(false) => app.updates.open = false,
+        None => {}
+    }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }
@@ -1573,7 +1588,13 @@ impl TequilaApp {
                 }
             }
             None => {
-                if !self.screenshot_requested {
+                // A minimized window has no pixels to read back: egui would
+                // read a framebuffer zero pixels wide, and that panics. So
+                // the screenshot waits for the window to be restored.
+                let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false) || !i.screen_rect().is_positive());
+                if minimized {
+                    self.project.status = "A screenshot is waiting for Tequila's window to be restored".into();
+                } else if !self.screenshot_requested {
                     self.screenshot_requested = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
                 }
@@ -1919,6 +1940,32 @@ mod handler_tests {
         let message = failure(&mut app, r#"{"op":"ui","console":false,"tab":"nonsense"}"#);
         assert!(message.contains("scene"), "the refusal lists the real tabs: {message}");
         assert!(app.console.open, "the console was not closed by a refused request");
+    }
+
+    /// A screenshot asked of a minimized window waits for it to come back,
+    /// rather than reading a framebuffer with no pixels, which panics.
+    #[test]
+    fn a_screenshot_waits_while_the_window_is_minimized() {
+        let mut app = TequilaApp::for_tests();
+        let path = std::env::temp_dir().join(format!("tequila-minimized-{}.png", std::process::id()));
+        let text = path.display().to_string().replace('\\', "/");
+        value(&mut app, &format!(r#"{{"op":"screenshot","path":"{text}"}}"#));
+        let ctx = egui::Context::default();
+        let asks_for_pixels = |app: &mut TequilaApp, minimized: bool| {
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                ..Default::default()
+            };
+            input.viewports.entry(egui::ViewportId::ROOT).or_default().minimized = Some(minimized);
+            let output = ctx.run(input, |ctx| app.serve_screenshot(ctx));
+            output
+                .viewport_output
+                .get(&egui::ViewportId::ROOT)
+                .is_some_and(|v| v.commands.iter().any(|c| matches!(c, egui::ViewportCommand::Screenshot)))
+        };
+        assert!(!asks_for_pixels(&mut app, true), "a minimized window was asked for its pixels");
+        assert!(app.pending_screenshot.is_some(), "the screenshot was given up");
+        assert!(asks_for_pixels(&mut app, false), "the restored window was not asked for its pixels");
     }
 
     #[test]

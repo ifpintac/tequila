@@ -30,6 +30,14 @@ pub fn available() -> Result<(), String> {
     ffi::api().map(|_| ())
 }
 
+/// Whether the installed library keeps passes beside a final render's image
+/// (`Session::add_pass`): one from before renders the image alone.
+pub fn has_passes() -> bool {
+    ffi::api().is_ok_and(|api| {
+        api.fsc_add_pass.is_some() && api.fsc_render_pass.is_some() && api.fsc_cryptomatte.is_some() && api.fsc_object_of.is_some() && api.fsc_set_name.is_some()
+    })
+}
+
 /// The devices Cycles can render on, as (type, description, id).
 pub fn devices() -> Result<Vec<(String, String, String)>, String> {
     let api = ffi::api()?;
@@ -366,6 +374,74 @@ impl Session {
         self.check(unsafe { link(self.raw, node.0, membership, receiver_set) })
     }
 
+    /// Whether this library takes vertex attributes of the caller's own
+    /// (`Session::mesh_attribute`).
+    pub fn has_mesh_attributes(&self) -> bool {
+        self.api.fsc_mesh_attribute.is_some()
+    }
+
+    /// Four numbers a vertex as the attribute `name`.
+    pub fn mesh_attribute(&mut self, mesh: Node, name: &str, rgba: &[[f32; 4]]) -> Result<(), String> {
+        let Some(send) = self.api.fsc_mesh_attribute else { return Err("this Cycles library predates vertex attributes".into()) };
+        self.check(unsafe { send(self.raw, mesh.0, c(name).as_ptr(), rgba.len() as c_int, rgba.as_ptr().cast()) })
+    }
+
+    /// Whether this library keeps passes beside a final render's image.
+    pub fn has_passes(&self) -> bool {
+        self.api.fsc_add_pass.is_some() && self.api.fsc_render_pass.is_some() && self.api.fsc_cryptomatte.is_some() && self.api.fsc_object_of.is_some() && self.api.fsc_set_name.is_some()
+    }
+
+    /// A pass of Cycles type `kind` named `name`, `channels` wide, kept by
+    /// the next render; `lightgroup` for a light group's.
+    pub fn add_pass(&mut self, name: &str, kind: &str, channels: usize, lightgroup: Option<&str>) -> Result<(), String> {
+        let Some(add) = self.api.fsc_add_pass else { return Err("this Cycles library predates passes".into()) };
+        let group = lightgroup.map(c);
+        let group_ptr = group.as_ref().map_or(std::ptr::null(), |g| g.as_ptr());
+        self.check(unsafe { add(self.raw, c(name).as_ptr(), c(kind).as_ptr(), channels as c_int, group_ptr) })
+    }
+
+    /// Cryptomatte for objects and materials, `layers` layers of two ranks.
+    pub fn cryptomatte(&mut self, layers: usize) -> Result<(), String> {
+        let Some(crypto) = self.api.fsc_cryptomatte else { return Err("this Cycles library predates passes".into()) };
+        self.check(unsafe { crypto(self.raw, layers as c_int) })
+    }
+
+    /// A pass the last render kept, rows top first.
+    pub fn render_pass(&mut self, name: &str, channels: usize, width: usize, height: usize) -> Result<Vec<f32>, String> {
+        let Some(read) = self.api.fsc_render_pass else { return Err("this Cycles library predates passes".into()) };
+        let mut out = vec![0.0f32; width * height * channels];
+        self.check(unsafe { read(self.raw, c(name).as_ptr(), out.as_mut_ptr(), out.len() as c_int) })?;
+        Ok(out)
+    }
+
+    /// The object a node - a light - stands for.
+    pub fn object_of(&mut self, node: Node) -> Result<Node, String> {
+        let Some(find) = self.api.fsc_object_of else { return Err("this Cycles library predates passes".into()) };
+        let object = unsafe { find(self.raw, node.0) };
+        self.node_or_error(object)
+    }
+
+    /// A node's name, which Cryptomatte hashes.
+    pub fn set_name(&mut self, node: Node, name: &str) -> Result<(), String> {
+        let Some(set) = self.api.fsc_set_name else { return Err("this Cycles library predates passes".into()) };
+        self.check(unsafe { set(node.0, c(name).as_ptr()) })
+    }
+
+    /// Whether this library sets Cycles' shadow linking.
+    pub fn has_shadow_linking(&self) -> bool {
+        self.api.fsc_shadow_linking.is_some()
+    }
+
+    /// An object's - or a light's - shadow linking: the blocker sets that
+    /// cast its shadow as an emitter (`membership`, a bit each), and the set
+    /// it belongs to as a blocker (0 blocks every light).
+    pub fn shadow_linking(&mut self, node: Node, membership: u64, blocker_set: u32) -> Result<(), String> {
+        let Some(link) = self.api.fsc_shadow_linking else {
+            return Err("this Cycles library predates shadow linking".into());
+        };
+        self.check(unsafe { link(self.raw, node.0, membership, blocker_set) })
+    }
+
     pub fn object(&mut self, mesh: Node, matrix: &[f32; 12], visibility: u32, shadow_catcher: bool) -> Result<Node, String> {
         let node = unsafe { (self.api.fsc_object)(self.raw, mesh.0, matrix.as_ptr(), visibility, shadow_catcher as c_int) };
         self.node_or_error(node)
@@ -383,6 +459,16 @@ impl Session {
     /// full angle across the image's shorter side.
     pub fn camera(&mut self, matrix: &[f32; 12], fov: f32, width: usize, height: usize) {
         unsafe { (self.api.fsc_camera)(self.raw, matrix.as_ptr(), fov, width as c_int, height as c_int) }
+    }
+
+    /// The camera's viewplane, `[left, right, bottom, top]`, in place of the
+    /// one fitted to the picture; `None` for the fitted one. `false` from a
+    /// library that predates it, where every camera is fitted.
+    pub fn camera_viewplane(&mut self, viewplane: Option<[f32; 4]>) -> bool {
+        let Some(set) = self.api.fsc_camera_viewplane else { return false };
+        let [left, right, bottom, top] = viewplane.unwrap_or([0.0; 4]);
+        unsafe { set(self.raw, left, right, bottom, top) };
+        true
     }
 
     /// The colour of a shadow catcher's shadow, in the working space: the

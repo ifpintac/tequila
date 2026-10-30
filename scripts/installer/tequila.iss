@@ -95,8 +95,16 @@ Root: HKA; Subkey: "Software\Classes\Tequila.Project\shell\open\command"; ValueT
 
 [Run]
 Filename: "{app}\Tequila.exe"; WorkingDir: "{code:PicturesDir}\Tequila"; Description: "{cm:LaunchProgram,Tequila}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Tequila.exe"; WorkingDir: "{code:PicturesDir}\Tequila"; Flags: nowait; Check: Relaunch
 
 [Code]
+// Started by Tequila's own updater (/relaunch=yes), which closed itself so
+// its files could be replaced: open it again once the update is in.
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|no}') = 'yes';
+end;
+
 // The user's Pictures folder, wherever it is: Windows records its real
 // place, OneDrive's included, under Shell Folders. Inno Setup has no
 // constant for it.

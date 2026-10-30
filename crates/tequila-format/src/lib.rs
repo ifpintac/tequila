@@ -79,6 +79,10 @@ use std::fmt;
 use std::path::Path;
 
 const SCENE_MEMBER: &str = "scene.json";
+/// A small picture of the project as it was when the application last saved
+/// it, for a start screen or a file browser to show without opening it.
+/// Optional: a project without one is no less a project.
+pub const PREVIEW_MEMBER: &str = "preview.png";
 const MANIFEST_MEMBER: &str = "manifest.json";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,6 +144,9 @@ pub struct Preserved {
     /// What each material carried that this build does not understand, by
     /// its key.
     materials: BTreeMap<u64, MaterialExtras>,
+    /// The project's picture ([`PREVIEW_MEMBER`]), kept for a save that does
+    /// not bring a new one. Understood, so not counted among the rest.
+    preview: Option<Vec<u8>>,
 }
 
 /// A material's part of [`Preserved`].
@@ -235,7 +242,18 @@ pub fn save(
     document: &SceneDocument,
     preserved: &Preserved,
 ) -> Result<(), FormatError> {
-    let archive = archive(document, preserved);
+    save_with_preview(path, document, preserved, None)
+}
+
+/// [`save`], with `preview` as the project's picture ([`PREVIEW_MEMBER`], a
+/// PNG). Without one, the picture it was opened with stays.
+pub fn save_with_preview(
+    path: &Path,
+    document: &SceneDocument,
+    preserved: &Preserved,
+    preview: Option<&[u8]>,
+) -> Result<(), FormatError> {
+    let archive = archive(document, preserved, preview);
     if let Some(why) = archive.too_big() {
         return Err(FormatError::Io(format!("{} was not saved: {why}", path.display())));
     }
@@ -262,16 +280,26 @@ pub fn save(
 }
 
 pub fn write(document: &SceneDocument, preserved: &Preserved) -> Vec<u8> {
-    archive(document, preserved).finish()
+    archive(document, preserved, None).finish()
+}
+
+/// The preview of the project at `path` ([`PREVIEW_MEMBER`]), read without
+/// the rest of it: `None` when it has none or cannot be read.
+pub fn read_preview(path: &Path) -> Option<Vec<u8>> {
+    let mut file = std::fs::File::open(path).ok()?;
+    zip::read_member(&mut file, PREVIEW_MEMBER, 8 << 20).ok().flatten()
 }
 
 /// The project's members, in the order they are written.
-fn archive(document: &SceneDocument, preserved: &Preserved) -> zip::ZipWriter {
+fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8]>) -> zip::ZipWriter {
     let mut archive = zip::ZipWriter::new();
 
     // Fixed member order, so two saves of one document agree byte for byte.
     archive.add(MANIFEST_MEMBER, write_manifest(document).into_bytes());
     archive.add(SCENE_MEMBER, write_scene(document, preserved).into_bytes());
+    if let Some(picture) = preview.or(preserved.preview.as_deref()) {
+        archive.add(PREVIEW_MEMBER, picture.to_vec());
+    }
 
     for (key, definition) in document.materials.iter() {
         let mut value = material_to_json(key, definition);
@@ -392,6 +420,9 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
         let mut object = Object::new();
         object.set("yaw", turn.yaw).set("pivot", Value::Array(vec![Value::from(turn.pivot[0]), Value::from(turn.pivot[1])]));
         scene.set("product_turn", object.build());
+    }
+    if let Some(animation) = &document.animation {
+        scene.set("animation", animation_to_json(animation));
     }
     if document.configurator != tequila_scene::configurator::Configurator::default() {
         scene.set("configurator", configurator_to_json(&document.configurator));
@@ -529,6 +560,7 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
         .set("transform", matrix_to_json(node.transform))
         .set("visible", node.visible)
         .set("locked", node.locked)
+        .set_some("rays", (!node.rays.is_default()).then(|| rays_to_json(&node.rays)))
         .set(
             "children",
             node.children
@@ -1383,6 +1415,76 @@ fn environment_to_json(environment: &EnvironmentSettings) -> Value {
 /// stored the converted values would silently change meaning the day the
 /// conversion is corrected, and there would be no way to tell a light that was
 /// authored at 1500 lm from one that happened to land there.
+/// Which rays see a node: every flag, written only where some is not the
+/// default.
+pub(crate) fn rays_to_json(rays: &tequila_scene::tree::Rays) -> Value {
+    let mut out = Object::new();
+    out.set("camera", rays.camera)
+        .set("diffuse", rays.diffuse)
+        .set("glossy", rays.glossy)
+        .set("transmission", rays.transmission)
+        .set("shadow", rays.shadow)
+        .set("holdout", rays.holdout);
+    out.build()
+}
+
+/// The rays a node's `rays` names; absent, every ray, no holdout.
+pub(crate) fn read_rays(value: Option<&Value>) -> tequila_scene::tree::Rays {
+    let default = tequila_scene::tree::Rays::default();
+    let Some(value) = value else { return default };
+    let flag = |key: &str, fallback: bool| value.get(key).and_then(|v| v.as_bool()).unwrap_or(fallback);
+    tequila_scene::tree::Rays {
+        camera: flag("camera", default.camera),
+        diffuse: flag("diffuse", default.diffuse),
+        glossy: flag("glossy", default.glossy),
+        transmission: flag("transmission", default.transmission),
+        shadow: flag("shadow", default.shadow),
+        holdout: flag("holdout", default.holdout),
+    }
+}
+
+/// A document's animation, as written to a project file.
+pub(crate) fn animation_to_json(animation: &tequila_scene::animation::Animation) -> Value {
+    let keys: Vec<Value> = animation
+        .keys
+        .iter()
+        .map(|k| {
+            let mut key = Object::new();
+            key.set("frame", k.frame as f64).set("product_yaw", k.product_yaw);
+            key.build()
+        })
+        .collect();
+    let mut out = Object::new();
+    out.set("frames", animation.frames as f64)
+        .set("fps", animation.fps)
+        .set("keys", Value::Array(keys))
+        .set("interpolation", animation.interpolation.key());
+    out.build()
+}
+
+pub(crate) fn read_animation(value: &Value) -> tequila_scene::animation::Animation {
+    use tequila_scene::animation::{Animation, Interpolation, TurnKey};
+    Animation {
+        frames: value.get("frames").and_then(|v| v.as_index()).unwrap_or(1).clamp(1, u32::MAX as usize) as u32,
+        fps: value.get("fps").and_then(|v| v.as_f32()).filter(|f| *f > 0.0).unwrap_or(24.0),
+        keys: value
+            .get("keys")
+            .map(|keys| {
+                keys.as_array()
+                    .iter()
+                    .filter_map(|k| {
+                        Some(TurnKey {
+                            frame: k.get("frame")?.as_index()?.min(u32::MAX as usize) as u32,
+                            product_yaw: k.get("product_yaw")?.as_f32().filter(|v| v.is_finite())?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        interpolation: value.get("interpolation").and_then(|v| v.as_str()).and_then(Interpolation::from_key).unwrap_or_default(),
+    }
+}
+
 pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     let mut object = Object::new();
     object.set("shape", settings.shape.label());
@@ -1411,6 +1513,9 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
                 .set("outer_degrees", outer_degrees)
                 .set("falloff", falloff);
         }
+        LightShape::Sun { angle_degrees } => {
+            object.set("angle_degrees", angle_degrees);
+        }
     }
     object
         .set("color", color(settings.color))
@@ -1429,14 +1534,38 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
         object.set("photometry", photometry.path.clone());
     }
     if let Some(links) = &settings.links {
-        let mut linking = Object::new();
-        linking
-            .set("exclude", links.exclude)
-            .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
-            .set("product", links.product);
-        object.set("links", linking.build());
+        object.set("links", linking_to_json(links));
+    }
+    if let Some(links) = &settings.shadow_links {
+        object.set("shadow_links", linking_to_json(links));
+    }
+    // Only where it is not a plain panel's, so a file from before reads
+    // and writes as it was.
+    if settings.spread_degrees < 180.0 {
+        object.set("spread_degrees", settings.spread_degrees);
     }
     object.build()
+}
+
+/// A light's links, for its light (`links`) or its shadow (`shadow_links`).
+fn linking_to_json(links: &tequila_scene::lighting::LightLinking) -> Value {
+    let mut linking = Object::new();
+    linking
+        .set("exclude", links.exclude)
+        .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
+        .set("product", links.product);
+    linking.build()
+}
+
+fn read_linking(links: &Value) -> tequila_scene::lighting::LightLinking {
+    tequila_scene::lighting::LightLinking {
+        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
+        nodes: links
+            .get("nodes")
+            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
+            .unwrap_or_default(),
+        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
+    }
 }
 
 pub(crate) fn read_light(value: &Value) -> LightSettings {
@@ -1453,6 +1582,9 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
             outer_degrees: number("outer_degrees", 35.0),
             falloff: number("falloff", 1.0),
         },
+        Some("Sun") => LightShape::Sun {
+            angle_degrees: number("angle_degrees", 0.53),
+        },
         shape => LightShape::Area {
             width: number("width", 1.0),
             height: number("height", 1.0),
@@ -1467,6 +1599,7 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
     settings.intensity = match value.get("intensity_unit").and_then(|v| v.as_str()) {
         Some("nits") => Intensity::Nits(amount),
         Some("cd") => Intensity::Candela(amount),
+        Some("lx") => Intensity::Lux(amount),
         _ => Intensity::Lumens(amount),
     };
     settings.temperature = value.get("temperature").and_then(|v| v.as_f32());
@@ -1482,14 +1615,9 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
         .unwrap_or(0)
         .min(255) as u8;
     settings.enabled = flag("enabled", true);
-    settings.links = value.get("links").map(|links| tequila_scene::lighting::LightLinking {
-        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
-        nodes: links
-            .get("nodes")
-            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
-            .unwrap_or_default(),
-        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
-    });
+    settings.links = value.get("links").map(read_linking);
+    settings.shadow_links = value.get("shadow_links").map(read_linking);
+    settings.spread_degrees = number("spread_degrees", 180.0).clamp(1.0, 180.0);
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -2012,6 +2140,10 @@ pub(crate) fn camera_to_json(saved: &SavedCamera) -> Value {
         .set("sensor_width_mm", camera.sensor_width_mm)
         .set("iso", camera.iso)
         .set("shutter_speed_seconds", camera.shutter_speed_seconds);
+    // Written only when on, so a file from before is unchanged.
+    if camera.physical_exposure {
+        object.set("physical_exposure", true);
+    }
     match camera.projection {
         Projection::Perspective { focal_length_mm } => {
             object.set("focal_length_mm", focal_length_mm);
@@ -2104,6 +2236,7 @@ pub(crate) fn read_camera(entry: &Value) -> SavedCamera {
     camera.sensor_width_mm = number("sensor_width_mm", camera.sensor_width_mm);
     camera.iso = number("iso", camera.iso);
     camera.shutter_speed_seconds = number("shutter_speed_seconds", camera.shutter_speed_seconds);
+    camera.physical_exposure = entry.get("physical_exposure").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if let Some(dof) = entry.get("dof") {
         let enabled = dof.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -2360,6 +2493,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
             pivot: [pivot.first().copied().unwrap_or(0.0), pivot.get(1).copied().unwrap_or(0.0)],
         };
     }
+    document.animation = root.get("animation").map(read_animation);
     document.configurator = root.get("configurator").map(read_configurator).unwrap_or_default();
     document.measurements = root
         .get("measurements")
@@ -2451,7 +2585,9 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         }
     }
     for name in archive.names() {
-        if name != SCENE_MEMBER
+        if name == PREVIEW_MEMBER {
+            preserved.preview = archive.get(name).map(<[u8]>::to_vec);
+        } else if name != SCENE_MEMBER
             && name != MANIFEST_MEMBER
             && !name.starts_with("geometry/")
             && !name.starts_with("materials/")
@@ -2885,6 +3021,7 @@ fn read_tree(
             .get("locked")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        node.rays = read_rays(value.get("rays"));
         node.material = value
             .get("material")
             .and_then(|v| v.as_str())
@@ -3008,6 +3145,28 @@ mod forward_compatibility_tests {
         if let Value::Object(map) = current {
             map.insert(key.into(), item);
         }
+    }
+
+    /// A project saved with a picture can be shown by it without being
+    /// opened; opened, it says nothing about the picture, and saved again
+    /// without a new one it keeps the old.
+    #[test]
+    fn a_projects_picture_is_read_alone_and_kept() {
+        let directory = std::env::temp_dir().join(format!("tequila-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("pictured.tequila");
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        save(&path, &document, &Preserved::default()).unwrap();
+        assert_eq!(read_preview(&path), None);
+        save_with_preview(&path, &document, &Preserved::default(), Some(b"a picture")).unwrap();
+        assert_eq!(read_preview(&path).as_deref(), Some(&b"a picture"[..]));
+
+        let loaded = load(&path).unwrap();
+        assert!(loaded.notes.is_empty(), "the picture was reported as not understood: {:?}", loaded.notes);
+        save(&path, &loaded.document, &loaded.preserved).unwrap();
+        assert_eq!(read_preview(&path).as_deref(), Some(&b"a picture"[..]), "a save without a picture lost the old one");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// A project as a newer Tequila might write it - new settings, a new
@@ -3198,5 +3357,78 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&product)), product);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("links"), "{plain}");
+    }
+
+    /// A camera's physical exposure is kept, and one without writes none.
+    #[test]
+    fn a_cameras_physical_exposure_survives_a_round_trip() {
+        use tequila_scene::lighting::SavedCamera;
+        let saved = SavedCamera {
+            name: "Shot".into(),
+            camera: tequila_render_core::camera::Camera { physical_exposure: true, iso: 400.0, ..Default::default() },
+            target: tequila_core::math::Vec3::ZERO,
+        };
+        let text = json_write::to_string(&camera_to_json(&saved));
+        assert!(text.contains("physical_exposure"), "{text}");
+        let back = read_camera(&json::parse(text.as_bytes()).unwrap());
+        assert!(back.camera.physical_exposure && back.camera.iso == 400.0);
+        let plain = SavedCamera { camera: Default::default(), ..saved };
+        assert!(!json_write::to_string(&camera_to_json(&plain)).contains("physical_exposure"));
+    }
+
+    /// A sun keeps its angle and its lux.
+    #[test]
+    fn a_sun_survives_a_round_trip() {
+        let sun = LightSettings {
+            shape: tequila_scene::lighting::LightShape::Sun { angle_degrees: 2.5 },
+            intensity: tequila_scene::lighting::Intensity::Lux(800.0),
+            ..LightSettings::default()
+        };
+        assert_eq!(read_light(&light_to_json(&sun)), sun);
+    }
+
+    /// A softbox's spread is kept, and a plain panel writes none.
+    #[test]
+    fn an_area_lights_spread_survives_a_round_trip() {
+        let gridded = LightSettings { spread_degrees: 40.0, ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&gridded)), gridded);
+        let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
+        assert!(!plain.contains("spread"), "{plain}");
+    }
+
+    /// Shadow links are kept beside the light's own, and apart from them.
+    #[test]
+    fn a_lights_shadow_links_survive_a_round_trip() {
+        let shadows = LightSettings {
+            links: Some(LightLinking { product: true, ..LightLinking::default() }),
+            shadow_links: Some(LightLinking { exclude: true, nodes: vec![tequila_scene::tree::NodeId(7)], product: false }),
+            ..LightSettings::default()
+        };
+        let back = read_light(&light_to_json(&shadows));
+        assert_eq!(back, shadows);
+        let only = LightSettings { shadow_links: shadows.shadow_links.clone(), ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&only)).links, None, "shadow links became light links");
+    }
+}
+
+#[cfg(test)]
+mod rays_tests {
+    use super::*;
+    use tequila_scene::tree::Rays;
+
+    /// A node's rays are kept in the file, and a node seen by every ray
+    /// writes nothing new.
+    #[test]
+    fn a_nodes_rays_survive_and_default_ones_write_nothing() {
+        let rays = Rays { camera: false, transmission: false, holdout: true, ..Rays::default() };
+        assert_eq!(read_rays(Some(&rays_to_json(&rays))), rays);
+        assert_eq!(read_rays(None), Rays::default());
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let plain = json_write::to_string(&node_to_json(document.tree.iter().next().unwrap(), &Preserved::default()));
+        assert!(!plain.contains("\"rays\""), "{plain}");
+        let mut node = document.tree.iter().next().unwrap().clone();
+        node.rays = rays;
+        let written = node_to_json(&node, &Preserved::default());
+        assert_eq!(read_rays(written.get("rays")), rays);
     }
 }

@@ -23,6 +23,7 @@ pub mod camera;
 pub mod cryptomatte;
 pub mod cutaway;
 pub mod density;
+pub mod emitters;
 pub mod environment;
 pub mod flakes;
 pub mod framebuffer;

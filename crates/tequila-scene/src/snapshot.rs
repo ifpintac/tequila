@@ -513,10 +513,15 @@ pub fn snapshot_with(
         };
 
         let instance_id = InstanceId(instances.len() as u32);
-        instances.push(
-            Instance::new(instance_id, mesh_id, material_id)
-                .with_transform(placed.world(node.id)),
-        );
+        let mut instance = Instance::new(instance_id, mesh_id, material_id).with_transform(placed.world(node.id));
+        let rays = document.tree.rays_of(node.id);
+        instance.visible_to_camera = rays.camera;
+        instance.casts_shadows = rays.shadow;
+        instance.seen_by_diffuse = rays.diffuse;
+        instance.seen_by_glossy = rays.glossy;
+        instance.seen_by_transmission = rays.transmission;
+        instance.holdout = rays.holdout;
+        instances.push(instance);
         instance_meshes.push(Some(mesh));
         mapping.nodes.push(node.id);
         mapping.instances.insert(node.id, instance_id);
@@ -594,10 +599,15 @@ pub fn snapshot_with(
         cache.converted.retain(|key, _| used.contains(key));
     }
 
-    // Light linking: each linked light's parts, as the instances under them.
+    // Light and shadow linking: each linked light's parts, as the instances
+    // under them.
     for (light, node) in lights.iter_mut().zip(&light_nodes) {
-        if let Some(linking) = document.tree.get(*node).and_then(|n| n.light()).and_then(|s| s.links.as_ref()) {
+        let Some(settings) = document.tree.get(*node).and_then(|n| n.light()) else { continue };
+        if let Some(linking) = &settings.links {
             light.links = linked_instances(document, &mapping, linking);
+        }
+        if let Some(linking) = &settings.shadow_links {
+            light.shadow_links = linked_instances(document, &mapping, linking);
         }
     }
 
@@ -1059,13 +1069,22 @@ fn ground_mesh(extent: f32) -> RenderMesh {
 /// World-space bounds of everything a snapshot would contain, for framing the
 /// camera. Empty when nothing is visible.
 pub fn visible_bounds(document: &SceneDocument) -> tequila_core::math::Aabb {
+    bounds_where(document, |_| true)
+}
+
+/// The bounds of the shown parts at or beneath `roots`.
+pub fn visible_bounds_under(document: &SceneDocument, roots: &[NodeId]) -> tequila_core::math::Aabb {
+    bounds_where(document, |id| roots.iter().any(|&root| root == id || document.tree.is_descendant_of(id, root)))
+}
+
+fn bounds_where(document: &SceneDocument, include: impl Fn(NodeId) -> bool) -> tequila_core::math::Aabb {
     let mut bounds = tequila_core::math::Aabb::EMPTY;
     let placed = document.placements();
     for node in document.tree.iter() {
         let NodeKind::Part { mesh } = node.kind else {
             continue;
         };
-        if !placed.shown(node.id) {
+        if !placed.shown(node.id) || !include(node.id) {
             continue;
         }
         if let Some(source) = document.geometry.get(mesh) {
@@ -1587,6 +1606,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Which rays see a part come from it and every group above it, and
+    /// reach its instance; one undo puts them back.
+    #[test]
+    fn a_parts_rays_reach_its_instance_with_its_groups() {
+        use crate::tree::Rays;
+        let (mut document, mut bus, ids) = assembly(2);
+        bus.apply(&mut document, Command::set_rays(ids[0], Rays { glossy: false, ..Rays::default() })).unwrap();
+        bus.apply(&mut document, Command::set_rays(ids[1], Rays { shadow: false, holdout: true, ..Rays::default() })).unwrap();
+        assert_eq!(document.tree.rays_of(ids[1]), Rays { glossy: false, shadow: false, holdout: true, ..Rays::default() });
+        let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO)), &mut MeshCache::new());
+        let first = &scene.instances[mapping.instance_of(ids[1]).unwrap().0 as usize];
+        assert!(!first.seen_by_glossy && !first.casts_shadows && first.holdout && first.visible_to_camera && first.seen_by_diffuse);
+        let second = &scene.instances[mapping.instance_of(ids[2]).unwrap().0 as usize];
+        assert!(!second.seen_by_glossy && second.casts_shadows && !second.holdout, "the group's limit reaches every part under it");
+        bus.undo(&mut document).unwrap();
+        bus.undo(&mut document).unwrap();
+        assert!(document.tree.rays_of(ids[1]).is_default());
+    }
+
     /// A light's links become the instances under what they name: the
     /// product's parts, a group's, or every part but some; and a light kept
     /// to the product leaves the floor out, so it shadows nothing there.
@@ -1612,6 +1650,22 @@ mod tests {
         assert!(!links.lights(parts[1]) && links.lights(parts[0]) && links.lights(parts[2]), "{links:?}");
         let (links, parts, _) = linked(&mut document, &mut bus, LightLinking { nodes: vec![ids[0]], ..LightLinking::default() });
         assert_eq!(links, LightLinks::Only(parts.into()), "a group stands for its parts");
+    }
+
+    /// A light's shadow links name instances the way its links do, and
+    /// apart from them: kept to one part's shadow, it still lights them all.
+    #[test]
+    fn a_lights_shadow_links_name_the_instances_under_them() {
+        use crate::lighting::{LightLinking, LightSettings};
+        use tequila_render_core::light::LightLinks;
+        let (mut document, mut bus, ids) = assembly(3);
+        let settings = LightSettings { shadow_links: Some(LightLinking { nodes: vec![ids[2]], ..LightLinking::default() }), ..LightSettings::default() };
+        bus.apply(&mut document, Command::AddLight { parent: None, name: "Key".into(), settings: Box::new(settings) }).unwrap();
+        let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO)), &mut MeshCache::new());
+        let light = scene.lights.lights().last().unwrap();
+        let second = mapping.instance_of(ids[2]).unwrap().0;
+        assert_eq!(light.shadow_links, LightLinks::Only(vec![second].into()));
+        assert!(light.links.is_all(), "shadow links kept the light to some parts");
     }
 
     #[test]

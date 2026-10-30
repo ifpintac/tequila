@@ -121,6 +121,14 @@ api! {
         fsc_mesh_colors: fn(*mut Session, Node, c_int, *const f32) -> c_int;
         fsc_shader_reopen: fn(*mut Session, Node) -> c_int;
         fsc_light_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
+        fsc_shadow_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
+        fsc_camera_viewplane: fn(*mut Session, f32, f32, f32, f32);
+        fsc_add_pass: fn(*mut Session, *const c_char, *const c_char, c_int, *const c_char) -> c_int;
+        fsc_cryptomatte: fn(*mut Session, c_int) -> c_int;
+        fsc_render_pass: fn(*mut Session, *const c_char, *mut f32, c_int) -> c_int;
+        fsc_object_of: fn(*mut Session, Node) -> Node;
+        fsc_set_name: fn(Node, *const c_char) -> c_int;
+        fsc_mesh_attribute: fn(*mut Session, Node, *const c_char, c_int, *const f32) -> c_int;
     }
 }
 

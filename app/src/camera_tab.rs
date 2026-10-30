@@ -223,23 +223,30 @@ impl CameraTab {
         }
 
         // ---- Exposure ---------------------------------------------------
+        // ISO and shutter only once they mean something: off, the image's
+        // Exposure is the whole of it.
         ui.add_space(4.0);
-        ui.add(
-            crate::field::Slider::new(&mut saved.camera.iso, 25.0..=6400.0)
-                .text("ISO")
-                .logarithmic(true),
-        );
-        let mut shutter = 1.0 / saved.camera.shutter_speed_seconds.max(1e-6);
-        if ui
-            .add(
-                crate::field::Slider::new(&mut shutter, 1.0..=8000.0)
-                    .text("Shutter")
-                    .prefix("1/")
+        ui.add(crate::field::Checkbox::new(&mut saved.camera.physical_exposure, "Use camera exposure"))
+            .on_hover_text("Expose by ISO, shutter and f-number as a camera would, on top of the Image tab's Exposure. Doubling the shutter time adds a stop; so does opening up one f-stop.");
+        if saved.camera.physical_exposure {
+            ui.add(
+                crate::field::Slider::new(&mut saved.camera.iso, 25.0..=6400.0)
+                    .text("ISO")
                     .logarithmic(true),
-            )
-            .changed()
-        {
-            saved.camera.shutter_speed_seconds = 1.0 / shutter.max(1.0);
+            );
+            let mut shutter = 1.0 / saved.camera.shutter_speed_seconds.max(1e-6);
+            if ui
+                .add(
+                    crate::field::Slider::new(&mut shutter, 1.0..=8000.0)
+                        .text("Shutter")
+                        .prefix("1/")
+                        .logarithmic(true),
+                )
+                .changed()
+            {
+                saved.camera.shutter_speed_seconds = 1.0 / shutter.max(1.0);
+            }
+            ui.label(egui::RichText::new(format!("{:+.1} stops", saved.camera.exposure_stops())).small().color(crate::theme::dim()));
         }
 
         // ---- Overlays ---------------------------------------------------
