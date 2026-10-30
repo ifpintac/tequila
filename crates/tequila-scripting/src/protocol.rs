@@ -319,6 +319,11 @@ pub struct UiChange {
     pub appearance: Option<bool>,
     /// Help > About Tequila, open.
     pub about: Option<bool>,
+    /// The start screen, open.
+    pub start_screen: Option<bool>,
+    /// Help > Check for updates, open. Opening it asks GitHub for the
+    /// latest release.
+    pub updates: Option<bool>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
@@ -865,6 +870,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             theme: opt_string(value, "theme")?,
             appearance: opt_bool(value, "appearance")?,
             about: opt_bool(value, "about")?,
+            start_screen: opt_bool(value, "start_screen")?,
+            updates: opt_bool(value, "updates")?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),

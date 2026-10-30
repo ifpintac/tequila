@@ -123,6 +123,11 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/library') -Destination $assetsPath -Recurse
     # The built-in studio presets, found beside the library.
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets/studios') -Destination $assetsPath -Recurse
+    # The sample scenes the start screen opens; the folder's model files are
+    # the tests' fixtures.
+    $samplesPath = Join-Path $assetsPath 'samples'
+    New-Item -ItemType Directory -Path $samplesPath | Out-Null
+    Copy-Item -Path (Join-Path $projectRoot 'assets/samples/*.tequila') -Destination $samplesPath
     foreach ($name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_LICENSES.md', 'TRADEMARKS.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $packagePath
     }
@@ -200,7 +205,11 @@ a render node for network rendering (Render window > Network rendering).
 python\ holds the scripting module: tequila.open() needs no open window.
 '@ | Set-Content -LiteralPath (Join-Path $packagePath 'START-HERE.txt') -Encoding utf8
     $revision = & git rev-parse HEAD
-    "Source: $revision`nBuilt: $(Get-Date -Format o)`nIncludes current working-tree changes." |
+    # The release's version, as its installer and tag are named: the
+    # package's stamp, 20261021-093000, as 2026.10.21.0930. Help > Check for
+    # updates compares it with the latest release's.
+    $version = '{0}.{1}.{2}.{3}' -f $stamp.Substring(0, 4), $stamp.Substring(4, 2), $stamp.Substring(6, 2), $stamp.Substring(9, 4)
+    "Source: $revision`nVersion: $version`nBuilt: $(Get-Date -Format o)`nIncludes current working-tree changes." |
         Set-Content -LiteralPath (Join-Path $packagePath 'BUILD.txt') -Encoding utf8
     $archivePath = "$packagePath.zip"
     # The zip format cannot date anything before 1980, and some crates ship

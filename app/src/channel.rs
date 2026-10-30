@@ -468,6 +468,17 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(help) = change.help {
         app.show_help = help;
     }
+    if let Some(open) = change.start_screen {
+        app.start_screen.open = open;
+    }
+    match change.updates {
+        Some(true) => {
+            app.start_screen.open = false;
+            app.updates.open_window();
+        }
+        Some(false) => app.updates.open = false,
+        None => {}
+    }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }

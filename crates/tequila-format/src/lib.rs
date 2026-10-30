@@ -79,6 +79,10 @@ use std::fmt;
 use std::path::Path;
 
 const SCENE_MEMBER: &str = "scene.json";
+/// A small picture of the project as it was when the application last saved
+/// it, for a start screen or a file browser to show without opening it.
+/// Optional: a project without one is no less a project.
+pub const PREVIEW_MEMBER: &str = "preview.png";
 const MANIFEST_MEMBER: &str = "manifest.json";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,6 +144,9 @@ pub struct Preserved {
     /// What each material carried that this build does not understand, by
     /// its key.
     materials: BTreeMap<u64, MaterialExtras>,
+    /// The project's picture ([`PREVIEW_MEMBER`]), kept for a save that does
+    /// not bring a new one. Understood, so not counted among the rest.
+    preview: Option<Vec<u8>>,
 }
 
 /// A material's part of [`Preserved`].
@@ -235,7 +242,18 @@ pub fn save(
     document: &SceneDocument,
     preserved: &Preserved,
 ) -> Result<(), FormatError> {
-    let archive = archive(document, preserved);
+    save_with_preview(path, document, preserved, None)
+}
+
+/// [`save`], with `preview` as the project's picture ([`PREVIEW_MEMBER`], a
+/// PNG). Without one, the picture it was opened with stays.
+pub fn save_with_preview(
+    path: &Path,
+    document: &SceneDocument,
+    preserved: &Preserved,
+    preview: Option<&[u8]>,
+) -> Result<(), FormatError> {
+    let archive = archive(document, preserved, preview);
     if let Some(why) = archive.too_big() {
         return Err(FormatError::Io(format!("{} was not saved: {why}", path.display())));
     }
@@ -262,16 +280,26 @@ pub fn save(
 }
 
 pub fn write(document: &SceneDocument, preserved: &Preserved) -> Vec<u8> {
-    archive(document, preserved).finish()
+    archive(document, preserved, None).finish()
+}
+
+/// The preview of the project at `path` ([`PREVIEW_MEMBER`]), read without
+/// the rest of it: `None` when it has none or cannot be read.
+pub fn read_preview(path: &Path) -> Option<Vec<u8>> {
+    let mut file = std::fs::File::open(path).ok()?;
+    zip::read_member(&mut file, PREVIEW_MEMBER, 8 << 20).ok().flatten()
 }
 
 /// The project's members, in the order they are written.
-fn archive(document: &SceneDocument, preserved: &Preserved) -> zip::ZipWriter {
+fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8]>) -> zip::ZipWriter {
     let mut archive = zip::ZipWriter::new();
 
     // Fixed member order, so two saves of one document agree byte for byte.
     archive.add(MANIFEST_MEMBER, write_manifest(document).into_bytes());
     archive.add(SCENE_MEMBER, write_scene(document, preserved).into_bytes());
+    if let Some(picture) = preview.or(preserved.preview.as_deref()) {
+        archive.add(PREVIEW_MEMBER, picture.to_vec());
+    }
 
     for (key, definition) in document.materials.iter() {
         let mut value = material_to_json(key, definition);
@@ -2557,7 +2585,9 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         }
     }
     for name in archive.names() {
-        if name != SCENE_MEMBER
+        if name == PREVIEW_MEMBER {
+            preserved.preview = archive.get(name).map(<[u8]>::to_vec);
+        } else if name != SCENE_MEMBER
             && name != MANIFEST_MEMBER
             && !name.starts_with("geometry/")
             && !name.starts_with("materials/")
@@ -3115,6 +3145,28 @@ mod forward_compatibility_tests {
         if let Value::Object(map) = current {
             map.insert(key.into(), item);
         }
+    }
+
+    /// A project saved with a picture can be shown by it without being
+    /// opened; opened, it says nothing about the picture, and saved again
+    /// without a new one it keeps the old.
+    #[test]
+    fn a_projects_picture_is_read_alone_and_kept() {
+        let directory = std::env::temp_dir().join(format!("tequila-preview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("pictured.tequila");
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        save(&path, &document, &Preserved::default()).unwrap();
+        assert_eq!(read_preview(&path), None);
+        save_with_preview(&path, &document, &Preserved::default(), Some(b"a picture")).unwrap();
+        assert_eq!(read_preview(&path).as_deref(), Some(&b"a picture"[..]));
+
+        let loaded = load(&path).unwrap();
+        assert!(loaded.notes.is_empty(), "the picture was reported as not understood: {:?}", loaded.notes);
+        save(&path, &loaded.document, &loaded.preserved).unwrap();
+        assert_eq!(read_preview(&path).as_deref(), Some(&b"a picture"[..]), "a save without a picture lost the old one");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// A project as a newer Tequila might write it - new settings, a new

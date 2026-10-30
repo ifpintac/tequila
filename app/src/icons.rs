@@ -96,6 +96,14 @@ pub enum Icon {
     Puzzle,
     /// Read again from disk.
     Refresh,
+    /// The start screen's links and new project.
+    Discord,
+    Github,
+    Book,
+    ExternalLink,
+    FilePlus,
+    /// A newer version to install.
+    Update,
 }
 
 impl Icon {
@@ -162,6 +170,12 @@ impl Icon {
             Icon::Upload => 0xe19d,
             Icon::Puzzle => 0xe29b,
             Icon::Refresh => 0xe148,
+            Icon::Discord => 0xe119,
+            Icon::Github => 0xe0e9,
+            Icon::Book => 0xe063,
+            Icon::ExternalLink => 0xe0bd,
+            Icon::FilePlus => 0xe0cd,
+            Icon::Update => 0xe07c,
         };
         char::from_u32(code)
     }
@@ -588,6 +602,36 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Refresh => {
             arc(8.0, 8.0, 5.5, 5.5, -2.6, 2.2);
             poly(&[(12.6, 2.6), (12.6, 5.6), (9.6, 5.6)]);
+        }
+        Icon::Discord => {
+            circle(8.0, 7.5, 5.5);
+            poly(&[(4.4, 11.4), (3.0, 14.0), (6.4, 12.7)]);
+        }
+        Icon::Github => {
+            circle(8.0, 8.0, 5.8);
+            poly(&[(6.2, 13.6), (6.2, 11.2), (5.0, 10.0)]);
+            poly(&[(9.8, 13.6), (9.8, 11.2), (11.0, 10.0)]);
+        }
+        Icon::Book => {
+            line((8.0, 4.8), (8.0, 13.5));
+            closed(&[(1.5, 3.5), (6.0, 3.5), (8.0, 4.8), (8.0, 13.5), (6.0, 12.2), (1.5, 12.2)]);
+            closed(&[(14.5, 3.5), (10.0, 3.5), (8.0, 4.8), (8.0, 13.5), (10.0, 12.2), (14.5, 12.2)]);
+        }
+        Icon::ExternalLink => {
+            poly(&[(11.5, 9.0), (11.5, 13.5), (2.5, 13.5), (2.5, 4.5), (7.0, 4.5)]);
+            poly(&[(9.5, 2.5), (13.5, 2.5), (13.5, 6.5)]);
+            line((13.5, 2.5), (7.5, 8.5));
+        }
+        Icon::FilePlus => {
+            closed(&[(3.5, 2.0), (9.5, 2.0), (12.5, 5.0), (12.5, 14.0), (3.5, 14.0)]);
+            poly(&[(9.5, 2.0), (9.5, 5.0), (12.5, 5.0)]);
+            line((8.0, 7.5), (8.0, 11.5));
+            line((6.0, 9.5), (10.0, 9.5));
+        }
+        Icon::Update => {
+            circle(8.0, 8.0, 6.0);
+            line((8.0, 5.0), (8.0, 11.0));
+            poly(&[(5.5, 8.5), (8.0, 11.0), (10.5, 8.5)]);
         }
     }
 }
@@ -1124,7 +1168,8 @@ mod tests {
             Icon::More, Icon::Texture, Icon::Sun, Icon::Moon, Icon::Palette, Icon::Check, Icon::Gauge,
             Icon::Package, Icon::House, Icon::Gem, Icon::Sliders, Icon::History, Icon::SearchX, Icon::Star,
             Icon::Clock, Icon::Plus, Icon::FolderOpen, Icon::Copy, Icon::Pencil, Icon::Trash, Icon::Download,
-            Icon::Upload, Icon::Puzzle, Icon::Refresh,
+            Icon::Upload, Icon::Puzzle, Icon::Refresh, Icon::Discord, Icon::Github, Icon::Book,
+            Icon::ExternalLink, Icon::FilePlus, Icon::Update,
         ]
     }
 

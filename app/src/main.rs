@@ -63,6 +63,7 @@ mod render_window;
 mod scene_tab;
 mod procedural_gpu;
 mod solid_gpu;
+mod start_screen;
 mod studio_tab;
 mod studio_shelf;
 mod studio_presets;
@@ -75,6 +76,7 @@ mod theme;
 mod thumbnail;
 mod toast;
 mod ui_capture;
+mod update;
 mod windows;
 mod material_lab;
 
@@ -213,6 +215,9 @@ fn main() -> eframe::Result<()> {
     // The application was called Freeshot before: on a computer that had
     // it, its things come across the first time.
     let adopted = tequila_format::library::adopt_older_name();
+    // Maximized, as a workspace opens: the picture is the point. Not for a
+    // capture or a test that asked for a width.
+    let maximized = std::env::var_os("TEQUILA_UI_WIDTH").is_none() && std::env::var_os("TEQUILA_UI_CAPTURE").is_none();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([
@@ -241,6 +246,11 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
+            // Asked for once the window is up: given to the builder, the
+            // window came up flagged maximized at its first size.
+            if maximized {
+                cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            }
             mac::quit_asks_first(cc);
             mac::wake_on_open(&cc.egui_ctx);
             {
@@ -298,6 +308,13 @@ struct TequilaApp {
     /// test, which must not touch the person's list).
     recent: Vec<std::path::PathBuf>,
     recent_file: Option<std::path::PathBuf>,
+    /// The start screen, up at launch and under Help.
+    start_screen: start_screen::StartScreen,
+    /// Due at launch, and held back while crashed work is offered: shown
+    /// when that is let go rather than recovered.
+    start_screen_after_recovery: bool,
+    /// Help > Check for updates, and the quiet look at launch.
+    updates: update::Updates,
     /// The selection and the snapshot's rebuild count the outline was last
     /// worked out for.
     outline_key: Option<(Vec<tequila_scene::tree::NodeId>, u64)>,
@@ -762,6 +779,7 @@ impl TequilaApp {
         let recent_file = recent::file();
         app.recent = recent::read(&recent_file);
         app.recent_file = Some(recent_file);
+        app.updates = update::Updates::with_preferences(update::Preferences::load());
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -771,6 +789,7 @@ impl TequilaApp {
         let finished = app.project.queue().jobs().to_vec();
         app.render_window.remember_finished(&finished);
         app.start_up();
+        app.updates.start_up();
         app
     }
 
@@ -816,6 +835,9 @@ impl TequilaApp {
             plugin_selection: Vec::new(),
             recent: Vec::new(),
             recent_file: None,
+            start_screen: Default::default(),
+            start_screen_after_recovery: false,
+            updates: Default::default(),
             outline_key: None,
             channel_wakes: false,
             dragging: None,
@@ -924,9 +946,18 @@ impl TequilaApp {
             // did not load".
             app.project.reset();
         }
+        let told = !given.is_empty();
         for path in given {
             app.open_given(path);
         }
+        // The start screen, unless the launch said what to open, a crashed
+        // session waits to be recovered, or nobody is there to see it.
+        let due = !told
+            && !theme::appearance().start_screen_hidden
+            && std::env::var_os("TEQUILA_UI_CAPTURE").is_none()
+            && std::env::var_os("TEQUILA_NO_START_SCREEN").is_none();
+        app.start_screen.open = due && app.recoverable.is_empty();
+        app.start_screen_after_recovery = due && !app.recoverable.is_empty();
         // Last, and never fatal: an application that would not open
         // because a port was busy is a worse tool than one that is simply not
         // scriptable this session. `TEQUILA_NO_CHANNEL` turns it off for
@@ -1245,7 +1276,15 @@ impl eframe::App for TequilaApp {
                 open.set_waker(move || waking.request_repaint());
                 self.channel_wakes = true;
             }
-            open.drain(|request| channel::handle(self, request));
+            open.drain(|request| {
+                // A script that changes something wants the window, not the
+                // start screen; one that only looks leaves it be.
+                use tequila_scripting::protocol::Operation;
+                if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
+                    self.start_screen.open = false;
+                }
+                channel::handle(self, request)
+            });
             self.channel = Some(open);
         }
         // Plugins: their code, their messages, their window and panels.
@@ -1462,6 +1501,8 @@ impl eframe::App for TequilaApp {
         if self.show_about {
             self.about_window(ctx);
         }
+        self.start_screen_window(ctx);
+        self.updates_window(ctx);
         // TEQUILA_CRASH_TEST: crash on purpose, once the window is up, to
         // see the report the next launch shows.
         crash::test_crash(ctx);
@@ -3025,6 +3066,10 @@ impl TequilaApp {
                         self.show_help = true;
                         ui.close_menu();
                     }
+                    if ui.button("Start screen").on_hover_text("New, open and recent projects, the samples, and where to find us").clicked() {
+                        self.start_screen.open = true;
+                        ui.close_menu();
+                    }
                     if ui.button("Show the welcome card").clicked() {
                         let mut appearance = theme::appearance();
                         appearance.welcome_seen = false;
@@ -3045,6 +3090,11 @@ impl TequilaApp {
                     ui.separator();
                     if ui.button("Crash reports").on_hover_text("What happened when Tequila stopped unexpectedly, to copy for Discord").clicked() {
                         self.crash_window.browse();
+                        ui.close_menu();
+                    }
+                    let label = self.updates.menu_label();
+                    if ui.button(label).on_hover_text("Whether there is a newer Tequila, and installing it").clicked() {
+                        self.updates.open_window();
                         ui.close_menu();
                     }
                     if ui.button("About Tequila").clicked() {
@@ -3486,7 +3536,7 @@ impl TequilaApp {
     /// Three steps to a first picture, over the bottom of the viewport until
     /// they are put away: bring in a model, dress it, render it.
     fn welcome_card(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        if theme::appearance().welcome_seen || rect.width() < 520.0 || rect.height() < 380.0 {
+        if theme::appearance().welcome_seen || self.start_screen.open || rect.width() < 520.0 || rect.height() < 380.0 {
             return;
         }
         let p = theme::p();
@@ -3794,6 +3844,7 @@ impl TequilaApp {
     fn recovery_window(&mut self, ctx: &egui::Context) {
         let sessions = self.recoverable.clone();
         let mut dismiss = false;
+        let mut recovered = false;
 
         let p = theme::p();
         egui::Window::new("Recover unsaved work")
@@ -3862,6 +3913,7 @@ impl TequilaApp {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 if icons::labelled(ui, icons::Icon::History, "Recover", true).clicked() {
                                     dismiss = self.recover_session(session);
+                                    recovered |= dismiss;
                                 }
                                 if icons::tip(
                                     icons::labelled(ui, icons::Icon::Close, "Discard", false),
@@ -3901,6 +3953,8 @@ impl TequilaApp {
 
         if dismiss {
             self.recoverable.clear();
+            self.start_screen.open |= self.start_screen_after_recovery && !recovered;
+            self.start_screen_after_recovery = false;
         }
     }
 
@@ -4143,7 +4197,7 @@ impl TequilaApp {
     }
 
     fn save_to(&mut self, path: &std::path::Path) {
-        if let Err(error) = self.project.save(path) {
+        if let Err(error) = self.project.save_with_preview(path, start_screen::picture_of(&self.image)) {
             self.project.status = error.to_string();
             rfd::MessageDialog::new()
                 .set_title("Could not save project")
@@ -4153,6 +4207,7 @@ impl TequilaApp {
             return;
         }
         self.remember_recent(path);
+        self.start_screen.refresh(path);
         self.plugin_event("saved", path);
     }
 
@@ -4213,6 +4268,72 @@ impl TequilaApp {
         self.remember_recent(path);
         self.plugin_event("opened", path);
         Ok(())
+    }
+
+    /// The start screen while it is up, and what was chosen on it.
+    fn start_screen_window(&mut self, ctx: &egui::Context) {
+        if !self.start_screen.open {
+            return;
+        }
+        let mut appearance = theme::appearance();
+        let mut show = !appearance.start_screen_hidden;
+        let newer = self.updates.newer();
+        let choice = self.start_screen.show(ctx, &self.recent, &mut show, newer);
+        if show == appearance.start_screen_hidden {
+            appearance.start_screen_hidden = !show;
+            theme::set_appearance(ctx, appearance, true);
+        }
+        match choice {
+            Some(start_screen::Choice::New) => self.new_project(),
+            Some(start_screen::Choice::Open) => self.ask_for_file(Action::Open),
+            Some(start_screen::Choice::Import) => self.ask_for_file(Action::Import),
+            Some(start_screen::Choice::Recent(path)) => self.open_recent(path),
+            Some(start_screen::Choice::Forget(path)) => self.forget_recent(Some(&path)),
+            Some(start_screen::Choice::Sample(path)) => self.open_sample(&path),
+            Some(start_screen::Choice::Update) => self.updates.open_window(),
+            None => {}
+        }
+    }
+
+    /// Help > Check for updates while it is open, the quiet look's news,
+    /// and an update to install.
+    fn updates_window(&mut self, ctx: &egui::Context) {
+        let act = self.updates.window(ctx);
+        if let Some(version) = self.updates.found.take() {
+            self.toasts.info(format!("Tequila {version} is out: Help, Update to {version} installs it"));
+        }
+        if let Some(update::Act::Install(file)) = act {
+            // Saved or let go first: the installer closes Tequila.
+            if !self.confirm_unsaved() {
+                return;
+            }
+            match update::install(&file, update::Platform::this()) {
+                Ok(true) => self.quit_requested = true,
+                Ok(false) => {
+                    self.updates.open = false;
+                    self.project.status = "Drag Tequila into Applications, replacing the one there, then open it again".into();
+                }
+                Err(error) => self.toasts.warn(format!("The update could not start: {error}")),
+            }
+        }
+    }
+
+    /// A sample, opened as a new project: saving it asks where, so the
+    /// shipped file stays as it was, and it is not a recent project.
+    fn open_sample(&mut self, path: &std::path::Path) {
+        if !self.confirm_unsaved() {
+            return;
+        }
+        match self.project.open(path) {
+            Ok(()) => {
+                self.project.path = None;
+                self.camera.adopt(self.project.camera());
+                self.submit();
+                let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.project.status = format!("The {name} sample, as a new project");
+            }
+            Err(error) => self.toasts.warn(format!("The sample could not be opened: {error}")),
+        }
     }
 
     /// A recent project, opened - or, gone, taken off the list.
@@ -4597,7 +4718,8 @@ impl TequilaApp {
                 match build_note() {
                     Some((built, source)) => {
                         let date = built.get(..16).unwrap_or(&built).replace('T', " ");
-                        ui.label(format!("Built {date}"));
+                        ui.label(update::label());
+                        ui.label(egui::RichText::new(format!("Built {date}")).small().color(p.text_dim));
                         if !source.is_empty() {
                             ui.label(egui::RichText::new(format!("Source {}", source.get(..10).unwrap_or(&source))).small().color(p.text_dim));
                         }
@@ -6149,6 +6271,23 @@ mod undo_tests {
         let note = read_build_note("\u{feff}Source: 5198cc44c7dc\nBuilt: 2026-10-15T14:06:02+08:00\nIncludes current working-tree changes.\n");
         assert_eq!(note, Some(("2026-10-15T14:06:02+08:00".to_string(), "5198cc44c7dc".to_string())), "the byte-order mark hid the source");
         assert_eq!(GUIDES.iter().filter(|(_, packaged, docs, _)| shipped_file(packaged, &format!("docs/{docs}")).is_some()).count(), GUIDES.len(), "a guide is missing from docs");
+    }
+
+    /// A sample opens as a new project: its scene, no file of its own to be
+    /// saved over, and not among the recent projects. Every sample ships
+    /// with the picture the start screen shows for it.
+    #[test]
+    fn a_sample_opens_as_a_new_project() {
+        let checkout = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut app = TequilaApp::for_tests();
+        app.open_sample(&checkout.join(start_screen::SAMPLES[0].file));
+        assert!(app.project.path.is_none(), "saving would write over the sample");
+        assert!(app.recent.is_empty(), "the sample became a recent project");
+        assert!(app.project.document().tree.iter().any(|n| n.name.starts_with("Shell")), "the headphones are not there");
+        assert!(!app.project.has_unsaved_changes());
+        for sample in &start_screen::SAMPLES {
+            assert!(tequila_format::read_preview(&checkout.join(sample.file)).is_some(), "{} has no picture", sample.name);
+        }
     }
 
     /// In a Mac app bundle the guides, BUILD.txt and the skill sit in

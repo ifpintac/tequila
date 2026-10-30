@@ -25,6 +25,7 @@ needs no compressor.
 project.tequila
 ├── manifest.json              what is inside, and what wrote it
 ├── scene.json                 the scene: hierarchy, units, environment
+├── preview.png                a small picture of it, optional
 ├── materials/
 │   └── mat_00000001.json      one file per material
 ├── geometry/
@@ -32,6 +33,13 @@ project.tequila
 └── sources/
     └── <id>.step              a CAD file kept with the project (.iges for IGES)
 ```
+
+`preview.png` is a small picture of the project, at most 512 pixels across,
+as the application's viewport showed it when it last saved the file. A start
+screen or a file browser shows it without reading the rest of the archive.
+It is optional: a writer without a picture to give leaves it out, and a
+reader that does not show one ignores it. A writer keeps the one a file was
+opened with when it has no new one.
 
 A `sources/` member is a CAD file's own bytes (`.step` or `.iges`, as the file
 was), kept so a model can be divided

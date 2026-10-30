@@ -918,7 +918,13 @@ impl Project {
     }
 
     pub fn save(&mut self, path: &Path) -> Result<(), tequila_format::FormatError> {
-        tequila_format::save(path, &self.document, &self.preserved)?;
+        self.save_with_preview(path, None)
+    }
+
+    /// [`Project::save`], with the picture the start screen shows for it;
+    /// without one, the picture it was opened with stays.
+    pub fn save_with_preview(&mut self, path: &Path, preview: Option<Vec<u8>>) -> Result<(), tequila_format::FormatError> {
+        tequila_format::save_with_preview(path, &self.document, &self.preserved, preview.as_deref())?;
         self.bus.mark_saved();
         self.path = Some(path.to_path_buf());
         self.rebase_journal();

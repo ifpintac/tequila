@@ -117,6 +117,10 @@ fi
 mkdir -p "$resources/assets" "$resources/python"
 cp -R assets/library "$resources/assets/library"
 cp -R assets/studios "$resources/assets/studios"
+# The sample scenes the start screen opens; the folder's model files are the
+# tests' fixtures.
+mkdir -p "$resources/assets/samples"
+cp assets/samples/*.tequila "$resources/assets/samples/"
 cp python/*.py "$resources/python/"
 cp -R plugins/examples "$resources/plugins"
 cp docs/SCRIPTING.md "$resources/SCRIPTING.md"
@@ -231,7 +235,9 @@ cat > "$contents/Info.plist" <<PLIST
 PLIST
 
 revision="$(git rev-parse HEAD)"
-printf 'Source: %s\nBuilt: %s\nIncludes current working-tree changes.\n' "$revision" "$(date +%Y-%m-%dT%H:%M:%S%z)" > "$resources/BUILD.txt"
+# The version, as the disk image is named: Help > Check for updates
+# compares it with the latest release's.
+printf 'Source: %s\nVersion: %s\nBuilt: %s\nIncludes current working-tree changes.\n' "$revision" "$version" "$(date +%Y-%m-%dT%H:%M:%S%z)" > "$resources/BUILD.txt"
 
 # What a person reads first, in the disk image beside the application.
 readme="$package/Read me first.txt"

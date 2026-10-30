@@ -21,8 +21,12 @@ Get the newest version from the **[Releases page](../../releases/latest)**:
 | **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) renders on the graphics card; any other computer renders on the processor. |
 | **Mac** | `Tequila-<version>.dmg` | A Mac with Apple's own chips (M1 or newer) and a recent macOS. |
 
-To update, download the newer one and install it over the old: your
-materials, plugins and settings are kept. Plugins are written in Python, so
+To update, choose **Help > Check for updates**: Tequila fetches the newer
+version from this page, checks it against the SHA-256 GitHub lists for it,
+and installs it (on a Mac it opens the disk image, for Tequila to be dragged
+into Applications). It also looks once a day when it starts, which the same
+window can turn off. Or download the newer one and install it over the old.
+Either way your materials, plugins and settings are kept. Plugins are written in Python, so
 they need Python 3 on the computer (on a Mac, it comes with Apple's command
 line tools).
 
