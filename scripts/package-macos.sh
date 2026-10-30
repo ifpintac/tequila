@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Package Tequila for Apple silicon: Tequila.app, and a disk image to
-# install it from - the Mac's counterpart of package-windows.ps1 and the
-# Windows installer. Updating is installing the newer one over it: your
+# Package Tequila for the Mac it runs on, Apple silicon or Intel:
+# Tequila.app, and a disk image to install it from - the Mac's counterpart
+# of package-windows.ps1 and the Windows installer. Updating is installing the newer one over it: your
 # materials, plugins and settings live outside the application
 # (~/Library/Application Support/Tequila), so they stay.
 #
@@ -33,7 +33,10 @@
 #
 # Usage:  bash scripts/package-macos.sh [--skip-build]
 # Result: dist/Tequila-macOS-<stamp>/Tequila.app and
-#         dist/Tequila-<version>.dmg
+#         dist/Tequila-<version>.dmg, or dist/Tequila-<version>-intel.dmg on
+#         an Intel Mac. An Intel Mac's has no Cycles: Blender 5, whose
+#         Cycles native/cycles builds, makes nothing for Intel Macs, so it
+#         renders with Tequila's own engine.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,6 +52,14 @@ if [ "${1:-}" != "--skip-build" ]; then
     cargo build --release --target-dir target-package -p tequila-app -p tequila-cli
 fi
 release="$root/target-package/release"
+# Which Mac this is, as the SDKs' folders, Rust's targets and the disk
+# image are named for it. Help > Check for updates picks the disk image by
+# that name (app/src/update.rs).
+case "$(uname -m)" in
+    arm64)  arch=arm64;  rust_target=aarch64-apple-darwin; suffix="" ;;
+    x86_64) arch=x86_64; rust_target=x86_64-apple-darwin;  suffix="-intel" ;;
+    *) echo "No Mac package for $(uname -m)" >&2; exit 1 ;;
+esac
 for required in tequila-app tequila; do
     [ -f "$release/$required" ] || { echo "Missing $release/$required" >&2; exit 1; }
 done
@@ -68,7 +79,7 @@ cp "$release/tequila" "$contents/MacOS/tequila-cli"
 
 # Embree, TBB and OIDN, found by the executables' rpath
 # (@executable_path/../Frameworks, `.cargo/config.toml`).
-for sdk in third_party/embree-*.arm64.macosx third_party/oidn-*.arm64.macos; do
+for sdk in third_party/embree-*."$arch".macosx third_party/oidn-*."$arch".macos; do
     [ -d "$sdk/lib" ] || { echo "Missing $sdk: run bash scripts/fetch-third-party.sh" >&2; exit 1; }
     cp -a "$sdk"/lib/*.dylib "$contents/Frameworks/"
 done
@@ -80,7 +91,9 @@ done
 # TBB and OIDN are not copied again: it finds those one folder up.
 cycles_work="${TEQUILA_CYCLES_WORK:-$(cd "$root/.." && pwd)/cycles-spike}"
 cycles_bin="$cycles_work/cycles/build/bin"
+with_cycles=""
 if [ -f "$cycles_bin/libtequila_cycles.dylib" ]; then
+    with_cycles=1
     mkdir -p "$contents/Frameworks/cycles" "$resources/cycles"
     for f in "$cycles_bin"/*.dylib; do
         case "$(basename "$f")" in
@@ -133,7 +146,7 @@ cp LICENSE NOTICE THIRD_PARTY_LICENSES.md TRADEMARKS.md "$resources/"
 # crate compiles in without shipping (scripts/notices).
 licenses="$resources/licenses"
 mkdir -p "$licenses"
-for sdk in third_party/*.arm64.macos*; do
+for sdk in third_party/*."$arch".macos*; do
     for folder in doc share; do
         if [ -d "$sdk/$folder" ]; then
             mkdir -p "$licenses/$(basename "$sdk")"
@@ -141,7 +154,7 @@ for sdk in third_party/*.arm64.macos*; do
         fi
     done
 done
-cargo metadata --format-version 1 --filter-platform aarch64-apple-darwin | python3 -c '
+cargo metadata --format-version 1 --filter-platform "$rust_target" | python3 -c '
 import json, shutil, sys
 from pathlib import Path
 out = Path(sys.argv[1])
@@ -263,10 +276,6 @@ part it goes on the whole selection; double-click a part to select its
 group (a body that came in pieces).
 Hide the selection: Control+H (Cmd+H hides the whole application, as in
 every Mac application); show everything: Option+H.
-Faster final renders: Render settings > Engine > Cycles (graphics card).
-The first render on the graphics card prepares it for this Mac, which
-can take a few minutes; later ones start at once.
-
 AI apps: Assistant > Connect an AI... > Connect the Claude app lets Claude
 work in Tequila - materials, procedural materials from a description,
 lighting, renders, even plugins.
@@ -278,6 +287,14 @@ If Tequila closes unexpectedly, the next launch shows what happened (with
 macOS's own crash report); Copy for Discord puts it on the clipboard for
 #bug-reports. Help > Crash reports.
 README
+if [ -n "$with_cycles" ]; then
+    cat >> "$readme" <<'README'
+
+Faster final renders: Render settings > Engine > Cycles (graphics card).
+The first render on the graphics card prepares it for this Mac, which
+can take a few minutes; later ones start at once.
+README
+fi
 cp "$readme" "$resources/"
 
 # Signed, the innermost code first and the bundle last: ad hoc, or with a
@@ -307,7 +324,7 @@ mkdir -p "$stage"
 cp -R "$app" "$stage/"
 cp "$readme" "$stage/"
 ln -s /Applications "$stage/Applications"
-dmg="$root/dist/Tequila-$version.dmg"
+dmg="$root/dist/Tequila-$version$suffix.dmg"
 rm -f "$dmg"
 hdiutil create -quiet -volname "Tequila $version" -srcfolder "$stage" -ov -format UDZO "$dmg"
 rm -rf "$stage"
@@ -319,7 +336,7 @@ if [ "$identity" != "-" ]; then
         xcrun notarytool submit "$dmg" --keychain-profile "$TEQUILA_NOTARY_PROFILE" --wait
         xcrun stapler staple "$dmg"
         spctl --assess --type open --context context:primary-signature --verbose "$dmg"
-        echo "Notarized: it opens on any Mac with Apple silicon"
+        echo "Notarized: it opens on any Mac"
     else
         echo "Signed but not notarized: set TEQUILA_NOTARY_PROFILE for other Macs"
     fi

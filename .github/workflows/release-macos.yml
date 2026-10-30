@@ -1,10 +1,12 @@
 name: Mac release
 
-# Tequila.app in a disk image, built on a Mac with Apple silicon: with the
-# OpenCASCADE STEP reader (Homebrew's OpenCASCADE) and Cycles for Metal
-# (built from source, with Blender's libraries for macOS). Run it by hand
-# (Actions > Mac release > Run workflow), or it runs when a release is
-# published and attaches the disk image to it.
+# Tequila.app in two disk images: one built on a Mac with Apple silicon,
+# with the OpenCASCADE STEP reader (Homebrew's OpenCASCADE) and Cycles for
+# Metal (built from source, with Blender's libraries for macOS), and one
+# built on an Intel Mac (Tequila-<version>-intel.dmg) with the STEP reader
+# and without Cycles, which Blender 5 no longer builds for Intel Macs. Run
+# it by hand (Actions > Mac release > Run workflow), or it runs when a
+# release is published and attaches the disk images to it.
 #
 # Signed ad hoc: a Mac opens it with System Settings > Privacy & Security >
 # Open Anyway. scripts/package-macos.sh signs with a Developer ID and
@@ -28,8 +30,20 @@ env:
 
 jobs:
   dmg:
-    runs-on: macos-15
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple silicon
+            runner: macos-15
+            arch: arm64
+          # GitHub's last Intel Mac runner, kept until autumn 2027.
+          - name: Intel
+            runner: macos-15-intel
+            arch: x86_64
     env:
       CYCLES_WORK: ${{ github.workspace }}/../cycles-work
     steps:
@@ -40,17 +54,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target-package"
+          key: ${{ matrix.arch }}
 
       - name: Tools
         run: |
-          brew install ninja git-lfs opencascade dylibbundler
-          git lfs install
+          brew install opencascade dylibbundler
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            brew install ninja git-lfs
+            git lfs install
+          fi
 
       - name: Cache third-party SDKs
         uses: actions/cache@v4
         with:
           path: third_party
-          key: sdks-macOS-arm64-embree4.4.1-oidn2.5.1
+          key: sdks-macOS-${{ matrix.arch }}-embree4.4.1-oidn2.5.1
 
       - name: Fetch third-party SDKs
         run: bash scripts/fetch-third-party.sh
@@ -58,6 +76,7 @@ jobs:
       # Cycles takes most of the time: its sources, Blender's libraries and
       # the build are kept between runs, keyed on what decides them.
       - name: Cache Cycles
+        if: matrix.arch == 'arm64'
         uses: actions/cache@v4
         with:
           path: ${{ env.CYCLES_WORK }}
@@ -68,6 +87,7 @@ jobs:
         run: bash native/occt/build-occt.sh
 
       - name: Cycles for Metal
+        if: matrix.arch == 'arm64'
         run: bash native/cycles/build-cycles.sh "$CYCLES_WORK"
 
       - name: Package
@@ -89,7 +109,9 @@ jobs:
           app="$(ls -d dist/Tequila-macOS-*/Tequila.app | tail -1)"
           cli="$app/Contents/MacOS/tequila-cli"
           "$cli" --width 160 --height 100 --samples 4 --output smoke-tequila.png
-          "$cli" --engine cycles --device CPU --width 160 --height 100 --samples 4 --output smoke-cycles.png
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            "$cli" --engine cycles --device CPU --width 160 --height 100 --samples 4 --output smoke-cycles.png
+          fi
           "$cli" --input crates/tequila-import/tests/data/two_bodies.step --width 160 --height 100 --samples 4 --output smoke-step.png 2>&1 | tee step.log
           if grep -q "own reader instead" step.log; then echo "The STEP file was not read by OpenCASCADE"; exit 1; fi
           ls -la smoke-*.png
@@ -106,7 +128,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-macOS
+          name: smoke-macOS-${{ matrix.arch }}
           path: |
             smoke-*.png
             app-window.png
@@ -115,7 +137,7 @@ jobs:
       - name: Keep the disk image
         uses: actions/upload-artifact@v4
         with:
-          name: Tequila-macOS
+          name: Tequila-macOS-${{ matrix.arch }}
           path: dist/Tequila-*.dmg
 
       - name: Attach it to the release

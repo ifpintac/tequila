@@ -61,8 +61,12 @@ jobs:
           version = release['tagName'].removeprefix('v')
           title = release['name'] or f'Tequila {version}'
           lines = [f'# {title} is out', release['url']]
-          for system, ending in (('Windows', '.exe'), ('Mac', '.dmg'), ('Linux', '.tar.gz')):
+          for system, ending in (('Windows', '.exe'), ('Mac with Apple silicon', '.dmg'), ('Intel Mac', '-intel.dmg'), ('Linux', '.tar.gz')):
               for name in names:
+                  # An Intel Mac's disk image ends in .dmg too: it is listed
+                  # as its own.
+                  if ending == '.dmg' and name.endswith('-intel.dmg'):
+                      continue
                   if name.startswith('Tequila') and name.endswith(ending):
                       lines.append(f'- **{system}:** {name}')
           lines.append('What changed, and how to install it, is on the release page.')
