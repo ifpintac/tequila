@@ -46,6 +46,7 @@ pub mod templates;
 pub mod textures;
 pub mod tree;
 pub mod units;
+pub mod uv;
 pub mod wireframe;
 
 pub use command::{Command, CommandBus, CommandError};
