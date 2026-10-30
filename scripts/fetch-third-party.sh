@@ -50,13 +50,26 @@ fetch() {
         *.tar.gz) tar -xzf "$third_party/$asset" -C "$unpacked" ;;
         *.zip)    unzip -q -o "$third_party/$asset" -d "$unpacked" ;;
     esac
-    # Some archives hold their files in a folder of the same name, some not.
-    if [ -d "$unpacked/$expected" ]; then
-        mv "$unpacked/$expected" "$target"
-        rm -rf "$unpacked"
-    else
-        mv "$unpacked" "$target"
+    # Some archives hold their files in a folder, named for the archive or
+    # not, some not: the SDK is wherever its lib folder is.
+    local sdk="$unpacked"
+    if [ ! -d "$sdk/lib" ] && [ ! -d "$sdk/lib64" ]; then
+        local lib
+        lib="$(find "$unpacked" -mindepth 2 -maxdepth 3 -type d \( -name lib -o -name lib64 \) -print -quit)"
+        if [ -z "$lib" ]; then
+            echo "$asset has no lib folder; it holds:" >&2
+            find "$unpacked" -maxdepth 2 >&2
+            exit 1
+        fi
+        sdk="$(dirname "$lib")"
     fi
+    # Embree's Linux archive has lib64 where the build scripts and the
+    # packaging look for lib.
+    if [ ! -d "$sdk/lib" ]; then
+        ln -s lib64 "$sdk/lib"
+    fi
+    mv "$sdk" "$target"
+    rm -rf "$unpacked"
     rm "$third_party/$asset"
 }
 

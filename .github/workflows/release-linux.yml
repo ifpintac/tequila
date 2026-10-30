@@ -1,0 +1,103 @@
+name: Linux release
+
+# Tequila for Linux on x86-64, as a .tar.gz to unpack anywhere, built on
+# Ubuntu 22.04 so it runs there and on anything newer (glibc 2.35: Debian
+# 12, Fedora 36, Arch). Tequila's own renderer and STEP reader: Cycles and
+# OpenCASCADE's reader are not built for Linux yet. Run it by hand
+# (Actions > Linux release > Run workflow), or it runs when a release is
+# published and attaches the archive to it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "A release's tag (v2026.10.30.1200) to attach the archive to, and take the version from; empty for neither"
+        required: false
+        default: ""
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tarball:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target-package"
+
+      # patchelf for the libraries' rpath; a display and software OpenGL
+      # for the application's smoke test, which a runner has no screen for.
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf xvfb libgl1-mesa-dri libegl1 libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libwayland-client0
+
+      - name: Cache third-party SDKs
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-linux-x64-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        run: bash scripts/fetch-third-party.sh
+
+      - name: Package
+        env:
+          TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release }}
+        run: |
+          # The release's time is the package's: v2026.10.30.1200 is
+          # Tequila-Linux-20261030-120000, which makes 2026.10.30.1200.
+          if [[ "$TAG" =~ ^v([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})([0-9]{2})$ ]]; then
+            export TEQUILA_PACKAGE_STAMP="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}-${BASH_REMATCH[4]}${BASH_REMATCH[5]}00"
+          fi
+          bash scripts/package-linux.sh
+
+      # Until here it was only built. Start what was packaged: the renderer
+      # without a window, a STEP file through Tequila's own reader, then the
+      # application, driven through its scripting channel.
+      - name: Smoke test the renderer
+        run: |
+          out="$(ls -d dist/Tequila-Linux-*/Tequila | tail -1)"
+          "$out/tequila-cli" --width 160 --height 100 --samples 4 --output smoke-tequila.png
+          "$out/tequila-cli" --input crates/tequila-import/tests/data/two_bodies.step --width 160 --height 100 --samples 4 --output smoke-step.png
+          ls -la smoke-*.png
+
+      - name: Smoke test the application
+        env:
+          FIRST_FRAME_SECONDS: '120'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" python3 scripts/smoke-app.py "$(ls -d dist/Tequila-Linux-*/Tequila | tail -1)" app-window.png
+
+      - name: Keep the smoke test's pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-Linux
+          path: |
+            smoke-*.png
+            app-window.png
+          if-no-files-found: ignore
+
+      - name: Keep the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-Linux
+          path: dist/Tequila-*-linux-x86_64.tar.gz
+
+      - name: Attach it to the release
+        if: github.event_name == 'release' || inputs.release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release }}
+        run: gh release upload "$TAG" dist/Tequila-*-linux-x86_64.tar.gz --clobber

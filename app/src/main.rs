@@ -4311,7 +4311,7 @@ impl TequilaApp {
                 Ok(true) => self.quit_requested = true,
                 Ok(false) => {
                     self.updates.open = false;
-                    self.project.status = "Drag Tequila into Applications, replacing the one there, then open it again".into();
+                    self.project.status = update::Platform::this().install_label().1.to_string();
                 }
                 Err(error) => self.toasts.warn(format!("The update could not start: {error}")),
             }

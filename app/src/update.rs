@@ -173,7 +173,9 @@ pub fn fetch_latest() -> Result<Release, String> {
 pub enum Platform {
     Windows,
     Mac,
-    /// No installer is made for it.
+    /// Linux on x86-64, from a .tar.gz.
+    Linux,
+    /// Nothing is made for it.
     Other,
 }
 
@@ -183,8 +185,23 @@ impl Platform {
             Platform::Windows
         } else if cfg!(target_os = "macos") {
             Platform::Mac
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Platform::Linux
         } else {
             Platform::Other
+        }
+    }
+
+    /// What installing the downloaded file is, for a button, and what the
+    /// person does then.
+    pub fn install_label(self) -> (&'static str, &'static str) {
+        match self {
+            Platform::Mac => ("Open the disk image", "Drag Tequila into Applications, replacing the one there, then open it again."),
+            Platform::Linux => (
+                "Show the download",
+                "Unpack it in place of this Tequila's folder, then open it again. Your materials, plugins and settings stay.",
+            ),
+            _ => ("Install and restart", "Tequila closes, the update installs, and Tequila opens again. It asks about unsaved work first."),
         }
     }
 }
@@ -201,6 +218,7 @@ pub fn asset_for(release: &Release, current: Option<Version>, platform: Platform
             .and_then(|from| named(format!("Tequila-Update-{from}-to-{latest}.exe")))
             .or_else(|| named(format!("Tequila-Setup-{latest}.exe"))),
         Platform::Mac => named(format!("Tequila-{latest}.dmg")),
+        Platform::Linux => named(format!("Tequila-{latest}-linux-x86_64.tar.gz")),
         Platform::Other => None,
     }
 }
@@ -272,7 +290,9 @@ fn downloads() -> std::path::PathBuf {
 /// Start installing the downloaded `file`: on Windows, the installer runs
 /// once Tequila has closed, replacing this installation, and opens Tequila
 /// again; on a Mac the disk image opens, for Tequila to be dragged into
-/// Applications. True when Tequila should close now.
+/// Applications; on Linux the folder it is in opens, for it to be unpacked
+/// in place of this one, which a running Tequila would be unwise to do to
+/// itself. True when Tequila should close now.
 pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, String> {
     match platform {
         Platform::Windows => std::process::Command::new(file)
@@ -285,6 +305,11 @@ pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, Strin
             .spawn()
             .map(|_| false)
             .map_err(|e| format!("the disk image could not be opened ({e})")),
+        Platform::Linux => std::process::Command::new("xdg-open")
+            .arg(file.parent().unwrap_or(file))
+            .spawn()
+            .map(|_| false)
+            .map_err(|e| format!("its folder could not be opened ({e}); it is in {}", file.display())),
         Platform::Other => Err("there is no installer for this computer".into()),
     }
 }
@@ -550,10 +575,7 @@ impl Updates {
                     }
                     State::Ready { release, file } => {
                         heading(ui, &format!("Tequila {} is ready to install", release.version));
-                        let (label, about) = match Platform::this() {
-                            Platform::Mac => ("Open the disk image", "Drag Tequila into Applications, replacing the one there, then open it again."),
-                            _ => ("Install and restart", "Tequila closes, the update installs, and Tequila opens again. It asks about unsaved work first."),
-                        };
+                        let (label, about) = Platform::this().install_label();
                         ui.label(egui::RichText::new(about).color(p.text_dim));
                         ui.add_space(6.0);
                         if ui.add(egui::Button::new(egui::RichText::new(label).color(p.on_accent)).fill(p.accent)).clicked() {
@@ -733,6 +755,10 @@ mod tests {
         assert_eq!(name(None, Platform::Windows), Some("Tequila-Setup-2026.11.02.0930.exe"));
         assert_eq!(name(from, Platform::Mac), Some("Tequila-2026.11.02.0930.dmg"));
         assert_eq!(name(from, Platform::Other), None);
+        assert_eq!(name(from, Platform::Linux), None, "this release made no Linux archive");
+        let mut with_linux = release.clone();
+        with_linux.assets.push(Asset { name: "Tequila-2026.11.02.0930-linux-x86_64.tar.gz".into(), size: 1, url: String::new(), sha256: None });
+        assert_eq!(asset_for(&with_linux, from, Platform::Linux).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930-linux-x86_64.tar.gz"));
     }
 
     /// Serve `body` once, over plain HTTP on a free port, and say where.
