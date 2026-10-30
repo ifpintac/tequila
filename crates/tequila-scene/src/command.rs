@@ -4633,9 +4633,10 @@ mod label_placement_tests {
     fn a_label_on_a_uv_mapped_part_keeps_its_uv_placement() {
         let (mut document, mut bus, material) = plate(true);
         add_label(&mut document, &mut bus, material);
+        // The layout as it is, the label turning as a whole as artwork does.
         assert_eq!(
             only_label(&document, material).mapping,
-            tequila_texture::projection::Mapping::default(),
+            tequila_texture::projection::Mapping { rigid: true, ..Default::default() },
             "a UV-mapped part had its authored layout overridden"
         );
     }

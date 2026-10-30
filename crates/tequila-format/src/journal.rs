@@ -278,7 +278,8 @@ pub fn encode(command: &Command) -> String {
                 .set("flip_u", mapping.flip_u)
                 .set("flip_v", mapping.flip_v)
                 .set("blend_sharpness", mapping.blend_sharpness)
-                .set("real_world_units", mapping.real_world_units);
+                .set("real_world_units", mapping.real_world_units)
+                .set("rigid", mapping.rigid);
         }
         Command::SetSky { sky } => {
             // `null` rather than an absent key: the difference between "no
@@ -769,6 +770,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 flip_v: boolean(&value, "flip_v"),
                 blend_sharpness: scalar("blend_sharpness").unwrap_or(default.blend_sharpness),
                 real_world_units: boolean(&value, "real_world_units"),
+                rigid: boolean(&value, "rigid"),
             };
             Command::SetTextureMapping {
                 material: material("material")?,

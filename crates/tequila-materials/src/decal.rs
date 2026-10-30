@@ -60,7 +60,8 @@ impl Decal {
         Self {
             name: name.into(),
             texture,
-            mapping: Mapping::default(),
+            // Artwork turns as a whole: a wide logo turned is a wide logo.
+            mapping: Mapping { rigid: true, ..Mapping::default() },
             opacity: 1.0,
             roughness: 0.35,
             metallic: false,

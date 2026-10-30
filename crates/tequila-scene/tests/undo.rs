@@ -533,6 +533,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::AddGroup { .. }
         | Command::DeleteNodes { .. }
         | Command::SplitIntoParts { .. }
+        | Command::UnwrapUvs { .. }
         | Command::Rename { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }

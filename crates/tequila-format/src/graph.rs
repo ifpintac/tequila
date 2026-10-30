@@ -1252,7 +1252,8 @@ fn mapping_to_json(mapping: &Mapping) -> Value {
         .set("flip_u", mapping.flip_u)
         .set("flip_v", mapping.flip_v)
         .set("blend_sharpness", mapping.blend_sharpness)
-        .set("real_world_units", mapping.real_world_units);
+        .set("real_world_units", mapping.real_world_units)
+        .set("rigid", mapping.rigid);
     object.build()
 }
 
@@ -1311,6 +1312,8 @@ fn mapping_from_json(value: &Value) -> Mapping {
         flip_v: flag("flip_v", default.flip_v),
         blend_sharpness: scalar("blend_sharpness", default.blend_sharpness),
         real_world_units: flag("real_world_units", default.real_world_units),
+        // A material saved before there was a choice turns as it always did.
+        rigid: flag("rigid", default.rigid),
     }
 }
 
@@ -1348,6 +1351,8 @@ mod tests {
                 flip_v: false,
                 blend_sharpness: 4.5,
                 real_world_units: true,
+                // Not the default either, for the same reason.
+                rigid: true,
             },
         });
         mapping_node.position = vec2(-300.0, 20.0);

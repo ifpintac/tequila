@@ -825,6 +825,10 @@ fn finished_gradients(u: Vec3, v: Vec3, mapping: &Mapping) -> (Vec3, Vec3) {
     let (su, sv) = finish_scale(mapping);
     let (sin, cos) = (mapping.rotation * std::f32::consts::TAU).sin_cos();
     let (fu, fv) = (if mapping.flip_u { -1.0 } else { 1.0 }, if mapping.flip_v { -1.0 } else { 1.0 });
+    if mapping.rigid {
+        // Turned, then scaled.
+        return ((u * cos - v * sin) * (su * fu), (u * sin + v * cos) * (sv * fv));
+    }
     (
         (u * (cos * su) - v * (sin * sv)) * fu,
         (u * (sin * su) + v * (cos * sv)) * fv,
@@ -1511,14 +1515,29 @@ impl Builder<'_> {
         let (px, py) = (mapping.pivot.x, mapping.pivot.y);
         let placed = self.session.node(shader, "mapping")?;
         self.session.set_string(placed, "mapping_type", "point")?;
-        self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
-        self.session.set_float3(placed, "rotation", [0.0, 0.0, angle])?;
-        self.session.set_float3(
-            placed,
-            "location",
-            [px - (px * cos - py * sin) + mapping.offset.x, py - (px * sin + py * cos) + mapping.offset.y, 0.0],
-        )?;
-        self.session.connect(shader, uv, "Vector", placed, "Vector")?;
+        if mapping.rigid && angle != 0.0 {
+            // Turned whole, then scaled: the turn about the pivot in the
+            // unscaled coordinates first, then the scale and the offset.
+            let safe = |s: f32| if s.abs() < 1e-12 { 1e-12 } else { s };
+            let (qx, qy) = (px / safe(su), py / safe(sv));
+            let turned = self.session.node(shader, "mapping")?;
+            self.session.set_string(turned, "mapping_type", "point")?;
+            self.session.set_float3(turned, "rotation", [0.0, 0.0, angle])?;
+            self.session.set_float3(turned, "location", [qx - (qx * cos - qy * sin), qy - (qx * sin + qy * cos), 0.0])?;
+            self.session.connect(shader, uv, "Vector", turned, "Vector")?;
+            self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
+            self.session.set_float3(placed, "location", [mapping.offset.x, mapping.offset.y, 0.0])?;
+            self.session.connect(shader, turned, "Vector", placed, "Vector")?;
+        } else {
+            self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
+            self.session.set_float3(placed, "rotation", [0.0, 0.0, angle])?;
+            self.session.set_float3(
+                placed,
+                "location",
+                [px - (px * cos - py * sin) + mapping.offset.x, py - (px * sin + py * cos) + mapping.offset.y, 0.0],
+            )?;
+            self.session.connect(shader, uv, "Vector", placed, "Vector")?;
+        }
         // The flips, and v counted from the bottom.
         let (fu, fv) = (if mapping.flip_u { -1.0 } else { 1.0 }, if mapping.flip_v { -1.0 } else { 1.0 });
         let cycles = self.session.node(shader, "mapping")?;

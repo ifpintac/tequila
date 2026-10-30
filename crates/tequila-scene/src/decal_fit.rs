@@ -155,6 +155,8 @@ pub fn fit_to_bounds(bounds: Aabb) -> Option<Mapping> {
         // artwork's centre and its pivot both belong.
         offset: vec2(0.5 - cu / size, 0.5 - cv / size),
         pivot: vec2(cu / size, cv / size),
+        // Turned as a whole, as artwork is.
+        rigid: true,
         // Artwork, not a tiling texture: outside its own extent there is
         // nothing, and the material below shows through.
         wrap_u: tequila_texture::mip::Wrap::Clamp,
@@ -232,9 +234,20 @@ fn reorient(mapping: &Mapping, to: Plane) -> Mapping {
     let half = [0.5, 0.5];
     let c = [mapping.pivot.x, mapping.pivot.y];
     let o = [mapping.offset.x, mapping.offset.y];
+    // A rigid turn is the turn with the scale taken out and put back:
+    // S R S^-1 on the scaled coordinates this works in.
+    let (su, sv) = scale_factors(mapping);
+    let spun = |turns: f32| -> Plane {
+        let r = turn(turns);
+        if mapping.rigid && su.abs() > 1e-12 && sv.abs() > 1e-12 {
+            [[r[0][0], r[0][1] * su / sv], [r[1][0] * sv / su, r[1][1]]]
+        } else {
+            r
+        }
+    };
     // The artwork's centre q, from F(R(q - c) + c + o) = (0.5, 0.5).
     let fh = apply(flips(mapping.flip_u, mapping.flip_v), half);
-    let back = apply(transpose(turn(mapping.rotation)), [fh[0] - c[0] - o[0], fh[1] - c[1] - o[1]]);
+    let back = apply(spun(-mapping.rotation), [fh[0] - c[0] - o[0], fh[1] - c[1] - o[1]]);
     let q = [c[0] + back[0], c[1] + back[1]];
 
     let mirrored = to[0][0] * to[1][1] - to[0][1] * to[1][0] < 0.0;
@@ -246,7 +259,7 @@ fn reorient(mapping: &Mapping, to: Plane) -> Mapping {
     let r = product(f, to);
     let rotation = r[1][0].atan2(r[0][0]) / std::f32::consts::TAU;
     let fh = apply(f, half);
-    let ahead = apply(turn(rotation), [q[0] - c[0], q[1] - c[1]]);
+    let ahead = apply(spun(rotation), [q[0] - c[0], q[1] - c[1]]);
     Mapping {
         flip_u,
         flip_v,
@@ -466,29 +479,7 @@ pub fn outline(
 /// visible in the arithmetic — it shows up as a frame that is right until the
 /// label is rotated and then drifts.
 fn unfinish(mapping: &Mapping, u: f32, v: f32) -> (f32, f32) {
-    let (mut u, mut v) = (u, v);
-    if mapping.flip_u {
-        u = -u;
-    }
-    if mapping.flip_v {
-        v = -v;
-    }
-    u -= mapping.offset.x;
-    v -= mapping.offset.y;
-
-    if mapping.rotation != 0.0 {
-        let angle = -mapping.rotation * std::f32::consts::TAU;
-        let (sin, cos) = angle.sin_cos();
-        let (pu, pv) = (u - mapping.pivot.x, v - mapping.pivot.y);
-        u = pu * cos - pv * sin + mapping.pivot.x;
-        v = pu * sin + pv * cos + mapping.pivot.y;
-    }
-
-    let (su, sv) = scale_factors(mapping);
-    (
-        u / if su.abs() < 1e-9 { 1e-9 } else { su },
-        v / if sv.abs() < 1e-9 { 1e-9 } else { sv },
-    )
+    mapping.unapply(u, v)
 }
 
 #[cfg(test)]
