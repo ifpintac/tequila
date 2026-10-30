@@ -13,30 +13,46 @@
 //! space an image should be converted to for a given monitor and look. This
 //! module reads that graph and evaluates it.
 //!
+//! An OCIO v2 config has two references, not one: scene-referred spaces are
+//! defined against the scene reference (ACES2065-1 in an ACES config) and
+//! display-referred ones, in `display_colorspaces`, against the display
+//! connection space (CIE XYZ D65). A view crosses from one to the other
+//! through a *view transform*, which is where the ACES output transforms live.
+//! Both references, view transforms, shared views, looks, aliases, roles,
+//! data spaces and the `active_displays` / `active_views` lists are read.
+//!
 //! Supported transforms: `FileTransform` (`.cube`, `.spi1d`, `.spimtx`),
 //! `MatrixTransform`, `ExponentTransform`, `ExponentWithLinearTransform`,
-//! `RangeTransform`, `LogTransform`, `CDLTransform`, `GroupTransform` and
-//! `ColorSpaceTransform`, each in both directions.
+//! `RangeTransform`, `LogTransform`, `LogAffineTransform`,
+//! `LogCameraTransform`, `CDLTransform`, `GroupTransform`,
+//! `ColorSpaceTransform` and `BuiltinTransform`, each in both directions
+//! where OCIO defines both.
 //!
-//! **Not** supported: `BuiltinTransform`. OCIO v2 moved the ACES output
-//! transforms out of LUT files and into a registry of transforms built into the
-//! library — a substantial body of maths that is defined by its C++
-//! implementation rather than by a file. A config that uses one is *reported*,
-//! not silently mis-rendered: [`Config::view_pipeline`] returns the names of the
-//! transforms it could not build, the application says so, and the analytic
-//! transforms of [`crate::DisplayTransform`] remain available. That is a real
-//! limitation and stating it is better than a picture that is quietly not what
-//! the config asked for.
+//! `BuiltinTransform` is the registry OCIO v2 moved the ACES transforms into,
+//! defined by the library rather than by any file; [`builtin`] implements it
+//! from the ACES CTL and the camera vendors' published formulas. What it does
+//! not implement — the ACES 2.0 output transforms of OCIO 2.4, chiefly — is
+//! *reported*, not silently mis-rendered: [`Config::view_pipeline`] returns
+//! the names of the transforms it could not build, the application says so,
+//! and the analytic transforms of [`crate::DisplayTransform`] remain
+//! available.
 //!
-//! This is why the analytic transforms were written first. `docs/05` §1 note 3:
-//! "M0 implements the same display transforms analytically ... OCIO arrives at
-//! M3; the analytic versions then serve as the reference to check it against" —
-//! and [`tests::a_config_that_encodes_srgb_matches_the_analytic_transform`] is
+//! The analytic transforms were written first for this reason. `docs/05` §1
+//! note 3: "M0 implements the same display transforms analytically ... OCIO
+//! arrives at M3; the analytic versions then serve as the reference to check
+//! it against" — and
+//! [`tests::a_config_that_encodes_srgb_matches_the_analytic_transform`] is
 //! that check.
 
+pub mod aces;
+pub mod builtin;
+pub mod curves;
 pub mod lut;
+pub mod primaries;
 pub mod yaml;
 
+use crate::ocio::aces::Tonescale;
+use crate::ocio::curves::Curve;
 use crate::ocio::lut::Lut;
 use crate::ocio::yaml::Yaml;
 use tequila_core::math::{vec3, Vec3};
@@ -71,8 +87,12 @@ pub enum Op {
         max_out: f32,
         clamp: bool,
     },
-    /// Log to linear, base `base`, as OCIO's `LogTransform` defines it.
-    Log { base: f32 },
+    /// Linear to log, base `base`, as OCIO's `LogTransform` defines it; log
+    /// to linear when `inverse`.
+    Log { base: f32, inverse: bool },
+    /// OCIO's `LogAffineTransform`, and `LogCameraTransform` when it has a
+    /// linear segment.
+    LogCamera(Box<LogCamera>),
     /// ASC CDL: slope, offset, power, saturation.
     Cdl {
         slope: [f32; 3],
@@ -80,10 +100,106 @@ pub enum Op {
         power: [f32; 3],
         saturation: f32,
     },
+    /// Every channel clamped to `[lo, hi]`, either bound possibly infinite.
+    /// What a clamp cuts off cannot be recovered, so its inverse is the same
+    /// clamp, as in OCIO.
+    Clamp { lo: f32, hi: f32 },
+    /// One of the published curves of [`curves`], per channel.
+    Curve { curve: Curve, to_linear: bool },
+    /// The colour scaled by a power of its own luminance, `c * Y^(gamma - 1)`:
+    /// a change of luminance at constant chromaticity. The ACES dim-surround
+    /// compensation and BT.2100's HLG system gamma are both this.
+    LumaPower {
+        weights: [f32; 3],
+        gamma: f32,
+        /// The luminance is held at least this, so black stays black.
+        floor: f32,
+    },
+    /// The ACES RRT's glow and red modifier, in ACES2065-1.
+    AcesSweeteners { inverse: bool },
+    /// An ACES tone scale, per channel in AP1.
+    AcesTonescale {
+        tonescale: Arc<Tonescale>,
+        inverse: bool,
+    },
+    /// The ACES 1.3 Reference Gamut Compression, on linear AP1.
+    AcesGamutCompress { inverse: bool },
+    /// The ACES white roll-off for the DCI-white simulation outputs.
+    RollWhite {
+        new_white: f32,
+        width: f32,
+        inverse: bool,
+    },
+}
+
+/// The parameters of a `LogAffineTransform` or `LogCameraTransform`.
+///
+/// Forward is linear to log, `log_slope * log_base(lin_slope * x +
+/// lin_offset) + log_offset`, with a straight segment below `lin_break` for
+/// the camera form. The straight segment's slope defaults to the one that
+/// meets the log curve with a continuous derivative, as OCIO computes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LogCamera {
+    pub base: f32,
+    pub log_slope: [f32; 3],
+    pub log_offset: [f32; 3],
+    pub lin_slope: [f32; 3],
+    pub lin_offset: [f32; 3],
+    pub lin_break: Option<[f32; 3]>,
+    pub linear_slope: Option<[f32; 3]>,
+    pub inverse: bool,
+}
+
+impl LogCamera {
+    fn log(&self, x: f32, i: usize) -> f32 {
+        self.log_slope[i] * (self.lin_slope[i] * x + self.lin_offset[i]).max(1e-10).ln() / self.base.ln()
+            + self.log_offset[i]
+    }
+
+    fn antilog(&self, y: f32, i: usize) -> f32 {
+        (self.base.powf((y - self.log_offset[i]) / self.log_slope[i]) - self.lin_offset[i])
+            / self.lin_slope[i]
+    }
+
+    /// The break point and the straight segment's slope there.
+    fn segment(&self, i: usize) -> Option<(f32, f32)> {
+        let lin_break = self.lin_break?[i];
+        let slope = match self.linear_slope {
+            Some(s) => s[i],
+            None => {
+                self.log_slope[i] * self.lin_slope[i]
+                    / ((self.lin_slope[i] * lin_break + self.lin_offset[i]) * self.base.ln())
+            }
+        };
+        Some((lin_break, slope))
+    }
+
+    fn apply(&self, v: f32, i: usize) -> f32 {
+        match (self.segment(i), self.inverse) {
+            (None, false) => self.log(v, i),
+            (None, true) => self.antilog(v, i),
+            (Some((lin_break, slope)), false) => {
+                if v <= lin_break {
+                    slope * (v - lin_break) + self.log(lin_break, i)
+                } else {
+                    self.log(v, i)
+                }
+            }
+            (Some((lin_break, slope)), true) => {
+                let log_break = self.log(lin_break, i);
+                if v <= log_break {
+                    (v - log_break) / slope + lin_break
+                } else {
+                    self.antilog(v, i)
+                }
+            }
+        }
+    }
 }
 
 impl Op {
     pub fn apply(&self, c: Vec3) -> Vec3 {
+        let per_channel = |f: &dyn Fn(f32) -> f32| vec3(f(c.x), f(c.y), f(c.z));
         match self {
             Op::Lut(lut) => lut.apply(c),
             Op::Matrix { matrix, offset } => vec3(
@@ -136,11 +252,16 @@ impl Op {
                 };
                 vec3(map(c.x), map(c.y), map(c.z))
             }
-            Op::Log { base } => {
-                let ln_base = base.max(1.0001).ln();
-                let map = |v: f32| v.max(1e-10).ln() / ln_base;
-                vec3(map(c.x), map(c.y), map(c.z))
+            Op::Log { base, inverse } => {
+                let base = base.max(1.0001);
+                if *inverse {
+                    per_channel(&|v| base.powf(v))
+                } else {
+                    let ln_base = base.ln();
+                    per_channel(&|v| v.max(1e-10).ln() / ln_base)
+                }
             }
+            Op::LogCamera(log) => vec3(log.apply(c.x, 0), log.apply(c.y, 1), log.apply(c.z, 2)),
             Op::Cdl {
                 slope,
                 offset,
@@ -159,6 +280,48 @@ impl Op {
                     luma + saturation * (out.y - luma),
                     luma + saturation * (out.z - luma),
                 )
+            }
+            Op::Clamp { lo, hi } => c.clamp(*lo, *hi),
+            Op::Curve { curve, to_linear } => {
+                if *to_linear {
+                    per_channel(&|v| curve.to_linear(v))
+                } else {
+                    per_channel(&|v| curve.from_linear(v))
+                }
+            }
+            Op::LumaPower {
+                weights,
+                gamma,
+                floor,
+            } => {
+                let y = (weights[0] * c.x + weights[1] * c.y + weights[2] * c.z).max(*floor);
+                c * y.powf(gamma - 1.0)
+            }
+            Op::AcesSweeteners { inverse } => {
+                if *inverse {
+                    aces::sweeteners_inverse(c)
+                } else {
+                    aces::sweeteners_forward(c)
+                }
+            }
+            Op::AcesTonescale { tonescale, inverse } => {
+                if *inverse {
+                    per_channel(&|v| tonescale.inverse(v))
+                } else {
+                    per_channel(&|v| tonescale.forward(v))
+                }
+            }
+            Op::AcesGamutCompress { inverse } => aces::gamut_compress(c, *inverse),
+            Op::RollWhite {
+                new_white,
+                width,
+                inverse,
+            } => {
+                if *inverse {
+                    per_channel(&|v| aces::roll_white_inverse(v, *new_white, *width))
+                } else {
+                    per_channel(&|v| aces::roll_white_forward(v, *new_white, *width))
+                }
             }
         }
     }
@@ -208,7 +371,44 @@ impl Op {
                 max_out: *max_in,
                 clamp: *clamp,
             }),
-            Op::Lut(_) | Op::Log { .. } | Op::Cdl { .. } => None,
+            Op::Log { base, inverse } => Some(Op::Log {
+                base: *base,
+                inverse: !inverse,
+            }),
+            Op::LogCamera(log) => Some(Op::LogCamera(Box::new(LogCamera {
+                inverse: !log.inverse,
+                ..(**log).clone()
+            }))),
+            Op::Clamp { lo, hi } => Some(Op::Clamp { lo: *lo, hi: *hi }),
+            Op::Curve { curve, to_linear } => Some(Op::Curve {
+                curve: *curve,
+                to_linear: !to_linear,
+            }),
+            Op::LumaPower {
+                weights,
+                gamma,
+                floor,
+            } => Some(Op::LumaPower {
+                weights: *weights,
+                gamma: 1.0 / gamma,
+                floor: floor.powf(*gamma),
+            }),
+            Op::AcesSweeteners { inverse } => Some(Op::AcesSweeteners { inverse: !inverse }),
+            Op::AcesTonescale { tonescale, inverse } => Some(Op::AcesTonescale {
+                tonescale: tonescale.clone(),
+                inverse: !inverse,
+            }),
+            Op::AcesGamutCompress { inverse } => Some(Op::AcesGamutCompress { inverse: !inverse }),
+            Op::RollWhite {
+                new_white,
+                width,
+                inverse,
+            } => Some(Op::RollWhite {
+                new_white: *new_white,
+                width: *width,
+                inverse: !inverse,
+            }),
+            Op::Lut(_) | Op::Cdl { .. } => None,
         }
     }
 }
@@ -301,6 +501,64 @@ impl Processor {
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
+
+    /// Append an op, folding it into the previous one when both are matrices.
+    ///
+    /// Not a micro-optimization: an ACES view chains a colour space's matrix,
+    /// the output transform's last matrices and the display's first, and the
+    /// develop pass runs every op on two million pixels. Multiplying
+    /// neighbouring matrices once here takes three or four matrix products
+    /// per pixel down to one, and changes nothing else.
+    pub fn push(&mut self, op: Op) {
+        if let (
+            Some(Op::Matrix {
+                matrix: first,
+                offset: first_offset,
+            }),
+            Op::Matrix {
+                matrix: second,
+                offset: second_offset,
+            },
+        ) = (self.ops.last_mut(), &op)
+        {
+            let a = *first;
+            let b = second;
+            let mut fused = [0.0f32; 9];
+            for row in 0..3 {
+                for col in 0..3 {
+                    fused[row * 3 + col] = (0..3).map(|k| b[row * 3 + k] * a[k * 3 + col]).sum();
+                }
+            }
+            let o = *first_offset;
+            *first_offset = vec3(
+                b[0] * o.x + b[1] * o.y + b[2] * o.z,
+                b[3] * o.x + b[4] * o.y + b[5] * o.z,
+                b[6] * o.x + b[7] * o.y + b[8] * o.z,
+            ) + *second_offset;
+            *first = fused;
+            return;
+        }
+        self.ops.push(op);
+    }
+
+    fn extend(&mut self, other: Processor) {
+        for op in other.ops {
+            self.push(op);
+        }
+        self.unsupported.extend(other.unsupported);
+    }
+}
+
+/// Which of a config's two references a colour space or view transform is
+/// defined against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Reference {
+    /// The scene reference: ACES2065-1 in an ACES config, and the only
+    /// reference an OCIO v1 config has.
+    #[default]
+    Scene,
+    /// The display connection space: CIE XYZ D65 in an ACES config.
+    Display,
 }
 
 /// One colour space in a config.
@@ -308,12 +566,39 @@ impl Processor {
 pub struct ColorSpace {
     pub name: String,
     pub family: String,
-    /// Written in the config as `to_reference` or `from_reference`; both are
-    /// kept as *to* reference, with the direction recorded, because building a
-    /// conversion always needs one of each and deriving the missing one is not
-    /// always possible.
+    pub aliases: Vec<String>,
+    /// `isdata: true`: values that are not colours — normals, masks, the
+    /// "Raw" space — which OCIO never converts.
+    pub is_data: bool,
+    pub reference: Reference,
+    /// Written in the config as `to_..._reference` or `from_..._reference`;
+    /// both are kept, because building a conversion always needs one of each
+    /// direction and deriving the missing one is not always possible.
     to_reference: Option<Yaml>,
     from_reference: Option<Yaml>,
+}
+
+/// A view transform: the step of an OCIO v2 view that crosses from the scene
+/// reference to the display reference, where a config's tone mapping lives.
+#[derive(Clone, Debug, Default)]
+pub struct ViewTransform {
+    pub name: String,
+    /// What it maps *from*: the scene reference for an ordinary view
+    /// transform, the display reference for one that adjusts an already
+    /// display-referred picture.
+    pub reference: Reference,
+    to_reference: Option<Yaml>,
+    from_reference: Option<Yaml>,
+}
+
+/// A look: a creative or corrective transform applied in its own process
+/// space before the view transform.
+#[derive(Clone, Debug, Default)]
+pub struct Look {
+    pub name: String,
+    pub process_space: String,
+    transform: Option<Yaml>,
+    inverse_transform: Option<Yaml>,
 }
 
 /// A parsed config.
@@ -322,15 +607,34 @@ pub struct Config {
     pub path: PathBuf,
     pub search_paths: Vec<PathBuf>,
     pub roles: BTreeMap<String, String>,
-    /// Display name to its views, in config order.
+    /// Display name to its views, in the order the config presents them:
+    /// filtered and ordered by `active_displays` and `active_views` when it
+    /// lists them, as OCIO does, because those lists are the config author
+    /// saying what an application should offer.
     pub displays: Vec<(String, Vec<View>)>,
+    /// Every display with every view, active or not, so that a document which
+    /// chose an inactive one still resolves.
+    all_displays: Vec<(String, Vec<View>)>,
     spaces: BTreeMap<String, ColorSpace>,
+    /// Lower-cased names and aliases, to the canonical name. OCIO looks
+    /// colour spaces up without regard to case.
+    names: BTreeMap<String, String>,
+    view_transforms: Vec<ViewTransform>,
+    default_view_transform: Option<String>,
+    looks: Vec<Look>,
 }
 
 #[derive(Clone, Debug)]
 pub struct View {
     pub name: String,
+    /// Where the view ends: for an OCIO v1 view the colour space it converts
+    /// to, for a v2 view its display colour space.
     pub colorspace: String,
+    /// The view transform of an OCIO v2 view.
+    pub view_transform: Option<String>,
+    /// The looks applied before the view transform, as the config writes
+    /// them: `+look`, `-look`, separated by commas.
+    pub looks: Option<String>,
 }
 
 impl Config {
@@ -373,46 +677,139 @@ impl Config {
             }
         }
 
+        // Shared views are written once and named from each display with
+        // `!<Views> [...]`; `<USE_DISPLAY_NAME>` in one stands for the name
+        // of the display it is used on.
+        let shared: Vec<&Yaml> = root
+            .get("shared_views")
+            .map(|v| v.as_sequence().iter().collect())
+            .unwrap_or_default();
         if let Some(Yaml::Mapping(displays)) = root.get("displays") {
-            for (display, views) in displays {
+            for (display, items) in displays {
                 let mut list = Vec::new();
-                for view in views.as_sequence() {
-                    let (Some(name), Some(colorspace)) = (
-                        view.get("name").and_then(|v| v.as_str()),
-                        view.get("colorspace").and_then(|v| v.as_str()),
-                    ) else {
-                        continue;
-                    };
-                    list.push(View {
-                        name: name.to_string(),
-                        colorspace: colorspace.to_string(),
-                    });
+                for item in items.as_sequence() {
+                    if item.tag() == Some("Views") || matches!(item, Yaml::Sequence(_)) {
+                        for name in item.as_sequence().iter().filter_map(|n| n.as_str()) {
+                            let found = shared
+                                .iter()
+                                .find(|v| v.get("name").and_then(|n| n.as_str()) == Some(name));
+                            if let Some(view) = found.and_then(|v| view_from(v, display)) {
+                                list.push(view);
+                            }
+                        }
+                    } else if let Some(view) = view_from(item, display) {
+                        list.push(view);
+                    }
                 }
-                config.displays.push((display.clone(), list));
+                config.all_displays.push((display.clone(), list));
             }
         }
 
-        for entry in root
-            .get("colorspaces")
-            .map(|v| v.as_sequence())
-            .unwrap_or(&[])
-        {
-            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            config.spaces.insert(
-                name.to_string(),
-                ColorSpace {
+        let active_displays = name_list(root.get("active_displays"));
+        let active_views = name_list(root.get("active_views"));
+        let ordered: Vec<(String, Vec<View>)> = if active_displays.is_empty() {
+            config.all_displays.clone()
+        } else {
+            active_displays
+                .iter()
+                .filter_map(|name| config.all_displays.iter().find(|(d, _)| d == name).cloned())
+                .collect()
+        };
+        config.displays = ordered
+            .into_iter()
+            .map(|(display, views)| {
+                if active_views.is_empty() {
+                    (display, views)
+                } else {
+                    let views = active_views
+                        .iter()
+                        .filter_map(|name| views.iter().find(|v| &v.name == name).cloned())
+                        .collect();
+                    (display, views)
+                }
+            })
+            .filter(|(_, views)| !views.is_empty())
+            .collect();
+
+        for (key, reference) in [("colorspaces", Reference::Scene), ("display_colorspaces", Reference::Display)] {
+            for entry in root.get(key).map(|v| v.as_sequence()).unwrap_or(&[]) {
+                let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let (to, from) = match reference {
+                    // `to_reference` and `from_reference` are OCIO v1's
+                    // spelling, and still read by v2.
+                    Reference::Scene => (
+                        entry.get("to_scene_reference").or_else(|| entry.get("to_reference")),
+                        entry.get("from_scene_reference").or_else(|| entry.get("from_reference")),
+                    ),
+                    Reference::Display => (
+                        entry.get("to_display_reference"),
+                        entry.get("from_display_reference"),
+                    ),
+                };
+                let space = ColorSpace {
                     name: name.to_string(),
                     family: entry
                         .get("family")
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string(),
-                    to_reference: entry.get("to_reference").cloned(),
-                    from_reference: entry.get("from_reference").cloned(),
-                },
-            );
+                    aliases: name_list(entry.get("aliases")),
+                    is_data: entry.get("isdata").and_then(|v| v.as_str()) == Some("true"),
+                    reference,
+                    to_reference: to.cloned(),
+                    from_reference: from.cloned(),
+                };
+                config.names.insert(name.to_lowercase(), name.to_string());
+                for alias in &space.aliases {
+                    config.names.insert(alias.to_lowercase(), name.to_string());
+                }
+                config.spaces.insert(name.to_string(), space);
+            }
+        }
+
+        for entry in root
+            .get("view_transforms")
+            .map(|v| v.as_sequence())
+            .unwrap_or(&[])
+        {
+            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let scene = (entry.get("to_scene_reference"), entry.get("from_scene_reference"));
+            let display = (entry.get("to_display_reference"), entry.get("from_display_reference"));
+            let (reference, (to, from)) = if scene.0.is_some() || scene.1.is_some() {
+                (Reference::Scene, scene)
+            } else {
+                (Reference::Display, display)
+            };
+            config.view_transforms.push(ViewTransform {
+                name: name.to_string(),
+                reference,
+                to_reference: to.cloned(),
+                from_reference: from.cloned(),
+            });
+        }
+        config.default_view_transform = root
+            .get("default_view_transform")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        for entry in root.get("looks").map(|v| v.as_sequence()).unwrap_or(&[]) {
+            let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            config.looks.push(Look {
+                name: name.to_string(),
+                process_space: entry
+                    .get("process_space")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                transform: entry.get("transform").cloned(),
+                inverse_transform: entry.get("inverse_transform").cloned(),
+            });
         }
 
         if config.spaces.is_empty() {
@@ -440,63 +837,223 @@ impl Config {
         self.role("scene_linear")
     }
 
+    /// A colour space by name, alias or role, as OCIO resolves one: exact
+    /// name first, then any name or alias without regard to case, then a role.
+    pub fn space(&self, name: &str) -> Option<&ColorSpace> {
+        let mut name = name;
+        // Roles can point at roles; four hops is more than any config uses
+        // and stops a cycle from hanging the loader.
+        for _ in 0..4 {
+            if let Some(space) = self.spaces.get(name) {
+                return Some(space);
+            }
+            if let Some(canonical) = self.names.get(&name.to_lowercase()) {
+                return self.spaces.get(canonical);
+            }
+            let role = self
+                .roles
+                .iter()
+                .find(|(role, _)| role.eq_ignore_ascii_case(name))
+                .map(|(_, target)| target.as_str())?;
+            name = role;
+        }
+        None
+    }
+
     /// Build the conversion from `from` to `to`.
     ///
     /// Both directions go through the config's reference space, which is what
     /// the config is structured around: a space defines its relationship to the
     /// reference and nothing else, so any conversion is "out of one, into the
-    /// other".
+    /// other". When one space is scene-referred and the other display-referred
+    /// the two references are bridged by the default view transform, which is
+    /// what OCIO does.
     pub fn processor(&self, from: &str, to: &str) -> Processor {
         let mut processor = Processor::default();
         if from == to {
             return processor;
         }
-        self.to_reference(from, &mut processor);
-        self.from_reference(to, &mut processor);
+        let (Some(source), Some(target)) = (self.space(from), self.space(to)) else {
+            for name in [from, to] {
+                if self.space(name).is_none() {
+                    processor.unsupported.push(format!("unknown colour space `{name}`"));
+                }
+            }
+            return processor;
+        };
+        // OCIO never converts data, in either direction.
+        if source.name == target.name || source.is_data || target.is_data {
+            return processor;
+        }
+        self.space_to_reference(source, &mut processor);
+        self.bridge(source.reference, target.reference, &mut processor);
+        self.space_from_reference(target, &mut processor);
         processor
     }
 
     /// The conversion the renderer needs: scene-linear to a (display, view).
     pub fn view_pipeline(&self, display: &str, view: &str) -> Processor {
+        let mut processor = Processor::default();
         let source = self.scene_linear().unwrap_or("ACEScg").to_string();
-        let Some(target) = self
-            .displays
+        let Some(view) = self
+            .all_displays
             .iter()
             .find(|(name, _)| name == display)
             .and_then(|(_, views)| views.iter().find(|v| v.name == view))
-            .map(|v| v.colorspace.clone())
         else {
-            let mut processor = Processor::default();
             processor
                 .unsupported
                 .push(format!("no view `{view}` on display `{display}`"));
             return processor;
         };
-        self.processor(&source, &target)
+
+        let (Some(source), Some(target)) = (self.space(&source), self.space(&view.colorspace)) else {
+            for name in [source.as_str(), view.colorspace.as_str()] {
+                if self.space(name).is_none() {
+                    processor.unsupported.push(format!("unknown colour space `{name}`"));
+                }
+            }
+            return processor;
+        };
+        // A "Raw" view: the values are shown as they are.
+        if source.is_data || target.is_data {
+            return processor;
+        }
+
+        self.space_to_reference(source, &mut processor);
+        self.bridge(source.reference, Reference::Scene, &mut processor);
+        if let Some(looks) = &view.looks {
+            self.apply_looks(looks, &mut processor);
+        }
+        match &view.view_transform {
+            Some(name) => {
+                let Some(transform) = self.view_transforms.iter().find(|t| &t.name == name) else {
+                    processor
+                        .unsupported
+                        .push(format!("unknown view transform `{name}`"));
+                    return processor;
+                };
+                // A display-referred view transform adjusts a picture that is
+                // already display-referred, so the scene is brought there by
+                // the default view transform first.
+                self.bridge(Reference::Scene, transform.reference, &mut processor);
+                self.leave(&transform.from_reference, &transform.to_reference, &mut processor);
+                self.bridge(Reference::Display, target.reference, &mut processor);
+            }
+            None => self.bridge(Reference::Scene, target.reference, &mut processor),
+        }
+        self.space_from_reference(target, &mut processor);
+        processor
     }
 
-    fn to_reference(&self, name: &str, out: &mut Processor) {
-        let Some(space) = self.spaces.get(name) else {
-            out.unsupported.push(format!("unknown colour space `{name}`"));
-            return;
-        };
-        if let Some(transform) = &space.to_reference {
+    /// The (display, view) an application should open a config on: the first
+    /// in the config's own order whose pipeline builds completely, else the
+    /// very first.
+    ///
+    /// For the ACES configs that is their default, ACES 1.0 SDR Video on
+    /// sRGB. It matters for a config whose first view uses something not
+    /// implemented here — an ACES 2.0 output transform — where taking the
+    /// first view blindly would open on a pipeline that falls straight back
+    /// to the built-in transform. The search stops at the first success,
+    /// because building a view of a LUT-based config reads its LUT files.
+    pub fn first_buildable_view(&self) -> Option<(String, String)> {
+        let every = self
+            .displays
+            .iter()
+            .flat_map(|(display, views)| views.iter().map(move |v| (display.clone(), v.name.clone())));
+        every
+            .clone()
+            .find(|(display, view)| self.view_pipeline(display, view).is_complete())
+            .or_else(|| every.clone().next())
+    }
+
+    /// Into the space's reference from the space.
+    fn space_to_reference(&self, space: &ColorSpace, out: &mut Processor) {
+        // A space with neither transform *is* its reference, and needs no
+        // conversion.
+        self.enter(&space.from_reference, &space.to_reference, out);
+    }
+
+    /// Out of the space's reference into the space.
+    fn space_from_reference(&self, space: &ColorSpace, out: &mut Processor) {
+        self.leave(&space.from_reference, &space.to_reference, out);
+    }
+
+    /// The direction that leaves a reference: `from_reference` forward, or
+    /// `to_reference` inverted.
+    fn leave(&self, from: &Option<Yaml>, to: &Option<Yaml>, out: &mut Processor) {
+        if let Some(transform) = from {
             self.build(transform, false, out);
-        } else if let Some(transform) = &space.from_reference {
+        } else if let Some(transform) = to {
             self.build(transform, true, out);
         }
-        // A space with neither *is* the reference, and needs no conversion.
     }
 
-    fn from_reference(&self, name: &str, out: &mut Processor) {
-        let Some(space) = self.spaces.get(name) else {
-            out.unsupported.push(format!("unknown colour space `{name}`"));
+    /// The direction that enters a reference.
+    fn enter(&self, from: &Option<Yaml>, to: &Option<Yaml>, out: &mut Processor) {
+        if let Some(transform) = to {
+            self.build(transform, false, out);
+        } else if let Some(transform) = from {
+            self.build(transform, true, out);
+        }
+    }
+
+    /// Cross between the scene and display references, if `from` and `to`
+    /// differ, through the default view transform — or, failing one, the
+    /// first scene-referred view transform, which is OCIO's fallback too.
+    fn bridge(&self, from: Reference, to: Reference, out: &mut Processor) {
+        if from == to {
+            return;
+        }
+        let transform = self
+            .default_view_transform
+            .as_deref()
+            .and_then(|name| self.view_transforms.iter().find(|t| t.name == name))
+            .filter(|t| t.reference == Reference::Scene)
+            .or_else(|| self.view_transforms.iter().find(|t| t.reference == Reference::Scene));
+        let Some(transform) = transform else {
+            out.unsupported.push(
+                "no view transform connects the scene-referred and display-referred spaces".into(),
+            );
             return;
         };
-        if let Some(transform) = &space.from_reference {
-            self.build(transform, false, out);
-        } else if let Some(transform) = &space.to_reference {
-            self.build(transform, true, out);
+        match to {
+            Reference::Display => self.leave(&transform.from_reference, &transform.to_reference, out),
+            Reference::Scene => self.enter(&transform.from_reference, &transform.to_reference, out),
+        }
+    }
+
+    /// A view's looks, each in its own process space, from and back to the
+    /// scene reference.
+    fn apply_looks(&self, looks: &str, out: &mut Processor) {
+        for item in looks.split([',', ':']) {
+            let item = item.trim();
+            if item.is_empty() {
+                continue;
+            }
+            let (name, inverse) = match item.strip_prefix('-') {
+                Some(name) => (name.trim(), true),
+                None => (item.trim_start_matches('+').trim(), false),
+            };
+            let Some(look) = self.looks.iter().find(|l| l.name == name) else {
+                out.unsupported.push(format!("unknown look `{name}`"));
+                continue;
+            };
+            let process = self.space(&look.process_space);
+            if let Some(space) = process {
+                self.space_from_reference(space, out);
+            }
+            let (transform, flipped) = match (inverse, &look.transform, &look.inverse_transform) {
+                (false, Some(t), _) => (t, false),
+                (false, None, Some(t)) => (t, true),
+                (true, _, Some(t)) => (t, false),
+                (true, Some(t), None) => (t, true),
+                (_, None, None) => continue,
+            };
+            self.build(transform, flipped, out);
+            if let Some(space) = process {
+                self.space_to_reference(space, out);
+            }
         }
     }
 
@@ -555,9 +1112,34 @@ impl Config {
                 let src = node.get("src").and_then(|v| v.as_str()).unwrap_or_default();
                 let dst = node.get("dst").and_then(|v| v.as_str()).unwrap_or_default();
                 let (src, dst) = if invert { (dst, src) } else { (src, dst) };
-                let inner = self.processor(src, dst);
-                out.ops.extend(inner.ops);
-                out.unsupported.extend(inner.unsupported);
+                out.extend(self.processor(src, dst));
+                return;
+            }
+            "BuiltinTransform" => {
+                let style = node
+                    .get("style")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unnamed");
+                match builtin::ops(style) {
+                    Ok(ops) if invert => {
+                        for op in ops.into_iter().rev() {
+                            match op.inverse() {
+                                Some(inverse) => out.push(inverse),
+                                None => {
+                                    out.unsupported
+                                        .push(format!("BuiltinTransform `{style}` cannot be inverted"));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Ok(ops) => {
+                        for op in ops {
+                            out.push(op);
+                        }
+                    }
+                    Err(error) => out.unsupported.push(error),
+                }
                 return;
             }
             "FileTransform" => {
@@ -587,11 +1169,14 @@ impl Config {
                         .push("a MatrixTransform without a 4x4 matrix".into());
                     return;
                 }
-                // OCIO writes a 4x4; the fourth column is the offset and the
-                // fourth row is unused for colour.
+                // OCIO writes a 4x4 and a separate offset. The fourth column
+                // multiplies alpha, which is 1 for every pixel developed here,
+                // so it acts as a further offset; the fourth row is alpha's
+                // own and unused for colour.
+                let offset = triple("offset", 0.0);
                 Op::Matrix {
                     matrix: [m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]],
-                    offset: vec3(m[3], m[7], m[11]),
+                    offset: vec3(m[3] + offset[0], m[7] + offset[1], m[11] + offset[2]),
                 }
             }
             "ExponentTransform" => Op::Exponent {
@@ -616,22 +1201,33 @@ impl Config {
             }
             "LogTransform" => Op::Log {
                 base: node.get("base").and_then(|v| v.as_f32()).unwrap_or(2.0),
+                inverse: false,
             },
+            "LogAffineTransform" | "LogCameraTransform" => {
+                let camera = tag == "LogCameraTransform";
+                if camera && node.get("lin_side_break").is_none() {
+                    out.unsupported
+                        .push("a LogCameraTransform without lin_side_break".into());
+                    return;
+                }
+                Op::LogCamera(Box::new(LogCamera {
+                    base: node.get("base").and_then(|v| v.as_f32()).unwrap_or(2.0),
+                    log_slope: triple("log_side_slope", 1.0),
+                    log_offset: triple("log_side_offset", 0.0),
+                    lin_slope: triple("lin_side_slope", 1.0),
+                    lin_offset: triple("lin_side_offset", 0.0),
+                    lin_break: camera.then(|| triple("lin_side_break", 0.0)),
+                    linear_slope: (camera && node.get("linear_slope").is_some())
+                        .then(|| triple("linear_slope", 1.0)),
+                    inverse: false,
+                }))
+            }
             "CDLTransform" => Op::Cdl {
                 slope: triple("slope", 1.0),
                 offset: triple("offset", 0.0),
                 power: triple("power", 1.0),
                 saturation: node.get("sat").and_then(|v| v.as_f32()).unwrap_or(1.0),
             },
-            "BuiltinTransform" => {
-                let style = node
-                    .get("style")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unnamed");
-                out.unsupported
-                    .push(format!("BuiltinTransform `{style}`"));
-                return;
-            }
             "" => return,
             other => {
                 out.unsupported.push(other.to_string());
@@ -641,13 +1237,13 @@ impl Config {
 
         if invert {
             match op.inverse() {
-                Some(inverse) => out.ops.push(inverse),
+                Some(inverse) => out.push(inverse),
                 None => out
                     .unsupported
                     .push(format!("`{tag}` cannot be inverted in closed form")),
             }
         } else {
-            out.ops.push(op);
+            out.push(op);
         }
     }
 
@@ -666,6 +1262,55 @@ impl Config {
         }
         let absolute = PathBuf::from(src);
         absolute.is_file().then_some(absolute)
+    }
+}
+
+/// A view as a display lists it, with `<USE_DISPLAY_NAME>` resolved.
+fn view_from(node: &Yaml, display: &str) -> Option<View> {
+    let name = node.get("name").and_then(|v| v.as_str())?;
+    let colorspace = node
+        .get("display_colorspace")
+        .or_else(|| node.get("colorspace"))
+        .and_then(|v| v.as_str())?;
+    let colorspace = if colorspace == "<USE_DISPLAY_NAME>" {
+        display
+    } else {
+        colorspace
+    };
+    Some(View {
+        name: name.to_string(),
+        colorspace: colorspace.to_string(),
+        view_transform: node
+            .get("view_transform")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        looks: node
+            .get("looks")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string),
+    })
+}
+
+/// A list of names, written `[a, b]` or as one comma-separated string.
+fn name_list(node: Option<&Yaml>) -> Vec<String> {
+    match node {
+        Some(Yaml::Sequence(items)) => items
+            .iter()
+            .filter_map(|i| i.as_str())
+            .map(str::to_string)
+            .collect(),
+        Some(other) => other
+            .as_str()
+            .map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => Vec::new(),
     }
 }
 
@@ -795,31 +1440,86 @@ colorspaces:
         );
     }
 
-    /// The limitation, asserted rather than described. A config using a
-    /// `BuiltinTransform` must come back *reported*, so the application can say
-    /// so and fall back — a silently empty pipeline would render the scene
-    /// untransformed and look like a bug in the renderer.
+    /// What is still missing must come back *reported*, by name, so the
+    /// application can say so and fall back — a silently empty pipeline would
+    /// render the scene untransformed and look like a bug in the renderer.
+    /// An ACES 2.0 output transform is the case that matters, and a style
+    /// that is not in the registry at all the other.
     #[test]
-    fn a_builtin_transform_is_reported_rather_than_ignored() {
-        let text = r#"
+    fn a_builtin_transform_that_is_not_implemented_is_reported_by_name() {
+        for style in [
+            "ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-100nit-REC709_2.0",
+            "ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65",
+        ] {
+            let text = format!(
+                r#"
 ocio_profile_version: 2
 displays:
   sRGB:
-    - !<View> {name: ACES, colorspace: out}
+    - !<View> {{name: ACES, colorspace: out}}
 colorspaces:
   - !<ColorSpace>
     name: ACEScg
   - !<ColorSpace>
     name: out
-    from_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65}
+    from_reference: !<BuiltinTransform> {{style: {style}}}
+"#
+            );
+            let config = Config::parse(&text).unwrap();
+            let processor = config.view_pipeline("sRGB", "ACES");
+            assert!(!processor.is_complete());
+            assert!(
+                processor.unsupported[0].contains("BuiltinTransform")
+                    && processor.unsupported[0].contains(style),
+                "{:?}",
+                processor.unsupported
+            );
+        }
+    }
+
+    /// A config whose first view is an ACES 2.0 one opens on the first view
+    /// that builds instead, which is what the application selects on load.
+    #[test]
+    fn the_first_buildable_view_skips_one_that_will_not_build() {
+        let text = r#"
+ocio_profile_version: 2
+displays:
+  sRGB - Display:
+    - !<View> {name: ACES 2.0 - SDR 100 nits (Rec.709), view_transform: ACES 2.0, display_colorspace: <USE_DISPLAY_NAME>}
+    - !<View> {name: ACES 1.0 - SDR Video, view_transform: ACES 1.0, display_colorspace: <USE_DISPLAY_NAME>}
+view_transforms:
+  - !<ViewTransform>
+    name: ACES 2.0
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-100nit-REC709_2.0}
+  - !<ViewTransform>
+    name: ACES 1.0
+    from_scene_reference: !<BuiltinTransform> {style: ACES-OUTPUT - ACES2065-1_to_CIE-XYZ-D65 - SDR-VIDEO_1.0}
+display_colorspaces:
+  - !<ColorSpace>
+    name: sRGB - Display
+    from_display_reference: !<BuiltinTransform> {style: DISPLAY - CIE-XYZ-D65_to_sRGB}
+colorspaces:
+  - !<ColorSpace>
+    name: ACES2065-1
+  - !<ColorSpace>
+    name: ACEScg
+    to_scene_reference: !<BuiltinTransform> {style: ACEScg_to_ACES2065-1}
+roles:
+  scene_linear: ACEScg
 "#;
         let config = Config::parse(text).unwrap();
-        let processor = config.view_pipeline("sRGB", "ACES");
-        assert!(!processor.is_complete());
-        assert!(
-            processor.unsupported[0].contains("BuiltinTransform"),
-            "{:?}",
-            processor.unsupported
+        let first = config.view_pipeline("sRGB - Display", "ACES 2.0 - SDR 100 nits (Rec.709)");
+        assert!(first.unsupported[0].contains("ACES 2.0"), "{:?}", first.unsupported);
+        assert_eq!(
+            config.first_buildable_view(),
+            Some(("sRGB - Display".to_string(), "ACES 1.0 - SDR Video".to_string()))
+        );
+        // And with nothing buildable it still offers the first, so the
+        // application can say what is missing.
+        let none = text.replace("SDR-VIDEO_1.0", "SDR-NOTHING");
+        assert_eq!(
+            Config::parse(&none).unwrap().first_buildable_view().map(|(_, v)| v),
+            Some("ACES 2.0 - SDR 100 nits (Rec.709)".to_string())
         );
     }
 
@@ -830,5 +1530,55 @@ colorspaces:
         let config = Config::parse(CONFIG).unwrap();
         let processor = config.view_pipeline("sRGB", "Nonexistent");
         assert!(!processor.is_complete());
+    }
+
+    /// The camera form of OCIO's log transform, checked against a curve it
+    /// can express exactly: ARRI LogC3 at EI 800, written the way the ACES
+    /// configs write camera curves that have no builtin. The linear
+    /// segment's slope is left for the transform to derive, and has to come
+    /// out as ARRI's published 5.367655.
+    #[test]
+    fn a_log_camera_transform_reproduces_logc3() {
+        let text = r#"
+ocio_profile_version: 2
+colorspaces:
+  - !<ColorSpace>
+    name: linear
+  - !<ColorSpace>
+    name: logc
+    to_reference: !<LogCameraTransform> {base: 10, log_side_slope: 0.24719, log_side_offset: 0.385537, lin_side_slope: 5.555556, lin_side_offset: 0.052272, lin_side_break: 0.010591, direction: inverse}
+"#;
+        let config = Config::parse(text).unwrap();
+        let decode = config.processor("logc", "linear");
+        let encode = config.processor("linear", "logc");
+        assert!(decode.is_complete() && encode.is_complete());
+        for code in [0.05f32, 0.1, 0.149, 0.2, 0.391, 0.6, 0.9] {
+            let ours = decode.apply(Vec3::splat(code)).x;
+            let arri = Curve::LogC3Ei800.to_linear(code);
+            assert!((ours - arri).abs() < 2e-5, "at {code}: {ours} against {arri}");
+            let back = encode.apply(Vec3::splat(ours)).x;
+            assert!((back - code).abs() < 1e-5, "{code} came back as {back}");
+        }
+    }
+
+    /// Fusing neighbouring matrices must not change the result.
+    #[test]
+    fn fused_matrices_apply_as_the_chain_did() {
+        let a = Op::Matrix {
+            matrix: [1.2, 0.1, -0.05, 0.02, 0.9, 0.1, -0.1, 0.2, 1.1],
+            offset: vec3(0.01, -0.02, 0.03),
+        };
+        let b = Op::Matrix {
+            matrix: [0.8, -0.2, 0.1, 0.3, 1.1, -0.1, 0.0, 0.05, 0.95],
+            offset: vec3(-0.1, 0.0, 0.2),
+        };
+        let mut fused = Processor::default();
+        fused.push(a.clone());
+        fused.push(b.clone());
+        assert_eq!(fused.len(), 1);
+        let probe = vec3(0.3, 0.6, 0.9);
+        let chained = b.apply(a.apply(probe));
+        let once = fused.apply(probe);
+        assert!((chained - once).abs().max_component() < 1e-6, "{chained:?} against {once:?}");
     }
 }

@@ -88,12 +88,6 @@ impl Yaml {
     pub fn parse(text: &str) -> Result<Yaml, String> {
         let mut lines = Vec::new();
         for (number, raw) in text.lines().enumerate() {
-            if raw.contains(" &") || raw.trim_start().starts_with('*') {
-                return Err(format!(
-                    "line {}: anchors and aliases are not supported",
-                    number + 1
-                ));
-            }
             let trimmed = strip_comment(raw);
             if trimmed.trim().is_empty() {
                 continue;
@@ -152,7 +146,14 @@ fn parse_block(lines: &[Line], cursor: &mut usize, indent: usize) -> Result<Yaml
     if *cursor >= lines.len() {
         return Ok(Yaml::Null);
     }
-    if lines[*cursor].text.starts_with("- ") || lines[*cursor].text == "-" {
+    let first = &lines[*cursor];
+    if first.text.starts_with('{') || first.text.starts_with('[') {
+        // A flow collection on a line of its own under its key, which is how
+        // OCIO writes an empty `environment:` — `{}` on the next line.
+        *cursor += 1;
+        return parse_inline(&first.text).map_err(|e| format!("line {}: {e}", first.number));
+    }
+    if first.text.starts_with("- ") || first.text == "-" {
         parse_sequence(lines, cursor, indent)
     } else {
         parse_mapping(lines, cursor, indent)
@@ -187,7 +188,7 @@ fn parse_sequence(lines: &[Line], cursor: &mut usize, indent: usize) -> Result<Y
         // rest of it is indented past the dash, which in YAML is the dash's own
         // column plus two — that offset is why this cannot simply recurse on
         // the line's indent.
-        let inline = parse_inline(&rest)?;
+        let inline = parse_inline(&rest).map_err(|e| format!("line {}: {e}", line.number))?;
         let continues = lines
             .get(*cursor)
             .is_some_and(|l| l.indent > indent && !l.text.starts_with("- "));
@@ -263,14 +264,16 @@ fn parse_mapping(lines: &[Line], cursor: &mut usize, indent: usize) -> Result<Ya
             continue;
         }
 
-        if rest == "|" || rest == ">" {
+        if is_block_scalar(&rest) {
             // A block scalar. Only descriptions use these, so the exact folding
-            // rules do not matter — joining the lines preserves the meaning.
+            // and chomping rules do not matter — joining the lines preserves
+            // the meaning.
+            let folded = rest.starts_with('>');
             let mut text = String::new();
             let child_indent = lines.get(*cursor).map(|l| l.indent).unwrap_or(0);
             while *cursor < lines.len() && lines[*cursor].indent >= child_indent && child_indent > indent {
                 if !text.is_empty() {
-                    text.push(if rest == "|" { '\n' } else { ' ' });
+                    text.push(if folded { ' ' } else { '\n' });
                 }
                 text.push_str(&lines[*cursor].text);
                 *cursor += 1;
@@ -298,6 +301,12 @@ fn parse_mapping(lines: &[Line], cursor: &mut usize, indent: usize) -> Result<Ya
         map.insert(key, inline);
     }
     Ok(Yaml::Mapping(map))
+}
+
+/// `|` or `>`, with an optional chomping (`-`, `+`) or indentation indicator.
+fn is_block_scalar(rest: &str) -> bool {
+    let mut chars = rest.chars();
+    matches!(chars.next(), Some('|' | '>')) && chars.all(|c| c == '-' || c == '+' || c.is_ascii_digit())
 }
 
 /// Split `key: value`, respecting quotes and flow brackets.
@@ -336,6 +345,16 @@ fn parse_inline(text: &str) -> Result<Yaml, String> {
     let text = text.trim();
     if text.is_empty() {
         return Ok(Yaml::Null);
+    }
+    // An anchor `&name` or an alias `*name` can only begin a value, and is
+    // refused there. Checking values rather than whole lines is what lets a
+    // bare `&` between words through — the ACES configs name views
+    // "ACES 1.1 - HDR Video (1000 nits & P3 lim)".
+    let mut chars = text.chars();
+    if let (Some('&' | '*'), Some(next)) = (chars.next(), chars.next()) {
+        if next.is_alphanumeric() || next == '_' {
+            return Err("anchors and aliases are not supported".into());
+        }
     }
     if let Some(rest) = text.strip_prefix("!<") {
         let Some(end) = rest.find('>') else {
@@ -501,5 +520,32 @@ mod tests {
     #[test]
     fn anchors_are_refused_rather_than_ignored() {
         assert!(Yaml::parse("a: &anchor 1\nb: *anchor\n").is_err());
+        assert!(Yaml::parse("a: 1\nb: *anchor\n").is_err());
+        assert!(Yaml::parse("a:\n  - &first x\n").is_err());
+    }
+
+    /// The shapes the ACES studio config has that a smaller config need not:
+    /// an ampersand inside a name, an empty mapping on the line after its
+    /// key, a chomped block scalar, and a `!<Views>` list.
+    #[test]
+    fn the_aces_configs_shapes_read() {
+        let y = Yaml::parse(
+            "environment:\n  {}\nshared_views:\n  - !<View> {name: ACES 1.1 - HDR Video (1000 nits & P3 lim), view_transform: x, display_colorspace: <USE_DISPLAY_NAME>}\ndescription: |-\n  First line\n  Second: line\ndisplays:\n  sRGB - Display:\n    - !<Views> [ACES 1.0 - SDR Video, Un-tone-mapped]\n",
+        )
+        .unwrap();
+        assert_eq!(y.get("environment"), Some(&Yaml::Mapping(Default::default())));
+        let shared = y.get("shared_views").unwrap().as_sequence();
+        assert_eq!(
+            shared[0].get("name").unwrap().as_str(),
+            Some("ACES 1.1 - HDR Video (1000 nits & P3 lim)")
+        );
+        assert_eq!(
+            shared[0].get("display_colorspace").unwrap().as_str(),
+            Some("<USE_DISPLAY_NAME>")
+        );
+        assert_eq!(y.get("description").unwrap().as_str(), Some("First line\nSecond: line"));
+        let views = y.get("displays").unwrap().get("sRGB - Display").unwrap().as_sequence();
+        assert_eq!(views[0].tag(), Some("Views"));
+        assert_eq!(views[0].as_sequence().len(), 2);
     }
 }

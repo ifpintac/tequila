@@ -274,7 +274,7 @@ the application and linking behaviour, and
 - [x] Camera tab: all four lens types, focal length/FOV, DOF with Keep Focus, ground grid.
 - [x] Match Perspective (2- and 3-point).
 - [x] Multiple cameras, switching, saved views.
-- [~] OCIO v2 pipeline, ACEScg working space, display transforms (§01 §7).
+- [x] OCIO v2 pipeline, ACEScg working space, display transforms (§01 §7). The ACES 1.3 studio config develops end to end, `BuiltinTransform` included; the ACES 2.0 output transforms are reported, not built.
 - [x] Image tab: Basic and Photographic image styles, applied as a re-tonemap with **no re-render** (§01 §9.3).
 - [x] Lighting tab: the five presets + Custom, wired to the integrator config table (§01 §11).
 
@@ -323,21 +323,46 @@ snapshot *is* a restart whatever its contents. `Project::apply` now consults
 
 #### M3 implementation notes
 
-**Colour management is the one incomplete item, and the gap is specific.**
-ACEScg has been the working space since M0 and the five display transforms are
-analytic, as `docs/05` §1 note 3 intended. The OCIO v2 side reads a config and
-evaluates it — a YAML subset, the `.cube`/`.spi1d`/`.spimtx` LUT formats, and
-the transform graph in both directions — and
-`a_config_that_encodes_srgb_matches_the_analytic_transform` checks the result
-against the analytic transform that note 3 said would be the reference.
+**Colour management develops through the ACES studio config, and the one gap
+left is ACES 2.0.** ACEScg has been the working space since M0 and the five
+display transforms are analytic, as `docs/05` §1 note 3 intended. The OCIO v2
+side reads a config and evaluates it — a YAML subset, the
+`.cube`/`.spi1d`/`.spimtx` LUT formats, and the transform graph in both
+directions — and `a_config_that_encodes_srgb_matches_the_analytic_transform`
+checks the result against the analytic transform that note 3 said would be the
+reference.
 
-What is **not** implemented is `BuiltinTransform`: OCIO v2 moved the ACES output
-transforms out of LUT files into a registry built into the library, defined by
-its C++ rather than by any file. So a config that uses one — which the ACES
-studio config does — is *reported* as unsupported, by name, and the built-in
-transforms stay available. A config built from LUTs works end to end; the ACES
-studio config specifically does not, and saying so is better than an image
-silently developed through an incomplete pipeline.
+It now also reads what makes a config a v2 one: display-referred colour spaces
+against the CIE XYZ D65 connection space, view transforms, shared views,
+looks, aliases, data spaces and the active display and view lists. And it
+implements `BuiltinTransform`, the registry OCIO v2 moved the ACES transforms
+into (`tequila-color/src/ocio/builtin.rs`): the ACES 1.0 SDR and 1.1 HDR output
+transforms written out from the Academy's CTL — RRT, the C5 and C9 splines, the
+Single Stage Tone Scale, surround and gamut-limit steps, the D60 and D65
+simulations — the ACES log encodings, the 1.3 Reference Gamut Compression and
+the blue-light fix, the display encodings (sRGB, Rec.1886, gamma 2.2/2.6, PQ,
+HLG, DCDM) and the ARRI, Sony, RED, Canon, Panasonic and Apple log cameras.
+`tests/aces_studio_config.rs` loads a hand-written subset of
+`studio-config-v1.0.0_aces-v1.3_ocio-v2.1` (the published file could not be
+fetched, so the fixture is written to its structure and names), builds all 47 of
+its views and develops an image through the default one.
+
+The maths is checked against values whose source is stated in each test: the
+AP0/AP1 matrices and ACEScct/ACEScc breakpoints of the Academy specifications,
+the camera vendors' own matrices and grey code values, the sRGB, PQ and HLG
+standards, and the SSTS reproducing the RRT's published coefficients. The
+output transforms' grey, black and peak values are *derived* from the CTL
+constants, not read from a published table, and the tests say so. What has not
+been done is to run the real published config, or to compare against OCIO's
+own output; both want a machine with OCIO on it.
+
+The ACES 2.0 output transforms of OCIO 2.4 (`..._2.0` styles) are still
+*reported* as unsupported, by name, and the built-in transforms stay available.
+Their tone scale, chroma compression and gamut compression are a body of work
+of their own, and an approximation would be the quietly wrong picture OCIO
+exists to prevent. An ACES view also costs more than the analytic transforms —
+about 0.6 µs a pixel on one core, some 75 ms for a 1080p re-develop on sixteen
+— because it evaluates the CTL rather than a LUT baked from it.
 
 Two smaller gaps, both carried forward deliberately:
 
