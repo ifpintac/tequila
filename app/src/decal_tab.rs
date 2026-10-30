@@ -55,11 +55,13 @@ pub fn show(
                  that says its print resolution arrives at its printed size.",
             );
             if ui.button("+ Add label…").clicked() {
-                const ARTWORK: &[&str] = &["png", "jpg", "jpeg", "psd", "psb"];
-                let both: Vec<&str> = ARTWORK.iter().chain(tequila_texture::video::EXTENSIONS).copied().collect();
+                // Every picture the loader reads but the two HDR formats,
+                // which hold light rather than artwork.
+                let artwork: Vec<&str> = Image::DECODABLE.into_iter().filter(|e| !matches!(*e, "hdr" | "exr")).collect();
+                let both: Vec<&str> = artwork.iter().chain(tequila_texture::video::EXTENSIONS).copied().collect();
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Artwork or video", &both)
-                    .add_filter("Artwork", ARTWORK)
+                    .add_filter("Artwork", &artwork)
                     .add_filter("Video", tequila_texture::video::EXTENSIONS)
                     .pick_file()
                 {

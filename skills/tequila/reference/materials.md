@@ -94,4 +94,4 @@ When no preset fits, write a recipe: `recipes.md`.
 
 ## Textures
 
-Only when the user gives files: `material.set_texture` puts an image on a parameter (see `commands.md`), and `{"op": "texture_set", "path": "<folder or .zip of a PBR texture pack>", "nodes": [ids]}` makes materials from a whole pack (base colour, roughness, normal…) and puts the first on the parts.
+Only when the user gives files: `material.set_texture` puts an image on a parameter (see `commands.md`), and `{"op": "texture_set", "path": "<folder or .zip of a PBR texture pack>", "nodes": [ids]}` makes materials from a whole pack (base colour, roughness, normal…) and puts the first on the parts. Images can be PNG, JPEG, TIFF, TGA, BMP, WebP, GIF, JPEG XL, DDS, PSD/PSB, SVG, EXR or HDR; HEIC and AVIF are not read, so ask for another format.

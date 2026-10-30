@@ -280,6 +280,7 @@ Use OpenImageIO's tiled texture cache. Requirements:
 - **Async load** with a placeholder (mid-grey for colour, 0.5 for data) until resident — never block the render thread on I/O.
 - **UDIM** support (`<UDIM>` / `_1001` tile naming).
 - Formats: PNG, JPEG, TIFF, EXR, HDR, TGA, PSD, WebP, plus video (MP4/MOV via ffmpeg) for Video Map nodes.
+  *As built:* all eight still formats are read, in pure Rust rather than through OIIO (`crates/tequila-texture/src/image.rs`), and BMP, GIF (its first frame), DDS (uncompressed and BC1–BC7), JPEG XL and SVG (rasterized, at least 4096 pixels on the long side and at most 8192) besides; PSB too. Integer formats have the sRGB curve removed unless the map's role reads them raw (§5.2), floats are linear either way. HEIC and AVIF are not read. Video reaches labels as a still frame, through the system's own decoders rather than ffmpeg; there is no Video Map node yet.
 
 ### 5.2 Colour space handling
 

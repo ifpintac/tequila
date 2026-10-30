@@ -231,9 +231,19 @@ is one command and one undo step.
       colour-space assignment by map role, UDIM tile sets, and a
       memory-budgeted LRU cache — in Rust rather than over OIIO, which is a
       deliberate deviation recorded in `crates/tequila-texture/src/mip.rs`.
-      **Outstanding:** tile-level residency, async load, and formats beyond
-      PNG/EXR/HDR (PSD, WebP, TGA, video), which is where OIIO is hard to
-      replace.
+      **Outstanding:** tile-level residency and async load.
+      *Done 2026-10-30:* formats beyond PNG/EXR/HDR, all in pure Rust
+      behind `tequila_texture::image::Image::load` — JPEG, PSD and PSB;
+      TGA and BMP read by hand (`tga.rs`, `bmp.rs`); TIFF at 8, 16 and 32
+      bits through the `tiff` crate; WebP lossy and lossless with alpha
+      (`image-webp`); GIF's first frame; DDS, its header read by hand and
+      BC1–BC7 decoded by `bcdec_rs`; JPEG XL (`jxl-oxide`); and SVG
+      rasterized by resvg with the system's fonts (`svg.rs`), a physical
+      width and height giving a label its print size as a PSD's DPI does.
+      The texture, pin and label pickers and the importers' format checks
+      take them from the one list (`Image::DECODABLE`); the texture-pack
+      picker and window drop take the map formats among them. HEIC and
+      AVIF are not read: their decoders are C libraries.
 - [x] Projection modes incl. tri-planar (§02 §5.3), with derivative-aware
       cylindrical seam handling and real-world units. The Mapping 2D node
       exists in the graph; its *editor* arrives with the graph editor in M6.
@@ -587,7 +597,9 @@ Alembic deformation import serve neither.
       (metal where the artwork covers); a placement gizmo — click or drag
       to put the artwork there, Ctrl + scroll to size it, Shift + scroll to
       turn it, one undo step per gesture; PNG and JPEG artwork arrives at
-      the print size its file records (`pHYs`, JFIF density); and a Labels
+      the print size its file records (`pHYs`, JFIF density; since
+      2026-10-30 a TIFF's and a BMP's resolution, and an SVG's width and
+      height in millimetres, inches or points, too); and a Labels
       pass (RGBA, premultiplied, coverage as alpha) in the EXR. A label that
       plays as video, frame by frame through an animation, waits on
       animation (parked).

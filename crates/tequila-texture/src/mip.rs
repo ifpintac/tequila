@@ -28,9 +28,12 @@
 //! The spec names OpenImageIO for the production pipeline, and OIIO's value is
 //! twofold: this filtering, and a very wide set of file formats. This module is
 //! the first half, written directly against [`Image`] so that no C++ toolchain
-//! stands between the renderer and correct filtering. The second half — PSD,
-//! WebP, TGA, video — is where OIIO is genuinely hard to replace, and the
-//! [`Image`] seam is unchanged so it can be dropped in behind this.
+//! stands between the renderer and correct filtering. The second half turned
+//! out to be within reach as well: the formats the spec lists, and several it
+//! does not, are read in pure Rust behind [`Image::load`] (see
+//! [`Image::DECODABLE`]). What OIIO would still add is tiled, on-demand
+//! residency, and the [`Image`] seam is unchanged so it can be dropped in
+//! behind this.
 
 use crate::image::{ColorSpace, Image};
 use tequila_core::math::Vec3;

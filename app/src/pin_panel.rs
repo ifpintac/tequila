@@ -207,7 +207,7 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
 
     if let Some(target) = pick_picture {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Picture", &["png", "jpg", "jpeg", "psd", "hdr", "exr"])
+            .add_filter("Picture", &tequila_texture::image::Image::DECODABLE)
             .set_title("Picture for the pin")
             .pick_file()
         {

@@ -157,11 +157,10 @@ pub fn preview_image(width: usize, height: usize, rgba: &[u8]) -> egui::ColorIma
 /// Read a render back from disk for its preview.
 ///
 /// PNG through the `png` crate directly, so the pixels are exactly the ones
-/// written. JPEG and EXR through the texture loader, which returns linear
-/// light, re-encoded to sRGB — exact for JPEG, and for an EXR a straight
-/// clamp that shows the render roughly as the viewport would, not graded.
-/// TIFF and PSD have no reader here yet; they keep their place in the list
-/// without a picture.
+/// written. JPEG, TIFF, PSD and EXR through the texture loader, which
+/// returns linear light, re-encoded to sRGB — exact for the eight-bit ones,
+/// and for an EXR or a 32-bit TIFF a straight clamp that shows the render
+/// roughly as the viewport would, not graded.
 fn load_preview(path: &str) -> Option<egui::ColorImage> {
     let lower = path.to_ascii_lowercase();
     let (width, height, rgba) = if lower.ends_with(".png") {

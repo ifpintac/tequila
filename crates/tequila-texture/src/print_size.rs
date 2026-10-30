@@ -5,8 +5,10 @@
 //! millimetres, not at whatever size fits the face it lands on. The file
 //! says how many pixels make an inch — PNG in its `pHYs` chunk, in pixels
 //! per metre; JPEG in its JFIF header, per inch or per centimetre; a PSD in
-//! its resolution resource — and the pixel count divided by that is the
-//! print size.
+//! its resolution resource; a TIFF in its resolution tags; a BMP in its
+//! header, per metre — and the pixel count divided by that is the print
+//! size. An SVG says its size outright, when it gives it in millimetres,
+//! inches or points ([`crate::svg::print_size`]).
 //!
 //! Read from the raw bytes rather than through a decoder: the density is a
 //! few bytes near the start, and decoding a large image to find it would
@@ -22,6 +24,39 @@ pub fn print_size(path: impl AsRef<Path>) -> Option<(f32, f32)> {
     png(&bytes)
         .or_else(|| jpeg(&bytes))
         .or_else(|| crate::psd::resolution(&bytes).and_then(|(w, h, x, y)| sized(w, h, x, y)))
+        .or_else(|| tiff(&bytes))
+        .or_else(|| crate::bmp::resolution(&bytes).and_then(|(w, h, x, y)| sized(w, h, x, y)))
+        .or_else(|| crate::svg::print_size(&bytes))
+}
+
+/// The same from a TIFF's first image: `XResolution` and `YResolution`,
+/// per inch unless `ResolutionUnit` says centimetres, and turned with the
+/// picture when its orientation lays it on its side.
+fn tiff(bytes: &[u8]) -> Option<(f32, f32)> {
+    use tiff::decoder::{ifd::Value, Decoder};
+    use tiff::tags::Tag;
+    if !(bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")) {
+        return None;
+    }
+    let mut decoder = Decoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let (width, height) = decoder.dimensions().ok()?;
+    let mut density = |tag: Tag| match decoder.find_tag(tag).ok()?? {
+        Value::Rational(n, d) if d != 0 => Some(n as f32 / d as f32),
+        Value::Float(v) => Some(v),
+        Value::Short(v) => Some(v as f32),
+        Value::Unsigned(v) => Some(v as f32),
+        _ => None,
+    };
+    let (x, y) = (density(Tag::XResolution)?, density(Tag::YResolution)?);
+    let per_metre = match decoder.find_tag_unsigned::<u16>(Tag::ResolutionUnit).ok()?.unwrap_or(2) {
+        2 => 1.0 / 0.0254,
+        3 => 100.0,
+        // 1 is an aspect ratio, with no size.
+        _ => return None,
+    };
+    let lying = matches!(decoder.find_tag_unsigned::<u16>(Tag::Orientation).ok()?.unwrap_or(1), 5..=8);
+    let (w, h, x, y) = if lying { (height, width, y, x) } else { (width, height, x, y) };
+    sized(w as f32, h as f32, x * per_metre, y * per_metre)
 }
 
 /// Pixels per metre across and down, and the pixel size, from a PNG.
@@ -174,5 +209,55 @@ mod tests {
         let (w, h) = jpeg(&out).expect("a size");
         // 300 by 75 at 150 dpi: two inches by half an inch.
         assert!((w - 0.0508).abs() < 1e-4 && (h - 0.0127).abs() < 1e-4, "{w} x {h}");
+    }
+
+    #[test]
+    fn a_tiff_says_its_print_size() {
+        use tiff::encoder::{colortype, Rational, TiffEncoder};
+        use tiff::tags::ResolutionUnit;
+        let write = |unit: ResolutionUnit, per_unit: u32| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+            let mut image = encoder.new_image::<colortype::Gray8>(600, 300).unwrap();
+            image.resolution(unit, Rational { n: per_unit, d: 1 });
+            image.write_data(&vec![0u8; 600 * 300]).unwrap();
+            bytes.into_inner()
+        };
+        let (w, h) = tiff(&write(ResolutionUnit::Inch, 300)).expect("a size");
+        assert!((w - 0.0508).abs() < 1e-4 && (h - 0.0254).abs() < 1e-4, "{w} x {h}");
+        // 600 pixels at 100 a centimetre is six centimetres.
+        let (w, _) = tiff(&write(ResolutionUnit::Centimeter, 100)).expect("a size");
+        assert!((w - 0.06).abs() < 1e-4, "{w}");
+        assert!(tiff(&write(ResolutionUnit::None, 300)).is_none(), "an aspect ratio is not a size");
+    }
+
+    /// Through the path, as the Labels tab asks: a BMP's density and an
+    /// SVG's millimetres.
+    #[test]
+    fn a_bmp_and_an_svg_say_their_print_sizes() {
+        let mut bmp = b"BM".to_vec();
+        let mut dib = vec![0u8; 40];
+        dib[0] = 40;
+        dib[4..8].copy_from_slice(&600i32.to_le_bytes());
+        dib[8..12].copy_from_slice(&300i32.to_le_bytes());
+        dib[14] = 24;
+        // 11811 pixels a metre: 300 dpi.
+        dib[24..28].copy_from_slice(&11811i32.to_le_bytes());
+        dib[28..32].copy_from_slice(&11811i32.to_le_bytes());
+        bmp.extend_from_slice(&[0; 8]);
+        bmp.extend_from_slice(&54u32.to_le_bytes());
+        bmp.extend_from_slice(&dib);
+        let path = std::env::temp_dir().join(format!("tequila-print-{}.bmp", std::process::id()));
+        std::fs::write(&path, &bmp).unwrap();
+        let size = print_size(&path);
+        let svg = path.with_extension("svg");
+        std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="18mm"/>"#).unwrap();
+        let drawn = print_size(&svg);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&svg);
+        let (w, h) = size.expect("a BMP's size");
+        assert!((w - 0.0508).abs() < 1e-4 && (h - 0.0254).abs() < 1e-4, "{w} x {h}");
+        let (w, h) = drawn.expect("an SVG's size");
+        assert!((w - 0.040).abs() < 1e-6 && (h - 0.018).abs() < 1e-6, "{w} x {h}");
     }
 }
