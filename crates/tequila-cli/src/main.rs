@@ -210,8 +210,10 @@ usage: tequila [options]
 
       --bench NAME      measure a reference scene instead of rendering:
                         simple_product | cad_assembly
-  -i, --input PATH      a .tequila project, or a model to import
-                        (.obj .stl .gltf .glb); omit for the demo scene
+  -i, --input PATH      a .tequila project, a KeyShot scene (.ksp .bip,
+                        rendered with its own camera, lighting and look),
+                        or a model to import (.obj .stl .gltf .glb .step
+                        .igs); omit for the demo scene
   -o, --output PATH     output image, .png or .jpg (default tequila.png);
                         {configuration} in it stands for the choices
   -w, --width N         image width (default: the project's, else 960)
@@ -529,6 +531,31 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
         return Ok(loaded.document);
     }
 
+    // A scene from another renderer (KeyShot's .ksp and .bip) opens with
+    // its own cameras, lighting and look, as a project does.
+    let started = Instant::now();
+    if tequila_import::is_scene_file(path) {
+        let (document, report) = tequila_import::open_scene(path, tequila_import::step::Tessellation::default()).map_err(|e| e.to_string())?;
+        for warning in &report.warnings {
+            eprintln!("tequila: {warning}");
+        }
+        let materials = document.materials.len();
+        let cameras = document.cameras.len();
+        let studios = document.studios.len();
+        let parts = document.tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count();
+        eprintln!(
+            "opened {} nodes ({parts} parts), {} meshes ({} instanced), {} triangles, {materials} materials, {} variant sets, {cameras} cameras, {studios} studios, {} pins, in {:.1} s",
+            report.nodes,
+            report.meshes_kept,
+            report.instances_detected,
+            report.triangles,
+            document.multi_materials.len(),
+            document.environment.pins.len(),
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(document);
+    }
+
     let mut document = tequila_scene::SceneDocument::new();
     let mut bus = tequila_scene::CommandBus::new();
     let (command, report) = tequila_import::import(
@@ -542,7 +569,7 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
         eprintln!("tequila: {warning}");
     }
     eprintln!(
-        "imported {} nodes, {} meshes ({} instanced), {} triangles, as {:?}{}",
+        "imported {} nodes, {} meshes ({} instanced), {} triangles, as {:?}{}, in {:.1} s",
         report.nodes,
         report.meshes_kept,
         report.instances_detected,
@@ -552,7 +579,8 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
             " (guessed from the bounding box)"
         } else {
             ""
-        }
+        },
+        started.elapsed().as_secs_f64()
     );
     bus.apply(&mut document, command)
         .map_err(|e| e.to_string())?;
@@ -1093,10 +1121,11 @@ fn is_project(options: &Options) -> bool {
     if options.studio_preset.is_some() {
         return true;
     }
-    // Freeshot, as it was called before, saved them as .freeshot.
+    // Freeshot, as it was called before, saved them as .freeshot. A
+    // KeyShot scene is set up as one is: its camera, lighting and look.
     options.input.as_deref().is_some_and(|p| {
-        let p = p.to_ascii_lowercase();
-        p.ends_with(".tequila") || p.ends_with(".freeshot")
+        let lower = p.to_ascii_lowercase();
+        lower.ends_with(".tequila") || lower.ends_with(".freeshot") || tequila_import::is_scene_file(std::path::Path::new(p))
     })
 }
 

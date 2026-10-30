@@ -77,6 +77,7 @@ pub fn read(
         source_unit: Some(LengthUnit::Metre),
         tessellation: None,
         warnings,
+        setup: None,
     };
     scene.validate().map_err(ImportError::Malformed)?;
     Ok(scene)

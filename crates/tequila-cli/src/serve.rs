@@ -103,6 +103,10 @@ impl Session {
                 session.document = loaded.document;
                 session.preserved = loaded.preserved;
                 session.path = Some(path.to_path_buf());
+            } else if tequila_import::is_scene_file(path) {
+                // A KeyShot scene, held as a project of its own would be.
+                let (document, _) = tequila_import::open_scene(path, tequila_import::step::Tessellation::default()).map_err(|e| e.to_string())?;
+                session.document = document;
             } else if let Reply::Failed(error) = session.import(input, None) {
                 return Err(error);
             } else {
@@ -422,8 +426,16 @@ impl Session {
             Ok(result) => result,
             Err(error) => return Reply::Failed(error.to_string()),
         };
+        // A scene file's variants, model sets and cameras come with its
+        // model, as they do in the application.
+        let setup = report.setup.as_ref().map(|s| s.commands(&self.document)).unwrap_or_default();
         if let Err(error) = self.apply(command) {
             return Reply::Failed(error);
+        }
+        for follow in setup {
+            if let Err(error) = self.apply(follow) {
+                return Reply::Failed(format!("the model came in, and part of its setup did not: {error}"));
+            }
         }
         let mut out = Object::new();
         out.set("path", path.display().to_string())

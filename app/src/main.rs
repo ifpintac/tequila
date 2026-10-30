@@ -942,7 +942,7 @@ impl TequilaApp {
         // application launched.
         let given: Vec<std::path::PathBuf> = file_from_arguments().into_iter().chain(mac::take_opened()).collect();
         if given.iter().any(|path| {
-            matches!(texture_pack::classify_drop(path), texture_pack::Dropped::Model | texture_pack::Dropped::Project)
+            matches!(texture_pack::classify_drop(path), texture_pack::Dropped::Model | texture_pack::Dropped::Project | texture_pack::Dropped::Scene)
         }) {
             // Start from nothing, not from the demo. Importing alongside it
             // leaves a 40-metre ground plane in the scene, and framing the
@@ -1158,6 +1158,8 @@ enum Arrived {
     /// A new model, prepared there up to needing the document: the slow
     /// part of an import, kept off the window's thread.
     Prepared(project::PreparedImport),
+    /// A scene from another renderer, opened as a document of its own.
+    Opened(Box<(tequila_scene::SceneDocument, tequila_import::ImportReport)>),
 }
 
 /// A model file being read on another thread.
@@ -4328,6 +4330,35 @@ impl TequilaApp {
         Ok(())
     }
 
+    /// A scene read from another renderer's file, put up as a new project:
+    /// unsaved, with no file of its own yet, looking through the camera
+    /// the scene was saved with. What came in approximated is said as an
+    /// import's warnings are.
+    fn adopt_scene(&mut self, pending: &PendingImport, document: tequila_scene::SceneDocument, report: &tequila_import::ImportReport) {
+        let (parts, materials, cameras) = (
+            document.tree.iter().filter(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. })).count(),
+            document.materials.len(),
+            document.cameras.len(),
+        );
+        self.imports.clear();
+        self.project.start_new(document);
+        self.camera.adopt(self.project.camera());
+        self.sync_viewport_camera();
+        // Nothing has been done to it yet: closing it asks nothing, and the
+        // scene's own file is still where it was.
+        self.project.mark_clean();
+        self.submit();
+        self.plugin_event("opened", &pending.path);
+        self.project.status = format!("Opened {}: {parts} parts, {materials} materials, {cameras} cameras", pending.name);
+        if let Some(warning) = report.warnings.first() {
+            self.project.status = format!("{}. {warning}", self.project.status);
+        }
+        if report.warnings.len() > 1 {
+            self.console.notes(&format!("{} came in with these notes:", pending.name), &report.warnings);
+            self.toasts.info(format!("{} came in with {} notes on what was approximated; the console lists them", pending.name, report.warnings.len()));
+        }
+    }
+
     /// The start screen while it is up, and what was chosen on it.
     fn start_screen_window(&mut self, ctx: &egui::Context) {
         if !self.start_screen.open {
@@ -4481,12 +4512,15 @@ impl TequilaApp {
         let chosen = match action {
             Action::Import => dialog
                 .set_title("Import model")
-                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc"])
+                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"])
+                .add_filter("KeyShot scene", &["ksp", "bip"])
                 .add_filter("All files", &["*"])
                 .pick_file(),
             Action::Open => dialog
                 .set_title("Open project")
+                .add_filter("Tequila project or KeyShot scene", &["tequila", "freeshot", "ksp", "bip"])
                 .add_filter("Tequila project", &["tequila", "freeshot"])
+                .add_filter("KeyShot scene", &["ksp", "bip"])
                 .pick_file(),
             Action::SaveAs => dialog
                 .set_title("Save project as")
@@ -4541,6 +4575,7 @@ impl TequilaApp {
             let text = match texture_pack::classify_drop(path) {
                 texture_pack::Dropped::Model => "Drop to import the model".to_string(),
                 texture_pack::Dropped::Project => "Drop to open the project".to_string(),
+                texture_pack::Dropped::Scene => "Drop to open the KeyShot scene as a new project".to_string(),
                 texture_pack::Dropped::TexturePack if parts == 0 => {
                     "Drop to add the texture pack to the project\n(select parts first to put it on them)".to_string()
                 }
@@ -4577,7 +4612,7 @@ impl TequilaApp {
     fn open_given(&mut self, path: std::path::PathBuf) {
         match texture_pack::classify_drop(&path) {
             texture_pack::Dropped::Model => self.handle_file(Action::Import, path),
-            texture_pack::Dropped::Project => self.handle_file(Action::Open, path),
+            texture_pack::Dropped::Project | texture_pack::Dropped::Scene => self.handle_file(Action::Open, path),
             texture_pack::Dropped::TexturePack => self.load_texture_pack(&path),
             texture_pack::Dropped::Material => self.import_material_file(&path),
             texture_pack::Dropped::Unknown => {
@@ -4605,6 +4640,29 @@ impl TequilaApp {
                 });
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.project.status = format!("Importing {name}\u{2026}");
+                self.imports.push(PendingImport {
+                    name,
+                    path,
+                    receiver,
+                    document_epoch: self.project.document_epoch(),
+                    update: None,
+                    started: std::time::Instant::now(),
+                });
+            }
+            // A KeyShot scene opens as a new project: read and divided on
+            // another thread, as an import is; `poll_imports` puts it up.
+            Action::Open if tequila_import::is_scene_file(&path) => {
+                if !self.confirm_unsaved() {
+                    return;
+                }
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let reading = path.clone();
+                std::thread::spawn(move || {
+                    let opened = tequila_import::open_scene(&reading, tequila_import::step::Tessellation::default());
+                    let _ = sender.send(opened.map(|opened| Arrived::Opened(Box::new(opened))));
+                });
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.project.status = format!("Opening {name}\u{2026}");
                 self.imports.push(PendingImport {
                     name,
                     path,
@@ -4676,10 +4734,20 @@ impl TequilaApp {
                 }
             };
             let pending = self.imports.remove(index);
+            // A scene opened as a project of its own: it takes the place of
+            // whatever was open, its own camera in the view.
+            let result = match result {
+                Ok(Arrived::Opened(opened)) => {
+                    let (document, report) = *opened;
+                    self.adopt_scene(&pending, document, &report);
+                    continue;
+                }
+                other => other,
+            };
             if let Some(roots) = &pending.update {
                 let updated = result.and_then(|arrived| match arrived {
                     Arrived::Read(model) => self.project.update_read(model, roots),
-                    Arrived::Prepared(_) => Err("an update arrived as a new import".to_string()),
+                    Arrived::Prepared(_) | Arrived::Opened(_) => Err("an update arrived as a new import".to_string()),
                 });
                 match updated {
                     Ok(report) => {
@@ -4716,6 +4784,7 @@ impl TequilaApp {
             let imported = result.and_then(|arrived| match arrived {
                 Arrived::Prepared(ready) => self.project.import_prepared(ready),
                 Arrived::Read(model) => self.project.import_read(model),
+                Arrived::Opened(_) => Err("a scene arrived as an import".to_string()),
             });
             if starter.is_some() {
                 if imported.is_ok() {
@@ -4733,6 +4802,11 @@ impl TequilaApp {
                     );
                     for warning in report.warnings.iter().take(1) {
                         self.project.status = format!("{}. {warning}", self.project.status);
+                    }
+                    // The status line has room for one; the rest are read in
+                    // the console.
+                    if report.warnings.len() > 1 {
+                        self.console.notes(&format!("{} came in with these notes:", pending.name), &report.warnings);
                     }
                     // CAD files do not say which way up they were drawn, and
                     // one drawn Z up arrives lying on its back.
@@ -4834,7 +4908,7 @@ impl TequilaApp {
             (_, recorded) => {
                 let mut dialog = rfd::FileDialog::new()
                     .set_title("Update model from")
-                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc"]);
+                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"]);
                 if let Some(folder) = recorded.as_ref().and_then(|p| p.parent()) {
                     dialog = dialog.set_directory(folder);
                 }

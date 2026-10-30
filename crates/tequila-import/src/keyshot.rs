@@ -41,7 +41,7 @@ use tequila_materials::material_type::{MaterialType, Param};
 use tequila_materials::openpbr::Material;
 use tequila_scene::textures::TextureSource;
 use tequila_texture::mip::Wrap;
-use tequila_texture::projection::{Mapping, Projection};
+use tequila_texture::projection::{Axis, Mapping, Projection};
 use tequila_texture::texture::MapRole;
 
 /// A material read out of a package, and what did not come across.
@@ -145,7 +145,7 @@ fn base_name(path: &str) -> &str {
 
 /// A parameter's value.
 #[derive(Clone, Debug, PartialEq)]
-enum Val {
+pub(crate) enum Val {
     Numbers(Vec<f32>),
     Text(String),
     Flag(bool),
@@ -155,10 +155,12 @@ enum Val {
     List(Vec<u32>),
 }
 
+/// A shader node: its type and parameters. A scene's (`crate::bip_scene`)
+/// are the same nodes a package's `.mtl` holds.
 #[derive(Clone, Debug, Default)]
-struct Shader {
-    kind: String,
-    params: Vec<(String, Val)>,
+pub(crate) struct Shader {
+    pub kind: String,
+    pub params: Vec<(String, Val)>,
 }
 
 impl Shader {
@@ -200,13 +202,13 @@ impl Shader {
 }
 
 #[derive(Debug, Default)]
-struct Mtl {
-    name: String,
-    shaders: BTreeMap<u32, Shader>,
-    surface: Option<u32>,
+pub(crate) struct Mtl {
+    pub name: String,
+    pub shaders: BTreeMap<u32, Shader>,
+    pub surface: Option<u32>,
     /// A displacement, when the material has one.
-    geometry: Option<u32>,
-    icon: Option<Vec<u8>>,
+    pub geometry: Option<u32>,
+    pub icon: Option<Vec<u8>>,
 }
 
 struct Cursor<'a> {
@@ -581,9 +583,27 @@ struct Build<'a> {
     scratch: &'a Path,
     /// Nodes already made, by KeyShot node and what was wanted of it.
     made: BTreeMap<(u32, bool), Option<(NodeId, u8)>>,
+    /// Read from a scene (`.bip`) rather than a package: textures placed by
+    /// their own frames, labels, measured metals by number, and an
+    /// emissive's power. See [`convert_scene`].
+    scene: bool,
 }
 
 fn convert(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBuf>, String>, scratch: &Path) -> Result<Converted, ImportError> {
+    convert_with(mtl, picture, scratch, false)
+}
+
+/// A material of a KeyShot scene, its nodes already in the units this
+/// converter reads: colours linear, roughness as the slider shows it
+/// (`crate::bip_scene` does both). Beyond a package's conversion, a scene's
+/// textures are placed by the frames they carry, its labels come over as
+/// labels, a metal's measured preset is read by number, and an emissive
+/// keeps its power.
+pub(crate) fn convert_scene(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBuf>, String>, scratch: &Path) -> Result<Converted, ImportError> {
+    convert_with(mtl, picture, scratch, true)
+}
+
+fn convert_with(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBuf>, String>, scratch: &Path, scene: bool) -> Result<Converted, ImportError> {
     let mut build = Build {
         mtl,
         graph: MaterialGraph::from_material(MaterialType::Plastic.defaults()),
@@ -592,6 +612,7 @@ fn convert(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBuf>, S
         picture,
         scratch,
         made: BTreeMap::new(),
+        scene,
     };
     let surface = mtl.surface.ok_or_else(|| ImportError::Malformed("no surface".into()))?;
     let material_type = build.surface(surface, 0)?;
@@ -683,6 +704,15 @@ impl Build<'_> {
                     return Ok(MaterialType::Plastic);
                 };
                 let material_type = self.surface(top, depth + 1)?;
+                if self.scene && !shader.flag("opacity_map").unwrap_or(false) && layers.len() >= 2 {
+                    // A scene's labels come first and the material they are
+                    // printed on last; the first listed is the one on top,
+                    // so they are laid down from the end.
+                    for &layer in layers[..layers.len() - 1].iter().rev() {
+                        self.label(layer, depth + 1)?;
+                    }
+                    return Ok(material_type);
+                }
                 if shader.flag("opacity_map").unwrap_or(false) && layers.len() >= 2 {
                     // The first layer's colour is the opacity map.
                     let mask = self.shader(layers[0])?.clone();
@@ -712,7 +742,10 @@ impl Build<'_> {
             "lux_anisotropic" => (MaterialType::Anisotropic, MaterialType::Anisotropic.defaults()),
             "lux_paint" => (MaterialType::Paint, MaterialType::Paint.defaults()),
             "metallic_paint" | "lux_metallic_paint" => (MaterialType::MetallicPaint, MaterialType::MetallicPaint.defaults()),
-            "lux_glass" => (MaterialType::Glass, MaterialType::Glass.defaults()),
+            // A scene's glass is a solid one: light is coloured by how far it
+            // travels through it.
+            "lux_glass" | "lux_glass_simple" if self.scene => (MaterialType::GlassSolid, MaterialType::GlassSolid.defaults()),
+            "lux_glass" | "lux_glass_simple" => (MaterialType::Glass, MaterialType::Glass.defaults()),
             "lux_solid_glass" | "lux_glass_solid" => (MaterialType::GlassSolid, MaterialType::GlassSolid.defaults()),
             "lux_dielectric" => (MaterialType::Dielectric, MaterialType::Dielectric.defaults()),
             "lux_liquid" => (MaterialType::Liquid, MaterialType::Liquid.defaults()),
@@ -765,6 +798,66 @@ impl Build<'_> {
         // The numbers.
         let rough = |s: &Shader| s.number("roughness");
         match material_type {
+            MaterialType::Metal | MaterialType::Anisotropic if self.scene => self.scene_metal(s, &mut m),
+            MaterialType::MetallicPaint if self.scene => {
+                // A scene's metallic paint: its roughness and index are the
+                // clear coat's, over a base and metal flakes.
+                if let Some(c) = s.colour("base") {
+                    m.base_color = c;
+                }
+                if let Some(c) = s.colour("metal") {
+                    m.flake_color = c;
+                }
+                if let Some(c) = s.number("metal_coverage") {
+                    m.flake_weight = c.clamp(0.0, 1.0);
+                }
+                if let Some(r) = s.number("metal_roughness") {
+                    m.flake_roughness = r.clamp(0.0, 1.0);
+                    m.specular_roughness = r.clamp(0.0, 1.0);
+                }
+                // Flake size 0 is KeyShot's "too fine to see one by one":
+                // the metal colour as an even sheen, which is what a fine
+                // flake gives. A size is taken as millimetres.
+                match s.number("metal_flake_size") {
+                    Some(size) if size > 0.0 => m.flake_size = size * 0.001,
+                    _ => m.flake_size = 0.000_005,
+                }
+                if s.number("metal_flake_visibility").is_some() {
+                    self.note("a metallic paint's flake visibility has no counterpart; the flakes show as Tequila's do".into());
+                }
+                m.coat_weight = 1.0;
+                if let Some(c) = s.colour("clearcoat") {
+                    m.coat_color = c;
+                }
+                if let Some(r) = rough(s) {
+                    m.coat_roughness = r.clamp(0.0, 1.0);
+                }
+                if let Some(ior) = s.number("ior") {
+                    m.coat_ior = ior;
+                }
+                if s.number("thickness multiplier").is_some_and(|t| (t - 1.0).abs() > 1e-3) {
+                    self.note(format!("{}'s clear-coat thickness has no counterpart; the coat is Tequila's own", self.mtl.name));
+                }
+            }
+            MaterialType::Emissive if self.scene => {
+                // The power is KeyShot's Intensity, as radiance beside the
+                // environment's: an intensity of 1 glows as bright as a
+                // white environment, which is how Tequila's emission and
+                // its environment compare too.
+                m.emission_color = s.colour("color").unwrap_or(Spectrum::ONE);
+                m.emission_luminance = s.number("intensity").unwrap_or(1.0).max(0.0);
+                // Tequila's glowing surfaces are seen directly and in
+                // reflections and cast shadows like any other; KeyShot's
+                // can each be switched off.
+                let hidden: Vec<&str> = [("visible to the eye", "to the camera"), ("visible in reflections", "in reflections"), ("visible in shadows", "in shadows")]
+                    .into_iter()
+                    .filter(|(key, _)| s.flag(key) == Some(false))
+                    .map(|(_, what)| what)
+                    .collect();
+                if !hidden.is_empty() {
+                    self.note(format!("{} glows but is hidden {} in KeyShot; Tequila has no such switch, so it shows there", self.mtl.name, hidden.join(" and ")));
+                }
+            }
             MaterialType::Metal | MaterialType::Anisotropic => {
                 if let Some(c) = s.colour("color") {
                     m.base_color = c;
@@ -820,9 +913,12 @@ impl Build<'_> {
                 }
                 // The distance the colour is reached at, its unit unstated:
                 // scaled so the wine KeyShot previews through 8 cm of it is
-                // as pale a yellow here.
+                // as pale a yellow here. A scene's is in metres: read so, a
+                // thin smoked cover whose colour is nearly black lets through
+                // what KeyShot's own render shows through it; at the
+                // package's scale it is opaque.
                 if let Some(d) = s.number("transparency").filter(|d| *d > 0.0) {
-                    m.transmission_depth = d * 0.03;
+                    m.transmission_depth = if self.scene { d } else { d * 0.03 };
                 }
                 if let Some(r) = rough(s) {
                     m.specular_roughness = r;
@@ -890,8 +986,15 @@ impl Build<'_> {
 
         // The inputs driven by other nodes.
         let output = self.graph.output();
+        let colour_param = if matches!(material_type, MaterialType::Glass | MaterialType::GlassSolid | MaterialType::Liquid | MaterialType::Dielectric) {
+            Param::TransmissionColor
+        } else if self.scene && material_type == MaterialType::Emissive {
+            Param::EmissionColor
+        } else {
+            Param::BaseColor
+        };
         let inputs: &[(&str, Param, Want, MapRole)] = &[
-            ("color", if matches!(material_type, MaterialType::Glass | MaterialType::GlassSolid | MaterialType::Liquid | MaterialType::Dielectric) { Param::TransmissionColor } else { Param::BaseColor }, Want::Colour, MapRole::Color),
+            ("color", colour_param, Want::Colour, MapRole::Color),
             ("diffuse", Param::BaseColor, Want::Colour, MapRole::Color),
             ("base_color", Param::BaseColor, Want::Colour, MapRole::Color),
             ("base", Param::BaseColor, Want::Colour, MapRole::Color),
@@ -1027,6 +1130,19 @@ impl Build<'_> {
 
     /// A picture node, mapped as the texture node says.
     fn image(&mut self, s: &Shader, role: MapRole) -> Result<Option<NodeId>, ImportError> {
+        let Some((id, mapping)) = self.texture(s, role)? else { return Ok(None) };
+        let coords = self.graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
+        let fallback = match role {
+            MapRole::Color => Value::Color(Spectrum::splat(0.5)),
+            _ => Value::Float(0.5),
+        };
+        let image = self.graph.add_node(Node::new(NodeKind::ImageTexture { texture: id, fallback }));
+        self.graph.connect(coords, image, Socket::Input(0));
+        Ok(Some(image))
+    }
+
+    /// A texture node's picture, kept with the material, and where it goes.
+    fn texture(&mut self, s: &Shader, role: MapRole) -> Result<Option<(TextureId, Mapping)>, ImportError> {
         let file = s.text("texture").or_else(|| s.text("textureX")).or_else(|| s.text("textureY")).or_else(|| s.text("textureZ"));
         let Some(file) = file else { return Ok(None) };
         if file.to_ascii_lowercase().ends_with(".ktx") {
@@ -1053,17 +1169,18 @@ impl Build<'_> {
             flip_green(&path, &flipped)?;
             path = flipped;
         }
-        let id = TextureId(self.textures.len() as u32 + 1);
-        self.textures.push((id, TextureSource::new(path, role)));
-        let mapping = self.mapping(s);
-        let coords = self.graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
-        let fallback = match role {
-            MapRole::Color => Value::Color(Spectrum::splat(0.5)),
-            _ => Value::Float(0.5),
+        // The same picture for the same use is kept once: a label and the
+        // emission it drives read one file.
+        let id = match self.textures.iter().find(|(_, t)| t.path == path && t.role == role) {
+            Some((id, _)) => *id,
+            None => {
+                let id = TextureId(self.textures.len() as u32 + 1);
+                self.textures.push((id, TextureSource::new(path, role)));
+                id
+            }
         };
-        let image = self.graph.add_node(Node::new(NodeKind::ImageTexture { texture: id, fallback }));
-        self.graph.connect(coords, image, Socket::Input(0));
-        Ok(Some(image))
+        let mapping = self.mapping(s);
+        Ok(Some((id, mapping)))
     }
 
     /// The normal map at `path`, encoded as normal maps are, when it is a
@@ -1099,6 +1216,9 @@ impl Build<'_> {
             let v = s.number("vScaleY").or_else(|| s.number("vScaleX")).unwrap_or(u);
             return box_of(u, v);
         }
+        if self.scene {
+            return self.scene_mapping(s);
+        }
         // A separate mapping node, or the texture's own.
         let m = s.number("uv_shader").and_then(|n| self.mtl.shaders.get(&(n as u32))).cloned().unwrap_or_else(|| s.clone());
         if let Some(projection) = m.number("uv_projection") {
@@ -1131,6 +1251,250 @@ impl Build<'_> {
         mapping.rotation = s.number("angle").unwrap_or(0.0) / 360.0;
         self.note("its texture size was estimated (the package is from an older KeyShot that does not say its units)".into());
         mapping
+    }
+
+    /// A scene's Metal: a colour (preset 0) or one of KeyShot's measured
+    /// metals, numbered in the order its list gives them, and an optional
+    /// anodised film. The numbering is read from the list as KeyShot's
+    /// manual gives it, with 0 its colour mode: a scene's files say only the
+    /// number.
+    fn scene_metal(&mut self, s: &Shader, m: &mut Material) {
+        use tequila_materials::fresnel::metals;
+        use tequila_core::spectrum::spectrum;
+        const LIST: [&str; 13] = ["Aluminum", "Brass", "Chromium", "Copper", "Gold", "Iron", "Magnesium", "Nickel", "Niobium", "Platinum", "Silver", "Titanium", "Zinc"];
+        let preset = s.number("preset").map(|p| p as i32).unwrap_or(0);
+        let colour = s.colour("color").unwrap_or(Spectrum::splat(0.8));
+        // Reflectance at normal incidence and at grazing for the metals
+        // Tequila has not measured: handbook values, near enough to tell
+        // brass from zinc.
+        let fitted = |r: [f32; 3], g: [f32; 3]| ComplexIor::from_reflectivity_and_edge_tint(spectrum(r[0], r[1], r[2]), spectrum(g[0], g[1], g[2]));
+        let named = usize::try_from(preset).ok().and_then(|p| p.checked_sub(1)).and_then(|i| LIST.get(i)).copied();
+        match named {
+            Some(name) => {
+                m.base_color = Spectrum::ONE;
+                m.metal_ior = match name {
+                    "Aluminum" => metals::ALUMINIUM,
+                    "Chromium" => metals::CHROMIUM,
+                    "Copper" => metals::COPPER,
+                    "Gold" => metals::GOLD,
+                    "Iron" => metals::IRON,
+                    "Nickel" => metals::NICKEL,
+                    "Platinum" => metals::PLATINUM,
+                    "Silver" => metals::SILVER,
+                    "Titanium" => metals::TITANIUM,
+                    "Brass" => fitted([0.91, 0.78, 0.42], [0.96, 0.90, 0.70]),
+                    "Magnesium" => fitted([0.84, 0.83, 0.82], [0.95, 0.94, 0.93]),
+                    "Niobium" => fitted([0.62, 0.60, 0.56], [0.85, 0.83, 0.80]),
+                    _ => fitted([0.66, 0.82, 0.85], [0.90, 0.95, 0.96]),
+                };
+                if matches!(name, "Brass" | "Magnesium" | "Niobium" | "Zinc") {
+                    self.note(format!("{name} is not one of Tequila's measured metals; it was fitted from its reflectance"));
+                }
+                self.note(format!("a Metal's preset number was read as KeyShot's list (preset {preset} as {name})"));
+            }
+            None => {
+                if preset != 0 {
+                    self.note(format!("a Metal's preset {preset} is past KeyShot's list; its colour was used"));
+                }
+                // Its colour is its reflectance, as for a package's metal.
+                m.base_color = colour;
+                m.metal_ior = ComplexIor { n: Spectrum::splat(0.01), k: Spectrum::splat(100.0) };
+            }
+        }
+        if let Some(r) = s.number("roughness") {
+            m.specular_roughness = r.clamp(0.0, 1.0);
+        }
+        // Anodised: a film on the metal, its thickness in nanometres as
+        // Tequila's is.
+        if s.flag("coated") == Some(true) {
+            m.thin_film_weight = 1.0;
+            m.thin_film_thickness = s.number("film_thickness").unwrap_or(100.0).clamp(0.0, 2000.0);
+            m.thin_film_ior = s.number("film_ior").unwrap_or(1.5).max(1.0);
+            if s.number("film_extinction").is_some_and(|k| k > 0.0) {
+                self.note("an anodised film's extinction has no counterpart; the film is clear".into());
+            }
+        }
+    }
+
+    /// A label of a scene's composite: a material printed through its
+    /// picture. A glowing one becomes the glow of the material it is
+    /// printed on, coloured by its picture where it is placed: Tequila's
+    /// labels print and reflect but do not glow. Any other becomes one of
+    /// Tequila's labels of its picture, with its placement.
+    fn label(&mut self, n: u32, depth: u32) -> Result<(), ImportError> {
+        if depth > 16 {
+            return Err(ImportError::Malformed("the material's nodes loop".into()));
+        }
+        let layer = self.shader(n)?.clone();
+        let inner = if layer.kind == "lux_label" { layer.number("shader").map(|v| v as u32) } else { Some(n) };
+        let Some(inner) = inner else {
+            self.note("a label printing nothing was left out".into());
+            return Ok(());
+        };
+        let s = self.shader(inner)?.clone();
+        let texture = ["color", "diffuse", "base", "base_color"]
+            .iter()
+            .find_map(|k| s.link(k))
+            .and_then(|t| self.mtl.shaders.get(&t))
+            .filter(|t| t.kind.starts_with("texture"))
+            .cloned();
+        if matches!(s.kind.as_str(), "lux_emissive" | "lux_light_emissive") {
+            let output = self.graph.output();
+            {
+                let m = self.graph.material_mut();
+                m.emission_luminance = s.number("intensity").unwrap_or(1.0).max(0.0);
+                m.emission_color = s.colour("color").unwrap_or(Spectrum::ONE);
+            }
+            if let Some(texture) = &texture {
+                if let Some(image) = self.image(texture, MapRole::Color)? {
+                    self.graph.connect(image, output, Socket::Param(Param::EmissionColor));
+                }
+            }
+            self.note(format!("{}'s glowing label became the glow of the material it is printed on, coloured by its picture", self.mtl.name));
+            return Ok(());
+        }
+        let Some(texture) = texture else {
+            self.note(format!("a label of {} has no picture and was left out", self.mtl.name));
+            return Ok(());
+        };
+        let Some((id, mapping)) = self.texture(&texture, MapRole::Color)? else { return Ok(()) };
+        let name = texture.text("texture").map(|t| {
+            let file = base_name(t);
+            file.rsplit_once('.').map_or(file, |(stem, _)| stem).to_string()
+        });
+        let mut decal = tequila_materials::decal::Decal::new(name.unwrap_or_else(|| "Label".into()), id);
+        decal.mapping = mapping;
+        decal.roughness = s.number("roughness").unwrap_or(0.35).clamp(0.0, 1.0);
+        decal.metallic = s.kind.contains("metal");
+        if !decal.is_valid() {
+            self.note(format!("a label of {} could not be placed and was left out", self.mtl.name));
+            return Ok(());
+        }
+        self.graph.decals.push(decal);
+        Ok(())
+    }
+
+    /// Where a scene's texture goes. KeyShot's projections are numbered as
+    /// its Mapping list gives them - planar, box, cylindrical, spherical,
+    /// UV - and each carries the frame it was placed in: object
+    /// coordinates in metres, multiplied on the left by
+    /// `transform_obj_to_uv`, are the texture's space, in which one picture
+    /// is `uv_scale` across. A planar picture is centred on that frame's
+    /// origin, looking down its second axis, its width along the third and
+    /// its height along the first: how a scene's label lands on the part it
+    /// was made for.
+    fn scene_mapping(&mut self, s: &Shader) -> Mapping {
+        let positive = |v: Option<f32>| v.map(f32::abs).filter(|v| *v > 1e-6);
+        let su = positive(s.number("uv_scale_u")).unwrap_or(1.0);
+        let sv = positive(s.number("uv_scale_v")).unwrap_or(su);
+        let frame: Option<[f32; 16]> = match s.value("transform_obj_to_uv") {
+            Some(Val::Numbers(m)) if m.len() == 16 && m.iter().all(|v| v.is_finite()) => m.as_slice().try_into().ok(),
+            _ => None,
+        };
+        // Bit 0x400 is set on a label and not on a tiling texture.
+        let repeat = s.number("uv_flags").map(|f| (f as i32) & 0x400 == 0).unwrap_or(true);
+        let wrap = if repeat { Wrap::Repeat } else { Wrap::Clamp };
+        let shift = tequila_core::math::vec2(s.number("uv_shift_u").unwrap_or(0.0), s.number("uv_shift_v").unwrap_or(0.0));
+        let angle = s.number("uv_angle").unwrap_or(0.0).to_radians();
+        let projection = s.number("uv_projection").map(|p| p as i32).unwrap_or(0);
+        let identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let m = frame.unwrap_or(identity);
+        // The object axis most nearly along each of the frame's.
+        let column = |j: usize| [m[j], m[4 + j], m[8 + j]];
+        let along = |c: [f32; 3]| (0..3).max_by(|&a, &b| c[a].abs().total_cmp(&c[b].abs())).unwrap_or(2);
+        let axis_of = |i: usize| match i {
+            0 => Axis::X,
+            1 => Axis::Y,
+            _ => Axis::Z,
+        };
+        let normal = column(1);
+        match projection {
+            0 => {
+                let axis = along(normal);
+                let (ia, ib) = match axis {
+                    0 => (1, 2),
+                    1 => (0, 2),
+                    _ => (0, 1),
+                };
+                // u and v as KeyShot has them, from the two object axes
+                // across the projection: [u v] = L [a b] + c.
+                let (cu, cv) = (column(2), column(0));
+                let mut l = [[cu[ia] / su, cu[ib] / su], [cv[ia] / sv, cv[ib] / sv]];
+                let mut c = [m[14] / su + 0.5, m[12] / sv + 0.5];
+                // Its own turn about the picture's centre, then its shift.
+                if angle != 0.0 {
+                    let (sin, cos) = angle.sin_cos();
+                    let turn = |p: [f32; 2]| [p[0] * cos - p[1] * sin, p[0] * sin + p[1] * cos];
+                    let (c0, c1) = (turn([l[0][0], l[1][0]]), turn([l[0][1], l[1][1]]));
+                    l = [[c0[0], c1[0]], [c0[1], c1[1]]];
+                    let centred = turn([c[0] - 0.5, c[1] - 0.5]);
+                    c = [centred[0] + 0.5, centred[1] + 0.5];
+                }
+                c = [c[0] + shift.x, c[1] + shift.y];
+                // Tequila's planar placement is a scale, a turn and a
+                // mirror: L = F R S, so S is its columns' lengths, and what
+                // is left a rotation or a rotation mirrored.
+                let s1 = (l[0][0] * l[0][0] + l[1][0] * l[1][0]).sqrt();
+                let s2 = (l[0][1] * l[0][1] + l[1][1] * l[1][1]).sqrt();
+                if !(s1 > 1e-9 && s2 > 1e-9) {
+                    self.note("a texture's planar frame is degenerate; it was placed square to the part".into());
+                    return Mapping { projection: Projection::Planar, axis: axis_of(axis), scale: vec3(1.0 / su, 1.0 / sv, 1.0), wrap_u: wrap, wrap_v: wrap, ..Mapping::default() };
+                }
+                let q = [[l[0][0] / s1, l[0][1] / s2], [l[1][0] / s1, l[1][1] / s2]];
+                let mirrored = q[0][0] * q[1][1] - q[0][1] * q[1][0] < 0.0;
+                let r = if mirrored { [q[0], [-q[1][0], -q[1][1]]] } else { q };
+                if (q[0][0] * q[0][1] + q[1][0] * q[1][1]).abs() > 0.05 {
+                    self.note("a texture's planar frame is sheared; it was placed without the shear".into());
+                }
+                let rotation = r[1][0].atan2(r[0][0]) / std::f32::consts::TAU;
+                let offset = tequila_core::math::vec2(c[0], if mirrored { -c[1] } else { c[1] });
+                Mapping {
+                    projection: Projection::Planar,
+                    axis: axis_of(axis),
+                    scale: vec3(s1, s2, 1.0),
+                    rotation,
+                    offset,
+                    flip_v: mirrored,
+                    wrap_u: wrap,
+                    wrap_v: wrap,
+                    ..Mapping::default()
+                }
+            }
+            4 => Mapping {
+                projection: Projection::Uv,
+                scale: vec3(1.0 / su, 1.0 / sv, 1.0),
+                offset: shift,
+                rotation: angle / std::f32::consts::TAU,
+                wrap_u: wrap,
+                wrap_v: wrap,
+                ..Mapping::default()
+            },
+            2 | 3 => {
+                self.note(format!("a {} texture was wrapped about its frame's axis; its size round the part was estimated", if projection == 2 { "cylindrical" } else { "spherical" }));
+                Mapping {
+                    projection: if projection == 2 { Projection::Cylindrical } else { Projection::Spherical },
+                    axis: axis_of(along(normal)),
+                    scale: vec3(1.0, 1.0 / sv, 1.0),
+                    offset: shift,
+                    wrap_u: wrap,
+                    wrap_v: wrap,
+                    ..Mapping::default()
+                }
+            }
+            other => {
+                if other != 1 {
+                    self.note(format!("a texture's projection ({other}) was taken as box mapping"));
+                }
+                Mapping {
+                    projection: Projection::TriPlanar,
+                    real_world_units: true,
+                    scale: vec3(su, sv, 1.0),
+                    rotation: angle / std::f32::consts::TAU,
+                    offset: shift,
+                    ..Mapping::default()
+                }
+            }
+        }
     }
 
     /// A measured AxF material: its diffuse colour, GGX lobe, Fresnel and
@@ -1240,8 +1604,13 @@ impl Build<'_> {
     fn height(&mut self, n: u32, scale: f32) -> Result<Option<(NodeId, u8)>, ImportError> {
         let s = self.shader(n)?.clone();
         let depth = match s.kind.as_str() {
+            // A scene's: as deep as its features are wide, at a height of
+            // 1, so a millimetre-wide noise at a height of 0.1 is a tenth of
+            // a millimetre deep. At a package's depth a moulding KeyShot
+            // renders speckled came out smooth.
+            "lux_noise" | "lux_fractal_noise" if self.scene => s.number("scale").filter(|v| *v > 0.0).unwrap_or(0.01),
             "lux_noise" | "lux_fractal_noise" => PROCEDURAL_BUMP,
-            k if k.starts_with("texture") && !k.contains("normal") && s.number("bump_mode") != Some(1.0) => 0.0005,
+            k if k.starts_with("texture") && !k.contains("normal") && s.number("bump_mode") != Some(1.0) => self.bump_depth(&s),
             _ => return Ok(None),
         };
         let share = match s.kind.as_str() {
@@ -1447,6 +1816,20 @@ impl Build<'_> {
         self.graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(marble), seed: 1 }))
     }
 
+    /// How deep a picture's bump is per unit of its height. A package's is
+    /// half a millimetre, measured against KeyShot's previews. A scene's is
+    /// a thousandth of the picture's repeat, about a texel for a picture a
+    /// thousand across: a slope rather than a depth, so a fine finish on a
+    /// small part stays a finish (at half a millimetre a glossy one came out
+    /// matte grey, where KeyShot's render keeps it glossy).
+    fn bump_depth(&self, s: &Shader) -> f32 {
+        if self.scene {
+            0.001 * s.number("uv_scale_u").map(f32::abs).filter(|v| *v > 1e-6).unwrap_or(0.5)
+        } else {
+            0.0005
+        }
+    }
+
     /// A bump or normal map from node `n`.
     fn bump(&mut self, n: u32, scale: f32) -> Result<(), ImportError> {
         let s = self.shader(n)?.clone();
@@ -1543,7 +1926,7 @@ impl Build<'_> {
             let height = s.number("bump_height").unwrap_or(1.0) * scale;
             let red = self.graph.add_node(Node::new(NodeKind::Channel { channel: Channel::Red }));
             self.graph.connect(image, red, Socket::Input(0));
-            let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: 0.0005 * height }));
+            let bump = self.graph.add_node(Node::new(NodeKind::Bump { depth: self.bump_depth(&s) * height }));
             self.graph.connect(red, bump, Socket::Input(0));
             self.graph.connect(bump, output, Socket::Param(Param::Bump));
         }

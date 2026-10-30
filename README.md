@@ -54,7 +54,8 @@ Questions, bugs, ideas and renders: join the
   colours and units, and a CAD file's attributes and layers (shown and
   hidden as groups); very large models; re-tessellate and re-import that
   keep your work. Send models from Blender (live), SolidWorks and ZBrush
-  ([integrations](integrations)).
+  ([integrations](integrations)). Open KeyShot scenes (`.ksp`, `.bip`) with
+  their materials, lighting and cameras ([notes](docs/keyshot-import.md)).
 - **Materials** - a library of 309 procedural materials (plastics, metals,
   glass, paints with flakes, fabrics, gems, liquids with bubbles, wood,
   stone...), a node editor, labels and decals, texture packs, KeyShot

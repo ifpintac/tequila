@@ -4127,6 +4127,7 @@ dependencies = [
  "rayon",
  "ruststep",
  "spade",
+ "tequila-color",
  "tequila-core",
  "tequila-format",
  "tequila-materials",

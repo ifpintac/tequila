@@ -257,6 +257,9 @@ pub fn menu(ui: &mut egui::Ui) -> Option<bool> {
 pub enum Dropped {
     Model,
     Project,
+    /// A scene from another renderer (KeyShot's `.ksp`, `.bip`): opened as
+    /// a project of its own, with its cameras, lighting and look.
+    Scene,
     TexturePack,
     /// A material somebody shared: a package, or a preset's `.json`.
     Material,
@@ -279,6 +282,7 @@ pub fn classify_drop(path: &Path) -> Dropped {
     match extension.as_str() {
         "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "usda" | "usd" | "ifc" => Dropped::Model,
         "tequila" | "freeshot" => Dropped::Project,
+        "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.
         "fsmat" | "json" | "zip" if tequila_format::library::is_material_file(path) => Dropped::Material,
         // KeyShot's material packages.
@@ -516,6 +520,8 @@ mod tests {
         assert_eq!(classify_drop(Path::new("C:/models/bracket.STEP")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/models/headset.glb")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/work/shot.tequila")), Dropped::Project);
+        assert_eq!(classify_drop(Path::new("C:/work/speaker.KSP")), Dropped::Scene);
+        assert_eq!(classify_drop(Path::new("C:/work/speaker.bip")), Dropped::Scene);
         assert_eq!(classify_drop(Path::new("C:/notes.txt")), Dropped::Unknown);
         assert_eq!(classify_drop(Path::new("C:/hdri/studio_small_08_4k.exr")), Dropped::Unknown);
     }

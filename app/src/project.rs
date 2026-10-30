@@ -1034,6 +1034,25 @@ impl Project {
             Command::Import { payload } => payload.roots.clone(),
             _ => Vec::new(),
         };
+        // A scene file's variants, model sets and cameras come with its
+        // model, in the same undo step.
+        let setup = report.setup.as_ref().map(|s| s.commands(&self.document)).unwrap_or_default();
+        if !setup.is_empty() {
+            self.begin_group();
+            let applied = self.apply(command).map_err(|e| e.to_string());
+            if applied.is_ok() {
+                for follow in setup {
+                    if let Err(error) = self.apply(follow) {
+                        self.status = format!("{name}: part of its setup did not come in: {error}");
+                    }
+                }
+                self.end_group();
+            } else {
+                self.abandon_group();
+            }
+            applied?;
+            return Ok((report, None));
+        }
         let guess = Some(report.source_unit)
             .filter(|unit| report.unit_was_guessed && *unit != tequila_core::units::LengthUnit::Unspecified);
         let Some(unit) = guess else {
