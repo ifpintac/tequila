@@ -34,7 +34,7 @@ rm -rf "$out"
 mkdir -p "$out/libs" "$out/licenses"
 
 # The same libraries build-occt.bat links.
-libs=(TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKTopAlgo TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKXCAF TKLCAF TKCAF TKCDF TKRWMesh TKService TKV3d TKVCAF)
+libs=(TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKTopAlgo TKMesh TKShHealing TKXSBase TKDE TKDESTEP TKDEIGES TKXCAF TKLCAF TKCAF TKCDF TKRWMesh TKService TKV3d TKVCAF)
 link=()
 for name in "${libs[@]}"; do link+=("-l$name"); done
 clang++ -std=c++17 -O2 -DNDEBUG \

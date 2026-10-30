@@ -55,6 +55,17 @@ fn fields(project: &Project, nodes: &[NodeId]) -> BTreeMap<String, Option<String
     out
 }
 
+/// The CAD layers across the selection: `None` when none of it is on one;
+/// the list they share, or `Some(None)` when they are on different ones.
+fn layers(project: &Project, nodes: &[NodeId]) -> Option<Option<Vec<String>>> {
+    let tree = &project.document().tree;
+    let all: Vec<&Vec<String>> = nodes.iter().filter_map(|&id| tree.get(id)).map(|n| &n.layers).collect();
+    if all.iter().all(|l| l.is_empty()) {
+        return None;
+    }
+    Some(all.iter().all(|l| *l == all[0]).then(|| all[0].clone()))
+}
+
 /// Set (or with `None`, remove) `key` on every node, as one undo step.
 fn write(project: &mut Project, nodes: &[NodeId], key: &str, value: Option<&str>) {
     let commands: Vec<Command> = nodes
@@ -134,7 +145,8 @@ impl MetadataPanel {
         let mut remove: Option<String> = None;
         let mut commit: Option<Edit> = None;
         let mut select: Option<(String, String)> = None;
-        if fields.is_empty() {
+        let layers = layers(project, &selected);
+        if fields.is_empty() && layers.is_none() {
             ui.weak(if selected.len() == 1 { "No fields yet. A CAD file's attributes land here; add your own below." } else { "None of these has a field yet." });
         }
         // Rows of key, value, and the row's two actions, measured out by
@@ -194,6 +206,26 @@ impl MetadataPanel {
                 {
                     remove = Some(key.clone());
                 }
+            });
+        }
+
+        // The CAD layers, the file's and not to be typed over: read here,
+        // shown and hidden under Layers.
+        if let Some(layers) = &layers {
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(key_width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_min_width(key_width);
+                    ui.label(egui::RichText::new(metadata::LAYER).color(theme::p().text_dim));
+                });
+                let text = match layers {
+                    Some(list) => egui::RichText::new(list.join(", ")),
+                    None => egui::RichText::new("Mixed").italics().color(theme::p().text_faint),
+                };
+                ui.allocate_ui_with_layout(egui::vec2(value_width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_min_width(value_width);
+                    ui.add(egui::Label::new(text).truncate())
+                        .on_hover_text("From the CAD file. Show and hide parts by layer under Layers.");
+                });
             });
         }
 

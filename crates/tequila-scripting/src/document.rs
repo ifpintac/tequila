@@ -167,6 +167,9 @@ pub fn nodes(document: &SceneDocument) -> Value {
             fields.set(key, value.clone());
         }
         entry.set("metadata", fields.build());
+        // The CAD layers it is on, by the names scene.set_layer_visibility
+        // takes: [n for n in nodes if "Construction" in n["layers"]].
+        entry.set("layers", Value::Array(node.layers.iter().map(|l| Value::String(l.clone())).collect()));
         list.push(entry.build());
     }
     let mut out = Object::new();
@@ -407,8 +410,8 @@ pub fn library_request(
     }
 }
 
-/// How big the scene is: parts, nodes, materials, textures, its bounds, and
-/// where it is saved.
+/// How big the scene is: parts, nodes, materials, textures, its bounds, its
+/// CAD layers, and where it is saved.
 pub fn scene(document: &SceneDocument, path: Option<&std::path::Path>) -> Value {
     let parts = document.tree.iter().filter(|n| matches!(n.kind, NodeKind::Part { .. })).count();
     let mut out = Object::new();
@@ -416,11 +419,30 @@ pub fn scene(document: &SceneDocument, path: Option<&std::path::Path>) -> Value 
         .set("nodes", document.tree.iter().count() as f64)
         .set("materials", document.materials.iter().count() as f64)
         .set("textures", document.textures.len() as f64)
-        .set("bounds", bounds_value(tequila_scene::snapshot::visible_bounds(document)));
+        .set("bounds", bounds_value(tequila_scene::snapshot::visible_bounds(document)))
+        .set("layers", layers(document));
     if let Some(path) = path {
         out.set("path", path.display().to_string());
     }
     out.build()
+}
+
+/// The CAD layers the scene's parts are on, in the order the tree meets
+/// them: each one's name, its nodes, and whether they are shown - "all",
+/// "none", or "some" where a part was shown or hidden by hand.
+pub fn layers(document: &SceneDocument) -> Value {
+    let list = tequila_scene::layers::layers(document)
+        .into_iter()
+        .map(|layer| {
+            let mut entry = Object::new();
+            entry
+                .set("name", layer.name.clone())
+                .set("nodes", Value::Array(layer.nodes.iter().map(|id| Value::Number(id.0 as f64)).collect()))
+                .set("shown", layer.shown().label());
+            entry.build()
+        })
+        .collect();
+    Value::Array(list)
 }
 
 /// The command catalog, straight from the build, so this cannot describe a

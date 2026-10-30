@@ -134,16 +134,29 @@ struct Counts {
 
 static READING: std::sync::Mutex<Vec<std::sync::Arc<Counts>>> = std::sync::Mutex::new(Vec::new());
 
-/// One read's counts, listed while it lasts.
-struct Reading(std::sync::Arc<Counts>);
+/// One read's counts, listed while it lasts. An IGES file OpenCASCADE reads
+/// is counted here too: its wait is as long as a STEP file's.
+pub(crate) struct Reading(std::sync::Arc<Counts>);
 
 impl Reading {
-    fn start() -> Reading {
+    pub(crate) fn start() -> Reading {
         let counts = std::sync::Arc::new(Counts::default());
         if let Ok(mut reading) = READING.lock() {
             reading.push(counts.clone());
         }
         Reading(counts)
+    }
+
+    /// What OpenCASCADE's helper reports, counted where [`progress`] sums it.
+    pub(crate) fn report(&self) -> impl Fn(crate::occt::Step) {
+        let counts = self.0.clone();
+        move |step: crate::occt::Step| match step {
+            crate::occt::Step::Reading(percent) => counts.read.store(percent, std::sync::atomic::Ordering::Relaxed),
+            crate::occt::Step::Dividing(done, total) => {
+                counts.total.store(total.max(1), std::sync::atomic::Ordering::Relaxed);
+                counts.done.store(done, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -170,16 +183,9 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
     // is not or cannot read the file.
     let mut fell_back = None;
     if let Some(helper) = crate::occt::helper() {
-        let counts = reading.0.clone();
-        let report = move |step: crate::occt::Step| match step {
-            crate::occt::Step::Reading(percent) => counts.read.store(percent, std::sync::atomic::Ordering::Relaxed),
-            crate::occt::Step::Dividing(done, total) => {
-                counts.total.store(total.max(1), std::sync::atomic::Ordering::Relaxed);
-                counts.done.store(done, std::sync::atomic::Ordering::Relaxed);
-            }
-        };
-        match crate::occt::read(&helper, bytes, quality.chord(), quality.angle(), &report) {
-            Ok(read) => return from_occt(read, &predefined_in(bytes), name, quality),
+        let report = reading.report();
+        match crate::occt::read(&helper, bytes, crate::occt::Format::Step, quality.chord(), quality.angle(), &report) {
+            Ok(read) => return from_occt(read, &predefined_in(bytes), name, quality, "STEP"),
             Err(why) => fell_back = Some(why),
         }
         reading.0.done.store(0, std::sync::atomic::Ordering::Relaxed);
@@ -295,8 +301,9 @@ pub fn read_with(bytes: &[u8], name: &str, quality: Tessellation) -> Result<RawS
 
 /// What OpenCASCADE read, laid out as truck's reading is: the same bodies,
 /// colours, products and names, so a file reads the same either way but
-/// for the faces truck lost.
-fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tessellation) -> Result<RawScene, ImportError> {
+/// for the faces truck lost. `what` names the format, STEP or IGES, for
+/// what the scene says about it.
+fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tessellation, what: &str) -> Result<RawScene, ImportError> {
     let near = |mm: f64| (read.unit_mm - mm).abs() < 1e-6 * mm;
     let source_unit = if near(1.0) {
         Some(LengthUnit::Millimetre)
@@ -314,7 +321,7 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
     let mut scene = RawScene { source_unit, ..RawScene::default() };
     let mut warnings = Vec::new();
     if source_unit.is_none() {
-        warnings.push("the STEP file's length unit is not one Tequila knows; its size is guessed".into());
+        warnings.push(format!("the {what} file's length unit is not one Tequila knows; its size is guessed"));
     }
     let mut materials: Vec<(Colour, usize)> = Vec::new();
     let mut meshed: Vec<Vec<(Option<Colour>, usize)>> = Vec::with_capacity(read.bodies.len());
@@ -340,11 +347,10 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
         names.push(body_name);
     }
     if scene.meshes.is_empty() {
-        return Err(ImportError::Unsupported(
-            "the STEP file has no solids or surfaces to mesh — only drawings, \
+        return Err(ImportError::Unsupported(format!(
+            "the {what} file has no solids or surfaces to mesh — only drawings, \
              wireframe or product data"
-                .into(),
-        ));
+        )));
     }
     fn product(p: crate::occt::Product) -> Product {
         let mut m = Mat4::IDENTITY;
@@ -375,6 +381,12 @@ fn from_occt(read: crate::occt::Read, named: &[Colour], name: &str, quality: Tes
     scene.warnings = warnings;
     scene.tessellation = Some(quality.label().to_string());
     Ok(scene)
+}
+
+/// An IGES file OpenCASCADE read (`crate::iges` asks it for one Tequila's
+/// own reader cannot read whole), laid out as a STEP file's reading is.
+pub(crate) fn from_occt_iges(read: crate::occt::Read, name: &str, quality: Tessellation) -> Result<RawScene, ImportError> {
+    from_occt(read, &[], name, quality, "IGES")
 }
 
 /// The material for a colour, made the first time the colour is seen.
@@ -409,9 +421,11 @@ struct Product {
 /// What a CAD package wrote about a product or a body besides its shape:
 /// named attributes - a part number, a description, the material, properties
 /// of the user's own - the layers it is on, and whether every one of those
-/// is switched off. It lands in the node's metadata (the Metadata panel, the
-/// Scene tab's search and Material Templates' rules read it there), the
-/// layers as one field, "Layer".
+/// is switched off. The attributes land in the node's metadata (the
+/// Metadata panel, the Scene tab's search and Material Templates' rules
+/// read them there), the layers in its own list, which the Scene tab's
+/// Layers shows and hides by, and which a search or a rule reads as the
+/// field "Layer".
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct About {
     pub attributes: Vec<(String, String)>,
@@ -446,9 +460,9 @@ impl About {
         out
     }
 
-    /// Into `node`'s metadata, and its visibility. A part number that only
-    /// repeats the node's name - many packages write the name in both - is
-    /// left out.
+    /// Into `node`'s metadata, layers and visibility. A part number that
+    /// only repeats the node's name - many packages write the name in both -
+    /// is left out.
     fn write(&self, node: &mut RawNode) {
         for (key, value) in &self.attributes {
             if key == "Part number" && *value == node.name {
@@ -457,7 +471,7 @@ impl About {
             node.metadata.insert(key.clone(), value.clone());
         }
         if !self.layers.is_empty() {
-            node.metadata.insert("Layer".into(), self.layers.join(", "));
+            node.layers = self.layers.clone();
         }
         node.hidden |= self.hidden;
     }

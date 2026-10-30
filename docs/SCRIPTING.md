@@ -139,6 +139,32 @@ linear sRGB; for a saturated sRGB colour, convert linear sRGB with the matrix
 rows (0.6131, 0.3395, 0.0474), (0.0702, 0.9164, 0.0135),
 (0.0206, 0.1096, 0.8698), or it renders more saturated than intended.
 
+### CAD metadata and layers
+
+Every node in `nodes` (and in `query nodes`) carries `metadata`, the
+attributes its CAD file gave it - a part number, a description, the
+material, properties of the user's own, by their names - together with
+fields added since (`scene.set_metadata`), and `layers`, the names of the CAD
+layers the file put it on, in the file's order (an IGES file's layers are its
+levels, `"Level 5"`). `scene.layers` lists the scene's layers in the order
+the tree meets them, each with the `nodes` on it and whether they are
+`shown`: `"all"`, `"none"` (a layer the file had switched off arrives so), or
+`"some"` where a part was shown or hidden by hand.
+
+```json
+{"scene": {"layers": [{"name": "Outer", "nodes": [4], "shown": "all"},
+                      {"name": "Construction", "nodes": [6], "shown": "none"}]},
+ "nodes": {"nodes": [{"id": 4, "name": "Box", "layers": ["Outer"],
+                      "metadata": {"Material": "ABS"}}]}}
+```
+
+Show or hide a layer by its name, every node on it as one undo step:
+`{"op":"apply","command":{"command":"scene.set_layer_visibility","layer":"Construction","visible":true}}`
+(`fs.commands.scene.set_layer_visibility(layer=..., visible=...)`). A layer
+no node is on is refused by name. A search, a Material Templates rule and the
+CSV export read layers as the field `Layer`: `Layer = Outer` is every part on
+Outer, whatever else it is on.
+
 Use screenshots or preview renders to check spatial and aesthetic decisions.
 Metadata cannot reliably identify semantic parts with anonymous names. Select
 and frame candidates, examine a picture, then verify IDs and values again.

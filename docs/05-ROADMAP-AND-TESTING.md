@@ -709,7 +709,28 @@ under M10's spectral item).
       as truck's reading; truck reads the file when the helper is missing or
       fails, and the scene says so. A 57 MB AP242 assembly in metres that
       truck read with 500 faces missing reads in ~40 s with none missing.)
-- [ ] STEP and IGES import via XDE: hierarchy, names, colours, metadata, layers.
+- [x] STEP and IGES import via XDE: hierarchy, names, colours, metadata, layers.
+      (2026-10-30: STEP's metadata and layers through XDE: `SetMetaMode`,
+      product metadata and `XCAFDoc_LayerTool`, in the helper's answer as
+      each body's and product's `attributes`, `layers` and `hidden` (every
+      layer it is on switched off), which an older answer simply lacks.
+      Attributes - part number, description, material, properties of the
+      user's own - are the node's metadata, the Metadata panel's (Scene tab);
+      layers are a list of their own on each node (`layers` in the project,
+      absent when empty; a project that kept them as the metadata field
+      `Layer` opens with them moved across), shown and hidden as groups by
+      the Scene tab's Layers list (`scene.set_layer_visibility`, one undo
+      step), read by a search or a Material Templates rule as the field
+      `Layer`, and given to scripts on every node and as the scene's
+      `layers`. truck reads the same entities, so a file reads the same
+      without OCCT. IGES through XDE as well (`IGESCAFControl_Reader`:
+      names, colours, levels as layers named "Level 5"), but only for a file
+      Tequila's own reader cannot read whole - a surface it does not read, a
+      face it cannot divide - since the two lay a surface model out
+      differently and updating or re-dividing a model matches its parts by
+      name; Tequila's reader reads levels too (one, or a 406 form 1 list),
+      and gathers only faces on the same levels into a body. IGES has no
+      attributes for either reader to give.)
       (Without OCCT, 2026-10-11: STEP keeps its B-rep - the file's bytes in
       the project, `sources/` - for Re-Tessellate (Draft/Medium/High/Ultra,
       Scene tab > Tessellation, an update that keeps every part's work), and
@@ -726,7 +747,6 @@ under M10's spectral item).
       loops and a curvature grid, exact normals) at the same presets, its
       bytes kept for Re-Tessellate, its boundaries as model edges with seams
       left out; faces meeting at their corners gathered into bodies.
-      Metadata and layers still wait for OCCT.
 - [x] BREP retention + serialization into the project: the STEP file's own
       bytes as a `sources/` member rather than OCCT's `.brep` (no OCCT), which
       truck re-reads exactly; kept up to 64 MB a file.

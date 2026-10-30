@@ -536,6 +536,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::Rename { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }
+        | Command::SetLayerVisibility { .. }
         | Command::SetLocked { .. }
         | Command::SetRays { .. }
         | Command::SetPivot { .. }
@@ -627,6 +628,7 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::set_transform(NodeId(1), Transform::IDENTITY),
         Command::set_visibility(NodeId(1), true),
+        Command::SetLayerVisibility { layer: "Construction".into(), visible: false },
         Command::set_locked(NodeId(1), true),
         Command::set_rays(NodeId(1), tequila_scene::tree::Rays::default()),
         Command::Reparent {

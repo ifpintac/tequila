@@ -261,6 +261,8 @@ pub fn plan(document: &SceneDocument, sync: &LiveSync) -> (Command, LiveReport) 
                     material: before.material,
                     metadata,
                     path_key: Some(object.key.clone()),
+                    // A live link sends no layers; the file's stay.
+                    layers: before.layers.clone(),
                 });
                 report.matched += 1;
             }

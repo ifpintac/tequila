@@ -145,6 +145,12 @@ pub struct SceneNode {
     /// CAD attributes and user annotations. Ordered, so the document
     /// serializes identically every time (§4.1).
     pub metadata: BTreeMap<String, String>,
+    /// The CAD layers the file put it on (an IGES file's levels), in the
+    /// file's order: the groups `crate::layers` shows and hides together.
+    /// Kept apart from `metadata` because a layer's name is the file's and
+    /// may hold any character, a comma included, and because a part may be
+    /// on several.
+    pub layers: Vec<String>,
     pub children: Vec<NodeId>,
     /// A custom pivot, in the node's own local space.
     ///
@@ -185,6 +191,7 @@ impl SceneNode {
             rays: Rays::default(),
             material: None,
             metadata: BTreeMap::new(),
+            layers: Vec::new(),
             children: Vec::new(),
             pivot: None,
             path_key: None,

@@ -90,6 +90,9 @@ pub fn encode(command: &Command) -> String {
         Command::SetVisibility { states } => {
             out.set("states", flags(states));
         }
+        Command::SetLayerVisibility { layer, visible } => {
+            out.set("layer", layer.clone()).set("visible", *visible);
+        }
         Command::SetLocked { states } => {
             out.set("states", flags(states));
         }
@@ -522,6 +525,15 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
         }
         "scene.set_visibility" => Command::SetVisibility {
             states: read_flags(&value)?,
+        },
+        // Whether to show or hide is the whole point, so it is never
+        // assumed.
+        "scene.set_layer_visibility" => Command::SetLayerVisibility {
+            layer: text("layer")?,
+            visible: value
+                .get("visible")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| FormatError::Invalid(format!("`{name}` has no `visible`")))?,
         },
         "scene.set_locked" => Command::SetLocked {
             states: read_flags(&value)?,
@@ -1267,6 +1279,9 @@ fn reimport_payload_to_json(payload: &tequila_scene::reimport::ReimportPayload) 
                     if let Some(transform) = update.transform {
                         entry.set("transform", matrix(transform));
                     }
+                    if !update.layers.is_empty() {
+                        entry.set("layers", crate::layers_to_json(&update.layers));
+                    }
                     entry.build()
                 })
                 .collect(),
@@ -1304,6 +1319,7 @@ fn reimport_payload_from_json(value: &Value) -> Result<tequila_scene::reimport::
             material: entry.get("material").and_then(|v| v.as_index()).map(|m| MaterialKey(m as u64)),
             metadata,
             path_key: entry.get("path_key").and_then(|v| v.as_str()).map(String::from),
+            layers: crate::read_layers(entry.get("layers")),
         });
     }
     Ok(tequila_scene::reimport::ReimportPayload {
@@ -1349,6 +1365,9 @@ fn node_to_json(node: &SceneNode) -> Value {
                     .collect(),
             ),
         );
+    }
+    if !node.layers.is_empty() {
+        out.set("layers", crate::layers_to_json(&node.layers));
     }
     out.build()
 }
@@ -1495,6 +1514,7 @@ fn node_from_json(value: &Value) -> Result<SceneNode, FormatError> {
             }
         }
     }
+    node.layers = crate::read_layers(value.get("layers"));
     Ok(node)
 }
 

@@ -592,6 +592,11 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
             ),
         );
     }
+    // Written only where there are some, so a project without CAD layers
+    // reads as it always did.
+    if !node.layers.is_empty() {
+        object.set("layers", layers_to_json(&node.layers));
+    }
     // §2.3's persistent path key, which re-import matches on to keep
     // material assignments across an updated CAD file. Useless if it does not
     // survive a save.
@@ -610,6 +615,24 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     };
     out.extend(known);
     Value::Object(out)
+}
+
+/// A node's CAD layers, as the project and the journal write them: their
+/// names in order.
+pub(crate) fn layers_to_json(layers: &[String]) -> Value {
+    Value::Array(layers.iter().map(|l| Value::String(l.clone())).collect())
+}
+
+/// A node's CAD layers back, an empty name or a repeated one left out;
+/// absent, none.
+pub(crate) fn read_layers(value: Option<&Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in value.map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str) {
+        if !name.trim().is_empty() && !out.iter().any(|l| l == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 /// A node's transform as its 4x4 matrix, in row-major order.
@@ -2935,7 +2958,7 @@ fn read_tree(
 ) -> Result<(), FormatError> {
     // Every field `node_to_json` writes, or a project opened in the build
     // that wrote it reports itself as from a newer one.
-    const KNOWN_NODE_FIELDS: [&str; 13] = [
+    const KNOWN_NODE_FIELDS: [&str; 15] = [
         "id",
         "name",
         "kind",
@@ -2943,12 +2966,16 @@ fn read_tree(
         "transform",
         "visible",
         "locked",
+        // Kept as an unknown field, a part's rays came back on the next
+        // save after they were set back to the default, which writes none.
+        "rays",
         "children",
         "mesh",
         "light",
         "cutaway",
         "material",
         "metadata",
+        "layers",
     ];
 
     let nodes = root
@@ -3048,6 +3075,20 @@ fn read_tree(
             for (key, item) in map {
                 if let Some(text) = item.as_str() {
                     node.metadata.insert(key.clone(), text.to_string());
+                }
+            }
+        }
+        node.layers = read_layers(value.get("layers"));
+        // A project saved before layers had a field of their own kept them
+        // in a metadata field, `Layer`, joined with commas: moved across, so
+        // the Layers list and its eyes have them, and a search or a rule on
+        // `Layer` finds them where it always did.
+        if value.get("layers").is_none() {
+            if let Some(joined) = node.metadata.remove(tequila_scene::metadata::LAYER) {
+                for name in joined.split(", ").map(str::trim).filter(|n| !n.is_empty()) {
+                    if !node.layers.iter().any(|l| l == name) {
+                        node.layers.push(name.to_string());
+                    }
                 }
             }
         }

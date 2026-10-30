@@ -66,6 +66,8 @@ pub enum CommandError {
     /// A value the renderer cannot use, such as a colour that is not a
     /// number.
     InvalidValue(&'static str),
+    /// A layer no node is on.
+    NoSuchLayer(String),
 }
 
 impl From<TreeError> for CommandError {
@@ -87,6 +89,7 @@ impl std::fmt::Display for CommandError {
             CommandError::NotALight(id) => write!(f, "{id} is not a light"),
             CommandError::NotACutaway(id) => write!(f, "{id} is not a cutaway"),
             CommandError::InvalidValue(what) => write!(f, "{what}"),
+            CommandError::NoSuchLayer(name) => write!(f, "no part is on the layer `{name}`"),
             CommandError::InconsistentHistory(what) => {
                 write!(f, "undo history is inconsistent with the document: {what}")
             }
@@ -164,6 +167,13 @@ pub enum Command {
     /// single undo step. Two commands would leave the user pressing Ctrl+Z
     /// twice for one menu item, with the first press appearing to do nothing.
     SetVisibility { states: Vec<(NodeId, bool)> },
+    /// `scene.set_layer_visibility` — every node on a CAD layer, as the
+    /// file named it, shown or hidden as one step.
+    ///
+    /// The layer (`crate::layers`) rather than its nodes, so a script or the
+    /// Layers list says what it means and the journal records it; it lands
+    /// as the nodes' own visibility, which is what undo restores.
+    SetLayerVisibility { layer: String, visible: bool },
     /// `scene.set_locked` — a lock per node: a locked node, and everything
     /// under it, refuses edits until unlocked.
     SetLocked { states: Vec<(NodeId, bool)> },
@@ -1010,6 +1020,7 @@ impl Command {
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
+            Command::SetLayerVisibility { .. } => "scene.set_layer_visibility",
             Command::SetLocked { .. } => "scene.set_locked",
             Command::SetRays { .. } => "scene.set_rays",
             Command::SetPivot { .. } => "scene.set_pivot",
@@ -1063,7 +1074,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 56] = [
+    pub const CATALOG: [&'static str; 57] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1074,6 +1085,7 @@ impl Command {
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
+        "scene.set_layer_visibility",
         "scene.set_locked",
         "scene.set_rays",
         "scene.set_pivot",
@@ -1137,7 +1149,9 @@ impl Command {
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
             Command::SetTransform { .. } | Command::TurnProduct { .. } => SceneChange::InstanceTransform,
             Command::SetAnimation { .. } => SceneChange::SelectionChange,
-            Command::SetVisibility { .. } | Command::SetRays { .. } => SceneChange::VisibilityToggle,
+            Command::SetVisibility { .. } | Command::SetLayerVisibility { .. } | Command::SetRays { .. } => {
+                SceneChange::VisibilityToggle
+            }
             Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
                 SceneChange::MaterialAssignment
             }
@@ -1271,7 +1285,7 @@ enum Undo {
     /// An update: what it added, and each touched node as it was before.
     Reimported {
         added: Box<Undo>,
-        previous: Vec<(NodeId, NodeKind, Transform, Option<MaterialKey>, std::collections::BTreeMap<String, String>, Option<String>)>,
+        previous: Vec<(NodeId, NodeKind, Transform, Option<MaterialKey>, std::collections::BTreeMap<String, String>, Option<String>, Vec<String>)>,
         hidden: Vec<NodeId>,
     },
     /// A part that became a group of parts. The node keeps its identity, so
@@ -2159,6 +2173,7 @@ fn execute(
                     node.material,
                     node.metadata.clone(),
                     node.path_key.clone(),
+                    node.layers.clone(),
                 ));
                 node.kind = update.kind.clone();
                 if let Some(transform) = update.transform {
@@ -2167,6 +2182,7 @@ fn execute(
                 node.material = update.material;
                 node.metadata = update.metadata.clone();
                 node.path_key = update.path_key.clone();
+                node.layers = update.layers.clone();
             }
             for &node in &payload.hidden {
                 document.tree.get_mut(node)?.visible = false;
@@ -2312,6 +2328,19 @@ fn execute(
             for (node, visible) in states {
                 previous.push((*node, document.tree.get_mut(*node)?.visible));
                 document.tree.get_mut(*node)?.visible = *visible;
+            }
+            Ok(Undo::Visibility(previous))
+        }
+
+        Command::SetLayerVisibility { layer, visible } => {
+            let nodes = crate::layers::members(document, layer);
+            if nodes.is_empty() {
+                return Err(CommandError::NoSuchLayer(layer.clone()));
+            }
+            let mut previous = Vec::with_capacity(nodes.len());
+            for node in nodes {
+                previous.push((node, document.tree.get_mut(node)?.visible));
+                document.tree.get_mut(node)?.visible = *visible;
             }
             Ok(Undo::Visibility(previous))
         }
@@ -3043,13 +3072,14 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             for &node in hidden {
                 document.tree.get_mut(node)?.visible = true;
             }
-            for (node, kind, transform, material, metadata, path_key) in previous {
+            for (node, kind, transform, material, metadata, path_key, layers) in previous {
                 let restored = document.tree.get_mut(*node)?;
                 restored.kind = kind.clone();
                 restored.transform = *transform;
                 restored.material = *material;
                 restored.metadata = metadata.clone();
                 restored.path_key = path_key.clone();
+                restored.layers = layers.clone();
             }
             // Last: the new meshes are what the updated parts pointed at.
             revert(document, added)
@@ -3827,6 +3857,11 @@ pub fn metadata_keys(document: &SceneDocument) -> BTreeMap<String, usize> {
     for node in document.tree.iter() {
         for key in node.metadata.keys() {
             *counts.entry(key.clone()).or_insert(0) += 1;
+        }
+        // Layers read as a field (`crate::metadata::LAYER`), so they are
+        // one to search on and a column to export.
+        if !node.layers.is_empty() && !node.metadata.contains_key(crate::metadata::LAYER) {
+            *counts.entry(crate::metadata::LAYER.to_string()).or_insert(0) += 1;
         }
     }
     counts
