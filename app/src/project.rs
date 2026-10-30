@@ -123,6 +123,9 @@ pub struct Project {
     journal_epoch: u64,
     /// The most recent thing worth telling the user, shown in the status bar.
     pub status: String,
+    /// The Studio applied last, by its file-name suffix or name: what
+    /// `{studio}` and `{view}` in a render's file name stand for.
+    pub last_studio: Option<String>,
 }
 
 impl Project {
@@ -167,6 +170,7 @@ impl Project {
             heavy_triangles: HEAVY_TRIANGLES,
             journal_epoch: 0,
             status: String::new(),
+            last_studio: None,
         }
     }
 
@@ -260,7 +264,10 @@ impl Project {
                 object_names, material_names, layers,
                 fields: tequila_format::output::NameFields {
                     project: crate::render_window::project_name(&self.document.meta.name, self.path.as_deref()),
-                    camera: saved.name, configuration, date: crate::today(), time: crate::now(), ..Default::default()
+                    camera: saved.name, configuration, date: crate::today(), time: crate::now(),
+                    studio: self.last_studio.clone().unwrap_or_default(),
+                    product: self.product_name(),
+                    ..Default::default()
                 },
             };
             self.queued_snapshots.insert(id, job);
@@ -270,6 +277,12 @@ impl Project {
     }
 
     pub fn document_epoch(&self) -> u64 { self.document_epoch }
+
+    /// What `{product}` in a file name stands for: the product's one top
+    /// group's name, or empty (the project's) when it has several or none.
+    pub fn product_name(&self) -> String {
+        tequila_scene::studio::product_name(&self.document)
+    }
 
     pub fn take_queued_snapshot(&mut self, id: u64) -> Option<crate::batch::BatchJob> {
         self.queued_snapshots.remove(&id)
@@ -397,7 +410,16 @@ impl Project {
         // rather than from a copy kept for it: every command used to be
         // copied whole, an imported model's every mesh with it.
         let line = (!heavy && self.session.is_some()).then(|| tequila_format::journal::encode(&command));
+        let studio = match &command {
+            Command::ApplyStudio { index } => {
+                self.document.studios.get(*index).map(|s| s.filename_suffix.clone().unwrap_or_else(|| s.name.clone()))
+            }
+            _ => None,
+        };
         self.bus.apply(&mut self.document, command)?;
+        if studio.is_some() {
+            self.last_studio = studio;
+        }
         if let (Some(session), Some(line)) = (&self.session, line) {
             if let Err(error) = session.record_line(&line) {
                 // Not fatal, but the user should know their safety net is

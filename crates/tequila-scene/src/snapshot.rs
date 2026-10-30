@@ -569,7 +569,12 @@ pub fn snapshot_with(
     // it is a property of the environment, not a thing in the scene tree —
     // and picking it must therefore select nothing rather than the last part.
     if let Some(mut catcher) = ground_catcher(&document.environment.ground) {
-        catcher.reflection_fade = reflection_fade(document.environment.ground.reflection_length, || visible_bounds(document).max.y);
+        let ground = &document.environment.ground;
+        catcher.reflection_fade = if ground.reflection_fade_distance > 0.0 {
+            Some(ground.reflection_fade_distance)
+        } else {
+            reflection_fade(ground.reflection_length, || visible_bounds(document).max.y)
+        };
         if let Some(ground) = cache.ground(document.environment.ground.size, || {
             fitted_ground_extent(document)
         }) {
@@ -589,6 +594,13 @@ pub fn snapshot_with(
         cache.converted.retain(|key, _| used.contains(key));
     }
 
+    // Light linking: each linked light's parts, as the instances under them.
+    for (light, node) in lights.iter_mut().zip(&light_nodes) {
+        if let Some(linking) = document.tree.get(*node).and_then(|n| n.light()).and_then(|s| s.links.as_ref()) {
+            light.links = linked_instances(document, &mapping, linking);
+        }
+    }
+
     mapping.lights = light_nodes;
     let scene = SceneSnapshot::new(meshes, instances, materials, environment)
         .with_programs(programs, Arc::new(textures))
@@ -596,6 +608,33 @@ pub fn snapshot_with(
         .with_lights(Arc::new(LightSet::new(lights)))
         .with_cutters(cutters);
     (scene, mapping)
+}
+
+/// The instances a light's linking names: its parts and the parts under its
+/// groups, and the product's with `product`.
+fn linked_instances(
+    document: &SceneDocument,
+    mapping: &SnapshotMapping,
+    linking: &crate::lighting::LightLinking,
+) -> tequila_render_core::light::LightLinks {
+    let mut roots = linking.nodes.clone();
+    if linking.product {
+        roots.extend(crate::studio::product_roots(document));
+    }
+    let mut these: Vec<u32> = roots
+        .iter()
+        .flat_map(|&root| document.tree.descendants_and_self(root))
+        .filter_map(|id| mapping.instance_of(id))
+        .map(|instance| instance.0)
+        .collect();
+    these.sort_unstable();
+    these.dedup();
+    let these: Arc<[u32]> = these.into();
+    if linking.exclude {
+        tequila_render_core::light::LightLinks::AllBut(these)
+    } else {
+        tequila_render_core::light::LightLinks::Only(these)
+    }
 }
 
 /// §6's Volume Map: for each part whose medium's Density is a Volume Map,
@@ -948,7 +987,8 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
     if !ground.enabled {
         return None;
     }
-    if !ground.shadows && ground.reflections <= 0.0 {
+    // A floor kept only for its bounce is still a floor: the product sees it.
+    if !ground.shadows && ground.reflections <= 0.0 && !ground.bounce {
         return None;
     }
     Some(ShadowCatcher {
@@ -965,6 +1005,10 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
         occlusion_only: ground.shadows && ground.occlusion_shadows,
         occlusion_radius: 1.0,
         shadows: ground.shadows,
+        reflection_luminance_alpha: ground.reflection_alpha == crate::document::ReflectionAlpha::Luminance,
+        reflection_fade_by_distance: ground.reflection_fade_by == crate::document::ReflectionFade::Distance,
+        bounce: (ground.bounce && ground.bounce_strength > 0.0).then(|| ground.bounce_color * ground.bounce_strength),
+        bounce_falloff: ground.bounce_contact_falloff.max(0.0),
     })
 }
 
@@ -1067,6 +1111,55 @@ mod tests {
         document.environment.ground.reflection_length = 0.5;
         let top = visible_bounds(&document).max.y;
         assert_eq!(floor(&document).reflection_fade, Some(top));
+    }
+
+    /// A fade distance is the same height under a product of any size, where
+    /// a reflection length is a share of the product's: the same studio fades
+    /// alike under every product it is applied to (V-Ray's Dim distance).
+    #[test]
+    fn a_fade_distance_is_the_same_under_any_product() {
+        let floor = |document: &SceneDocument| {
+            let (scene, _) = snapshot(document, crate::environment::EnvironmentCache::new().environment(&document.environment), &mut MeshCache::new());
+            scene.instances.iter().find_map(|i| i.shadow_catcher).expect("a floor").reflection_fade
+        };
+        let small = |scale: f32| {
+            let mut document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
+            document.environment.ground.reflections = 1.0;
+            document.environment.ground.reflection_length = 0.25;
+            for root in document.tree.roots().to_vec() {
+                let node = document.tree.get_mut(root).expect("a root");
+                node.transform = Transform::from_matrix(tequila_core::math::Mat4::scale(Vec3::splat(scale)) * node.transform.matrix).expect("invertible");
+            }
+            document
+        };
+        let (mut once, mut twice) = (small(1.0), small(2.0));
+        assert_ne!(floor(&once), floor(&twice), "a length is a share of the product's height");
+        for document in [&mut once, &mut twice] {
+            document.environment.ground.reflection_fade_distance = 0.0075;
+        }
+        assert_eq!(floor(&once), Some(0.0075));
+        assert_eq!(floor(&twice), Some(0.0075));
+    }
+
+    /// A floor kept only for its bounce is still in the scene, and carries
+    /// the bounce's radiance and falloff; without a bounce it carries none.
+    #[test]
+    fn a_bounce_reaches_the_floor() {
+        let mut document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
+        document.environment.ground.shadows = false;
+        document.environment.ground.reflections = 0.0;
+        let floor = |document: &SceneDocument| {
+            let (scene, _) = snapshot(document, crate::environment::EnvironmentCache::new().environment(&document.environment), &mut MeshCache::new());
+            scene.instances.iter().find_map(|i| i.shadow_catcher)
+        };
+        assert!(floor(&document).is_none(), "no shadow, no reflection, no bounce: no floor");
+        document.environment.ground.bounce = true;
+        document.environment.ground.bounce_strength = 0.8;
+        document.environment.ground.bounce_contact_falloff = 0.0075;
+        let catcher = floor(&document).expect("a floor for the bounce");
+        assert_eq!(catcher.bounce, Some(tequila_core::spectrum::Spectrum::splat(0.8)));
+        assert_eq!(catcher.bounce_falloff, 0.0075);
+        assert!(!catcher.reflection_luminance_alpha);
     }
     use tequila_core::math::{vec3, Transform, Vec3};
 
@@ -1492,6 +1585,33 @@ mod tests {
         let (r, _) = texel(MapRole::Color);
         assert!((r - 0.2158).abs() < 2e-3, "colour read 128 as {r}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A light's links become the instances under what they name: the
+    /// product's parts, a group's, or every part but some; and a light kept
+    /// to the product leaves the floor out, so it shadows nothing there.
+    #[test]
+    fn a_lights_links_name_the_instances_under_them() {
+        use crate::lighting::{LightLinking, LightSettings};
+        use tequila_render_core::light::LightLinks;
+        let (mut document, mut bus, ids) = assembly(3);
+        document.environment.ground.shadows = true;
+        let linked = |document: &mut SceneDocument, bus: &mut CommandBus, links: LightLinking| {
+            let settings = LightSettings { links: Some(links), ..LightSettings::default() };
+            bus.apply(document, Command::AddLight { parent: None, name: "Strip".into(), settings: Box::new(settings) }).unwrap();
+            let (scene, mapping) = snapshot(document, Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO)), &mut MeshCache::new());
+            let parts: Vec<u32> = ids[1..].iter().filter_map(|&id| mapping.instance_of(id)).map(|i| i.0).collect();
+            let links = scene.lights.lights().last().unwrap().links.clone();
+            bus.undo(document).unwrap();
+            (links, parts, scene.instances.len() as u32)
+        };
+        let (links, parts, count) = linked(&mut document, &mut bus, LightLinking { product: true, ..LightLinking::default() });
+        assert_eq!(links, LightLinks::Only(parts.clone().into()));
+        assert!(!links.lights(count - 1), "a light kept to the product lights the floor");
+        let (links, parts, _) = linked(&mut document, &mut bus, LightLinking { nodes: vec![ids[2]], exclude: true, ..LightLinking::default() });
+        assert!(!links.lights(parts[1]) && links.lights(parts[0]) && links.lights(parts[2]), "{links:?}");
+        let (links, parts, _) = linked(&mut document, &mut bus, LightLinking { nodes: vec![ids[0]], ..LightLinking::default() });
+        assert_eq!(links, LightLinks::Only(parts.into()), "a group stands for its parts");
     }
 
     #[test]

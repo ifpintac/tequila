@@ -44,6 +44,7 @@ impl crate::TequilaApp {
             }
             LibraryAction::BeganDrag(entry) => self.dragging = Some(entry),
             LibraryAction::ImportTexturePack(folder) => self.pick_texture_pack(folder),
+            LibraryAction::Studio(asked) => self.studio_action(asked),
             LibraryAction::Create(new) => {
                 let (name, apply) = (new.name.clone(), new.apply);
                 match self.create_material(*new) {
@@ -146,6 +147,81 @@ impl crate::TequilaApp {
                     }
                     Err(error) => self.toasts.warn(error.to_string()),
                 }
+            }
+        }
+    }
+
+    /// Do what the Studios section asked.
+    fn studio_action(&mut self, asked: crate::studio_shelf::StudioAction) {
+        use crate::studio_shelf::StudioAction;
+        use tequila_format::studio_preset as presets;
+        match asked {
+            StudioAction::Apply(file, options, dress) => match crate::studio_presets::apply(&mut self.project, &file, options, dress) {
+                Ok(applied) => {
+                    self.camera.adopt(self.project.camera());
+                    self.submit();
+                    let dressed = if applied.dressed > 0 { format!(", {} parts dressed", applied.dressed) } else { String::new() };
+                    self.toasts.info(format!(
+                        "Applied {} - {} views, framed ×{:.2}{dressed}. Undo takes it all back.",
+                        file.preset.name, applied.views, applied.scale
+                    ));
+                }
+                Err(error) => self.toasts.warn(error),
+            },
+            StudioAction::Save(what) => {
+                let thumbnail = crate::studio_presets::thumbnail_png(&self.image);
+                match crate::studio_presets::save(&self.project, &what, thumbnail.as_deref()) {
+                    Ok(file) => {
+                        self.library.reload_studios();
+                        self.toasts.info(format!("Saved the studio as `{}`", file.preset.name));
+                    }
+                    Err(error) => self.toasts.warn(error),
+                }
+            }
+            StudioAction::Install => {
+                let Some(from) = rfd::FileDialog::new()
+                    .set_title("Install a studio preset")
+                    .add_filter("Studio preset", &[presets::PACKAGE_EXTENSION, "json"])
+                    .pick_file()
+                else {
+                    return;
+                };
+                match presets::install(&from, &user_library_path()) {
+                    Ok(installed) => {
+                        self.library.reload();
+                        self.library.reload_studios();
+                        let materials = if installed.materials.is_empty() { String::new() } else { format!(" and {} materials", installed.materials.len()) };
+                        self.toasts.info(format!("Installed `{}`{materials}", installed.preset.preset.name));
+                    }
+                    Err(error) => self.toasts.warn(error),
+                }
+            }
+            StudioAction::Export(file) => {
+                let name = format!("{}.{}", file.preset.id, presets::PACKAGE_EXTENSION);
+                let Some(to) = rfd::FileDialog::new()
+                    .set_title("Export studio preset")
+                    .set_file_name(name)
+                    .add_filter("Studio preset", &[presets::PACKAGE_EXTENSION])
+                    .save_file()
+                else {
+                    return;
+                };
+                match presets::export(&file, &to) {
+                    Ok(()) => self.toasts.info(format!("Exported `{}` to {}", file.preset.name, to.display())),
+                    Err(error) => self.toasts.warn(error),
+                }
+            }
+            StudioAction::Delete(file) => match presets::delete(&file) {
+                Ok(()) => {
+                    self.library.reload_studios();
+                    self.toasts.info(format!("Deleted the studio preset `{}`", file.preset.name));
+                }
+                Err(error) => self.toasts.warn(error),
+            },
+            StudioAction::OpenFolder => {
+                let folder = presets::user_directory();
+                let _ = std::fs::create_dir_all(&folder);
+                crate::library_tab::open_folder(&folder);
             }
         }
     }

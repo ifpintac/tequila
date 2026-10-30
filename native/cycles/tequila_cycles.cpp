@@ -1041,6 +1041,27 @@ FscNode fsc_light(FscSession *s, const char *type, FscNode shader, const float *
   return light;
 }
 
+int fsc_light_linking(FscSession *s, FscNode node, unsigned long long membership, unsigned receiver_set)
+{
+  const EditLock lock(s);
+  Node *given = static_cast<Node *>(node);
+  /* A light is handed out as its Light; the sets are its Object's. */
+  Object *object = nullptr;
+  for (Object *candidate : s->scene()->objects) {
+    if (static_cast<Node *>(candidate) == given || static_cast<Node *>(candidate->get_geometry()) == given) {
+      object = candidate;
+      break;
+    }
+  }
+  if (object == nullptr) {
+    fail("light linking: no such object");
+    return 0;
+  }
+  object->set_light_set_membership(membership);
+  object->set_receiver_light_set(receiver_set);
+  return 1;
+}
+
 void fsc_camera(FscSession *s, const float *m, float fov, int width, int height)
 {
   const EditLock lock(s);

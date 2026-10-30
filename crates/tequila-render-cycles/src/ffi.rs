@@ -18,6 +18,9 @@ pub const VISIBLE_DIFFUSE: c_uint = 2;
 pub const VISIBLE_GLOSSY: c_uint = 4;
 pub const VISIBLE_TRANSMISSION: c_uint = 8;
 pub const VISIBLE_SHADOW: c_uint = 16;
+/// Volume scattering: what a light needs to light smoke, milk or a frosted
+/// medium from within.
+pub const VISIBLE_SCATTER: c_uint = 32;
 pub const VISIBLE_ALL: c_uint = 63;
 
 macro_rules! api {
@@ -117,6 +120,7 @@ api! {
     @optional {
         fsc_mesh_colors: fn(*mut Session, Node, c_int, *const f32) -> c_int;
         fsc_shader_reopen: fn(*mut Session, Node) -> c_int;
+        fsc_light_linking: fn(*mut Session, Node, u64, c_uint) -> c_int;
     }
 }
 

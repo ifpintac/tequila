@@ -672,14 +672,20 @@ fn render_loop(shared: Arc<Shared>) {
                                 1,
                             );
                         }
+                        let bright = tequila_render_cpu::floor::alpha_by_brightness(&state.request.scene);
                         for (pixel, laid) in state.framebuffer.pixels_mut().iter_mut().zip(layer.pixels()) {
                             let share = laid.alpha();
                             if share > 0.0 && pixel.samples > 0 {
                                 let n = pixel.samples as f32;
+                                let (reflection, share) = if bright {
+                                    tequila_render_cpu::floor::by_brightness(laid.mean(), share, style.exposure)
+                                } else {
+                                    (laid.mean(), share)
+                                };
                                 let (colour, coverage) = tequila_render_cpu::floor::lay_reflection(
                                     pixel.sum * (1.0 / n),
                                     pixel.coverage_sum / n,
-                                    laid.mean(),
+                                    reflection,
                                     share,
                                 );
                                 pixel.sum = colour * n;

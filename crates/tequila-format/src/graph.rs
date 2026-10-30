@@ -96,6 +96,13 @@ pub(crate) fn decals_to_json(decals: &[tequila_materials::decal::Decal]) -> Valu
         o.set("name", d.name.clone()).set("texture", d.texture.0 as f64)
             .set("mapping", mapping_to_json(&d.mapping)).set("opacity", d.opacity)
             .set("roughness", d.roughness).set("metallic", d.metallic).set("enabled", d.enabled);
+        // Absent for a label on both sides, as every label was before.
+        if d.side != tequila_materials::decal::DecalSide::Both {
+            o.set("side", d.side.key());
+        }
+        if d.ink != tequila_core::spectrum::Spectrum::ONE {
+            o.set("ink", Value::from(vec![d.ink.r, d.ink.g, d.ink.b]));
+        }
         o.build()
     }).collect())
 }
@@ -112,6 +119,13 @@ pub(crate) fn decals_from_json(value: Option<&Value>) -> Result<Vec<tequila_mate
         d.roughness = v.get("roughness").and_then(Value::as_f32).unwrap_or(0.35);
         d.metallic = v.get("metallic").and_then(Value::as_bool).unwrap_or(false);
         d.enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        if let Some(ink) = v.get("ink").and_then(Value::as_f32_array).filter(|c| c.len() == 3) {
+            d.ink = tequila_core::spectrum::Spectrum { r: ink[0], g: ink[1], b: ink[2] };
+        }
+        if let Some(side) = v.get("side").and_then(Value::as_str) {
+            d.side = tequila_materials::decal::DecalSide::from_key(side)
+                .ok_or_else(|| FormatError::Invalid(format!("A label's side is `{side}`: both, positive or negative")))?;
+        }
         if !d.is_valid() { return Err(FormatError::Invalid("Invalid label placement or finish".into())); }
         Ok(d)
     }).collect()
@@ -1326,8 +1340,15 @@ mod tests {
         label.name = "Top print".into();
         label.enabled = false;
         label.metallic = true;
+        label.side = tequila_materials::decal::DecalSide::Negative;
+        label.ink = tequila_core::spectrum::Spectrum { r: 0.45, g: 0.46, b: 0.46 };
         graph.decals.push(label);
         assert_eq!(round_trip(&graph).decals, graph.decals);
+        // A label on both sides writes nothing new: as a file from before.
+        let written = crate::json_write::to_string(&decals_to_json(&graph.decals[..1]));
+        assert!(!written.contains("side") && !written.contains("ink"), "{written}");
+        let wrong = crate::json::parse(br#"[{"texture":1,"side":"inside"}]"#).unwrap();
+        assert!(decals_from_json(Some(&wrong)).is_err());
     }
 
     /// Reroutes keep their type and their wiring, and groups their title and

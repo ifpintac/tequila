@@ -66,10 +66,215 @@ pub struct IntegratorConfig {
     /// as a ratio of the backdrop, so on a black one nothing shows). Never
     /// saved.
     pub floor_reflection_only: bool,
+    /// What Cycles is told beyond the above (Blender's Light Paths): `None`
+    /// throughout is what it was always told.
+    pub cycles: CyclesTransport,
+    /// How a pixel's samples are spread, from the render settings for a
+    /// final render; one pixel's box otherwise. Set per render, never saved
+    /// here (it is the render's setting, `RenderSettings::pixel_filter`).
+    pub pixel_filter: PixelFilter,
 }
 
 /// [`IntegratorConfig::pixel_spread`] when nothing better is known.
 pub const DEFAULT_PIXEL_SPREAD: f32 = 1e-3;
+
+/// Path limits and look settings Cycles distinguishes and Tequila's renderer
+/// does not, for a studio that has to match Blender's exactly (Blender's
+/// Light Paths panel). Each `None` sends Cycles what it was always sent:
+/// diffuse and glossy bounces both `max_bounces` (at least 4), transparent
+/// 8, Filter Glossy 1, Cycles' own volume bounces and caustics.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct CyclesTransport {
+    /// Diffuse bounces. Set, or [`glossy_bounces`](Self::glossy_bounces)
+    /// set, `max_bounces` is the total for all kinds together, as Blender's
+    /// Total.
+    pub diffuse_bounces: Option<u32>,
+    pub glossy_bounces: Option<u32>,
+    /// Passes through transparent surfaces and cutouts.
+    pub transparent_bounces: Option<u32>,
+    pub volume_bounces: Option<u32>,
+    /// Blurs glossy reflections after diffuse bounces to cut noise; 0 is
+    /// none, Blender's 0.5 a little.
+    pub filter_glossy: Option<f32>,
+    pub caustics_reflective: Option<bool>,
+    pub caustics_refractive: Option<bool>,
+}
+
+impl CyclesTransport {
+    /// Nothing set: what Cycles has always been sent.
+    pub const NONE: CyclesTransport = CyclesTransport {
+        diffuse_bounces: None,
+        glossy_bounces: None,
+        transparent_bounces: None,
+        volume_bounces: None,
+        filter_glossy: None,
+        caustics_reflective: None,
+        caustics_refractive: None,
+    };
+}
+
+/// The shape a pixel's samples are spread over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelFilterKind {
+    /// Even over the pixel: sharp, a little aliased. Cycles' own default.
+    Box,
+    Gaussian,
+    /// Blender's default: soft, without ringing.
+    BlackmanHarris,
+}
+
+impl PixelFilterKind {
+    pub const ALL: [PixelFilterKind; 3] = [PixelFilterKind::Box, PixelFilterKind::Gaussian, PixelFilterKind::BlackmanHarris];
+
+    /// The name in the file format, and Cycles' own for its Film's filter.
+    pub const fn key(self) -> &'static str {
+        match self {
+            PixelFilterKind::Box => "box",
+            PixelFilterKind::Gaussian => "gaussian",
+            PixelFilterKind::BlackmanHarris => "blackman_harris",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            PixelFilterKind::Box => "Box",
+            PixelFilterKind::Gaussian => "Gaussian",
+            PixelFilterKind::BlackmanHarris => "Blackman-Harris",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<PixelFilterKind> {
+        PixelFilterKind::ALL.into_iter().find(|k| k.key() == key)
+    }
+}
+
+/// A pixel filter: its shape and its width in pixels, as Cycles' Film takes
+/// them (a Gaussian's width is a third of its support, a Blackman-Harris's
+/// half of it, as there).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PixelFilter {
+    pub kind: PixelFilterKind,
+    pub width: f32,
+}
+
+impl PixelFilter {
+    /// One pixel's box: what Tequila's renderer always used, and Cycles'
+    /// default.
+    pub const BOX: PixelFilter = PixelFilter { kind: PixelFilterKind::Box, width: 1.0 };
+
+    /// What spreads a sample by this filter: filter importance sampling, so
+    /// each sample still lands in one pixel and accumulation stays a mean.
+    pub fn sampler(self) -> FilterSampler {
+        let width = if self.width.is_finite() && self.width > 0.0 { self.width } else { 1.0 };
+        let (half, f): (f32, Box<dyn Fn(f32) -> f32>) = match self.kind {
+            PixelFilterKind::Box => return FilterSampler { width, table: None },
+            PixelFilterKind::Gaussian => {
+                let support = width * 3.0;
+                (support * 0.5, Box::new(move |v: f32| (-2.0 * (v * 6.0 / support).powi(2)).exp()))
+            }
+            PixelFilterKind::BlackmanHarris => {
+                let support = width * 2.0;
+                (
+                    support * 0.5,
+                    Box::new(move |v: f32| {
+                        let v = std::f32::consts::TAU * (v / support + 0.5);
+                        0.35875 - 0.48829 * v.cos() + 0.14128 * (2.0 * v).cos() - 0.01168 * (3.0 * v).cos()
+                    }),
+                )
+            }
+        };
+        // The inverse of the filter's distribution over one half, by a table
+        // fine enough that the steps are far below a sample's spread.
+        const STEPS: usize = 1024;
+        let mut cdf = Vec::with_capacity(STEPS + 1);
+        let mut total = 0.0f64;
+        cdf.push(0.0f64);
+        for i in 0..STEPS {
+            let x = (i as f32 + 0.5) / STEPS as f32 * half;
+            total += f64::from(f(x).max(0.0));
+            cdf.push(total);
+        }
+        let mut table = Vec::with_capacity(STEPS + 1);
+        let mut j = 0usize;
+        for i in 0..=STEPS {
+            let target = total * i as f64 / STEPS as f64;
+            while j < STEPS && cdf[j + 1] < target {
+                j += 1;
+            }
+            let span = (cdf[j + 1] - cdf[j]).max(1e-12);
+            let within = ((target - cdf[j]) / span).clamp(0.0, 1.0);
+            table.push((j as f64 + within) as f32 / STEPS as f32 * half);
+        }
+        FilterSampler { width, table: Some(table) }
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use tequila_core::math::vec2;
+
+    /// One pixel's box places a sample exactly where the jitter always did,
+    /// so a render that asks for no filter is the same picture; the others
+    /// spread samples symmetrically about the centre, within their support,
+    /// Blackman-Harris at 1.5 px over three pixels and more of them near the
+    /// middle than a box puts there.
+    #[test]
+    fn a_pixel_filter_places_samples_by_its_shape() {
+        let boxed = PixelFilter::BOX.sampler();
+        for u in [0.0, 0.13, 0.5, 0.999] {
+            assert_eq!(boxed.place(vec2(u, 1.0 - u)), vec2(u, 1.0 - u));
+        }
+        let bh = PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 }.sampler();
+        let n = 4000;
+        let (mut sum, mut near, mut widest) = (0.0f64, 0, 0.0f32);
+        for i in 0..n {
+            let u = (i as f32 + 0.5) / n as f32;
+            let p = bh.place(vec2(u, 0.5)).x - 0.5;
+            sum += f64::from(p);
+            widest = widest.max(p.abs());
+            if p.abs() < 0.25 {
+                near += 1;
+            }
+        }
+        assert!((sum / f64::from(n)).abs() < 1e-3, "spread about the centre: mean {}", sum / f64::from(n));
+        assert!(widest <= 1.5 + 1e-4 && widest > 1.0, "within its support of three pixels: {widest}");
+        assert!(near as f32 / n as f32 > 0.3, "more near the middle than a box puts there: {near} of {n}");
+        assert_eq!(bh.place(vec2(0.5, 0.5)), vec2(0.5, 0.5), "the middle of the range is the pixel's centre");
+        let g = PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }.sampler();
+        let edge = g.place(vec2(0.0, 1.0));
+        assert!(edge.x < 0.5 - 1.0 && edge.y > 0.5 + 1.0, "a Gaussian reaches out to its support: {edge:?}");
+    }
+}
+
+/// A [`PixelFilter`] ready to place samples (see [`PixelFilter::sampler`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterSampler {
+    width: f32,
+    /// The inverse distribution over one half, `None` for a box.
+    table: Option<Vec<f32>>,
+}
+
+impl FilterSampler {
+    /// Where in (or around) the pixel a sample goes, for `jitter` uniform in
+    /// [0, 1)²: the same point a box of one pixel always gave, and otherwise
+    /// a point distributed as the filter is, about the pixel's centre.
+    pub fn place(&self, jitter: tequila_core::math::Vec2) -> tequila_core::math::Vec2 {
+        let along = |u: f32| match &self.table {
+            None if self.width == 1.0 => u,
+            None => 0.5 + (u - 0.5) * self.width,
+            Some(table) => {
+                let signed = 2.0 * u - 1.0;
+                let at = signed.abs() * (table.len() - 1) as f32;
+                let i = (at as usize).min(table.len() - 2);
+                let t = at - i as f32;
+                let offset = table[i] + (table[i + 1] - table[i]) * t;
+                0.5 + offset.copysign(signed)
+            }
+        };
+        tequila_core::math::vec2(along(jitter.x), along(jitter.y))
+    }
+}
 
 impl Default for IntegratorConfig {
     fn default() -> Self {
@@ -99,6 +304,8 @@ impl IntegratorConfig {
             pixel_spread: DEFAULT_PIXEL_SPREAD,
             in_floor_reflection: false,
             floor_reflection_only: false,
+            cycles: CyclesTransport::NONE,
+            pixel_filter: PixelFilter::BOX,
         }
     }
 

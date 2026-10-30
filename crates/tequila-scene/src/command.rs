@@ -410,6 +410,16 @@ pub enum Command {
     /// gained by telling them apart, and a style is small enough to carry
     /// whole.
     SetImageStyle { style: Box<ImageStyle> },
+    /// `studio_preset.apply` — a whole studio from a preset, framed to the
+    /// product: environment and floor, lights, cameras and views, image
+    /// style, render and lighting settings, and the preset's materials added
+    /// to assign. One step to undo. The product's geometry and its materials
+    /// are never touched; its top nodes are moved to stand where the studio
+    /// expects them (`crate::preset::fit`).
+    ApplyStudioPreset {
+        preset: Box<crate::preset::StudioPreset>,
+        options: crate::preset::ApplyOptions,
+    },
 }
 
 /// A single material parameter edit: which parameter, and its new value.
@@ -479,7 +489,14 @@ pub enum EnvParam {
     GroundReflections,
     GroundReflectionBlur,
     GroundReflectionLength,
+    GroundReflectionFadeDistance,
     GroundReflectionFresnel,
+    GroundReflectionAlpha,
+    GroundReflectionFadeBy,
+    GroundBounce,
+    GroundBounceStrength,
+    GroundBounceColor,
+    GroundBounceContactFalloff,
     GroundFlatten,
     GroundSize,
 }
@@ -493,6 +510,8 @@ pub enum EnvValue {
     Mode(BackgroundMode),
     /// A file path, or `None` for "not set".
     Path(Option<String>),
+    /// One of a fixed set of named options, [`EnvParam::choices`].
+    Choice(&'static str),
 }
 
 impl EnvValue {
@@ -528,7 +547,7 @@ pub struct EnvUi {
 }
 
 impl EnvParam {
-    pub const ALL: [EnvParam; 19] = [
+    pub const ALL: [EnvParam; 26] = [
         EnvParam::Rotation,
         EnvParam::Brightness,
         EnvParam::Contrast,
@@ -545,10 +564,27 @@ impl EnvParam {
         EnvParam::GroundReflections,
         EnvParam::GroundReflectionBlur,
         EnvParam::GroundReflectionLength,
+        EnvParam::GroundReflectionFadeDistance,
         EnvParam::GroundReflectionFresnel,
+        EnvParam::GroundReflectionAlpha,
+        EnvParam::GroundReflectionFadeBy,
+        EnvParam::GroundBounce,
+        EnvParam::GroundBounceStrength,
+        EnvParam::GroundBounceColor,
+        EnvParam::GroundBounceContactFalloff,
         EnvParam::GroundFlatten,
         EnvParam::GroundSize,
     ];
+
+    /// The options a [`EnvValue::Choice`] field offers: its keys, as
+    /// written, and their labels. Empty for every other field.
+    pub const fn choices(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            EnvParam::GroundReflectionAlpha => &[("coverage", "By coverage"), ("luminance", "By brightness")],
+            EnvParam::GroundReflectionFadeBy => &[("height", "By height"), ("distance", "By distance")],
+            _ => &[],
+        }
+    }
 
     /// The name used in the file format, the journal and the scripting API.
     pub const fn key(self) -> &'static str {
@@ -569,7 +605,14 @@ impl EnvParam {
             EnvParam::GroundReflections => "ground_reflections",
             EnvParam::GroundReflectionBlur => "ground_reflection_blur",
             EnvParam::GroundReflectionLength => "ground_reflection_length",
+            EnvParam::GroundReflectionFadeDistance => "ground_reflection_fade_distance",
             EnvParam::GroundReflectionFresnel => "ground_reflection_fresnel",
+            EnvParam::GroundReflectionAlpha => "ground_reflection_alpha",
+            EnvParam::GroundReflectionFadeBy => "ground_reflection_fade_by",
+            EnvParam::GroundBounce => "ground_bounce",
+            EnvParam::GroundBounceStrength => "ground_bounce_strength",
+            EnvParam::GroundBounceColor => "ground_bounce_color",
+            EnvParam::GroundBounceContactFalloff => "ground_bounce_contact_falloff",
             EnvParam::GroundFlatten => "ground_flatten",
             EnvParam::GroundSize => "ground_size",
         }
@@ -607,7 +650,14 @@ impl EnvParam {
             EnvParam::GroundReflections => ("ground", "reflections"),
             EnvParam::GroundReflectionBlur => ("ground", "reflection_blur"),
             EnvParam::GroundReflectionLength => ("ground", "reflection_length"),
+            EnvParam::GroundReflectionFadeDistance => ("ground", "reflection_fade_distance"),
             EnvParam::GroundReflectionFresnel => ("ground", "reflection_fresnel"),
+            EnvParam::GroundReflectionAlpha => ("ground", "reflection_alpha"),
+            EnvParam::GroundReflectionFadeBy => ("ground", "reflection_fade_by"),
+            EnvParam::GroundBounce => ("ground", "bounce"),
+            EnvParam::GroundBounceStrength => ("ground", "bounce_strength"),
+            EnvParam::GroundBounceColor => ("ground", "bounce_color"),
+            EnvParam::GroundBounceContactFalloff => ("ground", "bounce_contact_falloff"),
             EnvParam::GroundFlatten => ("ground", "flatten"),
             EnvParam::GroundSize => ("ground", "size"),
         }
@@ -679,9 +729,37 @@ impl EnvParam {
                 label: "Reflection length",
                 range: (0.0, 1.0),
             },
+            EnvParam::GroundReflectionFadeDistance => EnvUi {
+                label: "Fade distance",
+                range: (0.0, 1.0),
+            },
             EnvParam::GroundReflectionFresnel => EnvUi {
                 label: "Fainter seen from above",
                 range: (0.0, 0.0),
+            },
+            EnvParam::GroundReflectionAlpha => EnvUi {
+                label: "Reflection alpha",
+                range: (0.0, 0.0),
+            },
+            EnvParam::GroundReflectionFadeBy => EnvUi {
+                label: "Fade by",
+                range: (0.0, 0.0),
+            },
+            EnvParam::GroundBounce => EnvUi {
+                label: "Floor bounce",
+                range: (0.0, 0.0),
+            },
+            EnvParam::GroundBounceStrength => EnvUi {
+                label: "Bounce brightness",
+                range: (0.0, 20.0),
+            },
+            EnvParam::GroundBounceColor => EnvUi {
+                label: "Bounce colour",
+                range: (0.0, 1.0),
+            },
+            EnvParam::GroundBounceContactFalloff => EnvUi {
+                label: "Contact falloff",
+                range: (0.0, 1.0),
             },
             EnvParam::GroundFlatten => EnvUi {
                 label: "Flatten ground",
@@ -713,7 +791,14 @@ impl EnvParam {
             EnvParam::GroundReflections => EnvValue::Scalar(settings.ground.reflections),
             EnvParam::GroundReflectionBlur => EnvValue::Scalar(settings.ground.reflection_blur),
             EnvParam::GroundReflectionLength => EnvValue::Scalar(settings.ground.reflection_length),
+            EnvParam::GroundReflectionFadeDistance => EnvValue::Scalar(settings.ground.reflection_fade_distance),
             EnvParam::GroundReflectionFresnel => EnvValue::Flag(settings.ground.reflection_fresnel),
+            EnvParam::GroundReflectionAlpha => EnvValue::Choice(settings.ground.reflection_alpha.key()),
+            EnvParam::GroundReflectionFadeBy => EnvValue::Choice(settings.ground.reflection_fade_by.key()),
+            EnvParam::GroundBounce => EnvValue::Flag(settings.ground.bounce),
+            EnvParam::GroundBounceStrength => EnvValue::Scalar(settings.ground.bounce_strength),
+            EnvParam::GroundBounceColor => EnvValue::Color(settings.ground.bounce_color),
+            EnvParam::GroundBounceContactFalloff => EnvValue::Scalar(settings.ground.bounce_contact_falloff),
             EnvParam::GroundFlatten => EnvValue::Flag(settings.ground.flatten),
             EnvParam::GroundSize => EnvValue::Scalar(settings.ground.size),
         }
@@ -776,7 +861,36 @@ impl EnvParam {
                     settings.ground.reflection_length = v.clamp(0.0, 1.0);
                 }
             }
+            (EnvParam::GroundReflectionFadeDistance, v) => {
+                if let Some(v) = v.as_scalar() {
+                    // A length, so only the floor of the range binds: a big
+                    // product's fade may be longer than the slider shows.
+                    settings.ground.reflection_fade_distance = v.max(0.0);
+                }
+            }
             (EnvParam::GroundReflectionFresnel, EnvValue::Flag(f)) => settings.ground.reflection_fresnel = *f,
+            (EnvParam::GroundReflectionAlpha, EnvValue::Choice(c)) => {
+                if let Some(alpha) = crate::document::ReflectionAlpha::from_key(c) {
+                    settings.ground.reflection_alpha = alpha;
+                }
+            }
+            (EnvParam::GroundReflectionFadeBy, EnvValue::Choice(c)) => {
+                if let Some(fade) = crate::document::ReflectionFade::from_key(c) {
+                    settings.ground.reflection_fade_by = fade;
+                }
+            }
+            (EnvParam::GroundBounce, EnvValue::Flag(f)) => settings.ground.bounce = *f,
+            (EnvParam::GroundBounceStrength, v) => {
+                if let Some(v) = v.as_scalar() {
+                    settings.ground.bounce_strength = v.max(0.0);
+                }
+            }
+            (EnvParam::GroundBounceColor, EnvValue::Color(c)) => settings.ground.bounce_color = *c,
+            (EnvParam::GroundBounceContactFalloff, v) => {
+                if let Some(v) = v.as_scalar() {
+                    settings.ground.bounce_contact_falloff = v.max(0.0);
+                }
+            }
             (EnvParam::GroundFlatten, EnvValue::Flag(f)) => settings.ground.flatten = *f,
             (EnvParam::GroundSize, v) => {
                 if let Some(v) = scalar(v) {
@@ -926,12 +1040,13 @@ impl Command {
             Command::SetColorManagement { .. } => "image.set_color_management",
             Command::SetRenderSettings { .. } => "render.set_settings",
             Command::SetImageStyle { .. } => "image.set_style",
+            Command::ApplyStudioPreset { .. } => "studio_preset.apply",
         }
     }
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 52] = [
+    pub const CATALOG: [&'static str; 53] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -984,6 +1099,7 @@ impl Command {
         "image.set_style",
         "image.set_color_management",
         "render.set_settings",
+        "studio_preset.apply",
     ];
 
     /// How much accumulated render work this command invalidates (§01 §9.3).
@@ -991,6 +1107,8 @@ impl Command {
         match self {
             Command::Import { .. }
             | Command::Reimport { .. }
+            // A whole studio: lights, environment, cameras, everything.
+            | Command::ApplyStudioPreset { .. }
             | Command::DeleteNodes { .. }
             | Command::Group { .. }
             | Command::SplitIntoParts { .. }
@@ -1208,6 +1326,12 @@ enum Undo {
     MaterialTemplates(Vec<crate::templates::MaterialTemplate>),
     /// Everything a Studio can change, as it was.
     StudioApplied(Box<StudioUndo>),
+    /// A command made of commands (`studio_preset.apply`): each step it
+    /// took, in order, with what undoes it, and the product's turn before.
+    Composite {
+        steps: Vec<(Command, Undo)>,
+        turn: crate::studio::ProductTurn,
+    },
     Configurator(Box<crate::configurator::Configurator>),
     /// Everything a configuration can change, as it was, and the choices.
     Configured(Box<StudioUndo>, Vec<usize>),
@@ -1589,17 +1713,28 @@ struct Reissue {
     /// them — a selection, a material assignment, a saved camera — and would
     /// grow the id space every time somebody pressed undo and redo.
     split: Option<(Vec<NodeId>, Vec<MeshKey>)>,
+    /// The steps a command made of commands took last time, each with its
+    /// own identifiers: redo takes them again rather than planning afresh,
+    /// so every node and material comes back under the id it had.
+    composite: Option<Vec<(Command, Reissue)>>,
 }
 
 /// What applying a Studio replaced.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StudioUndo {
-    camera: SavedCamera,
+    /// All of them, and which was active: a Studio's camera goes to the
+    /// saved camera of its name, which need not be the active one.
+    cameras: crate::lighting::CameraStore,
     environment: crate::document::EnvironmentSettings,
     image_style: tequila_color::ImageStyle,
     model_set: Option<usize>,
     multi_materials: Vec<crate::studio::MultiMaterial>,
     materials: Vec<(NodeId, Option<MaterialKey>)>,
+    /// Every light's on-or-off.
+    lights: Vec<(NodeId, bool)>,
+    /// The product's roots' transforms, and its turn.
+    transforms: Vec<(NodeId, Transform)>,
+    turn: crate::studio::ProductTurn,
 }
 
 impl StudioUndo {
@@ -1607,30 +1742,67 @@ impl StudioUndo {
     /// are filled in once the variants are applied.
     fn of(document: &SceneDocument) -> StudioUndo {
         StudioUndo {
-            camera: document.cameras.active().clone(),
+            cameras: document.cameras.clone(),
             environment: document.environment.clone(),
             image_style: document.image_style,
             model_set: document.model_sets.active,
             multi_materials: document.multi_materials.clone(),
             materials: Vec::new(),
+            lights: document
+                .tree
+                .iter()
+                .filter_map(|n| match &n.kind {
+                    NodeKind::Light { settings } => Some((n.id, settings.enabled)),
+                    _ => None,
+                })
+                .collect(),
+            transforms: crate::studio::product_roots(document)
+                .into_iter()
+                .filter_map(|id| document.tree.get(id).map(|n| (id, n.transform)))
+                .collect(),
+            turn: document.product_turn,
         }
     }
 
     fn restore(&self, document: &mut SceneDocument) {
         crate::studio::restore_materials(document, &self.materials);
-        *document.cameras.active_mut() = self.camera.clone();
+        document.cameras = self.cameras.clone();
         document.environment = self.environment.clone();
         document.image_style = self.image_style;
         document.model_sets.active = self.model_set;
         document.multi_materials = self.multi_materials.clone();
+        for &(id, enabled) in &self.lights {
+            if let Ok(node) = document.tree.get_mut(id) {
+                if let NodeKind::Light { settings } = &mut node.kind {
+                    settings.enabled = enabled;
+                }
+            }
+        }
+        for &(id, transform) in &self.transforms {
+            if let Ok(node) = document.tree.get_mut(id) {
+                node.transform = transform;
+            }
+        }
+        document.product_turn = self.turn;
     }
 }
 
 /// Make the scene what `studio` says, leaving its variants for
 /// [`crate::studio::apply_variants`] to assign.
 fn put_studio(document: &mut SceneDocument, studio: crate::studio::Studio) {
+    // To the saved camera of its name, made active, so a set of views
+    // shares the cameras it names rather than writing each over whichever
+    // camera was active; one without a namesake takes the active one's
+    // place, as it always did.
     if let Some(camera) = studio.camera {
+        if let Some(index) = document.cameras.find(&camera.name) {
+            document.cameras.select(index);
+        }
         *document.cameras.active_mut() = camera;
+    }
+    crate::studio::switch_lights(document, &studio.lights);
+    if let Some(yaw) = studio.product_yaw {
+        crate::studio::turn_product(document, yaw);
     }
     if let Some(environment) = studio.environment {
         document.environment = environment;
@@ -1658,6 +1830,7 @@ impl Reissue {
         node: None,
         material: None,
         split: None,
+        composite: None,
     };
 
     /// The identifiers recorded by a previous run of the same command.
@@ -1667,6 +1840,7 @@ impl Reissue {
                 node: Some(*node),
                 material: None,
                 split: None,
+                composite: None,
             },
             Undo::Split {
                 children, meshes, ..
@@ -1674,18 +1848,224 @@ impl Reissue {
                 node: None,
                 material: None,
                 split: Some((children.clone(), meshes.clone())),
+                composite: None,
             },
             Undo::Grouped { group, .. } => Reissue {
                 node: Some(*group),
                 material: None,
                 split: None,
+                composite: None,
             },
             Undo::Unlinked { created, .. } => Reissue {
                 node: None,
                 material: Some(*created),
                 split: None,
+                composite: None,
+            },
+            Undo::Composite { steps, .. } => Reissue {
+                composite: Some(steps.iter().map(|(command, undo)| (command.clone(), Reissue::from_undo(undo))).collect()),
+                ..Reissue::FRESH
             },
             _ => Reissue::FRESH,
+        }
+    }
+}
+
+/// Undo `steps`, last first, and put the product's turn back.
+fn take_back(document: &mut SceneDocument, steps: &[(Command, Undo)], turn: crate::studio::ProductTurn) {
+    for (_, undo) in steps.iter().rev() {
+        let _ = revert(document, undo);
+    }
+    document.product_turn = turn;
+}
+
+/// `studio_preset.apply`: the preset's studio put in place of the scene's,
+/// as the commands each part is, run in order and undone together.
+fn apply_studio_preset(
+    document: &mut SceneDocument,
+    preset: &crate::preset::StudioPreset,
+    options: &crate::preset::ApplyOptions,
+) -> Result<Undo, CommandError> {
+    use crate::preset::{fit, light_transform, render_settings, scaled_camera, views};
+    let turn = document.product_turn;
+    let mut steps: Vec<(Command, Undo)> = Vec::new();
+    let result = (|| -> Result<(), CommandError> {
+        let mut run = |document: &mut SceneDocument, command: Command| -> Result<Undo, CommandError> {
+            let undo = execute(document, &command, Reissue::FRESH)?;
+            steps.push((command, undo.clone()));
+            Ok(undo)
+        };
+
+        // The product as it was placed: a view's turn taken off first, so
+        // the studio frames the product and not a view of it.
+        if turn.yaw.abs() > 1e-7 {
+            let (transforms, _) = crate::studio::turned(document, 0.0);
+            if !transforms.is_empty() {
+                run(document, Command::SetTransform { transforms })?;
+            }
+        }
+        document.product_turn = crate::studio::ProductTurn::default();
+
+        // The library: each material added once, an identical one already
+        // there kept, its pictures given the document's own ids.
+        for material in &preset.materials {
+            let wanted = material.definition.graph.content_hash();
+            let there = document
+                .materials
+                .iter()
+                .any(|(_, d)| d.name == material.definition.name && d.graph.content_hash() == wanted);
+            if there {
+                continue;
+            }
+            let mut definition = material.definition.clone();
+            let mut next = document.textures.next_id();
+            let mut renumbered = std::collections::BTreeMap::new();
+            let mut textures = Vec::new();
+            for (id, source) in &material.textures {
+                let existing =
+                    document.textures.iter().find(|(_, s)| s.path == source.path && s.role == source.role).map(|(id, _)| id);
+                let target = existing.unwrap_or_else(|| {
+                    let target = tequila_materials::graph::TextureId(next);
+                    next += 1;
+                    textures.push((target, source.clone()));
+                    target
+                });
+                renumbered.insert(*id, target);
+            }
+            definition.graph.remap_textures(&|id| renumbered.get(&id).copied().unwrap_or(id));
+            let key = MaterialKey(document.materials.next_key());
+            run(
+                document,
+                Command::Import {
+                    payload: Box::new(ImportPayload {
+                        meshes: Vec::new(),
+                        textures,
+                        materials: vec![(key, definition)],
+                        nodes: Vec::new(),
+                        roots: Vec::new(),
+                    }),
+                },
+            )?;
+        }
+
+        // Lighting, render settings and the image's look.
+        run(document, Command::SetLightingConfig { config: Box::new(preset.lighting.custom.clone()) })?;
+        if let Some(lighting) = preset.lighting.preset {
+            run(document, Command::SetLightingPreset { preset: lighting })?;
+        }
+        run(document, Command::SetRenderSettings { settings: Box::new(render_settings(preset, document)) })?;
+        run(document, Command::SetImageStyle { style: Box::new(preset.image_style) })?;
+        // The environment, whole - floor, sky, pins and all - by a Studio
+        // that holds nothing else, the one command that puts all of it in
+        // place; the views replace it below.
+        run(
+            document,
+            Command::SetStudios {
+                studios: vec![crate::studio::Studio {
+                    name: preset.name.clone(),
+                    environment: Some(preset.environment.clone()),
+                    ..crate::studio::Studio::default()
+                }],
+            },
+        )?;
+        run(document, Command::ApplyStudio { index: 0 })?;
+
+        // The product placed as the studio expects it, and how far the
+        // cameras move for its size.
+        let fitted = fit(document, &preset.framing, options);
+        if !fitted.transforms.is_empty() {
+            run(document, Command::SetTransform { transforms: fitted.transforms.clone() })?;
+        }
+        let scale = options.scale.unwrap_or(preset.framing.scale);
+
+        // The lights: the scene's studio lights out - those at the top and
+        // in a studio's group, never a light a model brought with it - and
+        // the preset's in, in a group of their own.
+        if !options.keep_lights {
+            let old: Vec<NodeId> = document
+                .tree
+                .roots()
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    document.tree.get(id).is_some_and(|n| {
+                        matches!(n.kind, NodeKind::Light { .. }) || n.metadata.contains_key(crate::studio::STUDIO_LIGHTS)
+                    })
+                })
+                .collect();
+            if !old.is_empty() {
+                run(document, Command::DeleteNodes { nodes: old })?;
+            }
+        }
+        if !options.keep_lights && !preset.lights.is_empty() {
+            let Undo::AddedNode(group) = run(document, Command::AddGroup { parent: None, name: format!("{} lights", preset.name) })? else {
+                return Err(CommandError::InvalidValue("a group was not added"));
+            };
+            run(
+                document,
+                Command::SetMetadata { node: group, key: crate::studio::STUDIO_LIGHTS.into(), value: Some(preset.id.clone()) },
+            )?;
+            let mut placed = Vec::new();
+            for light in &preset.lights {
+                let Undo::AddedNode(id) = run(
+                    document,
+                    Command::AddLight { parent: Some(group), name: light.name.clone(), settings: Box::new(light.settings.clone()) },
+                )?
+                else {
+                    return Err(CommandError::InvalidValue("a light was not added"));
+                };
+                if let Some(transform) = light_transform(light, fitted.scale, scale) {
+                    placed.push((id, transform));
+                }
+            }
+            if !placed.is_empty() {
+                run(document, Command::SetTransform { transforms: placed })?;
+            }
+        }
+
+        // The cameras its views name, framed for the product; the scene's
+        // own taken out after, so there is always one.
+        if !preset.cameras.is_empty() {
+            let before = document.cameras.len();
+            for camera in &preset.cameras {
+                run(document, Command::AddCamera { camera: Box::new(scaled_camera(camera, fitted.scale)) })?;
+            }
+            if !options.keep_cameras {
+                for _ in 0..before {
+                    run(document, Command::RemoveCamera { index: 0 })?;
+                }
+                run(document, Command::SelectCamera { index: 0 })?;
+            }
+        }
+
+        // The views, and the rules to dress a product with the library -
+        // offered, never applied.
+        run(document, Command::SetStudios { studios: views(preset, fitted.scale) })?;
+        if !preset.material_rules.is_empty() {
+            let name = crate::preset::template_name(preset);
+            let rules: Vec<crate::templates::Rule> = preset
+                .material_rules
+                .iter()
+                .filter_map(|rule| {
+                    let key = document.materials.iter().find(|(_, d)| d.name == rule.material).map(|(key, _)| key)?;
+                    Some(crate::templates::Rule { condition: crate::templates::Condition::Name(rule.pattern.clone()), material: key })
+                })
+                .collect();
+            let mut templates: Vec<crate::templates::MaterialTemplate> =
+                document.material_templates.iter().filter(|t| t.name != name).cloned().collect();
+            templates.push(crate::templates::MaterialTemplate { name, rules });
+            run(document, Command::SetMaterialTemplates { templates })?;
+        }
+        if !preset.studios.is_empty() {
+            run(document, Command::ApplyStudio { index: 0 })?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(Undo::Composite { steps, turn }),
+        Err(error) => {
+            take_back(document, &steps, turn);
+            Err(error)
         }
     }
 }
@@ -2430,6 +2810,25 @@ fn execute(
             Ok(Undo::Studios(previous))
         }
 
+        Command::ApplyStudioPreset { preset, options } => match reissue.composite {
+            // Redo: the steps it took, with the identifiers they had.
+            Some(steps) => {
+                let turn = document.product_turn;
+                let mut done = Vec::with_capacity(steps.len());
+                for (command, reissue) in steps {
+                    match execute(document, &command, reissue) {
+                        Ok(undo) => done.push((command, undo)),
+                        Err(error) => {
+                            take_back(document, &done, turn);
+                            return Err(error);
+                        }
+                    }
+                }
+                Ok(Undo::Composite { steps: done, turn })
+            }
+            None => apply_studio_preset(document, preset, options),
+        },
+
         Command::ApplyStudio { index } => {
             let Some(studio) = document.studios.get(*index).cloned() else {
                 return Err(CommandError::InvalidValue("no studio at that index"));
@@ -2832,6 +3231,10 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::Composite { steps, turn } => {
+            take_back(document, steps, *turn);
+            Ok(())
+        }
         Undo::StudioApplied(undo) => {
             undo.restore(document);
             Ok(())

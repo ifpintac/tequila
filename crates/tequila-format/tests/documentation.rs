@@ -107,6 +107,7 @@ fn document_with_everything() -> SceneDocument {
         active: Some(0),
     };
     document.studios = vec![tequila_scene::studio::Studio::capture("Hero", &document)];
+    document.product_turn = tequila_scene::studio::ProductTurn { yaw: 0.9, pivot: [0.0, 0.0] };
     document.configurator = tequila_scene::configurator::Configurator::draft(&document);
     document.material_templates = vec![tequila_scene::templates::MaterialTemplate {
         name: "Fasteners".into(),

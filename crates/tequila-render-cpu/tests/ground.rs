@@ -429,6 +429,56 @@ fn a_short_reflection_fades_with_height() {
     assert!(strongest(&short) > 0.9 * strongest(&full), "the reflection weakened at the floor too: {} of {}", strongest(&short), strongest(&full));
 }
 
+/// The floor's reflection shows the product as it is, lit by the floor's
+/// bounce: with a bounce on, the mirrored panel is brighter, as the panel
+/// itself is. Left out of the reflection, a face the bounce lifted was
+/// mirrored as dark as without it.
+#[test]
+fn the_reflection_shows_the_product_lit_by_the_bounce() {
+    let mirror = ShadowCatcher { reflections: 1.0, ..Default::default() };
+    let bounced = ShadowCatcher { bounce: Some(Spectrum::splat(0.8)), ..mirror.clone() };
+    let plain = render_layer(scene(Some(mirror), true), 32);
+    let lit = render_layer(scene(Some(bounced), true), 32);
+    let light = |image: &Framebuffer| image.pixels().iter().map(|p| p.mean().luminance()).sum::<f32>();
+    assert!(light(&lit) > 1.2 * light(&plain), "the bounce did not reach the reflection: {} against {}", light(&lit), light(&plain));
+}
+
+/// A short reflection's layer spends its samples where there is a
+/// reflection: after a first pass, only a band around what it found takes
+/// the rest, and the reflection comes to what sampling the whole frame
+/// makes of it.
+#[test]
+fn the_reflection_pass_samples_only_where_there_is_one() {
+    let short = || scene(Some(ShadowCatcher { reflections: 1.0, reflection_fade: Some(0.5), ..Default::default() }), true);
+    let whole = render_layer(short(), 64);
+    let device = Device::shared().expect("an Embree device");
+    let intersector = EmbreeIntersector::build(&device, short()).expect("builds");
+    let mut banded = Framebuffer::new(SIZE, SIZE);
+    tequila_render_cpu::floor::render_floor_reflection(&intersector, &mut banded, camera(), &tequila_render_core::settings::IntegratorConfig::default(), 64);
+    let total = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).sum::<f32>();
+    assert!((total(&banded) - total(&whole)).abs() < 0.05 * total(&whole), "the band's reflection is {} where the whole frame's is {}", total(&banded), total(&whole));
+    let skipped = banded.pixels().iter().filter(|p| p.samples < 64).count();
+    assert!(skipped > SIZE * SIZE / 4, "only {skipped} pixels were spared the full count");
+}
+
+/// Faded by distance, the floor mirrors the panel only near where it
+/// stands, and at most about half as strongly as the full mirror beside it,
+/// as an occlusion mask is: the panel hides half the sky from the floor at
+/// its foot, and none of it beyond the fade.
+#[test]
+fn a_reflection_faded_by_distance_shows_near_the_product() {
+    let full = render_layer(scene(Some(ShadowCatcher { reflections: 1.0, ..Default::default() }), true), 64);
+    let near = render_layer(
+        scene(Some(ShadowCatcher { reflections: 1.0, reflection_fade: Some(0.5), reflection_fade_by_distance: true, ..Default::default() }), true),
+        64,
+    );
+    let total = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).sum::<f32>();
+    let strongest = |image: &Framebuffer| image.pixels().iter().map(|p| p.alpha()).fold(0.0f32, f32::max);
+    assert!(total(&near) > 0.0, "no reflection at all");
+    assert!(total(&near) < 0.5 * total(&full), "the reflection did not shorten: {} of {}", total(&near), total(&full));
+    assert!(strongest(&near) < 0.8 * strongest(&full), "as strong as the full mirror: {} of {}", strongest(&near), strongest(&full));
+}
+
 fn changed_pixels(a: &Framebuffer, b: &Framebuffer) -> usize {
     let mut changed = 0;
     for y in 0..SIZE {

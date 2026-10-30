@@ -92,7 +92,8 @@ impl OutputFormat {
     /// that cannot be written.
     pub fn depths(self) -> &'static [BitDepth] {
         match self {
-            OutputFormat::Png | OutputFormat::Jpeg => &[BitDepth::Eight],
+            OutputFormat::Png => &[BitDepth::Eight, BitDepth::Sixteen],
+            OutputFormat::Jpeg => &[BitDepth::Eight],
             OutputFormat::Exr => &[BitDepth::Sixteen, BitDepth::ThirtyTwo],
             OutputFormat::Tiff | OutputFormat::Psd => &BitDepth::ALL,
         }
@@ -267,6 +268,17 @@ pub struct RenderSettings {
     /// and removes energy the Clamped Energy pass then has to account for. §3.5
     /// allows it only as an explicit choice, which is what `Option` says here.
     pub clamp_indirect: Option<f32>,
+    /// A ceiling on direct light of its own (Cycles), 0 for none. Unset, the
+    /// clamp above holds for direct light too, as it always did; set, the
+    /// two are apart, as Blender's are: a studio that clamps bounced light at
+    /// 10 and leaves direct light alone keeps its brightest highlights.
+    pub clamp_direct: Option<f32>,
+    /// How each pixel's samples are spread. Unset is one pixel's box, what
+    /// both renderers always used; Blender's is Blackman-Harris, 1.5 px.
+    pub pixel_filter: Option<tequila_render_core::settings::PixelFilter>,
+    /// The noise below which a pixel stops taking samples, for Cycles.
+    /// Unset is Cycles' own, 0.01.
+    pub adaptive_threshold: Option<f32>,
 
     /// Render only this rectangle (§9.5).
     pub region: Option<Region>,
@@ -323,6 +335,9 @@ impl Default for RenderSettings {
             prefilter_guides: true,
             reject_fireflies: true,
             clamp_indirect: None,
+            clamp_direct: None,
+            pixel_filter: None,
+            adaptive_threshold: None,
             region: None,
             format: OutputFormat::Png,
             depth: BitDepth::Eight,

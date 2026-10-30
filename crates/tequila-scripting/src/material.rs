@@ -245,7 +245,7 @@ fn preview(request: &MaterialRequest, document: &SceneDocument) -> Result<Value,
         display: tequila_color::DisplayPipeline::default(),
         alpha_mode: tequila_format::output::AlphaMode::None,
     };
-    output.write(&path, tequila_format::output::ImageFormat::Png).map_err(|e| e.to_string())?;
+    output.write(&path, tequila_format::output::ImageFormat::Png(tequila_format::psd::Depth::Eight)).map_err(|e| e.to_string())?;
     let mut out = Object::new();
     out.set("path", path.display().to_string())
         .set("name", name)

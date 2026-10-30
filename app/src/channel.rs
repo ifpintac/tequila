@@ -144,6 +144,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::Import { path, parent } => import(app, path, *parent),
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
+        Operation::StudioPreset(request) => studio_preset(app, request),
         Operation::Material(request) => material(app, request),
         Operation::Plugin(request) => plugin(app, request),
         Operation::Project { action, save: saving, discard } => project(app, action, *saving, *discard),
@@ -645,6 +646,55 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
             Err(why) => Reply::Failed(why),
         };
     }
+    if job.studios == Some(true) {
+        if app.project.document().studios.is_empty() {
+            return Reply::Failed("there are no Studios; set them with studio.set or apply a studio preset".into());
+        }
+        let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
+        let ids = app.queue_studios(Some(settings));
+        let mut out = Object::new();
+        out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>())
+            .set("count", ids.len() as f64)
+            .set("folder", folder.display().to_string())
+            .set("note", "one job per Studio, each view captured now; query jobs for progress");
+        return Reply::Value(out.build());
+    }
+    if let Some(wanted) = &job.studio {
+        let studios = &app.project.document().studios;
+        let Some(index) = studios
+            .iter()
+            .position(|s| &s.name == wanted)
+            .or_else(|| wanted.parse::<usize>().ok().filter(|&i| i < studios.len()))
+        else {
+            let names: Vec<&str> = studios.iter().map(|s| s.name.as_str()).collect();
+            return Reply::Failed(format!("there is no Studio `{wanted}`; there are {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+        };
+        // Applied for the render and taken back, as a batch of views is.
+        let before = app.project.last_studio.clone();
+        app.project.begin_group();
+        if let Err(error) = app.project.apply(tequila_scene::Command::ApplyStudio { index }) {
+            app.project.abandon_group();
+            return Reply::Failed(error.to_string());
+        }
+        let name = job.name.clone().unwrap_or_else(|| app.project.document().studios[index].name.clone());
+        let camera = app.project.document().cameras.active_index();
+        let (width, height, samples) = (settings.width, settings.height, settings.max_samples);
+        let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
+        let id = app.project.enqueue(name.clone(), camera, settings);
+        app.project.abandon_group();
+        app.project.last_studio = before;
+        app.camera.adopt(app.project.camera());
+        app.submit();
+        let mut out = Object::new();
+        out.set("job", id as f64)
+            .set("name", name)
+            .set("width", width as f64)
+            .set("height", height as f64)
+            .set("samples", samples as f64)
+            .set("folder", folder.display().to_string())
+            .set("note", "the Studio is captured now and the scene left as it was; query jobs for progress and the file");
+        return Reply::Value(out.build());
+    }
     if job.configurations == Some(true) {
         if app.project.document().configurator.is_empty() {
             return Reply::Failed("there is no configurator; set one with configurator.set".into());
@@ -949,6 +999,84 @@ fn library(app: &mut TequilaApp, request: &tequila_scripting::protocol::LibraryR
             carry_out(app, outcome)
         }
         Err(error) => Reply::Failed(error),
+    }
+}
+
+/// Studio presets (`docs/studio-presets.md`): listed, applied by id, the
+/// scene's studio saved as one, installed, exported, deleted, and every view
+/// rendered.
+fn studio_preset(app: &mut TequilaApp, request: &Value) -> Reply {
+    use tequila_format::studio_preset as presets;
+    use tequila_scripting::studio_presets as shared;
+    let action = request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase();
+    let path = |what: &str| request.get("path").and_then(|v| v.as_str()).map(std::path::PathBuf::from).ok_or_else(|| format!("`{action}` needs {what} \"path\""));
+    let done = |result: Result<(), String>| match result {
+        Ok(()) => Reply::Done,
+        Err(e) => Reply::Failed(e),
+    };
+    match action.as_str() {
+        "list" => Reply::Value(shared::list(crate::studio_presets::product_radius(&app.project))),
+        "apply" => {
+            let (file, options) = match shared::named(request, "apply").and_then(|file| shared::options(request).map(|o| (file, o))) {
+                Ok(found) => found,
+                Err(e) => return Reply::Failed(e),
+            };
+            let dress = request.get("dress").and_then(|v| v.as_bool()).unwrap_or(false);
+            match crate::studio_presets::apply(&mut app.project, &file, options, dress) {
+                Ok(applied) => {
+                    app.camera.adopt(app.project.camera());
+                    app.submit();
+                    let mut out = Object::new();
+                    out.set("applied", file.preset.id.clone())
+                        .set("views", applied.views as f64)
+                        .set("lights", applied.lights as f64)
+                        .set("cameras", applied.cameras as f64)
+                        .set("scale", applied.scale)
+                        .set("dressed", applied.dressed as f64)
+                        .set("note", "one undo step; the first view is applied - studio.apply or queue studio=<name> for the others");
+                    Reply::Value(out.build())
+                }
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "save" => {
+            let thumbnail = crate::studio_presets::thumbnail_png(&app.image);
+            match crate::studio_presets::save(&app.project, &shared::save_as(request), thumbnail.as_deref()) {
+                Ok(file) => {
+                    app.library.reload_studios();
+                    Reply::Value(shared::describe(&file, false))
+                }
+                Err(e) => Reply::Failed(e),
+            }
+        }
+        "delete" => {
+            let result = shared::named(request, "delete").and_then(|file| presets::delete(&file));
+            app.library.reload_studios();
+            done(result)
+        }
+        "install" => match path("the package's or the folder's").and_then(|from| presets::install(&from, &crate::library_tab::user_library_path())) {
+            Ok(installed) => {
+                app.library.reload();
+                app.library.reload_studios();
+                let mut out = Object::new();
+                out.set("installed", installed.preset.preset.id.clone())
+                    .set("path", installed.preset.path.display().to_string())
+                    .set("materials", Value::Array(installed.materials.into_iter().map(Value::String).collect()));
+                Reply::Value(out.build())
+            }
+            Err(e) => Reply::Failed(e),
+        },
+        "export" => done(path("the package's").and_then(|to| shared::named(request, "export").and_then(|file| presets::export(&file, &to)))),
+        "render_all" => {
+            if app.project.document().studios.is_empty() {
+                return Reply::Failed("there are no Studios; apply a studio preset first".into());
+            }
+            let ids = app.queue_studios(None);
+            let mut out = Object::new();
+            out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>()).set("count", ids.len() as f64);
+            Reply::Value(out.build())
+        }
+        other => Reply::Failed(format!("`{other}` is not a studio preset action")),
     }
 }
 
@@ -1389,7 +1517,7 @@ fn render_to_file(
     output
         .write(
             std::path::Path::new(path),
-            tequila_format::output::ImageFormat::Png,
+            tequila_format::output::ImageFormat::Png(tequila_format::psd::Depth::Eight),
         )
         .map_err(|e| e.to_string())?;
 

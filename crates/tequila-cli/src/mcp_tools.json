@@ -392,7 +392,7 @@
  },
  {
   "name": "tequila_queue",
-  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs.",
+  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -419,6 +419,14 @@
     },
     "camera": {
      "type": "integer"
+    },
+    "studio": {
+     "type": "string",
+     "description": "A Studio (a view) by name or index, applied for the render and taken back."
+    },
+    "studios": {
+     "type": "boolean",
+     "description": "Every Studio, one render each, named for its view."
     }
    },
    "required": [],
@@ -428,6 +436,105 @@
  {
   "name": "tequila_jobs",
   "description": "The background render queue: state, progress and output file of each job.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_studio_presets",
+  "description": "The studio presets installed: complete studios - lights, cameras and views, floor, look - for a kind of product, by family and size. Each lists its views and the product radius it was framed for; \"suggested\" marks the size in each family nearest the product in the scene.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_studio_preset_apply",
+  "description": "Apply an installed studio preset as ONE undo step: its lights, cameras and views (Studios), environment and floor, look and render settings, framed to the product's size and the product stood on its floor. The first view is applied; tequila_studio_render_all renders them all.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "preset": {
+     "type": "string",
+     "description": "The preset's id, from tequila_studio_presets."
+    },
+    "front": {
+     "type": "string",
+     "enum": [
+      "+z",
+      "-z",
+      "+x",
+      "-x"
+     ],
+     "description": "The product's side that should face the Main camera (default +z)."
+    },
+    "scale": {
+     "type": "string",
+     "enum": [
+      "cameras",
+      "cameras_and_lights",
+      "none"
+     ],
+     "description": "What follows the product's size (default: the preset's own choice)."
+    },
+    "keep_lights": {
+     "type": "boolean"
+    },
+    "keep_cameras": {
+     "type": "boolean"
+    },
+    "keep_placement": {
+     "type": "boolean",
+     "description": "Leave the product where it is."
+    },
+    "dress": {
+     "type": "boolean",
+     "description": "Also put the preset's materials on parts by their names (its material rules)."
+    }
+   },
+   "required": [
+    "preset"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_studio_preset_save",
+  "description": "Keep the scene's studio - everything but the product - as a studio preset of the person's own, framed for the product it has now.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "family": {
+     "type": "string"
+    },
+    "size": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "materials": {
+     "type": "boolean",
+     "description": "Keep the project's materials with it."
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_studio_render_all",
+  "description": "Render every view (Studio) in the background, one image each, named for its view. Only when asked for renders.",
   "inputSchema": {
    "type": "object",
    "properties": {},

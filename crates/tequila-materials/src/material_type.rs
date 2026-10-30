@@ -95,6 +95,21 @@ pub enum Param {
     /// only the shading.
     Displacement,
     DisplacementDetail,
+    /// Rounded edges at render time: sharp CAD edges shaded as if filleted
+    /// to this radius, in metres, without touching the geometry - V-Ray's
+    /// rounded corners, Cycles' Bevel. 0 is sharp. A large part of why a
+    /// product's edges and chamfers catch the light.
+    EdgeRadius,
+    /// How many probes the rounding takes per shading point.
+    EdgeSamples,
+    /// Light the medium inside gives off: a lit light guide or LED window
+    /// glowing from within, bright in the middle and soft toward its edges
+    /// by how far light travels through it, where surface emission is flat
+    /// paint. Needs a transmission depth for the medium to exist.
+    VolumeEmissionColor,
+    /// Its strength, as Cycles' volume emission takes it: radiance per metre
+    /// travelled.
+    VolumeEmissionStrength,
 }
 
 impl Param {
@@ -152,11 +167,15 @@ impl Param {
             Param::Bump => "Bump",
             Param::Displacement => "Displacement",
             Param::DisplacementDetail => "Displacement Detail",
+            Param::EdgeRadius => "Round Edges",
+            Param::EdgeSamples => "Round Edges Samples",
+            Param::VolumeEmissionColor => "Glow Color",
+            Param::VolumeEmissionStrength => "Glow Inside",
         }
     }
 
     /// Every parameter, for the types that expose all of them.
-    pub const ALL: [Param; 49] = [
+    pub const ALL: [Param; 53] = [
         Param::BaseWeight,
         Param::BaseColor,
         Param::BaseMetalness,
@@ -206,6 +225,10 @@ impl Param {
         Param::Bump,
         Param::Displacement,
         Param::DisplacementDetail,
+        Param::EdgeRadius,
+        Param::EdgeSamples,
+        Param::VolumeEmissionColor,
+        Param::VolumeEmissionStrength,
     ];
 }
 
@@ -725,6 +748,23 @@ impl MaterialType {
                 }
             }
         }
+        // Rounded edges wherever there is a surface to shade, as Bump: every
+        // CAD part has edges that catch light.
+        if params.contains(&Param::Bump) {
+            for param in [Param::EdgeRadius, Param::EdgeSamples] {
+                if !params.contains(&param) {
+                    params.push(param);
+                }
+            }
+        }
+        // A glow inside wherever there is an inside: a transmission depth.
+        if params.contains(&Param::TransmissionDepth) {
+            for param in [Param::VolumeEmissionColor, Param::VolumeEmissionStrength] {
+                if !params.contains(&param) {
+                    params.push(param);
+                }
+            }
+        }
         params
     }
 
@@ -987,6 +1027,10 @@ impl Param {
             Param::Bump => "bump",
             Param::Displacement => "displacement",
             Param::DisplacementDetail => "displacement_detail",
+            Param::EdgeRadius => "edge_radius",
+            Param::EdgeSamples => "edge_samples",
+            Param::VolumeEmissionColor => "volume_emission_color",
+            Param::VolumeEmissionStrength => "volume_emission_strength",
         }
     }
 
@@ -1041,6 +1085,10 @@ impl Param {
             "bump" => Param::Bump,
             "displacement" => Param::Displacement,
             "displacement_detail" => Param::DisplacementDetail,
+            "edge_radius" => Param::EdgeRadius,
+            "edge_samples" => Param::EdgeSamples,
+            "volume_emission_color" => Param::VolumeEmissionColor,
+            "volume_emission_strength" => Param::VolumeEmissionStrength,
             _ => return None,
         })
     }
@@ -1098,6 +1146,10 @@ impl Param {
             Param::Occlusion => Some(ParamValue::Scalar(material.geometry_occlusion)),
             Param::Bump | Param::Displacement | Param::Tangent => None,
             Param::DisplacementDetail => Some(ParamValue::Scalar(material.displacement_detail)),
+            Param::EdgeRadius => Some(ParamValue::Scalar(material.edge_radius)),
+            Param::EdgeSamples => Some(ParamValue::Scalar(material.edge_samples)),
+            Param::VolumeEmissionColor => Some(ParamValue::Color(material.volume_emission_color)),
+            Param::VolumeEmissionStrength => Some(ParamValue::Scalar(material.volume_emission_strength)),
         }
     }
 
@@ -1155,6 +1207,10 @@ impl Param {
             (Param::Occlusion, ParamValue::Scalar(value)) => material.geometry_occlusion = value,
             (Param::Bump, _) | (Param::Displacement, _) | (Param::Tangent, _) => return false,
             (Param::DisplacementDetail, ParamValue::Scalar(value)) => material.displacement_detail = value,
+            (Param::EdgeRadius, ParamValue::Scalar(value)) => material.edge_radius = value,
+            (Param::EdgeSamples, ParamValue::Scalar(value)) => material.edge_samples = value,
+            (Param::VolumeEmissionColor, ParamValue::Color(value)) => material.volume_emission_color = value,
+            (Param::VolumeEmissionStrength, ParamValue::Scalar(value)) => material.volume_emission_strength = value,
             _ => return false,
         }
         true
@@ -1242,6 +1298,8 @@ impl Param {
             Param::Occlusion => ParamUi::Scalar,
             Param::Bump | Param::Displacement | Param::Tangent => ParamUi::Slot,
             Param::DisplacementDetail => ParamUi::Scalar,
+            Param::EdgeRadius | Param::EdgeSamples | Param::VolumeEmissionStrength => ParamUi::Scalar,
+            Param::VolumeEmissionColor => ParamUi::Color,
         }
     }
 
@@ -1272,7 +1330,7 @@ impl Param {
     /// Whether the value is a count rather than a measure: the control steps
     /// in ones and shows no decimals.
     pub fn is_whole_number(self) -> bool {
-        matches!(self, Param::MediumPriority)
+        matches!(self, Param::MediumPriority | Param::EdgeSamples)
     }
 
     /// Whether the parameter belongs to the whole piece rather than to a
@@ -1342,6 +1400,11 @@ impl Param {
             // Up to a centimetre in a scene in metres; zero is the bump-only
             // approximation.
             Param::DisplacementDetail => Some(ParamRange { low: 0.0, high: 0.01, logarithmic: false }),
+            // Metres: up to 5 mm, past which a fillet belongs in the model.
+            Param::EdgeRadius => Some(ParamRange { low: 0.0, high: 0.005, logarithmic: false }),
+            Param::EdgeSamples => Some(ParamRange { low: 1.0, high: 32.0, logarithmic: false }),
+            Param::VolumeEmissionColor => None,
+            Param::VolumeEmissionStrength => Some(ParamRange { low: 0.0, high: 100000.0, logarithmic: true }),
         }
     }
 }
@@ -1605,6 +1668,10 @@ mod tests {
             flake_coverage: 0.0,
             flake_normal: tequila_core::math::Vec3::Z,
             displacement_detail: 0.00077,
+            edge_radius: 0.00025,
+            edge_samples: 12.0,
+            volume_emission_color: spectrum(0.97, 0.91, 0.85),
+            volume_emission_strength: 190.0,
             emission_luminance: 1234.0,
             emission_color: spectrum(0.19, 0.31, 0.42),
             geometry_opacity: 0.73,
@@ -2233,6 +2300,22 @@ mod exposed_parameters_do_something {
     /// and it names where. Without that, "implemented outside the BSDF" would
     /// be an excuse that swallows the whole check.
     const IMPLEMENTED_OUTSIDE_THE_BSDF: &[(Param, &str)] = &[
+        (
+            Param::EdgeRadius,
+            "rounded edges bend the shading normal before the BSDF is built, by              probing the geometry around the shading point (Cycles' Bevel, and              tequila-render-core's `bevel`). Covered by the app's              `rounded_edges_catch_light_in_both_renderers`, against a render.",
+        ),
+        (
+            Param::VolumeEmissionColor,
+            "a glow inside is the medium's, picked up along the path through              it, not the surface's: the integrator adds `Material::emitted_over`              per segment. Covered by tequila-materials' `a_medium_glows_by_its_path_through_it`              and the app's `a_glowing_medium_glows_in_both_renderers`.",
+        ),
+        (
+            Param::VolumeEmissionStrength,
+            "with Glow Color: the medium's, along the path. Covered by              `a_medium_glows_by_its_path_through_it`.",
+        ),
+        (
+            Param::EdgeSamples,
+            "the Bevel's probe count, with Edge Radius. Covered by the app's              `rounded_edges_catch_light_in_cycles`.",
+        ),
         (
             Param::MediumPriority,
             "which medium a path is in where two overlap is the \

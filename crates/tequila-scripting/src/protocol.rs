@@ -140,6 +140,11 @@ pub enum Operation {
     /// (`docs/livelink-protocol.md`): `hello`, `sync` or `camera`, read by
     /// the application, which owns the scene the sync applies to.
     LiveLink(Value),
+    /// `studio_preset`: Studio presets (`docs/studio-presets.md`) - `list`
+    /// them, `apply` an installed one (its id as `preset`), `save` the current studio as one,
+    /// `install` or `export` a package, `delete` one, or `render_all`
+    /// views. Carried as sent; the application reads its fields.
+    StudioPreset(Value),
     /// The material library: putting presets on parts, and adding to the
     /// user's own - what a script or a plugin does with materials beyond
     /// the document. See [`LibraryRequest`].
@@ -247,6 +252,39 @@ pub struct LibraryRequest {
     pub size: Option<f32>,
 }
 
+/// The `studio_preset` operation's actions.
+pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", "install", "export", "render_all"];
+
+/// A `studio_preset.apply` naming an installed preset by `id` rather than
+/// carrying it: the preset read in, so the command is whole - what the
+/// journal records, and what replays.
+fn with_preset(command: Value) -> Result<Value, ProtocolError> {
+    if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
+        return Ok(command);
+    }
+    // The preset itself, or an installed one's id in its place.
+    let id = match command.get("preset") {
+        Some(Value::String(id)) => id.clone(),
+        Some(_) => return Ok(command),
+        None => match command.get("id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return Err(ProtocolError("studio_preset.apply needs an installed preset's id as \"preset\", or the preset itself".into())),
+        },
+    };
+    let (presets, _) = tequila_format::studio_preset::list();
+    let Some(found) = presets.iter().find(|p| p.preset.id == id) else {
+        let ids: Vec<&str> = presets.iter().map(|p| p.preset.id.as_str()).collect();
+        return Err(ProtocolError(format!(
+            "no studio preset `{id}` is installed; there are {}",
+            if ids.is_empty() { "none".to_string() } else { ids.join(", ") }
+        )));
+    };
+    let Value::Object(mut map) = command else { return Err(ProtocolError("a command is an object".into())) };
+    map.remove("id");
+    map.insert("preset".into(), tequila_format::studio_preset::to_inline(&found.preset));
+    Ok(Value::Object(map))
+}
+
 /// The library's actions, for the protocol and its documentation.
 pub const LIBRARY_ACTIONS: &[&str] = &["apply", "save", "import", "export", "delete"];
 
@@ -307,6 +345,11 @@ pub struct QueueRender {
     /// Sent to the render nodes (the Render window's Network rendering)
     /// rather than rendered here.
     pub network: Option<bool>,
+    /// A Studio - a view - rendered as it says, by its name or its index:
+    /// applied for the render and taken back, so the scene is as it was.
+    pub studio: Option<String>,
+    /// Every Studio, one render each, named for its view.
+    pub studios: Option<bool>,
 }
 
 /// Where to put the camera. Every field is optional and starts from where
@@ -521,7 +564,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             // reaching into the parsed value keeps exactly one decoder for
             // commands, which is what makes the journal's exhaustive
             // round-trip test cover this path too.
-            let command = video_label(field(value, "command")?)?;
+            let command = with_preset(video_label(field(value, "command")?)?)?;
             let text = json_write::to_string(&command);
             let command = tequila_format::journal::decode(&text)
                 .map_err(|e| ProtocolError(format!("the command could not be read: {e}")))?;
@@ -581,6 +624,16 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             },
         },
         "livelink" => Operation::LiveLink(value.clone()),
+        "studio_preset" => {
+            let action = string(value, "action")?.to_ascii_lowercase();
+            if !STUDIO_PRESET_ACTIONS.contains(&action.as_str()) {
+                return Err(ProtocolError(format!(
+                    "`{action}` is not a studio preset action; the actions are {}",
+                    STUDIO_PRESET_ACTIONS.join(", ")
+                )));
+            }
+            Operation::StudioPreset(value.clone())
+        }
         "library" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !LIBRARY_ACTIONS.contains(&action.as_str()) {
@@ -832,6 +885,12 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             engine: opt_string(value, "engine")?,
             configurations: opt_bool(value, "configurations")?,
             network: opt_bool(value, "network")?,
+            // A name, or an index given as a number.
+            studio: match value.get("studio") {
+                Some(v) if v.as_index().is_some() => v.as_index().map(|i| i.to_string()),
+                _ => opt_string(value, "studio")?,
+            },
+            studios: opt_bool(value, "studios")?,
         }),
         "stop" => Operation::Stop,
         "look" => Operation::Look(Look {
@@ -901,6 +960,10 @@ impl Operation {
             Operation::Project { action: ProjectAction::Open(path), .. } => format!("open {path}"),
             Operation::Ui(_) => "change panels".into(),
             Operation::LiveLink(message) => format!("LiveLink {}", message.get("message").and_then(|m| m.as_str()).unwrap_or("message")),
+            Operation::StudioPreset(request) => match request.get("preset").and_then(|i| i.as_str()) {
+                Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+                None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+            },
             Operation::Export { format, path, .. } => format!("export {format} to {path}"),
             Operation::Queue(job) => match &job.name {
                 Some(name) => format!("queue render {name}"),

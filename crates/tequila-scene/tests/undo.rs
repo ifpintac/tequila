@@ -579,7 +579,8 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::RenameCamera { .. }
         | Command::SetColorManagement { .. }
         | Command::SetRenderSettings { .. }
-        | Command::SetImageStyle { .. } => {}
+        | Command::SetImageStyle { .. }
+        | Command::ApplyStudioPreset { .. } => {}
     }
 }
 
@@ -727,6 +728,10 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::SetStudios { studios: Vec::new() },
         Command::ApplyStudio { index: 0 },
+        Command::ApplyStudioPreset {
+            preset: Box::new(tequila_scene::preset::capture(&SceneDocument::new(), "test", "Test", "Tests", "Small")),
+            options: tequila_scene::preset::ApplyOptions::default(),
+        },
         Command::SetConfigurator { configurator: Box::default() },
         Command::Configure { choices: Vec::new() },
         Command::SetMaterialTemplates { templates: Vec::new() },

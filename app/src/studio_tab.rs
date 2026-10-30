@@ -22,6 +22,8 @@ pub struct StudioTab {
     pub action: Option<crate::configurator_panel::Action>,
     /// Scroll the configurator into view on the next frame.
     pub reveal: bool,
+    /// Render every Studio, one image each, asked for this frame.
+    pub render_all: bool,
 }
 
 impl StudioTab {
@@ -31,6 +33,15 @@ impl StudioTab {
         let mut camera_moved = false;
         crate::theme::section(ui, "Studios");
         camera_moved |= studios(ui, project, &mut self.thumbnails);
+        let views = project.document().studios.len();
+        if views > 1
+            && ui
+                .button(format!("Render all {views} views"))
+                .on_hover_text("Queue every Studio, one image each, named for the view: {view} in the file name.")
+                .clicked()
+        {
+            self.render_all = true;
+        }
         ui.add_space(6.0);
         ui.separator();
         crate::theme::section(ui, "Model sets");
@@ -284,7 +295,26 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
                 if ui.add(crate::field::Checkbox::new(&mut variants, "Variants")).changed() {
                     studio.variants = if variants { now.variants.clone() } else { Vec::new() };
                 }
+                let mut lights = !studio.lights.is_empty();
+                if ui
+                    .add(crate::field::Checkbox::new(&mut lights, "Lights"))
+                    .on_hover_text("Which lights are on: a view can switch off what another needs, as a top view does its side strips.")
+                    .changed()
+                {
+                    studio.lights = if lights { now.lights.clone() } else { Vec::new() };
+                }
+                let mut turn = studio.product_yaw.is_some();
+                if ui
+                    .add(crate::field::Checkbox::new(&mut turn, "Product turn"))
+                    .on_hover_text("How the product is turned on its vertical axis: one set of lights and cameras, the product turned for each view, as on a turntable.")
+                    .changed()
+                {
+                    studio.product_yaw = turn.then_some(now.product_yaw).flatten();
+                }
             });
+            if let Some(yaw) = studio.product_yaw.filter(|y| y.abs() > 1e-4) {
+                ui.label(egui::RichText::new(format!("Turns the product {:+.0}°", yaw.to_degrees())).small().color(crate::theme::dim()));
+            }
             if ui
                 .small_button("Update from the current shot")
                 .on_hover_text("Replace what it holds with the scene as it is now.")
@@ -301,6 +331,12 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
                 }
                 if studio.model_set.is_some() {
                     studio.model_set = now.model_set;
+                }
+                if !studio.lights.is_empty() {
+                    studio.lights = now.lights.clone();
+                }
+                if studio.product_yaw.is_some() {
+                    studio.product_yaw = now.product_yaw;
                 }
                 if !studio.variants.is_empty() {
                     studio.variants = now.variants.clone();

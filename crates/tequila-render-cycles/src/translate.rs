@@ -81,6 +81,16 @@ pub struct Quality {
     /// Whether the denoiser cleans its guides first: Cycles' "accurate"
     /// prefilter, or none.
     pub prefilter: bool,
+    /// The lighting's Light Paths beyond the two limits above
+    /// (`IntegratorConfig::cycles`).
+    pub transport: tequila_render_core::settings::CyclesTransport,
+    /// A clamp on direct light of its own: with it, [`clamp`](Self::clamp)
+    /// is the indirect one alone.
+    pub clamp_direct: Option<f32>,
+    /// The render's pixel filter; `None` is Cycles' Film default.
+    pub pixel_filter: Option<tequila_render_core::settings::PixelFilter>,
+    /// The render's adaptive-sampling threshold; `None` is Cycles' own.
+    pub adaptive_threshold: Option<f32>,
 }
 
 impl Quality {
@@ -96,7 +106,22 @@ impl Quality {
             reject_fireflies: true,
             clamp: None,
             prefilter: true,
+            transport: config.cycles,
+            clamp_direct: None,
+            pixel_filter: None,
+            adaptive_threshold: None,
         }
+    }
+
+    /// With the render settings' direct clamp, pixel filter and adaptive
+    /// threshold, each `None` leaving Cycles as it was.
+    pub fn with_render_controls(
+        self,
+        clamp_direct: Option<f32>,
+        pixel_filter: Option<tequila_render_core::settings::PixelFilter>,
+        adaptive_threshold: Option<f32>,
+    ) -> Quality {
+        Quality { clamp_direct, pixel_filter, adaptive_threshold, ..self }
     }
 
     /// With the render settings' firefly rejection, clamp and prefilter,
@@ -119,45 +144,98 @@ struct BounceLimits {
 /// asks: the Jewelry preset's twelve. A gem's inner reflections are glossy
 /// bounces to Cycles, and at Blender's four a diamond went dark. Tequila
 /// counts passes through glass apart; Cycles counts them in the total.
+///
+/// Diffuse or glossy bounces given on their own (`CyclesTransport`) are
+/// taken as they are, and `bounces` is then the total for every kind
+/// together, as Blender's Total is.
 fn bounce_limits(quality: &Quality) -> BounceLimits {
     let (bounces, through) = (quality.bounces as i32, quality.transmission_bounces as i32);
+    let t = &quality.transport;
+    let explicit = t.diffuse_bounces.is_some() || t.glossy_bounces.is_some();
     BounceLimits {
-        total: (bounces + through).max(12),
-        diffuse: bounces.max(4),
-        glossy: bounces.max(4),
+        total: if explicit { bounces.max(1) } else { (bounces + through).max(12) },
+        diffuse: t.diffuse_bounces.map_or(bounces.max(4), |d| d as i32),
+        glossy: t.glossy_bounces.map_or(bounces.max(4), |g| g as i32),
         transmission: through.max(12),
     }
+}
+
+/// A setting for one of Cycles' scene nodes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Setting {
+    Int(i32),
+    Float(f32),
+    Bool(bool),
+    Text(&'static str),
+}
+
+/// What [`configure`] sets, node by node: the integrator's and the film's,
+/// as `(node, socket, value)`. Apart from the session so it can be checked.
+pub fn settings(quality: &Quality) -> Vec<(&'static str, &'static str, Setting)> {
+    use Setting::*;
+    let limits = bounce_limits(quality);
+    let t = &quality.transport;
+    let transparent = t.transparent_bounces.map_or(8, |b| b as i32);
+    let mut out = vec![
+        ("integrator", "max_bounce", Int(limits.total)),
+        ("integrator", "max_diffuse_bounce", Int(limits.diffuse)),
+        ("integrator", "max_glossy_bounce", Int(limits.glossy)),
+        ("integrator", "max_transmission_bounce", Int(limits.transmission)),
+        ("integrator", "transparent_max_bounce", Int(transparent)),
+        // No Russian roulette through see-through surfaces. A path that
+        // reaches a shadow-catching floor through them gives the floor its
+        // strength before the roulette's survivors are made up for the paths
+        // it ended, so the floor behind half-transparent glass came out
+        // darker by the odds of surviving: an eighth of the light, through a
+        // sphere half there. (Blender's default, 0, has the same fault.)
+        ("integrator", "transparent_min_bounce", Int(transparent)),
+        ("integrator", "filter_glossy", Float(t.filter_glossy.unwrap_or(1.0).max(0.0))),
+        ("integrator", "use_adaptive_sampling", Bool(quality.adaptive)),
+        ("integrator", "use_denoise", Bool(quality.denoise)),
+    ];
+    if let Some(volume) = t.volume_bounces {
+        out.push(("integrator", "max_volume_bounce", Int(volume as i32)));
+    }
+    if let Some(on) = t.caustics_reflective {
+        out.push(("integrator", "caustics_reflective", Bool(on)));
+    }
+    if let Some(on) = t.caustics_refractive {
+        out.push(("integrator", "caustics_refractive", Bool(on)));
+    }
+    // Cycles reads 0 as no clamp. A direct clamp of its own leaves the other
+    // for indirect light alone, firefly rejection's 10 when there is none.
+    let rejection = if quality.reject_fireflies { 10.0 } else { 0.0 };
+    let (direct, indirect) = match (quality.clamp_direct, quality.clamp) {
+        (Some(direct), clamp) => (direct.max(0.0), clamp.map_or(rejection, |c| c.max(0.0))),
+        (None, Some(clamp)) => (clamp.max(0.0), clamp.max(0.0)),
+        (None, None) => (0.0, rejection),
+    };
+    out.push(("integrator", "sample_clamp_direct", Float(direct)));
+    out.push(("integrator", "sample_clamp_indirect", Float(indirect)));
+    // `DenoiserPrefilter` in Cycles' device/denoise.h: 1 none, 3 accurate.
+    out.push(("integrator", "denoiser_prefilter", Int(if quality.prefilter { 3 } else { 1 })));
+    if let Some(threshold) = quality.adaptive_threshold {
+        out.push(("integrator", "adaptive_threshold", Float(threshold.max(1e-6))));
+    }
+    if let Some(filter) = quality.pixel_filter {
+        out.push(("film", "filter_type", Text(filter.kind.key())));
+        out.push(("film", "filter_width", Float(if filter.width > 0.0 { filter.width } else { 1.0 })));
+    }
+    out
 }
 
 /// Set the integrator up as Blender does by default, so a scene renders here
 /// as it would there, with `quality` on top.
 pub fn configure(session: &mut Session, quality: &Quality) -> Result<(), String> {
-    let integrator = session.scene_node("integrator")?;
-    let limits = bounce_limits(quality);
-    session.set_int(integrator, "max_bounce", limits.total)?;
-    session.set_int(integrator, "max_diffuse_bounce", limits.diffuse)?;
-    session.set_int(integrator, "max_glossy_bounce", limits.glossy)?;
-    session.set_int(integrator, "max_transmission_bounce", limits.transmission)?;
-    session.set_int(integrator, "transparent_max_bounce", 8)?;
-    // No Russian roulette through see-through surfaces. A path that reaches
-    // a shadow-catching floor through them gives the floor its strength
-    // before the roulette's survivors are made up for the paths it ended,
-    // so the floor behind half-transparent glass came out darker by the
-    // odds of surviving: an eighth of the light, through a sphere half
-    // there. (Blender's default, 0, has the same fault.)
-    session.set_int(integrator, "transparent_min_bounce", 8)?;
-    session.set_float(integrator, "filter_glossy", 1.0)?;
-    session.set_bool(integrator, "use_adaptive_sampling", quality.adaptive)?;
-    session.set_bool(integrator, "use_denoise", quality.denoise)?;
-    // Cycles reads 0 as no clamp.
-    let (direct, indirect) = match quality.clamp {
-        Some(clamp) => (clamp.max(0.0), clamp.max(0.0)),
-        None => (0.0, if quality.reject_fireflies { 10.0 } else { 0.0 }),
-    };
-    session.set_float(integrator, "sample_clamp_direct", direct)?;
-    session.set_float(integrator, "sample_clamp_indirect", indirect)?;
-    // `DenoiserPrefilter` in Cycles' device/denoise.h: 1 none, 3 accurate.
-    session.set_int(integrator, "denoiser_prefilter", if quality.prefilter { 3 } else { 1 })?;
+    for (node, socket, value) in settings(quality) {
+        let node = session.scene_node(node)?;
+        match value {
+            Setting::Int(v) => session.set_int(node, socket, v)?,
+            Setting::Float(v) => session.set_float(node, socket, v)?,
+            Setting::Bool(v) => session.set_bool(node, socket, v)?,
+            Setting::Text(v) => session.set_string(node, socket, v)?,
+        }
+    }
     session.set_time_limit(quality.seconds);
     Ok(())
 }
@@ -432,6 +510,20 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             continue;
         }
         let (material, shader) = match &instance.shadow_catcher {
+            // A floor with a bounce: what the camera sees of it is as it
+            // always was, every other ray sees the glow.
+            Some(catcher) if catcher.bounce.is_some() => {
+                if catcher.shadows && catcher.shadow_color != tint {
+                    builder.out.warn("ground shadows of different colours all take the first one's colour in Cycles");
+                }
+                let seen = if catcher.shadows && catcher.occlusion_only {
+                    FloorLook::Occlusion(catcher.shadow_color, catcher.occlusion_radius)
+                } else {
+                    FloorLook::Catcher
+                };
+                let glow = catcher.bounce.unwrap_or(Spectrum::ZERO);
+                (usize::MAX - 2, builder.bounce_shader(seen, glow, catcher.bounce_falloff, view.ground_illumination)?)
+            }
             Some(catcher) if catcher.shadows && catcher.occlusion_only => {
                 (usize::MAX - 1, builder.occlusion_shader(catcher.shadow_color, catcher.occlusion_radius)?)
             }
@@ -455,8 +547,8 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
             }
         };
         let key = (instance.mesh.index(), material);
-        // An occlusion-only floor's shader is its own.
-        let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1) {
+        // An occlusion-only floor's shader is its own, and a bouncing one's.
+        let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2) {
             Some(m) => *m,
             None => {
                 let m = builder.mesh(mesh, shader)?;
@@ -492,6 +584,12 @@ pub fn build_with(session: &mut Session, scene: &SceneSnapshot, view: &View, ima
         let occlusion = instance.shadow_catcher.is_some_and(|c| c.shadows && c.occlusion_only);
         if occlusion {
             visibility = ffi::VISIBLE_CAMERA;
+        }
+        // A bouncing floor is a surface to what the product sends out - its
+        // reflections, the light it bounces, what passes through its glass -
+        // which see the glow; the camera's view of it is left as above.
+        if instance.shadow_catcher.is_some_and(|c| c.bounce.is_some()) {
+            visibility |= ffi::VISIBLE_DIFFUSE | ffi::VISIBLE_GLOSSY | ffi::VISIBLE_TRANSMISSION;
         }
         let matrix = Y_UP_TO_Z_UP * instance.transform.matrix;
         let catches = instance.shadow_catcher.is_some_and(|c| c.shadows) && !occlusion;
@@ -855,7 +953,74 @@ struct Builder<'a> {
     turned: HashMap<Node, (Node, &'static str)>,
 }
 
+/// What the camera sees of a floor whose bounce the rest of the scene sees.
+#[derive(Clone, Copy)]
+enum FloorLook {
+    /// The shadow catcher's own surface.
+    Catcher,
+    /// An occlusion-only floor, of this tint over this radius.
+    Occlusion(Spectrum, f32),
+}
+
 impl Builder<'_> {
+    /// A floor with a bounce (`ShadowCatcher::bounce`): to camera rays the
+    /// floor it would be without one; to every other ray an emission of the
+    /// bounce's radiance, darkened toward the contact by ambient occlusion
+    /// over `falloff` - the white sweep a photo studio puts under a product,
+    /// which its reflections see and the picture does not. With ground
+    /// illumination on, the lit floor is there to those rays as well.
+    fn bounce_shader(&mut self, seen: FloorLook, glow: Spectrum, falloff: f32, lit: bool) -> Result<Node, String> {
+        let shader = self.session.shader("bouncing ground")?;
+        let camera = match seen {
+            FloorLook::Catcher => {
+                let bsdf = self.session.node(shader, "diffuse_bsdf")?;
+                self.session.set_float3(bsdf, "color", [0.8, 0.8, 0.8])?;
+                (bsdf, "BSDF")
+            }
+            FloorLook::Occlusion(tint, radius) => {
+                let ao = self.session.node(shader, "ambient_occlusion")?;
+                self.session.set_float(ao, "Distance", radius.max(1e-3))?;
+                self.session.set_int(ao, "Samples", 16)?;
+                let shade = self.session.node(shader, "emission")?;
+                self.session.set_float3(shade, "Color", rgb(tint))?;
+                self.session.set_float(shade, "Strength", 1.0)?;
+                let clear = self.session.node(shader, "transparent_bsdf")?;
+                self.session.set_float3(clear, "Color", [1.0, 1.0, 1.0])?;
+                let mix = self.session.node(shader, "mix_closure")?;
+                self.session.connect(shader, ao, "AO", mix, "Fac")?;
+                self.session.connect(shader, shade, "Emission", mix, "Closure1")?;
+                self.session.connect(shader, clear, "BSDF", mix, "Closure2")?;
+                (mix, "Closure")
+            }
+        };
+        let emission = self.session.node(shader, "emission")?;
+        self.session.set_float3(emission, "Color", rgb(glow))?;
+        self.session.set_float(emission, "Strength", 1.0)?;
+        if falloff > 0.0 {
+            let ao = self.session.node(shader, "ambient_occlusion")?;
+            self.session.set_float(ao, "Distance", falloff)?;
+            self.session.set_int(ao, "Samples", 16)?;
+            self.session.connect(shader, ao, "AO", emission, "Strength")?;
+        }
+        let mut away = (emission, "Emission");
+        if lit {
+            let lit_floor = self.session.node(shader, "diffuse_bsdf")?;
+            self.session.set_float3(lit_floor, "color", [0.8, 0.8, 0.8])?;
+            let add = self.session.node(shader, "add_closure")?;
+            self.session.connect(shader, emission, "Emission", add, "Closure1")?;
+            self.session.connect(shader, lit_floor, "BSDF", add, "Closure2")?;
+            away = (add, "Closure");
+        }
+        let path = self.session.node(shader, "light_path")?;
+        let pick = self.session.node(shader, "mix_closure")?;
+        self.session.connect(shader, path, "Is Camera Ray", pick, "Fac")?;
+        self.session.connect(shader, away.0, away.1, pick, "Closure1")?;
+        self.session.connect(shader, camera.0, camera.1, pick, "Closure2")?;
+        let output = self.session.node(shader, "output")?;
+        self.session.connect(shader, pick, "Closure", output, "Surface")?;
+        self.session.commit(shader)
+    }
+
     /// A shadow catcher's surface: plain white diffuse, as Blender gives a
     /// catcher with no material of its own.
     fn catcher_shader(&mut self) -> Result<Node, String> {
@@ -931,6 +1096,22 @@ impl Builder<'_> {
                     (both, "Closure")
                 }
                 None => (node, "Volume"),
+            });
+        }
+        // A glow inside: an emission on the volume output is Cycles' volume
+        // emission, radiance per metre, as Blender's Emission there is.
+        if m.volume_emission_strength > 0.0 {
+            let glow = self.session.node(shader, "emission")?;
+            self.session.set_float3(glow, "Color", rgb(m.volume_emission_color))?;
+            self.session.set_float(glow, "Strength", m.volume_emission_strength)?;
+            filled = Some(match filled {
+                Some((medium, socket)) => {
+                    let both = self.session.node(shader, "add_closure")?;
+                    self.session.connect(shader, medium, socket, both, "Closure1")?;
+                    self.session.connect(shader, glow, "Emission", both, "Closure2")?;
+                    (both, "Closure")
+                }
+                None => (glow, "Emission"),
             });
         }
         if let Some((node, socket)) = filled {
@@ -1092,6 +1273,31 @@ impl Builder<'_> {
         self.session.connect(shader, coords, "Object", scaled, "Vector1")?;
         self.session.connect(shader, info, "Color", scaled, "Vector2")?;
         Ok((scaled, "Vector"))
+    }
+
+    /// Where a planar label keeps to one side: one on faces whose object-space
+    /// normal looks that way along its axis, else none. `None` for a label
+    /// on both sides, which needs nothing.
+    fn label_side(&mut self, shader: Shader, decal: &tequila_materials::decal::Decal) -> Result<Option<Slot>, String> {
+        use tequila_materials::decal::DecalSide;
+        if decal.side == DecalSide::Both || decal.mapping.projection != tequila_texture::projection::Projection::Planar {
+            return Ok(None);
+        }
+        let coords = self.session.node(shader, "texture_coordinate")?;
+        let normal = self.session.node(shader, "separate_xyz")?;
+        self.session.connect(shader, coords, "Normal", normal, "Vector")?;
+        let axis = match decal.mapping.axis {
+            tequila_texture::projection::Axis::X => "X",
+            tequila_texture::projection::Axis::Y => "Y",
+            tequila_texture::projection::Axis::Z => "Z",
+        };
+        let op = if decal.side == DecalSide::Positive { "greater_than" } else { "less_than" };
+        let threshold = if decal.side == DecalSide::Positive {
+            tequila_materials::decal::ONE_SIDED_COSINE
+        } else {
+            -tequila_materials::decal::ONE_SIDED_COSINE
+        };
+        Ok(Some(self.float_op(shader, op, Slot::Link(normal, axis), Slot::Value(Value::Float(threshold)))?))
     }
 
     /// How much each of the tri-planar planes counts at a point: its axis's
@@ -2783,8 +2989,16 @@ impl Builder<'_> {
             let Some(label) = self.texture_node_with(shader, decal.texture, &decal.mapping, true)? else {
                 continue;
             };
-            let alpha = self.float_op(shader, "multiply", label.alpha, Slot::Value(Value::Float(decal.opacity)))?;
-            base = self.apply(shader, &NodeKind::Mix, &[base, label.colour(), alpha], 0)?;
+            let mut alpha = self.float_op(shader, "multiply", label.alpha, Slot::Value(Value::Float(decal.opacity)))?;
+            if let Some(side) = self.label_side(shader, decal)? {
+                alpha = self.float_op(shader, "multiply", alpha, side)?;
+            }
+            let ink = if decal.ink == tequila_core::spectrum::Spectrum::ONE {
+                label.colour()
+            } else {
+                self.apply(shader, &NodeKind::Multiply, &[label.colour(), Slot::Value(Value::Color(decal.ink))], 0)?
+            };
+            base = self.apply(shader, &NodeKind::Mix, &[base, ink, alpha], 0)?;
             let foil = Slot::Value(Value::Float(if decal.metallic { 1.0 } else { 0.0 }));
             metalness = self.float_mix(shader, metalness, foil, alpha)?;
             let bare = self.float_op(shader, "subtract", Slot::Value(Value::Float(1.0)), alpha)?;
@@ -2855,7 +3069,24 @@ impl Builder<'_> {
         }
 
         let mut normal: Option<(Node, &'static str)> = None;
-        match self.scene.bumps.get(index).and_then(|b| b.as_deref()) {
+        // Rounded edges: Cycles' Bevel, the normal the bump starts from as
+        // Blender chains them, or the surface's own where there is no bump.
+        // A normal map has no normal to start from, so none is rounded.
+        let bump = self.scene.bumps.get(index).and_then(|b| b.as_deref());
+        let bevel = if m.edge_radius > 0.0 {
+            if matches!(bump, Some(BumpSource::NormalMap { .. })) {
+                self.out.warn("rounded edges are left out under a normal map in Cycles");
+                None
+            } else {
+                let node = self.session.node(shader, "bevel")?;
+                self.session.set_float(node, "Radius", m.edge_radius)?;
+                self.session.set_int(node, "Samples", m.edge_samples.round().clamp(1.0, 32.0) as i32)?;
+                Some(node)
+            }
+        } else {
+            None
+        };
+        match bump {
             // Laid down by a projection of its own - a texture pack's
             // tri-planar - and decoded in that projection's frames.
             Some(BumpSource::NormalMap { texture, mapping, .. }) if mapping.projection != TextureProjection::Uv => {
@@ -2886,11 +3117,22 @@ impl Builder<'_> {
                     self.feed(shader, bump, "Height", height, false)?;
                     self.session.set_float(bump, "Distance", 1.0)?;
                     self.session.set_float(bump, "Strength", 1.0)?;
+                    if let Some(bevel) = bevel {
+                        self.session.connect(shader, bevel, "Normal", bump, "Normal")?;
+                    }
                     self.session.connect(shader, bump, "Normal", bsdf, "Normal")?;
                     normal = Some((bump, "Normal"));
+                } else if let Some(bevel) = bevel {
+                    self.session.connect(shader, bevel, "Normal", bsdf, "Normal")?;
+                    normal = Some((bevel, "Normal"));
                 }
             }
-            None => {}
+            None => {
+                if let Some(bevel) = bevel {
+                    self.session.connect(shader, bevel, "Normal", bsdf, "Normal")?;
+                    normal = Some((bevel, "Normal"));
+                }
+            }
         }
         // And the rotation turns the surface's own tangent, or the one the
         // graph draws.
@@ -3090,7 +3332,8 @@ impl Builder<'_> {
             [x.x, y.x, z.x, p.x, x.y, y.y, z.y, p.y, x.z, y.z, z.z, p.z]
         };
 
-        for light in lights {
+        let mut made = Vec::new();
+        for (index, light) in lights.iter().enumerate() {
             if !light.enabled {
                 continue;
             }
@@ -3099,8 +3342,12 @@ impl Builder<'_> {
             if v.camera {
                 visibility |= ffi::VISIBLE_CAMERA;
             }
+            // Scattering in a volume goes with diffuse light, as Blender's
+            // Volume Scatter visibility is on wherever a lamp lights: left
+            // out, Cycles' milky liquids, smoke and frosted media took no
+            // light from any lamp, only from the environment.
             if v.diffuse {
-                visibility |= ffi::VISIBLE_DIFFUSE;
+                visibility |= ffi::VISIBLE_DIFFUSE | ffi::VISIBLE_SCATTER;
             }
             if v.specular {
                 visibility |= ffi::VISIBLE_GLOSSY;
@@ -3115,6 +3362,7 @@ impl Builder<'_> {
                     let s = rgb(point.intensity);
                     self.session.set_float3(node, "strength", [s[0] * four_pi, s[1] * four_pi, s[2] * four_pi])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
                 LightKind::Spot(spot) => {
                     let node = self.session.light("spot", shader, &aimed(spot.position, spot.direction), visibility)?;
@@ -3124,6 +3372,7 @@ impl Builder<'_> {
                     let s = rgb(spot.intensity);
                     self.session.set_float3(node, "strength", [s[0] * four_pi, s[1] * four_pi, s[2] * four_pi])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
                 LightKind::Area(area) => {
                     // Tequila's area light faces cross(u, v); Cycles' its -Z.
@@ -3159,6 +3408,7 @@ impl Builder<'_> {
                         let s = rgb(area.radiance);
                         self.session.set_float3(node, "strength", [s[0] * k, s[1] * k, s[2] * k])?;
                         self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                     }
                 }
                 LightKind::Ies(ies) => {
@@ -3182,8 +3432,67 @@ impl Builder<'_> {
                     let s = rgb(ies.intensity);
                     self.session.set_float3(node, "strength", [s[0] * 177.83, s[1] * 177.83, s[2] * 177.83])?;
                     self.light_flags(node, v.shadow)?;
+                    made.push((index, node));
                 }
             }
+        }
+        self.link_lights(&made)
+    }
+
+    /// Light linking (`LightLinks`), as Cycles keeps it: each part receives
+    /// from the set made of the linked lights that light it, and each
+    /// linked light is a member of the sets it lights. Set 0 is the parts
+    /// every linked light lights; Cycles has 64.
+    fn link_lights(&mut self, made: &[(usize, Node)]) -> Result<(), String> {
+        let scene = self.scene;
+        let lights = scene.lights.lights();
+        let linked: Vec<usize> = (0..lights.len()).filter(|&i| !lights[i].links.is_all()).take(64).collect();
+        if linked.is_empty() {
+            return Ok(());
+        }
+        if !self.session.has_light_linking() {
+            self.out.warn("light linking needs a newer Cycles library: here every light lights everything");
+            return Ok(());
+        }
+        let every = if linked.len() == 64 { u64::MAX } else { (1u64 << linked.len()) - 1 };
+        let mut sets: Vec<u64> = Vec::new();
+        let mut receivers = Vec::new();
+        for (instance, object) in self.out.objects.iter().enumerate() {
+            let Some(object) = *object else { continue };
+            let mut pattern = 0u64;
+            for (bit, &light) in linked.iter().enumerate() {
+                if lights[light].links.lights(instance as u32) {
+                    pattern |= 1 << bit;
+                }
+            }
+            if pattern == every {
+                continue;
+            }
+            let set = match sets.iter().position(|&p| p == pattern) {
+                Some(i) => i + 1,
+                None if sets.len() < 63 => {
+                    sets.push(pattern);
+                    sets.len()
+                }
+                None => continue,
+            };
+            receivers.push((object, set as u32));
+        }
+        if sets.len() == 63 {
+            self.out.warn("more than 63 different light links: some parts are lit by every light");
+        }
+        for (object, set) in receivers {
+            self.session.light_linking(object, u64::MAX, set)?;
+        }
+        for &(index, node) in made {
+            let Some(bit) = linked.iter().position(|&l| l == index) else { continue };
+            let mut membership = 1u64;
+            for (set, &pattern) in sets.iter().enumerate() {
+                if pattern & (1 << bit) != 0 {
+                    membership |= 1 << (set + 1);
+                }
+            }
+            self.session.light_linking(node, membership, 0)?;
         }
         Ok(())
     }
@@ -3350,6 +3659,91 @@ mod tests {
         assert_eq!(jewelry, BounceLimits { total: 28, diffuse: 12, glossy: 12, transmission: 16 });
         let quick = bounce_limits(&Quality::with_lighting(true, false, None, &IntegratorConfig::performance()));
         assert_eq!(quick, BounceLimits { total: 12, diffuse: 4, glossy: 4, transmission: 12 });
+    }
+
+    /// What Cycles is told with none of the finer controls set is what it
+    /// was always told, and each one set reaches its own socket, as a studio
+    /// that has to match Blender's Light Paths, clamping and Film sets them:
+    /// total 16 with diffuse 4, glossy 8, transmission 12, transparent 16,
+    /// volume 0, Filter Glossy 0.5, direct light unclamped and indirect at
+    /// 10, Blackman-Harris 1.5 px.
+    #[test]
+    fn the_finer_controls_reach_cycles_and_change_nothing_unset() {
+        use tequila_render_core::settings::{CyclesTransport, IntegratorConfig, PixelFilter, PixelFilterKind};
+        let find = |all: &[(&str, &str, Setting)], node: &str, socket: &str| {
+            all.iter().find(|(n, s, _)| *n == node && *s == socket).map(|(_, _, v)| v.clone())
+        };
+        let plain = settings(&Quality::with_lighting(true, true, None, &IntegratorConfig::product()).with_clamping(true, None, true));
+        for (socket, value) in [
+            ("max_bounce", Setting::Int(14)),
+            ("max_diffuse_bounce", Setting::Int(6)),
+            ("max_glossy_bounce", Setting::Int(6)),
+            ("max_transmission_bounce", Setting::Int(12)),
+            ("transparent_max_bounce", Setting::Int(8)),
+            ("transparent_min_bounce", Setting::Int(8)),
+            ("filter_glossy", Setting::Float(1.0)),
+            ("sample_clamp_direct", Setting::Float(0.0)),
+            ("sample_clamp_indirect", Setting::Float(10.0)),
+        ] {
+            assert_eq!(find(&plain, "integrator", socket), Some(value), "{socket} with nothing set");
+        }
+        for socket in ["max_volume_bounce", "caustics_reflective", "caustics_refractive", "adaptive_threshold"] {
+            assert_eq!(find(&plain, "integrator", socket), None, "{socket} sent with nothing set");
+        }
+        assert!(plain.iter().all(|(node, _, _)| *node != "film"), "the film was touched with no filter set");
+        // An old clamp still holds for direct and indirect light alike.
+        let clamped = settings(&Quality::with_lighting(true, true, None, &IntegratorConfig::product()).with_clamping(true, Some(4.0), true));
+        assert_eq!(find(&clamped, "integrator", "sample_clamp_direct"), Some(Setting::Float(4.0)));
+
+        let mut config = IntegratorConfig { max_bounces: 16, max_transmission_bounces: 12, ..IntegratorConfig::product() };
+        config.cycles = CyclesTransport {
+            diffuse_bounces: Some(4),
+            glossy_bounces: Some(8),
+            transparent_bounces: Some(16),
+            volume_bounces: Some(0),
+            filter_glossy: Some(0.5),
+            caustics_reflective: Some(true),
+            caustics_refractive: Some(true),
+        };
+        let studio = settings(
+            &Quality::with_lighting(true, true, None, &config).with_clamping(true, None, true).with_render_controls(
+                Some(0.0),
+                Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 }),
+                Some(0.01),
+            ),
+        );
+        for (node, socket, value) in [
+            ("integrator", "max_bounce", Setting::Int(16)),
+            ("integrator", "max_diffuse_bounce", Setting::Int(4)),
+            ("integrator", "max_glossy_bounce", Setting::Int(8)),
+            ("integrator", "max_transmission_bounce", Setting::Int(12)),
+            ("integrator", "transparent_max_bounce", Setting::Int(16)),
+            ("integrator", "max_volume_bounce", Setting::Int(0)),
+            ("integrator", "filter_glossy", Setting::Float(0.5)),
+            ("integrator", "caustics_reflective", Setting::Bool(true)),
+            ("integrator", "caustics_refractive", Setting::Bool(true)),
+            ("integrator", "sample_clamp_direct", Setting::Float(0.0)),
+            ("integrator", "sample_clamp_indirect", Setting::Float(10.0)),
+            ("integrator", "adaptive_threshold", Setting::Float(0.01)),
+            ("film", "filter_type", Setting::Text("blackman_harris")),
+            ("film", "filter_width", Setting::Float(1.5)),
+        ] {
+            assert_eq!(find(&studio, node, socket), Some(value), "{node}.{socket}");
+        }
+        // And Cycles takes every one of them: a socket it does not have is an
+        // error. Where Cycles is installed.
+        match crate::available() {
+            Ok(()) => {
+                let mut session = crate::Session::new("CPU", 1, None).expect("a session");
+                configure(&mut session, &Quality::with_lighting(true, true, None, &config).with_clamping(true, None, true).with_render_controls(
+                    Some(0.0),
+                    Some(PixelFilter { kind: PixelFilterKind::Gaussian, width: 1.5 }),
+                    Some(0.01),
+                ))
+                .expect("Cycles takes every setting");
+            }
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
     }
 
     /// The byte encoding loses nothing it can keep: a value from a byte on

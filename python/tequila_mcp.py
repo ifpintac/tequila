@@ -121,11 +121,39 @@ TOOLS = [
          {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'}}),
     tool('tequila_render', 'Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples).',
          {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'}}),
-    tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs.',
+    tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.',
          {'name': {'type': 'string'}, 'width': {'type': 'integer'}, 'height': {'type': 'integer'},
           'samples': {'type': 'integer'}, 'folder': {'type': 'string'}, 'filename': {'type': 'string'},
-          'denoise': {'type': 'boolean'}, 'camera': {'type': 'integer'}}),
+          'denoise': {'type': 'boolean'}, 'camera': {'type': 'integer'},
+          'studio': {'type': 'string', 'description': 'A Studio (a view) by name or index, applied for the render and taken back.'},
+          'studios': {'type': 'boolean', 'description': 'Every Studio, one render each, named for its view.'}}),
     tool('tequila_jobs', 'The background render queue: state, progress and output file of each job.'),
+    tool('tequila_studio_presets',
+         'The studio presets installed: complete studios - lights, cameras and views, floor, look - for a kind of product, '
+         'by family and size. Each lists its views and the product radius it was framed for; "suggested" marks the size '
+         'in each family nearest the product in the scene.'),
+    tool('tequila_studio_preset_apply',
+         "Apply an installed studio preset as ONE undo step: its lights, cameras and views (Studios), environment and floor, "
+         "look and render settings, framed to the product's size and the product stood on its floor. The first view is "
+         "applied; tequila_studio_render_all renders them all.",
+         {'preset': {'type': 'string', 'description': "The preset's id, from tequila_studio_presets."},
+          'front': {'type': 'string', 'enum': ['+z', '-z', '+x', '-x'],
+                    'description': "The product's side that should face the Main camera (default +z)."},
+          'scale': {'type': 'string', 'enum': ['cameras', 'cameras_and_lights', 'none'],
+                    'description': "What follows the product's size (default: the preset's own choice)."},
+          'keep_lights': {'type': 'boolean'},
+          'keep_cameras': {'type': 'boolean'},
+          'keep_placement': {'type': 'boolean', 'description': 'Leave the product where it is.'},
+          'dress': {'type': 'boolean', 'description': "Also put the preset's materials on parts by their names (its material rules)."}},
+         ['preset']),
+    tool('tequila_studio_preset_save',
+         "Keep the scene's studio - everything but the product - as a studio preset of the person's own, framed for the product it has now.",
+         {'name': {'type': 'string'}, 'family': {'type': 'string'}, 'size': {'type': 'string'},
+          'description': {'type': 'string'},
+          'materials': {'type': 'boolean', 'description': "Keep the project's materials with it."}},
+         ['name']),
+    tool('tequila_studio_render_all',
+         'Render every view (Studio) in the background, one image each, named for its view. Only when asked for renders.'),
     tool('tequila_stop', 'Stop the running background render; it still writes its image.'),
     tool('tequila_ui', 'Open or close panels and switch the viewport shading.',
          {'render_window': {'type': 'boolean'}, 'console': {'type': 'boolean'}, 'inspector': {'type': 'boolean'},
@@ -170,7 +198,7 @@ TOOLS = [
 
 # Tools that reach outside the open scene: gone in restricted mode.
 UNRESTRICTED_ONLY = {
-    'tequila_request', 'tequila_import', 'tequila_material_save',
+    'tequila_request', 'tequila_import', 'tequila_material_save', 'tequila_studio_preset_save',
     'tequila_plugin_guide', 'tequila_plugin_list', 'tequila_plugin_write',
     'tequila_plugin_enable', 'tequila_plugin_run', 'tequila_plugin_log',
 }
@@ -390,6 +418,18 @@ class Bridge:
 
     def tool_jobs(self):
         return text(self.request('query', what='jobs'))
+
+    def tool_studio_presets(self):
+        return text(self.request('studio_preset', action='list'))
+
+    def tool_studio_preset_apply(self, preset, **options):
+        return text(self.request('studio_preset', action='apply', preset=preset, **options))
+
+    def tool_studio_preset_save(self, name, **details):
+        return text(self.request('studio_preset', action='save', name=name, **details))
+
+    def tool_studio_render_all(self):
+        return text(self.request('studio_preset', action='render_all'))
 
     def tool_stop(self):
         return text(self.request('stop'))

@@ -17,15 +17,15 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "stop", "ui", "new", "open", "quit"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "stop", "ui", "new", "open", "quit"];
 pub const APP_QUERIES: &[&str] = &["api", "context", "scene", "nodes", "materials", "selection", "camera", "commands", "ui", "jobs", "history", "library"];
 pub const APP_LIMITS: &str = "No embedded Python interpreter. Screenshot completion is deferred: poll for the file. Paths refer to this computer. quit refuses unsaved work unless given save:true or discard:true.";
 
 /// What a headless session (`tequila --serve`) answers: what needs only
 /// the document.
-pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "new", "open", "quit"];
+pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "new", "open", "quit"];
 pub const HEADLESS_QUERIES: &[&str] = &["api", "context", "scene", "nodes", "materials", "selection", "camera", "commands", "history", "library"];
-pub const HEADLESS_LIMITS: &str = "Headless: there is no window, so no screenshot, ui, texture_set, livelink or background queue; render blocks until the picture is written. Paths refer to this computer. quit refuses unsaved work unless given save:true or discard:true.";
+pub const HEADLESS_LIMITS: &str = "Headless: there is no window, so no screenshot, ui, texture_set, livelink or background queue; render and studio_preset render_all block until the pictures are written. Paths refer to this computer. quit refuses unsaved work unless given save:true or discard:true.";
 
 /// What a client needs to know to use the channel: the protocol, the
 /// operations and queries this end answers, how to batch, and an example of

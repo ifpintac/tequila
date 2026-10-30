@@ -61,7 +61,7 @@ pub fn all() -> Vec<Tool> {
     let bridge = json::parse(MCP_TOOLS.as_bytes()).expect("the bridge's tool list is valid JSON");
     // The bridge's material and plugin tools, as they are: one description
     // of each for every AI.
-    let shared = |name: &str| name.starts_with("tequila_material_") || name.starts_with("tequila_plugin_");
+    let shared = |name: &str| ["tequila_material_", "tequila_plugin_", "tequila_studio_"].iter().any(|p| name.starts_with(p));
     let materials = bridge.as_array().iter().filter(|t| t.get("name").and_then(|n| n.as_str()).is_some_and(shared)).map(|tool| {
         let mut entry = tool.clone();
         if let Value::Object(fields) = &mut entry {
@@ -222,6 +222,25 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
                 picture: arguments.get("preview").and_then(|v| v.as_bool()).unwrap_or(true),
             })
         }
+        "tequila_studio_presets" => raw(with("studio_preset", vec![("action".into(), text("list"))])),
+        "tequila_studio_preset_apply" => {
+            arguments.get("preset").and_then(|v| v.as_str()).ok_or("say which studio preset: its id, as preset")?;
+            raw(with(
+                "studio_preset",
+                [("action".to_string(), text("apply"))]
+                    .into_iter()
+                    .chain(pick(arguments, &["preset", "front", "scale", "keep_lights", "keep_cameras", "keep_placement", "dress"]))
+                    .collect(),
+            ))
+        }
+        "tequila_studio_preset_save" => {
+            arguments.get("name").and_then(|v| v.as_str()).ok_or("give the preset a name")?;
+            raw(with(
+                "studio_preset",
+                [("action".to_string(), text("save"))].into_iter().chain(pick(arguments, &["name", "family", "size", "description", "materials"])).collect(),
+            ))
+        }
+        "tequila_studio_render_all" => raw(with("studio_preset", vec![("action".into(), text("render_all"))])),
         "tequila_plugin_guide" => raw(with("plugin", vec![("action".into(), text("guide"))])),
         "tequila_plugin_list" => raw(with("plugin", vec![("action".into(), text("list"))])),
         "tequila_plugin_write" | "tequila_plugin_enable" | "tequila_plugin_log" => {
@@ -360,6 +379,7 @@ How to work:
 - A liquid in a glass container is modelled a fraction of a millimetre into the glass wall; the Liquid type's higher priority makes it the medium there.
 - For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Prefer a library preset when one fits.
 - To add to Tequila itself - a panel, a button, something done on every import - write a plugin: tequila_plugin_guide once, then tequila_plugin_write. The person turns it on in Tequila (tequila_plugin_enable asks them, and so does every change you make to one that is on); then tequila_plugin_run tries it and shows its log. Only when asked for one.
+- For a whole studio at once - lights, cameras and views, floor and look for a kind of product - list tequila_studio_presets and apply the suggested size with tequila_studio_preset_apply (one undo step). tequila_studio_render_all renders every view, only when asked for renders.
 - Only render (tequila_queue) or save (tequila_save) when asked to.
 - Everything you do is undoable and shown to the person as you do it. When you finish, say briefly what you changed.";
 
@@ -397,6 +417,8 @@ mod tests {
                 "tequila_plugin_write" => args(r#"{"id":"my.x","files":{"main.py":""}}"#),
                 "tequila_plugin_enable" | "tequila_plugin_log" => args(r#"{"id":"my.x"}"#),
                 "tequila_plugin_run" => args(r#"{"id":"my.x","command":"go"}"#),
+                "tequila_studio_preset_apply" => args(r#"{"preset":"studio"}"#),
+                "tequila_studio_preset_save" => args(r#"{"name":"Mine"}"#),
                 _ => args("{}"),
             };
             plan(&tool.name, &arguments).unwrap_or_else(|e| panic!("{}: {e}", tool.name));

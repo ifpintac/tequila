@@ -18,7 +18,7 @@
 //! person has open. With `--attached` it ends when its standard input does,
 //! so a script that dies does not leave it running.
 
-use crate::{each_configuration, render_one, Options};
+use crate::{each_configuration, each_studio, render_one, Options};
 use tequila_format::json::Value;
 use tequila_format::json_write::Object;
 use tequila_scene::orbit::OrbitCamera;
@@ -205,9 +205,107 @@ impl Session {
             Operation::Export { format, path, live, photos, columns, rows, tilt, transparent } => {
                 self.export(format, path, *live, *photos, (*columns, *rows, *tilt), *transparent)
             }
+            Operation::StudioPreset(request) => self.studio_preset(request),
             Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
+        }
+    }
+
+    /// Studio presets (`docs/studio-presets.md`), as the application answers
+    /// them - but `render_all` renders every view here, one file each, and
+    /// answers when they are written; `path` is a file name template with
+    /// `{view}` in it, or the project's own output folder and name.
+    fn studio_preset(&mut self, request: &Value) -> Reply {
+        use tequila_format::studio_preset as presets;
+        use tequila_scripting::studio_presets as shared;
+        let action = request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase();
+        let path = request.get("path").and_then(|v| v.as_str()).map(PathBuf::from);
+        let needs_path = |what: &str| format!("`{action}` needs {what} \"path\"");
+        match action.as_str() {
+            "list" => Reply::Value(shared::list(tequila_scene::preset::product_radius(&self.document))),
+            "apply" => {
+                let (file, options) = match shared::named(request, "apply").and_then(|file| shared::options(request).map(|o| (file, o))) {
+                    Ok(found) => found,
+                    Err(e) => return Reply::Failed(e),
+                };
+                let scale = match tequila_scene::preset::product_radius(&self.document) {
+                    Some(radius) if options.scale.unwrap_or(file.preset.framing.scale) != tequila_scene::preset::FramingScale::None => {
+                        radius / file.preset.framing.reference_radius.max(1e-6)
+                    }
+                    _ => 1.0,
+                };
+                self.bus.begin_group();
+                if let Err(error) = self.apply(Command::ApplyStudioPreset { preset: Box::new(file.preset.clone()), options }) {
+                    let _ = self.bus.abandon_group(&mut self.document);
+                    return Reply::Failed(error);
+                }
+                let mut dressed = 0;
+                if request.get("dress").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    for command in tequila_scene::preset::dressing(&self.document, &file.preset) {
+                        if let Command::AssignMaterial { nodes, .. } = &command {
+                            dressed += nodes.len();
+                        }
+                        if let Err(error) = self.apply(command) {
+                            let _ = self.bus.abandon_group(&mut self.document);
+                            return Reply::Failed(error);
+                        }
+                    }
+                }
+                self.bus.end_group();
+                self.follow_camera();
+                let mut out = Object::new();
+                out.set("applied", file.preset.id.clone())
+                    .set("views", file.preset.studios.len() as f64)
+                    .set("lights", if options.keep_lights { 0.0 } else { file.preset.lights.len() as f64 })
+                    .set("cameras", file.preset.cameras.len() as f64)
+                    .set("scale", scale)
+                    .set("dressed", dressed as f64);
+                Reply::Value(out.build())
+            }
+            "save" => match presets::save_document(&self.document, &shared::save_as(request), None) {
+                Ok(file) => Reply::Value(shared::describe(&file, false)),
+                Err(e) => Reply::Failed(e),
+            },
+            "delete" => match shared::named(request, "delete").and_then(|file| presets::delete(&file)) {
+                Ok(()) => Reply::Done,
+                Err(e) => Reply::Failed(e),
+            },
+            "install" => {
+                let Some(from) = path else { return Reply::Failed(needs_path("the package's or the folder's")) };
+                match presets::install(&from, &tequila_format::library::user_directory()) {
+                    Ok(installed) => {
+                        let mut out = Object::new();
+                        out.set("installed", installed.preset.preset.id.clone())
+                            .set("path", installed.preset.path.display().to_string())
+                            .set("materials", Value::Array(installed.materials.into_iter().map(Value::String).collect()));
+                        Reply::Value(out.build())
+                    }
+                    Err(e) => Reply::Failed(e),
+                }
+            }
+            "export" => {
+                let Some(to) = path else { return Reply::Failed(needs_path("the package's")) };
+                match shared::named(request, "export").and_then(|file| presets::export(&file, &to)) {
+                    Ok(()) => Reply::Done,
+                    Err(e) => Reply::Failed(e),
+                }
+            }
+            "render_all" => {
+                let start = std::time::Instant::now();
+                let template = path.map(|p| p.display().to_string());
+                match each_studio(&self.render_options(None, None, None), &self.document, template.as_deref()) {
+                    Ok(written) => {
+                        let mut out = Object::new();
+                        out.set("paths", Value::Array(written.iter().map(|p| Value::String(absolute(Path::new(p)))).collect()))
+                            .set("count", written.len() as f64)
+                            .set("seconds", start.elapsed().as_secs_f64());
+                        Reply::Value(out.build())
+                    }
+                    Err(e) => Reply::Failed(e),
+                }
+            }
+            other => Reply::Failed(format!("`{other}` is not a studio preset action")),
         }
     }
 
@@ -748,6 +846,63 @@ mod tests {
         value(&mut s, r#"{"op":"new"}"#);
         assert_eq!(s.document.tree.len(), 0, "a new project is empty here");
         assert!(matches!(ask(&mut s, r#"{"op":"open","path":"C:/nowhere/at/all.tequila","discard":true}"#), Reply::Failed(_)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// A studio saved as a preset here applies to a bigger product in one
+    /// undo step, framed for it, and every view of it renders to a file of
+    /// its own, named for the view.
+    #[test]
+    fn a_studio_preset_is_saved_applied_and_rendered_headless() {
+        let folder = std::env::temp_dir().join(format!("tequila-serve-studios-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::env::set_var("TEQUILA_STUDIO_PRESETS", folder.join("studios"));
+        let mut source = session();
+        let radius = tequila_scene::demo::STARTER_RADIUS;
+        source.document = tequila_scene::demo::demo_document_sized(tequila_scene::demo::DemoMaterial::Plastic, 0.3, radius);
+        let front = source.document.cameras.active().clone();
+        let mut high = front.clone();
+        high.name = "High".into();
+        high.camera.camera_to_world = tequila_core::math::Mat4::look_at(
+            tequila_core::math::vec3(0.0, 2.5, 0.8),
+            tequila_core::math::Vec3::ZERO,
+            tequila_core::math::Vec3::Y,
+        );
+        source.apply(Command::AddCamera { camera: Box::new(high.clone()) }).unwrap();
+        let views = vec![
+            tequila_scene::studio::Studio { name: "Front".into(), camera: Some(front), ..Default::default() },
+            tequila_scene::studio::Studio { name: "High".into(), camera: Some(high), ..Default::default() },
+        ];
+        source.apply(Command::SetStudios { studios: views }).unwrap();
+        let mut render = source.document.render.clone();
+        (render.width, render.height, render.max_samples, render.denoise) = (24, 16, 2, false);
+        render.engine = tequila_scene::render::RenderEngine::Tequila;
+        source.apply(Command::SetRenderSettings { settings: Box::new(render) }).unwrap();
+        let saved = value(&mut source, r#"{"op":"studio_preset","action":"save","name":"Headless Test","family":"Tests","size":"Small"}"#);
+        assert_eq!(saved.get("id").and_then(Value::as_str), Some("headless-test"));
+
+        let mut s = session();
+        s.document = tequila_scene::demo::demo_document_sized(tequila_scene::demo::DemoMaterial::Plastic, 0.3, radius * 2.0);
+        let listed = value(&mut s, r#"{"op":"studio_preset","action":"list"}"#);
+        let ours = listed.get("presets").unwrap().as_array().iter().find(|p| p.get("id").and_then(Value::as_str) == Some("headless-test")).cloned().unwrap();
+        assert_eq!(ours.get("views").map(|v| v.as_array().len()), Some(2));
+        let applied = value(&mut s, r#"{"op":"studio_preset","action":"apply","preset":"headless-test"}"#);
+        let scale = applied.get("scale").and_then(Value::as_f64).unwrap();
+        assert!((scale - 2.0).abs() < 0.05, "a product twice the size: {scale}");
+        assert_eq!(s.document.studios.len(), 2);
+        assert_eq!(s.document.render.width, 24);
+        value(&mut s, r#"{"op":"undo"}"#);
+        assert!(s.document.studios.is_empty(), "one undo takes the whole studio back");
+        value(&mut s, r#"{"op":"redo"}"#);
+
+        let template = folder.join("shot_{view}.png").display().to_string().replace('\\', "/");
+        let rendered = value(&mut s, &format!(r#"{{"op":"studio_preset","action":"render_all","path":"{template}"}}"#));
+        let paths: Vec<String> = rendered.get("paths").unwrap().as_array().iter().filter_map(|p| p.as_str().map(str::to_string)).collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with("shot_Front.png") && paths[1].ends_with("shot_High.png"), "{paths:?}");
+        assert!(paths.iter().all(|p| Path::new(p).is_file()));
+        assert!(matches!(ask(&mut s, r#"{"op":"studio_preset","action":"apply","preset":"nowhere"}"#), Reply::Failed(_)));
+        std::env::remove_var("TEQUILA_STUDIO_PRESETS");
         let _ = std::fs::remove_dir_all(&folder);
     }
 

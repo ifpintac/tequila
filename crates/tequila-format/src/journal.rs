@@ -287,6 +287,7 @@ pub fn encode(command: &Command) -> String {
                 EnvValue::Mode(m) => Value::from(m.label()),
                 EnvValue::Path(Some(p)) => Value::from(p.clone()),
                 EnvValue::Path(None) => Value::Null,
+                EnvValue::Choice(c) => Value::from(*c),
             };
             out.set("parameter", parameter.param.key()).set("value", value);
         }
@@ -332,6 +333,16 @@ pub fn encode(command: &Command) -> String {
         }
         Command::ApplyStudio { index } => {
             out.set("index", *index as f64);
+        }
+        Command::ApplyStudioPreset { preset, options } => {
+            out.set("preset", crate::studio_preset::to_inline(preset));
+            let mut o = Object::new();
+            o.set("front", options.front.key())
+                .set_some("scale", options.scale.map(|s| s.key()))
+                .set("keep_lights", options.keep_lights)
+                .set("keep_cameras", options.keep_cameras)
+                .set("keep_placement", options.keep_placement);
+            out.set("options", o.build());
         }
         Command::SetConfigurator { configurator } => {
             out.set("configurator", crate::configurator_to_json(configurator));
@@ -829,6 +840,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                     .and_then(|s| crate::BackgroundMode::ALL.into_iter().find(|m| m.label() == s))
                     .map(EnvValue::Mode),
                 EnvValue::Path(_) => Some(EnvValue::Path(raw.as_str().map(|s| s.to_string()))),
+                EnvValue::Choice(_) => raw
+                    .as_str()
+                    .and_then(|s| param.choices().iter().find(|(key, _)| *key == s))
+                    .map(|(key, _)| EnvValue::Choice(key)),
             };
             let shaped = shaped.ok_or_else(|| {
                 FormatError::Invalid(format!("`{named}` was given a value of the wrong kind"))
@@ -914,6 +929,35 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 .map(|v| v.as_array().iter().map(crate::read_template).collect())
                 .unwrap_or_default(),
         },
+        "studio_preset.apply" => {
+            let preset = value.get("preset").ok_or_else(|| {
+                FormatError::Invalid("studio_preset.apply carries no preset: give it inline, or name an installed one by \"id\" through the app".into())
+            })?;
+            let preset = crate::studio_preset::from_inline(preset).map_err(FormatError::Invalid)?;
+            let options = value.get("options");
+            let flag = |key: &str| options.and_then(|o| o.get(key)).and_then(|v| v.as_bool()).unwrap_or(false);
+            let front = match options.and_then(|o| o.get("front")).and_then(|v| v.as_str()) {
+                None => tequila_scene::preset::Front::PlusZ,
+                Some(f) => tequila_scene::preset::Front::from_key(f)
+                    .ok_or_else(|| FormatError::Invalid(format!("`{f}` is no front: +z, -z, +x or -x")))?,
+            };
+            let scale = match options.and_then(|o| o.get("scale")).and_then(|v| v.as_str()) {
+                None => None,
+                Some(s) => Some(tequila_scene::preset::FramingScale::from_key(s).ok_or_else(|| {
+                    FormatError::Invalid(format!("`{s}` is no framing scale: cameras, cameras_and_lights or none"))
+                })?),
+            };
+            Command::ApplyStudioPreset {
+                preset: Box::new(preset),
+                options: tequila_scene::preset::ApplyOptions {
+                    front,
+                    scale,
+                    keep_lights: flag("keep_lights"),
+                    keep_cameras: flag("keep_cameras"),
+                    keep_placement: flag("keep_placement"),
+                },
+            }
+        }
         "studio.apply" => Command::ApplyStudio {
             index: value
                 .get("index")

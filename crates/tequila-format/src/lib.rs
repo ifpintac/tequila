@@ -44,6 +44,7 @@ use tequila_core::units::LengthUnit;
 use tequila_materials::fresnel::ComplexIor;
 mod graph;
 pub mod library;
+pub mod studio_preset;
 
 /// A procedural as the project file and `material.set_procedural` write it:
 /// its `kind` and that kind's own fields. What a script or an assistant is
@@ -175,6 +176,7 @@ fn known_unwritten(path: &str) -> &'static [&'static str] {
     match path {
         "environment" => &["image", "sky", "pins"],
         "units" => &["metres_per_unit", "meters_per_unit"],
+        "lighting.custom" => &["cycles"],
         _ => &[],
     }
 }
@@ -383,6 +385,13 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
     }
     if !document.studios.is_empty() {
         scene.set("studios", document.studios.iter().map(studio_to_json).collect::<Vec<_>>());
+    }
+    // Only once a Studio has turned the product.
+    if document.product_turn != tequila_scene::studio::ProductTurn::default() {
+        let turn = &document.product_turn;
+        let mut object = Object::new();
+        object.set("yaw", turn.yaw).set("pivot", Value::Array(vec![Value::from(turn.pivot[0]), Value::from(turn.pivot[1])]));
+        scene.set("product_turn", object.build());
     }
     if document.configurator != tequila_scene::configurator::Configurator::default() {
         scene.set("configurator", configurator_to_json(&document.configurator));
@@ -801,7 +810,49 @@ pub(crate) fn studio_to_json(studio: &tequila_scene::studio::Studio) -> Value {
             })
             .collect::<Vec<_>>(),
     );
+    // Written only when there are some, so a Studio from before views is the
+    // same bytes it always was.
+    if !studio.lights.is_empty() {
+        object.set(
+            "lights",
+            studio
+                .lights
+                .iter()
+                .map(|o| {
+                    let mut entry = Object::new();
+                    match &o.target {
+                        tequila_scene::studio::LightTarget::Name(name) => entry.set("name", name.clone()),
+                        tequila_scene::studio::LightTarget::Layer(layer) => entry.set("layer", f64::from(*layer)),
+                    };
+                    entry.set("enabled", o.enabled);
+                    entry.build()
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+    object.set_some("product_yaw", studio.product_yaw);
+    object.set_some("filename_suffix", studio.filename_suffix.clone());
     object.build()
+}
+
+/// A Studio's light switches, as [`studio_to_json`] writes them.
+fn read_light_overrides(value: Option<&Value>) -> Vec<tequila_scene::studio::LightOverride> {
+    use tequila_scene::studio::{LightOverride, LightTarget};
+    value
+        .map(|v| {
+            v.as_array()
+                .iter()
+                .filter_map(|entry| {
+                    let target = match (entry.get("name").and_then(|n| n.as_str()), entry.get("layer").and_then(|l| l.as_index())) {
+                        (Some(name), _) => LightTarget::Name(name.to_string()),
+                        (None, Some(layer)) => LightTarget::Layer(layer.min(255) as u8),
+                        (None, None) => return None,
+                    };
+                    Some(LightOverride { target, enabled: entry.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true) })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn read_studio(value: &Value) -> tequila_scene::studio::Studio {
@@ -827,6 +878,9 @@ pub(crate) fn read_studio(value: &Value) -> tequila_scene::studio::Studio {
                     .collect()
             })
             .unwrap_or_default(),
+        lights: read_light_overrides(value.get("lights")),
+        product_yaw: value.get("product_yaw").and_then(|v| v.as_f32()).filter(|v| v.is_finite()),
+        filename_suffix: value.get("filename_suffix").and_then(|v| v.as_str()).map(str::to_string),
     }
 }
 
@@ -1298,6 +1352,7 @@ fn environment_to_json(environment: &EnvironmentSettings) -> Value {
             EnvValue::Flag(v) => Value::from(v),
             EnvValue::Color(c) => color(c),
             EnvValue::Mode(m) => Value::from(m.label()),
+            EnvValue::Choice(c) => Value::from(c),
             EnvValue::Path(p) => match p {
                 Some(path) => Value::from(path),
                 // Written as null rather than omitted: the absence has to be
@@ -1373,6 +1428,14 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     if let Some(photometry) = &settings.photometry {
         object.set("photometry", photometry.path.clone());
     }
+    if let Some(links) = &settings.links {
+        let mut linking = Object::new();
+        linking
+            .set("exclude", links.exclude)
+            .set("nodes", links.nodes.iter().map(|n| Value::from(n.0 as f64)).collect::<Vec<_>>())
+            .set("product", links.product);
+        object.set("links", linking.build());
+    }
     object.build()
 }
 
@@ -1419,6 +1482,14 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
         .unwrap_or(0)
         .min(255) as u8;
     settings.enabled = flag("enabled", true);
+    settings.links = value.get("links").map(|links| tequila_scene::lighting::LightLinking {
+        exclude: links.get("exclude").and_then(|v| v.as_bool()).unwrap_or(false),
+        nodes: links
+            .get("nodes")
+            .map(|v| v.as_array().iter().filter_map(|n| n.as_index()).map(|n| tequila_scene::tree::NodeId(n as u64)).collect())
+            .unwrap_or_default(),
+        product: links.get("product").and_then(|v| v.as_bool()).unwrap_or(false),
+    });
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -1469,7 +1540,37 @@ pub(crate) fn integrator_to_json(config: &IntegratorConfig) -> Value {
             "russian_roulette_start_bounce",
             config.russian_roulette_start_bounce as f64,
         );
+    // Only when something is set, so a project that sets none is the same
+    // bytes it always was.
+    if config.cycles != tequila_render_core::settings::CyclesTransport::NONE {
+        let c = &config.cycles;
+        let mut cycles = Object::new();
+        cycles
+            .set_some("diffuse_bounces", c.diffuse_bounces.map(f64::from))
+            .set_some("glossy_bounces", c.glossy_bounces.map(f64::from))
+            .set_some("transparent_bounces", c.transparent_bounces.map(f64::from))
+            .set_some("volume_bounces", c.volume_bounces.map(f64::from))
+            .set_some("filter_glossy", c.filter_glossy.map(f64::from))
+            .set_some("caustics_reflective", c.caustics_reflective)
+            .set_some("caustics_refractive", c.caustics_refractive);
+        object.set("cycles", cycles.build());
+    }
     object.build()
+}
+
+fn read_cycles_transport(value: Option<&Value>) -> tequila_render_core::settings::CyclesTransport {
+    let Some(value) = value else { return tequila_render_core::settings::CyclesTransport::NONE };
+    let count = |key: &str| value.get(key).and_then(|v| v.as_index()).map(|v| v as u32);
+    let flag = |key: &str| value.get(key).and_then(|v| v.as_bool());
+    tequila_render_core::settings::CyclesTransport {
+        diffuse_bounces: count("diffuse_bounces"),
+        glossy_bounces: count("glossy_bounces"),
+        transparent_bounces: count("transparent_bounces"),
+        volume_bounces: count("volume_bounces"),
+        filter_glossy: value.get("filter_glossy").and_then(|v| v.as_f32()).map(|v| v.max(0.0)),
+        caustics_reflective: flag("caustics_reflective"),
+        caustics_refractive: flag("caustics_refractive"),
+    }
 }
 
 pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> IntegratorConfig {
@@ -1519,6 +1620,9 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         pixel_spread: default.pixel_spread,
         in_floor_reflection: false,
         floor_reflection_only: false,
+        cycles: read_cycles_transport(value.get("cycles")),
+        // The render's, set per render.
+        pixel_filter: default.pixel_filter,
     }
 }
 
@@ -1633,6 +1737,22 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         Some(clamp) => object.set("clamp_indirect", clamp),
         None => object.set("clamp_indirect", Value::Null),
     };
+    match settings.clamp_direct {
+        Some(clamp) => object.set("clamp_direct", clamp),
+        None => object.set("clamp_direct", Value::Null),
+    };
+    match settings.adaptive_threshold {
+        Some(threshold) => object.set("adaptive_threshold", threshold),
+        None => object.set("adaptive_threshold", Value::Null),
+    };
+    match settings.pixel_filter {
+        Some(filter) => {
+            let mut f = Object::new();
+            f.set("type", filter.kind.key()).set("width_px", filter.width);
+            object.set("pixel_filter", f.build())
+        }
+        None => object.set("pixel_filter", Value::Null),
+    };
     match settings.region {
         Some(region) => object.set(
             "region",
@@ -1706,6 +1826,13 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
         prefilter_guides: flag("prefilter_guides", default.prefilter_guides),
         reject_fireflies: flag("reject_fireflies", default.reject_fireflies),
         clamp_indirect: value.get("clamp_indirect").and_then(|v| v.as_f32()),
+        clamp_direct: value.get("clamp_direct").and_then(|v| v.as_f32()).map(|v| v.max(0.0)),
+        adaptive_threshold: value.get("adaptive_threshold").and_then(|v| v.as_f32()).filter(|v| *v > 0.0),
+        pixel_filter: value.get("pixel_filter").and_then(|f| {
+            let kind = tequila_render_core::settings::PixelFilterKind::from_key(f.get("type")?.as_str()?)?;
+            let width = f.get("width_px").and_then(|w| w.as_f32()).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(1.0);
+            Some(tequila_render_core::settings::PixelFilter { kind, width })
+        }),
         region: value.get("region").and_then(|v| {
             let parts = v.as_array();
             if parts.len() < 4 {
@@ -2226,6 +2353,13 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         .get("studios")
         .map(|v| v.as_array().iter().map(read_studio).collect())
         .unwrap_or_default();
+    if let Some(turn) = root.get("product_turn") {
+        let pivot = turn.get("pivot").and_then(|p| p.as_f32_array()).unwrap_or_default();
+        document.product_turn = tequila_scene::studio::ProductTurn {
+            yaw: turn.get("yaw").and_then(|y| y.as_f32()).filter(|y| y.is_finite()).unwrap_or(0.0),
+            pivot: [pivot.first().copied().unwrap_or(0.0), pivot.get(1).copied().unwrap_or(0.0)],
+        };
+    }
     document.configurator = root.get("configurator").map(read_configurator).unwrap_or_default();
     document.measurements = root
         .get("measurements")
@@ -2280,7 +2414,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
     }
 
     // Unknown top-level scene fields.
-    const KNOWN_SCENE_FIELDS: [&str; 23] = [
+    const KNOWN_SCENE_FIELDS: [&str; 24] = [
         "format_version",
         "name",
         "units",
@@ -2299,6 +2433,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
         "multi_materials",
         "model_sets",
         "studios",
+        "product_turn",
         "configurator",
         "material_templates",
         "tree",
@@ -2452,6 +2587,10 @@ fn read_environment(root: &Value) -> EnvironmentSettings {
                 .and_then(|s| BackgroundMode::ALL.into_iter().find(|m| m.label() == s))
                 .map(EnvValue::Mode),
             EnvValue::Path(_) => Some(EnvValue::Path(value.as_str().map(|s| s.to_string()))),
+            EnvValue::Choice(_) => value
+                .as_str()
+                .and_then(|s| param.choices().iter().find(|(key, _)| *key == s))
+                .map(|(key, _)| EnvValue::Choice(key)),
         };
         if let Some(read) = read {
             param.write(&mut settings, &read);
@@ -3038,5 +3177,26 @@ mod hex_colour_tests {
         let red = choices[0].swatch.expect("a hex swatch");
         assert!((red[0] - 1.0).abs() < 1e-3 && red[1].abs() < 1e-3 && red[2].abs() < 1e-3, "{red:?}");
         assert_eq!(choices[1].swatch, Some([0.2, 0.2, 0.2]));
+    }
+}
+
+#[cfg(test)]
+mod light_link_tests {
+    use super::*;
+    use tequila_scene::lighting::LightLinking;
+
+    /// A light's linking is kept in the file, and a light without one
+    /// writes nothing new: a file from before reads as it was.
+    #[test]
+    fn a_lights_links_survive_a_round_trip() {
+        let linked = LightSettings {
+            links: Some(LightLinking { exclude: true, nodes: vec![tequila_scene::tree::NodeId(4), tequila_scene::tree::NodeId(9)], product: false }),
+            ..LightSettings::default()
+        };
+        assert_eq!(read_light(&light_to_json(&linked)), linked);
+        let product = LightSettings { links: Some(LightLinking { product: true, ..LightLinking::default() }), ..LightSettings::default() };
+        assert_eq!(read_light(&light_to_json(&product)), product);
+        let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
+        assert!(!plain.contains("links"), "{plain}");
     }
 }

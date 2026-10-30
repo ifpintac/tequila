@@ -972,6 +972,25 @@ pub fn trace_path_with_caustics(
             // the floor), so what lies beyond is found by this path alone and
             // takes full weight.
             //
+            // A floor with a bounce glows for everything but the camera -
+            // the studio's white sweep the product's reflections see - and
+            // ends the path there; darker toward the contact over its
+            // falloff, as ambient occlusion. In the floor's own reflection
+            // too: it shows the product as it is, lit by the bounce. Left
+            // out there, a face the bounce lifted was mirrored as dark as it
+            // would be without it.
+            if let Some(glow) = catcher.bounce.filter(|_| !config.floor_reflection_only) {
+                let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 { hit.geometric_normal } else { -hit.geometric_normal };
+                let open = if catcher.bounce_falloff > 0.0 {
+                    1.0 - occlusion_at(intersector, &hit, facing, catcher.bounce_falloff, sampler)
+                } else {
+                    1.0
+                };
+                let emitted = throughput * glow * open;
+                radiance += emitted;
+                aovs.contribute(emitted, crate::lpe::ENVIRONMENT);
+                break;
+            }
             // Unless ground illumination is on, in which case the floor is
             // deliberately a real diffuse surface bouncing light back into the
             // product, and shading falls through to it.
@@ -992,7 +1011,19 @@ pub fn trace_path_with_caustics(
         // out of geometry that does not close, and attenuating it over the
         // distance to the environment would turn every open-sided glass part
         // black rather than admit the mesh is not a solid.
-        if let Some(volume) = media.top(None).and_then(|m| m.volume.as_ref()) {
+        if let Some((volume, ior)) = media.top(None).and_then(|m| m.volume.as_ref().map(|v| (v, m.ior))) {
+            // What the medium itself gives off along the way, a lit light
+            // guide's glow, before what it absorbs of the rest. Times the
+            // square of its index: refraction here divides light born inside
+            // by it on the way out, as light physically is, and Cycles and
+            // Blender's refraction do not, so without it a glowing part was
+            // twice as dim here as in a render through Cycles.
+            let glow = volume.emitted_over(hit.t) * (ior * ior).max(1.0);
+            if !glow.is_black() {
+                let emitted = throughput * glow;
+                radiance += emitted;
+                aovs.contribute(emitted, crate::lpe::EMISSIVE);
+            }
             throughput *= volume.transmittance_over(hit.t);
             if !throughput.is_finite() || throughput.is_black() {
                 break;
@@ -1090,6 +1121,20 @@ pub fn trace_path_with_caustics(
             &flaked
         } else {
             material
+        };
+
+        // Rounded edges (Cycles' Bevel): near a sharp edge the normal leans
+        // toward the next face. On the surface the camera sees, where it
+        // shows, and with the material's own count of probes: fewer, and the
+        // probes that miss the next face pull the average back toward the
+        // sharp edge, a highlight half there. Past that first surface it
+        // cost Tequila's renderer 40% on a product all of whose parts are
+        // rounded. The bump bends what it leaves, as Bevel feeds Cycles'
+        // Bump.
+        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 {
+            crate::bevel::rounded_normal(intersector, &hit, shading_normal, material.edge_radius, material.edge_samples as u32, sampler)
+        } else {
+            shading_normal
         };
 
         // Bump and normal maps (§02 §5.4) bend the normal the BSDF is built
@@ -1641,6 +1686,29 @@ fn floor_reflection(
         return None;
     }
     let origin = tequila_core::math::offset_ray_origin(hit.position, normal);
+    // A short reflection is gone above its fade, and most of what a floor
+    // mirrors is above it: one intersection says so before a whole path is
+    // traced and shaded to be thrown away. The first thing the ray meets is
+    // never further than what the path would shade, so this skips only what
+    // would have faded anyway.
+    // By distance, the floor shows its mirror by how much the product closes
+    // in on it within the fade, sampled as ambient occlusion is: most of the
+    // floor has nothing near and is done with in one short ray.
+    let mut near = 1.0;
+    match catcher.reflection_fade {
+        Some(fade) if catcher.reflection_fade_by_distance => {
+            near = occlusion_at(intersector, hit, normal, fade, sampler);
+            if near <= 0.0 {
+                return None;
+            }
+        }
+        Some(fade) => match intersector.intersect(&Ray::new(origin, reflected)) {
+            None => return None,
+            Some(first) if first.t * reflected.dot(normal) >= fade => return None,
+            Some(_) => {}
+        },
+        None => {}
+    }
     // One bounce, not a recursion: a floor reflecting a floor reflecting a
     // floor is a hall of mirrors nobody asked for, and the second bounce is
     // below the noise floor of a render anyone would ship.
@@ -1652,11 +1720,11 @@ fn floor_reflection(
     if seen.escaped {
         return None;
     }
-    let mut share = catcher.reflections.clamp(0.0, 1.0);
+    let mut share = catcher.reflections.clamp(0.0, 1.0) * near;
     // A short reflection: fading with how high above the floor what it shows
     // is, as a photographer's faded reflection does, so it meets the product
     // at the floor and is gone further up.
-    if let Some(fade) = catcher.reflection_fade {
+    if let Some(fade) = catcher.reflection_fade.filter(|_| !catcher.reflection_fade_by_distance) {
         let height = seen.depth * reflected.dot(normal);
         let t = (height / fade.max(1e-6)).clamp(0.0, 1.0);
         share *= 1.0 - t * t * (3.0 - 2.0 * t);
@@ -1729,7 +1797,8 @@ fn shadow_at(
     };
     let mut total = sky;
     for (bound, light) in bounds.iter_mut().zip(lights) {
-        *bound = light.irradiance_bound(hit.position, normal);
+        // A light kept off the floor neither lights it nor shadows it.
+        *bound = if light.links.lights(hit.instance.0) { light.irradiance_bound(hit.position, normal) } else { 0.0 };
         total += *bound;
     }
     // Negated, so that a NaN bound is refused too.
@@ -2142,7 +2211,7 @@ fn medium_direct_light(
         // By power, not by the light tree: a point in a medium has no normal
         // for the tree to cull lights behind.
         let chosen = scene.lights.select(sampler.light_select());
-        if let Some((light, p_select)) = chosen.and_then(|(id, p)| Some((scene.lights.get(id)?, p))) {
+        if let Some((light, p_select)) = chosen.and_then(|(id, p)| Some((scene.lights.get(id)?, p))).filter(|(light, _)| light.links.lights(instance.0)) {
             if let Some(sample) = light.sample(at, sampler.light_sample()) {
                 if light.visibility.diffuse && !sample.radiance.is_black() && (sample.is_delta || sample.pdf > 0.0) {
                     let density = if sample.is_delta { p_select } else { sample.pdf * p_select };
@@ -2406,6 +2475,10 @@ fn sample_analytic_lights(
     let Some(light) = scene.lights.get(id) else {
         return (Spectrum::ZERO, 0);
     };
+    // Light linking: a light kept to other parts lights nothing here.
+    if !light.links.lights(hit.instance.0) {
+        return (Spectrum::ZERO, 0);
+    }
 
     // A dimension of its own, not the leftovers of the selection. Trying to
     // recover a variate from the coordinate the alias table consumed piles

@@ -1539,6 +1539,66 @@ fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
                 );
             }
         });
+    cycles_controls(ui, settings);
+}
+
+/// Blender's Clamping, Film filter and noise threshold, for a render that
+/// must match one; each unset leaves the render as it always was.
+fn cycles_controls(ui: &mut egui::Ui, settings: &mut RenderSettings) {
+    use tequila_render_core::settings::{PixelFilter, PixelFilterKind};
+    crate::field::Fold::new("Advanced (Cycles)")
+        .id_salt("render-cycles-controls")
+        .default_open(settings.clamp_direct.is_some() || settings.pixel_filter.is_some() || settings.adaptive_threshold.is_some())
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let mut apart = settings.clamp_direct.is_some();
+                if ui.add(crate::field::Checkbox::new(&mut apart, "Clamp direct light apart")).changed() {
+                    settings.clamp_direct = apart.then_some(0.0);
+                }
+                if let Some(clamp) = &mut settings.clamp_direct {
+                    ui.add(egui::DragValue::new(clamp).range(0.0..=1000.0).speed(0.1));
+                    ui.label(egui::RichText::new("0 = none").small().color(crate::theme::dim()));
+                }
+            })
+            .response
+            .on_hover_text(
+                "Blender clamps direct and indirect light apart. Ticked, this is the direct clamp, and Clamp \
+                 samples (or firefly rejection's 10) is the indirect one alone, so bright lights keep their highlights.",
+            );
+            ui.horizontal(|ui| {
+                ui.label("Pixel filter");
+                let current = settings.pixel_filter;
+                let label = current.map_or("Box, 1 px (default)", |f| f.kind.label());
+                egui::ComboBox::from_id_salt("render-pixel-filter").selected_text(label).show_ui(ui, |ui| {
+                    if ui.selectable_label(current.is_none(), "Box, 1 px (default)").clicked() {
+                        settings.pixel_filter = None;
+                    }
+                    for kind in PixelFilterKind::ALL {
+                        let chosen = current.is_some_and(|f| f.kind == kind);
+                        if ui.selectable_label(chosen, kind.label()).clicked() {
+                            let width = current.map_or(if kind == PixelFilterKind::Box { 1.0 } else { 1.5 }, |f| f.width);
+                            settings.pixel_filter = Some(PixelFilter { kind, width });
+                        }
+                    }
+                });
+                if let Some(filter) = &mut settings.pixel_filter {
+                    ui.add(egui::DragValue::new(&mut filter.width).range(0.1..=10.0).speed(0.05).suffix(" px"));
+                }
+            })
+            .response
+            .on_hover_text("How each pixel's samples are spread. Blender's default is Blackman-Harris, 1.5 px: softer edges, no aliasing.");
+            ui.horizontal(|ui| {
+                let mut set = settings.adaptive_threshold.is_some();
+                if ui.add(crate::field::Checkbox::new(&mut set, "Noise threshold")).changed() {
+                    settings.adaptive_threshold = set.then_some(0.01);
+                }
+                if let Some(threshold) = &mut settings.adaptive_threshold {
+                    ui.add(egui::DragValue::new(threshold).range(0.0001..=1.0).speed(0.0005).fixed_decimals(4));
+                }
+            })
+            .response
+            .on_hover_text("How clean a pixel must be before adaptive sampling stops working on it. Cycles' own is 0.01.");
+        });
 }
 
 fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
@@ -1562,7 +1622,7 @@ fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
 }
 
 /// Placeholders a filename can use, in the order people reach for them.
-const TOKENS: &[&str] = &["project", "camera", "date", "time", "resolution", "samples"];
+const TOKENS: &[&str] = &["project", "product", "camera", "view", "date", "time", "resolution", "samples"];
 
 fn file_section(ui: &mut egui::Ui, settings: &mut RenderSettings, project: &Project) {
     ui.label(egui::RichText::new("Folder").color(crate::theme::dim()));
@@ -1794,7 +1854,7 @@ pub fn image_format(settings: &RenderSettings) -> ImageFormat {
         BitDepth::ThirtyTwo => tequila_format::psd::Depth::ThirtyTwo,
     };
     match settings.format {
-        OutputFormat::Png => ImageFormat::Png,
+        OutputFormat::Png => ImageFormat::Png(depth),
         OutputFormat::Jpeg => ImageFormat::Jpeg(settings.jpeg_quality),
         OutputFormat::Tiff => ImageFormat::Tiff(depth),
         OutputFormat::Psd => ImageFormat::Psd(depth),
@@ -1859,7 +1919,7 @@ mod tests {
             depth: BitDepth::ThirtyTwo,
             ..Default::default()
         };
-        assert!(matches!(image_format(&settings), ImageFormat::Png));
+        assert!(matches!(image_format(&settings), ImageFormat::Png(tequila_format::psd::Depth::Eight)));
 
         let exr = RenderSettings {
             format: OutputFormat::Exr,

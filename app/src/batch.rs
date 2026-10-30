@@ -279,8 +279,10 @@ fn run(
     });
 
     let mut config = job.config.clone();
+    // The render's pixel filter, a box of one pixel unless it asks for another.
+    config.pixel_filter = settings.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
     config.adaptive_sampling_threshold = if settings.adaptive {
-        config.adaptive_sampling_threshold
+        settings.adaptive_threshold.unwrap_or(config.adaptive_sampling_threshold)
     } else {
         // Zero retires nothing, which is how "adaptive off" is expressed
         // without the renderer needing a second switch.
@@ -576,7 +578,8 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
     translate::configure(
         &mut session,
         &translate::Quality::with_lighting(settings.adaptive, settings.denoise, settings.max_seconds.map(f64::from), &job.config)
-            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides),
+            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
+            .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
     )?;
 
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Rendering" });
@@ -683,6 +686,7 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         // reflection's fade put dark specks on a light backdrop and grain in
         // a transparent one.
         let shares = smooth_alpha(settings.width, settings.height, layer.pixels().iter().map(|p| p.alpha()).collect(), settings.denoise);
+        let bright = tequila_render_cpu::floor::alpha_by_brightness(&job.scene);
         for (i, &share) in shares.iter().enumerate() {
             if share > 0.0 {
                 let reflection = tequila_core::spectrum::Spectrum::from_rendering_rgb(tequila_core::math::vec3(
@@ -690,6 +694,8 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
                     reflected[3 * i + 1].max(0.0),
                     reflected[3 * i + 2].max(0.0),
                 ));
+                let (reflection, share) =
+                    if bright { tequila_render_cpu::floor::by_brightness(reflection, share, job.style.exposure) } else { (reflection, share) };
                 (color[i], alpha[i]) = tequila_render_cpu::floor::lay_reflection(color[i], alpha[i], reflection, share);
             }
         }
@@ -1395,6 +1401,239 @@ mod tests {
                 "with a lamp of {intensity} cd, the shadow darkened Tequila's render by {tequila:.2} and Cycles' by {cycles:.2}"
             );
         }
+    }
+
+    /// A floor's bounce is seen by the product and never by the camera: a
+    /// mirror sphere on a floor that catches no shadow, in a black studio
+    /// with no lamp, mirrors black below its middle without one and the glow
+    /// with one, while the pixels the camera sees of the floor itself stay
+    /// as they were. In Tequila's renderer and, where it is installed, in
+    /// Cycles.
+    #[test]
+    fn a_floor_bounce_lights_the_product_and_not_the_picture() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::LightSet;
+        use tequila_render_core::scene::ShadowCatcher;
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let picture = |bounce: Option<Spectrum>| -> Vec<u8> {
+                let directory = scratch(&format!("tequila-bounce-{}-{}", engine.key(), bounce.is_some()));
+                let renderer = BatchRenderer::new();
+                let mut render =
+                    job(1, &directory, RenderSettings { engine, width: 64, height: 48, max_samples: 64, denoise: false, ..Default::default() });
+                let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(Vec::new())));
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                scene.background = Background::Environment;
+                scene.instances[1].shadow_catcher = Some(ShadowCatcher { shadows: false, bounce, bounce_falloff: 0.0, ..ShadowCatcher::default() });
+                let m = &mut scene.materials[0];
+                m.base_color = Spectrum::splat(1.0);
+                m.base_metalness = 1.0;
+                m.specular_roughness = 0.05;
+                m.coat_weight = 0.0;
+                scene.programs.clear();
+                render.scene = Arc::new(scene);
+                renderer.submit(render);
+                match wait_for_finish(&renderer) {
+                    BatchEvent::Finished { preview, .. } => preview,
+                    BatchEvent::Failed { message, .. } => panic!("{message}"),
+                    _ => unreachable!(),
+                }
+            };
+            let (dark, lifted) = (picture(None), picture(Some(Spectrum::splat(1.0))));
+            let mean = |p: &[u8]| p.chunks_exact(4).map(|c| f64::from(c[0]) + f64::from(c[1]) + f64::from(c[2])).sum::<f64>() / (p.len() / 4) as f64;
+            assert!(mean(&lifted) > mean(&dark) + 2.0, "{engine:?}: the bounce lit nothing, {:.2} against {:.2}", mean(&lifted), mean(&dark));
+            // The floor's corners, where the sphere is not: the camera sees
+            // no more of the floor than before.
+            for corner in [0, 63, 64 * 47, 64 * 48 - 1] {
+                let (a, b) = (&dark[4 * corner..4 * corner + 4], &lifted[4 * corner..4 * corner + 4]);
+                assert!(a.iter().zip(b).all(|(x, y)| x.abs_diff(*y) <= 2), "{engine:?}: the camera saw the bounce at pixel {corner}: {a:?} then {b:?}");
+            }
+        }
+    }
+
+    /// Rounded edges catch light a sharp edge cannot: a 2 cm white cube lit
+    /// from in front and above, at 45 degrees, in a black studio. Its top and
+    /// front faces see the lamp at 45 degrees; an edge rounded to 2 mm turns
+    /// squarely to it and is the brightest thing in the picture, where the
+    /// sharp edge has nothing brighter than the faces. In Tequila's renderer,
+    /// and in Cycles where it is installed. (A lamp behind a face's plane
+    /// lights it through no rounding: Cycles takes no light from below a
+    /// surface's true face.)
+    #[test]
+    fn rounded_edges_catch_light_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
+        use tequila_render_core::scene::Mesh;
+        use tequila_scene::render::RenderEngine;
+        // A closed cube a centimetre either side of its centre, flat-shaded.
+        let cube = {
+            let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+            for axis in 0..3 {
+                for sign in [-1.0f32, 1.0] {
+                    let n = [Vec3::X, Vec3::Y, Vec3::Z][axis] * sign;
+                    let (u, v) = match axis {
+                        0 => (Vec3::Y, Vec3::Z),
+                        1 => (Vec3::Z, Vec3::X),
+                        _ => (Vec3::X, Vec3::Y),
+                    };
+                    let (u, v) = if sign > 0.0 { (u, v) } else { (v, u) };
+                    let base = positions.len() as u32;
+                    for (a, b) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                        positions.push((n + u * a + v * b) * 0.01);
+                        normals.push(n);
+                    }
+                    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                }
+            }
+            Mesh::new(positions, indices).with_normals(normals)
+        };
+        let lit = |engine: RenderEngine, radius: f32| -> f64 {
+            let directory = scratch(&format!("tequila-bevel-{}-{radius}", engine.key()));
+            let renderer = BatchRenderer::new();
+            let mut render = job(
+                1,
+                &directory,
+                RenderSettings { engine, width: 96, height: 72, max_samples: 64, denoise: false, ..Default::default() },
+            );
+            let above = Light::new(LightKind::Point(PointLight { position: vec3(0.0, 0.02 + 0.2, 0.01 + 0.2), intensity: Spectrum::splat(0.06), radius: 0.0 }));
+            let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(vec![above])));
+            scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+            scene.background = Background::Environment;
+            scene.meshes[0] = Arc::new(cube.clone());
+            scene.instances[0].transform = tequila_core::math::Transform::translation(vec3(0.0, 0.01, 0.0));
+            scene.instances.truncate(1);
+            let m = &mut scene.materials[0];
+            m.base_color = Spectrum::splat(0.8);
+            m.specular_weight = 0.0;
+            m.coat_weight = 0.0;
+            m.edge_radius = radius;
+            scene.programs.clear();
+            render.scene = Arc::new(scene);
+            render.camera = Camera::look_at(vec3(0.0, 0.035, 0.06), vec3(0.0, 0.008, 0.0), Vec3::Y);
+            renderer.submit(render);
+            match wait_for_finish(&renderer) {
+                // The brightest twenty pixels, on average: the edge band
+                // when there is one, the faces otherwise.
+                BatchEvent::Finished { preview, .. } => {
+                    let mut levels: Vec<u32> = preview.chunks_exact(4).map(|p| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])).collect();
+                    levels.sort_unstable_by(|a, b| b.cmp(a));
+                    levels[..20].iter().map(|&l| f64::from(l)).sum::<f64>() / 20.0
+                }
+                BatchEvent::Failed { message, .. } => panic!("{message}"),
+                _ => unreachable!(),
+            }
+        };
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(_) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let (sharp, rounded) = (lit(engine, 0.0), lit(engine, 0.002));
+            assert!(sharp > 60.0, "{engine:?}: the faces should be lit: {sharp:.1}");
+            assert!(sharp < 600.0, "{engine:?}: the faces should not clip: {sharp:.1}");
+            assert!(rounded > sharp * 1.12, "{engine:?}: rounded edges brightest at {rounded:.1}, sharp ones' brightest {sharp:.1}");
+        }
+    }
+
+    /// The demo sphere as a clear medium, `inside` it, in a black studio lit
+    /// by `lamps`, through `engine`: the picture's mean, 8-bit, summed over
+    /// its channels.
+    fn medium(engine: tequila_scene::render::RenderEngine, name: &str, lamps: Vec<tequila_render_core::light::Light>, inside: impl Fn(&mut tequila_materials::openpbr::Material)) -> f64 {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::LightSet;
+        let directory = scratch(&format!("tequila-medium-{name}-{}", engine.key()));
+        let renderer = BatchRenderer::new();
+        let mut render = job(1, &directory, RenderSettings { engine, width: 64, height: 48, max_samples: 96, denoise: false, ..Default::default() });
+        let mut scene = (*render.scene).clone().with_lights(Arc::new(LightSet::new(lamps)));
+        scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+        scene.background = Background::Environment;
+        scene.instances.truncate(1);
+        let m = &mut scene.materials[0];
+        m.base_color = Spectrum::splat(0.96);
+        m.base_metalness = 0.0;
+        m.coat_weight = 0.0;
+        m.specular_roughness = 0.3;
+        m.specular_ior = 1.49;
+        m.transmission_weight = 1.0;
+        inside(m);
+        scene.programs.clear();
+        render.scene = Arc::new(scene);
+        render.config = IntegratorConfig { max_transmission_bounces: 12, ..IntegratorConfig::product() };
+        renderer.submit(render);
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { preview, .. } => {
+                preview.chunks_exact(4).map(|c| f64::from(c[0]) + f64::from(c[1]) + f64::from(c[2])).sum::<f64>() / (preview.len() / 4) as f64
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A medium that glows from within lights itself in a black studio with
+    /// no lamp - a lit light guide - and as much in Cycles as in Tequila's
+    /// renderer; without the glow it is dark.
+    #[test]
+    fn a_glowing_medium_glows_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        let mut glowing = Vec::new();
+        for engine in engines {
+            let absorbing = |m: &mut tequila_materials::openpbr::Material| {
+                // Blender's Volume Absorption 0.9 at density 600: 60 a metre.
+                m.transmission_color = Spectrum::splat(0.9);
+                m.transmission_depth = -(0.9f32.ln()) / 60.0;
+            };
+            let dark = medium(engine, "dark", Vec::new(), absorbing);
+            let lit = medium(engine, "glow", Vec::new(), |m| {
+                absorbing(m);
+                m.volume_emission_color = Spectrum::splat(1.0);
+                m.volume_emission_strength = 20.0;
+            });
+            assert!(dark < 1.0, "{engine:?}: dark without its glow, {dark:.2}");
+            assert!(lit > dark + 20.0, "{engine:?}: the glow lit {lit:.2}");
+            glowing.push(lit);
+        }
+        if let [tequila, cycles] = glowing[..] {
+            assert!((cycles / tequila - 1.0).abs() < 0.25, "Tequila's glow {tequila:.2}, Cycles' {cycles:.2}");
+        }
+    }
+
+    /// A lamp lights a scattering medium in Cycles as in Tequila's renderer:
+    /// a milky sphere under a lamp in a black studio. Cycles' lamps never
+    /// lit volume scattering, and the sphere was dark there.
+    #[test]
+    fn a_lamp_lights_a_scattering_medium_in_cycles() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::light::{Light, LightKind, PointLight};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let lamp = || vec![Light::new(LightKind::Point(PointLight { position: vec3(1.0, 2.0, 2.0), intensity: Spectrum::splat(40.0), radius: 0.1 }))];
+        let milky = |m: &mut tequila_materials::openpbr::Material| {
+            m.transmission_color = Spectrum::splat(0.95);
+            m.transmission_depth = 0.2;
+            m.transmission_scatter = Spectrum::splat(0.8);
+        };
+        let tequila = medium(RenderEngine::Tequila, "milk", lamp(), milky);
+        let cycles = medium(RenderEngine::CyclesCpu, "milk", lamp(), milky);
+        assert!(tequila > 5.0, "the lamp lit Tequila's milky sphere by only {tequila:.2}");
+        assert!(cycles > 0.5 * tequila, "the lamp lit Cycles' milky sphere {cycles:.2} against Tequila's {tequila:.2}");
     }
 
     /// The mean of each channel of the demo scene with a black sphere on a
@@ -2319,6 +2558,180 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// White artwork prints in its ink's colour, the same in both renderers:
+    /// a label all round a dark sphere, white with a red ink, comes out red,
+    /// and as red in Cycles as in Tequila's renderer. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn a_labels_ink_colours_white_artwork() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::{Axis, Mapping, Projection};
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let middle = |image: &[u8]| -> [f64; 3] {
+            let (mut sum, mut n) = ([0.0; 3], 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    for c in 0..3 {
+                        sum[c] += f64::from(image[(y * 96 + x) * 4 + c]);
+                    }
+                    n += 1.0;
+                }
+            }
+            sum.map(|s| s / n)
+        };
+        let inked = |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            graph.material_mut().base_color = Spectrum::splat(0.05);
+            let mut print = tequila_materials::decal::Decal::new("Print", TextureId(1));
+            print.mapping = Mapping {
+                projection: Projection::Cylindrical,
+                axis: Axis::Y,
+                scale: tequila_core::math::vec3(1.0, 0.25, 1.0),
+                offset: tequila_core::math::vec2(0.0, 0.5),
+                ..Mapping::default()
+            };
+            print.ink = Spectrum { r: 0.7, g: 0.08, b: 0.05 };
+            graph.decals.push(print);
+            let program = graph.compile().expect("compiles");
+            let mut table = tequila_render_core::shade::TextureTable::new();
+            table.insert(TextureId(1), Arc::new(Texture::from_linear(
+                Image { width: 4, height: 4, channels: 4, color_space: ColorSpace::LinearSrgb, data: [1.0, 1.0, 1.0, 1.0].repeat(16) },
+                MapRole::Color,
+                Mapping::default(),
+            )));
+            scene.materials[0] = graph.material().clone();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+        };
+        let [tequila, cycles] = both_engines("label-ink", inked);
+        let (tequila, cycles) = (middle(&tequila), middle(&cycles));
+        assert!(tequila[0] > tequila[1] + 40.0, "white artwork in red ink is not red: {tequila:.1?}");
+        for c in 0..3 {
+            assert!((tequila[c] - cycles[c]).abs() < 10.0, "red ink is {tequila:.1?} in Tequila's render and {cycles:.1?} in Cycles'");
+        }
+    }
+
+    /// A light kept to some parts lights those and no others, in both
+    /// renderers alike: with nothing else lighting the scene, a lamp kept to
+    /// one of two spheres and the same lamp kept to the other add up to the
+    /// lamp lighting both, each less than that, and Cycles agrees. Skipped
+    /// where Cycles is not installed or predates light linking.
+    #[test]
+    fn a_linked_light_lights_only_its_parts() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Environment;
+        use tequila_render_core::light::{Light, LightKind, LightLinks, LightSet, PointLight};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let lit = |links: LightLinks| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                // Side by side across the view: the camera's right is
+                // (3, 0, -2) normalized.
+                let right = vec3(3.0, 0.0, -2.0).normalize() * 0.65;
+                let mut second = scene.instances[0].clone();
+                second.id = tequila_core::ids::InstanceId(1);
+                second.transform = tequila_core::math::Transform::translation(right) * second.transform;
+                scene.instances[0].transform = tequila_core::math::Transform::translation(-right) * scene.instances[0].transform;
+                scene.instances.push(second);
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                let mut lamp = Light::new(LightKind::Point(PointLight { position: vec3(0.5, 3.0, 2.5), intensity: Spectrum::splat(6.0), radius: 0.05 }));
+                lamp.links = links.clone();
+                *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![lamp])));
+            }
+        };
+        let total = |image: &[u8]| image.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>();
+        let shots = [
+            both_engines("linked-all", lit(LightLinks::All)),
+            both_engines("linked-first", lit(LightLinks::Only(Arc::from([0u32])))),
+            both_engines("linked-second", lit(LightLinks::AllBut(Arc::from([0u32])))),
+        ];
+        for (engine, name) in [(0, "Tequila's renderer"), (1, "Cycles")] {
+            let [all, first, second] = [&shots[0], &shots[1], &shots[2]].map(|s| total(&s[engine]));
+            assert!(first < 0.9 * all && second < 0.9 * all, "{name}: a linked lamp lit both spheres ({first:.0}, {second:.0} of {all:.0})");
+            assert!(first > 0.05 * all && second > 0.05 * all, "{name}: a linked lamp lit nothing ({first:.0}, {second:.0} of {all:.0})");
+            assert!((first + second - all).abs() < 0.12 * all, "{name}: the two halves come to {:.0}, not {all:.0}", first + second);
+        }
+    }
+
+    /// A flat label kept to one side prints on the faces looking that way and
+    /// not on those behind, in both renderers alike: projected straight
+    /// through a sphere along each axis in turn, where the camera looks it
+    /// prints for at most one of the two sides - for one of them on some
+    /// axis - and on both sides wherever either does (and also on faces too
+    /// far off the axis for one side). Skipped where Cycles is not installed.
+    #[test]
+    fn a_one_sided_label_prints_on_one_side_only() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::decal::DecalSide;
+        use tequila_materials::graph::{MaterialGraph, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::{Axis, Mapping, Projection};
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let middle = |image: &[u8]| -> f64 {
+            let (mut sum, mut n) = (0.0, 0.0);
+            for y in 30..38 {
+                for x in 44..52 {
+                    sum += f64::from(image[(y * 96 + x) * 4 + 1]);
+                    n += 1.0;
+                }
+            }
+            sum / n
+        };
+        let printed = |axis: Axis, side: Option<DecalSide>| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+                graph.material_mut().base_color = Spectrum::splat(0.05);
+                // The whole sphere under the artwork.
+                if let Some(side) = side {
+                    let mut print = tequila_materials::decal::Decal::new("Print", TextureId(1));
+                    print.mapping = Mapping { projection: Projection::Planar, axis, scale: tequila_core::math::vec3(0.01, 0.01, 0.01), offset: tequila_core::math::vec2(0.5, 0.5), real_world_units: false, ..Mapping::default() };
+                    print.side = side;
+                    graph.decals.push(print);
+                }
+                let program = graph.compile().expect("compiles");
+                let mut table = tequila_render_core::shade::TextureTable::new();
+                table.insert(TextureId(1), Arc::new(Texture::from_linear(
+                    Image { width: 4, height: 4, channels: 4, color_space: ColorSpace::LinearSrgb, data: [0.9, 0.9, 0.9, 1.0].repeat(16) },
+                    MapRole::Color,
+                    Mapping::default(),
+                )));
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+            }
+        };
+        let [bare, _] = both_engines("label-side-none", printed(Axis::Z, None));
+        let bare = middle(&bare);
+        let mut one_sided = false;
+        for axis in [Axis::X, Axis::Y, Axis::Z] {
+            let shot = |side: DecalSide| {
+                let [tequila, cycles] = both_engines(&format!("label-side-{axis:?}-{}", side.key()), printed(axis, Some(side)));
+                let (tequila, cycles) = (middle(&tequila), middle(&cycles));
+                assert!((tequila - cycles).abs() < 10.0, "{axis:?} {side:?}: {tequila:.1} in Tequila's render, {cycles:.1} in Cycles'");
+                tequila > bare + 20.0
+            };
+            let (plus, minus, both) = (shot(DecalSide::Positive), shot(DecalSide::Negative), shot(DecalSide::Both));
+            assert!(!(plus && minus), "along {axis:?} it prints for both sides");
+            assert!(both || !(plus || minus), "along {axis:?}: + {plus}, - {minus}, both sides {both}");
+            one_sided |= plus || minus;
+        }
+        assert!(one_sided, "no axis printed for either side");
     }
 
     /// Coloured glass with a depth absorbs as it goes, in Cycles as in

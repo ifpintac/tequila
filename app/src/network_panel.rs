@@ -199,7 +199,7 @@ impl NetworkPanel {
                 }
             }
         });
-        if !matches!(image_format(settings), ImageFormat::Png | ImageFormat::Jpeg(_)) {
+        if !matches!(image_format(settings), ImageFormat::Png(_) | ImageFormat::Jpeg(_)) {
             ui.label(egui::RichText::new("Render nodes write PNG or JPEG; these go out as PNG.").color(dim).small());
         }
         if let Some(note) = &self.note {

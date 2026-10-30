@@ -23,6 +23,33 @@ use crate::project::Project;
 #[derive(Default)]
 pub struct LightingTab {}
 
+/// A count Cycles takes that may be left to it: ticked, the number given;
+/// unticked, `automatic`, shown greyed out as what it will be.
+fn optional_count(ui: &mut egui::Ui, label: &str, value: &mut Option<u32>, automatic: u32) {
+    ui.horizontal(|ui| {
+        let mut set = value.is_some();
+        if ui.add(crate::field::Checkbox::new(&mut set, label)).changed() {
+            *value = set.then_some(automatic);
+        }
+        match value {
+            Some(count) => {
+                ui.add(egui::DragValue::new(count).range(0..=128));
+            }
+            None => {
+                ui.label(egui::RichText::new(automatic.to_string()).color(crate::theme::dim()));
+            }
+        }
+    });
+}
+
+/// A switch Cycles takes that may be left to it (on, there).
+fn optional_flag(ui: &mut egui::Ui, label: &str, value: &mut Option<bool>) {
+    let mut on = value.unwrap_or(true);
+    if ui.add(crate::field::Checkbox::new(&mut on, label)).changed() {
+        *value = Some(on);
+    }
+}
+
 impl LightingTab {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) {
         let lighting = project.document().lighting.clone();
@@ -103,6 +130,39 @@ impl LightingTab {
                     crate::field::Slider::new(&mut config.regularization_roughness, 0.0..=0.4)
                         .text("Roughness floor"),
                 );
+
+                let unset = tequila_render_core::settings::CyclesTransport::NONE;
+                crate::field::Fold::new("Advanced (Cycles)")
+                    .id_salt("lighting-cycles-light-paths")
+                    .default_open(config.cycles != unset)
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Blender's Light Paths, for a studio that must match one. Unticked, Cycles takes \
+                                 what it always has; with diffuse or glossy set, Ray bounces is the total.",
+                            )
+                            .small()
+                            .color(crate::theme::dim()),
+                        );
+                        let automatic = config.max_bounces.max(4);
+                        optional_count(ui, "Diffuse bounces", &mut config.cycles.diffuse_bounces, automatic);
+                        optional_count(ui, "Glossy bounces", &mut config.cycles.glossy_bounces, automatic);
+                        optional_count(ui, "Transparent bounces", &mut config.cycles.transparent_bounces, 8);
+                        optional_count(ui, "Volume bounces", &mut config.cycles.volume_bounces, 7);
+                        ui.horizontal(|ui| {
+                            let mut set = config.cycles.filter_glossy.is_some();
+                            if ui.add(crate::field::Checkbox::new(&mut set, "Filter glossy")).changed() {
+                                config.cycles.filter_glossy = set.then_some(1.0);
+                            }
+                            if let Some(blur) = &mut config.cycles.filter_glossy {
+                                ui.add(egui::DragValue::new(blur).range(0.0..=10.0).speed(0.05));
+                            }
+                        })
+                        .response
+                        .on_hover_text("Blur glossy reflections seen after a diffuse bounce, which cuts their noise. Blender's is 0.5; unticked, 1.");
+                        optional_flag(ui, "Reflective caustics", &mut config.cycles.caustics_reflective);
+                        optional_flag(ui, "Refractive caustics", &mut config.cycles.caustics_refractive);
+                    });
 
                 if config != before {
                     // Touching any of these leaves the preset behind — the
@@ -333,6 +393,58 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
                      render rather than re-rendered.",
                 );
             light.layer = layer;
+        });
+
+    // ---- Light linking -----------------------------------------------------
+    crate::field::Fold::new("Light linking")
+        .id_salt("light-linking")
+        .default_open(light.links.is_some())
+        .show(ui, |ui| {
+            use tequila_scene::lighting::LightLinking;
+            let mut mode = match &light.links {
+                None => 0u8,
+                Some(links) if links.exclude => 2,
+                Some(_) => 1,
+            };
+            if crate::theme::segmented(ui, &mut mode, &[(0, "Everything"), (1, "Only"), (2, "All but")]) {
+                light.links = match mode {
+                    0 => None,
+                    _ => Some(LightLinking {
+                        exclude: mode == 2,
+                        ..light.links.clone().unwrap_or(LightLinking { product: true, ..LightLinking::default() })
+                    }),
+                };
+            }
+            let Some(links) = &mut light.links else {
+                ui.label(egui::RichText::new("Lights every part, and shadows them all.").small().color(crate::theme::dim()));
+                return;
+            };
+            ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
+                .on_hover_text("Everything in the scene but its lights. What a studio preset keeps, since it cannot name a product's parts.");
+            let document = project.document();
+            let roots = tequila_scene::studio::product_roots(document);
+            if !links.product {
+                for &root in &roots {
+                    let name = document.tree.get(root).map(|n| n.name.clone()).unwrap_or_default();
+                    let mut on = links.nodes.contains(&root);
+                    if ui.add(crate::field::Checkbox::new(&mut on, name)).changed() {
+                        if on {
+                            links.nodes.push(root);
+                        } else {
+                            links.nodes.retain(|&n| n != root);
+                        }
+                    }
+                }
+            }
+            let deeper = links.nodes.iter().filter(|n| !roots.contains(n)).count();
+            if deeper > 0 {
+                ui.label(egui::RichText::new(format!("and {deeper} parts set by a script")).small().color(crate::theme::dim()));
+            }
+            ui.label(
+                egui::RichText::new("What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.")
+                    .small()
+                    .color(crate::theme::dim()),
+            );
         });
 
     if light != before {

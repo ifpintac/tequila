@@ -45,7 +45,9 @@ pub enum AlphaMode {
 /// The file formats §1.8 lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageFormat {
-    Png,
+    /// Eight or sixteen bits per sample; thirty-two is written as sixteen,
+    /// as much as a PNG holds.
+    Png(Depth),
     /// Quality 1 to 100.
     Jpeg(u8),
     /// Eight or sixteen bits per sample, or full float for TIFF32.
@@ -58,7 +60,7 @@ impl ImageFormat {
     /// The extension a file of this format gets.
     pub fn extension(self) -> &'static str {
         match self {
-            ImageFormat::Png => "png",
+            ImageFormat::Png(_) => "png",
             ImageFormat::Jpeg(_) => "jpg",
             ImageFormat::Tiff(_) => "tif",
             ImageFormat::Exr(_) => "exr",
@@ -211,6 +213,20 @@ impl RenderOutput {
         out
     }
 
+    /// Sixteen-bit RGBA: the same picture as [`to_rgba8`](Self::to_rgba8),
+    /// developed at full width - grade, spatial effects and all - rather
+    /// than eight bits widened, which would only claim the precision.
+    pub fn to_rgba16(&self) -> Vec<u16> {
+        let (color, alpha) = self.matted();
+        let rgb = self.style.develop_through_wide(self.width, self.height, &color, &self.display);
+        let mut out = Vec::with_capacity(alpha.len() * 4);
+        for (pixel, coverage) in rgb.chunks_exact(3).zip(&alpha) {
+            out.extend_from_slice(pixel);
+            out.push((coverage.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16);
+        }
+        out
+    }
+
     /// Eight-bit RGBA, graded and display-encoded.
     pub fn to_rgba8(&self) -> Vec<u8> {
         let (color, alpha) = self.matted();
@@ -226,7 +242,7 @@ impl RenderOutput {
     pub fn write(&self, path: impl AsRef<Path>, format: ImageFormat) -> Result<(), OutputError> {
         let path = path.as_ref();
         match format {
-            ImageFormat::Png => self.write_png(path),
+            ImageFormat::Png(depth) => self.write_png(path, depth),
             ImageFormat::Jpeg(quality) => self.write_jpeg(path, quality),
             ImageFormat::Tiff(depth) => self.write_tiff(path, depth),
             ImageFormat::Exr(precision) => self.write_exr(path, precision),
@@ -234,7 +250,7 @@ impl RenderOutput {
         }
     }
 
-    fn write_png(&self, path: &Path) -> Result<(), OutputError> {
+    fn write_png(&self, path: &Path, depth: Depth) -> Result<(), OutputError> {
         let file = std::fs::File::create(path).map_err(|e| OutputError::Io(e.to_string()))?;
         let mut encoder = png::Encoder::new(
             std::io::BufWriter::new(file),
@@ -242,12 +258,19 @@ impl RenderOutput {
             self.height as u32,
         );
         encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
+        // Big-endian samples, as PNG stores them.
+        let (bits, data) = match depth {
+            Depth::Eight => (png::BitDepth::Eight, self.to_rgba8()),
+            Depth::Sixteen | Depth::ThirtyTwo => {
+                (png::BitDepth::Sixteen, self.to_rgba16().into_iter().flat_map(u16::to_be_bytes).collect())
+            }
+        };
+        encoder.set_depth(bits);
         let mut writer = encoder
             .write_header()
             .map_err(|e| OutputError::Encode(e.to_string()))?;
         writer
-            .write_image_data(&self.to_rgba8())
+            .write_image_data(&data)
             .map_err(|e| OutputError::Encode(e.to_string()))
     }
 
@@ -294,21 +317,12 @@ impl RenderOutput {
                     .map_err(|e| OutputError::Encode(e.to_string()))
             }
             Depth::Sixteen => {
-                let rgba = self.to_rgba8();
-                // Sixteen bits from eight would be a lie about the precision,
-                // so the grade is redone at full width instead.
-                let (color, alpha) = self.matted();
-                let mut samples = Vec::with_capacity(color.len() * 4);
-                for (c, a) in color.iter().zip(&alpha) {
-                    let graded = self.display.apply(self.style.grade(*c));
-                    for channel in [graded.x, graded.y, graded.z] {
-                        samples.push((channel.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16);
-                    }
-                    samples.push((a.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16);
-                }
-                let _ = rgba;
+                // Developed at full width: sixteen bits from eight would be
+                // a lie about the precision. And developed whole, so bloom,
+                // the vignette and sharpening are in it as they are in the
+                // eight-bit file; a pixel at a time, they were left out.
                 encoder
-                    .write_image::<colortype::RGBA16>(width, height, &samples)
+                    .write_image::<colortype::RGBA16>(width, height, &self.to_rgba16())
                     .map_err(|e| OutputError::Encode(e.to_string()))
             }
             Depth::ThirtyTwo => {
@@ -404,7 +418,12 @@ pub struct NameFields {
     /// (`TEQUILA_SPEC.md` §1.13); empty for an ordinary render.
     pub configuration: String,
     pub model_set: String,
+    /// The Studio - the view - rendered, its file-name suffix or its name;
+    /// `{view}` is the same.
     pub studio: String,
+    /// What the product is called: its top group's name, or the project's
+    /// when it has several. `{project}` where it is empty.
+    pub product: String,
     pub frame: Option<u32>,
     pub width: usize,
     pub height: usize,
@@ -437,7 +456,8 @@ pub fn expand_template(template: &str, fields: &NameFields) -> String {
             "camera" => Some(fields.camera.clone()),
             "configuration" => Some(fields.configuration.clone()),
             "model_set" => Some(fields.model_set.clone()),
-            "studio" => Some(fields.studio.clone()),
+            "studio" | "view" => Some(fields.studio.clone()),
+            "product" => Some(if fields.product.is_empty() { fields.project.clone() } else { fields.product.clone() }),
             "frame" => fields.frame.map(|f| format!("{f:04}")),
             "width" => Some(fields.width.to_string()),
             "height" => Some(fields.height.to_string()),
@@ -889,6 +909,40 @@ mod tests {
         assert_eq!(metadata.to_text(), "Samples: 256\nRenderer: Tequila\n");
     }
 
+    /// A 16-bit PNG is a real one: sixteen bits a sample, the coverage kept,
+    /// and the same picture as the eight-bit file, finer.
+    #[test]
+    fn a_sixteen_bit_png_is_the_same_picture_finer() {
+        let directory = std::env::temp_dir().join(format!("tequila-png16-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut source = output(AlphaMode::Straight);
+        source.width = 16;
+        source.height = 4;
+        source.color = (0..64).map(|i| Spectrum::splat(i as f32 / 40.0)).collect();
+        source.alpha = (0..64).map(|i| if i % 16 < 4 { 0.0 } else { 1.0 }).collect();
+        let read = |depth: Depth| {
+            let path = directory.join(format!("probe-{depth:?}.png"));
+            source.write(&path, ImageFormat::Png(depth)).unwrap();
+            let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&path).unwrap()));
+            let mut reader = decoder.read_info().unwrap();
+            let mut buffer = vec![0; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buffer).unwrap();
+            buffer.truncate(info.buffer_size());
+            (info.bit_depth, buffer)
+        };
+        let (eight_bits, eight) = read(Depth::Eight);
+        let (sixteen_bits, sixteen) = read(Depth::Sixteen);
+        assert_eq!((eight_bits, sixteen_bits), (png::BitDepth::Eight, png::BitDepth::Sixteen));
+        let wide: Vec<u16> = sixteen.chunks_exact(2).map(|b| u16::from_be_bytes([b[0], b[1]])).collect();
+        assert_eq!(wide.len(), eight.len());
+        assert_eq!(wide[3], 0, "transparent where there is nothing");
+        assert_eq!(wide[4 * 4 + 3], 65535);
+        for (narrow, wide) in eight.iter().zip(&wide) {
+            assert!((*narrow as f32 / 255.0 - *wide as f32 / 65535.0).abs() <= 1.01 / 255.0, "{narrow} against {wide}");
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     /// Every format actually writes a file, and the file starts with what its
     /// readers look for. A format that is offered in the UI and produces
     /// something unopenable is worse than one that is not offered.
@@ -912,8 +966,9 @@ mod tests {
         // Magic bytes as numbers rather than as string escapes. The escapes
         // do not survive being written through several layers of quoting, and a
         // test that checks the wrong bytes is worse than no test at all.
-        let cases: [(ImageFormat, &[u8]); 7] = [
-            (ImageFormat::Png, &[0x89, b'P', b'N', b'G']),
+        let cases: [(ImageFormat, &[u8]); 8] = [
+            (ImageFormat::Png(Depth::Eight), &[0x89, b'P', b'N', b'G']),
+            (ImageFormat::Png(Depth::Sixteen), &[0x89, b'P', b'N', b'G']),
             (ImageFormat::Jpeg(90), &[0xff, 0xd8, 0xff]),
             (ImageFormat::Tiff(Depth::Eight), &[b'I', b'I', 42, 0]),
             (ImageFormat::Tiff(Depth::Sixteen), &[b'I', b'I', 42, 0]),
@@ -967,10 +1022,10 @@ mod tests {
     #[test]
     fn formats_declare_what_they_can_carry() {
         assert!(!ImageFormat::Jpeg(90).carries_alpha());
-        assert!(ImageFormat::Png.carries_alpha());
+        assert!(ImageFormat::Png(Depth::Eight).carries_alpha());
         assert!(ImageFormat::Exr(Precision::Half).is_high_dynamic_range());
         assert!(ImageFormat::Tiff(Depth::ThirtyTwo).is_high_dynamic_range());
         assert!(!ImageFormat::Tiff(Depth::Eight).is_high_dynamic_range());
-        assert!(!ImageFormat::Png.is_high_dynamic_range());
+        assert!(!ImageFormat::Png(Depth::Sixteen).is_high_dynamic_range());
     }
 }

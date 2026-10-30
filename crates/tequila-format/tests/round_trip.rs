@@ -578,6 +578,10 @@ fn every_environment_parameter_survives_a_round_trip() {
                 BackgroundMode::Color
             }),
             EnvValue::Path(_) => EnvValue::Path(Some("assets/somewhere/thing.hdr".to_string())),
+            // Another of its options.
+            EnvValue::Choice(c) => EnvValue::Choice(
+                param.choices().iter().map(|(key, _)| *key).find(|key| key != c).expect("a choice of one"),
+            ),
         }
     };
 
@@ -641,6 +645,14 @@ fn studios_survive_a_round_trip() {
         image_style: None,
         model_set: Some(None),
         variants: Vec::new(),
+        // A view: lights switched by name and by layer, the product turned,
+        // and the name its image takes.
+        lights: vec![
+            tequila_scene::studio::LightOverride { target: tequila_scene::studio::LightTarget::Name("Strip L".into()), enabled: false },
+            tequila_scene::studio::LightOverride { target: tequila_scene::studio::LightTarget::Layer(2), enabled: true },
+        ],
+        product_yaw: Some(3.141593),
+        filename_suffix: Some("Rear".into()),
     };
     let untouched = Studio {
         model_set: None,
@@ -650,10 +662,13 @@ fn studios_survive_a_round_trip() {
     all_sets.variants = vec![(3, 0)];
     document.studios = vec![full, all_sets, untouched];
 
+    document.product_turn = tequila_scene::studio::ProductTurn { yaw: -0.942478, pivot: [0.01, -0.02] };
+
     let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
     assert_eq!(reopened.document.multi_materials, document.multi_materials);
     assert_eq!(reopened.document.model_sets, document.model_sets);
     assert_eq!(reopened.document.studios, document.studios);
+    assert_eq!(reopened.document.product_turn, document.product_turn);
 }
 
 /// The configurator survives a save and a reopen: every kind of option, a
@@ -708,6 +723,38 @@ fn render_layers_survive_a_round_trip() {
     ];
     let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
     assert_eq!(reopened.document.render.layers, document.render.layers);
+}
+
+/// The finer Cycles controls survive a save and a reopen - the lighting's
+/// Light Paths and the render's direct clamp, pixel filter and adaptive
+/// threshold - and a project that sets none of them writes no Light Paths
+/// at all, so it is the same bytes it always was.
+#[test]
+fn the_finer_cycles_controls_survive_a_round_trip() {
+    use tequila_render_core::settings::{CyclesTransport, IntegratorConfig, LightingSettings, PixelFilter, PixelFilterKind};
+    let plain = SceneDocument::new();
+    let text = write(&plain, &Preserved::default());
+    assert!(!String::from_utf8_lossy(&text).contains("\"cycles\""), "Light Paths written for a project that sets none");
+
+    let mut document = SceneDocument::new();
+    let mut custom = IntegratorConfig { max_bounces: 16, max_transmission_bounces: 12, ..IntegratorConfig::product() };
+    custom.cycles = CyclesTransport {
+        diffuse_bounces: Some(4),
+        glossy_bounces: Some(8),
+        transparent_bounces: Some(16),
+        volume_bounces: Some(0),
+        filter_glossy: Some(0.5),
+        caustics_reflective: Some(false),
+        caustics_refractive: Some(true),
+    };
+    document.lighting = LightingSettings { preset: None, custom };
+    document.render.clamp_direct = Some(0.0);
+    document.render.clamp_indirect = Some(10.0);
+    document.render.pixel_filter = Some(PixelFilter { kind: PixelFilterKind::BlackmanHarris, width: 1.5 });
+    document.render.adaptive_threshold = Some(0.01);
+    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    assert_eq!(reopened.document.lighting.custom.cycles, document.lighting.custom.cycles);
+    assert_eq!(reopened.document.render, document.render);
 }
 
 /// Measurements survive a save and a reopen, ends on parts and in the
