@@ -395,6 +395,8 @@ RGB rendering cannot produce correct dispersion (prism rainbows, gem fire) or co
 
 Enable spectral automatically when a path encounters a material with `dispersion > 0` or a thin-film lobe; otherwise render in RGB for speed. Upsample RGB reflectance to spectra with [Jakob & Hanika 2019], which guarantees the round trip preserves the original RGB under the rendering illuminant.
 
+- *As built, October 30* (`tequila-render-core/src/spectral.rs`): decided per render rather than per path, by the render settings' Spectral — Auto, the default, is spectral when any material disperses (an Abbe number on something that transmits), and thin films alone do not turn it on, since their interference is still evaluated at three wavelengths inside the BSDF. The rendering illuminant is D65, the white of the AP1 space `Spectrum` holds, folded into the film's response so a white light is a flat spectrum. Companions are dropped at a dispersive *transmission*; a reflection off the same surface keeps all four. The coefficient table is fitted at first use rather than shipped. Measurements and what remains open: `docs/05` M10.
+
 ### 7.5 Light units
 
 Emission is specified in physically meaningful units and converted internally to radiance:

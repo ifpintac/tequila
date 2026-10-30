@@ -179,6 +179,13 @@ pub fn render_pass_with_aovs(
     };
     let caustic_map = caustic_map.as_ref();
 
+    // A spectral render's upsampling table (§7.4), built here the first time
+    // rather than by whichever worker meets a colour first, with the others
+    // waiting on it.
+    if context.config.spectral.resolve(intersector.scene()) {
+        tequila_render_core::spectral::prewarm();
+    }
+
     work.par_iter().for_each(|tile| {
         let base = &base;
         for y in tile.y0..tile.y1 {
@@ -383,6 +390,7 @@ fn result_from(sample: preview::PreviewSample) -> PathResult {
         labels: tequila_core::spectrum::Spectrum::ZERO,
         labels_alpha: 0.0,
         wavelength: None,
+        hue: None,
         // An escaped preview ray is the background and nothing else.
         background: if sample.escaped { sample.radiance } else { tequila_core::spectrum::Spectrum::ZERO },
     }

@@ -1564,6 +1564,8 @@ fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
         "Stop working on pixels that are already clean, and spend the time on the ones that are not.",
     );
 
+    spectral_picker(ui, settings);
+
     crate::field::Fold::new("Fireflies")
         .id_salt("render-fireflies")
         .default_open(false)
@@ -1590,6 +1592,32 @@ fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
             }
         });
     cycles_controls(ui, settings);
+}
+
+/// Whether Tequila's renderer traces wavelengths or RGB (`docs/01` §7.4).
+/// Greyed out for Cycles, which renders RGB whatever it says.
+fn spectral_picker(ui: &mut egui::Ui, settings: &mut RenderSettings) {
+    use tequila_render_core::settings::SpectralMode;
+    let cycles = settings.engine.is_cycles();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.add_enabled(!cycles, egui::Label::new("Spectral"));
+        for mode in SpectralMode::ALL {
+            let hint = match mode {
+                SpectralMode::Auto => "Trace wavelengths where a material disperses light (glass or a gem with an Abbe number), and RGB everywhere else",
+                SpectralMode::On => "Always trace wavelengths: colours mix as light does, at some cost per sample",
+                SpectralMode::Off => "Always RGB, the fastest: a dispersive material still splits light, by one wavelength per path and with more colour noise",
+            };
+            if ui
+                .add_enabled(!cycles, egui::SelectableLabel::new(settings.spectral == mode, mode.label()))
+                .on_hover_text(hint)
+                .on_disabled_hover_text("Cycles renders in RGB; Spectral is for Tequila's renderer")
+                .clicked()
+            {
+                settings.spectral = mode;
+            }
+        }
+    });
 }
 
 /// Blender's Clamping, Film filter and noise threshold, for a render that

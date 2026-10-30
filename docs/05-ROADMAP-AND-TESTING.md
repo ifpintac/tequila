@@ -875,20 +875,72 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
 **Exit criterion:** GPU backend produces images matching CPU within tolerance on the parity suite, at ≥ 8× CPU throughput on the benchmark scene.
 
 ### M10 — Beyond parity (optional)
-- [ ] Spectral rendering promoted to default for dispersive materials.
-      *Dispersion done, September 26, as a deviation from §01 §7.4:* a path
-      meeting glass with an Abbe number takes one wavelength, weighted by
-      the colour it stands for (the CIE functions by Wyman et al.'s fit,
-      normalized so the wavelengths average to exact white), and refracts
-      by a two-term Cauchy index fitted to the IOR and Abbe number at every
-      dispersive surface after. That is hero-wavelength sampling after its
-      first dispersive event, which is where it matters. *Open:* the four
-      wavelengths before it (less colour noise) and Jakob & Hanika's RGB
-      upsampling, whose coefficient table this build does not carry;
-      surfaces met after the split filter the path by their RGB, exact for
-      neutral ones. Tested: a dispersive ball in a white world stays white
-      (0.99, 1.00, 1.01); a small light seen through one is 0.89 saturated,
-      against 0.00 without.
+- [x] Spectral rendering promoted to default for dispersive materials.
+      *Dispersion done, September 26:* a path meeting glass with an Abbe
+      number takes one wavelength, weighted by the colour it stands for, and
+      refracts by a two-term Cauchy index fitted to the IOR and Abbe number.
+      That is still what an RGB render does (Spectral off).
+      *Spectral, October 30* (`tequila-render-core/src/spectral.rs`): the
+      Render window's **Spectral** — Auto (the default: spectral when a
+      material disperses, RGB otherwise), On, Off — saved as the render
+      settings' `spectral`, followed by the viewport, greyed out for Cycles.
+      A spectral path carries four wavelengths from the camera (Wilkie et
+      al.'s hero-wavelength sampling): one drawn from the sampler's
+      wavelength dimension and three a quarter, half and three quarters
+      further round the sampling distribution, which is Radziszewski et al.'s
+      sech² for the eye with an eighth by AP1's blue response, which the
+      eye's alone starves (a white path's blue strayed 47% RMS, now 11%; red
+      13%, green 5%). Every colour the path meets is read at the four as
+      Jakob & Hanika's sigmoid-polynomial spectrum: a BSDF's weight and a
+      volume's transmittance as reflectances, light — the environment,
+      emission, light samples — as unbounded colours at half brightness, a
+      random walk's medium made per wavelength from its colour and radius
+      (Chiang's remap is not linear: made per channel and upsampled, a milky
+      medium was dE 7 off). D65, the space's white, is folded into the
+      film's response rather than into the lights, so a white light is a
+      flat spectrum and a white furnace is white; radiance goes to the film
+      through the CIE functions (Wyman's fit) into AP1, normalized so a flat
+      spectrum is (1, 1, 1), and keeps its sign, since AP1's responses dip
+      below zero (clipped per path, a blue light was 30% too bright). A
+      dispersive surface refracts by the hero's index; the path keeps all
+      four off the surface and drops the other three, the hero carrying on
+      for four, when it goes through, as light sampled through a rough one
+      is the hero's alone. Firefly rejection judges a spectral path by the
+      light it carries over its wavelengths' luminance, signed. An RGB
+      render is bit-for-bit what it was: the integrator is one generic
+      function, and its RGB instance does the old arithmetic in the old
+      order (checked by hashing every catalog material's render, passes,
+      caustics and floor included, before and after).
+      *The table* is generated, not shipped: three 64³ cubes of
+      coefficients fitted by Gauss-Newton on the CIELAB difference under
+      D65, warm-started along brightness from a fifth of the way up, as
+      `rgb2spec` does, with one change: a step that makes the fit worse is
+      halved, since much of AP1 is outside the spectral locus and there the
+      full steps diverged (a line of oranges fitted as blues). It is built
+      the first time a render is spectral — before the render's workers
+      start, on plain threads — in 0.6 s in a debug build over 16 cores;
+      shipped, it would be 9 MB of floats that compress badly. Round trip,
+      integrated finely (`tests/spectral.rs`): reflectances over sRGB's
+      gamut, mean dE 0.044 and at most 2.3 (a yellow-white brighter than a
+      reflectance can be); lights over it, mean 0.041, at most 0.83; the
+      whole AP1 cube, mean 3.2, at most 93 at its green primary, which is
+      not a colour. Measured: a white furnace (1.0002, 1.0001, 1.0002); five
+      coloured balls within dE 0.07 of RGB's; sRGB's primaries as lights
+      within dE 0.64; every catalog material in the studio within dE 0.52
+      of its RGB render, the Gem aside; a dispersive ball in a white world
+      (0.998, 1.007, 0.997), and with firefly rejection (0.996, 1.005,
+      0.999); a small light through flint 1.08 saturated (beyond sRGB),
+      0.12 through plain glass. Colour noise through a flint ball in the
+      studio at 16 samples: 0.39 with four wavelengths, 0.52 with the hero
+      alone, 0.85 by RGB's one wavelength at the glass. Cost on
+      `simple_product`, nothing in it dispersive, spectral forced on: 1.21×
+      RGB's time (4.50 against 5.45 Msamples/s at 320×180, debug build). *Open:* thin films interfere at three
+      wavelengths inside the BSDF, whose result is then upsampled; a rough
+      dispersive surface drops the companions rather than weighing them by
+      spectral MIS; the companions reflect off a dispersive surface by the
+      hero's Fresnel; caustic photons, and light sampled from inside a
+      scattering medium, stay RGB and are upsampled where the path reads
+      them; Cycles renders RGB.
 - [ ] Manifold Next Event Estimation as an unbiased alternative to SPPM caustics.
 - [x] Post-render relighting UI driven by light-group AOVs: "Keep light
       groups for relighting" and the Render window's Relight section,

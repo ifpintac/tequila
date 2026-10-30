@@ -1134,6 +1134,9 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     if let Some(caustics) = options.caustics {
         config.caustics = caustics;
     }
+    // Wavelengths or RGB as the document's render settings say; Auto, a
+    // new document's, for a model.
+    config.spectral = settings.spectral;
     // A project's adaptive sampling switched off, as the Render window
     // renders it: zero retires nothing.
     if project && !settings.adaptive {

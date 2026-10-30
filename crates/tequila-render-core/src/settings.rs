@@ -73,6 +73,63 @@ pub struct IntegratorConfig {
     /// final render; one pixel's box otherwise. Set per render, never saved
     /// here (it is the render's setting, `RenderSettings::pixel_filter`).
     pub pixel_filter: PixelFilter,
+    /// Whether paths carry wavelengths rather than RGB (§7.4,
+    /// [`crate::spectral`]). From the render settings, never saved here
+    /// (`RenderSettings::spectral`).
+    pub spectral: SpectralMode,
+    /// Whether a spectral path carries its hero wavelength's three
+    /// companions, as Wilkie et al. have it, or the hero alone from the
+    /// start. Only ever off to measure what the companions buy; never saved.
+    pub spectral_companions: bool,
+}
+
+/// Whether a render traces wavelengths or RGB (`docs/01` §7.4).
+///
+/// RGB cannot split light by wavelength, and a spectral path, which can,
+/// costs more per vertex: each colour it meets is read as a spectrum at its
+/// four wavelengths. So by default a scene is rendered spectrally only when
+/// something in it disperses light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SpectralMode {
+    /// Spectral when the scene has a dispersive material, RGB otherwise.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl SpectralMode {
+    pub const ALL: [SpectralMode; 3] = [SpectralMode::Auto, SpectralMode::On, SpectralMode::Off];
+
+    /// The name in the file format.
+    pub const fn key(self) -> &'static str {
+        match self {
+            SpectralMode::Auto => "auto",
+            SpectralMode::On => "on",
+            SpectralMode::Off => "off",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            SpectralMode::Auto => "Auto",
+            SpectralMode::On => "On",
+            SpectralMode::Off => "Off",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<SpectralMode> {
+        SpectralMode::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// Whether `scene` is rendered spectrally.
+    pub fn resolve(self, scene: &crate::scene::SceneSnapshot) -> bool {
+        match self {
+            SpectralMode::Auto => scene.has_dispersion(),
+            SpectralMode::On => true,
+            SpectralMode::Off => false,
+        }
+    }
 }
 
 /// [`IntegratorConfig::pixel_spread`] when nothing better is known.
@@ -306,6 +363,8 @@ impl IntegratorConfig {
             floor_reflection_only: false,
             cycles: CyclesTransport::NONE,
             pixel_filter: PixelFilter::BOX,
+            spectral: SpectralMode::Auto,
+            spectral_companions: true,
         }
     }
 

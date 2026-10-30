@@ -733,9 +733,13 @@ impl Project {
         Some((Arc::new(scene), copy.cameras.active().camera, style, copy.lighting.config()))
     }
 
-    /// What the integrator should run with, from the Lighting tab.
+    /// What the integrator should run with, from the Lighting tab, traced
+    /// spectrally as the Render window's Spectral says (`docs/01` §7.4), so
+    /// the viewport shows a gem's fire as the render will.
     pub fn integrator_config(&self) -> tequila_render_core::settings::IntegratorConfig {
-        self.document.lighting.config()
+        let mut config = self.document.lighting.config();
+        config.spectral = self.document.render.spectral;
+        config
     }
 
     /// The grade applied to the accumulated image. Changing it never costs a
@@ -1241,6 +1245,22 @@ mod tests {
         assert!(Arc::ptr_eq(&queued.scene, &original_scene));
         assert!(queued.settings.output_directory.contains("original"));
         assert!(project.take_queued_snapshot(id).is_none());
+    }
+
+    /// The Render window's Spectral reaches the integrator, for the
+    /// viewport and for a queued render alike, and a new project is Auto.
+    #[test]
+    fn the_render_settings_decide_whether_paths_are_spectral() {
+        use tequila_render_core::settings::SpectralMode;
+        let mut project = demo();
+        assert_eq!(project.integrator_config().spectral, SpectralMode::Auto);
+        let settings = tequila_scene::render::RenderSettings { spectral: SpectralMode::On, ..project.render_settings().clone() };
+        project.apply(Command::SetRenderSettings { settings: Box::new(settings.clone()) }).unwrap();
+        assert_eq!(project.integrator_config().spectral, SpectralMode::On);
+        let id = project.enqueue("Spectral", 0, settings);
+        let job = project.take_queued_snapshot(id).unwrap();
+        assert_eq!(job.config.spectral, SpectralMode::On);
+        assert_eq!(job.settings.spectral, SpectralMode::On);
     }
 
     #[test]

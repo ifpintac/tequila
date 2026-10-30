@@ -284,6 +284,8 @@ fn run(
     let mut config = job.config.clone();
     // The render's pixel filter, a box of one pixel unless it asks for another.
     config.pixel_filter = settings.pixel_filter.unwrap_or(tequila_render_core::settings::PixelFilter::BOX);
+    // Wavelengths or RGB, as the job was queued with.
+    config.spectral = settings.spectral;
     config.adaptive_sampling_threshold = if settings.adaptive {
         settings.adaptive_threshold.unwrap_or(config.adaptive_sampling_threshold)
     } else {

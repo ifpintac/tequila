@@ -634,10 +634,13 @@ impl Pixel {
         // green paths through a diamond were clipped hardest and the stone
         // turned lavender. Dividing out the colour's own luminance judges
         // every wavelength by the light it carries, so whether a path is
-        // clipped, and by how much, no longer depends on its colour.
-        let hue = result
-            .wavelength
-            .map_or(1.0, |lambda| tequila_materials::dispersion::weight(lambda).luminance().max(1e-3));
+        // clipped, and by how much, no longer depends on its colour. A
+        // spectral path says how luminous its own wavelengths are.
+        let hue = match (result.hue, result.wavelength) {
+            (Some(hue), _) => hue.max(1e-3),
+            (None, Some(lambda)) => tequila_materials::dispersion::weight(lambda).luminance().max(1e-3),
+            (None, None) => 1.0,
+        };
         let brightness = |radiance: Spectrum| radiance.luminance() / hue;
 
         if let Some(limit) = clamp {
@@ -661,10 +664,20 @@ impl Pixel {
             // first samples were all blocked had no spread at all, and every
             // lit sample after them was clipped to the dark mean: one pixel in
             // sixteen of a shadow came out black.
-            let sampled = Spectrum {
-                r: (radiance.r - background.r).max(0.0),
-                g: (radiance.g - background.g).max(0.0),
-                b: (radiance.b - background.b).max(0.0),
+            //
+            // A spectral path's is kept signed: its wavelengths can register
+            // a little below zero in a channel (`spectral::Wavelengths`), and
+            // clipped there a blue hero, whose green is negative, was judged
+            // brighter than it was and scaled down out of proportion, and a
+            // gem in a white world went yellow.
+            let sampled = if result.hue.is_some() {
+                radiance - background
+            } else {
+                Spectrum {
+                    r: (radiance.r - background.r).max(0.0),
+                    g: (radiance.g - background.g).max(0.0),
+                    b: (radiance.b - background.b).max(0.0),
+                }
             };
             let luminance = brightness(sampled);
             let mean = self.mean().luminance();

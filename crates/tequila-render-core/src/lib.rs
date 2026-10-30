@@ -41,6 +41,7 @@ pub mod sky;
 pub mod preview;
 pub mod scene;
 pub mod shade;
+pub mod spectral;
 pub mod surface_bump;
 pub mod scheduler;
 pub mod settings;

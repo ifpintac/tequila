@@ -227,6 +227,7 @@ these are read when Render is pressed and not before.
 | `clamp_direct` | number? | A ceiling on direct light of its own, 0 for none, or null. Null, `clamp_indirect` holds for direct light too, as it always did; set, the two are apart, as Blender's are, and `clamp_indirect` (or firefly rejection's 10) is the indirect one alone. |
 | `pixel_filter` | object? | `{type, width_px}`: `box`, `gaussian` or `blackman_harris`, in pixels as Cycles' Film takes them, or null for one pixel's box (both renderers' default; Blender's is Blackman-Harris 1.5). |
 | `adaptive_threshold` | number? | The noise below which a pixel stops taking samples, or null for the renderer's own (Cycles 0.01). |
+| `spectral` | string | `auto`, `on` or `off`: whether Tequila's renderer traces wavelengths rather than RGB (§01 §7.4). `auto`, the default and what a project without the field reads as, is spectral when a material disperses light (an Abbe number on something that transmits) and RGB otherwise. Cycles renders RGB whatever it says. |
 | `region` | number[4]? | `[x, y, width, height]`, or null for the whole image (§01 §9.5). |
 | `format` | string | `png`, `jpeg`, `tiff`, `exr` or `psd`. |
 | `depth` | string | `8`, `16` or `32`. A depth the format cannot hold is corrected on load rather than obeyed. |
