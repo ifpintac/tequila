@@ -253,6 +253,7 @@ fn main() -> eframe::Result<()> {
             }
             mac::quit_asks_first(cc);
             mac::wake_on_open(&cc.egui_ctx);
+            mac::add_menus(&cc.egui_ctx);
             {
                 let mut app = TequilaApp::new();
                 if !adopted.is_empty() {
@@ -1227,6 +1228,10 @@ impl eframe::App for TequilaApp {
         // change the person's own choice.
         if let Some(look) = self.pending_look.take() {
             theme::set_appearance(ctx, look, false);
+        }
+        // What was chosen in a Mac's own menu bar since the last frame.
+        for command in mac::take_commands() {
+            self.menu_command(ctx, command);
         }
         theme::sync(ctx);
         // The title bar in the interface's mode, not the desktop's.
@@ -2821,6 +2826,34 @@ impl TequilaApp {
     /// left, the document's name in the middle, and on the right the panels
     /// it can show and the two things a session is for — bringing a model
     /// in and rendering it out.
+    /// A command from a Mac's own menu bar (`mac::add_menus`), done as the
+    /// window's menu item for it does it.
+    fn menu_command(&mut self, ctx: &egui::Context, command: mac::MenuCommand) {
+        use mac::MenuCommand;
+        match command {
+            MenuCommand::NewProject => self.new_project(),
+            MenuCommand::Open => self.ask_for_file(Action::Open),
+            MenuCommand::Save => match self.project.path.clone() {
+                Some(path) => self.save_to(&path),
+                None => self.ask_for_file(Action::SaveAs),
+            },
+            MenuCommand::SaveAs => self.ask_for_file(Action::SaveAs),
+            MenuCommand::Import => self.ask_for_file(Action::Import),
+            MenuCommand::Undo => self.undo(),
+            MenuCommand::Redo => self.redo(),
+            MenuCommand::Inspector => self.show_project = !self.show_project,
+            MenuCommand::Library => self.toggle_library(ctx.screen_rect().width()),
+            MenuCommand::FullViewport => self.full_viewport = !self.full_viewport,
+            MenuCommand::FrameSelection => self.frame(false),
+            MenuCommand::FrameAll => self.frame(true),
+            MenuCommand::RenderWindow => self.render_window.open = true,
+            MenuCommand::Shortcuts => self.show_help = true,
+            MenuCommand::StartScreen => self.start_screen.open = true,
+            MenuCommand::Updates => self.updates.open_window(),
+            MenuCommand::About => self.show_about = true,
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let bar = ui.max_rect();
         ui.horizontal_centered(|ui| {

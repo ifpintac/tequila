@@ -218,3 +218,239 @@ pub fn listen_for_opened_files() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn listen_for_opened_files() {}
+
+/// What the Mac's own menu bar asks for, done by the frame that takes it
+/// ([`take_commands`]) as the window's own menus do it.
+// Only a Mac builds the menu that makes these.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuCommand {
+    NewProject,
+    Open,
+    Save,
+    SaveAs,
+    Import,
+    Undo,
+    Redo,
+    Inspector,
+    Library,
+    FullViewport,
+    FrameSelection,
+    FrameAll,
+    RenderWindow,
+    Shortcuts,
+    StartScreen,
+    Updates,
+    About,
+}
+
+// Only a Mac builds the menu that makes these.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+impl MenuCommand {
+    /// In menu order, each menu's commands together: an item's tag is its
+    /// place here.
+    pub const ALL: [MenuCommand; 17] = [
+        MenuCommand::NewProject,
+        MenuCommand::Open,
+        MenuCommand::Save,
+        MenuCommand::SaveAs,
+        MenuCommand::Import,
+        MenuCommand::Undo,
+        MenuCommand::Redo,
+        MenuCommand::Inspector,
+        MenuCommand::Library,
+        MenuCommand::FullViewport,
+        MenuCommand::FrameSelection,
+        MenuCommand::FrameAll,
+        MenuCommand::RenderWindow,
+        MenuCommand::Shortcuts,
+        MenuCommand::StartScreen,
+        MenuCommand::Updates,
+        MenuCommand::About,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MenuCommand::NewProject => "New Project",
+            MenuCommand::Open => "Open Project…",
+            MenuCommand::Save => "Save",
+            MenuCommand::SaveAs => "Save As…",
+            MenuCommand::Import => "Import Model…",
+            MenuCommand::Undo => "Undo",
+            MenuCommand::Redo => "Redo",
+            MenuCommand::Inspector => "Inspector",
+            MenuCommand::Library => "Material Library",
+            MenuCommand::FullViewport => "Full Viewport",
+            MenuCommand::FrameSelection => "Frame Selection",
+            MenuCommand::FrameAll => "Frame All",
+            MenuCommand::RenderWindow => "Render Window",
+            MenuCommand::Shortcuts => "Navigation and Shortcuts",
+            MenuCommand::StartScreen => "Start Screen",
+            MenuCommand::Updates => "Check for Updates…",
+            MenuCommand::About => "About Tequila",
+        }
+    }
+
+    /// The menu it is in.
+    pub fn menu(self) -> &'static str {
+        match self {
+            MenuCommand::NewProject | MenuCommand::Open | MenuCommand::Save | MenuCommand::SaveAs | MenuCommand::Import => "File",
+            MenuCommand::Undo | MenuCommand::Redo => "Edit",
+            MenuCommand::Inspector | MenuCommand::Library | MenuCommand::FullViewport | MenuCommand::FrameSelection | MenuCommand::FrameAll => "View",
+            MenuCommand::RenderWindow => "Render",
+            MenuCommand::Shortcuts | MenuCommand::StartScreen | MenuCommand::Updates | MenuCommand::About => "Help",
+        }
+    }
+}
+
+/// Commands chosen in the menu bar since the last frame took them.
+static COMMANDS: std::sync::Mutex<Vec<MenuCommand>> = std::sync::Mutex::new(Vec::new());
+
+/// The commands chosen since the last call.
+pub fn take_commands() -> Vec<MenuCommand> {
+    COMMANDS.lock().map(|mut commands| std::mem::take(&mut *commands)).unwrap_or_default()
+}
+
+/// The menu bar a Mac application has: File, Edit, View, Render, Window and
+/// Help beside winit's application menu, so Tequila's commands are where a
+/// Mac user looks for them and not only in the window. The window's own
+/// menus stay, with everything in them.
+///
+/// No key equivalents: a menu item's shortcut is taken by AppKit before the
+/// window sees the key, and would take Cmd+Z and Cmd+C from a text field.
+/// The window's shortcuts work as they always have.
+///
+/// Called once the window, and with it the menu, exists.
+#[cfg(target_os = "macos")]
+pub fn add_menus(ctx: &egui::Context) {
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, NSObject, Sel};
+    use objc2::{class, msg_send, sel, ClassType};
+
+    static MENU_WAKE: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+    let _ = MENU_WAKE.set(ctx.clone());
+
+    extern "C-unwind" fn chosen(_this: &AnyObject, _: Sel, sender: *mut AnyObject) {
+        if sender.is_null() {
+            return;
+        }
+        // SAFETY: `sender` is the NSMenuItem AppKit calls the action for.
+        let tag: isize = unsafe { msg_send![sender, tag] };
+        let Some(command) = usize::try_from(tag).ok().and_then(|i| MenuCommand::ALL.get(i)) else {
+            return;
+        };
+        if let Ok(mut commands) = COMMANDS.lock() {
+            commands.push(*command);
+        }
+        if let Some(ctx) = MENU_WAKE.get() {
+            ctx.request_repaint();
+        }
+    }
+
+    // SAFETY: plain AppKit messages on the main thread, where eframe calls
+    // its creation callback. A class of Tequila's own with one action
+    // method, one instance of it kept for the life of the process as every
+    // item's target; menus and items are made with `new` and kept, as the
+    // menu bar is, until the application ends. Every object is checked for
+    // nil before use.
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let application: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let bar: *mut AnyObject = msg_send![application, mainMenu];
+        if bar.is_null() {
+            return;
+        }
+        let Some(mut builder) = ClassBuilder::new(c"TequilaMenuTarget", NSObject::class()) else {
+            return;
+        };
+        builder.add_method(sel!(menuCommand:), chosen as extern "C-unwind" fn(_, _, _));
+        let class: &AnyClass = builder.register();
+        let target: Option<Retained<AnyObject>> = msg_send![class, new];
+        let Some(target) = target else {
+            return;
+        };
+        let target = Retained::into_raw(target);
+
+        let text = |s: &str| -> *mut AnyObject {
+            let owned = std::ffi::CString::new(s).unwrap_or_default();
+            msg_send![class!(NSString), stringWithUTF8String: owned.as_ptr()]
+        };
+        let menu = |title: &str| -> *mut AnyObject {
+            let menu: Option<Retained<AnyObject>> = msg_send![class!(NSMenu), new];
+            let Some(menu) = menu else { return std::ptr::null_mut() };
+            let menu = Retained::into_raw(menu);
+            let _: () = msg_send![menu, setTitle: text(title)];
+            menu
+        };
+        let item = |title: &str, action: Option<Sel>| -> *mut AnyObject {
+            let item: Option<Retained<AnyObject>> = msg_send![class!(NSMenuItem), new];
+            let Some(item) = item else { return std::ptr::null_mut() };
+            let item = Retained::into_raw(item);
+            let _: () = msg_send![item, setTitle: text(title)];
+            if let Some(action) = action {
+                let _: () = msg_send![item, setAction: action];
+            }
+            let _: () = msg_send![item, setKeyEquivalent: text("")];
+            item
+        };
+
+        let mut window_menu = std::ptr::null_mut();
+        for title in ["File", "Edit", "View", "Render", "Window", "Help"] {
+            let submenu = menu(title);
+            if submenu.is_null() {
+                continue;
+            }
+            for (index, command) in MenuCommand::ALL.iter().enumerate().filter(|(_, c)| c.menu() == title) {
+                let entry = item(command.label(), Some(sel!(menuCommand:)));
+                if entry.is_null() {
+                    continue;
+                }
+                let _: () = msg_send![entry, setTarget: target];
+                let _: () = msg_send![entry, setTag: index as isize];
+                let _: () = msg_send![submenu, addItem: entry];
+            }
+            if title == "Window" {
+                // AppKit's own, sent along the responder chain to the window.
+                for (label, action) in [("Minimize", sel!(performMiniaturize:)), ("Zoom", sel!(performZoom:)), ("Enter Full Screen", sel!(toggleFullScreen:))] {
+                    let entry = item(label, Some(action));
+                    if !entry.is_null() {
+                        let _: () = msg_send![submenu, addItem: entry];
+                    }
+                }
+                window_menu = submenu;
+            }
+            // The menu bar's own item, which holds the menu.
+            let holder = item(title, None);
+            if holder.is_null() {
+                continue;
+            }
+            let _: () = msg_send![holder, setSubmenu: submenu];
+            let _: () = msg_send![bar, addItem: holder];
+            if title == "Help" {
+                let _: () = msg_send![application, setHelpMenu: submenu];
+            }
+        }
+        if !window_menu.is_null() {
+            let _: () = msg_send![application, setWindowsMenu: window_menu];
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn add_menus(_ctx: &egui::Context) {}
+
+#[cfg(test)]
+mod tests {
+    use super::MenuCommand;
+
+    /// An item's tag is its command's place in the list, and every command
+    /// is in one of the menus that are made.
+    #[test]
+    fn every_menu_command_is_found_by_its_tag_in_a_menu() {
+        let mut labels = std::collections::HashSet::new();
+        for (tag, command) in MenuCommand::ALL.iter().enumerate() {
+            assert_eq!(MenuCommand::ALL.get(tag), Some(command));
+            assert!(["File", "Edit", "View", "Render", "Help"].contains(&command.menu()), "{command:?}");
+            assert!(labels.insert(command.label()), "two commands are called {}", command.label());
+        }
+    }
+}

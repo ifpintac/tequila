@@ -33,7 +33,12 @@ user sets up:
 - render-farm machines the user adds;
 - the scripting channel, on the user's own computer (localhost).
 
-Tequila checks for no updates and sends no usage data.
+- GitHub's releases page, once a day when Tequila starts, to see whether a
+  newer version is out (Help > Check for updates turns this off). Only
+  GitHub's public release list is fetched; nothing about the user or their
+  work is sent.
+
+Tequila sends no usage data.
 
 ## How it works
 
