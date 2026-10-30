@@ -3271,6 +3271,52 @@ mod forward_compatibility_tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 
+    /// A project saved before fibres (§4.4's Fuzz) opens without any, its
+    /// materials' fibre settings at their defaults, and one given fibres
+    /// keeps every setting across a save.
+    #[test]
+    fn fibre_settings_are_optional_and_kept() {
+        use tequila_materials::material_type::{Param, ParamValue};
+        let directory = std::env::temp_dir().join(format!("tequila-fibres-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("before fibres.tequila");
+        let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let key = document.materials.iter().next().unwrap().0;
+        save(&path, &document, &Preserved::default()).unwrap();
+        let material_member = format!("materials/{}.json", material_id(key));
+        let fibre_keys = [Param::FuzzDensity, Param::FuzzLength, Param::FuzzThickness, Param::FuzzLean, Param::FuzzCurl, Param::FuzzColorVariation];
+        rewrite(&path, &|name, mut value| {
+            if name == material_member {
+                if let Value::Object(map) = &mut value {
+                    for param in fibre_keys {
+                        map.remove(param.key());
+                    }
+                }
+            }
+            value
+        });
+        let loaded = load(&path).expect("an older project opens");
+        let material = loaded.document.materials.get(key).unwrap().material();
+        assert_eq!(material.fuzz_density, 0.0, "fibres nobody asked for");
+        assert_eq!(material.fuzz_length, tequila_materials::openpbr::Material::default().fuzz_length);
+
+        let values = [7.5f32, 0.0035, 0.00003, 0.45, 0.65, 0.15];
+        let mut definition = document.materials.get(key).unwrap().clone();
+        for (param, value) in fibre_keys.iter().zip(values) {
+            assert!(param.write(definition.material_mut(), ParamValue::Scalar(value)));
+        }
+        document.materials.insert_with_key(key, definition);
+        let again = directory.join("with fibres.tequila");
+        save(&again, &document, &Preserved::default()).unwrap();
+        let reloaded = load(&again).unwrap();
+        let material = reloaded.document.materials.get(key).unwrap().material();
+        for (param, value) in fibre_keys.iter().zip(values) {
+            assert_eq!(param.read(material), Some(ParamValue::Scalar(value)), "{}", param.key());
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
     /// A project as a newer Tequila might write it - new settings, a new
     /// material parameter, a material type and a graph node this build has
     /// never heard of - opens, and saves with all of it as it was.

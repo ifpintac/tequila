@@ -725,8 +725,8 @@ fn trace<C: PathColour>(
     // it: counted as a transmission and not against the bounces, as Cycles
     // counts its hair's. A felt is many fibres deep, and its colour is the
     // light that wanders through them; at the bounces a surface needs, the
-    // pile of a felt ball came out a twelfth darker and less saturated than
-    // in Cycles, and with them counted apart they agree to 2%.
+    // pile of a felt ball came out 4% darker and a tenth less red than in
+    // Cycles, and with them counted apart the two agree to 2%.
     let mut fibre_passes = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth

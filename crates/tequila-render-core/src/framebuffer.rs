@@ -660,8 +660,8 @@ impl Pixel {
         // fibre is finer than a pixel, so the few samples of it that catch a
         // glint are the fibre's share of the pixel, not outliers: judged by
         // the pixel's spread, which the surface between the fibres keeps
-        // narrow, they were clipped, and fur came out 15% darker than in
-        // Cycles.
+        // narrow, they were clipped, and a felt ball's fur lost 15% of its
+        // light at 64 samples.
         if reject_fireflies && !result.fine && self.samples >= FIREFLY_MIN_SAMPLES {
             // Only what the path found by sampling is judged. The background
             // is what the camera sees, the same however often it looks, and a

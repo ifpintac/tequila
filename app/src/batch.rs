@@ -4401,6 +4401,162 @@ mod tests {
 "));
     }
 
+    /// §4.4's fibres come out of Cycles as out of Tequila's renderer: a ball
+    /// of dark blue felt grown over with orange fibres, lit by the studio,
+    /// lands at the same level, in the same colour and with the same light
+    /// and shade across it, and its fuzz stands out past the outline in both,
+    /// where the bare ball shows the backdrop. Cycles traces them as its own
+    /// hair, in Principled Hair's Chiang model, the one Tequila's fibre BSDF
+    /// is ported from.
+    ///
+    /// Two things had to agree beyond the model for it to pass: a pass
+    /// through a fibre counts as a transmission, not a bounce, as Cycles
+    /// counts its hair's, and firefly rejection leaves fibres' glints alone.
+    /// Before them Tequila's ball was 19% darker than Cycles' and less red.
+    /// Fibres are finer than these pixels, so the picture is compared in
+    /// blocks of 8 by 8 rather than pixel by pixel, which their noise would
+    /// decide.
+    /// Skipped where Cycles is not installed, or is a library from before
+    /// fibres.
+    #[test]
+    fn fibres_render_alike_in_both_renderers() {
+        use tequila_core::spectrum::spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_render_core::camera::Camera;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        if !tequila_render_cycles::has_curves() {
+            eprintln!("skipped: this Cycles library predates fibres");
+            return;
+        }
+        const SCALE: f32 = 0.025;
+        let render = |density: f32| {
+            both_engines_scaled(&format!("fibres-{density}"), SCALE, |scene| {
+                let mut felt = MaterialType::Velvet.defaults();
+                felt.base_color = spectrum(0.02, 0.03, 0.08);
+                felt.fuzz_weight = 0.0;
+                felt.fuzz_color = spectrum(0.8, 0.35, 0.05);
+                felt.fuzz_roughness = 0.4;
+                felt.fuzz_density = density;
+                felt.fuzz_length = 0.003;
+                felt.fuzz_thickness = 0.00005;
+                felt.fuzz_lean = 0.4;
+                felt.fuzz_curl = 0.4;
+                felt.fuzz_color_variation = 0.3;
+                scene.environment = Arc::new(tequila_scene::demo::preview_environment());
+                scene.materials[0] = felt.clone();
+                // Grown as the snapshot grows them, at the scale the ball is
+                // about to be given.
+                if let Some(request) = tequila_materials::graph::FuzzRequest::of_material(&felt) {
+                    let ball = scene.instances[0].clone();
+                    let fur = tequila_scene::fuzz::grow(&scene.meshes[ball.mesh.index()], SCALE, &request).expect("fibres");
+                    scene.meshes.push(Arc::new(fur));
+                    let mesh = tequila_core::ids::MeshId(scene.meshes.len() as u32 - 1);
+                    scene.instances.push(
+                        tequila_render_core::scene::Instance::new(tequila_core::ids::InstanceId(1), mesh, ball.material).with_transform(ball.transform),
+                    );
+                }
+            })
+        };
+        // Where the ball is in the picture, and how big, in pixels.
+        let camera = Camera::look_at(vec3(2.0, 1.5, 3.0), vec3(0.0, 0.5, 0.0), Vec3::Y);
+        let aspect = 96.0 / 72.0;
+        let centre = camera.project(vec3(0.0, 1.0, 0.0), aspect).expect("in view");
+        let side = (vec3(0.0, 1.0, 0.0) - vec3(2.0, 1.5, 3.0)).cross(Vec3::Y).normalize();
+        let edge = camera.project(vec3(0.0, 1.0, 0.0) + side, aspect).expect("in view");
+        let radius = ((edge.x - centre.x) * 96.0).hypot((edge.y - centre.y) * 72.0);
+        let from_centre = |x: f32, y: f32| (x - centre.x * 96.0).hypot(y - centre.y * 72.0);
+        // The fuzz just past the outline, as a colour: the ring from the
+        // ball's edge out to a sixteenth of its radius beyond.
+        let ring = |image: &[u8]| {
+            let (mut sum, mut n) = ([0.0f64; 3], 0.0);
+            for (i, p) in image.chunks_exact(4).enumerate() {
+                let r = from_centre((i % 96) as f32 + 0.5, (i / 96) as f32 + 0.5);
+                if r > radius && r < radius * 1.0625 {
+                    for (c, s) in sum.iter_mut().enumerate() {
+                        *s += f64::from(p[c]);
+                    }
+                    n += 1.0;
+                }
+            }
+            sum.map(|s| s / n)
+        };
+        // The ball's face in blocks of 8 by 8 pixels, each block's
+        // brightness: where it is lit and where it is in shade.
+        let blocks = |image: &[u8]| {
+            let mut out = Vec::new();
+            for by in 0..9 {
+                for bx in 0..12 {
+                    if from_centre(bx as f32 * 8.0 + 4.0, by as f32 * 8.0 + 4.0) > radius * 0.85 {
+                        continue;
+                    }
+                    let mut sum = 0.0;
+                    for y in by * 8..by * 8 + 8 {
+                        for x in bx * 8..bx * 8 + 8 {
+                            let p = &image[(y * 96 + x) * 4..];
+                            sum += f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
+                        }
+                    }
+                    out.push(sum / 64.0);
+                }
+            }
+            out
+        };
+        let correlation = |a: &[f64], b: &[f64]| {
+            let ((ma, _), (mb, _)) = (mean_and_spread(a), mean_and_spread(b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            cov / (va.sqrt() * vb.sqrt()).max(1e-9)
+        };
+        let [bare_tequila, bare_cycles] = render(0.0);
+        let [tequila, cycles] = render(800.0);
+        let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+        let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+        let (blocks_a, blocks_b) = (blocks(&tequila), blocks(&cycles));
+        let r = correlation(&blocks_a, &blocks_b);
+        let (ca, cb) = (channel_means(&tequila), channel_means(&cycles));
+        let (bare_a, bare_b) = (channel_means(&bare_tequila), channel_means(&bare_cycles));
+        let (ring_a, ring_b) = (ring(&tequila), ring(&cycles));
+        let (bare_ring_a, bare_ring_b) = (ring(&bare_tequila), ring(&bare_cycles));
+        eprintln!(
+            "fibres: {} blocks correlated {r:.3}; Tequila {ma:.1} {ca:.1?}, Cycles {mb:.1} {cb:.1?}; bare {bare_a:.1?} {bare_b:.1?}; ring {ring_a:.1?} {ring_b:.1?}, bare ring {bare_ring_a:.1?} {bare_ring_b:.1?}",
+            blocks_a.len()
+        );
+        let mut wrong = Vec::new();
+        if (mb / ma.max(1.0) - 1.0).abs() > 0.06 {
+            wrong.push(format!("brightness: Tequila {ma:.1}, Cycles {mb:.1}"));
+        }
+        if r < 0.9 {
+            wrong.push(format!("light and shade across the ball correlate {r:.3}"));
+        }
+        // The colour: red over blue, the fibres' over the felt's.
+        let (warm_a, warm_b) = (ca[0] / ca[2].max(1.0), cb[0] / cb[2].max(1.0));
+        if (warm_b / warm_a - 1.0).abs() > 0.07 {
+            wrong.push(format!("colour: red over blue {warm_a:.2} in Tequila, {warm_b:.2} in Cycles"));
+        }
+        // And the fibres are what made it: the bare ball is blue in both,
+        // and its outline is the backdrop, where the furred one's is warm.
+        for (engine, furred, bare, ring, bare_ring) in [("Tequila", ca, bare_a, ring_a, bare_ring_a), ("Cycles", cb, bare_b, ring_b, bare_ring_b)] {
+            if furred[0] < 2.0 * bare[0].max(1.0) {
+                wrong.push(format!("{engine}: the fibres hardly redden the ball, {:.1} against {:.1} bare", furred[0], bare[0]));
+            }
+            if ring[0] - ring[2] < bare_ring[0] - bare_ring[2] + 10.0 {
+                wrong.push(format!("{engine}: no fuzz past the outline, {ring:.1?} against {bare_ring:.1?} bare"));
+            }
+        }
+        let warm_ring = |c: [f64; 3]| c[0] - c[2];
+        if (warm_ring(ring_b) / warm_ring(ring_a).max(1.0) - 1.0).abs() > 0.08 {
+            wrong.push(format!("the fuzz past the outline: {ring_a:.1?} in Tequila, {ring_b:.1?} in Cycles"));
+        }
+        assert!(wrong.is_empty(), "fibres render differently in Cycles:\n{}", wrong.join("\n"));
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.

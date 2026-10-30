@@ -57,8 +57,8 @@ Questions, bugs, ideas and renders: join the
   ([integrations](integrations)). Open KeyShot scenes (`.ksp`, `.bip`) with
   their materials, lighting and cameras ([notes](docs/keyshot-import.md)).
 - **Materials** - a library of 309 procedural materials (plastics, metals,
-  glass, paints with flakes, fabrics, gems, liquids with bubbles, wood,
-  stone...), a node editor, labels and decals, texture packs, KeyShot
+  glass, paints with flakes, fabrics with real fibres, gems, liquids with
+  bubbles, wood, stone...), a node editor, labels and decals, texture packs, KeyShot
   material packages (.kmp), colourways and variants. Drop a material on a
   part, on a selection or on a whole group.
 - **Lighting** - HDRI environments and an HDRI editor, sun and sky, area,
