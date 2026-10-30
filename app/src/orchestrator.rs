@@ -354,7 +354,20 @@ impl Orchestrator {
         if self.shared.request.lock().unwrap().as_ref().is_some_and(|r| r.shading == Shading::Fast) {
             return tequila_render_core::preview::intersect_solid(intersector.as_ref(), *ray);
         }
-        intersector.intersect(ray)
+        // Through a part's fibres to the part: a click on fur picks the
+        // surface it grows on, its face and its edges, which is what the
+        // tools that read a pick - face selection, measuring - work with.
+        let mut ray = *ray;
+        for _ in 0..64 {
+            let hit = intersector.intersect(&ray)?;
+            let scene = intersector.scene();
+            let fur = scene.instances.get(hit.instance.0 as usize).is_some_and(|i| scene.mesh(i.mesh).fibres.is_some());
+            if !fur {
+                return Some(hit);
+            }
+            ray.t_min = hit.t + 1e-5 * hit.t.abs().max(1.0);
+        }
+        None
     }
 
     /// What the viewport has to say about its engine, if anything.
