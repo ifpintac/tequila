@@ -442,26 +442,26 @@ fn is_cut_out(material: &Material) -> bool {
 pub struct Pane {
     /// What reaches the transmission lobe: its weight, less what metal and
     /// cutout there are.
-    weight: f32,
+    pub weight: f32,
     /// The opacity a cutout has, the rest passing untouched.
-    opacity: f32,
-    ior: f32,
-    coat: f32,
-    coat_ior: f32,
+    pub opacity: f32,
+    pub ior: f32,
+    pub coat: f32,
+    pub coat_ior: f32,
     /// The surface's tint at each crossing, the square root of its colour,
     /// as the transmission lobe has it.
-    tint: Spectrum,
+    pub tint: Spectrum,
     /// The volume behind the surface, for Beer-Lambert between the way in
     /// and the way out: its colour, and the distance that colour is reached
     /// in. `None` for glass with no depth, tinted at the surface alone.
-    volume: Option<(Spectrum, f32)>,
+    pub volume: Option<(Spectrum, f32)>,
     /// An infinitely thin shell, which light leaves straight on.
-    thin: bool,
+    pub thin: bool,
     /// Glass and nothing else: all transmission, solid, no coat, film,
     /// fuzz or flakes, and a plain white reflection. What it does with
     /// light is the interface's Fresnel alone, which [`Pane::split`] can
     /// then do without the surface's BSDF.
-    plain: bool,
+    pub plain: bool,
 }
 
 impl Pane {
@@ -614,6 +614,38 @@ impl Pane {
     /// Whether the volume behind the surface absorbs.
     pub fn has_volume(&self) -> bool {
         self.volume.is_some()
+    }
+
+    /// Whether light through the glass leaves it bent: a solid's surface at
+    /// an index other than air's, with no holes in it. Not a thin wall,
+    /// which light leaves straight on, nor glass with a cutout, part of
+    /// whose light passes the holes unbent. What manifold next event
+    /// estimation solves the way through (`integrator::manifold`).
+    pub fn bends(&self) -> bool {
+        !self.thin && self.ior > 1.0 + 1e-3 && self.opacity >= 0.999
+    }
+
+    /// Whether a shadow ray taking in `glass` passes this glass.
+    pub fn passes(&self, glass: crate::settings::ShadowGlass) -> bool {
+        match glass {
+            crate::settings::ShadowGlass::Solid => false,
+            crate::settings::ShadowGlass::Clear => true,
+            crate::settings::ShadowGlass::Unbent => !self.bends(),
+        }
+    }
+
+    /// The light through the surface along a refracted path, met at `cos`
+    /// to its normal on one side, `eta` the index on the other side over
+    /// the index on this one: what the coat and the interface do not
+    /// reflect, tinted. Fresnel's share through is the same from either
+    /// side of a refraction, so either side's angle will do with its own
+    /// `eta`. Radiance squeezed or spread by the change of index is left to
+    /// the caller.
+    pub fn refracted(&self, cos: f32, eta: f32) -> Spectrum {
+        let cos = cos.abs().clamp(0.0, 1.0);
+        let surface = 1.0 - tequila_materials::fresnel::dielectric(cos, eta);
+        let coat = 1.0 - self.coat * tequila_materials::fresnel::dielectric(cos, self.coat_ior);
+        self.tint * (self.weight * surface * coat)
     }
 }
 

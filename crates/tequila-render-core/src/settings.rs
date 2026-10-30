@@ -32,8 +32,12 @@ pub struct IntegratorConfig {
     /// mirror-smooth. Off, shadow rays pass clear glass instead
     /// ([`Self::light_through_glass`]), as KeyShot's renderer does with its
     /// caustics off, and light focused by anything else is found only by
-    /// chance.
+    /// chance. How the pass finds that light is [`Self::caustics_method`].
     pub caustics: bool,
+    /// How the caustics pass finds focused light, when it is on: photons
+    /// from every light, or the paths from each lamp through smooth glass
+    /// solved for at every surface ([`CausticsMethod`]).
+    pub caustics_method: CausticsMethod,
     /// Portal sampling and increased NEE weighting for enclosed scenes.
     pub interior_mode: bool,
     /// Bounce at which the roughness floor starts being applied (§3.5).
@@ -138,6 +142,62 @@ impl SpectralMode {
             SpectralMode::Off => false,
         }
     }
+}
+
+/// How the caustics pass ([`IntegratorConfig::caustics`]) finds the light
+/// that glass, liquids, gems and mirrors focus onto what is around them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CausticsMethod {
+    /// Photons traced from every light, the environment's included,
+    /// through glass and off mirrors ([`crate::integrator::caustics`]):
+    /// soft at first and sharper the longer a render runs.
+    #[default]
+    Photons,
+    /// Manifold next event estimation ([`crate::integrator::manifold`]):
+    /// at each surface, the path from a lamp through smooth glass to it is
+    /// solved for, so a caustic is sharp from the first samples. Lamps
+    /// through refracting glass only: the environment and glowing parts
+    /// reach through glass by bounces, and mirrors focus nothing here.
+    Manifold,
+}
+
+impl CausticsMethod {
+    pub const ALL: [CausticsMethod; 2] = [CausticsMethod::Photons, CausticsMethod::Manifold];
+
+    /// The name in the file format.
+    pub const fn key(self) -> &'static str {
+        match self {
+            CausticsMethod::Photons => "photons",
+            CausticsMethod::Manifold => "manifold",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            CausticsMethod::Photons => "Photons",
+            CausticsMethod::Manifold => "Manifold",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<CausticsMethod> {
+        CausticsMethod::ALL.into_iter().find(|m| m.key() == key)
+    }
+}
+
+/// The clear glass ([`crate::scene::Pane`]) a shadow ray passes on its way
+/// to a light, which follows from how caustics are found
+/// ([`IntegratorConfig::shadow_glass`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ShadowGlass {
+    /// None: glass stops it as anything solid does, and the light glass
+    /// lets by is the photons'.
+    Solid,
+    /// All of it, straight through, tinted and less what it reflects.
+    Clear,
+    /// Glass that lets light by without bending it - a thin wall, glass at
+    /// the index of air - and nothing that bends it, the light through
+    /// which manifold next event estimation finds along the bent path.
+    Unbent,
 }
 
 /// [`IntegratorConfig::pixel_spread`] when nothing better is known.
@@ -352,9 +412,42 @@ impl IntegratorConfig {
     /// what is behind a pane or inside a bottle is lit through it. Not with
     /// the caustics pass, whose photons already carry the light glass lets
     /// by: a shadow ray that passed it too would count that light twice.
+    /// With manifold caustics, only glass that does not bend light
+    /// ([`Self::shadow_glass`]).
     #[inline]
     pub fn light_through_glass(&self) -> bool {
-        !self.caustics
+        self.shadow_glass() != ShadowGlass::Solid
+    }
+
+    /// Which clear glass shadow rays pass. All of it with the caustics pass
+    /// off, as KeyShot's renderer does; none with photons, which carry that
+    /// light; and with manifold caustics only what does not bend light. Glass
+    /// that bends it then stops every shadow ray, the environment's and a
+    /// glowing part's too: a lamp's light through it is the manifold
+    /// sample's, and theirs is found by bounces through the glass, which
+    /// meet them where the bent path really leads. Let by straight as well,
+    /// the light under a glass ball would be counted twice, once spread
+    /// over its shadow and once focused.
+    #[inline]
+    pub fn shadow_glass(&self) -> ShadowGlass {
+        match (self.caustics, self.caustics_method) {
+            (false, _) => ShadowGlass::Clear,
+            (true, CausticsMethod::Photons) => ShadowGlass::Solid,
+            (true, CausticsMethod::Manifold) => ShadowGlass::Unbent,
+        }
+    }
+
+    /// Whether this render traces caustic photons.
+    #[inline]
+    pub fn photon_caustics(&self) -> bool {
+        self.caustics && self.caustics_method == CausticsMethod::Photons
+    }
+
+    /// Whether lamps' light through smooth glass is found by manifold next
+    /// event estimation ([`crate::integrator::manifold`]).
+    #[inline]
+    pub fn manifold_caustics(&self) -> bool {
+        self.caustics && self.caustics_method == CausticsMethod::Manifold
     }
 
     /// Values shared by every preset. §3.4 fixes Russian roulette at bounce 3:
@@ -369,6 +462,7 @@ impl IntegratorConfig {
             light_source_materials: true,
             ground_illumination: false,
             caustics: false,
+            caustics_method: CausticsMethod::Photons,
             interior_mode: false,
             regularization_start_bounce: 2,
             regularization_roughness: 0.09,

@@ -1691,6 +1691,11 @@ pub(crate) fn integrator_to_json(config: &IntegratorConfig) -> Value {
             "russian_roulette_start_bounce",
             config.russian_roulette_start_bounce as f64,
         );
+    // Only when it is not the photons every project used before there was
+    // a choice, so such a project is the same bytes it always was.
+    if config.caustics_method != tequila_render_core::settings::CausticsMethod::default() {
+        object.set("caustics_method", config.caustics_method.key());
+    }
     // Only when something is set, so a project that sets none is the same
     // bytes it always was.
     if config.cycles != tequila_render_core::settings::CyclesTransport::NONE {
@@ -1746,6 +1751,11 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         light_source_materials: flag("light_source_materials", default.light_source_materials),
         ground_illumination: flag("ground_illumination", default.ground_illumination),
         caustics: flag("caustics", default.caustics),
+        caustics_method: value
+            .get("caustics_method")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_render_core::settings::CausticsMethod::from_key)
+            .unwrap_or(default.caustics_method),
         interior_mode: flag("interior_mode", default.interior_mode),
         regularization_start_bounce: count(
             "regularization_start_bounce",

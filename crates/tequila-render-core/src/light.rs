@@ -637,7 +637,7 @@ pub struct IesLight {
 
 impl IesLight {
     /// Candela towards a world-space direction.
-    fn candela(&self, world: Vec3) -> f32 {
+    pub(crate) fn candela(&self, world: Vec3) -> f32 {
         let up = self.direction.cross(self.right);
         // Into the luminaire's frame, where the profile expects `-Z` forward.
         let local = Vec3 {
