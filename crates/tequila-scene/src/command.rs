@@ -160,6 +160,14 @@ pub enum Command {
     /// no way to say otherwise — an STL, an OBJ with no groups — which is the
     /// only way to get at the pieces afterwards.
     SplitIntoParts { node: NodeId },
+    /// `scene.unwrap_uvs` — a part's surface laid out flat as its first UV
+    /// set (`crate::uv`), so labels and textures can be placed on it
+    /// anywhere; the sets it had move up one.
+    ///
+    /// The part gets a mesh of its own, the unwrapped one, under a new key:
+    /// parts that shared the old mesh keep it, and undo points the part back
+    /// at it.
+    UnwrapUvs { node: NodeId, options: crate::uv::UnwrapOptions },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -1017,6 +1025,7 @@ impl Command {
             Command::AddGroup { .. } => "scene.add_group",
             Command::DeleteNodes { .. } => "scene.delete_nodes",
             Command::SplitIntoParts { .. } => "scene.split_parts",
+            Command::UnwrapUvs { .. } => "scene.unwrap_uvs",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
@@ -1144,6 +1153,7 @@ impl Command {
             | Command::DeleteNodes { .. }
             | Command::Group { .. }
             | Command::SplitIntoParts { .. }
+            | Command::UnwrapUvs { .. }
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
@@ -1298,6 +1308,9 @@ enum Undo {
         children: Vec<NodeId>,
         meshes: Vec<MeshKey>,
     },
+    /// A part given an unwrapped mesh: the mesh it had, kept in the store,
+    /// and the one it was given.
+    Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
     Name(NodeId, String),
@@ -1889,6 +1902,13 @@ impl Reissue {
                 split: Some((children.clone(), meshes.clone())),
                 composite: None,
             },
+            // The mesh an unwrap made, as a split's are: no children.
+            Undo::Unwrapped { unwrapped, .. } => Reissue {
+                node: None,
+                material: None,
+                split: Some((Vec::new(), vec![*unwrapped])),
+                composite: None,
+            },
             Undo::Grouped { group, .. } => Reissue {
                 node: Some(*group),
                 material: None,
@@ -2218,6 +2238,26 @@ fn execute(
                 }
             }
             Ok(Undo::RemovedNodes(removed))
+        }
+
+        Command::UnwrapUvs { node, options } => {
+            check_unlocked(document, *node)?;
+            let source = document.tree.get(*node).ok_or(CommandError::InconsistentHistory("no such node"))?;
+            let NodeKind::Part { mesh: previous } = source.kind else {
+                return Err(CommandError::InconsistentHistory("only a part can be unwrapped"));
+            };
+            let geometry = document.geometry.get(previous).ok_or(CommandError::InconsistentHistory("the part has no mesh"))?;
+            if geometry.triangle_count() == 0 {
+                return Err(CommandError::InconsistentHistory("the part has no surface to unwrap"));
+            }
+            let (unwrapped, _) = crate::uv::unwrap(geometry, options);
+            let key = match &reissue.split {
+                Some((children, meshes)) if children.is_empty() && meshes.len() == 1 => meshes[0],
+                _ => reserve_keys(document, 1, 0, 0).0[0],
+            };
+            document.geometry.insert_with_key(key, unwrapped);
+            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: key };
+            Ok(Undo::Unwrapped { node: *node, previous, unwrapped: key })
         }
 
         Command::SplitIntoParts { node } => {
@@ -3083,6 +3123,17 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             }
             // Last: the new meshes are what the updated parts pointed at.
             revert(document, added)
+        }
+
+        Undo::Unwrapped { node, previous, unwrapped } => {
+            // The mesh it had was never removed: the part points at it again
+            // and the unwrapped one goes, unless something else took it.
+            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: *previous };
+            let still_used = document.tree.iter().any(|n| matches!(n.kind, NodeKind::Part { mesh } if mesh == *unwrapped));
+            if !still_used {
+                document.geometry.retain_keys(&|key| key != *unwrapped);
+            }
+            Ok(())
         }
 
         Undo::Split {

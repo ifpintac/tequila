@@ -67,6 +67,12 @@ pub fn encode(command: &Command) -> String {
         Command::SplitIntoParts { node } => {
             out.set("node", node.0);
         }
+        Command::UnwrapUvs { node, options } => {
+            out.set("node", node.0)
+                .set("cone_degrees", options.cone_degrees)
+                .set("crease_degrees", options.crease_degrees)
+                .set("margin", options.margin);
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -503,6 +509,22 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             nodes: node_list("nodes"),
         },
         "scene.split_parts" => Command::SplitIntoParts { node: node("node")? },
+        // Each setting the default's when left out, and kept to what lays a
+        // surface out: a cone past a right angle would fold charts over.
+        "scene.unwrap_uvs" => {
+            let defaults = tequila_scene::uv::UnwrapOptions::default();
+            let number = |key: &str, fallback: f32, low: f32, high: f32| {
+                value.get(key).and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(low, high)).unwrap_or(fallback)
+            };
+            Command::UnwrapUvs {
+                node: node("node")?,
+                options: tequila_scene::uv::UnwrapOptions {
+                    cone_degrees: number("cone_degrees", defaults.cone_degrees, 5.0, 89.0),
+                    crease_degrees: number("crease_degrees", defaults.crease_degrees, 1.0, 180.0),
+                    margin: number("margin", defaults.margin, 0.0, 0.1),
+                },
+            }
+        }
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,

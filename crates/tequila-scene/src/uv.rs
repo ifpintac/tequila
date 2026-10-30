@@ -791,3 +791,47 @@ mod tests {
         }
     }
 }
+
+/// The command, end to end through the bus: the part gets a mesh of its own
+/// with the layout, and undo and redo put it back exactly.
+#[cfg(test)]
+mod command_tests {
+    use crate::split::tests_support::one_cube;
+    use crate::tree::NodeKind;
+    use crate::Command;
+
+    fn mesh_of(document: &crate::SceneDocument, node: crate::NodeId) -> crate::MeshKey {
+        match document.tree.get(node).unwrap().kind {
+            NodeKind::Part { mesh } => mesh,
+            ref other => panic!("not a part: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unwrapping_gives_the_part_a_laid_out_mesh_and_undo_takes_it_back() {
+        let (mut document, mut bus, node) = one_cube();
+        let before = mesh_of(&document, node);
+        let triangles = document.geometry.get(before).unwrap().triangle_count();
+        bus.apply(&mut document, Command::UnwrapUvs { node, options: Default::default() }).expect("it unwraps");
+        let after = mesh_of(&document, node);
+        assert_ne!(after, before, "a mesh of its own");
+        let unwrapped = document.geometry.get(after).unwrap();
+        assert_eq!(unwrapped.triangle_count(), triangles);
+        assert!(!unwrapped.uv_sets.is_empty() && unwrapped.uv_sets[0].len() == unwrapped.positions.len());
+
+        bus.undo(&mut document).expect("undo");
+        assert_eq!(mesh_of(&document, node), before, "the old mesh back");
+        assert!(document.geometry.get(after).is_none(), "and the unwrapped one gone");
+
+        bus.redo(&mut document).expect("redo");
+        assert_eq!(mesh_of(&document, node), after, "redo comes back under the same key");
+        assert!(document.geometry.get(after).is_some());
+    }
+
+    #[test]
+    fn only_a_part_unwraps() {
+        let (mut document, mut bus, node) = one_cube();
+        let parent = document.tree.get(node).unwrap().parent.unwrap();
+        assert!(bus.apply(&mut document, Command::UnwrapUvs { node: parent, options: Default::default() }).is_err());
+    }
+}

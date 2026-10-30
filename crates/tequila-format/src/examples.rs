@@ -146,6 +146,7 @@ pub fn commands() -> Vec<Command> {
         // Non-default values wherever a default would round-trip by
         // accident.
         Command::SplitIntoParts { node: ids[1] },
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions::default() },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,
