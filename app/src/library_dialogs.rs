@@ -451,7 +451,7 @@ fn pack_name(path: &std::path::Path) -> String {
         let lower = word.to_ascii_lowercase();
         let head = lower.split('-').next().unwrap_or("");
         (head.ends_with('k') && head.len() >= 2 && head[..head.len() - 1].chars().all(|c| c.is_ascii_digit()))
-            || matches!(lower.as_str(), "jpg" | "png" | "exr" | "jpeg" | "tif")
+            || matches!(lower.as_str(), "jpg" | "png" | "exr" | "jpeg" | "tif" | "tiff" | "tga" | "bmp" | "webp" | "dds" | "jxl")
     };
     let words: Vec<String> = stem
         .split('_')
@@ -498,5 +498,6 @@ mod tests {
         assert_eq!(pack_name(std::path::Path::new("C:/Downloads/Leather037_1K-JPG.zip")), "Leather037");
         assert_eq!(pack_name(std::path::Path::new("C:/Downloads/brown_leather_2k")), "Brown Leather");
         assert_eq!(pack_name(std::path::Path::new("C:/Downloads/oak_veneer_01")), "Oak Veneer 01");
+        assert_eq!(pack_name(std::path::Path::new("C:/Downloads/rusty_metal_4k_tga")), "Rusty Metal");
     }
 }

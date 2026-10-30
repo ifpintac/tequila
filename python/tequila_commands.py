@@ -87,7 +87,7 @@ class MaterialCommands(_Commands):
     """The `material.*` commands."""
 
     def add_decal(self, *, material=_UNSET, name=_UNSET, path=_UNSET, role=_UNSET):
-        r"""`material.add_decal`: A label, an image projected onto a material. PNG, JPEG or Photoshop artwork; or a video (MP4, MOV and the rest the system plays), sent with `time` in seconds, whose frame then is the picture (kept under "Video frames" among Tequila's settings).
+        r"""`material.add_decal`: A label, an image projected onto a material. Artwork as PNG, JPEG, TIFF, TGA, BMP, WebP, GIF, JPEG XL, DDS, Photoshop (PSD, PSB) or SVG (drawn 4096 pixels on its long side, or more for a larger document, up to 8192); or a video (MP4, MOV and the rest the system plays), sent with `time` in seconds, whose frame then is the picture (kept under "Video frames" among Tequila's settings).
 
         { "command": "material.add_decal", "material": 1, "name": "Logo", "path": "logo.png", "role": "color" }
         """

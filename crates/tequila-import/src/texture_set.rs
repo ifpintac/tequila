@@ -141,7 +141,7 @@ fn resolution(word: &str) -> Option<u32> {
 
 fn is_noise(word: &str) -> bool {
     resolution(word).is_some()
-        || matches!(word, "jpg" | "jpeg" | "png" | "exr" | "hdr" | "tif" | "tiff" | "gl" | "ogl" | "opengl" | "dx"
+        || matches!(word, "jpg" | "jpeg" | "png" | "exr" | "hdr" | "tif" | "tiff" | "tga" | "bmp" | "webp" | "dds" | "jxl" | "gl" | "ogl" | "opengl" | "dx"
             | "directx" | "16bit" | "8bit" | "32bit" | "lod0" | "map" | "tex" | "texture" | "t" | "mixed")
 }
 
@@ -232,12 +232,14 @@ pub fn classify(path: &Path) -> Result<(Slot, u32, String), String> {
 }
 
 /// Which format to prefer when a set offers the same map twice at one
-/// resolution: PNG keeps every level, JPEG is next, and EXR last because its
-/// float data is rarely what an 8-bit map was authored as.
+/// resolution: the lossless ones (PNG, TIFF, TGA, BMP) keep every level, the
+/// ones that may not (JPEG, WebP, JPEG XL, block-compressed DDS) are next,
+/// and EXR last because its float data is rarely what an 8-bit map was
+/// authored as.
 fn format_rank(path: &Path) -> u32 {
     match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
-        Some("png") => 3,
-        Some("jpg") | Some("jpeg") => 2,
+        Some("png" | "tif" | "tiff" | "tga" | "bmp") => 3,
+        Some("jpg" | "jpeg" | "webp" | "jxl" | "dds") => 2,
         Some("exr") | Some("hdr") => 1,
         _ => 0,
     }
@@ -287,7 +289,10 @@ pub fn scan(paths: &[PathBuf]) -> Vec<TextureSet> {
                     }
                 }
             }
-            Ok(_) => loose.push((path.clone(), "not a format Tequila can read (PNG, JPEG, EXR, HDR)".to_string())),
+            Ok(_) => loose.push((
+                path.clone(),
+                format!("not a format Tequila can read ({})", tequila_texture::image::Image::DECODABLE.join(", ")),
+            )),
             Err(reason) => loose.push((path.clone(), reason)),
         }
     }

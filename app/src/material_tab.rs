@@ -724,11 +724,10 @@ impl MaterialTab {
         // Picking a file is a blocking dialog, so it happens after the panel
         // has finished drawing rather than in the middle of a layout pass.
         if let Some(param) = pending_texture {
+            // Every format the loader reads, from its own list, so the dialog
+            // neither offers a file that then fails nor hides one that works.
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter(
-                    "Images",
-                    &["png", "jpg", "jpeg", "psd", "exr", "hdr", "tif", "tiff"],
-                )
+                .add_filter("Images", &tequila_texture::image::Image::DECODABLE)
                 .set_title(format!("Image for {}", param.label()))
                 .pick_file()
             {

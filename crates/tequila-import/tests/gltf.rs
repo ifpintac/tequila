@@ -950,10 +950,11 @@ fn occlusion_strength_fades_towards_unoccluded() {
 /// put a complaint.
 #[test]
 fn a_map_in_an_unreadable_format_is_reported_at_import() {
+    // HEIC: its decoders are C libraries, so it stays unread.
     let path = write_model(
         "unreadable",
-        &textured_gltf("colour.tga", "bumps.png"),
-        &["colour.tga", "bumps.png"],
+        &textured_gltf("colour.heic", "bumps.png"),
+        &["colour.heic", "bumps.png"],
     );
     let mut document = SceneDocument::new();
     let (command, report) =
@@ -963,8 +964,8 @@ fn a_map_in_an_unreadable_format_is_reported_at_import() {
     let complaint = report
         .warnings
         .iter()
-        .find(|w| w.contains("colour.tga"))
-        .unwrap_or_else(|| panic!("nothing warned about the .tga: {:?}", report.warnings));
+        .find(|w| w.contains("colour.heic"))
+        .unwrap_or_else(|| panic!("nothing warned about the .heic: {:?}", report.warnings));
     assert!(
         complaint.contains("format"),
         "the warning does not say what is wrong: {complaint}"
@@ -1008,6 +1009,43 @@ fn a_jpeg_map_imports_without_complaint() {
         report.warnings
     );
     assert_eq!(report.textures, 2);
+}
+
+/// `EXT_texture_webp` names its WebP inside the texture, with the plain
+/// `source` left as a PNG for readers without it. This one has it, so the
+/// WebP is used and the extension is not reported as unread.
+#[test]
+fn ext_texture_webp_is_read_for_its_webp() {
+    let gltf = textured_gltf("fallback.png", "bumps.png")
+        .replacen(
+            r#""textures": [{ "source": 0 }"#,
+            r#""extensionsUsed": ["EXT_texture_webp"],
+  "textures": [{ "source": 0, "extensions": { "EXT_texture_webp": { "source": 2 } } }"#,
+            1,
+        )
+        .replacen(r#"{ "uri": "bumps.png" }]"#, r#"{ "uri": "bumps.png" }, { "uri": "colour.webp" }]"#, 1);
+    assert!(gltf.contains("colour.webp") && gltf.contains("EXT_texture_webp"), "the helper's JSON changed shape");
+    let path = write_model("webp", &gltf, &["fallback.png", "bumps.png", "colour.webp"]);
+    let mut document = SceneDocument::new();
+    let (command, report) = tequila_import::import(&document, None, &path, &ImportOptions::default()).expect("imports");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    CommandBus::new().apply(&mut document, command).expect("applies");
+    let names: Vec<String> = document.textures.iter().map(|(_, source)| source.display_name()).collect();
+    assert!(names.iter().any(|n| n.contains("colour")), "the WebP was not used: {names:?}");
+    assert!(!names.iter().any(|n| n.contains("fallback")), "the fallback was used: {names:?}");
+}
+
+/// The same for the formats game-engine and texture-painting exports bring:
+/// TGA above all, and TIFF, WebP, BMP and DDS.
+#[test]
+fn game_engine_map_formats_import_without_complaint() {
+    for (colour, bumps) in [("colour.tga", "bumps.TIF"), ("colour.webp", "bumps.dds"), ("colour.bmp", "bumps.tiff")] {
+        let path = write_model("engine", &textured_gltf(colour, bumps), &[colour, bumps]);
+        let (_, report) = tequila_import::import(&SceneDocument::new(), None, &path, &ImportOptions::default())
+            .expect("imports");
+        assert!(report.warnings.is_empty(), "{colour} or {bumps} was refused: {:?}", report.warnings);
+        assert_eq!(report.textures, 2);
+    }
 }
 
 /// A one-pixel PNG, as bytes.

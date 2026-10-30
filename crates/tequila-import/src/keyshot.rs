@@ -1071,7 +1071,9 @@ impl Build<'_> {
     /// is not.
     fn encode_signed_normals(&mut self, path: &std::path::Path) -> Result<Option<PathBuf>, ImportError> {
         let extension = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-        if !matches!(extension.as_str(), "exr" | "hdr") {
+        // The formats that can hold floats; a TIFF only sometimes does, and
+        // an integer one never has a negative value to find below.
+        if !matches!(extension.as_str(), "exr" | "hdr" | "tif" | "tiff") {
             return Ok(None);
         }
         let Ok(image) = tequila_texture::Image::load_raw(path) else { return Ok(None) };
