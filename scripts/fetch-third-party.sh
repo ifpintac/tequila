@@ -53,15 +53,20 @@ fetch() {
     # Some archives hold their files in a folder, named for the archive or
     # not, some not: the SDK is wherever its lib folder is.
     local sdk="$unpacked"
-    if [ ! -d "$sdk/lib" ]; then
+    if [ ! -d "$sdk/lib" ] && [ ! -d "$sdk/lib64" ]; then
         local lib
-        lib="$(find "$unpacked" -mindepth 2 -maxdepth 3 -type d -name lib -print -quit)"
+        lib="$(find "$unpacked" -mindepth 2 -maxdepth 3 -type d \( -name lib -o -name lib64 \) -print -quit)"
         if [ -z "$lib" ]; then
             echo "$asset has no lib folder; it holds:" >&2
             find "$unpacked" -maxdepth 2 >&2
             exit 1
         fi
         sdk="$(dirname "$lib")"
+    fi
+    # Embree's Linux archive has lib64 where the build scripts and the
+    # packaging look for lib.
+    if [ ! -d "$sdk/lib" ]; then
+        ln -s lib64 "$sdk/lib"
     fi
     mv "$sdk" "$target"
     rm -rf "$unpacked"
