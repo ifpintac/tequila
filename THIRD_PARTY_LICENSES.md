@@ -153,6 +153,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | [Hosek-Wilkie skylight and solar radiance model](https://cgg.mff.cuni.cz/projects/SkylightModelling/) | 1.4a | BSD-3-Clause | The physical sky (`tequila-render-core/src/hosek.rs`, data in `hosek_data.rs`) |
 | Cycles' sheen table (`table_sheen_ltc` in `src/scene/shader.tables`) | Cycles 5.0.0 | Apache-2.0 | The fitted linearly transformed cosines of Zeltner, Burley & Chiang's sheen, reproduced unchanged (`tequila-materials/src/lobes/sheen_ltc.rs`), so velvet shades alike in both engines |
 | Cycles' random-walk coefficients (`subsurface_random_walk_remap` and the radius scale of `bssrdf_setup_radius`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Kutz & Burley's albedo fit with anisotropy, ported (`walk_coefficients` in `tequila-materials/src/openpbr.rs`), so subsurface shades alike in both engines |
+| Cycles' Principled Hair, Chiang model (`bsdf_principled_hair_chiang.h`, and `bsdf_principled_hair_sigma_from_reflectance` in `bsdf_util.h`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Bitterli, Tappan & Burley's fibre model - its lobes, sampling, roughness mapping and colour-to-absorption fit - ported (`tequila-materials/src/lobes/fibre.rs`), so §4.4's fibres shade alike in both engines |
 
 The Hosek-Wilkie model's evaluation is ported from, and its fitted data is
 reproduced unchanged from, the authors' reference implementation, under this

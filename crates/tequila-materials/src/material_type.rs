@@ -73,6 +73,15 @@ pub enum Param {
     FuzzWeight,
     FuzzColor,
     FuzzRoughness,
+    /// §4.4's Fuzz, geometric: fibres to the square centimetre, grown out of
+    /// the surface when the scene is built; 0 grows none. The fibres wear
+    /// the Sheen Color and Sheen Roughness, and the sheen stays under them.
+    FuzzDensity,
+    FuzzLength,
+    FuzzThickness,
+    FuzzLean,
+    FuzzCurl,
+    FuzzColorVariation,
     ThinFilmWeight,
     ThinFilmThickness,
     ThinFilmIor,
@@ -151,6 +160,12 @@ impl Param {
             Param::FuzzWeight => "Sheen",
             Param::FuzzColor => "Sheen Color",
             Param::FuzzRoughness => "Sheen Roughness",
+            Param::FuzzDensity => "Fibres",
+            Param::FuzzLength => "Fibre Length",
+            Param::FuzzThickness => "Fibre Thickness",
+            Param::FuzzLean => "Fibre Lean",
+            Param::FuzzCurl => "Fibre Curl",
+            Param::FuzzColorVariation => "Fibre Color Variation",
             Param::ThinFilmWeight => "Thin Film",
             Param::ThinFilmThickness => "Thickness (nm)",
             Param::ThinFilmIor => "Film IOR",
@@ -175,7 +190,7 @@ impl Param {
     }
 
     /// Every parameter, for the types that expose all of them.
-    pub const ALL: [Param; 53] = [
+    pub const ALL: [Param; 59] = [
         Param::BaseWeight,
         Param::BaseColor,
         Param::BaseMetalness,
@@ -209,6 +224,12 @@ impl Param {
         Param::FuzzWeight,
         Param::FuzzColor,
         Param::FuzzRoughness,
+        Param::FuzzDensity,
+        Param::FuzzLength,
+        Param::FuzzThickness,
+        Param::FuzzLean,
+        Param::FuzzCurl,
+        Param::FuzzColorVariation,
         Param::ThinFilmWeight,
         Param::ThinFilmThickness,
         Param::ThinFilmIor,
@@ -765,6 +786,22 @@ impl MaterialType {
                 }
             }
         }
+        // Fibres wherever there is a sheen for them to thicken: velvet and
+        // cloth, a felt, a peach.
+        if params.contains(&Param::FuzzWeight) {
+            for param in [
+                Param::FuzzDensity,
+                Param::FuzzLength,
+                Param::FuzzThickness,
+                Param::FuzzLean,
+                Param::FuzzCurl,
+                Param::FuzzColorVariation,
+            ] {
+                if !params.contains(&param) {
+                    params.push(param);
+                }
+            }
+        }
         params
     }
 
@@ -1011,6 +1048,12 @@ impl Param {
             Param::FuzzWeight => "fuzz_weight",
             Param::FuzzColor => "fuzz_color",
             Param::FuzzRoughness => "fuzz_roughness",
+            Param::FuzzDensity => "fuzz_density",
+            Param::FuzzLength => "fuzz_length",
+            Param::FuzzThickness => "fuzz_thickness",
+            Param::FuzzLean => "fuzz_lean",
+            Param::FuzzCurl => "fuzz_curl",
+            Param::FuzzColorVariation => "fuzz_color_variation",
             Param::ThinFilmWeight => "thin_film_weight",
             Param::ThinFilmThickness => "thin_film_thickness",
             Param::ThinFilmIor => "thin_film_ior",
@@ -1069,6 +1112,12 @@ impl Param {
             "fuzz_weight" => Param::FuzzWeight,
             "fuzz_color" => Param::FuzzColor,
             "fuzz_roughness" => Param::FuzzRoughness,
+            "fuzz_density" => Param::FuzzDensity,
+            "fuzz_length" => Param::FuzzLength,
+            "fuzz_thickness" => Param::FuzzThickness,
+            "fuzz_lean" => Param::FuzzLean,
+            "fuzz_curl" => Param::FuzzCurl,
+            "fuzz_color_variation" => Param::FuzzColorVariation,
             "thin_film_weight" => Param::ThinFilmWeight,
             "thin_film_thickness" => Param::ThinFilmThickness,
             "thin_film_ior" => Param::ThinFilmIor,
@@ -1131,6 +1180,12 @@ impl Param {
             Param::FuzzWeight => Some(ParamValue::Scalar(material.fuzz_weight)),
             Param::FuzzColor => Some(ParamValue::Color(material.fuzz_color)),
             Param::FuzzRoughness => Some(ParamValue::Scalar(material.fuzz_roughness)),
+            Param::FuzzDensity => Some(ParamValue::Scalar(material.fuzz_density)),
+            Param::FuzzLength => Some(ParamValue::Scalar(material.fuzz_length)),
+            Param::FuzzThickness => Some(ParamValue::Scalar(material.fuzz_thickness)),
+            Param::FuzzLean => Some(ParamValue::Scalar(material.fuzz_lean)),
+            Param::FuzzCurl => Some(ParamValue::Scalar(material.fuzz_curl)),
+            Param::FuzzColorVariation => Some(ParamValue::Scalar(material.fuzz_color_variation)),
             Param::ThinFilmWeight => Some(ParamValue::Scalar(material.thin_film_weight)),
             Param::ThinFilmThickness => Some(ParamValue::Scalar(material.thin_film_thickness)),
             Param::ThinFilmIor => Some(ParamValue::Scalar(material.thin_film_ior)),
@@ -1192,6 +1247,12 @@ impl Param {
             (Param::FuzzWeight, ParamValue::Scalar(value)) => material.fuzz_weight = value,
             (Param::FuzzColor, ParamValue::Color(value)) => material.fuzz_color = value,
             (Param::FuzzRoughness, ParamValue::Scalar(value)) => material.fuzz_roughness = value,
+            (Param::FuzzDensity, ParamValue::Scalar(value)) => material.fuzz_density = value,
+            (Param::FuzzLength, ParamValue::Scalar(value)) => material.fuzz_length = value,
+            (Param::FuzzThickness, ParamValue::Scalar(value)) => material.fuzz_thickness = value,
+            (Param::FuzzLean, ParamValue::Scalar(value)) => material.fuzz_lean = value,
+            (Param::FuzzCurl, ParamValue::Scalar(value)) => material.fuzz_curl = value,
+            (Param::FuzzColorVariation, ParamValue::Scalar(value)) => material.fuzz_color_variation = value,
             (Param::ThinFilmWeight, ParamValue::Scalar(value)) => material.thin_film_weight = value,
             (Param::ThinFilmThickness, ParamValue::Scalar(value)) => material.thin_film_thickness = value,
             (Param::ThinFilmIor, ParamValue::Scalar(value)) => material.thin_film_ior = value,
@@ -1286,6 +1347,12 @@ impl Param {
             Param::FuzzWeight => ParamUi::Scalar,
             Param::FuzzColor => ParamUi::Color,
             Param::FuzzRoughness => ParamUi::Scalar,
+            Param::FuzzDensity
+            | Param::FuzzLength
+            | Param::FuzzThickness
+            | Param::FuzzLean
+            | Param::FuzzCurl
+            | Param::FuzzColorVariation => ParamUi::Scalar,
             Param::ThinFilmWeight => ParamUi::Scalar,
             Param::ThinFilmThickness => ParamUi::Scalar,
             Param::ThinFilmIor => ParamUi::Scalar,
@@ -1337,7 +1404,42 @@ impl Param {
     /// point on its surface, so that a texture across the surface means
     /// nothing: which medium wins where two overlap is one answer per part.
     pub fn is_per_piece(self) -> bool {
-        matches!(self, Param::MediumPriority)
+        matches!(
+            self,
+            Param::MediumPriority
+                | Param::FuzzDensity
+                | Param::FuzzLength
+                | Param::FuzzThickness
+                | Param::FuzzLean
+                | Param::FuzzCurl
+                | Param::FuzzColorVariation
+        )
+    }
+
+    /// How the Material tab shows a length too fine to read in metres: a
+    /// factor and its unit, as the graph editor shows a Fuzz node's.
+    pub fn shown_in(self) -> Option<(f32, &'static str)> {
+        match self {
+            Param::FuzzLength => Some((1000.0, " mm")),
+            Param::FuzzThickness => Some((1.0e6, " µm")),
+            _ => None,
+        }
+    }
+
+    /// What the Material tab says about a control on hover, where its name
+    /// alone does not.
+    pub fn hint(self) -> Option<&'static str> {
+        match self {
+            Param::FuzzDensity => Some(
+                "Real fibres grown out of the surface, to the square centimetre, in the Sheen Color and                  Sheen Roughness: felt's halo, a tennis ball's nap, velvet's pile. 0 grows none. They render                  in both renderers and in the Rendered view, not in the Solid one; a part grows at most                  250,000, so dense fibres on a large part come out sparser.",
+            ),
+            Param::FuzzLength => Some("How long each fibre is, give or take a third."),
+            Param::FuzzThickness => Some("How wide each fibre is at its root; it tapers to a fifth of that at its tip."),
+            Param::FuzzLean => Some("How far the fibres lean over, 0 standing straight up."),
+            Param::FuzzCurl => Some("How much each fibre bends along its length."),
+            Param::FuzzColorVariation => Some("How much darker than the Sheen Color a fibre may be, each its own way."),
+            _ => None,
+        }
     }
 
     /// Why a parameter does nothing yet, for the Material tab to grey it out
@@ -1381,6 +1483,16 @@ impl Param {
             Param::FuzzWeight => Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false }),
             Param::FuzzColor => None,
             Param::FuzzRoughness => Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false }),
+            // A few fibres to the square centimetre is a peach's skin, a few
+            // hundred a tennis ball's felt, thousands a velvet's pile.
+            Param::FuzzDensity => Some(ParamRange { low: 0.0, high: 5000.0, logarithmic: true }),
+            // Metres: a twentieth of a millimetre to five centimetres.
+            Param::FuzzLength => Some(ParamRange { low: 0.00005, high: 0.05, logarithmic: true }),
+            // Two microns, a microfibre's, to a millimetre, a bristle's.
+            Param::FuzzThickness => Some(ParamRange { low: 0.000002, high: 0.001, logarithmic: true }),
+            Param::FuzzLean | Param::FuzzCurl | Param::FuzzColorVariation => {
+                Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false })
+            }
             Param::ThinFilmWeight => Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false }),
             Param::ThinFilmThickness => Some(ParamRange { low: 0.0, high: 2000.0, logarithmic: false }),
             Param::ThinFilmIor => Some(ParamRange { low: 1.0, high: 3.0, logarithmic: false }),
@@ -1655,6 +1767,12 @@ mod tests {
             fuzz_weight: 0.47,
             fuzz_color: spectrum(0.18, 0.29, 0.41),
             fuzz_roughness: 0.53,
+            fuzz_density: 37.0,
+            fuzz_length: 0.0031,
+            fuzz_thickness: 0.000017,
+            fuzz_lean: 0.41,
+            fuzz_curl: 0.62,
+            fuzz_color_variation: 0.33,
             thin_film_weight: 0.39,
             thin_film_thickness: 517.0,
             thin_film_ior: 1.39,
@@ -2300,6 +2418,39 @@ mod exposed_parameters_do_something {
     /// and it names where. Without that, "implemented outside the BSDF" would
     /// be an excuse that swallows the whole check.
     const IMPLEMENTED_OUTSIDE_THE_BSDF: &[(Param, &str)] = &[
+        (
+            Param::FuzzDensity,
+            "fibres are geometry grown out of the part when the scene is built \
+             (`tequila_scene::fuzz`), not a lobe of its surface. Covered by \
+             tequila-scene's `fibres_follow_the_density_and_the_part_scale` and \
+             the app's `fibres_render_alike_in_both_renderers`.",
+        ),
+        (
+            Param::FuzzLength,
+            "how long the grown fibres are. Covered by tequila-scene's \
+             `fibres_stand_out_of_the_surface`.",
+        ),
+        (
+            Param::FuzzThickness,
+            "how wide the grown fibres are at the root. Covered by \
+             tequila-scene's `fibres_taper_from_the_thickness_asked`.",
+        ),
+        (
+            Param::FuzzLean,
+            "how far the grown fibres lean. Covered by tequila-scene's \
+             `fibres_lean_and_curl_as_asked`.",
+        ),
+        (
+            Param::FuzzCurl,
+            "how much the grown fibres bend. Covered by tequila-scene's \
+             `fibres_lean_and_curl_as_asked`.",
+        ),
+        (
+            Param::FuzzColorVariation,
+            "how much each fibre's colour differs from the next: read at a \
+             fibre, from its own random number, which no surface has. Covered \
+             by tequila-render-core's `a_fibre_is_shaded_by_its_own_colour`.",
+        ),
         (
             Param::EdgeRadius,
             "rounded edges bend the shading normal before the BSDF is built, by              probing the geometry around the shading point (Cycles' Bevel, and              tequila-render-core's `bevel`). Covered by the app's              `rounded_edges_catch_light_in_both_renderers`, against a render.",

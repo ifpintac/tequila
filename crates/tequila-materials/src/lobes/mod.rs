@@ -12,6 +12,7 @@
 pub mod conductor;
 pub mod dielectric;
 pub mod diffuse;
+pub mod fibre;
 pub mod layered;
 pub mod openpbr;
 pub mod sheen;
@@ -22,6 +23,7 @@ pub mod transmission;
 pub use conductor::Conductor;
 pub use dielectric::DielectricSpecular;
 pub use diffuse::OrenNayarDiffuse;
+pub use fibre::Fibre;
 pub use layered::SpecularOverDiffuse;
 pub use openpbr::OpenPbrBsdf;
 pub use sheen::Sheen;
