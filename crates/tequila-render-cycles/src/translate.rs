@@ -3691,12 +3691,12 @@ impl Builder<'_> {
     /// (`Pane::crossing`): a transparent surface as clear as the glass is
     /// straight on - its tint, less what its face and its coat reflect at
     /// the angle the ray meets it, and its holes clear - to shadow rays and
-    /// to the bounces that are weighed against them. The camera, and rays
-    /// off mirrors and glass, meet `surface`. Cycles' glass stopped every
-    /// shadow ray, and what was under a glass cover went black but for the
-    /// light that happened to refract onto it, as specks. A volume behind
-    /// the surface still absorbs on the way, as Cycles' transparent shadows
-    /// go through it.
+    /// to the diffuse bounces that are weighed against them. The camera,
+    /// glossy bounces, and rays off mirrors and glass meet `surface`.
+    /// Cycles' glass stopped every shadow ray, and what was under a glass
+    /// cover went black but for the light that happened to refract onto it,
+    /// as specks. A volume behind the surface still absorbs on the way, as
+    /// Cycles' transparent shadows go through it.
     fn shadows_through(&mut self, shader: Shader, pane: tequila_render_core::scene::Pane, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
         let facing = self.session.node(shader, "geometry")?;
         // What a face lets by at an index: one less its Fresnel, by the same
@@ -3731,20 +3731,23 @@ impl Builder<'_> {
         self.session.set_float3(colour, "Vector3", [open, open, open])?;
         let clear = self.session.node(shader, "transparent_bsdf")?;
         self.session.connect(shader, colour, "Vector", clear, "Color")?;
-        // Shadow rays, and every ray off a surface that is not a mirror -
-        // the bounces that could also have found the lamps the shadow rays
-        // were aimed at. Cycles' lamps are there to be hit, and a bounce off
-        // the floor that refracted through the glass into one counted as
-        // the only way of finding it, on top of the shadow ray that had
-        // passed the glass: twice the light under a cover, in specks. Passed
-        // straight on as the shadow ray was, a bounce is weighed against it
-        // as it is in the open. The camera, and what a mirror or glass sends
-        // on, still see glass.
+        // Shadow rays, and diffuse bounces: the bounces that find most of the
+        // lamps the shadow rays were aimed at. Cycles' lamps are there to be
+        // hit, and a diffuse bounce off the floor that refracted through the
+        // glass into one counted as the only way of finding it, on top of
+        // the shadow ray that had passed the glass: twice the light under a
+        // cover, in specks. Passed straight on as the shadow ray was, a
+        // bounce is weighed against it as it is in the open. Glossy bounces
+        // still see glass, or a bottle on a glossy floor would be mirrored
+        // in it as a clear ghost, without its glass or what it holds; what
+        // they find of a lamp through the glass is counted on top of the
+        // shadow ray's, but next to a glossy lobe's own, a shadow ray's
+        // share is small - a per cent on a glossy ball under a glass bell,
+        // five on the demo under a slab - and grows only as the lobe gets
+        // rough. The camera, and what a mirror or glass sends on, see glass
+        // too.
         let path = self.session.node(shader, "light_path")?;
-        let not_camera = self.sub(shader, num(1.0), Slot::Link(path, "Is Camera Ray"))?;
-        let not_singular = self.sub(shader, num(1.0), Slot::Link(path, "Is Singular Ray"))?;
-        let bounced = self.mul(shader, not_camera, not_singular)?;
-        let passes = self.float_op(shader, "maximum", Slot::Link(path, "Is Shadow Ray"), bounced)?;
+        let passes = self.float_op(shader, "maximum", Slot::Link(path, "Is Shadow Ray"), Slot::Link(path, "Is Diffuse Ray"))?;
         let mix = self.session.node(shader, "mix_closure")?;
         self.feed(shader, mix, "Fac", passes, false)?;
         self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;

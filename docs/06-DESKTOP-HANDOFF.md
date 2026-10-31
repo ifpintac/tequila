@@ -791,7 +791,8 @@ Every material parameter is now implemented; nothing is greyed out.
   first samples; the environment's and glowing parts' light through glass
   is found by bounces. Cycles is given its own MNEE by the same switch.
   With caustics off, Cycles' clear glass now passes shadow rays as Tequila's
-  does, so what is under a glass cover is lit in both.
+  does, so what is under a glass cover is lit in both, and is still glass in
+  a glossy floor's reflection.
 
 - **Updating a model from its file** (right-click a part in the Scene tree:
   Reload from file, or Update from another file…; File → Reload model from
