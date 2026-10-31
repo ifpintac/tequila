@@ -63,8 +63,9 @@ pub enum Square {
 }
 
 /// Of `edges`, those within `tolerance` radians of running across the
-/// layout, or down it.
-pub fn square_edges(layout: &UvLayout, edges: &[u32], way: Square, tolerance: f32) -> Vec<u32> {
+/// layout, or down it: a strip's lines, not the long diagonals of its
+/// quads, which a long thin quad lays nearly along them too.
+pub fn square_edges(layout: &UvLayout, mesh: &Mesh, edges: &[u32], way: Square, tolerance: f32) -> Vec<u32> {
     edges
         .iter()
         .copied()
@@ -72,7 +73,7 @@ pub fn square_edges(layout: &UvLayout, edges: &[u32], way: Square, tolerance: f3
             let Some(edge) = layout.edges.get(e as usize) else { return false };
             let [a, b] = edge.ends.map(|v| layout.uv_vertices[v as usize].uv);
             let d = b - a;
-            if d.length() <= 0.0 {
+            if d.length() <= 0.0 || super::vertices::is_diagonal(layout, mesh, e) {
                 return false;
             }
             let angle = d.y.abs().atan2(d.x.abs());
@@ -136,8 +137,8 @@ mod tests {
         let layout = UvLayout::new(&mesh, 0).unwrap();
         let all: Vec<u32> = (0..layout.edges.len() as u32).collect();
         // Twelve sides of the four squares across and down; four diagonals.
-        assert_eq!(square_edges(&layout, &all, Square::Either, 0.1).len(), 12);
-        assert_eq!(square_edges(&layout, &all, Square::Across, 0.1).len(), 6);
+        assert_eq!(square_edges(&layout, &mesh, &all, Square::Either, 0.1).len(), 12);
+        assert_eq!(square_edges(&layout, &mesh, &all, Square::Across, 0.1).len(), 6);
         assert!(no_area_faces(&layout, &mesh).is_empty());
         assert!(flipped_faces(&layout).is_empty());
         // The middle vertex pushed out past a corner turns faces over; onto

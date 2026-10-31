@@ -60,6 +60,13 @@ pub struct UvArrange {
     pub select_menu: Option<bool>,
     /// Sort's options, open.
     pub sort_options: Option<bool>,
+    /// The side panel scrolled to a panel: `arrange` or `density`.
+    pub panel: Option<String>,
+    /// The material's texture shown behind the layout, by the parameter it
+    /// drives (`base_color`), or `none`.
+    pub behind: Option<String>,
+    /// View options, open.
+    pub view_options: Option<bool>,
 }
 
 /// Where a script puts the 2D cursor.
@@ -135,6 +142,9 @@ pub(super) fn uv_arrange(value: &Value) -> Result<UvArrange, ProtocolError> {
         },
         select_menu: opt_bool(value, "select_menu")?,
         sort_options: opt_bool(value, "sort_options")?,
+        panel: opt_string(value, "panel")?,
+        behind: opt_string(value, "behind")?,
+        view_options: opt_bool(value, "view_options")?,
     })
 }
 

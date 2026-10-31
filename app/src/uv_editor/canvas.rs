@@ -891,6 +891,12 @@ impl UvEditor {
             }
         }
 
+        // The padding round each island, over the textures and under the
+        // labels and the layout's own.
+        if self.prefs.padding {
+            self.draw_padding(&painter, &xform, part, layout);
+        }
+
         // Where the layout's own is drawn this frame: as it is, or through
         // a drag's map, or the Transform panel's while a field is held.
         let preview = match &self.gesture {
@@ -1010,11 +1016,6 @@ impl UvEditor {
             let island = layout.uv.island_of[hover.triangle as usize];
             fill(&mut layout.uv.islands[island as usize].triangles.iter().copied(), &|_| tint.linked.gamma_multiply(0.16));
             fill(&mut std::iter::once(hover.triangle), &|_| tint.linked.gamma_multiply(0.55));
-        }
-
-        // The padding round each island, under its lines.
-        if self.prefs.padding {
-            self.draw_padding(&painter, &xform, part, layout);
         }
 
         // Every edge, faint, when there are few enough to see; the part's

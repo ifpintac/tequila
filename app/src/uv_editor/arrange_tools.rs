@@ -217,6 +217,10 @@ pub struct Arrange {
     pub pending: Vec<Request>,
     /// Sort's options, asked open or shut by a script.
     pub sort_open: Option<bool>,
+    /// The side panel scrolled to one of these panels, as a script asks.
+    pub scroll_to: Option<String>,
+    /// View options, asked open or shut by a script.
+    pub view_open: Option<bool>,
 }
 
 impl Default for Arrange {
@@ -247,6 +251,8 @@ impl Default for Arrange {
             copied: None,
             pending: Vec::new(),
             sort_open: None,
+            scroll_to: None,
+            view_open: None,
         }
     }
 }
@@ -331,7 +337,16 @@ impl UvEditor {
                 return;
             }
         };
-        let done = format!("{} to the {}", how.name(), self.align_to.label().to_lowercase());
+        // "by their bottom right corners, on the 2D cursor"
+        let by = how.name().trim_start_matches("Align ");
+        let against = match self.align_to {
+            Target::Selection if self.mode == Mode::Edges => "each against its own",
+            Target::Selection => "against the selection",
+            Target::Island => "against the island",
+            Target::Layout => "against the layout's square",
+            Target::Cursor => "on the 2D cursor",
+        };
+        let done = format!("by their {by}, {against}");
         match self.mode {
             Mode::Vertices | Mode::Edges => {
                 let groups: Vec<Vec<u32>> = if self.mode == Mode::Vertices {
@@ -376,7 +391,7 @@ impl UvEditor {
                     return;
                 }
                 let what = if self.mode == Mode::Vertices { plural(places.vertices.len(), "vertex", "vertices") } else { plural(groups.len(), "edge path", "edge paths") };
-                let done = if self.mode == Mode::Vertices && middles { format!("Put {what} on the line between the outermost") } else { format!("Lined up {what}: {}", done.to_lowercase()) };
+                let done = if self.mode == Mode::Vertices && middles { format!("Put {what} on the line between the outermost") } else { format!("Lined up {what} {done}") };
                 self.put(edits, part, layout, places, "line them up", done);
             }
             _ => {
@@ -396,7 +411,7 @@ impl UvEditor {
                     self.say("The islands are lined up already", false);
                     return;
                 }
-                self.place(edits, part, layout, plan, "line them up", format!("Lined up {}", plural(islands.len(), "island", "islands")));
+                self.place(edits, part, layout, plan, "line them up", format!("Lined up {} {done}", plural(islands.len(), "island", "islands")));
             }
         }
     }
@@ -809,6 +824,15 @@ impl UvEditor {
         }
         if let Some(tool) = asked {
             self.arrange.pending.push(Request::Tool(tool));
+        }
+    }
+
+    /// The side panel scrolled to show the panel named, once, where a
+    /// script asked for it.
+    pub(super) fn scroll_to_panel(&mut self, ui: &mut egui::Ui, name: &str, header: &egui::Response) {
+        if self.arrange.scroll_to.as_deref() == Some(name) {
+            ui.scroll_to_rect(header.rect, Some(egui::Align::TOP));
+            self.arrange.scroll_to = None;
         }
     }
 
@@ -1240,6 +1264,11 @@ impl UvEditor {
             }
             None => (false, None),
         };
+        let behind = match change.behind.as_deref() {
+            None => None,
+            Some("none") => Some(None),
+            Some(key) => Some(Some(tequila_materials::material_type::Param::ALL.iter().copied().find(|p| p.key() == key).ok_or_else(|| format!("`{key}` is not a parameter"))?)),
+        };
         let node = self.shown_part();
         if change.cursor.is_some() && node.is_none() {
             return Err("the editor shows no part to put the cursor on".into());
@@ -1257,11 +1286,23 @@ impl UvEditor {
         if let Some(target) = align_to {
             self.align_to = target;
         }
+        if let Some(behind) = behind {
+            self.display.behind = behind;
+        }
         if let Some(pivot) = pivot {
             self.cursors.pivot = pivot;
         }
         if let Some(open) = change.sort_options {
             self.arrange.sort_open = Some(open);
+        }
+        if let Some(open) = change.view_options {
+            self.arrange.view_open = Some(open);
+        }
+        if let Some(panel) = &change.panel {
+            if !["arrange", "density"].contains(&panel.as_str()) {
+                return Err(format!("`{panel}` is not a panel to show: arrange or density"));
+            }
+            self.arrange.scroll_to = Some(panel.clone());
         }
         if let (Some(cursor), Some(node)) = (change.cursor, node) {
             match cursor {
@@ -1329,6 +1370,7 @@ impl UvEditor {
             .set("pivot", if self.cursors.pivot { "cursor" } else { "frame" })
             .set("align_to", self.align_to.key())
             .set("exposure", self.prefs.background_exposure)
+            .set("behind", self.display.behind.map(|p| Value::String(p.key().to_string())).unwrap_or(Value::Null))
             .set("copied", self.arrange.copied.as_ref().map(|(name, _)| Value::String(name.clone())).unwrap_or(Value::Null));
         let mut checker = tequila_format::json_write::Object::new();
         checker.set("on", self.checker.on).set("squares", self.checker.squares as usize).set("pattern", self.checker.pattern.key());

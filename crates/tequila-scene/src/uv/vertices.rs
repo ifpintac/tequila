@@ -248,7 +248,7 @@ pub fn spread(layout: &UvLayout, mesh: &Mesh, path: &[u32], by_part: bool) -> Pl
 /// An edge of the layout that is the long diagonal of a quad split in two:
 /// the longest side, on the part, of the triangles on both its sides. A
 /// strip's diagonals run nearly along it and are no edge to square.
-fn is_diagonal(layout: &UvLayout, mesh: &Mesh, edge: u32) -> bool {
+pub(crate) fn is_diagonal(layout: &UvLayout, mesh: &Mesh, edge: u32) -> bool {
     let e = &layout.edges[edge as usize];
     if e.kind != EdgeKind::Inner {
         return false;
@@ -326,40 +326,57 @@ pub fn square_edges(layout: &UvLayout, mesh: &Mesh, edges: &[u32], tolerance: f3
                 closing.insert(ra);
             }
         }
-        let mut roots: Vec<usize> = runs.keys().copied().collect();
+        let mut roots: Vec<usize> = runs.keys().copied().filter(|r| !closing.contains(r)).collect();
         roots.sort_unstable();
-        for root in roots {
-            if closing.contains(&root) {
-                continue;
-            }
-            let run = &runs[&root];
-            let place = |current: &HashMap<u32, Vec2>, v: u32| *current.get(&v).unwrap_or(&layout.uv_vertices[v as usize].uv);
-            let mean = run.iter().map(|&v| if is_across { place(&current, v).y } else { place(&current, v).x }).sum::<f32>() / run.len() as f32;
+        let place = |current: &HashMap<u32, Vec2>, v: u32| *current.get(&v).unwrap_or(&layout.uv_vertices[v as usize].uv);
+        // Some runs moved to their averages, if every face round them still
+        // faces its island's way and keeps some area.
+        let attempt = |current: &HashMap<u32, Vec2>, chosen: &[usize]| -> Option<HashMap<u32, Vec2>> {
             let mut proposed = current.clone();
-            for &v in run {
-                let p = place(&current, v);
-                proposed.insert(v, if is_across { vec2(p.x, mean) } else { vec2(mean, p.y) });
+            for root in chosen {
+                let run = &runs[root];
+                let mean = run.iter().map(|&v| if is_across { place(current, v).y } else { place(current, v).x }).sum::<f32>() / run.len() as f32;
+                for &v in run {
+                    let p = place(current, v);
+                    proposed.insert(v, if is_across { vec2(p.x, mean) } else { vec2(mean, p.y) });
+                }
             }
-            // Every face round the run still facing its island's way, and
-            // with area left.
-            let keeps = run.iter().flat_map(|v| faces_of.get(v).into_iter().flatten()).all(|&t| {
+            let keeps = chosen.iter().flat_map(|root| runs[root].iter()).flat_map(|v| faces_of.get(v).into_iter().flatten()).all(|&t| {
                 let island = &layout.islands[layout.island_of[t as usize] as usize];
                 let sign = if island.mirrored { -1.0 } else { 1.0 };
                 let hair = island.uv_area * super::flatten::FOLD_HAIR;
                 let corners = |positions: &HashMap<u32, Vec2>| [0, 1, 2].map(|k| place(positions, layout.corner_vertex[t as usize * 3 + k]));
-                let [a, b, c] = corners(&current);
+                let [a, b, c] = corners(current);
                 let [p, q, r] = corners(&proposed);
                 let before = super::flatten::facing(a, b, c) * sign;
                 let after = super::flatten::facing(p, q, r) * sign;
                 before <= hair || after > hair
             });
-            if !keeps {
-                continue;
+            keeps.then_some(proposed)
+        };
+        // All the runs one way at once, which a turned strip needs - each
+        // alone would cross its neighbours, still turned; else one by one,
+        // leaving those that would fold.
+        let accepted: Vec<usize> = match attempt(&current, &roots) {
+            Some(proposed) => {
+                current = proposed;
+                roots
             }
-            for &v in run {
-                out.push(v, proposed[&v]);
+            None => {
+                let mut kept = Vec::new();
+                for root in roots {
+                    if let Some(proposed) = attempt(&current, &[root]) {
+                        current = proposed;
+                        kept.push(root);
+                    }
+                }
+                kept
             }
-            current = proposed;
+        };
+        for root in accepted {
+            for &v in &runs[&root] {
+                out.push(v, current[&v]);
+            }
         }
     }
     out.moving(layout)
@@ -442,6 +459,33 @@ mod tests {
         let by_part = spread(&layout, &mesh, &path, true);
         for (a, b) in even.uv.iter().zip(&by_part.uv) {
             assert!((a[0] - b[0]).abs() < 1e-5);
+        }
+    }
+
+    /// A strip of narrow rows turned by 8°: a row squared alone would cross
+    /// the next, still turned, so all of them go at once.
+    #[test]
+    fn a_turned_strip_is_squared_whole() {
+        let strip = sheet(4, 16, |_, _| 0.0);
+        let turn = 8f32.to_radians();
+        let uv = strip.positions.iter().map(|p| {
+            let (x, y) = (p.x * 0.8, p.z * 0.08);
+            vec2(0.1 + x * turn.cos() - y * turn.sin(), 0.4 + x * turn.sin() + y * turn.cos())
+        }).collect();
+        let mesh = strip.with_uvs(uv);
+        let layout = UvLayout::new(&mesh, 0).unwrap();
+        let all: Vec<u32> = (0..layout.edges.len() as u32).collect();
+        let places = square_edges(&layout, &mesh, &all, 15f32.to_radians());
+        let out = crate::uv::set_positions(&mesh, 0, &places.vertices, &places.uv).expect("no fold");
+        let after = UvLayout::new(&out, 0).unwrap();
+        for edge in &after.edges {
+            let [a, b] = edge.vertices.map(|v| mesh.positions[v as usize]);
+            let [p, q] = edge.ends.map(|v| after.uv_vertices[v as usize].uv);
+            if (a.z - b.z).abs() < 1e-6 {
+                assert!((p.y - q.y).abs() < 1e-5, "rows across: {p:?} {q:?}");
+            } else if (a.x - b.x).abs() < 1e-6 {
+                assert!((p.x - q.x).abs() < 1e-5, "rungs down: {p:?} {q:?}");
+            }
         }
     }
 

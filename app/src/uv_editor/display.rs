@@ -156,19 +156,26 @@ impl UvEditor {
         close
     }
 
-    /// Each island's band, drawn soft along its border, the islands too
-    /// close in the colour of a warning.
+    /// Each island's band, drawn soft along its border with round
+    /// corners, so a ragged edge does not throw spikes; the islands too
+    /// close in the colour of a warning. In colours already laid on the
+    /// layout's own, so where bands cross they do not darken.
     pub(super) fn draw_padding(&mut self, painter: &egui::Painter, xform: &Xform, part: &Part, layout: &Layout) {
         let p = crate::theme::p();
         let close = self.too_close_now(part, layout);
         let width = (self.padding_uv() * xform.scale).max(1.0);
+        let (soft, warn) = (crate::theme::mix(p.canvas, p.accent, 0.22), crate::theme::mix(p.canvas, p.danger, 0.4));
         for (i, island) in layout.uv.islands.iter().enumerate() {
-            let warn = close.get(i).copied().unwrap_or(false);
-            let colour = if warn { p.danger.gamma_multiply(0.4) } else { p.accent.gamma_multiply(0.18) };
+            let colour = if close.get(i).copied().unwrap_or(false) { warn } else { soft };
+            let stroke = egui::Stroke::new(width, colour);
             for ring in &island.boundary {
                 let points: Vec<egui::Pos2> = ring.iter().map(|&v| xform.to_screen(layout.uv.uv_vertices[v as usize].uv)).collect();
-                if points.len() >= 2 {
-                    painter.add(egui::Shape::closed_line(points, egui::Stroke::new(width, colour)));
+                for k in 0..points.len() {
+                    let (a, b) = (points[k], points[(k + 1) % points.len()]);
+                    painter.line_segment([a, b], stroke);
+                    if width > 2.0 {
+                        painter.circle_filled(a, width * 0.5, colour);
+                    }
                 }
             }
         }
@@ -205,7 +212,9 @@ impl UvEditor {
             .pixels
             .iter()
             .map(|c| {
-                let lift = |v: u8| ((v as f32 / 255.0).powf(2.2) * gain).powf(1.0 / 2.2).clamp(0.0, 1.0) * 255.0;
+                // On the values as shown, not as light: what the eye needs
+                // from it is the dark parts brought up to where lines read.
+                let lift = |v: u8| (v as f32 * gain).min(255.0);
                 egui::Color32::from_rgba_unmultiplied(lift(c.r()) as u8, lift(c.g()) as u8, lift(c.b()) as u8, c.a())
             })
             .collect();

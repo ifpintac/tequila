@@ -902,61 +902,70 @@ impl UvEditor {
     fn view_options(&mut self, ui: &mut egui::Ui, part: &Part, layout: Option<&layout::Layout>, edits: &mut Edits) {
         let density = self.density;
         let button = egui::Button::new(egui::RichText::new("View options").size(12.5)).fill(crate::theme::p().control).rounding(6.0);
-        let response = ui.add(button).on_hover_text("The unit, the grid's spacing, the guides, the stretch heatmap and the artwork");
+        let response = ui.add(button).on_hover_text("The unit, the grid's spacing, the guides, the stretch heatmap, the artwork and what is behind it, the padding, the 2D cursor and the checker on the part");
         let id = ui.id().with("uv-view-options");
         if response.clicked() {
             ui.memory_mut(|m| m.toggle_popup(id));
         }
+        match self.arrange.view_open.take() {
+            Some(true) => ui.memory_mut(|m| m.open_popup(id)),
+            Some(false) if ui.memory(|m| m.is_popup_open(id)) => ui.memory_mut(|m| m.close_popup()),
+            _ => {}
+        }
         egui::popup::popup_below_widget(ui, id, &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
             ui.set_min_width(260.0);
-            crate::theme::section(ui, "Units");
-            ui.add_enabled_ui(density.is_some(), |ui| {
-                let mut unit = if density.is_some() { self.prefs.unit } else { units::Unit::Layout };
-                if crate::theme::segmented(ui, &mut unit, &[(units::Unit::Millimetres, "mm"), (units::Unit::Centimetres, "cm"), (units::Unit::Inches, "in"), (units::Unit::Layout, "UV")]) {
-                    self.prefs.unit = unit;
+            // Scrolled where the window is too short for all of it.
+            let room = (ui.ctx().screen_rect().height() - response.rect.bottom() - 24.0).max(200.0);
+            egui::ScrollArea::vertical().max_height(room).min_scrolled_height(room).show(ui, |ui| {
+                crate::theme::section(ui, "Units");
+                ui.add_enabled_ui(density.is_some(), |ui| {
+                    let mut unit = if density.is_some() { self.prefs.unit } else { units::Unit::Layout };
+                    if crate::theme::segmented(ui, &mut unit, &[(units::Unit::Millimetres, "mm"), (units::Unit::Centimetres, "cm"), (units::Unit::Inches, "in"), (units::Unit::Layout, "UV")]) {
+                        self.prefs.unit = unit;
+                    }
+                })
+                .response
+                .on_disabled_hover_text("This layout is not one size all over, so it reads in UV units: 1 across its square");
+                crate::theme::section(ui, "Grid");
+                let mut spacing = if density.is_some() { self.prefs.spacing } else { prefs::Spacing::Fraction };
+                ui.add_enabled_ui(density.is_some(), |ui| {
+                    if crate::theme::segmented(ui, &mut spacing, &[(prefs::Spacing::Length, "Length"), (prefs::Spacing::Fraction, "Fraction of UV")]) {
+                        self.prefs.spacing = spacing;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if spacing == prefs::Spacing::Length {
+                        ui.add(egui::DragValue::new(&mut self.prefs.grid_mm).speed(0.1).range(0.01..=10_000.0).prefix("Every ").suffix(" mm").max_decimals(2))
+                            .on_hover_text("The grid's spacing on the part");
+                    } else {
+                        ui.add(egui::DragValue::new(&mut self.prefs.divisions).speed(0.2).range(1..=1000).prefix("Every 1/"))
+                            .on_hover_text("The grid's spacing, as a fraction of the layout's square");
+                    }
+                    ui.add(egui::DragValue::new(&mut self.prefs.subdivisions).speed(0.1).range(1..=20).prefix("in ").suffix(" parts"))
+                        .on_hover_text("Fainter lines between the grid's own");
+                });
+                crate::theme::section(ui, "Guides");
+                ui.horizontal(|ui| {
+                    ui.add(crate::field::Checkbox::new(&mut self.prefs.guides_locked, "Lock guides")).on_hover_text("Guides stay where they are: they cannot be dragged or picked");
+                    if ui.add_enabled(!part.guides.is_empty(), egui::Button::new("Clear guides")).on_hover_text("Remove every guide on this part").clicked() {
+                        edits.guides = Some(Vec::new());
+                        self.selected_guide = None;
+                        edits.status = Some("Cleared the guides".into());
+                    }
+                });
+                crate::theme::section(ui, "Stretch");
+                let mut stretch = self.prefs.stretch;
+                if crate::theme::segmented(ui, &mut stretch, &[(None, "Off"), (Some(Measure::Area), "Area"), (Some(Measure::Angle), "Angle")]) {
+                    self.prefs.stretch = stretch;
                 }
-            })
-            .response
-            .on_disabled_hover_text("This layout is not one size all over, so it reads in UV units: 1 across its square");
-            crate::theme::section(ui, "Grid");
-            let mut spacing = if density.is_some() { self.prefs.spacing } else { prefs::Spacing::Fraction };
-            ui.add_enabled_ui(density.is_some(), |ui| {
-                if crate::theme::segmented(ui, &mut spacing, &[(prefs::Spacing::Length, "Length"), (prefs::Spacing::Fraction, "Fraction of UV")]) {
-                    self.prefs.spacing = spacing;
+                ui.small("A heatmap of how much the layout stretches the part: by area, blue where the texture is coarser and red where finer; by angle, yellow to red where it is squashed one way.");
+                crate::theme::section(ui, "Artwork");
+                let mut percent = self.prefs.artwork_opacity * 100.0;
+                if ui.add(crate::field::Slider::new(&mut percent, 0.0..=100.0).text("Opacity").suffix("%").fixed_decimals(0)).on_hover_text("How strongly the labels' artwork is drawn over the layout").changed() {
+                    self.prefs.artwork_opacity = percent / 100.0;
                 }
+                self.display_options(ui, part, layout);
             });
-            ui.horizontal(|ui| {
-                if spacing == prefs::Spacing::Length {
-                    ui.add(egui::DragValue::new(&mut self.prefs.grid_mm).speed(0.1).range(0.01..=10_000.0).prefix("Every ").suffix(" mm").max_decimals(2))
-                        .on_hover_text("The grid's spacing on the part");
-                } else {
-                    ui.add(egui::DragValue::new(&mut self.prefs.divisions).speed(0.2).range(1..=1000).prefix("Every 1/"))
-                        .on_hover_text("The grid's spacing, as a fraction of the layout's square");
-                }
-                ui.add(egui::DragValue::new(&mut self.prefs.subdivisions).speed(0.1).range(1..=20).prefix("in ").suffix(" parts"))
-                    .on_hover_text("Fainter lines between the grid's own");
-            });
-            crate::theme::section(ui, "Guides");
-            ui.horizontal(|ui| {
-                ui.add(crate::field::Checkbox::new(&mut self.prefs.guides_locked, "Lock guides")).on_hover_text("Guides stay where they are: they cannot be dragged or picked");
-                if ui.add_enabled(!part.guides.is_empty(), egui::Button::new("Clear guides")).on_hover_text("Remove every guide on this part").clicked() {
-                    edits.guides = Some(Vec::new());
-                    self.selected_guide = None;
-                    edits.status = Some("Cleared the guides".into());
-                }
-            });
-            crate::theme::section(ui, "Stretch");
-            let mut stretch = self.prefs.stretch;
-            if crate::theme::segmented(ui, &mut stretch, &[(None, "Off"), (Some(Measure::Area), "Area"), (Some(Measure::Angle), "Angle")]) {
-                self.prefs.stretch = stretch;
-            }
-            ui.small("A heatmap of how much the layout stretches the part: by area, blue where the texture is coarser and red where finer; by angle, yellow to red where it is squashed one way.");
-            crate::theme::section(ui, "Artwork");
-            let mut percent = self.prefs.artwork_opacity * 100.0;
-            if ui.add(crate::field::Slider::new(&mut percent, 0.0..=100.0).text("Opacity").suffix("%").fixed_decimals(0)).on_hover_text("How strongly the labels' artwork is drawn over the layout").changed() {
-                self.prefs.artwork_opacity = percent / 100.0;
-            }
-            self.display_options(ui, part, layout);
         });
     }
 
@@ -1184,14 +1193,16 @@ impl UvEditor {
         });
 
         // ---- Arrange ------------------------------------------------------
-        crate::field::Fold::new("Arrange").id_salt("uv-arrange").default_open(true).show(ui, |ui| {
+        let arrange = crate::field::Fold::new("Arrange").id_salt("uv-arrange").default_open(true).show(ui, |ui| {
             self.arrange_panel(ui, layout);
         });
+        self.scroll_to_panel(ui, "arrange", &arrange.header_response);
 
         // ---- Texel density ------------------------------------------------
-        crate::field::Fold::new("Texel density").id_salt("uv-texel-density").default_open(true).show(ui, |ui| {
+        let density = crate::field::Fold::new("Texel density").id_salt("uv-texel-density").default_open(true).show(ui, |ui| {
             self.density_panel(ui, part, layout, project);
         });
+        self.scroll_to_panel(ui, "density", &density.header_response);
 
         // ---- Islands ------------------------------------------------------
         crate::field::Fold::new("Islands").id_salt("uv-islands").default_open(true).show(ui, |ui| {

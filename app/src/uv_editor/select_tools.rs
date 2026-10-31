@@ -110,7 +110,7 @@ impl UvEditor {
                     islands_or_all.iter().flat_map(|&i| uv.islands[i as usize].edges.clone()).map(|e| e as u32).collect()
                 };
                 let way = if pick == Pick::Across { Square::Across } else { Square::Down };
-                let found = select::square_edges(uv, &candidates, way, self.arrange.tolerance.to_radians());
+                let found = select::square_edges(uv, mesh, &candidates, way, self.arrange.tolerance.to_radians());
                 self.set_mode(Mode::Edges);
                 self.selection.set_all(edge_items(&found));
                 let what = if pick == Pick::Across { "running across" } else { "running down" };
