@@ -1030,9 +1030,11 @@ pub fn show(ctx: &egui::Context, editor: &mut UvEditor, project: &mut Project) {
         return;
     }
     // A label asked for: its part, the label selected, and a part with no
-    // layout unwrapped first, as the button says.
+    // layout unwrapped first, as the button says. Of the parts that share
+    // the material, the selected one, where the person is looking.
     if let Some((material, index)) = editor.requested.take() {
-        if let Some((node, _)) = tequila_scene::decal_fit::part_of(project.document(), material) {
+        let selected = project.selection.active().filter(|node| project.document().tree.get(*node).is_some_and(|n| n.material == Some(material)));
+        if let Some(node) = selected.or_else(|| tequila_scene::decal_fit::part_of(project.document(), material).map(|(node, _)| node)) {
             editor.subject = Subject::Part(node);
             editor.selection.set(Item::Label(index));
             editor.frame_pending = true;

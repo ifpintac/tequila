@@ -193,6 +193,32 @@ fn opening_on_a_label_unwraps_a_part_without_a_layout() {
     assert_eq!(project.undo_step(), before, "the unwrap was one step");
 }
 
+/// Opened from a label whose material two parts share, the editor shows
+/// the one that is selected rather than the first.
+#[test]
+fn opening_on_a_shared_label_shows_the_selected_part() {
+    let (mut project, first, material) = a_project(true);
+    let (meshes, _, ids) = reserve_keys(project.document(), 1, 0, 1);
+    let mesh = tequila_scene::Mesh::new(vec![vec3(0.0, 0.0, 0.1), vec3(0.2, 0.0, 0.1), vec3(0.2, 0.2, 0.1)], vec![0, 1, 2]);
+    let mut node = SceneNode::new(ids[0], "Back", NodeKind::Part { mesh: meshes[0] });
+    node.material = Some(material);
+    let payload = ImportPayload { meshes: vec![(meshes[0], mesh)], textures: Vec::new(), materials: Vec::new(), nodes: vec![node], roots: vec![ids[0]] };
+    project.apply(Command::Import { payload: Box::new(payload) }).unwrap();
+    add_label(&mut project, material, vec2(0.5, 0.5), 0.2);
+    project.selection.clear();
+    let ctx = egui::Context::default();
+
+    let mut editor = UvEditor::default();
+    editor.edit(material, 0);
+    frames(&mut editor, &mut project, &ctx, 2);
+    assert_eq!(editor.part(&project).map(|p| p.node), Some(first), "with nothing selected, the first part");
+
+    project.selection.select_many([ids[0]], tequila_scene::selection::SelectionMode::Replace);
+    editor.edit(material, 0);
+    frames(&mut editor, &mut project, &ctx, 2);
+    assert_eq!(editor.part(&project).map(|p| p.node), Some(ids[0]), "the selected part");
+}
+
 /// Align, duplicate and delete each change the labels, the selection
 /// follows, and all of a frame's edits are one step to undo.
 #[test]
