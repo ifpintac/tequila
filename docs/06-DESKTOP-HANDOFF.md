@@ -795,7 +795,12 @@ Every material parameter is now implemented; nothing is greyed out.
   found by bounces. Cycles is given its own MNEE by the same switch.
   With caustics off, Cycles' clear glass now passes shadow rays as Tequila's
   does, so what is under a glass cover is lit in both, and is still glass in
-  a glossy floor's reflection.
+  a glossy floor's reflection. In Tequila's renderer too a glossy reflection
+  now sees glass as glass, with the lamps behind it: a glass ball on a
+  glossy floor shows the softbox behind it in its reflection, where it
+  showed only the sky. And an area light or a sun mirrored in a glossy
+  surface is solid and smooth, as in Cycles, where it was specks; point,
+  spot and IES lights render as before.
 
 - **Updating a model from its file** (right-click a part in the Scene tree:
   Reload from file, or Update from another file…; File → Reload model from
