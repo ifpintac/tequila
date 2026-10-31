@@ -29,3 +29,4 @@ pub mod protocol;
 pub mod server;
 pub mod shell;
 pub mod studio_presets;
+pub mod uv_layout;

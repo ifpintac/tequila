@@ -70,8 +70,34 @@ the document; what needs the window is refused by name.
 | `new` | yes | yes |
 | `open` | yes | yes |
 | `quit` | yes | yes |
+| `uv_layout` | - | yes |
 
 Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `materials`, `selection`, `camera`, `commands`, `ui`, `jobs`, `history`, `library`; a headless session answers all but `ui` and `jobs`.
+
+## UV layouts
+
+A part's UV layout is edited by the `uv.*` commands below, and written as a
+picture by `uv_layout`, which changes nothing and so is not a command: an
+SVG to draw artwork over, or a PNG drawn from it, the unit square `size`
+pixels a side with v down, as the texture's rows run.
+
+```json
+{"op":"uv_layout","node":12,"path":"C:/work/bottle-uv.png","set":0,"size":2048,"fill":"islands"}
+```
+
+`fill` is `islands`, `none`, or a heatmap of how much the layout stretches
+each triangle: `area` or `angle`. `edges`, `seams` and `note` (the square's
+size in millimetres, where the layout is as dense all over) are on unless
+set false. The format is the path's extension unless `format` says. From
+Python: `fs.uv_layout(node, path, size=2048, fill='islands')`. A headless
+session answers it; it cannot go inside a batch.
+
+In the commands, an island is named by its number - islands are numbered
+in the order of their first triangle - a vertex by its mesh vertex number,
+and an edge by the mesh vertices at its two ends, on either side of it.
+Edits keep vertex numbers, adding new vertices after the others where a
+cut splits them. A seam is an edge whose two sides the layout puts in
+different places; there is no seam attribute to set.
 
 ## Commands
 

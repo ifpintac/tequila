@@ -26,7 +26,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 use tequila_scene::{Command, CommandBus, SceneDocument};
 use tequila_scripting::document::{self, PROTOCOL};
 use tequila_scripting::protocol::{Operation, Query, Reply, Request};
-use tequila_scripting::server::Channel;
+use tequila_scripting::server::{Arrived, Channel};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -41,7 +41,7 @@ pub fn run(options: &Options) -> Result<(), String> {
         .as_deref()
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join(format!("tequila-serve-{}.json", std::process::id())));
-    let channel = Channel::start_at(&discovery)?;
+    let channel = Channel::start_at_with(&discovery, tequila_scripting::document::HEADLESS_OWN_OPERATIONS)?;
     eprintln!("tequila: serving on 127.0.0.1:{}, announced in {}", channel.port(), discovery.display());
 
     let orphaned = Arc::new(AtomicBool::new(false));
@@ -54,7 +54,10 @@ pub fn run(options: &Options) -> Result<(), String> {
         });
     }
     while !session.quit && !orphaned.load(Ordering::SeqCst) {
-        channel.drain(|request| session.handle(request));
+        channel.drain_with(|arrived| match arrived {
+            Arrived::Request(request) => session.handle(request),
+            Arrived::Own(request) => session.own(request),
+        });
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
     // The answer to the quit is on its way to the client; let it arrive
@@ -119,6 +122,18 @@ impl Session {
 
     pub fn handle(&mut self, request: &Request) -> Reply {
         self.perform(&request.operation)
+    }
+
+    /// The session's own operations (`HEADLESS_OWN_OPERATIONS`), each from
+    /// its request's JSON: a part's UV layout written as a picture.
+    pub fn own(&mut self, request: &Value) -> Reply {
+        match request.get("op").and_then(|v| v.as_str()) {
+            Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(&self.document, request) {
+                Ok(written) => Reply::Value(written),
+                Err(error) => Reply::Failed(error),
+            },
+            other => Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
+        }
     }
 
     /// Keep the orbit in step with the document's camera after something
@@ -839,6 +854,27 @@ mod tests {
 
     fn session() -> Session {
         Session::open(&Options::default()).expect("an empty session")
+    }
+
+    /// A script edits a part's layout with the `uv.*` commands, and writes
+    /// it out as a picture with the session's own `uv_layout`.
+    #[test]
+    fn a_layout_is_edited_and_written_out_headless() {
+        let mut s = session();
+        s.document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let part = s.document.tree.iter().find(|n| matches!(n.kind, NodeKind::Part { .. })).map(|n| n.id.0).expect("a part");
+        value(&mut s, &format!(r#"{{"op":"apply","command":{{"command":"scene.unwrap_uvs","node":{part}}}}}"#));
+        value(&mut s, &format!(r#"{{"op":"apply","command":{{"command":"uv.pack","node":{part},"margin":0.02,"normalize":true}}}}"#));
+        let folder = std::env::temp_dir().join(format!("tequila-serve-uv-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("layout.png").display().to_string().replace('\\', "/");
+        let request = tequila_format::json::parse(format!(r#"{{"op":"uv_layout","node":{part},"path":"{path}","size":128,"fill":"area"}}"#).as_bytes()).unwrap();
+        let Reply::Value(written) = s.own(&request) else { panic!("the layout was not written") };
+        assert!(written.get("islands").and_then(Value::as_f64).unwrap_or(0.0) >= 1.0);
+        assert!(std::fs::read(&path).unwrap().starts_with(b"\x89PNG"));
+        let api = value(&mut s, r#"{"op":"query","what":"api"}"#);
+        assert!(api.get("operations").unwrap().as_array().iter().any(|op| op.as_str() == Some("uv_layout")));
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// A headless session starts over or opens another project when told
