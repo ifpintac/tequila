@@ -1303,16 +1303,13 @@ impl Builder<'_> {
         let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
         let normals: Option<Vec<[f32; 3]>> = (mesh.normals.len() == mesh.positions.len())
             .then(|| mesh.normals.iter().map(|n| [n.x, n.y, n.z]).collect());
-        let triangles: Vec<[i32; 3]> = mesh
-            .indices
-            .chunks_exact(3)
-            .map(|t| [t[0] as i32, t[1] as i32, t[2] as i32])
-            .collect();
+        let triangles = wound_as_shaded(mesh);
         // Per corner, and with v flipped: Tequila's v runs down the image
         // from its top row, Cycles' up from its bottom one.
         let uvs: Option<Vec<[f32; 2]>> = (mesh.uvs.len() == mesh.positions.len()).then(|| {
-            mesh.indices
+            triangles
                 .iter()
+                .flatten()
                 .map(|&i| {
                     let uv = mesh.uvs[i as usize];
                     [uv.x, 1.0 - uv.y]
@@ -4185,6 +4182,32 @@ impl Builder<'_> {
     }
 }
 
+/// A mesh's triangles, each wound the way its vertex normals face where
+/// the two disagree outright. An exporter that reverses faces without
+/// touching their normals leaves shading normals facing into the mesh:
+/// Cycles shaded it black, and took its glass's inside for its outside.
+/// Tequila's renderer shades it by the winding and finds the inside from
+/// the solid itself, so the glass is glass (`inverted_winding`); turned
+/// back, the triangle is that glass in Cycles too, shaded smooth. Normals
+/// that only lean away from a face, at a crease smoothed over, leave it.
+fn wound_as_shaded(mesh: &tequila_render_core::scene::Mesh) -> Vec<[i32; 3]> {
+    let shaded = mesh.normals.len() == mesh.positions.len();
+    mesh.indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [t[0] as usize, t[1] as usize, t[2] as usize];
+            if shaded {
+                let face = (mesh.positions[b] - mesh.positions[a]).cross(mesh.positions[c] - mesh.positions[a]);
+                let normal = mesh.normals[a] + mesh.normals[b] + mesh.normals[c];
+                if face.dot(normal) < -0.5 * face.length() * normal.length() {
+                    return [t[0] as i32, t[2] as i32, t[1] as i32];
+                }
+            }
+            [t[0] as i32, t[1] as i32, t[2] as i32]
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4499,6 +4522,26 @@ mod tests {
         let lost = |f: &dyn Fn(f32) -> f32| (0..4000).map(|i| 1.0 - f(steep.outer_angle.cos() + (1.0 - steep.outer_angle.cos()) * (i as f32 + 0.5) / 4000.0)).sum::<f32>();
         let (a, b) = (lost(&|cos| steep.falloff_at(cos)), lost(&|cos| cycles(&steep, cos)));
         assert!((a / b - 1.0).abs() < 0.02, "the edge loses {a} in Tequila, {b} in Cycles");
+    }
+
+    /// A face wound against its normals is turned back to them; one that
+    /// agrees, or whose normals lean only a little away, stays.
+    #[test]
+    fn faces_turn_to_agree_with_their_normals() {
+        use tequila_core::math::{vec3, Vec3};
+        use tequila_render_core::scene::Mesh;
+        let positions = vec![Vec3::ZERO, vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)];
+        // Counter-clockwise from +Z: the face looks up +Z.
+        let up = Mesh::new(positions.clone(), vec![0, 1, 2]).with_normals(vec![Vec3::Z; 3]);
+        assert_eq!(wound_as_shaded(&up), vec![[0, 1, 2]]);
+        // The same face reversed, its normals left looking up.
+        let reversed = Mesh::new(positions.clone(), vec![0, 2, 1]).with_normals(vec![Vec3::Z; 3]);
+        assert_eq!(wound_as_shaded(&reversed), vec![[0, 1, 2]]);
+        // A smoothed crease, normals 80 degrees off the face.
+        let creased = Mesh::new(positions.clone(), vec![0, 1, 2]).with_normals(vec![vec3(0.985, 0.0, 0.174); 3]);
+        assert_eq!(wound_as_shaded(&creased), vec![[0, 1, 2]]);
+        // No normals: the winding is all there is.
+        assert_eq!(wound_as_shaded(&Mesh::new(positions, vec![0, 2, 1])), vec![[0, 2, 1]]);
     }
 
     #[test]

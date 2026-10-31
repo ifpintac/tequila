@@ -38,7 +38,10 @@ use std::sync::Arc;
 /// §04 §4.1 requires without exception.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SnapshotMapping {
-    nodes: Vec<NodeId>,
+    /// The node each instance came from, by `InstanceId`: none for a
+    /// light's stand-in, which a camera-visible area light puts among the
+    /// parts with no part of its own.
+    nodes: Vec<Option<NodeId>>,
     instances: BTreeMap<NodeId, InstanceId>,
     /// The part each instance of fibres grew on (§4.4's Fuzz): fibres are
     /// their part's, to pick, to name, to put in a render layer and to
@@ -53,7 +56,7 @@ pub struct SnapshotMapping {
 impl SnapshotMapping {
     /// The node an instance came from.
     pub fn node_of(&self, instance: InstanceId) -> Option<NodeId> {
-        self.nodes.get(instance.0 as usize).copied().or_else(|| self.grown.get(&instance).copied())
+        self.nodes.get(instance.0 as usize).copied().flatten().or_else(|| self.grown.get(&instance).copied())
     }
 
     /// Whether an instance is fibres grown on a part rather than the part.
@@ -411,6 +414,9 @@ pub fn snapshot_with(
                                 .with_light_layer(settings.layer),
                             );
                             instance_meshes.push(None);
+                            // No part: what is picked or put in a layer
+                            // after it is still the part it came from.
+                            mapping.nodes.push(None);
                         }
                     }
                 }
@@ -532,7 +538,7 @@ pub fn snapshot_with(
         instance.holdout = rays.holdout;
         instances.push(instance);
         instance_meshes.push(Some(mesh));
-        mapping.nodes.push(node.id);
+        mapping.nodes.push(Some(node.id));
         mapping.instances.insert(node.id, instance_id);
     }
 
@@ -1504,6 +1510,58 @@ mod tests {
         assert_eq!(without.instances.len(), 3);
     }
 
+    /// An area light the camera sees stands in the scene as an instance
+    /// among the parts, with no part of its own. The parts after it were
+    /// each mapped to the node before theirs: a click picked the wrong part,
+    /// and a render layer showed the wrong ones.
+    #[test]
+    fn parts_after_a_seen_light_map_to_their_own_nodes() {
+        let mut document = SceneDocument::new();
+        document.environment.ground.shadows = false;
+        let mut bus = CommandBus::new();
+        bus.apply(
+            &mut document,
+            Command::AddLight {
+                parent: None,
+                name: "Softbox".into(),
+                settings: Box::new(crate::lighting::LightSettings::default()),
+            },
+        )
+        .unwrap();
+        let mesh = Mesh::new(vec![Vec3::ZERO, vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)], vec![0, 1, 2]);
+        let (meshes, materials, ids) = reserve_keys(&document, 1, 1, 2);
+        let mut nodes = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            let mut node = SceneNode::new(*id, format!("Part {i}"), NodeKind::Part { mesh: meshes[0] });
+            node.transform = Transform::translation(vec3(i as f32, 0.0, 0.0));
+            node.material = Some(materials[0]);
+            nodes.push(node);
+        }
+        bus.apply(
+            &mut document,
+            Command::Import {
+                payload: Box::new(ImportPayload {
+                    meshes: vec![(meshes[0], mesh)],
+                    textures: Vec::new(),
+                    materials: vec![(materials[0], MaterialDefinition::plastic("Shell"))],
+                    nodes,
+                    roots: ids.clone(),
+                }),
+            },
+        )
+        .unwrap();
+
+        let (scene, mapping) = snapshot(&document, environment(), &mut MeshCache::new());
+        assert_eq!(scene.instances.len(), 3, "the light's stand-in and two parts");
+        assert!(scene.instances[0].light_proxy, "the light comes first");
+        assert_eq!(mapping.node_of(InstanceId(0)), None, "a light's stand-in is no part");
+        for (i, id) in ids.iter().enumerate() {
+            let instance = mapping.instance_of(*id).expect("each part has an instance");
+            assert_eq!(instance, InstanceId(i as u32 + 1));
+            assert_eq!(mapping.node_of(instance), Some(*id), "part {i} maps to another node");
+        }
+    }
+
     /// Clearing is the caller's job, and it must actually take effect —
     /// otherwise an edited mesh renders as its previous version.
     #[test]
@@ -1541,7 +1599,7 @@ mod tests {
         let mut document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
         let mut bus = crate::CommandBus::new();
         let (scene, mapping) = snapshot(&document, environment(), &mut MeshCache::new());
-        let sphere_node = mapping.nodes[0];
+        let sphere_node = mapping.node_of(InstanceId(0)).unwrap();
         let material = document.tree.get(sphere_node).unwrap().material.expect("the sphere has a material");
         let plain = scene.meshes[scene.instances[0].mesh.index()].triangle_count();
 
