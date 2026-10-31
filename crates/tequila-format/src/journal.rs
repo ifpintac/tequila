@@ -71,7 +71,8 @@ pub fn encode(command: &Command) -> String {
             out.set("node", node.0)
                 .set("cone_degrees", options.cone_degrees)
                 .set("crease_degrees", options.crease_degrees)
-                .set("margin", options.margin);
+                .set("margin", options.margin)
+                .set("respect_cuts", options.respect_cuts);
         }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
@@ -523,6 +524,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                     cone_degrees: number("cone_degrees", defaults.cone_degrees, 5.0, 89.0),
                     crease_degrees: number("crease_degrees", defaults.crease_degrees, 1.0, 180.0),
                     margin: number("margin", defaults.margin, 0.0, 0.1),
+                    respect_cuts: boolean(&value, "respect_cuts"),
                 },
             }
         }

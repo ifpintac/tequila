@@ -65,6 +65,35 @@ pub(crate) fn rasterize_bytes(bytes: &[u8], folder: Option<&Path>) -> Result<(us
     Ok((width as usize, height as usize, rgba))
 }
 
+/// An SVG drawn at exactly `width` by `height` pixels, its viewBox filling
+/// them, and written as an 8-bit RGBA PNG: a picture made here as a drawing
+/// first, a UV layout, saved as an image.
+pub fn render_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let options = usvg::Options { fontdb: fonts(), ..Default::default() };
+    let tree = usvg::Tree::from_data(bytes, &options).map_err(|e| e.to_string())?;
+    let size = tree.size();
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| format!("cannot make a {width}x{height} picture"))?;
+    let transform = tiny_skia::Transform::from_scale(width as f32 / size.width(), height as f32 / size.height());
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let rgba: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(&rgba).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
 /// The raster size for a drawing `width` by `height` CSS pixels: its long
 /// side brought into [`DEFAULT_LONG_SIDE`]..=[`MAX_LONG_SIDE`], its
 /// proportions kept.
