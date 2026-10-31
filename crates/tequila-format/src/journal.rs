@@ -73,7 +73,8 @@ pub fn encode(command: &Command) -> String {
                 .set("crease_degrees", options.crease_degrees)
                 .set("margin", options.margin)
                 .set("respect_cuts", options.respect_cuts)
-                .set_some("in_place", options.in_place);
+                .set_some("in_place", options.in_place)
+                .set("method", options.method.key());
         }
         Command::CutUvs { node, set, edges, reflatten } => {
             out.set("node", node.0).set("set", *set).set("edges", edge_list(edges)).set("reflatten", *reflatten);
@@ -583,6 +584,11 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             let number = |key: &str, fallback: f32, low: f32, high: f32| {
                 value.get(key).and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(low, high)).unwrap_or(fallback)
             };
+            let method = match value.get("method").and_then(|v| v.as_str()) {
+                None => defaults.method,
+                Some(key) => tequila_scene::uv::Method::from_key(key)
+                    .ok_or_else(|| FormatError::Invalid(format!("`scene.unwrap_uvs` has a method `{key}`: conformal or least_stretch")))?,
+            };
             Command::UnwrapUvs {
                 node: node("node")?,
                 options: tequila_scene::uv::UnwrapOptions {
@@ -591,6 +597,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                     margin: number("margin", defaults.margin, 0.0, 0.1),
                     respect_cuts: boolean(&value, "respect_cuts"),
                     in_place: value.get("in_place").and_then(|v| v.as_index()),
+                    method,
                 },
             }
         }

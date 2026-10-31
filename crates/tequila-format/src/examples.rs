@@ -151,6 +151,7 @@ pub fn commands() -> Vec<Command> {
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() } },
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions::default() },
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { cone_degrees: 45.0, respect_cuts: true, ..Default::default() } },
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { method: tequila_scene::uv::Method::LeastStretch, ..Default::default() } },
         // The layout edits: islands by number, vertices by mesh vertex, an
         // edge by the vertices at its ends.
         Command::CutUvs { node: ids[1], set: 0, edges: vec![[0, 1], [1, 2]], reflatten: true },

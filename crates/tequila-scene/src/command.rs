@@ -168,7 +168,8 @@ pub enum Command {
     /// anywhere; the sets it had move up one. With `respect_cuts`, the
     /// islands of its first set are kept, each laid out again whole. With
     /// `in_place`, the set it names is laid out again where it is - its
-    /// islands kept, with `respect_cuts` - and no set moves.
+    /// islands kept, with `respect_cuts` - and no set moves. Each piece is
+    /// laid out by `method`: `conformal`, or `least_stretch` from there.
     ///
     /// The part gets a mesh of its own, the unwrapped one, under a new key:
     /// parts that shared the old mesh keep it, and undo points the part back

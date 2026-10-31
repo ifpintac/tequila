@@ -67,28 +67,45 @@
 //! 204,800 as one chart a few seconds (`uv::tests::flattening_a_large_part`,
 //! ignored by default, times them).
 
+pub mod again;
+pub mod angle_cut;
+pub mod circle;
 pub mod distortion;
 pub mod edit;
 pub mod export;
 pub mod flatten;
+pub mod grid;
 pub mod layout;
+pub mod least_stretch;
+pub mod offset;
 pub mod pack;
 pub mod positions;
+pub mod project;
+pub mod rectangle;
 pub mod reflatten;
+pub mod relax;
+pub mod seam_sides;
 pub mod seams;
 pub mod sets;
+pub mod shape;
+pub mod straight;
+pub mod symmetry;
 pub mod transform;
 pub mod unwrap;
+pub mod weld;
 
+pub use again::{unwrap_again, AgainOptions, AgainReport, Direction, Keep};
 pub use distortion::{distortion, heat, Distortion, Measure};
 pub use edit::UvError;
 pub use export::{layout_png, layout_svg, Fill, LayoutPicture};
 pub use layout::{weld, EdgeKind, Island, LayoutEdge, SurfaceHit, TriangleHit, UvLayout, UvVertex, NO_ISLAND};
+pub use least_stretch::{stretch_left, Method};
 pub use pack::{pack, PackOptions, PackReport, UvRect};
 pub use positions::set_positions;
 pub use reflatten::reflatten;
 pub use seams::{cut, stitch, CutOptions};
 pub use sets::SetChange;
+pub use shape::{Moves, Pick, ShapeError};
 pub use transform::{even_density, straighten, transform, Alignment, DensityTarget, Pivot, StraightenBy, UvAffine, UvSelection};
 pub use unwrap::{unwrap, UnwrapOptions, UnwrapReport};
 

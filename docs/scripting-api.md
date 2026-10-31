@@ -324,12 +324,13 @@ A part's surface laid out flat as its first UV set (`crate::uv`), so labels
 and textures can be placed on it anywhere; the sets it had move up one. With
 `respect_cuts`, the islands of its first set are kept, each laid out again
 whole. With `in_place`, the set it names is laid out again where it is - its
-islands kept, with `respect_cuts` - and no set moves.
+islands kept, with `respect_cuts` - and no set moves. Each piece is laid out
+by `method`: `conformal`, or `least_stretch` from there.
 
-`fs.commands.scene.unwrap_uvs(cone_degrees=..., crease_degrees=..., in_place=..., margin=..., node=..., respect_cuts=...)`
+`fs.commands.scene.unwrap_uvs(cone_degrees=..., crease_degrees=..., in_place=..., margin=..., method=..., node=..., respect_cuts=...)`
 
 ```json
-{ "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "node": 2, "respect_cuts": true }
+{ "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "method": "conformal", "node": 2, "respect_cuts": true }
 ```
 
 #### `scene.rename`
