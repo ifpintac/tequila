@@ -1032,19 +1032,29 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       their closed forms to four digits; an area lamp through a lens matches
       brute-force path tracing within 1.3%; behind a perfume flacon (glass,
       scent, scent, glass) it finds 45% of the light path tracing does.
-      Studio test (a glass ball and the flacon under a spot and a softbox,
-      640 x 420, 20 s each on the CPU): 22 samples against the photons' 52
-      and 124 with caustics off; its caustics are sharper than the photons'
-      but further from its own 160 s render (RMS 8.1 against 4.0 over the
-      picture, 10.9 against 3.7 in the ball's caustic, 0 to 255) - a walk
-      costs tens of rays, and a sample takes one lamp of the two - so at
-      equal time it is not yet the less noisy. Cycles' own MNEE there: 86
-      samples, RMS 4.3 in the ball's caustic, with blotches in it and
-      nothing through the flacon. *Open:* one path per lamp point, so where
-      several paths through glass meet (a ball's focal spot, the flacon's
-      lens) the caustic is darker than the truth, as in Cycles; a sample's
-      cost; no environment or glowing-part MNEE, no internal reflections,
-      mirror caustics or frosted glass, no dispersion in the solved path.
+      Profiled, failing walks were 62% of its time: a box test now skips the
+      seed where no bending glass is in the way, and Russian roulette lets
+      a walk still far from Snell's law go on half the time (about a
+      quarter more samples, unbiased); solving for every lamp each sample
+      cost 1.6 times the time for no less error and was dropped. Studio test,
+      against brute-force path tracing with the lamps as glowing geometry
+      (`manifold_noise`, 320 x 210, 10 s each, the three in turns): 106
+      samples against the photons' 170; RMS as shown, 0 to 255, over the
+      picture / the ball's caustic / the flacon's: photons 9.5 / 3.5 / 6.4,
+      manifold 9.9 / 8.6 / 24.0, caustics off 32.7 / 66.2 / 31.6. The
+      photons' mean is within 1% of the reference in both caustics,
+      manifold's 14% and 27% short, and at 60 s still 8.1 / 23.1: light it
+      never finds, not noise. **It does not beat the photons at equal time,
+      nor given longer**; it is the sharper only where it finds the path.
+      Cycles' own MNEE there: blotches in the ball's caustic and nothing
+      through the flacon. *Open:* one path per lamp point, from the straight
+      line's crossings, so where the light's path crosses the glass
+      elsewhere or several paths meet (a ball's focal spot and rim, the
+      flacon's lobes) the caustic is darker than the truth, as in Cycles;
+      finding those would take seeds from the glass itself [Zeltner et al.
+      2020], many walks a sample; no environment or glowing-part MNEE, no
+      internal reflections, mirror caustics or frosted glass, no dispersion
+      in the solved path.
 - [x] Post-render relighting UI driven by light-group AOVs: "Keep light
       groups for relighting" and the Render window's Relight section,
       which rebalances and tints each group live and saves `…_relit`

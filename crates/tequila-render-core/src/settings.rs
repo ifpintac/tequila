@@ -155,9 +155,12 @@ pub enum CausticsMethod {
     Photons,
     /// Manifold next event estimation ([`crate::integrator::manifold`]):
     /// at each surface, the path from a lamp through smooth glass to it is
-    /// solved for, so a caustic is sharp from the first samples. Lamps
-    /// through refracting glass only: the environment and glowing parts
-    /// reach through glass by bounces, and mirrors focus nothing here.
+    /// solved for, so a caustic is sharp from the first samples where the
+    /// path is found - but only the path the straight line to the lamp
+    /// leads to, so light that crosses the glass elsewhere is missed, and
+    /// at equal time it is noisier than the photons (`docs/01` §6.5).
+    /// Lamps through refracting glass only: the environment and glowing
+    /// parts reach through glass by bounces, and mirrors focus nothing here.
     Manifold,
 }
 

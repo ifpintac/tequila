@@ -18,7 +18,11 @@
 //! unit of the lamp covers once the glass has bent it, which falls out of
 //! the same derivatives as the walk's [Jakob and Marschner 2012]. The point
 //! on the lamp is drawn as next event estimation draws it, so the estimate
-//! is the light through the glass, and sharp from the first sample.
+//! is the light through the glass along that path, and sharp from the
+//! first sample. Measured against brute-force path tracing in a studio, it
+//! does not beat the photons at equal time, nor given longer: the light
+//! along paths the straight line does not lead to, a quarter of a perfume
+//! bottle's caustic, is light it never finds (`docs/01` §6.5).
 //!
 //! What it finds, and what it leaves:
 //!
@@ -43,6 +47,14 @@
 //! - Refraction only: a path reflected inside the glass on its way, a
 //!   mirror's caustic, light through frosted glass, are not found here.
 //!
+//! What it costs: a seed ray, and then tens of projection rays a walk.
+//! Where the straight line passes no glass that bends light, a box test
+//! against each such part's bounds says so before the seed ray is cast.
+//! Most walks that will fail stay far from Snell's law step after step
+//! until their step shrinks to nothing, and they were most of a sample's
+//! time; every ten steps one still far from it goes on only half the time,
+//! and counts twice if it then lands, which leaves the estimate unbiased.
+//!
 //! Ported from Cycles' `kernel/integrator/mnee.h` (Apache-2.0, Blender
 //! Foundation; see THIRD_PARTY_LICENSES.md). Changed on the way: which side
 //! of a crossing the receiver is on is read from the media the seed path
@@ -51,9 +63,10 @@
 //! fraction of the scene's size rather than metres; the geometric term is
 //! left unclamped, so the estimate stays unbiased; a sun's direction is
 //! moved across the path's last leg rather than in angles about the
-//! surface's normal, which are singular along it; and radiance is squeezed
-//! by the square of the index at each crossing, as Tequila's refraction has
-//! it and Cycles' does not.
+//! surface's normal, which are singular along it; radiance is squeezed by
+//! the square of the index at each crossing, as Tequila's refraction has it
+//! and Cycles' does not; and a walk that stays far from the answer is
+//! given up by Russian roulette rather than run to its end.
 
 use super::*;
 use crate::light::{Light, LightKind};
@@ -83,6 +96,17 @@ const MIN_DETERMINANT: f32 = 1e-4;
 
 /// How far past a tentative crossing its surface is looked for.
 const PROJECTION_DISTANCE_MULTIPLIER: f32 = 2.0;
+
+/// Every `ROULETTE_EVERY` steps, a walk whose worst crossing is still
+/// `ROULETTE_FAR` from Snell's law (its half vector that far along the
+/// surface) goes on with probability `ROULETTE_KEEP`, and what it finds
+/// counts as many times over. Measured on the caustics studio, 97 in 100
+/// walks that land are under 0.5 by their tenth step, and most that fail
+/// are over it from first to last; a quarter's chance instead of a half's
+/// saved more time but added more specks than it took away.
+const ROULETTE_EVERY: u32 = 10;
+const ROULETTE_FAR: f32 = 0.5;
+const ROULETTE_KEEP: f32 = 0.5;
 
 /// A 2x2 matrix, row by row: a block of the walk's derivatives.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -481,8 +505,9 @@ fn project(intersector: &dyn Intersector, from: Vec3, from_normal: Vec3, towards
 /// `mnee_newton_solver`. Gently at first, as Cycles does: a seed far from
 /// the answer sends a full Newton step further than the surfaces' local
 /// shape can be trusted, so it starts at a tenth and doubles while the
-/// steps land.
-fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, crossings: &mut [Crossing], unit: f32) -> bool {
+/// steps land. What a path found counts for: one, or more where Russian
+/// roulette let the walk go on (`ROULETTE_KEEP`). `None` where none was.
+fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, crossings: &mut [Crossing], unit: f32, sampler: &mut Sampler) -> Option<f32> {
     let scene = intersector.scene();
     let k = crossings.len();
     let short = unit * 1e-6;
@@ -490,17 +515,25 @@ fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, c
     let mut tentative = [Crossing::EMPTY; MAX_CROSSINGS];
     let mut beta = 0.1f32;
     let mut resolve = true;
-    for _ in 0..MAX_ITERATIONS {
+    let mut worst = f32::INFINITY;
+    let mut weight = 1.0f32;
+    for iteration in 0..MAX_ITERATIONS {
+        if iteration > 0 && iteration % ROULETTE_EVERY == 0 && worst >= ROULETTE_FAR {
+            if sampler.next_unstructured() >= ROULETTE_KEEP {
+                return None;
+            }
+            weight /= ROULETTE_KEEP;
+        }
         if resolve {
             if !constrain(crossings, receiver, end, short) {
-                return false;
+                return None;
             }
-            let worst = crossings.iter().map(|c| c.constraint.length()).fold(0.0f32, f32::max);
+            worst = crossings.iter().map(|c| c.constraint.length()).fold(0.0f32, f32::max);
             if worst < SOLVER_THRESHOLD {
-                return true;
+                return Some(weight);
             }
             if !step(crossings, &mut dx) {
-                return false;
+                return None;
             }
         }
 
@@ -531,7 +564,7 @@ fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, c
         // be where it belongs already, as the first crossing of a slab is
         // under the sun.
         if !reduce && moved < asked * 1e-3 {
-            return false;
+            return None;
         }
 
         // Still through each surface, not turned back off it.
@@ -551,7 +584,7 @@ fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, c
             resolve = false;
             beta *= 0.5;
             if beta < MINIMUM_STEP_SIZE {
-                return false;
+                return None;
             }
             continue;
         }
@@ -559,7 +592,7 @@ fn walk(intersector: &dyn Intersector, receiver: Vec3, normal: Vec3, end: End, c
         resolve = true;
         beta = (2.0 * beta).min(1.0);
     }
-    false
+    None
 }
 
 /// How much of the first crossing's tangent plane one unit of the lamp
@@ -714,6 +747,33 @@ fn emitted(light: &Light, towards: Vec3) -> Spectrum {
     }
 }
 
+/// Whether the segment from `origin` along the unit `direction` for
+/// `reach` (which may be infinite) meets `bounds`, padded a little so that
+/// a surface on them, or a start on one, counts.
+fn passes_through(bounds: &tequila_core::math::Aabb, origin: Vec3, direction: Vec3, reach: f32) -> bool {
+    let pad = bounds.diagonal().length() * 1e-4 + 1e-6;
+    let (mut near, mut far) = (0.0f32, reach);
+    for (o, d, lo, hi) in [
+        (origin.x, direction.x, bounds.min.x - pad, bounds.max.x + pad),
+        (origin.y, direction.y, bounds.min.y - pad, bounds.max.y + pad),
+        (origin.z, direction.z, bounds.min.z - pad, bounds.max.z + pad),
+    ] {
+        if d.abs() < 1e-12 {
+            if o < lo || o > hi {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((lo - o) / d, (hi - o) / d);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
 /// `normal` turned to face `direction`.
 fn facing(normal: Vec3, direction: Vec3) -> Vec3 {
     if normal.dot(direction) >= 0.0 {
@@ -782,6 +842,12 @@ pub(super) fn solve(
     if direction.dot(normal) <= 0.0 {
         return None;
     }
+    // Nothing to solve for where the straight line passes no glass that
+    // bends light, as most of the floor's does: a box apiece says so for
+    // less than the seed's ray would.
+    if !scene.bending_bounds().iter().any(|bounds| passes_through(bounds, receiver, direction, reach)) {
+        return None;
+    }
     let mut seeded = media.clone();
     // The medium each leg of the path runs through, where it absorbs: the
     // receiver's, then whatever each crossing leads into.
@@ -839,9 +905,7 @@ pub(super) fn solve(
 
     // ---- The walk -------------------------------------------------------
     let crossings = &mut crossings[..count];
-    if !walk(intersector, receiver, normal, lamp.end, crossings, unit) {
-        return None;
-    }
+    let weight = walk(intersector, receiver, normal, lamp.end, crossings, unit, sampler)?;
 
     // ---- What the path brings --------------------------------------------
     let first = crossings[0].at;
@@ -937,7 +1001,7 @@ pub(super) fn solve(
         return None;
     }
 
-    let light_out = light_in * through * (geometry / lamp.density);
+    let light_out = light_in * through * (geometry * weight / lamp.density);
     if !light_out.is_finite() {
         return None;
     }
@@ -1051,5 +1115,26 @@ mod tests {
         assert_eq!((v.x, v.y), (4.0, 5.0));
         assert!(Mat2 { xx: 1.0, xy: 2.0, yx: 2.0, yy: 4.0 }.inverse().is_none());
         assert!(Mat2 { xx: f32::NAN, ..Mat2::IDENTITY }.inverse().is_none());
+    }
+
+    /// The box test the seed is skipped by: a segment through a box, or
+    /// starting in it, meets it; one short of it, beside it, or pointing
+    /// away does not; a sun's, of no end, meets what lies along it; and a
+    /// segment along a face, axis-parallel, still meets it.
+    #[test]
+    fn a_segment_meets_a_box_only_where_it_passes_through_it() {
+        use tequila_core::math::vec3;
+        let bounds = tequila_core::math::Aabb::from_points(vec3(-1.0, 0.0, -1.0), vec3(1.0, 2.0, 1.0));
+        let up = Vec3::Y;
+        assert!(passes_through(&bounds, vec3(0.0, -1.0, 0.0), up, 2.0));
+        assert!(passes_through(&bounds, vec3(0.5, 1.0, 0.5), up, 0.1), "starts inside");
+        assert!(!passes_through(&bounds, vec3(0.0, -1.0, 0.0), up, 0.9), "stops short");
+        assert!(!passes_through(&bounds, vec3(1.5, -1.0, 0.0), up, 10.0), "beside it");
+        assert!(!passes_through(&bounds, vec3(0.0, -1.0, 0.0), -up, 10.0), "pointing away");
+        assert!(passes_through(&bounds, vec3(-3.0, 1.0, 0.0), Vec3::X, f32::INFINITY), "a sun's");
+        assert!(passes_through(&bounds, vec3(-3.0, 2.0, 1.0), Vec3::X, 10.0), "along an edge");
+        let slanted = vec3(1.0, 1.0, 0.0).normalize();
+        assert!(passes_through(&bounds, vec3(-2.0, -1.0, 0.0), slanted, 3.0));
+        assert!(!passes_through(&bounds, vec3(-2.0, -1.0, 0.0), slanted, 1.0));
     }
 }

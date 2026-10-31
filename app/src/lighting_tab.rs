@@ -138,9 +138,11 @@ impl LightingTab {
                         ui.selectable_value(&mut caustics, Some(CausticsMethod::Manifold), CausticsMethod::Manifold.label())
                             .on_hover_text(
                                 "The path from each lamp through smooth glass, solved for at every \
-                                 surface: caustics sharp from the first samples, each sample slower. \
-                                 Lamps only, through glass that bends light; the environment's light \
-                                 through glass is found by bounces, and mirrors focus nothing.",
+                                 surface: sharp where it finds the path, but slower and noisier than \
+                                 photons, and short of light where several paths through the glass \
+                                 meet, as in a bottle's caustic. Lamps only, through glass that bends \
+                                 light; the environment's light through glass is found by bounces, and \
+                                 mirrors focus nothing.",
                             );
                     })
                     .response

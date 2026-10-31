@@ -247,7 +247,8 @@ usage: tequila [options]
       --caustics-method M
                         how, and caustics on: photons (from every light,
                         the default) or manifold (each lamp's path through
-                        smooth glass solved for: sharp, slower a sample)
+                        smooth glass solved for: sharp, but noisier than
+                        photons and short where several paths meet)
       --silhouette      cut out along the product's outline: glass stays
                         solid, the floor and its shadow go (implies alpha)
 

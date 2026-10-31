@@ -362,6 +362,20 @@ pub struct SceneSnapshot {
     /// pass ([`Pane`]). Empty when there is none, which is what keeps a
     /// scene without glass on the one any-hit query per shadow ray.
     panes: PaneCache,
+    /// Where the glass that bends light is ([`SceneSnapshot::bending_bounds`]).
+    bending: BendingCache,
+}
+
+/// [`SceneSnapshot::bending_bounds`], worked out once. A copy starts
+/// without it, as [`EmitterCache`] does: a part moved or a material changed
+/// is what a copy is made for.
+#[derive(Debug, Default)]
+struct BendingCache(std::sync::OnceLock<Vec<Aabb>>);
+
+impl Clone for BendingCache {
+    fn clone(&self) -> Self {
+        BendingCache::default()
+    }
 }
 
 /// [`SceneSnapshot::pane`]'s table, worked out the first time it is asked
@@ -689,6 +703,7 @@ impl SceneSnapshot {
             transmissive: materials.iter().any(Material::is_transmissive),
             dispersive: DispersionCache::default(),
             panes: PaneCache::default(),
+            bending: BendingCache::default(),
             materials,
         }
     }
@@ -729,6 +744,22 @@ impl SceneSnapshot {
     #[inline]
     pub fn pane(&self, id: MaterialId) -> Option<&Pane> {
         self.panes().get(id.index()).and_then(Option::as_ref)
+    }
+
+    /// The world bounds of each part of glass that bends light
+    /// ([`Pane::bends`]): what a straight line has to pass for manifold next
+    /// event estimation to have a path to solve for.
+    pub fn bending_bounds(&self) -> &[Aabb] {
+        self.bending.0.get_or_init(|| {
+            if !self.has_panes() {
+                return Vec::new();
+            }
+            self.instances
+                .iter()
+                .filter(|instance| self.pane(instance.material).is_some_and(Pane::bends))
+                .filter_map(|instance| self.meshes.get(instance.mesh.index()).map(|mesh| mesh.bounds().transformed(&instance.transform)))
+                .collect()
+        })
     }
 
     fn panes(&self) -> &[Option<Pane>] {
@@ -809,6 +840,7 @@ impl SceneSnapshot {
             }
         });
         self.panes = PaneCache::default();
+        self.bending = BendingCache::default();
         self.bumps = programs
             .iter()
             .map(|program| {
