@@ -148,6 +148,16 @@ class Client:
         photos=) or 'spin' (a folder; columns=, rows=, tilt=, transparent=)."""
         return self.request('export', format=format, path=str(Path(path).resolve()), **options)
 
+    def uv_layout(self, node, path, *, uv_set=0, size=2048, fill='islands', edges=True, seams=True, note=True):
+        """Write a part's UV layout as a picture: an .svg to draw artwork
+        over, or a .png drawn from it, the unit square `size` pixels a side.
+        `fill` is 'islands', 'none', or a heatmap of how much the layout
+        stretches each triangle, 'area' or 'angle'. Answered by a headless
+        session (`tequila.open`)."""
+        part = node.id if hasattr(node, 'id') else int(node)
+        return self.request('uv_layout', node=part, path=str(Path(path).resolve()), set=uv_set, size=size,
+                            fill=fill, edges=edges, seams=seams, note=note)
+
     def select(self, nodes):
         return self.request('select', nodes=list(nodes))
 

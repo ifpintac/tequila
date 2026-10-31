@@ -87,6 +87,20 @@ class HeadlessTests(unittest.TestCase):
                 fs.screenshot(self.out / 'window.png')
             self.assertIn('window', str(refused.exception))
 
+    def test_a_layout_is_unwrapped_packed_and_written_out(self):
+        with tequila.open(MODEL) as fs:
+            part = fs.parts()[0]
+            fs.commands.scene.unwrap_uvs(node=part.id)
+            fs.commands.uv.pack(node=part.id, margin=0.01, normalize=True)
+            self.assertEqual(fs.undo()['undone'], 'uv.pack')
+            picture = self.out / 'layout.png'
+            written = fs.uv_layout(part, picture, size=256, fill='angle')
+            self.assertTrue(picture.read_bytes().startswith(b'\x89PNG'), written)
+            self.assertGreaterEqual(written['islands'], 1)
+            drawing = fs.uv_layout(part.id, self.out / 'layout.svg', size=512)
+            self.assertIn('<svg', (self.out / 'layout.svg').read_text())
+            self.assertEqual(drawing['format'], 'svg')
+
     def test_a_plugin_request_reads_as_this_client_sends_it(self):
         # The client numbers every request with `id`; the plugin request
         # once used `id` for the plugin too, and every real one was refused
