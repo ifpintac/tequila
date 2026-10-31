@@ -2618,6 +2618,36 @@ mod tests {
         assert!((tequila_share - cycles_share).abs() < 0.05, "through the slab by manifold caustics Tequila kept {tequila_share:.3} of the light, Cycles {cycles_share:.3}");
     }
 
+    /// A glass ball on a glossy floor, a softbox behind it: the floor's
+    /// reflection of the ball shows the softbox through the ball, as bright
+    /// in Tequila's renderer as in Cycles, whose glossy rays see the glass
+    /// and meet the lamp past it. Tequila's floor passed the ball straight,
+    /// as its shadow rays do, and showed through it only the sky, and the
+    /// lamp where the straight line met it, in specks: 38 of Cycles' 153 at
+    /// roughness 0.04 and 157 of 202 at 0.1, at 640 by 420 and 256 samples;
+    /// now 147 and 203. Skipped where Cycles is not installed.
+    #[test]
+    fn a_glass_ball_in_a_glossy_floor_shows_the_softbox_behind_it_in_both_renderers() {
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = scratch("tequila-glass-ball-reflection");
+        let size = (320, 210);
+        for roughness in [0.04f32, 0.1] {
+            let scene = ball_on_a_glossy_floor(roughness);
+            let mirrored = mirrored_box(&scene, vec3(0.0, 0.05, 0.0), size);
+            let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+                let image = picture_into(&folder, &format!("ball-{roughness}-{}", engine.key()), &scene, engine, IntegratorConfig::product(), None, 64, size);
+                box_mean(&image, size.0, mirrored)
+            });
+            println!("at roughness {roughness}: the reflection of the ball {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+            assert!(cycles > 100.0, "at roughness {roughness} Cycles' floor shows little through the ball: {cycles:.1}");
+            assert!((tequila / cycles - 1.0).abs() < 0.1, "at roughness {roughness} the floor's reflection of the ball is {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+        }
+    }
+
     /// A thin-walled shell passes light straight through, in Cycles as in
     /// Tequila's renderer, so a clear one casts a faint shadow where a
     /// solid sphere casts a full one. Cycles' principled glass is always a
@@ -5489,6 +5519,45 @@ mod tests {
         (scene, Camera::look_at(vec3(0.02, 0.08, 0.42), vec3(0.0, 0.06, 0.0), Vec3::Y))
     }
 
+    /// A ball of clear glass on a dark glossy floor of `roughness`, seen low
+    /// so the floor mirrors it, with a softbox low behind it, facing the
+    /// camera: the floor's reflection of the ball shows the softbox through
+    /// it, turned over as a ball turns what is behind it. Under a dim sky.
+    fn ball_on_a_glossy_floor(roughness: f32) -> (tequila_render_core::scene::SceneSnapshot, Camera) {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::math::Transform;
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_materials::openpbr::Material;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{AreaLight, Light, LightKind, LightSet};
+        use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
+        let floor = Mesh::new(vec![vec3(-3.0, 0.0, -3.0), vec3(3.0, 0.0, -3.0), vec3(3.0, 0.0, 3.0), vec3(-3.0, 0.0, 3.0)], vec![0, 2, 1, 0, 3, 2])
+            .with_normals(vec![Vec3::Y; 4]);
+        let ball = tequila_scene::demo::uv_sphere(0.05, 160, 80);
+        let clear = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, ..MaterialType::GlassSolid.defaults() };
+        let glossy = Material::plastic(Spectrum::splat(0.04), roughness);
+        let instances = vec![
+            Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
+            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(Transform::translation(vec3(0.0, 0.05, 0.0))),
+        ];
+        // The softbox faces the camera: cross(u, v) towards it.
+        let box_at = vec3(0.0, 0.1, -0.5);
+        let softbox = Light::new(LightKind::Area(AreaLight {
+            position: box_at,
+            half_u: Vec3::X * 0.15,
+            half_v: Vec3::Y * 0.08,
+            radiance: Spectrum::splat(12.0),
+            disc: false,
+            two_sided: false,
+            spread: std::f32::consts::PI,
+        }));
+        let mut scene = SceneSnapshot::new(vec![Arc::new(floor), Arc::new(ball)], instances, vec![glossy, clear], Arc::new(Environment::uniform(Spectrum::splat(0.1))))
+            .with_lights(Arc::new(LightSet::new(vec![softbox])));
+        scene.background = Background::Environment;
+        (scene, Camera::look_at(vec3(0.0, 0.06, 0.45), vec3(0.0, 0.03, 0.0), Vec3::Y))
+    }
+
     /// How speckled a box of a developed image is: the RMS of each pixel's
     /// luminance from the mean of the 5x5 pixels round it, 0 to 255.
     fn speckle(image: &[u8], width: usize, (x0, y0, x1, y1): (usize, usize, usize, usize)) -> f64 {
@@ -5524,16 +5593,28 @@ mod tests {
         sum / ((x1 - x0) * (y1 - y0)) as f64
     }
 
-    /// Pictures of what Cycles' glass shows a glossy surface and lets onto
-    /// one with caustics off, written to the folder `TEQUILA_PICTURES` names:
-    /// a flacon on a glossy floor at two roughnesses, whose reflection must
-    /// be of glass and scent, not a clear ghost of them, and the bell, whose
-    /// glossy ball must be lit through it once, not twice, and without
-    /// specks. Each through Tequila's renderer, through Cycles with its
-    /// glass stopping shadow rays (as it always did, and as it still does
-    /// with photons), and through Cycles now. Prints the white ball's
-    /// highlight and how speckled the floor and the puck are in each. Run by
-    /// hand, as `caustics_pictures` is.
+    /// The box of a `size` picture of `scene` round the floor's reflection
+    /// of `point`: 120 by 36 pixels of a picture 640 wide, as much of any
+    /// other.
+    fn mirrored_box(scene: &(tequila_render_core::scene::SceneSnapshot, Camera), point: Vec3, (width, height): (usize, usize)) -> (usize, usize, usize, usize) {
+        let film = scene.1.project(vec3(point.x, -point.y, point.z), width as f32 / height as f32).expect("in view");
+        let (x, y) = ((film.x * width as f32) as usize, (film.y * height as f32) as usize);
+        let (half_width, half_height) = (60 * width / 640, 18 * width / 640);
+        (x - half_width, y.saturating_sub(half_height), x + half_width, (y + half_height).min(height))
+    }
+
+    /// Pictures of what glass shows a glossy surface and lets onto one with
+    /// caustics off, written to the folder `TEQUILA_PICTURES` names: a
+    /// flacon on a glossy floor at two roughnesses, whose reflection must be
+    /// of glass and scent, not a clear ghost of them; a glass ball on such a
+    /// floor with a softbox behind it, whose reflection must show the
+    /// softbox through the ball; and the bell, whose glossy ball must be lit
+    /// through it once, not twice, and without specks. Each through
+    /// Tequila's renderer, through Cycles with its glass stopping shadow
+    /// rays (as it always did, and as it still does with photons), and
+    /// through Cycles now. Prints the floor's reflection and how speckled it
+    /// is, and the white ball's highlight and how speckled the floor and the
+    /// puck are under the bell. Run by hand, as `caustics_pictures` is.
     #[test]
     #[ignore]
     fn glass_reflection_pictures() {
@@ -5552,12 +5633,16 @@ mod tests {
         let samples: u32 = std::env::var("TEQUILA_PICTURE_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(256);
         let off = IntegratorConfig::product();
         let before = IntegratorConfig { caustics: true, caustics_method: CausticsMethod::Photons, ..IntegratorConfig::product() };
-        for roughness in [0.04f32, 0.1] {
-            let scene = flacon_on_a_glossy_floor(roughness);
-            let name = |what: &str| format!("glossy-{roughness}-{what}");
-            picture_into(&folder, &name("tequila"), &scene, RenderEngine::Tequila, off.clone(), None, samples, size);
-            picture_into(&folder, &name("cycles-before"), &scene, RenderEngine::CyclesCpu, before.clone(), None, samples, size);
-            picture_into(&folder, &name("cycles-now"), &scene, RenderEngine::CyclesCpu, off.clone(), None, samples, size);
+        for (roughness, ball) in [(0.04f32, false), (0.1, false), (0.04, true), (0.1, true)] {
+            let scene = if ball { ball_on_a_glossy_floor(roughness) } else { flacon_on_a_glossy_floor(roughness) };
+            let name = |what: &str| format!("{}-{roughness}-{what}", if ball { "ball" } else { "glossy" });
+            let mirrored = mirrored_box(&scene, vec3(0.0, if ball { 0.05 } else { 0.035 }, 0.0), size);
+            let report = |name: &str, image: &[u8]| {
+                println!("{name}: reflection {:.1}, reflection speckle {:.2}", box_mean(image, size.0, mirrored), speckle(image, size.0, mirrored));
+            };
+            report(&name("tequila"), &picture_into(&folder, &name("tequila"), &scene, RenderEngine::Tequila, off.clone(), None, samples, size));
+            report(&name("cycles-before"), &picture_into(&folder, &name("cycles-before"), &scene, RenderEngine::CyclesCpu, before.clone(), None, samples, size));
+            report(&name("cycles-now"), &picture_into(&folder, &name("cycles-now"), &scene, RenderEngine::CyclesCpu, off.clone(), None, samples, size));
         }
         let bell = under_a_bell();
         let aspect = size.0 as f32 / size.1 as f32;
