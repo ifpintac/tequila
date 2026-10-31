@@ -161,6 +161,24 @@ pub enum Icon {
     ExportImage,
     ArrowUp,
     ArrowDown,
+    /// The UV editor's shape tools: a path laid straight, a grid, a
+    /// rectangle, faces seen straight on, relaxing, a circle, a border grown
+    /// and shrunk, welding, seam sides lined up, cutting by angle; and its
+    /// symmetry: made symmetric, one side picked, the mirror picked.
+    StraightLine,
+    QuadGrid,
+    Rectangle,
+    ProjectFaces,
+    Relax,
+    Circle,
+    Grow,
+    Shrink,
+    Weld,
+    MatchSeams,
+    CutAngle,
+    Symmetrize,
+    OneSide,
+    MirrorPick,
 }
 
 impl Icon {
@@ -275,6 +293,20 @@ impl Icon {
             Icon::ExportImage => 0xe540,
             Icon::ArrowUp => 0xe04e,
             Icon::ArrowDown => 0xe046,
+            Icon::StraightLine => 0xe11f,
+            Icon::QuadGrid => 0xe503,
+            Icon::Rectangle => 0xe379,
+            Icon::ProjectFaces => 0xe256,
+            Icon::Relax => 0xe282,
+            Icon::Circle => 0xe4b4,
+            Icon::Grow => 0xe219,
+            Icon::Shrink => 0xe21f,
+            Icon::Weld => 0xe443,
+            Icon::MatchSeams => 0xe43f,
+            Icon::CutAngle => 0xe2ef,
+            Icon::Symmetrize => 0xe3b9,
+            Icon::OneSide => 0xe12d,
+            Icon::MirrorPick => 0xe249,
         };
         char::from_u32(code)
     }
@@ -939,6 +971,66 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 poly(&[(3.5, 9.0), (8.0, 13.5), (12.5, 9.0)]);
             }
         }
+        Icon::StraightLine => line((3.0, 8.0), (13.0, 8.0)),
+        Icon::QuadGrid => {
+            rounded(2.0, 2.0, 14.0, 14.0, 1.5);
+            line((8.0, 2.0), (8.0, 14.0));
+            line((2.0, 8.0), (14.0, 8.0));
+        }
+        Icon::Rectangle => rounded(1.5, 4.0, 14.5, 12.0, 1.5),
+        Icon::ProjectFaces => {
+            poly(&[(2.0, 5.0), (2.0, 2.0), (5.0, 2.0)]);
+            poly(&[(11.0, 2.0), (14.0, 2.0), (14.0, 5.0)]);
+            poly(&[(14.0, 11.0), (14.0, 14.0), (11.0, 14.0)]);
+            poly(&[(5.0, 14.0), (2.0, 14.0), (2.0, 11.0)]);
+        }
+        Icon::Relax => {
+            for y in [4.5, 8.0, 11.5] {
+                poly(&[(2.0, y), (4.5, y - 1.2), (7.0, y), (9.5, y + 1.2), (12.0, y), (14.0, y - 1.0)]);
+            }
+        }
+        Icon::Circle => {
+            for i in 0..8 {
+                let a = i as f32 / 8.0 * TAU;
+                arc(8.0, 8.0, 6.0, 6.0, a, a + TAU / 16.0);
+            }
+        }
+        Icon::Grow | Icon::Shrink => {
+            for (cx, cy) in [(2.5, 2.5), (13.5, 2.5), (2.5, 13.5), (13.5, 13.5)] {
+                line((8.0 + (cx - 8.0) * 0.45, 8.0 + (cy - 8.0) * 0.45), (cx, cy));
+            }
+            if icon == Icon::Shrink {
+                rounded(6.5, 6.5, 9.5, 9.5, 0.5);
+            }
+        }
+        Icon::Weld => {
+            poly(&[(3.0, 2.0), (8.0, 8.0), (13.0, 2.0)]);
+            line((8.0, 8.0), (8.0, 14.0));
+        }
+        Icon::MatchSeams => {
+            line((8.0, 2.0), (8.0, 14.0));
+            line((2.0, 8.0), (6.0, 8.0));
+            line((10.0, 8.0), (14.0, 8.0));
+            poly(&[(4.5, 6.0), (6.5, 8.0), (4.5, 10.0)]);
+            poly(&[(11.5, 6.0), (9.5, 8.0), (11.5, 10.0)]);
+        }
+        Icon::CutAngle => {
+            line((2.0, 14.0), (14.0, 2.0));
+            poly(&[(2.0, 14.0), (14.0, 14.0)]);
+        }
+        Icon::Symmetrize => {
+            rounded(2.0, 2.0, 14.0, 14.0, 1.5);
+            line((8.0, 2.0), (8.0, 14.0));
+        }
+        Icon::OneSide => {
+            rounded(2.0, 2.0, 14.0, 14.0, 1.5);
+            line((6.5, 2.0), (6.5, 14.0));
+        }
+        Icon::MirrorPick => {
+            line((2.5, 8.0), (13.5, 8.0));
+            poly(&[(5.0, 5.5), (2.5, 8.0), (5.0, 10.5)]);
+            poly(&[(11.0, 5.5), (13.5, 8.0), (11.0, 10.5)]);
+        }
     }
 }
 
@@ -1486,7 +1578,9 @@ mod tests {
             Icon::Sticker, Icon::Islands, Icon::EdgeSelect, Icon::VertexSelect, Icon::Scissors, Icon::Stitch,
             Icon::Pin, Icon::Unpin, Icon::Reflatten, Icon::Pack, Icon::Straighten, Icon::EvenSize, Icon::Unwrap,
             Icon::CutFaces, Icon::QuarterCw, Icon::QuarterCcw, Icon::Heat, Icon::UvSets, Icon::ExportImage,
-            Icon::ArrowUp, Icon::ArrowDown,
+            Icon::ArrowUp, Icon::ArrowDown, Icon::StraightLine, Icon::QuadGrid, Icon::Rectangle, Icon::ProjectFaces,
+            Icon::Relax, Icon::Circle, Icon::Grow, Icon::Shrink, Icon::Weld, Icon::MatchSeams, Icon::CutAngle,
+            Icon::Symmetrize, Icon::OneSide, Icon::MirrorPick,
         ]
     }
 

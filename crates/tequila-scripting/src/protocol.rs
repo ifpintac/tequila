@@ -439,7 +439,17 @@ pub struct UvEditorChange {
     /// The selected labels put on the island last clicked: `fit`, `centre`,
     /// `along` or `square`, as the Islands panel's buttons do.
     pub place: Option<String>,
+    /// The shape tools' keys as given, in the order of [`SHAPE_KEYS`]: the
+    /// UV editor reads each - its options, and the tool it runs - as the
+    /// Unwrap, Shape and Symmetry panels do.
+    pub shape: Vec<(String, Value)>,
 }
+
+/// The UV editor's shape tools, as `ui.uv` names them.
+pub const SHAPE_KEYS: &[&str] = &[
+    "shape_panel", "unwrap_options", "shape_options", "straight", "grid", "rectangle", "project", "relax", "circle", "grow", "weld",
+    "match_seams", "cut_angle", "symmetrize", "snap_mirror", "select_side", "select_mirror",
+];
 
 /// A pack's settings, as the Pack popover has them. Absent fields keep the
 /// popover's.
@@ -614,6 +624,7 @@ fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
             Some(v) => Some(Some(v.as_index().ok_or_else(|| ProtocolError("`hover_face` is a face of the part, by number, or false".into()))?)),
         },
         place: opt_string(value, "place")?,
+        shape: SHAPE_KEYS.iter().filter_map(|&key| value.get(key).map(|v| (key.to_string(), v.clone()))).collect(),
     })
 }
 
@@ -1374,6 +1385,18 @@ mod tests {
             let request = json_write::to_string(example.get("request").unwrap());
             parse_request(&request).unwrap_or_else(|e| panic!("{request}: {e}"));
         }
+    }
+
+    /// The UV editor's shape tool keys come through as given, in the order
+    /// the editor reads them, for it to check and carry out.
+    #[test]
+    fn the_uv_shape_keys_are_carried_in_their_order() {
+        let request = parse_request(r#"{"op":"ui","uv":{"weld":{"within":2},"straight":true,"islands":[1],"shape_panel":"shape"}}"#).unwrap();
+        let Operation::Ui(UiChange { uv: Some(uv), .. }) = request.operation else { panic!("a ui change") };
+        let keys: Vec<&str> = uv.shape.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["shape_panel", "straight", "weld"]);
+        assert_eq!(uv.shape[2].1.get("within").and_then(|v| v.as_f64()), Some(2.0));
+        assert_eq!(uv.islands, Some(vec![1]));
     }
 
     #[test]

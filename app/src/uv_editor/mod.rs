@@ -48,6 +48,7 @@ mod placement;
 mod prefs;
 mod rulers;
 mod selection;
+mod shape_tools;
 mod shortcuts;
 mod snapping;
 mod textures;
@@ -206,6 +207,8 @@ pub struct UvEditor {
     message: Option<(String, bool, f64)>,
     /// What the viewport is to light on the part this frame.
     hint: link::Hint,
+    /// The Unwrap, Shape and Symmetry panels' tools and their settings.
+    shape: shape_tools::State,
 }
 
 impl Default for UvEditor {
@@ -264,6 +267,7 @@ impl Default for UvEditor {
             export: export::Dialog::default(),
             message: None,
             hint: link::Hint::default(),
+            shape: shape_tools::State::default(),
         }
     }
 }
@@ -713,6 +717,7 @@ impl UvEditor {
             MenuAction::FrameSelection => self.frame_selection(canvas::labels_of(edits, part), part, layout),
             MenuAction::FrameAll => self.frame_all(canvas::labels_of(edits, part), part, layout),
             MenuAction::SelectAll => self.select_everything(canvas::labels_of(edits, part), layout),
+            MenuAction::Shape(tool) => self.shape.pending.push(tool),
         }
     }
 
@@ -752,6 +757,7 @@ impl UvEditor {
             Action::Pack => self.act(actions::Action::Pack, part, layout, edits),
             Action::Quarter(turns) => self.quarter(part, layout, edits, turns),
             Action::Flip(across) => self.flip(part, layout, edits, across),
+            Action::Shape(tool) => self.shape.pending.push(tool),
         }
     }
 
@@ -1165,6 +1171,9 @@ impl UvEditor {
         crate::field::Fold::new("Islands").id_salt("uv-islands").default_open(true).show(ui, |ui| {
             self.islands_panel(ui, part, layout, edits);
         });
+
+        // ---- Unwrap, Shape, Symmetry -----------------------------------------
+        self.shape_panels(ui, part, layout, project);
     }
 
     /// The help popover: every key, by group, as key caps.
@@ -1247,6 +1256,7 @@ impl UvEditor {
             Some("layout") => Some(Ask::OnLayout),
             Some(other) => return Err(format!("`{other}` is not a way to place a label: layout, fit, centre, along or square")),
         };
+        self.shape_script(&change.shape)?;
         if let Some(pack) = &change.pack {
             if let Some(unit) = &pack.unit {
                 self.pack.unit = match unit.as_str() {
@@ -1549,7 +1559,8 @@ impl UvEditor {
                 Some(Measure::Angle) => "angle",
             })
             .set("export_dialog", self.export.open)
-            .set("message", self.message.as_ref().map(|(text, _, _)| Value::String(text.clone())).unwrap_or(Value::Null));
+            .set("message", self.message.as_ref().map(|(text, _, _)| Value::String(text.clone())).unwrap_or(Value::Null))
+            .set("shape", self.shape_state());
         if let Some((_, _, layout)) = &self.layout {
             // What is under the pointer, as the layout names it.
             let mut under = tequila_format::json_write::Object::new();
@@ -1625,7 +1636,7 @@ pub fn show(ctx: &egui::Context, editor: &mut UvEditor, project: &mut Project) {
     };
     if editor.unwrap_pending {
         editor.unwrap_pending = false;
-        let options = tequila_scene::uv::UnwrapOptions { cone_degrees: editor.cone, ..Default::default() };
+        let options = tequila_scene::uv::UnwrapOptions { cone_degrees: editor.cone, method: editor.shape.settings.again.method, ..Default::default() };
         project.end_interaction();
         match project.apply(Command::UnwrapUvs { node: part.node, options }) {
             Ok(_) => project.status = format!("Unwrapped {} to place its label on the layout", part.name),
@@ -1837,6 +1848,8 @@ impl UvEditor {
                 }
             }
         }
+        // The shape tools asked for this frame, by any of the ways there are.
+        self.run_shape_tools(part, layout, project, edits);
         if self.help {
             self.help_popover(ui.ctx());
         }
@@ -1881,7 +1894,7 @@ impl UvEditor {
             }
         }
         if edits.unwrap {
-            let options = tequila_scene::uv::UnwrapOptions { cone_degrees: self.cone, ..Default::default() };
+            let options = tequila_scene::uv::UnwrapOptions { cone_degrees: self.cone, method: self.shape.settings.again.method, ..Default::default() };
             project.end_interaction();
             match project.apply(Command::UnwrapUvs { node: part.node, options }) {
                 Ok(_) => project.status = format!("Unwrapped {}", part.name),
