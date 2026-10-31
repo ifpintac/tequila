@@ -240,6 +240,18 @@ pub enum Command {
     /// labels and textures of what the part wears follow it, and the sets
     /// it passes.
     MoveUvSet { node: NodeId, from: usize, to: usize },
+    /// `uv.set_positions` — UV vertices of a part's UV set put where an
+    /// edit worked out they go: `vertices` by their number in the layout,
+    /// `uv` each one's place, `[u, v]`. What the tools that reshape a layout
+    /// come down to (vertices lined up, one island's shape laid over
+    /// another's) where no one affine map does it. Refused where it would
+    /// fold the layout.
+    SetUvPositions { node: NodeId, set: usize, vertices: Vec<u32>, uv: Vec<[f32; 2]> },
+    /// `uv.place_islands` — islands of a part's UV set each moved whole by
+    /// an affine map of its own, `maps` one `[a, b, tx, c, d, ty]` for each
+    /// of `islands`: what arranging them comes down to (spread, sorted,
+    /// sized alike, fitted, swapped, turned upright), as one step.
+    PlaceUvIslands { node: NodeId, set: usize, islands: Vec<u32>, maps: Vec<crate::uv::UvAffine> },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -1121,6 +1133,8 @@ impl Command {
             Command::CopyUvSet { .. } => "uv.copy_set",
             Command::DeleteUvSet { .. } => "uv.delete_set",
             Command::MoveUvSet { .. } => "uv.move_set",
+            Command::SetUvPositions { .. } => "uv.set_positions",
+            Command::PlaceUvIslands { .. } => "uv.place_islands",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
@@ -1179,7 +1193,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 70] = [
+    pub const CATALOG: [&'static str; 72] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1199,6 +1213,8 @@ impl Command {
         "uv.copy_set",
         "uv.delete_set",
         "uv.move_set",
+        "uv.set_positions",
+        "uv.place_islands",
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
@@ -1276,6 +1292,8 @@ impl Command {
             | Command::CopyUvSet { .. }
             | Command::DeleteUvSet { .. }
             | Command::MoveUvSet { .. }
+            | Command::SetUvPositions { .. }
+            | Command::PlaceUvIslands { .. }
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
@@ -2436,6 +2454,12 @@ fn execute(
         Command::MoveUvSet { node, from, to } => {
             let change = crate::uv::SetChange::Move { from: *from, to: *to };
             edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::SetUvPositions { node, set, vertices, uv } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::set_positions(mesh, *set, vertices, uv))
+        }
+        Command::PlaceUvIslands { node, set, islands, maps } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::place_islands(mesh, *set, islands, maps))
         }
 
         Command::SplitIntoParts { node } => {

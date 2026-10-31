@@ -103,7 +103,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-70 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+72 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -669,6 +669,33 @@ what the part wears follow it, and the sets it passes.
 
 ```json
 { "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
+```
+
+#### `uv.set_positions`
+
+UV vertices of a part's UV set put where an edit worked out they go:
+`vertices` by their number in the layout, `uv` each one's place, `[u, v]`.
+What the tools that reshape a layout come down to (vertices lined up, one
+island's shape laid over another's) where no one affine map does it. Refused
+where it would fold the layout.
+
+`fs.commands.uv.set_positions(node=..., set=..., uv=..., vertices=...)`
+
+```json
+{ "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.75, 0.5] ], "vertices": [3, 7] }
+```
+
+#### `uv.place_islands`
+
+Islands of a part's UV set each moved whole by an affine map of its own,
+`maps` one `[a, b, tx, c, d, ty]` for each of `islands`: what arranging them
+comes down to (spread, sorted, sized alike, fitted, swapped, turned
+upright), as one step.
+
+`fs.commands.uv.place_islands(islands=..., maps=..., node=..., set=...)`
+
+```json
+{ "command": "uv.place_islands", "islands": [0, 2], "maps": [ [1, 0, 0.1, 0, 1, 0], [0, -1, 1, 1, 0, 0] ], "node": 2, "set": 0 }
 ```
 
 ### lighting

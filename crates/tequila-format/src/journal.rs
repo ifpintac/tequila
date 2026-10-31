@@ -132,6 +132,19 @@ pub fn encode(command: &Command) -> String {
         Command::DeleteUvSet { node, set } => {
             out.set("node", node.0).set("set", *set);
         }
+        Command::SetUvPositions { node, set, vertices, uv } => {
+            out.set("node", node.0)
+                .set("set", *set)
+                .set("vertices", numbers(vertices))
+                .set("uv", Value::Array(uv.iter().map(|p| Value::from(vec![p[0], p[1]])).collect()));
+        }
+        Command::PlaceUvIslands { node, set, islands, maps } => {
+            let maps = maps.iter().map(|map| {
+                let m = map.m;
+                Value::from(vec![m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2]])
+            });
+            out.set("node", node.0).set("set", *set).set("islands", numbers(islands)).set("maps", Value::Array(maps.collect()));
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -591,7 +604,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
         }
         "uv.cut" | "uv.stitch" | "uv.transform" | "uv.reflatten" | "uv.pack" | "uv.straighten" | "uv.even_density" | "uv.add_set"
-        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" => uv_command(name, &value)?,
+        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" | "uv.set_positions" | "uv.place_islands" => uv_command(name, &value)?,
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,
@@ -1377,6 +1390,32 @@ fn uv_command(name: &str, value: &Value) -> Result<Command, FormatError> {
         "uv.copy_set" => Command::CopyUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
         "uv.delete_set" => Command::DeleteUvSet { node: node()?, set: pair("set")? },
         "uv.move_set" => Command::MoveUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
+        "uv.set_positions" => {
+            let vertices = list("vertices")?;
+            let places = value.get("uv").map(|v| v.as_array()).unwrap_or(&[]);
+            let uv = places
+                .iter()
+                .map(|p| p.as_f32_array().filter(|p| p.len() == 2 && p.iter().all(|c| c.is_finite())).map(|p| [p[0], p[1]]))
+                .collect::<Option<Vec<[f32; 2]>>>()
+                .ok_or_else(|| invalid("has a `uv` that is not a list of places, [[u, v], ...]"))?;
+            if uv.len() != vertices.len() {
+                return Err(invalid("needs a place in `uv` for each of its `vertices`"));
+            }
+            Command::SetUvPositions { node: node()?, set: set(), vertices, uv }
+        }
+        "uv.place_islands" => {
+            let islands = list("islands")?;
+            let entries = value.get("maps").map(|v| v.as_array()).unwrap_or(&[]);
+            let maps = entries
+                .iter()
+                .map(|m| m.as_f32_array().filter(|m| m.len() == 6 && m.iter().all(|x| x.is_finite())).map(|m| UvAffine { m: [[m[0], m[1], m[2]], [m[3], m[4], m[5]]] }))
+                .collect::<Option<Vec<UvAffine>>>()
+                .ok_or_else(|| invalid("has `maps` that are not each six numbers, [a, b, tx, c, d, ty]"))?;
+            if maps.len() != islands.len() {
+                return Err(invalid("needs a map in `maps` for each of its `islands`"));
+            }
+            Command::PlaceUvIslands { node: node()?, set: set(), islands, maps }
+        }
         other => return Err(FormatError::Invalid(format!("`{other}` is not a UV command"))),
     })
 }

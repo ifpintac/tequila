@@ -199,6 +199,13 @@ pub fn commands() -> Vec<Command> {
         Command::CopyUvSet { node: ids[1], from: 0, to: 1 },
         Command::DeleteUvSet { node: ids[1], set: 1 },
         Command::MoveUvSet { node: ids[1], from: 1, to: 0 },
+        Command::SetUvPositions { node: ids[1], set: 0, vertices: vec![3, 7], uv: vec![[0.25, 0.5], [0.75, 0.5]] },
+        Command::PlaceUvIslands {
+            node: ids[1],
+            set: 0,
+            islands: vec![0, 2],
+            maps: vec![tequila_scene::uv::UvAffine::translation(tequila_core::math::vec2(0.1, 0.0)), tequila_scene::uv::UvAffine::quarter_turns(1).about(tequila_core::math::vec2(0.5, 0.5))],
+        },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,

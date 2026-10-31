@@ -67,23 +67,32 @@
 //! 204,800 as one chart a few seconds (`uv::tests::flattening_a_large_part`,
 //! ignored by default, times them).
 
+pub mod arrange;
+pub mod density;
 pub mod distortion;
 pub mod edit;
 pub mod export;
 pub mod flatten;
 pub mod layout;
 pub mod pack;
+pub mod positions;
 pub mod reflatten;
 pub mod seams;
+pub mod select;
 pub mod sets;
+pub mod similar;
+pub mod sort;
 pub mod transform;
 pub mod unwrap;
+pub mod vertices;
 
 pub use distortion::{distortion, heat, Distortion, Measure};
 pub use edit::UvError;
 pub use export::{layout_png, layout_svg, Fill, LayoutPicture};
 pub use layout::{weld, EdgeKind, Island, LayoutEdge, SurfaceHit, TriangleHit, UvLayout, UvVertex, NO_ISLAND};
+pub use arrange::{place_islands, Plan};
 pub use pack::{pack, PackOptions, PackReport, UvRect};
+pub use positions::set_positions;
 pub use reflatten::reflatten;
 pub use seams::{cut, stitch, CutOptions};
 pub use sets::SetChange;
@@ -390,7 +399,11 @@ mod command_tests {
             let layout = UvLayout::new(mesh, 0).unwrap();
             let seam = layout.edges.iter().find(|e| e.kind == EdgeKind::Seam).unwrap().vertices;
             let inner = layout.edges.iter().find(|e| e.kind == EdgeKind::Inner).unwrap().vertices;
+            let corner = layout.islands[2].boundary[0][0];
+            let at = layout.uv_vertices[corner as usize].uv;
             vec![
+                Command::SetUvPositions { node, set: 0, vertices: vec![corner], uv: vec![[at.x + 0.001, at.y]] },
+                Command::PlaceUvIslands { node, set: 0, islands: vec![1, 4], maps: vec![UvAffine::translation(vec2(0.25, 0.0)), UvAffine::quarter_turns(1).about(layout.islands[4].centre)] },
                 Command::CutUvs { node, set: 0, edges: vec![inner], reflatten: true },
                 Command::StitchUvs { node, set: 0, edges: vec![seam] },
                 Command::TransformUvs { node, set: 0, selection: UvSelection::Islands(vec![1, 3]), transform: UvAffine::quarter_turns(1), pivot: Pivot::Islands },

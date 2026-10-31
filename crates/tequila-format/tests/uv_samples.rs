@@ -312,3 +312,93 @@ fn the_perfume_bottle_parts_lay_out_and_edit_cleanly() {
         exercise(name, mesh);
     }
 }
+
+/// A part of a sample by name, laid out: its own layout, or an unwrap where
+/// it has none.
+fn laid_out(document: &tequila_scene::SceneDocument, name: &str) -> Mesh {
+    let node = document.tree.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("no part {name}"));
+    let NodeKind::Part { mesh } = node.kind else { panic!("{name} is not a part") };
+    let mesh = document.geometry.get(mesh).unwrap();
+    if mesh.uv_sets.is_empty() { unwrap(mesh, &UnwrapOptions::default()).0 } else { mesh.clone() }
+}
+
+/// The arranging tools on real parts: repeated pieces found and laid over
+/// each other exactly, islands sorted, set out as on the part, spread,
+/// sized alike and squared, and none of it folds.
+#[test]
+fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
+    let document = sample("Headphones.tequila");
+    for name in ["Knuckle L", "Shell R", "Pad", "Marks L"] {
+        let mesh = laid_out(&document, name);
+        let tag = format!("arrange-{}", slug(name));
+        let layout = UvLayout::new(&mesh, 0).unwrap();
+        let all: Vec<u32> = (0..layout.islands.len() as u32).collect();
+        let shapes: Vec<(u32, similar::IslandShape)> = all.iter().map(|&i| (i, similar::IslandShape::of(&layout, &mesh, i))).collect();
+        let classes = similar::classes(&shapes, 0.05, true);
+        let repeated = classes.iter().max_by_key(|c| c.len()).unwrap();
+        assert!(repeated.len() >= 2, "{name}: a repeated piece");
+        // Stacked: every copy laid over the first, corner for corner.
+        let first = &shapes[repeated[0] as usize].1;
+        let (mut vertices, mut places) = (Vec::new(), Vec::new());
+        for &other in &repeated[1..] {
+            let theirs = &shapes[other as usize].1;
+            let m = similar::correspond(first, theirs, true).expect("the same piece");
+            let (v, p) = similar::laid_over(first, theirs, &m, Vec2::ZERO);
+            vertices.extend(v);
+            places.extend(p);
+        }
+        picture(&mesh, &format!("{tag}-1-stack-before"), Fill::Islands);
+        let stacked = set_positions(&mesh, 0, &vertices, &places).unwrap_or_else(|e| panic!("{name}: {e}"));
+        picture(&stacked, &format!("{tag}-1-stack-after"), Fill::Islands);
+        let after = UvLayout::new(&stacked, 0).unwrap();
+        for &other in &repeated[1..] {
+            let (a, b) = (&after.islands[repeated[0] as usize], &after.islands[other as usize]);
+            assert!((a.min - b.min).length() < 1e-5 && (a.max - b.max).length() < 1e-5, "{name}: island {other} lies over the first");
+        }
+        // Sorted along the part, then as on the part: nothing folds, and
+        // the islands keep their shapes.
+        let options = sort::SortOptions { by: sort::SortBy::Axis(0), wrap: sort::Wrap::Width, spacing: 0.01, ..Default::default() };
+        let plan = sort::sort(&layout, &mesh, &all, &options, &sort::PartAxes::default());
+        let sorted = place_islands(&mesh, 0, &plan.islands, &plan.maps).unwrap();
+        no_folds(&sorted, "sort");
+        picture(&sorted, &format!("{tag}-2-sorted"), Fill::Islands);
+        let density = arrange::linear_density(&layout, &all).unwrap();
+        let plan = sort::as_on_part(&layout, &mesh, &all, sort::View::Auto, &sort::PartAxes::default(), density, 0.005);
+        let seen = place_islands(&mesh, 0, &plan.islands, &plan.maps).unwrap();
+        no_folds(&seen, "as on the part");
+        picture(&seen, &format!("{tag}-3-as-on-the-part"), Fill::Islands);
+        let seen_layout = UvLayout::new(&seen, 0).unwrap();
+        for (a, b) in layout.islands.iter().zip(&seen_layout.islands) {
+            assert!((a.uv_area - b.uv_area).abs() <= a.uv_area * 1e-3 + 1e-9, "{name}: moved, not scaled");
+        }
+        // Spread, sized alike, fitted, shuffled, squared.
+        for plan in [
+            arrange::distribute(&layout, &all, true, arrange::Spread::Centres),
+            arrange::match_size(&layout, &all, arrange::SizeTarget::Average, true, true).unwrap(),
+            arrange::fit(&layout, &all, UvRect::UNIT, 0.01, false).unwrap(),
+            arrange::shuffle(&layout, &all, 3),
+        ] {
+            if !plan.is_empty() {
+                no_folds(&place_islands(&mesh, 0, &plan.islands, &plan.maps).unwrap(), "arranged");
+            }
+        }
+        let edges: Vec<u32> = (0..layout.edges.len() as u32).collect();
+        let squared = vertices::square_edges(&layout, &mesh, &edges, 15f32.to_radians());
+        if !squared.is_empty() {
+            if let Ok(out) = set_positions(&mesh, 0, &squared.vertices, &squared.uv) {
+                no_folds(&out, "squared");
+            }
+        }
+        let coverage = density::coverage(&layout, 1024);
+        assert!(coverage.covered > 0.05 && coverage.covered <= 1.0 && coverage.overlap <= coverage.covered, "{name}: {coverage:?}");
+    }
+    // A shape copied from one part's piece pastes on the other side's.
+    let (left, right) = (laid_out(&document, "Name L"), laid_out(&document, "Name R"));
+    let (ll, rl) = (UvLayout::new(&left, 0).unwrap(), UvLayout::new(&right, 0).unwrap());
+    let copied = similar::IslandShape::of(&ll, &left, 0);
+    let target = (0..rl.islands.len() as u32).find_map(|i| similar::correspond(&copied, &similar::IslandShape::of(&rl, &right, i), true).map(|m| (i, m)));
+    let (island, m) = target.expect("Name R has Name L's first piece");
+    let theirs = similar::IslandShape::of(&rl, &right, island);
+    let (vertices, places) = similar::laid_over(&copied, &theirs, &m, theirs.centre() - copied.centre());
+    no_folds(&set_positions(&right, 0, &vertices, &places).unwrap(), "pasted");
+}

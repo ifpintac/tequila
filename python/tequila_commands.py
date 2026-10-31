@@ -33,6 +33,8 @@ CATALOG = (
     'uv.copy_set',
     'uv.delete_set',
     'uv.move_set',
+    'uv.set_positions',
+    'uv.place_islands',
     'scene.rename',
     'scene.set_transform',
     'scene.set_visibility',
@@ -457,6 +459,20 @@ class UvCommands(_Commands):
         { "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
         """
         return self._apply('uv.move_set', {'from': from_, 'node': node, 'to': to})
+
+    def set_positions(self, *, node=_UNSET, set=_UNSET, uv=_UNSET, vertices=_UNSET):
+        r"""`uv.set_positions`: UV vertices of a part's UV set put where an edit worked out they go: `vertices` by their number in the layout, `uv` each one's place, `[u, v]`. What the tools that reshape a layout come down to (vertices lined up, one island's shape laid over another's) where no one affine map does it. Refused where it would fold the layout.
+
+        { "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.75, 0.5] ], "vertices": [3, 7] }
+        """
+        return self._apply('uv.set_positions', {'node': node, 'set': set, 'uv': uv, 'vertices': vertices})
+
+    def place_islands(self, *, islands=_UNSET, maps=_UNSET, node=_UNSET, set=_UNSET):
+        r"""`uv.place_islands`: Islands of a part's UV set each moved whole by an affine map of its own, `maps` one `[a, b, tx, c, d, ty]` for each of `islands`: what arranging them comes down to (spread, sorted, sized alike, fitted, swapped, turned upright), as one step.
+
+        { "command": "uv.place_islands", "islands": [0, 2], "maps": [ [1, 0, 0.1, 0, 1, 0], [0, -1, 1, 1, 0, 0] ], "node": 2, "set": 0 }
+        """
+        return self._apply('uv.place_islands', {'islands': islands, 'maps': maps, 'node': node, 'set': set})
 
 
 class LightingCommands(_Commands):
