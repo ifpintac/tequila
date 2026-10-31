@@ -404,6 +404,7 @@ mod command_tests {
                 Command::DeleteUvSet { node, set: 0 },
                 Command::MoveUvSet { node, from: 2, to: 0 },
                 Command::UnwrapUvs { node, options: UnwrapOptions { respect_cuts: true, ..Default::default() } },
+                Command::UnwrapUvs { node, options: UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() } },
             ]
         };
         let (_, _, [node, _], _) = two_parts(false);

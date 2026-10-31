@@ -32,8 +32,9 @@
 //! A channel can be opened with operations beyond the protocol's
 //! ([`Channel::start_at_with`]): a request whose `op` is one of them is
 //! queued as it came, and answered by the handler [`Channel::drain_with`]
-//! is given, so an end that has more to offer - the headless server's
-//! `uv_layout` - can offer it without every end having to.
+//! is given, so an end that has more to offer - `uv_layout`, which the
+//! application and the headless server answer - can offer it without every
+//! end having to.
 
 use crate::protocol::{encode_reply, parse_request, request_id, ProtocolError, Reply, Request};
 use std::collections::VecDeque;
@@ -128,7 +129,13 @@ impl Channel {
     /// because a port was busy would be a worse tool than one that is simply
     /// not scriptable this session.
     pub fn start() -> Result<Channel, String> {
-        let mut channel = Channel::open(&[])?;
+        Channel::start_with(&[])
+    }
+
+    /// As [`Channel::start`], answering the operations `own` names as well
+    /// as the protocol's: the application's `uv_layout`.
+    pub fn start_with(own: &'static [&'static str]) -> Result<Channel, String> {
+        let mut channel = Channel::open(own)?;
         channel.announce(&discovery_path());
         Ok(channel)
     }

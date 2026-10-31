@@ -166,7 +166,9 @@ pub enum Command {
     /// `scene.unwrap_uvs` — a part's surface laid out flat as its first UV
     /// set (`crate::uv`), so labels and textures can be placed on it
     /// anywhere; the sets it had move up one. With `respect_cuts`, the
-    /// islands of its first set are kept, each laid out again whole.
+    /// islands of its first set are kept, each laid out again whole. With
+    /// `in_place`, the set it names is laid out again where it is - its
+    /// islands kept, with `respect_cuts` - and no set moves.
     ///
     /// The part gets a mesh of its own, the unwrapped one, under a new key:
     /// parts that shared the old mesh keep it, and undo points the part back

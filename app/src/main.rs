@@ -968,7 +968,7 @@ impl TequilaApp {
         // scriptable this session. `TEQUILA_NO_CHANNEL` turns it off for
         // anyone who would rather not have a socket at all.
         if std::env::var_os("TEQUILA_NO_CHANNEL").is_none() {
-            match tequila_scripting::server::Channel::start() {
+            match tequila_scripting::server::Channel::start_with(tequila_scripting::document::APP_OWN_OPERATIONS) {
                 Ok(open) => {
                     app.project.status = format!(
                         "Scripting channel ready on port {} — see ~/.tequila/channel.json",
@@ -1288,14 +1288,25 @@ impl eframe::App for TequilaApp {
                 open.set_waker(move || waking.request_repaint());
                 self.channel_wakes = true;
             }
-            open.drain(|request| {
-                // A script that changes something wants the window, not the
-                // start screen; one that only looks leaves it be.
-                use tequila_scripting::protocol::Operation;
-                if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
-                    self.start_screen.open = false;
+            open.drain_with(|arrived| match arrived {
+                tequila_scripting::server::Arrived::Request(request) => {
+                    // A script that changes something wants the window, not
+                    // the start screen; one that only looks leaves it be.
+                    use tequila_scripting::protocol::Operation;
+                    if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
+                        self.start_screen.open = false;
+                    }
+                    channel::handle(self, request)
                 }
-                channel::handle(self, request)
+                // The application's own operations: a part's UV layout
+                // written as a picture.
+                tequila_scripting::server::Arrived::Own(value) => match value.get("op").and_then(|v| v.as_str()) {
+                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), value) {
+                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
+                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
+                    },
+                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
+                },
             });
             self.channel = Some(open);
         }

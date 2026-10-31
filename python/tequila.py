@@ -148,15 +148,18 @@ class Client:
         photos=) or 'spin' (a folder; columns=, rows=, tilt=, transparent=)."""
         return self.request('export', format=format, path=str(Path(path).resolve()), **options)
 
-    def uv_layout(self, node, path, *, uv_set=0, size=2048, fill='islands', edges=True, seams=True, note=True):
+    def uv_layout(self, node, path, *, uv_set=0, size=2048, fill='islands', edges=True, seams=True, note=True,
+                  line=None, transparent=False):
         """Write a part's UV layout as a picture: an .svg to draw artwork
         over, or a .png drawn from it, the unit square `size` pixels a side.
         `fill` is 'islands', 'none', or a heatmap of how much the layout
-        stretches each triangle, 'area' or 'angle'. Answered by a headless
-        session (`tequila.open`)."""
+        stretches each triangle, 'area' or 'angle'. `line` is a colour for
+        the lines, '#rrggbb'; `transparent` leaves out the white square.
+        Answered by the application and by a headless session."""
         part = node.id if hasattr(node, 'id') else int(node)
+        extra = {'line': line} if line else {}
         return self.request('uv_layout', node=part, path=str(Path(path).resolve()), set=uv_set, size=size,
-                            fill=fill, edges=edges, seams=seams, note=note)
+                            fill=fill, edges=edges, seams=seams, note=note, transparent=transparent, **extra)
 
     def select(self, nodes):
         return self.request('select', nodes=list(nodes))
@@ -229,7 +232,8 @@ class Client:
 
     def screenshot(self, path, *, viewport=False, window=None, timeout=30):
         """Wait for a new PNG of the window, or of just the viewport, or of
-        another window: window='render', 'graph', 'shortcuts' or 'connect'.
+        another window: window='render', 'graph', 'shortcuts', 'connect' or
+        'uv' (the UV editor).
         Refuse existing paths to avoid stale-image success."""
         path = Path(path).resolve()
         if path.exists():

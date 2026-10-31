@@ -237,12 +237,12 @@ class SceneCommands(_Commands):
         """
         return self._apply('scene.split_parts', {'node': node})
 
-    def unwrap_uvs(self, *, cone_degrees=_UNSET, crease_degrees=_UNSET, margin=_UNSET, node=_UNSET, respect_cuts=_UNSET):
-        r"""`scene.unwrap_uvs`: A part's surface laid out flat as its first UV set (`crate::uv`), so labels and textures can be placed on it anywhere; the sets it had move up one. With `respect_cuts`, the islands of its first set are kept, each laid out again whole.
+    def unwrap_uvs(self, *, cone_degrees=_UNSET, crease_degrees=_UNSET, in_place=_UNSET, margin=_UNSET, node=_UNSET, respect_cuts=_UNSET):
+        r"""`scene.unwrap_uvs`: A part's surface laid out flat as its first UV set (`crate::uv`), so labels and textures can be placed on it anywhere; the sets it had move up one. With `respect_cuts`, the islands of its first set are kept, each laid out again whole. With `in_place`, the set it names is laid out again where it is - its islands kept, with `respect_cuts` - and no set moves.
 
-        { "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "margin": 0.005, "node": 2, "respect_cuts": false }
+        { "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "node": 2, "respect_cuts": true }
         """
-        return self._apply('scene.unwrap_uvs', {'cone_degrees': cone_degrees, 'crease_degrees': crease_degrees, 'margin': margin, 'node': node, 'respect_cuts': respect_cuts})
+        return self._apply('scene.unwrap_uvs', {'cone_degrees': cone_degrees, 'crease_degrees': crease_degrees, 'in_place': in_place, 'margin': margin, 'node': node, 'respect_cuts': respect_cuts})
 
     def rename(self, *, name=_UNSET, node=_UNSET):
         r"""`scene.rename`: A node's name.

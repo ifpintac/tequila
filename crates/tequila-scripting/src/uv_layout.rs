@@ -12,8 +12,12 @@
 //! how much the layout stretches each triangle: `area` (blue coarser, red
 //! finer than the rest) or `angle` (yellow to red). `edges`, `seams` and
 //! `note` (the square's size in millimetres, where the layout is as dense
-//! all over) are on unless turned off. The format is the path's extension
-//! unless `format` says.
+//! all over) are on unless turned off. `line` draws the lines in a colour,
+//! `"#rrggbb"`, and `transparent` leaves out the white square under the
+//! layout. The format is the path's extension unless `format` says.
+//!
+//! Both the application and a headless session answer it, as an operation of
+//! their own beside the protocol's (`crate::server`).
 
 use tequila_format::json::Value;
 use tequila_format::json_write::Object;
@@ -42,7 +46,12 @@ pub fn answer(document: &SceneDocument, request: &Value) -> Result<Value, String
         other => return Err(format!("`{other}` is not a fill: islands, none, area or angle")),
     };
     let flag = |key: &str| request.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
-    let picture = LayoutPicture { size, fill, edges: flag("edges"), seams: flag("seams"), note: flag("note") };
+    let line = match request.get("line").and_then(|v| v.as_str()) {
+        Some(text) => Some(colour(text).ok_or_else(|| format!("`{text}` is not a colour: give one as \"#rrggbb\""))?),
+        None => None,
+    };
+    let transparent = request.get("transparent").and_then(|v| v.as_bool()).unwrap_or(false);
+    let picture = LayoutPicture { size, fill, edges: flag("edges"), seams: flag("seams"), note: flag("note"), line, transparent };
     let format = match request.get("format").and_then(|v| v.as_str()) {
         Some(format) => format.to_ascii_lowercase(),
         None => std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("png").to_ascii_lowercase(),
@@ -70,6 +79,16 @@ pub fn answer(document: &SceneDocument, request: &Value) -> Result<Value, String
         .set_some("units_per_uv", layout.units_per_uv)
         .set_some("note", tequila_scene::uv::export::size_note(layout.units_per_uv, size));
     Ok(out.build())
+}
+
+/// A colour written `#rrggbb`, the hash optional.
+pub fn colour(text: &str) -> Option<[u8; 3]> {
+    let digits = text.trim().trim_start_matches('#');
+    if digits.len() != 6 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
 }
 
 #[cfg(test)]

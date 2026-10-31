@@ -13,7 +13,9 @@
 //!    square with a margin between charts ([`super::pack`]).
 //!
 //! The mesh comes back with its vertices split along the charts' seams and
-//! the layout as its first UV set; the sets it had move up one, kept.
+//! the layout as its first UV set; the sets it had move up one, kept. Or,
+//! unwrapped again in place, the layout where the set it lays out was, and
+//! the others where they were.
 
 use super::flatten::{conformal, folds, project, to_true_area};
 use super::layout::{weld, UvLayout};
@@ -32,18 +34,22 @@ pub struct UnwrapOptions {
     pub crease_degrees: f32,
     /// The gap between charts, as a fraction of the square's side.
     pub margin: f32,
-    /// Keep the cuts the part's first layout has: its islands are the
-    /// charts, each laid out flat again whole, and no cut is added but where
-    /// an island will not lie flat without one. A part with no layout
-    /// unwraps as usual.
+    /// Keep the cuts the part's first layout has - or the layout `in_place`
+    /// names: its islands are the charts, each laid out flat again whole,
+    /// and no cut is added but where an island will not lie flat without
+    /// one. A part with no layout unwraps as usual.
     pub respect_cuts: bool,
+    /// Lay this UV set out again where it is, rather than adding a new
+    /// first set: the other sets keep their numbers, so what reads each
+    /// still reads it. An unwrap done again, not one more.
+    pub in_place: Option<usize>,
 }
 
 impl Default for UnwrapOptions {
     fn default() -> Self {
         // Blender's Smart UV Project's angle, which splits a box into its
         // sides and a cylinder into a handful of strips.
-        UnwrapOptions { cone_degrees: 66.0, crease_degrees: 60.0, margin: 0.005, respect_cuts: false }
+        UnwrapOptions { cone_degrees: 66.0, crease_degrees: 60.0, margin: 0.005, respect_cuts: false, in_place: None }
     }
 }
 
@@ -73,7 +79,8 @@ pub fn unwrap(mesh: &Mesh, options: &UnwrapOptions) -> (Mesh, UnwrapReport) {
     // chart stays one piece across the splits a mesh has for its normals -
     // or, keeping the cuts, its UV vertex, so a cut that does not part an
     // island stays open in it.
-    let existing = if options.respect_cuts && !mesh.uv_sets.is_empty() { UvLayout::new(mesh, 0) } else { None };
+    let in_place = options.in_place.filter(|&set| set < mesh.uv_sets.len());
+    let existing = if options.respect_cuts && !mesh.uv_sets.is_empty() { UvLayout::new(mesh, in_place.unwrap_or(0)) } else { None };
     let keys: Vec<u32> = match &existing {
         Some(layout) => layout.corner_vertex.clone(),
         None => mesh.indices.iter().map(|&v| weld[v as usize]).collect(),
@@ -147,6 +154,12 @@ pub fn unwrap(mesh: &Mesh, options: &UnwrapOptions) -> (Mesh, UnwrapReport) {
                 indices[c] = index;
             }
         }
+    }
+    // Laid out again in place: the new layout where the old one was, every
+    // other set at its own number.
+    if let Some(set) = in_place {
+        let layout = sets.remove(0);
+        sets[set] = layout;
     }
     out.positions = positions;
     out.normals = normals_out;
@@ -570,5 +583,34 @@ mod tests {
         let (out, report) = unwrap(&closed, &UnwrapOptions { respect_cuts: true, ..Default::default() });
         let folded = UvLayout::new(&out, 0).unwrap().folded_triangles();
         assert!(folded.is_empty(), "{report:?}: {} folded of {}", folded.len(), out.triangle_count());
+    }
+
+    /// Unwrapped again in place, a part's second set is laid out anew keeping
+    /// its cuts, and its first stays as it was: no set added, none moved.
+    #[test]
+    fn an_unwrap_in_place_lays_one_set_out_again_and_keeps_the_others() {
+        let (segments, rings) = (16, 4);
+        let tube = tube(segments, rings);
+        let strip: Vec<Vec2> = (0..tube.positions.len()).map(|i| {
+            let (s, r) = (i % (segments + 1), i / (segments + 1));
+            vec2(s as f32 / segments as f32, r as f32 / rings as f32 * 0.3)
+        }).collect();
+        let first: Vec<Vec2> = tube.positions.iter().map(|p| vec2(p.x, p.y)).collect();
+        let mut part = tube.clone();
+        part.uv_sets = vec![first, strip];
+        let (out, report) = unwrap(&part, &UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() });
+        assert_eq!(out.uv_sets.len(), 2, "no set added");
+        assert_eq!(report.charts, 1, "the second set's one strip, kept");
+        for t in 0..out.triangle_count() {
+            let before = part.triangle(t).map(|v| part.uv_sets[0][v as usize]);
+            let after = out.triangle(t).map(|v| out.uv_sets[0][v as usize]);
+            assert_eq!(before, after, "the first set is as it was");
+        }
+        let layout = UvLayout::new(&out, 1).unwrap();
+        assert_eq!(layout.islands.len(), 1);
+        assert!(layout.folded_triangles().is_empty());
+        // A set that is not there unwraps as usual, as a new first set.
+        let (usual, _) = unwrap(&part, &UnwrapOptions { in_place: Some(5), ..Default::default() });
+        assert_eq!(usual.uv_sets.len(), 3);
     }
 }

@@ -146,6 +146,9 @@ pub fn commands() -> Vec<Command> {
         // Non-default values wherever a default would round-trip by
         // accident.
         Command::SplitIntoParts { node: ids[1] },
+        // The first of a command's examples is the one its binding lists
+        // the fields of: this one has them all.
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() } },
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions::default() },
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { cone_degrees: 45.0, respect_cuts: true, ..Default::default() } },
         // The layout edits: islands by number, vertices by mesh vertex, an

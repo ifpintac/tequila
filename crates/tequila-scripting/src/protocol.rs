@@ -377,6 +377,109 @@ pub struct UvEditorChange {
     pub click: Option<[f32; 2]>,
     /// The view framed on a box of the layout, from one corner to the other.
     pub frame: Option<[[f32; 2]; 2]>,
+    /// What a click picks: `labels`, `islands`, `edges` or `vertices`.
+    pub mode: Option<String>,
+    /// These islands selected, by number, in the Islands mode.
+    pub islands: Option<Vec<usize>>,
+    /// These edges selected, each by the mesh vertices at its ends, in the
+    /// Edges mode.
+    pub edges: Option<Vec<[usize; 2]>>,
+    /// These vertices selected, by mesh vertex, in the Vertices mode.
+    pub vertices: Option<Vec<usize>>,
+    /// Everything of the mode's kind selected, as Ctrl+A does.
+    pub select_all: bool,
+    /// The selected edges cut, as the Cut button does.
+    pub cut: bool,
+    /// The selected seams, or the seams between the selected islands,
+    /// stitched.
+    pub stitch: bool,
+    /// The selected vertices pinned (`true`) or unpinned.
+    pub pin: Option<bool>,
+    /// The selected islands laid out flat again with their pins; `repack`
+    /// packs the layout after.
+    pub reflatten: bool,
+    pub repack: Option<bool>,
+    /// The selected islands, or all of them, packed as the Pack popover
+    /// says, with any of its settings changed first.
+    pub pack: Option<UvPack>,
+    /// The Pack popover, open.
+    pub pack_options: Option<bool>,
+    /// The selected islands, or all, turned square; scaled to one density;
+    /// laid out flat again keeping their cuts.
+    pub straighten: bool,
+    pub even: bool,
+    pub unwrap: bool,
+    /// The selection moved, turned, scaled, flipped or turned a quarter, as
+    /// the Transform panel does it.
+    pub transform: Option<UvTransform>,
+    /// The stretch heatmap: `area`, `angle` or `off`.
+    pub heatmap: Option<String>,
+    /// The UV set shown.
+    pub set: Option<usize>,
+    /// `add`, `copy`, `delete`, `up` or `down`: what the set picker does to
+    /// the set shown.
+    pub set_action: Option<String>,
+    /// The layout written as a picture, as the Export dialog does.
+    pub export: Option<UvExport>,
+    /// The Export dialog, open.
+    pub export_dialog: Option<bool>,
+    /// These faces of the part selected in the viewport, as picked there at
+    /// Face level.
+    pub faces: Option<Vec<usize>>,
+    /// The islands of the faces selected in the viewport selected here.
+    pub from_faces: bool,
+    /// The faces selected in the viewport cut out of the layout as an
+    /// island of their own.
+    pub cut_faces: bool,
+    /// A face of the part held under the viewport's pointer, as if a person
+    /// pointed at it there; `Some(None)` gives the pointer back.
+    pub hover_face: Option<Option<usize>>,
+    /// The selected labels put on the island last clicked: `fit`, `centre`,
+    /// `along` or `square`, as the Islands panel's buttons do.
+    pub place: Option<String>,
+}
+
+/// A pack's settings, as the Pack popover has them. Absent fields keep the
+/// popover's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvPack {
+    /// The gap between islands, in `unit`.
+    pub margin: Option<f32>,
+    /// `mm`, or `px` of a texture `texture` pixels a side.
+    pub unit: Option<String>,
+    pub texture: Option<u32>,
+    pub rotate: Option<bool>,
+    /// `square`, the layout's square, or `guides`, the box between them.
+    pub into: Option<String>,
+}
+
+/// A move, turn, scale or flip of the selection, about the Transform
+/// panel's chosen point.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvTransform {
+    /// Across and down, in the layout's units.
+    pub offset: Option<[f32; 2]>,
+    /// Degrees, anticlockwise as the panel counts.
+    pub turn: Option<f32>,
+    /// Across and down; one number for both.
+    pub scale: Option<[f32; 2]>,
+    /// `horizontal` or `vertical`.
+    pub flip: Option<String>,
+    /// Quarter turns, clockwise as the editor shows them; negative the
+    /// other way.
+    pub quarter: Option<i32>,
+}
+
+/// The layout written as a picture, as the Export dialog writes it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvExport {
+    pub path: String,
+    pub size: Option<u32>,
+    /// `islands`, `none`, `area` or `angle`.
+    pub fill: Option<String>,
+    /// `"#rrggbb"`.
+    pub line: Option<String>,
+    pub transparent: Option<bool>,
 }
 
 fn point(value: &Value) -> Option<[f32; 2]> {
@@ -435,7 +538,85 @@ fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
             [a, b] => Some([point(a)?, point(b)?]),
             _ => None,
         })?,
+        mode: opt_string(value, "mode")?,
+        islands: indices(value, "islands")?,
+        edges: optional(value, "edges", "a list of edges, each the mesh vertices at its ends, [[a, b], ...]", |v| {
+            v.as_array()
+                .iter()
+                .map(|e| match e.as_array() {
+                    [a, b] => Some([a.as_index()?, b.as_index()?]),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        })?,
+        vertices: indices(value, "vertices")?,
+        select_all: opt_bool(value, "select_all")?.unwrap_or(false),
+        cut: opt_bool(value, "cut")?.unwrap_or(false),
+        stitch: opt_bool(value, "stitch")?.unwrap_or(false),
+        pin: opt_bool(value, "pin")?,
+        reflatten: opt_bool(value, "reflatten")?.unwrap_or(false),
+        repack: opt_bool(value, "repack")?,
+        pack: match value.get("pack") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+            Some(Value::Bool(true)) => Some(UvPack::default()),
+            Some(object @ Value::Object(_)) => Some(UvPack {
+                margin: opt_number(object, "margin")?,
+                unit: opt_string(object, "unit")?,
+                texture: opt_index(object, "texture")?.map(|n| n as u32),
+                rotate: opt_bool(object, "rotate")?,
+                into: opt_string(object, "into")?,
+            }),
+            Some(_) => return Err(ProtocolError("`pack` is true, or the popover's settings: {\"margin\": 2, \"unit\": \"mm\", \"rotate\": true, \"into\": \"guides\"}".into())),
+        },
+        pack_options: opt_bool(value, "pack_options")?,
+        straighten: opt_bool(value, "straighten")?.unwrap_or(false),
+        even: opt_bool(value, "even")?.unwrap_or(false),
+        unwrap: opt_bool(value, "unwrap")?.unwrap_or(false),
+        transform: match value.get("transform") {
+            None | Some(Value::Null) => None,
+            Some(object @ Value::Object(_)) => Some(UvTransform {
+                offset: optional(object, "offset", "a move of the layout, [du, dv]", point)?,
+                turn: opt_number(object, "turn")?,
+                scale: match object.get("scale") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Number(k)) if k.is_finite() && *k > 0.0 => Some([*k as f32; 2]),
+                    Some(v) => Some(point(v).filter(|p| p.iter().all(|k| *k > 0.0)).ok_or_else(|| ProtocolError("`scale` is a number above 0, or [across, down]".into()))?),
+                },
+                flip: opt_string(object, "flip")?,
+                quarter: optional(object, "quarter", "a whole number of quarter turns", |v| v.as_f64().filter(|n| n.fract() == 0.0 && n.abs() <= 8.0).map(|n| n as i32))?,
+            }),
+            Some(_) => return Err(ProtocolError("`transform` is an object, such as {\"offset\": [0.1, 0], \"turn\": 15}".into())),
+        },
+        heatmap: opt_string(value, "heatmap")?,
+        set: opt_index(value, "set")?,
+        set_action: opt_string(value, "set_action")?,
+        export: match value.get("export") {
+            None | Some(Value::Null) => None,
+            Some(object @ Value::Object(_)) => Some(UvExport {
+                path: opt_string(object, "path")?.ok_or_else(|| ProtocolError("`export` needs a `path`, .svg or .png".into()))?,
+                size: opt_index(object, "size")?.map(|n| n as u32),
+                fill: opt_string(object, "fill")?,
+                line: opt_string(object, "line")?,
+                transparent: opt_bool(object, "transparent")?,
+            }),
+            Some(_) => return Err(ProtocolError("`export` is an object, such as {\"path\": \"C:/work/layout.png\", \"size\": 2048}".into())),
+        },
+        export_dialog: opt_bool(value, "export_dialog")?,
+        faces: indices(value, "faces")?,
+        from_faces: opt_bool(value, "from_faces")?.unwrap_or(false),
+        cut_faces: opt_bool(value, "cut_faces")?.unwrap_or(false),
+        hover_face: match value.get("hover_face") {
+            None => None,
+            Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+            Some(v) => Some(Some(v.as_index().ok_or_else(|| ProtocolError("`hover_face` is a face of the part, by number, or false".into()))?)),
+        },
+        place: opt_string(value, "place")?,
     })
+}
+
+/// A list of whole numbers.
+fn indices(value: &Value, key: &str) -> Result<Option<Vec<usize>>, ProtocolError> {
+    optional(value, key, "a list of whole numbers", |v| v.as_array().iter().map(Value::as_index).collect::<Option<Vec<_>>>())
 }
 
 /// A background render. Absent fields come from the document's settings.

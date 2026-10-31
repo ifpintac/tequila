@@ -256,9 +256,11 @@ pub fn reference() -> String {
          `fill` is `islands`, `none`, or a heatmap of how much the layout stretches\n\
          each triangle: `area` or `angle`. `edges`, `seams` and `note` (the square's\n\
          size in millimetres, where the layout is as dense all over) are on unless\n\
-         set false. The format is the path's extension unless `format` says. From\n\
-         Python: `fs.uv_layout(node, path, size=2048, fill='islands')`. A headless\n\
-         session answers it; it cannot go inside a batch.\n\n\
+         set false; `line` draws the lines in one colour, `\"#rrggbb\"`, and\n\
+         `transparent` leaves out the white square under them. The format is the\n\
+         path's extension unless `format` says. From Python:\n\
+         `fs.uv_layout(node, path, size=2048, fill='islands')`. The application and\n\
+         a headless session both answer it; it cannot go inside a batch.\n\n\
          In the commands, an island is named by its number - islands are numbered\n\
          in the order of their first triangle - a vertex by its mesh vertex number,\n\
          and an edge by the mesh vertices at its two ends, on either side of it.\n\

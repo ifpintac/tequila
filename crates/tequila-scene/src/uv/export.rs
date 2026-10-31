@@ -40,11 +40,17 @@ pub struct LayoutPicture {
     pub seams: bool,
     /// The square's size on the part, where the layout says it.
     pub note: bool,
+    /// The colour the lines are drawn in, sRGB - the edges, the part's edge,
+    /// and the seams when they are not in colour - or the usual greys.
+    pub line: Option<[u8; 3]>,
+    /// No white square under the layout: a PNG is clear where nothing is
+    /// drawn, to lay over artwork.
+    pub transparent: bool,
 }
 
 impl Default for LayoutPicture {
     fn default() -> Self {
-        LayoutPicture { size: 2048, fill: Fill::Islands, edges: true, seams: true, note: true }
+        LayoutPicture { size: 2048, fill: Fill::Islands, edges: true, seams: true, note: true, line: None, transparent: false }
     }
 }
 
@@ -61,7 +67,14 @@ pub fn layout_svg(mesh: &Mesh, set: usize, picture: &LayoutPicture) -> Result<St
     let mut out = String::with_capacity(layout.edges.len() * 40 + 4096);
     let _ = writeln!(out, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">"#);
     let _ = writeln!(out, "<title>UV layout, set {set}</title>");
-    let _ = writeln!(out, r##"<rect width="{size}" height="{size}" fill="#ffffff"/>"##);
+    if !picture.transparent {
+        let _ = writeln!(out, r##"<rect width="{size}" height="{size}" fill="#ffffff"/>"##);
+    }
+    // The lines: the usual greys, or one colour, the inner edges lighter.
+    let (inner, outer, opacity) = match picture.line {
+        Some(colour) => (hex(colour), hex(colour), 0.55),
+        None => ("#5a5f66".to_string(), "#1d2024".to_string(), 1.0),
+    };
     let triangle = |out: &mut String, t: u32| {
         let [a, b, c] = layout.triangle_uv(t).map(at);
         let _ = write!(out, "M{:.2} {:.2}L{:.2} {:.2}L{:.2} {:.2}Z", a.0, a.1, b.0, b.1, c.0, c.1);
@@ -103,13 +116,18 @@ pub fn layout_svg(mesh: &Mesh, set: usize, picture: &LayoutPicture) -> Result<St
         d
     };
     if picture.edges {
-        let _ = writeln!(out, r##"<path id="edges" fill="none" stroke="#5a5f66" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke * 0.6, lines(EdgeKind::Inner));
+        let _ = writeln!(
+            out,
+            r##"<path id="edges" fill="none" stroke="{inner}" stroke-opacity="{opacity}" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##,
+            stroke * 0.6,
+            lines(EdgeKind::Inner)
+        );
     }
-    let _ = writeln!(out, r##"<path id="boundary" fill="none" stroke="#1d2024" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke, lines(EdgeKind::Boundary));
+    let _ = writeln!(out, r##"<path id="boundary" fill="none" stroke="{outer}" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke, lines(EdgeKind::Boundary));
     if picture.seams {
         let _ = writeln!(out, r##"<path id="seams" fill="none" stroke="#e8571f" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke * 1.5, lines(EdgeKind::Seam));
     } else {
-        let _ = writeln!(out, r##"<path id="seams" fill="none" stroke="#1d2024" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke, lines(EdgeKind::Seam));
+        let _ = writeln!(out, r##"<path id="seams" fill="none" stroke="{outer}" stroke-width="{:.2}" stroke-linecap="round" d="{}"/>"##, stroke, lines(EdgeKind::Seam));
     }
     let _ = writeln!(out, r##"<rect width="{size}" height="{size}" fill="none" stroke="#9aa0a6" stroke-width="{:.2}"/>"##, stroke * 2.0);
     if picture.note {
@@ -215,6 +233,25 @@ mod tests {
         let width = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
         let height = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
         assert_eq!((width, height), (256, 256));
+    }
+
+    /// Lines in a colour of their own, and no white square under them: a
+    /// layout to lay over artwork.
+    #[test]
+    fn the_lines_take_a_colour_and_the_square_can_be_clear() {
+        let mesh = unwrapped(cube());
+        let picture = LayoutPicture { size: 256, line: Some([0x20, 0x60, 0xc0]), transparent: true, note: false, ..Default::default() };
+        let svg = layout_svg(&mesh, 0, &picture).unwrap();
+        assert!(!svg.contains(r##"fill="#ffffff""##), "no white square");
+        assert!(svg.contains(r##"id="boundary" fill="none" stroke="#2060c0""##) || !svg.contains(r#"id="boundary""#));
+        assert!(svg.contains(r##"id="edges" fill="none" stroke="#2060c0""##));
+        let path = std::env::temp_dir().join(format!("tequila-clear-layout-{}.png", std::process::id()));
+        std::fs::write(&path, layout_png(&mesh, 0, &picture).unwrap()).unwrap();
+        let image = tequila_texture::image::Image::load_raw(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(image.channels, 4);
+        let clear = image.data.chunks(4).filter(|p| p[3] == 0.0).count();
+        assert!(clear > image.width * image.height / 10, "the square is clear between the islands: {clear}");
     }
 
     #[test]

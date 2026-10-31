@@ -72,7 +72,8 @@ pub fn encode(command: &Command) -> String {
                 .set("cone_degrees", options.cone_degrees)
                 .set("crease_degrees", options.crease_degrees)
                 .set("margin", options.margin)
-                .set("respect_cuts", options.respect_cuts);
+                .set("respect_cuts", options.respect_cuts)
+                .set_some("in_place", options.in_place);
         }
         Command::CutUvs { node, set, edges, reflatten } => {
             out.set("node", node.0).set("set", *set).set("edges", edge_list(edges)).set("reflatten", *reflatten);
@@ -585,6 +586,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                     crease_degrees: number("crease_degrees", defaults.crease_degrees, 1.0, 180.0),
                     margin: number("margin", defaults.margin, 0.0, 0.1),
                     respect_cuts: boolean(&value, "respect_cuts"),
+                    in_place: value.get("in_place").and_then(|v| v.as_index()),
                 },
             }
         }
