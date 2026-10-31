@@ -44,6 +44,27 @@ pub enum Scattering {
     Fibre(tequila_materials::lobes::Fibre),
 }
 
+impl Scattering {
+    /// A sample, and the roughness of the reflection it took where it took
+    /// one off the coat, the interface or a metal
+    /// ([`MaterialBsdf::sample_reflection`]). A fibre has none.
+    pub fn sample_reflection(&self, wo: tequila_core::math::Vec3, u: tequila_core::math::Vec2, uc: f32) -> Option<(tequila_materials::BsdfSample, Option<f32>)> {
+        match self {
+            Scattering::Surface(b) => b.sample_reflection(wo, u, uc),
+            Scattering::Fibre(b) => tequila_materials::Bsdf::sample(b, wo, u, uc).map(|sample| (sample, None)),
+        }
+    }
+
+    /// The density of those reflections alone, each weighed by `share` of
+    /// its roughness ([`MaterialBsdf::pdf_reflection`]).
+    pub fn pdf_reflection(&self, wo: tequila_core::math::Vec3, wi: tequila_core::math::Vec3, share: impl Fn(f32) -> f32) -> f32 {
+        match self {
+            Scattering::Surface(b) => b.pdf_reflection(wo, wi, share),
+            Scattering::Fibre(_) => 0.0,
+        }
+    }
+}
+
 impl tequila_materials::Bsdf for Scattering {
     fn eval(&self, wo: tequila_core::math::Vec3, wi: tequila_core::math::Vec3) -> tequila_core::spectrum::Spectrum {
         match self {
