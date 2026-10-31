@@ -409,7 +409,7 @@ fn legacy_controls(ui: &mut egui::Ui, project: &Project, kind: &mut NodeKind) ->
                 ui.label("Seed");
                 changed |= ui.add(egui::DragValue::new(seed)).changed();
             });
-            hint(ui, "Real fibres grown out of the surface in its own material: a peach's skin, felt, a tennis ball, a towel. Needs no wires; being in the graph is enough. Dense, long fuzz on a large part is a lot of geometry - the count is capped.");
+            hint(ui, "Real fibres grown out of the surface, in the material's Sheen Color and Roughness: a peach's skin, felt, a tennis ball, a towel. Needs no wires; being in the graph is enough, and it wins over the material's own Fibres settings. Dense, long fuzz on a large part is a lot of geometry - the count is capped at 250,000 a part.");
             changed
         }
         NodeKind::VolumeMap { .. } => {

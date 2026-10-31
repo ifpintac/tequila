@@ -23,6 +23,9 @@ pub struct ImageTab {
     /// selectors can offer what the config actually contains rather than
     /// asking the user to type names.
     known: Option<(String, Vec<(String, Vec<String>)>)>,
+    /// The config path last read into `known`, successfully or not, so a
+    /// config that will not read is not re-read on every frame.
+    read: Option<String>,
 }
 
 impl ImageTab {
@@ -152,6 +155,18 @@ impl ImageTab {
                     self.load(path.trim(), project);
                 }
 
+                // A selection the document arrived with — a project saved with
+                // a config — has not been through `load`, so its lists are
+                // read here, once per path, without changing the selection.
+                if let Some(selection) = &current {
+                    if self.typing.is_none() && self.read.as_deref() != Some(selection.config.as_str()) {
+                        self.read = Some(selection.config.clone());
+                        self.known = offered(&selection.config)
+                            .ok()
+                            .map(|displays| (selection.config.clone(), displays));
+                    }
+                }
+
                 // What the config offers.
                 let Some((loaded, displays)) = self.known.clone() else {
                     if current.is_some() && ui.button("Use the built-in transform").clicked() {
@@ -203,8 +218,10 @@ impl ImageTab {
             });
     }
 
-    /// Read a config's displays and views, and select its first one.
+    /// Read a config's displays and views, and select the first view it can
+    /// develop through.
     fn load(&mut self, path: &str, project: &mut Project) {
+        self.read = Some(path.to_string());
         if path.is_empty() {
             self.known = None;
             if project.document().ocio.is_some() {
@@ -214,24 +231,15 @@ impl ImageTab {
         }
         match tequila_color::ocio::Config::load(path) {
             Ok(config) => {
-                let displays: Vec<(String, Vec<String>)> = config
-                    .displays
-                    .iter()
-                    .map(|(name, views)| {
-                        (
-                            name.clone(),
-                            views.iter().map(|v| v.name.clone()).collect(),
-                        )
-                    })
-                    .collect();
-                let first = displays.first().cloned();
+                let displays = lists(&config);
+                let first = config.first_buildable_view();
                 self.known = Some((path.to_string(), displays));
-                if let Some((display, views)) = first {
+                if let Some((display, view)) = first {
                     let _ = project.apply(Command::SetColorManagement {
                         selection: Some(tequila_scene::document::OcioSelection {
                             config: path.to_string(),
                             display,
-                            view: views.first().cloned().unwrap_or_default(),
+                            view,
                         }),
                     });
                 }
@@ -242,4 +250,17 @@ impl ImageTab {
             }
         }
     }
+}
+
+/// A config's displays and their views, in the order the config offers them.
+fn offered(path: &str) -> Result<Vec<(String, Vec<String>)>, String> {
+    tequila_color::ocio::Config::load(path).map(|config| lists(&config))
+}
+
+fn lists(config: &tequila_color::ocio::Config) -> Vec<(String, Vec<String>)> {
+    config
+        .displays
+        .iter()
+        .map(|(name, views)| (name.clone(), views.iter().map(|v| v.name.clone()).collect()))
+        .collect()
 }

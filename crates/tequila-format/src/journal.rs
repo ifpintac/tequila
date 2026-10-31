@@ -67,6 +67,12 @@ pub fn encode(command: &Command) -> String {
         Command::SplitIntoParts { node } => {
             out.set("node", node.0);
         }
+        Command::UnwrapUvs { node, options } => {
+            out.set("node", node.0)
+                .set("cone_degrees", options.cone_degrees)
+                .set("crease_degrees", options.crease_degrees)
+                .set("margin", options.margin);
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -89,6 +95,9 @@ pub fn encode(command: &Command) -> String {
         }
         Command::SetVisibility { states } => {
             out.set("states", flags(states));
+        }
+        Command::SetLayerVisibility { layer, visible } => {
+            out.set("layer", layer.clone()).set("visible", *visible);
         }
         Command::SetLocked { states } => {
             out.set("states", flags(states));
@@ -269,7 +278,8 @@ pub fn encode(command: &Command) -> String {
                 .set("flip_u", mapping.flip_u)
                 .set("flip_v", mapping.flip_v)
                 .set("blend_sharpness", mapping.blend_sharpness)
-                .set("real_world_units", mapping.real_world_units);
+                .set("real_world_units", mapping.real_world_units)
+                .set("rigid", mapping.rigid);
         }
         Command::SetSky { sky } => {
             // `null` rather than an absent key: the difference between "no
@@ -500,6 +510,22 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             nodes: node_list("nodes"),
         },
         "scene.split_parts" => Command::SplitIntoParts { node: node("node")? },
+        // Each setting the default's when left out, and kept to what lays a
+        // surface out: a cone past a right angle would fold charts over.
+        "scene.unwrap_uvs" => {
+            let defaults = tequila_scene::uv::UnwrapOptions::default();
+            let number = |key: &str, fallback: f32, low: f32, high: f32| {
+                value.get(key).and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(low, high)).unwrap_or(fallback)
+            };
+            Command::UnwrapUvs {
+                node: node("node")?,
+                options: tequila_scene::uv::UnwrapOptions {
+                    cone_degrees: number("cone_degrees", defaults.cone_degrees, 5.0, 89.0),
+                    crease_degrees: number("crease_degrees", defaults.crease_degrees, 1.0, 180.0),
+                    margin: number("margin", defaults.margin, 0.0, 0.1),
+                },
+            }
+        }
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,
@@ -522,6 +548,15 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
         }
         "scene.set_visibility" => Command::SetVisibility {
             states: read_flags(&value)?,
+        },
+        // Whether to show or hide is the whole point, so it is never
+        // assumed.
+        "scene.set_layer_visibility" => Command::SetLayerVisibility {
+            layer: text("layer")?,
+            visible: value
+                .get("visible")
+                .and_then(|v| v.as_bool())
+                .ok_or_else(|| FormatError::Invalid(format!("`{name}` has no `visible`")))?,
         },
         "scene.set_locked" => Command::SetLocked {
             states: read_flags(&value)?,
@@ -735,6 +770,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 flip_v: boolean(&value, "flip_v"),
                 blend_sharpness: scalar("blend_sharpness").unwrap_or(default.blend_sharpness),
                 real_world_units: boolean(&value, "real_world_units"),
+                rigid: boolean(&value, "rigid"),
             };
             Command::SetTextureMapping {
                 material: material("material")?,
@@ -1267,6 +1303,9 @@ fn reimport_payload_to_json(payload: &tequila_scene::reimport::ReimportPayload) 
                     if let Some(transform) = update.transform {
                         entry.set("transform", matrix(transform));
                     }
+                    if !update.layers.is_empty() {
+                        entry.set("layers", crate::layers_to_json(&update.layers));
+                    }
                     entry.build()
                 })
                 .collect(),
@@ -1304,6 +1343,7 @@ fn reimport_payload_from_json(value: &Value) -> Result<tequila_scene::reimport::
             material: entry.get("material").and_then(|v| v.as_index()).map(|m| MaterialKey(m as u64)),
             metadata,
             path_key: entry.get("path_key").and_then(|v| v.as_str()).map(String::from),
+            layers: crate::read_layers(entry.get("layers")),
         });
     }
     Ok(tequila_scene::reimport::ReimportPayload {
@@ -1349,6 +1389,9 @@ fn node_to_json(node: &SceneNode) -> Value {
                     .collect(),
             ),
         );
+    }
+    if !node.layers.is_empty() {
+        out.set("layers", crate::layers_to_json(&node.layers));
     }
     out.build()
 }
@@ -1495,6 +1538,7 @@ fn node_from_json(value: &Value) -> Result<SceneNode, FormatError> {
             }
         }
     }
+    node.layers = crate::read_layers(value.get("layers"));
     Ok(node)
 }
 

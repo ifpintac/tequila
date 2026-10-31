@@ -119,8 +119,9 @@ TOOLS = [
           'focal_length': {'type': 'number', 'description': 'Millimetres.'}}),
     tool('tequila_screenshot', 'See the application as it is now. Returns an image.',
          {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'}}),
-    tool('tequila_render', 'Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples).',
-         {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'}}),
+    tool('tequila_render', "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples). wireframe=true draws the model's edges instead, as the project's Wireframe settings say - no ray tracing, a second or two at any size.",
+         {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'},
+          'wireframe': {'type': 'boolean'}}),
     tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.',
          {'name': {'type': 'string'}, 'width': {'type': 'integer'}, 'height': {'type': 'integer'},
           'samples': {'type': 'integer'}, 'folder': {'type': 'string'}, 'filename': {'type': 'string'},
@@ -408,9 +409,12 @@ class Bridge:
         self.client().screenshot(path, viewport=viewport)
         return image(path, f'Tequila {"viewport" if viewport else "window"}')
 
-    def tool_render(self, width=640, height=400, samples=32):
+    def tool_render(self, width=640, height=400, samples=32, wireframe=False):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-render-{time.time_ns()}.png'
-        result = self.request('render', path=str(path), width=width, height=height, samples=samples)
+        fields = dict(path=str(path), width=width, height=height, samples=samples)
+        if wireframe:
+            fields['wireframe'] = True
+        result = self.request('render', **fields)
         return image(path, json.dumps(result))
 
     def tool_queue(self, **job):

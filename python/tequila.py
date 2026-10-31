@@ -239,8 +239,13 @@ class Client:
             time.sleep(0.05)
         raise TimeoutError('Screenshot has not completed; inspect app activity for errors')
 
-    def render(self, path, *, width=960, height=600, samples=64, timeout=3600):
+    def render(self, path, *, width=960, height=600, samples=64, wireframe=False, timeout=3600):
         """Render to a file and return when it is written.
+
+        With `wireframe=True`, draw the model's edges instead - as the
+        project's Wireframe settings say (`render.set_settings` with
+        `wireframe: {edges, hidden, line_width, ...}`) - with no ray tracing:
+        a second or two at any size.
 
         Synchronous, and a final-quality frame takes minutes, so the wait is
         this call's own `timeout` (seconds, default an hour) rather than the
@@ -250,7 +255,10 @@ class Client:
         previous = self._socket.gettimeout()
         self._socket.settimeout(timeout)
         try:
-            return self.request('render', path=str(Path(path).resolve()), width=width, height=height, samples=samples)
+            fields = dict(path=str(Path(path).resolve()), width=width, height=height, samples=samples)
+            if wireframe:
+                fields['wireframe'] = True
+            return self.request('render', **fields)
         finally:
             try:
                 self._socket.settimeout(previous)

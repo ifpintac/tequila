@@ -77,6 +77,7 @@ pub fn read(
         source_unit: Some(LengthUnit::Metre),
         tessellation: None,
         warnings,
+        setup: None,
     };
     scene.validate().map_err(ImportError::Malformed)?;
     Ok(scene)
@@ -147,6 +148,8 @@ fn split_container(bytes: &[u8]) -> Result<(Vec<u8>, Option<&[u8]>), ImportError
 fn report_unsupported_extensions(root: &json::Value, warnings: &mut Vec<String>) {
     const IMPLEMENTED: &[&str] = &[
         "KHR_texture_transform",
+        "EXT_texture_webp",
+        "MSFT_texture_dds",
         "KHR_materials_emissive_strength",
         "KHR_materials_ior",
         "KHR_materials_transmission",
@@ -444,12 +447,19 @@ fn image_extension(mime: Option<&str>, bytes: &[u8]) -> Option<&'static str> {
     match mime {
         Some("image/png") => return Some("png"),
         Some("image/jpeg") => return Some("jpg"),
+        // `EXT_texture_webp` and `MSFT_texture_dds`.
+        Some("image/webp") => return Some("webp"),
+        Some("image/vnd-ms.dds") => return Some("dds"),
         _ => {}
     }
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         Some("png")
     } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         Some("jpg")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else if bytes.starts_with(b"DDS ") {
+        Some("dds")
     } else {
         None
     }
@@ -566,6 +576,11 @@ fn texture_transform(
 }
 
 /// The image index a texture reference resolves to.
+///
+/// `EXT_texture_webp` and `MSFT_texture_dds` name their image inside the
+/// texture's extensions, and a reader that knows them uses it; the plain
+/// `source` is then a PNG or JPEG fallback for readers that do not, and may
+/// be missing altogether when the extension is required.
 fn texture_image(root: &json::Value, reference: Option<&json::Value>) -> Option<usize> {
     let index = reference?.get("index")?.as_f32()? as usize;
     let texture = root
@@ -573,7 +588,10 @@ fn texture_image(root: &json::Value, reference: Option<&json::Value>) -> Option<
         .map(|v| v.as_array())
         .unwrap_or(&[])
         .get(index)?;
-    Some(texture.get("source")?.as_f32()? as usize)
+    let extended = ["EXT_texture_webp", "MSFT_texture_dds"]
+        .iter()
+        .find_map(|name| texture.get("extensions")?.get(name)?.get("source")?.as_f32());
+    Some(extended.or_else(|| texture.get("source")?.as_f32())? as usize)
 }
 
 fn read_materials(
@@ -1805,6 +1823,7 @@ fn read_nodes(
                 _ => None,
             },
             metadata: Default::default(),
+            layers: Vec::new(),
             hidden: false,
         };
         // §6.5: "Retain all imported attributes per node." glTF puts them in

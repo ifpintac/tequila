@@ -48,6 +48,8 @@ pub struct UvTransform {
     pub rotation: f32,
     pub flip: [bool; 2],
     pub wrap: [Wrap; 2],
+    /// Turned as a whole (`Mapping::rigid`).
+    pub rigid: bool,
 }
 
 impl UvTransform {
@@ -69,6 +71,7 @@ impl UvTransform {
             rotation: mapping.rotation * std::f32::consts::TAU,
             flip: [mapping.flip_u, mapping.flip_v],
             wrap: [mapping.wrap_u, mapping.wrap_v],
+            rigid: mapping.rigid,
         })
     }
 
@@ -78,9 +81,18 @@ impl UvTransform {
         let (mut u, mut v) = (u * self.scale[0], v * self.scale[1]);
         if self.rotation != 0.0 {
             let (sin, cos) = self.rotation.sin_cos();
-            let (pu, pv) = (u - self.pivot[0], v - self.pivot[1]);
-            u = pu * cos - pv * sin + self.pivot[0];
-            v = pu * sin + pv * cos + self.pivot[1];
+            let (mut pu, mut pv) = (u - self.pivot[0], v - self.pivot[1]);
+            if self.rigid {
+                pu /= self.scale[0];
+                pv /= self.scale[1];
+            }
+            (u, v) = (pu * cos - pv * sin, pu * sin + pv * cos);
+            if self.rigid {
+                u *= self.scale[0];
+                v *= self.scale[1];
+            }
+            u += self.pivot[0];
+            v += self.pivot[1];
         }
         u += self.offset[0];
         v += self.offset[1];
@@ -205,7 +217,8 @@ impl SolidLabel {
         } else {
             (m.scale.x, m.scale.y)
         };
-        let flips = m.flip_u as i32 as f32 + 2.0 * m.flip_v as i32 as f32;
+        // The flips in the low two bits, rigid in the third.
+        let flips = m.flip_u as i32 as f32 + 2.0 * m.flip_v as i32 as f32 + 4.0 * m.rigid as i32 as f32;
         let colour_managed = texture.role == MapRole::Color && texture.source_color_space != tequila_texture::image::ColorSpace::Raw;
         Some(SolidLabel {
             mode: [projection, axis, (m.real_world_units && projection != 0) as i32, colour_managed as i32],
@@ -709,15 +722,21 @@ bool inside_cutter(int shape, vec3 p) {
 
 vec2 transform_uv(vec2 uv, vec4 a, vec4 b) {
     // a = (scale.u, scale.v, pivot.u, pivot.v); b = (offset.u, offset.v, rotation, flips)
+    // with flips' third bit for a rigid turn (`Mapping::rigid`).
+    bool rigid = b.w >= 4.0;
     vec2 p = uv * a.xy;
     if (b.z != 0.0) {
         vec2 q = p - a.zw;
+        vec2 scale = vec2(abs(a.x) < 1e-12 ? 1e-12 : a.x, abs(a.y) < 1e-12 ? 1e-12 : a.y);
+        if (rigid) q /= scale;
         float s = sin(b.z);
         float c = cos(b.z);
-        p = vec2(q.x * c - q.y * s, q.x * s + q.y * c) + a.zw;
+        q = vec2(q.x * c - q.y * s, q.x * s + q.y * c);
+        if (rigid) q *= scale;
+        p = q + a.zw;
     }
     p += b.xy;
-    float flips = b.w;
+    float flips = mod(b.w, 4.0);
     if (mod(flips, 2.0) >= 1.0) p.x = -p.x;
     if (flips >= 2.0) p.y = -p.y;
     return p;
@@ -2101,7 +2120,7 @@ impl Gpu {
                     gl.bind_texture(glow::TEXTURE_2D, Some(gpu.texture));
                     gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, wrap_mode(transform.wrap[0]));
                     gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, wrap_mode(transform.wrap[1]));
-                    let flips = transform.flip[0] as i32 as f32 + 2.0 * transform.flip[1] as i32 as f32;
+                    let flips = transform.flip[0] as i32 as f32 + 2.0 * transform.flip[1] as i32 as f32 + 4.0 * transform.rigid as i32 as f32;
                     let packed = [
                         transform.scale[0], transform.scale[1], transform.pivot[0], transform.pivot[1],
                         transform.offset[0], transform.offset[1], transform.rotation, flips,
@@ -2773,16 +2792,19 @@ mod tests {
         assert!(solid.volume_extinction > 0.0 && solid.volume_albedo.luminance() > 0.5);
     }
 
-    /// The GPU's UV arithmetic is the CPU mapping's, for every option.
+    /// The GPU's UV arithmetic is the CPU mapping's, for every option, turned
+    /// as glTF turns a texture or as a whole.
     #[test]
     fn uv_transforms_match_the_cpu_mapping() {
         use tequila_texture::projection::SurfacePoint;
+        for rigid in [false, true] {
         let mapping = Mapping {
             scale: tequila_core::math::vec3(2.0, 3.0, 1.0),
             offset: tequila_core::math::Vec2 { x: 0.25, y: -0.5 },
             rotation: 0.125,
             pivot: tequila_core::math::Vec2 { x: 0.5, y: 0.5 },
             flip_u: true,
+            rigid,
             ..Default::default()
         };
         let transform = UvTransform::of(&mapping).expect("a UV mapping");
@@ -2801,7 +2823,8 @@ mod tests {
             };
             let cpu = mapping.project(&point)[0].coords;
             let gpu = transform.apply(u, v);
-            assert!((cpu.u - gpu.0).abs() < 1e-5 && (cpu.v - gpu.1).abs() < 1e-5, "({u},{v}): cpu {:?} gpu {gpu:?}", (cpu.u, cpu.v));
+            assert!((cpu.u - gpu.0).abs() < 1e-5 && (cpu.v - gpu.1).abs() < 1e-5, "({u},{v}) rigid {rigid}: cpu {:?} gpu {gpu:?}", (cpu.u, cpu.v));
+        }
         }
     }
 

@@ -231,9 +231,19 @@ is one command and one undo step.
       colour-space assignment by map role, UDIM tile sets, and a
       memory-budgeted LRU cache — in Rust rather than over OIIO, which is a
       deliberate deviation recorded in `crates/tequila-texture/src/mip.rs`.
-      **Outstanding:** tile-level residency, async load, and formats beyond
-      PNG/EXR/HDR (PSD, WebP, TGA, video), which is where OIIO is hard to
-      replace.
+      **Outstanding:** tile-level residency and async load.
+      *Done 2026-10-30:* formats beyond PNG/EXR/HDR, all in pure Rust
+      behind `tequila_texture::image::Image::load` — JPEG, PSD and PSB;
+      TGA and BMP read by hand (`tga.rs`, `bmp.rs`); TIFF at 8, 16 and 32
+      bits through the `tiff` crate; WebP lossy and lossless with alpha
+      (`image-webp`); GIF's first frame; DDS, its header read by hand and
+      BC1–BC7 decoded by `bcdec_rs`; JPEG XL (`jxl-oxide`); and SVG
+      rasterized by resvg with the system's fonts (`svg.rs`), a physical
+      width and height giving a label its print size as a PSD's DPI does.
+      The texture, pin and label pickers and the importers' format checks
+      take them from the one list (`Image::DECODABLE`); the texture-pack
+      picker and window drop take the map formats among them. HEIC and
+      AVIF are not read: their decoders are C libraries.
 - [x] Projection modes incl. tri-planar (§02 §5.3), with derivative-aware
       cylindrical seam handling and real-world units. The Mapping 2D node
       exists in the graph; its *editor* arrives with the graph editor in M6.
@@ -274,7 +284,7 @@ the application and linking behaviour, and
 - [x] Camera tab: all four lens types, focal length/FOV, DOF with Keep Focus, ground grid.
 - [x] Match Perspective (2- and 3-point).
 - [x] Multiple cameras, switching, saved views.
-- [~] OCIO v2 pipeline, ACEScg working space, display transforms (§01 §7).
+- [x] OCIO v2 pipeline, ACEScg working space, display transforms (§01 §7). The ACES 1.3 studio config develops end to end, `BuiltinTransform` included; the ACES 2.0 output transforms are reported, not built.
 - [x] Image tab: Basic and Photographic image styles, applied as a re-tonemap with **no re-render** (§01 §9.3).
 - [x] Lighting tab: the five presets + Custom, wired to the integrator config table (§01 §11).
 
@@ -323,21 +333,46 @@ snapshot *is* a restart whatever its contents. `Project::apply` now consults
 
 #### M3 implementation notes
 
-**Colour management is the one incomplete item, and the gap is specific.**
-ACEScg has been the working space since M0 and the five display transforms are
-analytic, as `docs/05` §1 note 3 intended. The OCIO v2 side reads a config and
-evaluates it — a YAML subset, the `.cube`/`.spi1d`/`.spimtx` LUT formats, and
-the transform graph in both directions — and
-`a_config_that_encodes_srgb_matches_the_analytic_transform` checks the result
-against the analytic transform that note 3 said would be the reference.
+**Colour management develops through the ACES studio config, and the one gap
+left is ACES 2.0.** ACEScg has been the working space since M0 and the five
+display transforms are analytic, as `docs/05` §1 note 3 intended. The OCIO v2
+side reads a config and evaluates it — a YAML subset, the
+`.cube`/`.spi1d`/`.spimtx` LUT formats, and the transform graph in both
+directions — and `a_config_that_encodes_srgb_matches_the_analytic_transform`
+checks the result against the analytic transform that note 3 said would be the
+reference.
 
-What is **not** implemented is `BuiltinTransform`: OCIO v2 moved the ACES output
-transforms out of LUT files into a registry built into the library, defined by
-its C++ rather than by any file. So a config that uses one — which the ACES
-studio config does — is *reported* as unsupported, by name, and the built-in
-transforms stay available. A config built from LUTs works end to end; the ACES
-studio config specifically does not, and saying so is better than an image
-silently developed through an incomplete pipeline.
+It now also reads what makes a config a v2 one: display-referred colour spaces
+against the CIE XYZ D65 connection space, view transforms, shared views,
+looks, aliases, data spaces and the active display and view lists. And it
+implements `BuiltinTransform`, the registry OCIO v2 moved the ACES transforms
+into (`tequila-color/src/ocio/builtin.rs`): the ACES 1.0 SDR and 1.1 HDR output
+transforms written out from the Academy's CTL — RRT, the C5 and C9 splines, the
+Single Stage Tone Scale, surround and gamut-limit steps, the D60 and D65
+simulations — the ACES log encodings, the 1.3 Reference Gamut Compression and
+the blue-light fix, the display encodings (sRGB, Rec.1886, gamma 2.2/2.6, PQ,
+HLG, DCDM) and the ARRI, Sony, RED, Canon, Panasonic and Apple log cameras.
+`tests/aces_studio_config.rs` loads a hand-written subset of
+`studio-config-v1.0.0_aces-v1.3_ocio-v2.1` (the published file could not be
+fetched, so the fixture is written to its structure and names), builds all 47 of
+its views and develops an image through the default one.
+
+The maths is checked against values whose source is stated in each test: the
+AP0/AP1 matrices and ACEScct/ACEScc breakpoints of the Academy specifications,
+the camera vendors' own matrices and grey code values, the sRGB, PQ and HLG
+standards, and the SSTS reproducing the RRT's published coefficients. The
+output transforms' grey, black and peak values are *derived* from the CTL
+constants, not read from a published table, and the tests say so. What has not
+been done is to run the real published config, or to compare against OCIO's
+own output; both want a machine with OCIO on it.
+
+The ACES 2.0 output transforms of OCIO 2.4 (`..._2.0` styles) are still
+*reported* as unsupported, by name, and the built-in transforms stay available.
+Their tone scale, chroma compression and gamut compression are a body of work
+of their own, and an approximation would be the quietly wrong picture OCIO
+exists to prevent. An ACES view also costs more than the analytic transforms —
+about 0.6 µs a pixel on one core, some 75 ms for a 1080p re-develop on sixteen
+— because it evaluates the CTL rather than a LUT baked from it.
 
 Two smaller gaps, both carried forward deliberately:
 
@@ -526,14 +561,48 @@ Alembic deformation import serve neither.
       dense milk in a glass-sized ball kept 0.83 of a white world's light,
       now 0.98 to 1.00. *Open:* the CPU Solid fallback still shows such a
       medium at its described density.
-- [ ] Geometry nodes: Displace with adaptive tessellation, Flakes, Fuzz, Bubbles.
-      *Done:* Displace, Flakes, and Bubbles — real air pockets rather than
-      §4.4's density field, which reads as fuzzy specks: inside-out spheres
-      in the part's own material, so a ray meeting one leaves the liquid
-      into air with the right refraction and total-internal-reflection rim,
-      placed wholly inside the (closed) part without overlapping, seeded
-      and cached. *Open:* geometric Fuzz (shading-only fuzz is the fuzz
-      lobe); curve primitives are not in the Embree integration yet.
+- [x] Geometry nodes: Displace with adaptive tessellation, Flakes, Fuzz, Bubbles.
+      *Fuzz since October 31:* real fibres, grown when the scene is built
+      (`tequila_scene::fuzz`) by a material's own settings - Fibres (to the
+      square centimetre; 0, the default, grows none), length, thickness,
+      lean, curl and colour variation, offered wherever Sheen is - or by a
+      Fuzz node, which wins. Five points a fibre, rooted evenly by area,
+      tapering to a fifth at the tip, outward even on a part wound inside
+      out; capped at 250,000 a part, which grow in about 90 ms and build in
+      about 60, cached by mesh, scale and settings. Tequila's renderer
+      traces them as Embree's flat linear curves - ribbons facing each ray,
+      with a filter so a ray leaving a fibre does not meet it again - and
+      shades them with Chiang et al.'s fibre model, ported from Cycles'
+      Principled Hair, in the fuzz colour and roughness; Cycles gets them as
+      thick linear hair through an optional `fsc_curves` (an older library
+      warns and leaves them out) and shades them with Principled Hair,
+      Chiang. `sample`, `eval` and `pdf` agree (a white fibre's furnace by
+      its own sampling and by uniform directions, a χ² test over the
+      roughness ladder), white fur on a white ball in a white world reads
+      0.999, and `fibres_render_alike_in_both_renderers` holds a furred ball
+      to 2% in brightness, 3.5% in colour and 1% in the fuzz past its
+      outline (its light and shade correlated 0.95). That took a pass
+      through a fibre counting as a transmission rather than a bounce, as
+      Cycles counts hair's, and firefly rejection leaving fibres' glints
+      alone: before, Tequila's ball was 19% darker. Fibres take shadows,
+      cast them, show in reflections and keep their part's rays, holdout,
+      light links, render layer and name; picking one picks the part.
+      Measured at 960 x 600 and 256 samples: a tennis ball's 205,000 fibres
+      took a mid shot from 32 s to 131 s in Tequila's renderer and a
+      close-up from 76 s to 199 s (Cycles on the graphics card 18 to 28 s
+      and 12 to 26 s), a velvet cushion's 250,000 from 25 to 41 s and 31 to
+      72 s (Cycles 14 to 15 s and 11 to 15 s). That is a slower refinement
+      rather than a stall, so they stay in the Rendered view in both
+      engines; the Solid view, the Fast preview and the preview sphere show
+      the sheen alone. A document without fibres renders bit for bit as
+      before. *Before:* Displace, Flakes, and Bubbles
+      — real air pockets rather than §4.4's density field, which reads as
+      fuzzy specks: inside-out spheres in the part's own material, so a ray
+      meeting one leaves the liquid into air with the right refraction and
+      total-internal-reflection rim, placed wholly inside the (closed) part
+      without overlapping, seeded and cached. *Open:* fibres take their
+      colour and roughness as constants, so a texture on Sheen Color tints
+      the surface under them and not them.
 - [ ] ~~Animation nodes (Color Fade, Curve Fade)~~ — deferred with M5.
 - [x] HDRI Editor: light/image/gradient pins, sun & sky (Hosek-Wilkie), export to EXR, async CDF rebuild.
       *Hosek–Wilkie since September 26:* the authors' 1.4a reference code
@@ -562,7 +631,9 @@ Alembic deformation import serve neither.
       (metal where the artwork covers); a placement gizmo — click or drag
       to put the artwork there, Ctrl + scroll to size it, Shift + scroll to
       turn it, one undo step per gesture; PNG and JPEG artwork arrives at
-      the print size its file records (`pHYs`, JFIF density); and a Labels
+      the print size its file records (`pHYs`, JFIF density; since
+      2026-10-30 a TIFF's and a BMP's resolution, and an SVG's width and
+      height in millimetres, inches or points, too); and a Labels
       pass (RGBA, premultiplied, coverage as alpha) in the EXR. A label that
       plays as video, frame by frame through an animation, waits on
       animation (parked).
@@ -709,7 +780,28 @@ under M10's spectral item).
       as truck's reading; truck reads the file when the helper is missing or
       fails, and the scene says so. A 57 MB AP242 assembly in metres that
       truck read with 500 faces missing reads in ~40 s with none missing.)
-- [ ] STEP and IGES import via XDE: hierarchy, names, colours, metadata, layers.
+- [x] STEP and IGES import via XDE: hierarchy, names, colours, metadata, layers.
+      (2026-10-30: STEP's metadata and layers through XDE: `SetMetaMode`,
+      product metadata and `XCAFDoc_LayerTool`, in the helper's answer as
+      each body's and product's `attributes`, `layers` and `hidden` (every
+      layer it is on switched off), which an older answer simply lacks.
+      Attributes - part number, description, material, properties of the
+      user's own - are the node's metadata, the Metadata panel's (Scene tab);
+      layers are a list of their own on each node (`layers` in the project,
+      absent when empty; a project that kept them as the metadata field
+      `Layer` opens with them moved across), shown and hidden as groups by
+      the Scene tab's Layers list (`scene.set_layer_visibility`, one undo
+      step), read by a search or a Material Templates rule as the field
+      `Layer`, and given to scripts on every node and as the scene's
+      `layers`. truck reads the same entities, so a file reads the same
+      without OCCT. IGES through XDE as well (`IGESCAFControl_Reader`:
+      names, colours, levels as layers named "Level 5"), but only for a file
+      Tequila's own reader cannot read whole - a surface it does not read, a
+      face it cannot divide - since the two lay a surface model out
+      differently and updating or re-dividing a model matches its parts by
+      name; Tequila's reader reads levels too (one, or a 406 form 1 list),
+      and gathers only faces on the same levels into a body. IGES has no
+      attributes for either reader to give.)
       (Without OCCT, 2026-10-11: STEP keeps its B-rep - the file's bytes in
       the project, `sources/` - for Re-Tessellate (Draft/Medium/High/Ultra,
       Scene tab > Tessellation, an update that keeps every part's work), and
@@ -726,7 +818,6 @@ under M10's spectral item).
       loops and a curvature grid, exact normals) at the same presets, its
       bytes kept for Re-Tessellate, its boundaries as model edges with seams
       left out; faces meeting at their corners gathered into bodies.
-      Metadata and layers still wait for OCCT.
 - [x] BREP retention + serialization into the project: the STEP file's own
       bytes as a `sources/` member rather than OCCT's `.brep` (no OCCT), which
       truck re-reads exactly; kept up to 64 MB a file.
@@ -772,6 +863,24 @@ under M10's spectral item).
       property sets become searchable metadata; units, Z up and far-off
       georeferenced coordinates are handled. Not read: swept disks,
       revolved solids, NURBS (`IfcAdvancedBrep`) - listed in a warning.
+- [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
+      opened as a project of their own (File > Open, a drop, the start
+      screen, `tequila -i`) or imported into one (File > Import, the
+      scripting `import`). Tequila's own reader of the token stream
+      (`tequila-import/src/bip.rs`): every token skipped by its size when
+      unknown and said in a warning, the compressed chunk inflated, fuzzed
+      by truncation and corruption. The scene tree with its names,
+      placements and hidden variants; an object's trimmed NURBS faces
+      divided by the IGES divider at the import presets, in parallel,
+      turned to look the way KeyShot's own mesh of the object looks,
+      their boundaries kept as model edges; materials
+      through the `.kmp` converter with labels, measured metals and
+      emissive power; multi-materials as variants; HDRI-editor
+      environments rebuilt from their pins; every camera with its lens,
+      orthographic frame and depth of field; the image style and the
+      render's size and samples. Where KeyShot's own units are not known
+      (pin sizes, gradient stops, tone mapping) the reading is a best guess
+      and the import's warnings say so.
 - [x] Metadata panel, metadata-based selection, CSV export. The Scene tab
       searches `Field = value` (also `!=`, `:` contains, wildcards), a panel
       edits the selection's fields as one undo step, and Export CSV writes the
@@ -860,8 +969,11 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
 - [~] wgpu compute wavefront path tracer: stage kernels, SoA path state, material sorting.
       *Superseded* by Cycles' own GPU integrator.
 - [x] OptiX backend (NVIDIA hardware RT): Cycles' OptiX device.
-- [~] HIP RT backend (AMD): Cycles has it; this build ships the NVIDIA
-      kernels only.
+- [x] HIP backend (AMD): Cycles' HIP device, loaded at run time, with
+      Blender 5.0.1's HIP kernels, on Windows and Linux; the GPU denoiser
+      takes OIDN's HIP device on an AMD card. *Done 2026-10-30, untested on
+      an AMD card here* (an RTX 2060 machine). HIP RT, AMD's hardware ray
+      tracing, is left off: it needs AMD's HIP RT library beside Cycles.
 - [~] Texture streaming with LRU device residency; graceful CPU fallback on VRAM exhaustion.
       Cycles' texture handling; a render with no usable card falls back to
       Cycles on the processor (`batch::engine_for`).
@@ -869,27 +981,114 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       in the app's tests wherever Cycles is installed, and the whole-image
       agreement is measured above; neither is a CI gate yet, which needs
       the Cycles library on the CI machine.
-- [~] Multi-GPU support: Cycles' device list supports it; the app picks
-      one device.
+- [x] Multi-GPU support: the graphics-card engine renders on every card of
+      the best kind there is (OptiX, else CUDA, else HIP; Metal on a Mac)
+      together, as Cycles' multi-device, as Blender does with several
+      enabled. `TEQUILA_CYCLES_ONE_DEVICE` keeps it to the first, for a card
+      that misbehaves. *Done 2026-10-30; one card here, so the multi-device
+      path is Cycles' own, unexercised by this build's tests.*
 
 **Exit criterion:** GPU backend produces images matching CPU within tolerance on the parity suite, at ≥ 8× CPU throughput on the benchmark scene.
 
 ### M10 — Beyond parity (optional)
-- [ ] Spectral rendering promoted to default for dispersive materials.
-      *Dispersion done, September 26, as a deviation from §01 §7.4:* a path
-      meeting glass with an Abbe number takes one wavelength, weighted by
-      the colour it stands for (the CIE functions by Wyman et al.'s fit,
-      normalized so the wavelengths average to exact white), and refracts
-      by a two-term Cauchy index fitted to the IOR and Abbe number at every
-      dispersive surface after. That is hero-wavelength sampling after its
-      first dispersive event, which is where it matters. *Open:* the four
-      wavelengths before it (less colour noise) and Jakob & Hanika's RGB
-      upsampling, whose coefficient table this build does not carry;
-      surfaces met after the split filter the path by their RGB, exact for
-      neutral ones. Tested: a dispersive ball in a white world stays white
-      (0.99, 1.00, 1.01); a small light seen through one is 0.89 saturated,
-      against 0.00 without.
-- [ ] Manifold Next Event Estimation as an unbiased alternative to SPPM caustics.
+- [x] Spectral rendering promoted to default for dispersive materials.
+      *Dispersion done, September 26:* a path meeting glass with an Abbe
+      number takes one wavelength, weighted by the colour it stands for, and
+      refracts by a two-term Cauchy index fitted to the IOR and Abbe number.
+      That is still what an RGB render does (Spectral off).
+      *Spectral, October 30* (`tequila-render-core/src/spectral.rs`): the
+      Render window's **Spectral** — Auto (the default: spectral when a
+      material disperses, RGB otherwise), On, Off — saved as the render
+      settings' `spectral`, followed by the viewport, greyed out for Cycles.
+      A spectral path carries four wavelengths from the camera (Wilkie et
+      al.'s hero-wavelength sampling): one drawn from the sampler's
+      wavelength dimension and three a quarter, half and three quarters
+      further round the sampling distribution, which is Radziszewski et al.'s
+      sech² for the eye with an eighth by AP1's blue response, which the
+      eye's alone starves (a white path's blue strayed 47% RMS, now 11%; red
+      13%, green 5%). Every colour the path meets is read at the four as
+      Jakob & Hanika's sigmoid-polynomial spectrum: a BSDF's weight and a
+      volume's transmittance as reflectances, light — the environment,
+      emission, light samples — as unbounded colours at half brightness, a
+      random walk's medium made per wavelength from its colour and radius
+      (Chiang's remap is not linear: made per channel and upsampled, a milky
+      medium was dE 7 off). D65, the space's white, is folded into the
+      film's response rather than into the lights, so a white light is a
+      flat spectrum and a white furnace is white; radiance goes to the film
+      through the CIE functions (Wyman's fit) into AP1, normalized so a flat
+      spectrum is (1, 1, 1), and keeps its sign, since AP1's responses dip
+      below zero (clipped per path, a blue light was 30% too bright). A
+      dispersive surface refracts by the hero's index; the path keeps all
+      four off the surface and drops the other three, the hero carrying on
+      for four, when it goes through, as light sampled through a rough one
+      is the hero's alone. Firefly rejection judges a spectral path by the
+      light it carries over its wavelengths' luminance, signed. An RGB
+      render is bit-for-bit what it was: the integrator is one generic
+      function, and its RGB instance does the old arithmetic in the old
+      order (checked by hashing every catalog material's render, passes,
+      caustics and floor included, before and after).
+      *The table* is generated, not shipped: three 64³ cubes of
+      coefficients fitted by Gauss-Newton on the CIELAB difference under
+      D65, warm-started along brightness from a fifth of the way up, as
+      `rgb2spec` does, with one change: a step that makes the fit worse is
+      halved, since much of AP1 is outside the spectral locus and there the
+      full steps diverged (a line of oranges fitted as blues). It is built
+      the first time a render is spectral — before the render's workers
+      start, on plain threads — in 0.6 s in a debug build over 16 cores;
+      shipped, it would be 9 MB of floats that compress badly. Round trip,
+      integrated finely (`tests/spectral.rs`): reflectances over sRGB's
+      gamut, mean dE 0.044 and at most 2.3 (a yellow-white brighter than a
+      reflectance can be); lights over it, mean 0.041, at most 0.83; the
+      whole AP1 cube, mean 3.2, at most 93 at its green primary, which is
+      not a colour. Measured: a white furnace (1.0002, 1.0001, 1.0002); five
+      coloured balls within dE 0.07 of RGB's; sRGB's primaries as lights
+      within dE 0.64; every catalog material in the studio within dE 0.52
+      of its RGB render, the Gem aside; a dispersive ball in a white world
+      (0.998, 1.007, 0.997), and with firefly rejection (0.996, 1.005,
+      0.999); a small light through flint 1.08 saturated (beyond sRGB),
+      0.12 through plain glass. Colour noise through a flint ball in the
+      studio at 16 samples: 0.39 with four wavelengths, 0.52 with the hero
+      alone, 0.85 by RGB's one wavelength at the glass. Cost on
+      `simple_product`, nothing in it dispersive, spectral forced on: 1.21×
+      RGB's time (4.50 against 5.45 Msamples/s at 320×180, debug build). *Open:* thin films interfere at three
+      wavelengths inside the BSDF, whose result is then upsampled; a rough
+      dispersive surface drops the companions rather than weighing them by
+      spectral MIS; the companions reflect off a dispersive surface by the
+      hero's Fresnel; caustic photons, and light sampled from inside a
+      scattering medium, stay RGB and are upsampled where the path reads
+      them; Cycles renders RGB.
+- [x] Manifold Next Event Estimation as an unbiased alternative to SPPM
+      caustics: Caustics Off / Photons / Manifold (`caustics_method`, the
+      CLI's `--caustics-method`), a lamp's light through smooth glass solved
+      for at every surface (`integrator/manifold.rs`, ported from Cycles'
+      `mnee.h`), Cycles given its own MNEE by the same switch. Measured: a
+      point light, the sun, and a point light through water in glass match
+      their closed forms to four digits; an area lamp through a lens matches
+      brute-force path tracing within 1.3%; behind a perfume flacon (glass,
+      scent, scent, glass) it finds 45% of the light path tracing does.
+      Profiled, failing walks were 62% of its time: a box test now skips the
+      seed where no bending glass is in the way, and Russian roulette lets
+      a walk still far from Snell's law go on half the time (about a
+      quarter more samples, unbiased); solving for every lamp each sample
+      cost 1.6 times the time for no less error and was dropped. Studio test,
+      against brute-force path tracing with the lamps as glowing geometry
+      (`manifold_noise`, 320 x 210, 10 s each, the three in turns): 106
+      samples against the photons' 170; RMS as shown, 0 to 255, over the
+      picture / the ball's caustic / the flacon's: photons 9.5 / 3.5 / 6.4,
+      manifold 9.9 / 8.6 / 24.0, caustics off 32.7 / 66.2 / 31.6. The
+      photons' mean is within 1% of the reference in both caustics,
+      manifold's 14% and 27% short, and at 60 s still 8.1 / 23.1: light it
+      never finds, not noise. **It does not beat the photons at equal time,
+      nor given longer**; it is the sharper only where it finds the path.
+      Cycles' own MNEE there: blotches in the ball's caustic and nothing
+      through the flacon. *Open:* one path per lamp point, from the straight
+      line's crossings, so where the light's path crosses the glass
+      elsewhere or several paths meet (a ball's focal spot and rim, the
+      flacon's lobes) the caustic is darker than the truth, as in Cycles;
+      finding those would take seeds from the glass itself [Zeltner et al.
+      2020], many walks a sample; no environment or glowing-part MNEE, no
+      internal reflections, mirror caustics or frosted glass, no dispersion
+      in the solved path.
 - [x] Post-render relighting UI driven by light-group AOVs: "Keep light
       groups for relighting" and the Render window's Relight section,
       which rebalances and tints each group live and saves `…_relit`

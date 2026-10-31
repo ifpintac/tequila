@@ -220,7 +220,7 @@ fn an_occlusion_node_measures_its_parts_and_nothing_else() {
 }
 
 /// A Fuzz node grows fibres on its part: one more instance, in the part's
-/// place and material, its mesh rooted on the part's surface and standing
+/// place and material, its fibres rooted on the part's surface and standing
 /// out of it by about the length asked; and a scene built again reuses the
 /// same fibres rather than growing them anew.
 #[test]
@@ -238,22 +238,67 @@ fn a_fuzz_node_grows_fibres_on_the_part() {
     let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
     assert_eq!(scene.instances.len(), plain.instances.len() + 1, "one instance of fibres");
     let part_instance = &scene.instances[mapping.instance_of(part).unwrap().0 as usize];
-    let fur_instance = scene
-        .instances
-        .iter()
-        .find(|i| i.shadow_catcher.is_none() && mapping.node_of(i.id).is_none())
-        .expect("the fibres' instance");
+    let fur_instance = scene.instances.iter().find(|i| mapping.is_grown(i.id)).expect("the fibres' instance");
+    // The fibres are the part's: picking one picks it.
+    assert_eq!(mapping.node_of(fur_instance.id), Some(part));
     assert_eq!(fur_instance.material, part_instance.material);
     assert_eq!(fur_instance.transform.matrix, part_instance.transform.matrix);
     let fur = &scene.meshes[fur_instance.mesh.index()];
+    assert!(fur.fibres.as_ref().is_some_and(|f| f.count() > 0), "curves, not triangles");
     let body = scene.meshes[part_instance.mesh.index()].bounds();
     // The fibres reach past the part by about their length, in its units.
     let reach = (fur.bounds().max - body.max).x * (1.0 / part_instance.transform.inv_length_scale());
     assert!(reach > 0.02 && reach < 0.08, "fibres reach {reach} past the part");
 
     let (again, _) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
-    let fur_again = again.instances.iter().find(|i| i.shadow_catcher.is_none() && mapping.node_of(i.id).is_none()).unwrap();
+    let fur_again = again.instances.iter().find(|i| mapping.is_grown(i.id)).unwrap();
     assert!(Arc::ptr_eq(&again.meshes[fur_again.mesh.index()], fur), "the fibres were grown again");
+}
+
+/// The material's own fibre settings grow fibres as a Fuzz node does, and
+/// off by default: a material nobody gave fibres has none. The fibres take
+/// the part's rays - hidden from the camera, casting no shadow, held out -
+/// as the part does, and a colour edit keeps them where a length edit grows
+/// them anew.
+#[test]
+fn a_materials_fibre_settings_grow_fibres() {
+    use tequila_materials::material_type::Param;
+    use tequila_scene::command::MaterialParameter;
+
+    let (mut document, mut bus, part, material) = demo();
+    let mut cache = MeshCache::default();
+    let (plain, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
+    assert!(!plain.instances.iter().any(|i| mapping.is_grown(i.id)), "fibres nobody asked for");
+
+    bus.apply(&mut document, Command::SetMaterialParameter { material, parameter: MaterialParameter::scalar(Param::FuzzDensity, 0.5) }).unwrap();
+    bus.apply(&mut document, Command::SetMaterialParameter { material, parameter: MaterialParameter::scalar(Param::FuzzLength, 0.05) }).unwrap();
+    let (scene, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
+    let fur_instance = scene.instances.iter().find(|i| mapping.is_grown(i.id)).expect("fibres from the settings");
+    assert_eq!(mapping.node_of(fur_instance.id), Some(part));
+    let fur = scene.meshes[fur_instance.mesh.index()].clone();
+
+    bus.apply(
+        &mut document,
+        Command::SetMaterialParameter { material, parameter: MaterialParameter::color(Param::FuzzColor, Spectrum { r: 0.9, g: 0.2, b: 0.1 }) },
+    )
+    .unwrap();
+    let (recoloured, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
+    let same = recoloured.instances.iter().find(|i| mapping.is_grown(i.id)).unwrap();
+    assert!(Arc::ptr_eq(&recoloured.meshes[same.mesh.index()], &fur), "a colour edit grew the fibres again");
+
+    bus.apply(&mut document, Command::SetMaterialParameter { material, parameter: MaterialParameter::scalar(Param::FuzzLength, 0.03) }).unwrap();
+    let (longer, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
+    let regrown = longer.instances.iter().find(|i| mapping.is_grown(i.id)).unwrap();
+    assert!(!Arc::ptr_eq(&longer.meshes[regrown.mesh.index()], &fur), "a length edit kept the old fibres");
+
+    bus.apply(
+        &mut document,
+        Command::set_rays(part, tequila_scene::tree::Rays { camera: false, shadow: false, holdout: true, ..Default::default() }),
+    )
+    .unwrap();
+    let (hidden, mapping) = snapshot(&document, Arc::new(Environment::uniform(Spectrum::ONE)), &mut cache);
+    let fur_instance = hidden.instances.iter().find(|i| mapping.is_grown(i.id)).unwrap();
+    assert!(!fur_instance.visible_to_camera && !fur_instance.casts_shadows && fur_instance.holdout);
 }
 
 /// A Bubbles node fills a part with bubbles: wholly inside it, touching

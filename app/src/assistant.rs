@@ -682,11 +682,7 @@ impl Assistant {
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new(if tequila_ai::secret::encrypted() {
-                        "API keys are encrypted for your Windows account, and are sent only to the service they belong to."
-                    } else {
-                        "API keys are stored encoded but not encrypted on this system; an environment variable is safer."
-                    })
+                    egui::RichText::new(tequila_ai::secret::kept())
                     .small()
                     .color(crate::theme::dim()),
                 );

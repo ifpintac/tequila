@@ -17,6 +17,19 @@ exr = "1"
 # MIT. OpenVDB reading, for Volume Maps; builds Blosc and LZ4 (BSD) from
 # source through blosc-src.
 vdb-rs = "0.6"
+# Texture formats whose decoders are large and already written well in pure
+# Rust; TGA, BMP and the DDS container are small enough to read by hand
+# (`tga.rs`, `bmp.rs`, `dds.rs`). TIFF is MIT, at the version tequila-format
+# writes it with; the rest are MIT OR Apache-2.0 (bcdec_rs: MIT).
+tiff = "0.9"
+image-webp = "0.2"
+gif = "0.13"
+# Block-compressed DDS (BC1 to BC7), a port of bcdec.
+bcdec_rs = "0.2"
+jxl-oxide = "0.12"
+# SVG artwork, rasterized; usvg and tiny-skia come with it. 0.45 is the
+# newest that keeps to the workspace's rust-version.
+resvg = "0.45"
 
 # A video label's frame, through the system's own decoders (`video.rs`):
 # Media Foundation on Windows, AVFoundation on a Mac. Versions the workspace
@@ -33,3 +46,7 @@ objc2 = "0.6"
 # (MIT OR Apache-2.0) AND IJG; as a dev-dependency it is not part of anything
 # distributed, so it raises no NOTICE obligation.
 jpeg-encoder = "0.6"
+# The same, for JPEG XL: a lossless encoder, so the decoder is tested
+# against pixels written here. MIT OR Apache-2.0 OR Zlib.
+zune-jpegxl = "0.5"
+zune-core = "0.5"

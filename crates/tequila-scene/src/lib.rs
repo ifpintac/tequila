@@ -26,6 +26,7 @@ pub mod document;
 pub mod environment;
 pub mod geometry;
 pub mod gizmo;
+pub mod layers;
 pub mod lighting;
 pub mod livelink;
 pub mod material;
@@ -46,6 +47,8 @@ pub mod templates;
 pub mod textures;
 pub mod tree;
 pub mod units;
+pub mod uv;
+pub mod wireframe;
 
 pub use command::{Command, CommandBus, CommandError};
 pub use document::SceneDocument;

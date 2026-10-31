@@ -9,7 +9,8 @@
 //! one — rather than regular expressions. A CAD part list is full of `.`,
 //! `(` and `+`, each of which means something to a regex and nothing to the
 //! person typing `bolt*`; and it keeps the project free of a regex engine.
-//! A CAD layer arrives as a metadata field, so a metadata rule covers it.
+//! A metadata rule on the field `Layer` covers CAD layers, which a part
+//! keeps beside its metadata (`crate::metadata::LAYER`).
 //!
 //! The first rule that matches a part decides it, as a list of exceptions
 //! above a general case reads. Nothing is assigned until the plan is
@@ -61,10 +62,9 @@ impl Condition {
                     && (c.g - color.g).abs() <= *tolerance
                     && (c.b - color.b).abs() <= *tolerance
             }),
-            Condition::Metadata { key, value } => node
-                .metadata
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case(key) && wildcard(value, v)),
+            Condition::Metadata { key, value } => {
+                crate::metadata::values(node, key).iter().any(|v| wildcard(value, v))
+            }
         }
     }
 }

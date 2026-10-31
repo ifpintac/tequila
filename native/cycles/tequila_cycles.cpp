@@ -13,6 +13,7 @@
 #include "scene/background.h"
 #include "scene/camera.h"
 #include "scene/film.h"
+#include "scene/hair.h"
 #include "scene/image.h"
 #include "scene/integrator.h"
 #include "scene/light.h"
@@ -406,17 +407,28 @@ Transform to_transform(const float *m)
   return t;
 }
 
-bool device_from_name(const char *name, DeviceInfo &out)
+/* A device by name. A kind - CUDA, OPTIX, HIP, METAL - takes every card of
+ * that kind, rendering together as Blender does with several enabled: a
+ * second card was left idle. TEQUILA_CYCLES_ONE_DEVICE keeps to the first,
+ * for when one of them misbehaves. An id is that device alone. */
+bool device_from_name(const char *name, int threads, bool background, DeviceInfo &out)
 {
   const DeviceType type = Device::type_from_string(name);
   if (type != DEVICE_NONE) {
     vector<DeviceInfo> devices = Device::available_devices(DEVICE_MASK(type));
-    if (!devices.empty()) {
-      out = devices.front();
-      return true;
+    if (devices.empty()) {
+      fail(string("no ") + name + " device is available");
+      return false;
     }
-    fail(string("no ") + name + " device is available");
-    return false;
+    const bool one = getenv("TEQUILA_CYCLES_ONE_DEVICE") != nullptr;
+    /* The processor is one device however many cores it has. */
+    if (devices.size() > 1 && type != DEVICE_CPU && !one) {
+      out = Device::get_multi_device(devices, threads, background);
+    }
+    else {
+      out = devices.front();
+    }
+    return true;
   }
   for (const DeviceInfo &info : Device::available_devices()) {
     if (info.id == name) {
@@ -998,6 +1010,44 @@ int fsc_mesh_attribute(FscSession *s, FscNode node, const char *name, int vertex
   return 1;
 }
 
+FscNode fsc_curves(FscSession *s,
+                   int curve_count,
+                   int points_per_curve,
+                   const float *keys,
+                   const float *radii,
+                   const float *random,
+                   FscNode shader)
+{
+  const EditLock lock(s);
+  if (curve_count <= 0 || points_per_curve < 2 || keys == nullptr || radii == nullptr) {
+    fail("fibres need at least one curve of two keys");
+    return nullptr;
+  }
+  Hair *hair = s->scene()->create_node<Hair>();
+  array<Node *> used;
+  used.push_back_slow(static_cast<Node *>(shader));
+  hair->set_used_shaders(used);
+  /* Straight segments, as Tequila's renderer traces them, and round, so a
+   * fibre seen close is a tube; its width is the same either way. */
+  hair->curve_shape = CURVE_THICK_LINEAR;
+  hair->reserve_curves(curve_count, curve_count * points_per_curve);
+  for (int c = 0; c < curve_count; c++) {
+    for (int k = 0; k < points_per_curve; k++) {
+      const int i = c * points_per_curve + k;
+      hair->add_curve_key(make_float3(keys[3 * i], keys[3 * i + 1], keys[3 * i + 2]), radii[i]);
+    }
+    hair->add_curve(c * points_per_curve, 0);
+  }
+  if (random) {
+    Attribute *attr = hair->attributes.add(ustring("tq_fibre_random"), TypeFloat, ATTR_ELEMENT_CURVE);
+    float *value = attr->data_float();
+    for (int c = 0; c < curve_count; c++) {
+      value[c] = random[c];
+    }
+  }
+  return hair;
+}
+
 FscNode fsc_object(FscSession *s, FscNode mesh, const float *m, unsigned visibility,
                    int shadow_catcher)
 {
@@ -1259,7 +1309,7 @@ static FscSession *create(const char *device, int threads, const char *kernel_di
   init_once(kernel_dir);
 
   auto s = std::make_unique<FscSession>();
-  if (!device_from_name(device ? device : "CPU", s->session_params.device)) {
+  if (!device_from_name(device ? device : "CPU", threads, !live, s->session_params.device)) {
     return nullptr;
   }
   s->session_params.background = !live;

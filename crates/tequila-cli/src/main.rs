@@ -73,6 +73,7 @@ struct Options {
     alpha: bool,
     /// Caustics on or off, whatever the lighting says.
     caustics: Option<bool>,
+    caustics_method: Option<tequila_render_core::settings::CausticsMethod>,
     /// Render with Cycles (true) or Tequila's own path tracer (false);
     /// unsaid, a project renders with its own engine.
     cycles: Option<bool>,
@@ -131,6 +132,13 @@ struct Options {
     token: Option<String>,
     /// Render on these nodes instead of here: host[:port], comma-separated.
     farm: Option<String>,
+    /// Draw a wireframe of the model rather than render it, and how.
+    wireframe: bool,
+    wire_edges: Option<tequila_scene::render::WireEdges>,
+    hidden_lines: Option<tequila_scene::render::HiddenLines>,
+    line_width: Option<f32>,
+    /// Dark lines on white, rather than the viewport's light on dark.
+    paper: bool,
 }
 
 impl Default for Options {
@@ -155,6 +163,7 @@ impl Default for Options {
             display: None,
             alpha: false,
             caustics: None,
+            caustics_method: None,
             cycles: None,
             device: None,
             output_set: false,
@@ -187,6 +196,11 @@ impl Default for Options {
             worker_name: None,
             token: None,
             farm: None,
+            wireframe: false,
+            wire_edges: None,
+            hidden_lines: None,
+            line_width: None,
+            paper: false,
         }
     }
 }
@@ -198,8 +212,10 @@ usage: tequila [options]
 
       --bench NAME      measure a reference scene instead of rendering:
                         simple_product | cad_assembly
-  -i, --input PATH      a .tequila project, or a model to import
-                        (.obj .stl .gltf .glb); omit for the demo scene
+  -i, --input PATH      a .tequila project, a KeyShot scene (.ksp .bip,
+                        rendered with its own camera, lighting and look),
+                        or a model to import (.obj .stl .gltf .glb .step
+                        .igs); omit for the demo scene
   -o, --output PATH     output image, .png or .jpg (default tequila.png);
                         {configuration} in it stands for the choices
   -w, --width N         image width (default: the project's, else 960)
@@ -228,8 +244,22 @@ usage: tequila [options]
       --no-ground       no floor: the model floats
       --caustics        trace light through glass and off mirrors onto
                         what is around them (--no-caustics to turn off)
+      --caustics-method M
+                        how, and caustics on: photons (from every light,
+                        the default) or manifold (each lamp's path through
+                        smooth glass solved for: sharp, but noisier than
+                        photons and short where several paths meet)
       --silhouette      cut out along the product's outline: glass stays
                         solid, the floor and its shadow go (implies alpha)
+
+A wireframe, drawn rather than rendered - in a second or two, at any size:
+      --wireframe       draw the model's edges instead of rendering it (a
+                        project saved for a wireframe draws one anyway)
+      --edges E         mesh: every triangle's edge (default); model: the
+                        parts' own edges and their outline, a line drawing
+      --hidden-lines H  faint (default), hidden or shown
+      --line-width PX   in pixels of the image (default 1.5)
+      --paper           dark lines on white, not light lines on dark
 
 From a project's own setup:
       --camera NAME     a saved camera, by name or number from 0
@@ -311,6 +341,35 @@ fn parse_args() -> Result<Options, String> {
                 options.output_set = true;
             }
             "--silhouette" => options.silhouette = true,
+            "--wireframe" => options.wireframe = true,
+            "--edges" => {
+                let text = value()?;
+                options.wire_edges = Some(
+                    tequila_scene::render::WireEdges::from_key(&text).ok_or_else(|| format!("--edges is mesh or model, not {text:?}"))?,
+                );
+                options.wireframe = true;
+            }
+            "--hidden-lines" => {
+                let text = value()?;
+                options.hidden_lines = Some(
+                    tequila_scene::render::HiddenLines::from_key(&text)
+                        .ok_or_else(|| format!("--hidden-lines is faint, hidden or shown, not {text:?}"))?,
+                );
+                options.wireframe = true;
+            }
+            "--line-width" => {
+                let text = value()?;
+                let width: f32 = text.trim().parse().map_err(|_| format!("--line-width takes pixels: not {text:?}"))?;
+                if !(width.is_finite() && width > 0.0 && width <= 64.0) {
+                    return Err(format!("--line-width is from a little over 0 to 64 pixels, not {text}"));
+                }
+                options.line_width = Some(width);
+                options.wireframe = true;
+            }
+            "--paper" => {
+                options.paper = true;
+                options.wireframe = true;
+            }
             "--camera" => options.camera = Some(value()?),
             "--studio" => options.studio = Some(value()?),
             "--model-set" => options.model_set = Some(value()?),
@@ -409,6 +468,13 @@ fn parse_args() -> Result<Options, String> {
             "--alpha" => options.alpha = true,
             "--caustics" => options.caustics = Some(true),
             "--no-caustics" => options.caustics = Some(false),
+            "--caustics-method" => {
+                let name = value()?;
+                options.caustics_method = Some(
+                    tequila_render_core::settings::CausticsMethod::from_key(&name.to_ascii_lowercase())
+                        .ok_or_else(|| format!("unknown caustics method {name:?}: photons or manifold"))?,
+                );
+            }
             "--engine" => match value()?.as_str() {
                 "cycles" => options.cycles = Some(true),
                 "tequila" => options.cycles = Some(false),
@@ -479,6 +545,31 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
         return Ok(loaded.document);
     }
 
+    // A scene from another renderer (KeyShot's .ksp and .bip) opens with
+    // its own cameras, lighting and look, as a project does.
+    let started = Instant::now();
+    if tequila_import::is_scene_file(path) {
+        let (document, report) = tequila_import::open_scene(path, tequila_import::step::Tessellation::default()).map_err(|e| e.to_string())?;
+        for warning in &report.warnings {
+            eprintln!("tequila: {warning}");
+        }
+        let materials = document.materials.len();
+        let cameras = document.cameras.len();
+        let studios = document.studios.len();
+        let parts = document.tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count();
+        eprintln!(
+            "opened {} nodes ({parts} parts), {} meshes ({} instanced), {} triangles, {materials} materials, {} variant sets, {cameras} cameras, {studios} studios, {} pins, in {:.1} s",
+            report.nodes,
+            report.meshes_kept,
+            report.instances_detected,
+            report.triangles,
+            document.multi_materials.len(),
+            document.environment.pins.len(),
+            started.elapsed().as_secs_f64()
+        );
+        return Ok(document);
+    }
+
     let mut document = tequila_scene::SceneDocument::new();
     let mut bus = tequila_scene::CommandBus::new();
     let (command, report) = tequila_import::import(
@@ -492,7 +583,7 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
         eprintln!("tequila: {warning}");
     }
     eprintln!(
-        "imported {} nodes, {} meshes ({} instanced), {} triangles, as {:?}{}",
+        "imported {} nodes, {} meshes ({} instanced), {} triangles, as {:?}{}, in {:.1} s",
         report.nodes,
         report.meshes_kept,
         report.instances_detected,
@@ -502,7 +593,8 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
             " (guessed from the bounding box)"
         } else {
             ""
-        }
+        },
+        started.elapsed().as_secs_f64()
     );
     bus.apply(&mut document, command)
         .map_err(|e| e.to_string())?;
@@ -1043,10 +1135,11 @@ fn is_project(options: &Options) -> bool {
     if options.studio_preset.is_some() {
         return true;
     }
-    // Freeshot, as it was called before, saved them as .freeshot.
+    // Freeshot, as it was called before, saved them as .freeshot. A
+    // KeyShot scene is set up as one is: its camera, lighting and look.
     options.input.as_deref().is_some_and(|p| {
-        let p = p.to_ascii_lowercase();
-        p.ends_with(".tequila") || p.ends_with(".freeshot")
+        let lower = p.to_ascii_lowercase();
+        lower.ends_with(".tequila") || lower.ends_with(".freeshot") || tequila_import::is_scene_file(std::path::Path::new(p))
     })
 }
 
@@ -1084,6 +1177,13 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     if let Some(caustics) = options.caustics {
         config.caustics = caustics;
     }
+    if let Some(method) = options.caustics_method {
+        config.caustics = true;
+        config.caustics_method = method;
+    }
+    // Wavelengths or RGB as the document's render settings say; Auto, a
+    // new document's, for a model.
+    config.spectral = settings.spectral;
     // A project's adaptive sampling switched off, as the Render window
     // renders it: zero retires nothing.
     if project && !settings.adaptive {
@@ -1109,6 +1209,19 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     // its environment behind the product whatever had been chosen.
     scene.background = environments.background(&document.environment);
     let triangles = scene.triangle_count();
+    // A wireframe is drawn, not traced: none of what follows applies.
+    if options.wireframe || (project && settings.kind == tequila_scene::render::RenderKind::Wireframe) {
+        let camera = saved_camera.unwrap_or_else(|| framing(options, document, width as f32 / height as f32).0);
+        let mut look = if project { settings.wireframe } else { tequila_scene::render::WireframeSettings::default() };
+        if options.paper {
+            look = tequila_scene::render::WireframeSettings { edges: look.edges, hidden: look.hidden, line_width: look.line_width, ..tequila_scene::render::WireframeSettings::LIGHT };
+        }
+        look.edges = options.wire_edges.unwrap_or(look.edges);
+        look.hidden = options.hidden_lines.unwrap_or(look.hidden);
+        look.line_width = options.line_width.unwrap_or(look.line_width);
+        let wide = project && settings.effective_depth() != tequila_scene::render::BitDepth::Eight;
+        return draw_wireframe(output, &device, &scene, &camera, width, height, &look, keep_alpha || silhouette, wide);
+    }
     let (cycles, cycles_device, why) = engine_choice(options.cycles, options.device.as_deref(), project.then_some(&settings), &tequila_render_cycles::devices);
     if let Some(why) = why {
         println!("  {why}");
@@ -1331,9 +1444,13 @@ fn engine_choice(
     if device.is_some() || settings.engine != RenderEngine::CyclesGpu {
         return (true, named(settings.engine.cycles_device()), None);
     }
-    let has = |kind: &str| found.iter().any(|(k, _, _)| k == kind);
     let wanted = settings.engine.cycles_device();
-    let card = if has(wanted) { Some(wanted) } else if !cfg!(target_os = "macos") && has("CUDA") { Some("CUDA") } else { None };
+    // "GPU" is the best card there is, as a session would choose it.
+    let card = if wanted == "GPU" {
+        tequila_render_cycles::best_of(found.iter().map(|(k, _, _)| k.as_str()))
+    } else {
+        found.iter().any(|(k, _, _)| k == wanted).then_some(wanted)
+    };
     match card {
         Some(card) => (true, card.to_string(), None),
         None => (true, "CPU".into(), Some("Cycles found no graphics card it can use, so it renders on the processor".into())),
@@ -1363,7 +1480,17 @@ fn render_with_cycles(
 
     let start = Instant::now();
     let mut session = Session::new(device, 0, std::env::var_os("TEQUILA_CYCLES_KERNELS").map(std::path::PathBuf::from).as_deref())?;
-    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination, light_materials: lighting.light_source_materials, light_groups: false };
+    let view = translate::View {
+        camera,
+        width,
+        height,
+        transparent: keep_alpha,
+        ground_illumination: lighting.ground_illumination,
+        light_materials: lighting.light_source_materials,
+        light_groups: false,
+        shadow_glass: lighting.shadow_glass(),
+        manifold_caustics: lighting.manifold_caustics(),
+    };
     let translation = translate::build(&mut session, scene, &view)?;
     for warning in &translation.warnings {
         println!("  cycles: {warning}");
@@ -1457,6 +1584,44 @@ fn render_with_cycles(
         built.as_secs_f32() * 1000.0,
         render_time.as_secs_f32()
     );
+    Ok(())
+}
+
+/// A wireframe of `scene` from `camera` to `output`, as the render queue
+/// draws one (the application's `batch::wireframe_output`): plain sRGB, so
+/// the lines and the ground are the colours they were given.
+#[allow(clippy::too_many_arguments)]
+fn draw_wireframe(
+    output: &str,
+    device: &Arc<Device>,
+    scene: &tequila_render_core::scene::SceneSnapshot,
+    camera: &Camera,
+    width: usize,
+    height: usize,
+    look: &tequila_scene::render::WireframeSettings,
+    transparent: bool,
+    wide: bool,
+) -> Result<(), String> {
+    let start = Instant::now();
+    let lines = tequila_scene::wireframe::lines(scene, camera, look.edges);
+    println!("drawing a wireframe {width}x{height}: {} edges", lines.len());
+    let (front, behind) = if lines.is_empty() {
+        (vec![0.0; width * height], vec![0.0; width * height])
+    } else {
+        let intersector = EmbreeIntersector::build(device, tequila_scene::wireframe::visible_scene(scene))?;
+        let behind = look.hidden != tequila_scene::render::HiddenLines::Hidden;
+        let coverage = tequila_render_cpu::wireframe::draw(&intersector, camera, width, height, &lines, look.line_width, behind)?;
+        (coverage.front, coverage.behind)
+    };
+    let (color, alpha) = tequila_scene::wireframe::composite(width, height, &front, &behind, look, transparent);
+    let style = tequila_color::ImageStyle { display: DisplayTransform::Srgb, ..tequila_color::ImageStyle::default() };
+    if transparent {
+        let color = straight(width, height, color, alpha.clone(), style);
+        finish_image(output, width, height, &color, Some(&alpha), &style, wide)?;
+    } else {
+        finish_image(output, width, height, &color, None, &style, wide)?;
+    }
+    println!("wrote {output} ({width}x{height}) in {:.2} s", start.elapsed().as_secs_f32());
     Ok(())
 }
 
@@ -1570,7 +1735,8 @@ mod engine_tests {
     fn a_project_renders_with_its_own_engine() {
         let with = |engine| RenderSettings { engine, ..Default::default() };
         let gpu = with(RenderEngine::CyclesGpu);
-        let card = RenderEngine::CyclesGpu.cycles_device().to_string();
+        // The card a session would use: Metal on a Mac, OptiX here.
+        let card = if cfg!(target_os = "macos") { "METAL" } else { "OPTIX" }.to_string();
         let with_card = || -> Devices { Ok(vec![(card.clone(), "a graphics card".into(), "0".into()), ("CPU".into(), "the processor".into(), "1".into())]) };
         let processor_only = || -> Devices { Ok(vec![("CPU".into(), "the processor".into(), "0".into())]) };
         let missing = || -> Devices { Err("tequila_cycles.dll is not installed".into()) };
@@ -1588,5 +1754,12 @@ mod engine_tests {
         let (cycles, _, why) = engine_choice(None, None, Some(&region), &with_card);
         assert!(!cycles && why.is_some(), "a region is Tequila's renderer's");
         assert_eq!(engine_choice(None, None, None, &with_card), (false, "CPU".into(), None), "a model");
+        if !cfg!(target_os = "macos") {
+            let card = |kind: &str| (kind.to_string(), "a graphics card".to_string(), "0".to_string());
+            let amd = || -> Devices { Ok(vec![card("HIP"), card("CPU")]) };
+            assert_eq!(engine_choice(None, None, Some(&gpu), &amd).1, "HIP", "an AMD card renders with HIP");
+            let both = || -> Devices { Ok(vec![card("HIP"), card("CUDA")]) };
+            assert_eq!(engine_choice(None, None, Some(&gpu), &both).1, "CUDA", "NVIDIA's before AMD's");
+        }
     }
 }

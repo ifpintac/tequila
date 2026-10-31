@@ -9,9 +9,11 @@
 
 #![warn(missing_debug_implementations)]
 
+pub mod bmp;
 pub mod bump;
 pub mod cache;
 pub mod cycles;
+pub(crate) mod dds;
 pub mod image;
 pub mod mip;
 pub mod gradient;
@@ -23,6 +25,8 @@ pub mod udim;
 pub mod print_size;
 pub mod psd;
 pub mod radiance;
+pub mod svg;
+pub mod tga;
 pub mod video;
 pub mod volume;
 

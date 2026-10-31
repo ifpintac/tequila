@@ -157,11 +157,10 @@ pub fn preview_image(width: usize, height: usize, rgba: &[u8]) -> egui::ColorIma
 /// Read a render back from disk for its preview.
 ///
 /// PNG through the `png` crate directly, so the pixels are exactly the ones
-/// written. JPEG and EXR through the texture loader, which returns linear
-/// light, re-encoded to sRGB — exact for JPEG, and for an EXR a straight
-/// clamp that shows the render roughly as the viewport would, not graded.
-/// TIFF and PSD have no reader here yet; they keep their place in the list
-/// without a picture.
+/// written. JPEG, TIFF, PSD and EXR through the texture loader, which
+/// returns linear light, re-encoded to sRGB — exact for the eight-bit ones,
+/// and for an EXR or a 32-bit TIFF a straight clamp that shows the render
+/// roughly as the viewport would, not graded.
 fn load_preview(path: &str) -> Option<egui::ColorImage> {
     let lower = path.to_ascii_lowercase();
     let (width, height, rgba) = if lower.ends_with(".png") {
@@ -754,6 +753,26 @@ impl RenderWindow {
                     self.selected = None;
                     self.compare_with = None;
                 }
+                // The same job drawn as a wireframe: the document's own kind
+                // stays a photo, so the next Render renders.
+                if ui
+                    .button("Render wireframe")
+                    .on_hover_text("Draw the model's edges at this size into the same folder, in a second or two: no ray tracing. Settings under Wireframe.")
+                    .clicked()
+                {
+                    let name = if self.job_name.trim().is_empty() {
+                        format!("{} wireframe", project.camera().name)
+                    } else {
+                        self.job_name.trim().to_string()
+                    };
+                    let camera = project.document().cameras.active_index();
+                    project.queue_mut().clear_finished();
+                    let drawing = RenderSettings { kind: tequila_scene::render::RenderKind::Wireframe, ..settings.clone() };
+                    project.enqueue(name, camera, drawing);
+                    self.job_name.clear();
+                    self.selected = None;
+                    self.compare_with = None;
+                }
                 ui.add(
                     egui::TextEdit::singleline(&mut self.job_name)
                         .desired_width(140.0)
@@ -884,6 +903,7 @@ impl RenderWindow {
                 section(ui, "Image size", true, |ui| self.size_section(ui, settings));
                 section(ui, "Quality", true, |ui| quality_section(ui, settings));
                 section(ui, "Denoise", true, |ui| denoise_section(ui, settings));
+                section(ui, "Wireframe", false, |ui| wireframe_section(ui, settings));
                 section(ui, "File", true, |ui| file_section(ui, settings, project));
                 section(ui, "Region", settings.region.is_some(), |ui| region_section(ui, settings));
                 section(ui, "Render layers", !settings.layers.is_empty(), |ui| layers_section(ui, settings, project));
@@ -1018,8 +1038,8 @@ impl RenderWindow {
                 let Some(entry) = self.gallery.get(index) else { return };
                 let path = entry.path.clone();
                 let mut details = format!(
-                    "{} × {}  ·  {} spp  ·  {}",
-                    entry.width, entry.height, entry.samples, duration(entry.seconds)
+                    "{} × {}  ·  {}  ·  {}",
+                    entry.width, entry.height, sampled(entry.samples), duration(entry.seconds)
                 );
                 if !entry.when.is_empty() {
                     details.push_str(&format!("  ·  {}", entry.when));
@@ -1354,7 +1374,10 @@ impl RenderWindow {
         painter.text(
             inner.left_top() + egui::vec2(0.0, 38.0),
             egui::Align2::LEFT_TOP,
-            format!("{} × {} · {} spp", job.settings.width, job.settings.height, job.settings.max_samples),
+            match job.settings.kind {
+                tequila_scene::render::RenderKind::Wireframe => format!("{} × {} · wireframe", job.settings.width, job.settings.height),
+                tequila_scene::render::RenderKind::Photo => format!("{} × {} · {} spp", job.settings.width, job.settings.height, job.settings.max_samples),
+            },
             egui::FontId::proportional(11.0),
             crate::theme::dim(),
         );
@@ -1409,7 +1432,7 @@ impl RenderWindow {
     /// The label with what makes it different: samples and time.
     fn described(&self, index: usize) -> String {
         match self.gallery.get(index) {
-            Some(entry) => format!("{}  ·  {} spp  ·  {}", self.label(index), entry.samples, duration(entry.seconds)),
+            Some(entry) => format!("{}  ·  {}  ·  {}", self.label(index), sampled(entry.samples), duration(entry.seconds)),
             None => String::new(),
         }
     }
@@ -1540,6 +1563,8 @@ fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
         "Stop working on pixels that are already clean, and spend the time on the ones that are not.",
     );
 
+    spectral_picker(ui, settings);
+
     crate::field::Fold::new("Fireflies")
         .id_salt("render-fireflies")
         .default_open(false)
@@ -1566,6 +1591,32 @@ fn quality_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
             }
         });
     cycles_controls(ui, settings);
+}
+
+/// Whether Tequila's renderer traces wavelengths or RGB (`docs/01` §7.4).
+/// Greyed out for Cycles, which renders RGB whatever it says.
+fn spectral_picker(ui: &mut egui::Ui, settings: &mut RenderSettings) {
+    use tequila_render_core::settings::SpectralMode;
+    let cycles = settings.engine.is_cycles();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.add_enabled(!cycles, egui::Label::new("Spectral"));
+        for mode in SpectralMode::ALL {
+            let hint = match mode {
+                SpectralMode::Auto => "Trace wavelengths where a material disperses light (glass or a gem with an Abbe number), and RGB everywhere else",
+                SpectralMode::On => "Always trace wavelengths: colours mix as light does, at some cost per sample",
+                SpectralMode::Off => "Always RGB, the fastest: a dispersive material still splits light, by one wavelength per path and with more colour noise",
+            };
+            if ui
+                .add_enabled(!cycles, egui::SelectableLabel::new(settings.spectral == mode, mode.label()))
+                .on_hover_text(hint)
+                .on_disabled_hover_text("Cycles renders in RGB; Spectral is for Tequila's renderer")
+                .clicked()
+            {
+                settings.spectral = mode;
+            }
+        }
+    });
 }
 
 /// Blender's Clamping, Film filter and noise threshold, for a render that
@@ -1645,6 +1696,77 @@ fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
              counts, where the guides are themselves noisy.",
         );
     });
+}
+
+/// How a wireframe looks: what Render wireframe draws, at the image size
+/// and into the file above, in a second or two and with no ray tracing.
+fn wireframe_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
+    use tequila_scene::render::{HiddenLines, WireEdges, WireframeSettings};
+    ui.label(
+        egui::RichText::new("Render wireframe draws the model's edges at the image size above, sharp at any size, in a second or two.")
+            .small()
+            .color(crate::theme::dim()),
+    );
+    let look = &mut settings.wireframe;
+    ui.horizontal(|ui| {
+        ui.label("Edges");
+        for edges in WireEdges::ALL {
+            ui.selectable_value(&mut look.edges, edges, edges.label()).on_hover_text(match edges {
+                WireEdges::Mesh => "Every edge of every triangle, as the viewport's Wireframe shows them",
+                WireEdges::Model => "The parts' own edges - a CAD part's, or a mesh's creases and borders - and their outline: a line drawing",
+            });
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Hidden lines");
+        for hidden in HiddenLines::ALL {
+            ui.selectable_value(&mut look.hidden, hidden, hidden.label()).on_hover_text(match hidden {
+                HiddenLines::Faint => "The edges behind the model drawn faint, so its structure reads through it",
+                HiddenLines::Hidden => "Only the edges the camera sees",
+                HiddenLines::Shown => "Every edge as strong as the ones in front",
+            });
+        }
+    });
+    ui.add(crate::field::Slider::new(&mut look.line_width, 0.25..=8.0).text("line width, px"))
+        .on_hover_text("In pixels of the image: a 4K drawing's lines are as thick as a 1080p one's unless made thicker");
+    let colour = |ui: &mut egui::Ui, label: &str, value: &mut [f32; 3]| {
+        let mut srgb = value.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        ui.horizontal(|ui| {
+            if ui.color_edit_button_srgb(&mut srgb).changed() {
+                *value = srgb.map(|v| v as f32 / 255.0);
+            }
+            ui.label(label);
+        });
+    };
+    colour(ui, "Lines", &mut look.line_colour);
+    colour(ui, "Background, top", &mut look.background_top);
+    colour(ui, "Background, bottom", &mut look.background_bottom);
+    ui.horizontal(|ui| {
+        let keep = |look: &WireframeSettings, preset: WireframeSettings| WireframeSettings {
+            edges: look.edges,
+            hidden: look.hidden,
+            line_width: look.line_width,
+            ..preset
+        };
+        if ui.button("Dark").on_hover_text("Light lines on a dark ground, as the viewport draws them").clicked() {
+            *look = keep(look, WireframeSettings::DARK);
+        }
+        if ui.button("Paper").on_hover_text("Dark lines on white, as a drawing").clicked() {
+            *look = keep(look, WireframeSettings::LIGHT);
+        }
+    });
+    if settings.alpha_mode.transparent_background() {
+        ui.label(egui::RichText::new("The file keeps its alpha, so the background is left out.").small().color(crate::theme::dim()));
+    }
+}
+
+/// A finished job's samples, or what it was when it had none to take.
+fn sampled(samples: u32) -> String {
+    if samples == 0 {
+        "wireframe".into()
+    } else {
+        format!("{samples} spp")
+    }
 }
 
 /// Placeholders a filename can use, in the order people reach for them.

@@ -96,7 +96,7 @@ pub fn render_pass_with_aovs(
     // With caustics on, one sample at a time: each gets its own photons and
     // its own, smaller radius. Sharing one set across a batch would give a
     // render an eighth as many photon passes as samples.
-    if context.config.caustics && samples_per_pixel > 1 {
+    if context.config.photon_caustics() && samples_per_pixel > 1 {
         let mut aovs = aovs;
         for _ in 0..samples_per_pixel {
             render_pass_with_aovs(
@@ -172,12 +172,19 @@ pub fn render_pass_with_aovs(
 
     // This pass's caustic photons (§6.5), numbered by how far the image has
     // got, so each pass reads a fresh set with a smaller radius.
-    let caustic_map = if context.config.caustics {
+    let caustic_map = if context.config.photon_caustics() {
         build_caustics(intersector, &context.config, framebuffer.max_samples(), context.scene_seed)
     } else {
         None
     };
     let caustic_map = caustic_map.as_ref();
+
+    // A spectral render's upsampling table (§7.4), built here the first time
+    // rather than by whichever worker meets a colour first, with the others
+    // waiting on it.
+    if context.config.spectral.resolve(intersector.scene()) {
+        tequila_render_core::spectral::prewarm();
+    }
 
     work.par_iter().for_each(|tile| {
         let base = &base;
@@ -383,8 +390,11 @@ fn result_from(sample: preview::PreviewSample) -> PathResult {
         labels: tequila_core::spectrum::Spectrum::ZERO,
         labels_alpha: 0.0,
         wavelength: None,
+        hue: None,
         // An escaped preview ray is the background and nothing else.
         background: if sample.escaped { sample.radiance } else { tequila_core::spectrum::Spectrum::ZERO },
+        // The preview passes through fibres to the surface.
+        fine: false,
     }
 }
 

@@ -45,6 +45,14 @@ pub struct SceneTab {
     select_all_at: Option<egui::Rect>,
     /// The fields of what is selected, below the tree.
     pub metadata: crate::metadata_panel::MetadataPanel,
+    /// The CAD layers, with the document and the history change they were
+    /// listed at: listed every frame, they walked every node of an assembly
+    /// to draw a list that had not changed.
+    layers: Option<((u64, u64), Vec<tequila_scene::layers::Layer>)>,
+    /// Where each layer's eye and name were drawn this frame, for the tests
+    /// to aim at.
+    #[cfg_attr(not(test), allow(dead_code))]
+    layer_rows: Vec<(String, egui::Rect, egui::Rect)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,6 +306,83 @@ impl SceneTab {
             });
         if rays != before {
             let _ = project.apply(tequila_scene::Command::SetRays { states: selected.iter().map(|&id| (id, rays)).collect() });
+        }
+    }
+
+    /// The CAD layers the scene's parts are on (`tequila_scene::layers`): an
+    /// eye each, which shows or hides every part on it as one undo step, and
+    /// its name, which selects them. Nothing at all where no part is on a
+    /// layer, which is every model but a CAD one.
+    pub fn layers_panel(&mut self, ui: &mut egui::Ui, project: &mut Project) {
+        use tequila_scene::layers::Shown;
+        self.layer_rows.clear();
+        let counted_at = (project.document_epoch(), project.bus().changes());
+        let layers = match &self.layers {
+            Some((at, layers)) if *at == counted_at => layers.clone(),
+            _ => {
+                let layers = tequila_scene::layers::layers(project.document());
+                self.layers = Some((counted_at, layers.clone()));
+                layers
+            }
+        };
+        if layers.is_empty() {
+            return;
+        }
+        ui.add_space(4.0);
+        ui.separator();
+        theme::section(ui, "Layers");
+        let mut command = None;
+        let mut select = None;
+        // An IGES file can have a hundred levels; they scroll rather than
+        // push the sections below out of reach.
+        egui::ScrollArea::vertical().id_salt("cad-layers").auto_shrink([false, true]).max_height(180.0).show(ui, |ui| {
+            for layer in &layers {
+                let shown = layer.shown();
+                ui.horizontal(|ui| {
+                    let eye = icons::button(ui, if shown == Shown::None { Icon::EyeClosed } else { Icon::Eye }, false, 20.0, egui::Sense::click())
+                        .on_hover_text(match shown {
+                            Shown::All => "Hide every part on this layer",
+                            Shown::None => "Show every part on this layer",
+                            Shown::Some => "Some of its parts are hidden: show them all",
+                        });
+                    if eye.clicked() {
+                        // Partly shown reads as a layer to show: one click
+                        // puts it back as the file had it.
+                        command = Some(Command::SetLayerVisibility { layer: layer.name.clone(), visible: shown != Shown::All });
+                    }
+                    let mut text = egui::RichText::new(&layer.name);
+                    text = match shown {
+                        Shown::All => text.color(theme::p().text),
+                        Shown::None => text.color(theme::p().text_faint),
+                        Shown::Some => text.color(theme::p().text_dim).italics(),
+                    };
+                    let parts = layer.nodes.len();
+                    let count = if parts == 1 { "1 part".to_string() } else { format!("{parts} parts") };
+                    // The name gets what the count leaves, measured out by
+                    // hand: a truncated label takes the whole row otherwise.
+                    let width = (ui.available_width() - 64.0).max(40.0);
+                    let name = ui
+                        .allocate_ui_with_layout(egui::vec2(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_min_width(width);
+                            ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()))
+                        })
+                        .inner
+                        .on_hover_text(format!("{}: {count}. Click to select them.", layer.name));
+                    if name.clicked() {
+                        select = Some(layer.nodes.clone());
+                    }
+                    self.layer_rows.push((layer.name.clone(), eye.rect, name.rect));
+                    ui.label(egui::RichText::new(count).small().color(theme::dim()));
+                });
+            }
+        });
+        if let Some(command) = command {
+            if let Err(error) = project.apply(command) {
+                project.status = error.to_string();
+            }
+        }
+        if let Some(nodes) = select {
+            project.selection.select_many(nodes, SelectionMode::Replace);
         }
     }
 
@@ -905,6 +990,91 @@ mod tests {
         h.press(at, false);
         h.frame(Vec::new());
         assert_eq!(h.project.selection.nodes().collect::<Vec<_>>(), vec![part], "Select all selected the match");
+    }
+
+    /// A model of two parts on CAD layers, one of them switched off, and a
+    /// part on none.
+    fn layered() -> Project {
+        use tequila_scene::command::{reserve_keys, ImportPayload};
+        let mut document = tequila_scene::SceneDocument::new();
+        let mesh = tequila_scene::Mesh::new(
+            vec![tequila_core::math::Vec3::ZERO, tequila_core::math::vec3(1.0, 0.0, 0.0), tequila_core::math::vec3(0.0, 1.0, 0.0)],
+            vec![0, 1, 2],
+        );
+        let (meshes, _, ids) = reserve_keys(&document, 1, 0, 4);
+        let mut root = tequila_scene::SceneNode::new(ids[0], "Model", NodeKind::Group);
+        root.children = ids[1..].to_vec();
+        let mut nodes = vec![root];
+        for (index, name, layer) in [(1, "Box", Some("Outer")), (2, "Pin", Some("Construction")), (3, "Screw", None)] {
+            let mut node = tequila_scene::SceneNode::new(ids[index], name, NodeKind::Part { mesh: meshes[0] });
+            node.parent = Some(ids[0]);
+            node.layers = layer.into_iter().map(String::from).collect();
+            node.visible = name != "Pin";
+            nodes.push(node);
+        }
+        let payload = ImportPayload { meshes: vec![(meshes[0], mesh)], textures: Vec::new(), materials: Vec::new(), nodes, roots: vec![ids[0]] };
+        tequila_scene::CommandBus::new().apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+        Project::with_document(document, std::sync::Arc::new(tequila_scene::demo::studio_environment()))
+    }
+
+    /// The Layers list has a row a layer; its eye shows a switched-off one
+    /// (one undo step) and hides it again, and its name selects its parts.
+    /// A scene with no layers draws no list.
+    #[test]
+    fn the_layers_list_shows_hides_and_selects_by_layer() {
+        let ctx = egui::Context::default();
+        let mut tab = SceneTab::default();
+        let mut project = layered();
+        let mut time = 0.0;
+        let mut frame = |tab: &mut SceneTab, project: &mut Project, events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 700.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| tab.layers_panel(ui, project));
+            });
+        };
+        let button = |at: egui::Pos2, pressed: bool| {
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },
+            ]
+        };
+        let mut click = |tab: &mut SceneTab, project: &mut Project, at: egui::Pos2| {
+            frame(tab, project, vec![egui::Event::PointerMoved(at)]);
+            frame(tab, project, button(at, true));
+            frame(tab, project, button(at, false));
+            frame(tab, project, Vec::new());
+        };
+        let pin = |project: &Project| project.document().tree.iter().find(|n| n.name == "Pin").unwrap().clone();
+        click(&mut tab, &mut project, egui::pos2(-10.0, -10.0));
+        let names: Vec<&str> = tab.layer_rows.iter().map(|(name, ..)| name.as_str()).collect();
+        assert_eq!(names, ["Outer", "Construction"]);
+
+        let eye = tab.layer_rows[1].1.center();
+        click(&mut tab, &mut project, eye);
+        assert!(pin(&project).visible, "the eye showed the switched-off layer");
+        assert_eq!(project.bus().undo_name(), Some("scene.set_layer_visibility"));
+        let eye = tab.layer_rows[1].1.center();
+        click(&mut tab, &mut project, eye);
+        assert!(!pin(&project).visible, "and hid it again");
+
+        let name = tab.layer_rows[0].2.center();
+        click(&mut tab, &mut project, name);
+        let boxed = project.document().tree.iter().find(|n| n.name == "Box").unwrap().id;
+        assert_eq!(project.selection.nodes().collect::<Vec<_>>(), vec![boxed], "the name selected the layer's part");
+
+        let mut plain = Project::with_document(
+            tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2),
+            std::sync::Arc::new(tequila_scene::demo::studio_environment()),
+        );
+        let mut fresh = SceneTab::default();
+        click(&mut fresh, &mut plain, egui::pos2(-10.0, -10.0));
+        assert!(fresh.layer_rows.is_empty(), "a scene without layers has no list");
     }
 
     /// The eye on a row hides the part, without selecting it.

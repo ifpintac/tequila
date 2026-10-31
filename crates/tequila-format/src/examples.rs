@@ -55,6 +55,11 @@ pub(crate) fn imported() -> (SceneDocument, CommandBus, Vec<NodeId>, MaterialKey
         node.parent = Some(ids[0]);
         node.material = Some(materials[0]);
         node.metadata.insert("PartNumber".into(), format!("P-{i}"));
+        // The bracket is on a CAD layer, so an example that names the layer
+        // applies here.
+        if i == 2 {
+            node.layers.push("Construction".into());
+        }
         nodes.push(node);
     }
 
@@ -101,6 +106,7 @@ pub fn commands() -> Vec<Command> {
                         let mut lid = SceneNode::new(NodeId(51), "Lid", NodeKind::Part { mesh });
                         lid.parent = Some(ids[0]);
                         lid.path_key = Some("Bracket#1/Lid#1".into());
+                        lid.layers = vec!["Outer".into()];
                         lid
                     }],
                     roots: vec![NodeId(51)],
@@ -113,6 +119,7 @@ pub fn commands() -> Vec<Command> {
                         material: Some(material),
                         metadata: [("Revision".to_string(), "B".to_string())].into_iter().collect(),
                         path_key: Some("Bracket#1/Housing#1".into()),
+                        layers: vec!["Outer".into(), "Shell, inner".into()],
                     },
                     tequila_scene::reimport::NodeUpdate {
                         node: ids[0],
@@ -121,6 +128,7 @@ pub fn commands() -> Vec<Command> {
                         material: None,
                         metadata: Default::default(),
                         path_key: Some("Bracket#1".into()),
+                        layers: Vec::new(),
                     },
                 ],
                 hidden: vec![ids[2]],
@@ -138,6 +146,7 @@ pub fn commands() -> Vec<Command> {
         // Non-default values wherever a default would round-trip by
         // accident.
         Command::SplitIntoParts { node: ids[1] },
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions::default() },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,
@@ -357,6 +366,7 @@ pub fn commands() -> Vec<Command> {
         },
         Command::set_transform(ids[1], Transform::translation(vec3(1.5, -2.25, 0.125))),
         Command::set_visibility(ids[1], false),
+        Command::SetLayerVisibility { layer: "Construction".into(), visible: false },
         Command::set_locked(ids[1], true),
         Command::set_rays(ids[1], tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() }),
         Command::Reparent {

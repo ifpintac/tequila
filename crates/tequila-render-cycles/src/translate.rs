@@ -66,6 +66,13 @@ pub struct View {
     /// light by its layer, `LightLayer0`..., the environment `Environment`,
     /// glowing parts `Emissive`.
     pub light_groups: bool,
+    /// The clear glass shadow rays pass, as the lighting has Tequila's
+    /// renderer pass it (`IntegratorConfig::shadow_glass`).
+    pub shadow_glass: tequila_render_core::settings::ShadowGlass,
+    /// The lighting's manifold caustics: Cycles' own manifold next event
+    /// estimation, from every lamp through the glass that bends light onto
+    /// everything else (`IntegratorConfig::manifold_caustics`).
+    pub manifold_caustics: bool,
 }
 
 /// A position or a direction from Cycles' Z-up world back into Tequila's.
@@ -503,7 +510,19 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
     let mut out = Translation::default();
     // What updates since the last translation used is asked again below.
     images.used.clear();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: view.light_groups };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials: view.light_materials,
+        light_groups: view.light_groups,
+        shadow_glass: view.shadow_glass,
+        manifold_caustics: view.manifold_caustics,
+    };
 
     // One Cycles shader per Tequila material.
     let mut shaders = Vec::with_capacity(scene.materials.len());
@@ -586,11 +605,23 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
             }
         };
         let key = (instance.mesh.index(), material);
+        // Fibres (§4.4's Fuzz) go over as hair, in their material's shader,
+        // which turns to a hair BSDF on them (`Builder::with_fibres`). A
+        // library from before fibres leaves them out, and the part keeps its
+        // sheen.
+        if mesh.fibres.is_some() && !builder.session.has_curves() {
+            builder.out.warn("this Cycles library predates fibres: they are left out, and the sheen under them stays");
+            builder.out.objects.push(None);
+            continue;
+        }
         // An occlusion-only floor's shader is its own, and a bouncing one's.
         let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2) {
             Some(m) => *m,
             None => {
-                let m = builder.mesh(mesh, shader)?;
+                let m = match &mesh.fibres {
+                    Some(fibres) => builder.curves(fibres, shader)?,
+                    None => builder.mesh(mesh, shader)?,
+                };
                 meshes.insert(key, m);
                 m
             }
@@ -655,6 +686,18 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
         builder.session.set_int(object, "random_id", random_id as i32)?;
         if instance.holdout {
             builder.session.set_bool(object, "use_holdout", true)?;
+        }
+        // Manifold caustics: the glass that bends light casts them, as
+        // Tequila's renderer solves through it (`Pane::bends`), on a mesh
+        // with the vertex normals Cycles' walk needs too; everything else
+        // receives them, the floor included.
+        if view.manifold_caustics {
+            let bends = scene.pane(instance.material).is_some_and(|pane| pane.bends());
+            let caster = bends && instance.shadow_catcher.is_none() && mesh.normals.len() == mesh.positions.len();
+            let socket = if caster { "is_caustics_caster" } else { "is_caustics_receiver" };
+            if builder.session.set_bool(object, socket, true).is_err() {
+                builder.out.warn("this Cycles library has no manifold caustics: lamps' light through glass is left out");
+            }
         }
         if let Some(name) = names.and_then(|n| n.objects.get(builder.out.objects.len())) {
             builder.session.set_name(object, name)?;
@@ -825,6 +868,10 @@ fn finished_gradients(u: Vec3, v: Vec3, mapping: &Mapping) -> (Vec3, Vec3) {
     let (su, sv) = finish_scale(mapping);
     let (sin, cos) = (mapping.rotation * std::f32::consts::TAU).sin_cos();
     let (fu, fv) = (if mapping.flip_u { -1.0 } else { 1.0 }, if mapping.flip_v { -1.0 } else { 1.0 });
+    if mapping.rigid {
+        // Turned, then scaled.
+        return ((u * cos - v * sin) * (su * fu), (u * sin + v * cos) * (sv * fv));
+    }
     (
         (u * (cos * su) - v * (sin * sv)) * fu,
         (u * (sin * su) + v * (cos * sv)) * fv,
@@ -985,12 +1032,25 @@ pub fn update_materials(
     changed: &[usize],
     images: &mut Images,
     light_materials: bool,
+    shadow_glass: tequila_render_core::settings::ShadowGlass,
 ) -> Result<bool, String> {
     if !session.can_reopen() || changed.iter().any(|&i| i >= shaders.len()) {
         return Ok(false);
     }
     let mut out = Translation::default();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials, light_groups: false };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials,
+        light_groups: false,
+        shadow_glass,
+        manifold_caustics: false,
+    };
     for &index in changed {
         builder.material(index, Some(shaders[index]))?;
     }
@@ -1021,7 +1081,19 @@ pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Opt
 pub fn set_camera(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Result<Translation, String> {
     let mut out = Translation::default();
     let mut images = Images::default();
-    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: false };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images: &mut images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials: view.light_materials,
+        light_groups: false,
+        shadow_glass: view.shadow_glass,
+        manifold_caustics: view.manifold_caustics,
+    };
     builder.camera(view)?;
     Ok(out)
 }
@@ -1050,6 +1122,11 @@ struct Builder<'a> {
     light_materials: bool,
     /// [`View::light_groups`].
     light_groups: bool,
+    /// [`View::shadow_glass`].
+    shadow_glass: tequila_render_core::settings::ShadowGlass,
+    /// [`View::manifold_caustics`]: read only while a whole scene is built,
+    /// where its objects and lights are made.
+    manifold_caustics: bool,
 }
 
 /// What the camera sees of a floor whose bounce the rest of the scene sees.
@@ -1227,20 +1304,73 @@ impl Builder<'_> {
         self.session.commit(shader)
     }
 
+    /// A part's fibres as Cycles hair: the same points and radii, and each
+    /// fibre's random number, which its colour is darkened by.
+    fn curves(&mut self, fibres: &tequila_render_core::scene::Fibres, shader: Node) -> Result<Node, String> {
+        let keys: Vec<[f32; 3]> = fibres.points.iter().map(|p| [p.x, p.y, p.z]).collect();
+        self.session.curves(tequila_render_core::scene::Fibres::POINTS, &keys, &fibres.radii, &fibres.random, shader)
+    }
+
+    /// `surface`, unless the material grows fibres: then on a fibre (Hair
+    /// Info's Is Strand) Principled Hair in the Chiang model, which is the
+    /// one Tequila's fibre BSDF is ported from, with the same colour - the
+    /// fuzz's, darkened by the fibre's random number as
+    /// `tequila_render_core::material::fibre_colour` does - roughness along
+    /// and around alike, the index 1.55, no coat and no tilt.
+    fn with_fibres(&mut self, shader: Shader, index: usize, m: &Material, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
+        let node = self.scene.programs.get(index).and_then(|p| p.as_deref()).and_then(|p| p.requirements.fuzz);
+        if node.is_none() && tequila_materials::graph::FuzzRequest::of_material(m).is_none() {
+            return Ok(surface);
+        }
+        let random = self.session.node(shader, "attribute")?;
+        self.session.set_string(random, "attribute", "tq_fibre_random")?;
+        let colour = self.session.node(shader, "mix_color")?;
+        self.session.set_string(colour, "blend_type", "mix")?;
+        self.session.connect(shader, random, "Fac", colour, "Factor")?;
+        let variation = m.fuzz_color_variation.clamp(0.0, 1.0);
+        self.session.set_float3(colour, "A", rgb(m.fuzz_color))?;
+        self.session.set_float3(colour, "B", rgb(m.fuzz_color * (1.0 - variation)))?;
+        let hair = self.session.node(shader, "principled_hair_bsdf")?;
+        self.session.set_string(hair, "model", "Chiang")?;
+        self.session.set_string(hair, "parametrization", "Direct coloring")?;
+        self.session.connect(shader, colour, "Result", hair, "Color")?;
+        self.session.set_float(hair, "Roughness", m.fuzz_roughness)?;
+        self.session.set_float(hair, "Radial Roughness", m.fuzz_roughness)?;
+        self.session.set_float(hair, "Coat", 0.0)?;
+        self.session.set_float(hair, "IOR", tequila_materials::lobes::fibre::FIBRE_IOR)?;
+        self.session.set_float(hair, "Offset", 0.0)?;
+        self.session.set_float(hair, "Random Roughness", 0.0)?;
+        self.session.set_float(hair, "Random Color", 0.0)?;
+        let mut fibre = (hair, "BSDF");
+        // A cutout's holes go through its fibres too, as Tequila's renderer
+        // passes them.
+        if m.geometry_opacity < 0.999 {
+            let hole = self.session.node(shader, "transparent_bsdf")?;
+            let cut = self.session.node(shader, "mix_closure")?;
+            self.session.set_float(cut, "Fac", m.geometry_opacity)?;
+            self.session.connect(shader, hole, "BSDF", cut, "Closure1")?;
+            self.session.connect(shader, hair, "BSDF", cut, "Closure2")?;
+            fibre = (cut, "Closure");
+        }
+        let strand = self.session.node(shader, "hair_info")?;
+        let which = self.session.node(shader, "mix_closure")?;
+        self.session.connect(shader, strand, "Is Strand", which, "Fac")?;
+        self.session.connect(shader, surface.0, surface.1, which, "Closure1")?;
+        self.session.connect(shader, fibre.0, fibre.1, which, "Closure2")?;
+        Ok((which, "Closure"))
+    }
+
     fn mesh(&mut self, mesh: &tequila_render_core::scene::Mesh, shader: Node) -> Result<Node, String> {
         let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
         let normals: Option<Vec<[f32; 3]>> = (mesh.normals.len() == mesh.positions.len())
             .then(|| mesh.normals.iter().map(|n| [n.x, n.y, n.z]).collect());
-        let triangles: Vec<[i32; 3]> = mesh
-            .indices
-            .chunks_exact(3)
-            .map(|t| [t[0] as i32, t[1] as i32, t[2] as i32])
-            .collect();
+        let triangles = wound_as_shaded(mesh);
         // Per corner, and with v flipped: Tequila's v runs down the image
         // from its top row, Cycles' up from its bottom one.
         let uvs: Option<Vec<[f32; 2]>> = (mesh.uvs.len() == mesh.positions.len()).then(|| {
-            mesh.indices
+            triangles
                 .iter()
+                .flatten()
                 .map(|&i| {
                     let uv = mesh.uvs[i as usize];
                     [uv.x, 1.0 - uv.y]
@@ -1511,14 +1641,29 @@ impl Builder<'_> {
         let (px, py) = (mapping.pivot.x, mapping.pivot.y);
         let placed = self.session.node(shader, "mapping")?;
         self.session.set_string(placed, "mapping_type", "point")?;
-        self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
-        self.session.set_float3(placed, "rotation", [0.0, 0.0, angle])?;
-        self.session.set_float3(
-            placed,
-            "location",
-            [px - (px * cos - py * sin) + mapping.offset.x, py - (px * sin + py * cos) + mapping.offset.y, 0.0],
-        )?;
-        self.session.connect(shader, uv, "Vector", placed, "Vector")?;
+        if mapping.rigid && angle != 0.0 {
+            // Turned whole, then scaled: the turn about the pivot in the
+            // unscaled coordinates first, then the scale and the offset.
+            let safe = |s: f32| if s.abs() < 1e-12 { 1e-12 } else { s };
+            let (qx, qy) = (px / safe(su), py / safe(sv));
+            let turned = self.session.node(shader, "mapping")?;
+            self.session.set_string(turned, "mapping_type", "point")?;
+            self.session.set_float3(turned, "rotation", [0.0, 0.0, angle])?;
+            self.session.set_float3(turned, "location", [qx - (qx * cos - qy * sin), qy - (qx * sin + qy * cos), 0.0])?;
+            self.session.connect(shader, uv, "Vector", turned, "Vector")?;
+            self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
+            self.session.set_float3(placed, "location", [mapping.offset.x, mapping.offset.y, 0.0])?;
+            self.session.connect(shader, turned, "Vector", placed, "Vector")?;
+        } else {
+            self.session.set_float3(placed, "scale", [su, sv, 1.0])?;
+            self.session.set_float3(placed, "rotation", [0.0, 0.0, angle])?;
+            self.session.set_float3(
+                placed,
+                "location",
+                [px - (px * cos - py * sin) + mapping.offset.x, py - (px * sin + py * cos) + mapping.offset.y, 0.0],
+            )?;
+            self.session.connect(shader, uv, "Vector", placed, "Vector")?;
+        }
         // The flips, and v counted from the bottom.
         let (fu, fv) = (if mapping.flip_u { -1.0 } else { 1.0 }, if mapping.flip_v { -1.0 } else { 1.0 });
         let cycles = self.session.node(shader, "mapping")?;
@@ -3500,6 +3645,12 @@ impl Builder<'_> {
                 Some(program) => self.layered(shader, program, surface, normal)?,
                 None => surface,
             };
+            let surface = match self.scene.pane(tequila_core::ids::MaterialId(index as u32)) {
+                Some(pane) if pane.passes(self.shadow_glass) => self.shadows_through(shader, *pane, surface)?,
+                _ => surface,
+            };
+            // The fibres last, so a strand stays a strand to shadow rays too.
+            let surface = self.with_fibres(shader, index, m, surface)?;
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
             return self.session.commit(shader);
         }
@@ -3599,8 +3750,77 @@ impl Builder<'_> {
             None => body,
         };
         self.session.connect(shader, body.0, body.1, cut, "Closure2")?;
-        self.session.connect(shader, cut, "Closure", output, "Surface")?;
+        let surface = self.with_fibres(shader, index, m, (cut, "Closure"))?;
+        self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
         self.session.commit(shader)
+    }
+
+    /// Clear glass as a shadow ray meets it, as Tequila's renderer has it
+    /// (`Pane::crossing`): a transparent surface as clear as the glass is
+    /// straight on - its tint, less what its face and its coat reflect at
+    /// the angle the ray meets it, and its holes clear - to shadow rays and
+    /// to the diffuse bounces that are weighed against them. The camera,
+    /// glossy bounces, and rays off mirrors and glass meet `surface`.
+    /// Cycles' glass stopped every shadow ray, and what was under a glass
+    /// cover went black but for the light that happened to refract onto it,
+    /// as specks. A volume behind the surface still absorbs on the way, as
+    /// Cycles' transparent shadows go through it.
+    fn shadows_through(&mut self, shader: Shader, pane: tequila_render_core::scene::Pane, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
+        let facing = self.session.node(shader, "geometry")?;
+        // What a face lets by at an index: one less its Fresnel, by the same
+        // index from either side, since a ray straight through meets the far
+        // face at the angle it met the near one. Cycles' Fresnel inverts the
+        // index on a back face; the inverse cancels that.
+        let through = |builder: &mut Self, ior: f32| -> Result<Slot, String> {
+            let ior = ior.max(1e-5);
+            let fresnel = builder.session.node(shader, "fresnel")?;
+            let index = builder.madd(shader, Slot::Link(facing, "Backfacing"), num(1.0 / ior - ior), num(ior))?;
+            builder.feed(shader, fresnel, "IOR", index, false)?;
+            builder.sub(shader, num(1.0), Slot::Link(fresnel, "Fac"))
+        };
+        let mut share = through(self, pane.ior)?;
+        if pane.coat > 1e-3 {
+            // 1 - coat F: the coat reflects its weight's share of its Fresnel.
+            let coat = through(self, pane.coat_ior)?;
+            let coat = self.madd(shader, coat, num(pane.coat), num(1.0 - pane.coat))?;
+            share = self.mul(shader, share, coat)?;
+        }
+        let share = self.mul(shader, share, num(pane.weight * pane.opacity))?;
+        // The tint times that share, and the holes on top.
+        let spread = self.session.node(shader, "combine_xyz")?;
+        for axis in ["X", "Y", "Z"] {
+            self.feed(shader, spread, axis, share, false)?;
+        }
+        let colour = self.session.node(shader, "vector_math")?;
+        self.session.set_string(colour, "math_type", "multiply_add")?;
+        self.session.set_float3(colour, "Vector1", rgb(pane.tint))?;
+        self.session.connect(shader, spread, "Vector", colour, "Vector2")?;
+        let open = 1.0 - pane.opacity;
+        self.session.set_float3(colour, "Vector3", [open, open, open])?;
+        let clear = self.session.node(shader, "transparent_bsdf")?;
+        self.session.connect(shader, colour, "Vector", clear, "Color")?;
+        // Shadow rays, and diffuse bounces: the bounces that find most of the
+        // lamps the shadow rays were aimed at. Cycles' lamps are there to be
+        // hit, and a diffuse bounce off the floor that refracted through the
+        // glass into one counted as the only way of finding it, on top of
+        // the shadow ray that had passed the glass: twice the light under a
+        // cover, in specks. Passed straight on as the shadow ray was, a
+        // bounce is weighed against it as it is in the open. Glossy bounces
+        // still see glass, or a bottle on a glossy floor would be mirrored
+        // in it as a clear ghost, without its glass or what it holds; what
+        // they find of a lamp through the glass is counted on top of the
+        // shadow ray's, but next to a glossy lobe's own, a shadow ray's
+        // share is small - a per cent on a glossy ball under a glass bell,
+        // five on the demo under a slab - and grows only as the lobe gets
+        // rough. The camera, and what a mirror or glass sends on, see glass
+        // too.
+        let path = self.session.node(shader, "light_path")?;
+        let passes = self.float_op(shader, "maximum", Slot::Link(path, "Is Shadow Ray"), Slot::Link(path, "Is Diffuse Ray"))?;
+        let mix = self.session.node(shader, "mix_closure")?;
+        self.feed(shader, mix, "Fac", passes, false)?;
+        self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;
+        self.session.connect(shader, clear, "BSDF", mix, "Closure2")?;
+        Ok((mix, "Closure"))
     }
 
     /// Light through a rough thin wall, as Tequila's renderer passes it: on
@@ -3920,6 +4140,12 @@ impl Builder<'_> {
 
     fn light_flags(&mut self, node: Node, shadow: bool) -> Result<(), String> {
         self.session.set_bool(node, "cast_shadow", shadow)?;
+        // Its light through glass by Cycles' manifold next event estimation,
+        // as Tequila's renderer finds a lamp's. One that casts no shadow
+        // passes glass already.
+        if self.manifold_caustics && shadow && self.session.set_bool(node, "use_caustics", true).is_err() {
+            self.out.warn("this Cycles library has no manifold caustics: lamps' light through glass is left out");
+        }
         // As Blender sets them: sampled both from the surface and the light.
         self.session.set_bool(node, "use_mis", true)
     }
@@ -4094,6 +4320,32 @@ impl Builder<'_> {
         self.session.set_float(node, "bladesrotation", rotation)?;
         Ok(())
     }
+}
+
+/// A mesh's triangles, each wound the way its vertex normals face where
+/// the two disagree outright. An exporter that reverses faces without
+/// touching their normals leaves shading normals facing into the mesh:
+/// Cycles shaded it black, and took its glass's inside for its outside.
+/// Tequila's renderer shades it by the winding and finds the inside from
+/// the solid itself, so the glass is glass (`inverted_winding`); turned
+/// back, the triangle is that glass in Cycles too, shaded smooth. Normals
+/// that only lean away from a face, at a crease smoothed over, leave it.
+fn wound_as_shaded(mesh: &tequila_render_core::scene::Mesh) -> Vec<[i32; 3]> {
+    let shaded = mesh.normals.len() == mesh.positions.len();
+    mesh.indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [t[0] as usize, t[1] as usize, t[2] as usize];
+            if shaded {
+                let face = (mesh.positions[b] - mesh.positions[a]).cross(mesh.positions[c] - mesh.positions[a]);
+                let normal = mesh.normals[a] + mesh.normals[b] + mesh.normals[c];
+                if face.dot(normal) < -0.5 * face.length() * normal.length() {
+                    return [t[0] as i32, t[2] as i32, t[1] as i32];
+                }
+            }
+            [t[0] as i32, t[1] as i32, t[2] as i32]
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -4410,6 +4662,26 @@ mod tests {
         let lost = |f: &dyn Fn(f32) -> f32| (0..4000).map(|i| 1.0 - f(steep.outer_angle.cos() + (1.0 - steep.outer_angle.cos()) * (i as f32 + 0.5) / 4000.0)).sum::<f32>();
         let (a, b) = (lost(&|cos| steep.falloff_at(cos)), lost(&|cos| cycles(&steep, cos)));
         assert!((a / b - 1.0).abs() < 0.02, "the edge loses {a} in Tequila, {b} in Cycles");
+    }
+
+    /// A face wound against its normals is turned back to them; one that
+    /// agrees, or whose normals lean only a little away, stays.
+    #[test]
+    fn faces_turn_to_agree_with_their_normals() {
+        use tequila_core::math::{vec3, Vec3};
+        use tequila_render_core::scene::Mesh;
+        let positions = vec![Vec3::ZERO, vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)];
+        // Counter-clockwise from +Z: the face looks up +Z.
+        let up = Mesh::new(positions.clone(), vec![0, 1, 2]).with_normals(vec![Vec3::Z; 3]);
+        assert_eq!(wound_as_shaded(&up), vec![[0, 1, 2]]);
+        // The same face reversed, its normals left looking up.
+        let reversed = Mesh::new(positions.clone(), vec![0, 2, 1]).with_normals(vec![Vec3::Z; 3]);
+        assert_eq!(wound_as_shaded(&reversed), vec![[0, 1, 2]]);
+        // A smoothed crease, normals 80 degrees off the face.
+        let creased = Mesh::new(positions.clone(), vec![0, 1, 2]).with_normals(vec![vec3(0.985, 0.0, 0.174); 3]);
+        assert_eq!(wound_as_shaded(&creased), vec![[0, 1, 2]]);
+        // No normals: the winding is all there is.
+        assert_eq!(wound_as_shaded(&Mesh::new(positions, vec![0, 2, 1])), vec![[0, 2, 1]]);
     }
 
     #[test]

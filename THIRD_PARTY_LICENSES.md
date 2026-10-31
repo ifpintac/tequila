@@ -115,6 +115,16 @@ POSSIBILITY OF SUCH DAMAGE.
 | `bitflags` | MIT OR Apache-2.0 | BSDF flag sets |
 | `rayon` | MIT OR Apache-2.0 | Tile-parallel rendering, table precomputation |
 | `exr` | BSD-3-Clause | OpenEXR reading |
+| `tiff`, `weezl` | MIT (weezl: MIT OR Apache-2.0) | TIFF textures (`tequila-texture`) and TIFF output (`tequila-format`) |
+| `image-webp`, `byteorder-lite`, `quick-error` | MIT OR Apache-2.0 (byteorder-lite: Unlicense OR MIT) | WebP textures |
+| `gif`, `color_quant` | MIT OR Apache-2.0 (color_quant: MIT) | GIF textures |
+| `bcdec_rs` | MIT | Block-compressed (BC1 to BC7) DDS textures |
+| `jxl-oxide`, `jxl-bitstream`, `jxl-coding`, `jxl-color`, `jxl-frame`, `jxl-grid`, `jxl-image`, `jxl-jbr`, `jxl-modular`, `jxl-oxide-common`, `jxl-render`, `jxl-threadpool`, `jxl-vardct` | MIT OR Apache-2.0 | JPEG XL textures |
+| `brotli-decompressor`, `alloc-no-stdlib`, `alloc-stdlib`, `tracing`, `tracing-core` | BSD-3-Clause OR MIT (alloc-*: BSD-3-Clause; tracing: MIT) | `jxl-oxide`'s own dependencies |
+| `resvg`, `usvg`, `svgtypes`, `simplecss`, `roxmltree`, `kurbo`, `data-url`, `imagesize`, `xmlwriter`, `euclid`, `siphasher`, `pico-args` | MIT OR Apache-2.0 (imagesize, xmlwriter, pico-args: MIT) | SVG artwork, rasterized (`tequila-texture`) |
+| `tiny-skia`, `tiny-skia-path`, `arrayref` | BSD-3-Clause (arrayref: BSD-2-Clause) | resvg's rasterizer |
+| `fontdb`, `fontconfig-parser`, `rustybuzz`, `ttf-parser`, `unicode-bidi`, `unicode-bidi-mirroring`, `unicode-ccc`, `unicode-properties`, `unicode-script`, `unicode-vo`, `core_maths`, `memmap2` | MIT OR Apache-2.0 (fontdb, fontconfig-parser, rustybuzz, core_maths: MIT) | The system's fonts, for text in SVG artwork |
+| `zune-jpeg`, `zune-core`, `rgb`, `strict-num`, `float-cmp` | MIT OR Apache-2.0 OR Zlib (rgb, strict-num, float-cmp: MIT) | Pictures embedded in SVG artwork, and resvg's own dependencies |
 | `ureq`, `ureq-proto`, `http`, `httparse`, `itoa`, `utf8-zero`, `base64` | MIT OR Apache-2.0 | HTTPS requests to AI providers (`tequila-ai`) |
 | `rustls` | Apache-2.0 OR ISC OR MIT | TLS for those requests |
 | `rustls-pki-types`, `zeroize` | MIT OR Apache-2.0 | TLS certificate types; wiping key material |
@@ -143,6 +153,8 @@ POSSIBILITY OF SUCH DAMAGE.
 | [Hosek-Wilkie skylight and solar radiance model](https://cgg.mff.cuni.cz/projects/SkylightModelling/) | 1.4a | BSD-3-Clause | The physical sky (`tequila-render-core/src/hosek.rs`, data in `hosek_data.rs`) |
 | Cycles' sheen table (`table_sheen_ltc` in `src/scene/shader.tables`) | Cycles 5.0.0 | Apache-2.0 | The fitted linearly transformed cosines of Zeltner, Burley & Chiang's sheen, reproduced unchanged (`tequila-materials/src/lobes/sheen_ltc.rs`), so velvet shades alike in both engines |
 | Cycles' random-walk coefficients (`subsurface_random_walk_remap` and the radius scale of `bssrdf_setup_radius`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Kutz & Burley's albedo fit with anisotropy, ported (`walk_coefficients` in `tequila-materials/src/openpbr.rs`), so subsurface shades alike in both engines |
+| Cycles' Principled Hair, Chiang model (`bsdf_principled_hair_chiang.h`, and `bsdf_principled_hair_sigma_from_reflectance` in `bsdf_util.h`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Bitterli, Tappan & Burley's fibre model - its lobes, sampling, roughness mapping and colour-to-absorption fit - ported (`tequila-materials/src/lobes/fibre.rs`), so §4.4's fibres shade alike in both engines |
+| Cycles' manifold next event estimation (`src/kernel/integrator/mnee.h`, Copyright 2011-2022 Blender Foundation) | Cycles 5.0.0 | Apache-2.0 | Hanika, Droske & Fascione's specular manifold walk - the constraint derivatives, their block tridiagonal solve, the Newton walk and the transfer matrix - ported, with the changes listed at its head, to find lamps' light through glass (`tequila-render-core/src/integrator/manifold.rs`) |
 
 The Hosek-Wilkie model's evaluation is ported from, and its fitted data is
 reproduced unchanged from, the authors' reference implementation, under this

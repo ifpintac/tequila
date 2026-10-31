@@ -97,6 +97,9 @@ pub struct NodeUpdate {
     pub material: Option<MaterialKey>,
     pub metadata: BTreeMap<String, String>,
     pub path_key: Option<String>,
+    /// Its CAD layers, which the file decides: unlike a material or a note,
+    /// they are not the person's work for an update to keep.
+    pub layers: Vec<String>,
 }
 
 /// An update, as a command carries it.
@@ -306,6 +309,7 @@ pub fn plan(document: &SceneDocument, roots: &[NodeId], new: ImportPayload) -> (
                 material,
                 metadata,
                 path_key: node.path_key.clone(),
+                layers: node.layers.clone(),
             });
         } else {
             let mut added = node.clone();
@@ -579,5 +583,24 @@ mod tests {
         assert!(report.added.is_empty() && report.removed.is_empty(), "{report:?}");
         assert_eq!(without_copy_number("Bottom v3 (12)"), "Bottom v3");
         assert_eq!(without_copy_number("Bracket (left)"), "Bracket (left)");
+    }
+
+    /// A part's layers are the file's: an update takes the new file's, and
+    /// undo puts the old ones back.
+    #[test]
+    fn an_update_takes_the_files_layers() {
+        let mut document = SceneDocument::new();
+        let mut bus = CommandBus::new();
+        let mut first = import(&document, &[("Bracket", None, None), ("Housing", Some(0), Some(1.0))], None);
+        first.nodes[1].layers = vec!["Outer".into()];
+        bus.apply(&mut document, Command::Import { payload: Box::new(first) }).unwrap();
+        let (root, housing) = (find(&document, "Bracket"), find(&document, "Housing"));
+        let mut second = import(&document, &[("Bracket", None, None), ("Housing", Some(0), Some(1.0))], document.tree.get(root).unwrap().parent);
+        second.nodes[1].layers = vec!["Shell".into(), "Outer".into()];
+        let (command, _) = plan(&document, &[root], second);
+        bus.apply(&mut document, command).unwrap();
+        assert_eq!(document.tree.get(housing).unwrap().layers, ["Shell", "Outer"]);
+        bus.undo(&mut document).unwrap();
+        assert_eq!(document.tree.get(housing).unwrap().layers, ["Outer"]);
     }
 }

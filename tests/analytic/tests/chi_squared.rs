@@ -120,7 +120,39 @@ fn assert_consistent(
 /// The M2 additions: transmission over the roughness ladder and three
 /// directions, the OpenPBR stack over five configurations of it, and the
 /// catalog's scattering presets at three directions each.
-const TOTAL_TESTS: usize = 6 * 3 * 4 + 4 + 6 * 3 + 6 * 3 * 5 + 30 * 3;
+///
+/// Then §4.4's fibres: the hair model over the roughness ladder, three
+/// directions and three places across the fibre.
+const TOTAL_TESTS: usize = 6 * 3 * 4 + 4 + 6 * 3 + 6 * 3 * 5 + 30 * 3 + 6 * 3 * 3;
+
+// --- Fibres ----------------------------------------------------------------
+
+/// A fibre (§4.4's Fuzz grown as geometry), whose four lobes cover the whole
+/// sphere: reflected, through, back out, and spread round. Its density is
+/// the lobes' luminance-weighted sum, and the sampler picks a lobe by the
+/// same weights, so a weight or an angle sampled one way and evaluated
+/// another shows here. The viewer is square to the fibre's `y`, as the
+/// integrator places it, at three angles off square to the fibre.
+#[test]
+fn fibre_sampling_is_consistent() {
+    use tequila_materials::lobes::Fibre;
+    for roughness in ROUGHNESSES {
+        for mu in COSINES {
+            for h in [-0.7f32, 0.0, 0.5] {
+                let d = BsdfUnderTest {
+                    bsdf: Fibre::new(Spectrum { r: 0.7, g: 0.45, b: 0.2 }, roughness, h),
+                    wo: wo_at(mu),
+                };
+                assert_consistent(
+                    &format!("fibre, roughness {roughness}, cos {mu}, h {h}"),
+                    &d,
+                    (roughness.to_bits() as u64) << 8 ^ (mu.to_bits() as u64) << 2 ^ h.to_bits() as u64 ^ 0xf1b4e,
+                    TOTAL_TESTS,
+                );
+            }
+        }
+    }
+}
 
 // --- M2 lobes ------------------------------------------------------------
 

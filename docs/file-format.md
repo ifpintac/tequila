@@ -167,6 +167,7 @@ reader and the writer being edited separately.
 |---|---|---|
 | `preset` | string? | `Performance`, `Basic`, `Product`, `Interior` or `Jewelry`. **Null means Custom** — Custom is modelled as the absence of a preset rather than as a sixth one, so a document can say both which preset was chosen and that the scene no longer matches it. |
 | `custom` | object | The integrator configuration Custom uses. Kept even while a preset is selected, so switching away and back does not discard a tuned setup. Field names match `IntegratorConfig`. |
+| `custom.caustics_method` | string? | How caustics are found when `custom.caustics` is on: `photons` (from every light, through glass and off mirrors) or `manifold` (each lamp's path through glass that bends light, solved for at every surface; manifold next event estimation). Written only for `manifold`; absent, photons, as every document before there was a choice. With `manifold`, shadow rays stop at glass that bends light and pass only thin walls; Cycles is given its own manifold next event estimation, the bending glass casting, everything else receiving, every lamp casting. |
 | `custom.cycles` | object? | Blender's Light Paths for Cycles, written only when one is set: `{diffuse_bounces, glossy_bounces, transparent_bounces, volume_bounces, filter_glossy, caustics_reflective, caustics_refractive}`, each optional. Unset, Cycles gets what it always did (diffuse and glossy = `max_bounces`, at least 4; transparent 8; Filter Glossy 1; its own volume bounces and caustics). With diffuse or glossy set, `max_bounces` is the total, as Blender's Total is. |
 
 ### 3.3.2 `cameras` entries
@@ -227,6 +228,7 @@ these are read when Render is pressed and not before.
 | `clamp_direct` | number? | A ceiling on direct light of its own, 0 for none, or null. Null, `clamp_indirect` holds for direct light too, as it always did; set, the two are apart, as Blender's are, and `clamp_indirect` (or firefly rejection's 10) is the indirect one alone. |
 | `pixel_filter` | object? | `{type, width_px}`: `box`, `gaussian` or `blackman_harris`, in pixels as Cycles' Film takes them, or null for one pixel's box (both renderers' default; Blender's is Blackman-Harris 1.5). |
 | `adaptive_threshold` | number? | The noise below which a pixel stops taking samples, or null for the renderer's own (Cycles 0.01). |
+| `spectral` | string | `auto`, `on` or `off`: whether Tequila's renderer traces wavelengths rather than RGB (§01 §7.4). `auto`, the default and what a project without the field reads as, is spectral when a material disperses light (an Abbe number on something that transmits) and RGB otherwise. Cycles renders RGB whatever it says. |
 | `region` | number[4]? | `[x, y, width, height]`, or null for the whole image (§01 §9.5). |
 | `format` | string | `png`, `jpeg`, `tiff`, `exr` or `psd`. |
 | `depth` | string | `8`, `16` or `32`. A depth the format cannot hold is corrected on load rather than obeyed. |
@@ -247,12 +249,19 @@ cleared.
 
 Tequila reads a config's `FileTransform` (`.cube`, `.spi1d`, `.spimtx`),
 `MatrixTransform`, `ExponentTransform`, `ExponentWithLinearTransform`,
-`RangeTransform`, `LogTransform`, `CDLTransform`, `GroupTransform` and
-`ColorSpaceTransform`. It does **not** implement OCIO v2's `BuiltinTransform`
-registry, which is defined by the library's own C++ rather than by a file; a
-config that uses one is reported as unsupported and the built-in transforms
-stay available, rather than the image being quietly developed through an
-incomplete pipeline.
+`RangeTransform`, `LogTransform`, `LogAffineTransform`, `LogCameraTransform`,
+`CDLTransform`, `GroupTransform`, `ColorSpaceTransform` and `BuiltinTransform`,
+along with OCIO v2's display colour spaces, view transforms, shared views,
+looks and aliases, so the ACES studio config works as it is. The `display` and
+`view` of `color_management` are names the config defines; for that config
+they are, for example, `sRGB - Display` and `ACES 1.0 - SDR Video`.
+
+`BuiltinTransform` covers the ACES 1.x output transforms (SDR, HDR and the
+D60/D65 simulations), the ACES log encodings and looks, the display encodings
+and the common camera log curves. The ACES 2.0 output transforms of OCIO 2.4
+are not implemented: a view that uses one, or any transform Tequila cannot
+build, is reported by name and the built-in transforms stay available, rather
+than the image being quietly developed through an incomplete pipeline.
 
 ### 3.3.5 `pins` entries
 
@@ -295,6 +304,7 @@ Each is a light, a picture or a gradient painted onto the environment sphere.
 | `cutaway` | object? | Required when `kind` is `Cutaway`. `{shape, enabled, cap, cap_color?}`: `shape` is `plane`, `box`, `sphere` or `cylinder`, in the node's own space — the half-space in front of `z = 0` along +Z, the cube from -1 to 1, the unit sphere, or radius 1 about Z from z = -1 to 1 — so the `transform` sizes and places it. `cap` is `own` (a cut face in the material of the part it cuts) or `color`, with `cap_color` linear RGB. Everything inside the volume is removed from the render and cut solids are capped (`docs/02` §3). A part whose material is of type Cutaway cuts with its own mesh instead, and has no node kind of its own. |
 | `material` | string? | Names a `materials/<id>.json` member. Absent means unassigned. |
 | `metadata` | object? | String-to-string. CAD attributes and user annotations, kept verbatim. |
+| `layers?` | string[] | The CAD layers the source file put the node on (an IGES file's levels, `Level 5`), in the file's order; the Scene tab shows and hides them as groups. Absent means none. A file without it whose `metadata` has a `Layer` field, as projects saved before 2026-10-30 kept layers, is read with that field's comma-separated names as its layers. |
 | `path_key` | string? | The source file's stable identifier for this node, so a re-import can match it and keep its material. |
 | `pivot` | number[3]? | A custom pivot in this node's local space, if one has been set. Absent means the gizmo uses a derived pivot. Stored because §04 §5 requires pivots to persist — they are what an animation track rotates about. |
 
@@ -430,6 +440,12 @@ is spelled exactly as the parameter is named there.
 | `fuzz_weight` | number | Sheen strength. |
 | `fuzz_color` | number[3] | Sheen colour. |
 | `fuzz_roughness` | number | 0 to 1. |
+| `fuzz_density` | number | Fibres to the square centimetre grown out of the surface when the scene is built (§4.4's geometric Fuzz), 0 to 5000; 0, the default, grows none. They wear `fuzz_color` and `fuzz_roughness`, and are capped at 250,000 a part. A graph's Fuzz node, where there is one, wins over these settings. |
+| `fuzz_length` | number | A fibre's length in metres (default 0.002). |
+| `fuzz_thickness` | number | A fibre's width at its root in metres (default 0.00004); it tapers to a fifth at the tip. |
+| `fuzz_lean` | number | How far fibres lean from standing straight up, 0 to 1 (default 0.35). |
+| `fuzz_curl` | number | How much each fibre bends along its length, 0 to 1 (default 0.3). |
+| `fuzz_color_variation` | number | How much darker than `fuzz_color` a fibre may be, 0 to 1 (default 0.2). |
 | `thin_film_weight` | number | Strength of the interference film. |
 | `thin_film_thickness` | number | Nanometres. |
 | `thin_film_ior` | number | Index of refraction of the film. |

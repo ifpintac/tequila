@@ -66,6 +66,8 @@ pub enum CommandError {
     /// A value the renderer cannot use, such as a colour that is not a
     /// number.
     InvalidValue(&'static str),
+    /// A layer no node is on.
+    NoSuchLayer(String),
 }
 
 impl From<TreeError> for CommandError {
@@ -87,6 +89,7 @@ impl std::fmt::Display for CommandError {
             CommandError::NotALight(id) => write!(f, "{id} is not a light"),
             CommandError::NotACutaway(id) => write!(f, "{id} is not a cutaway"),
             CommandError::InvalidValue(what) => write!(f, "{what}"),
+            CommandError::NoSuchLayer(name) => write!(f, "no part is on the layer `{name}`"),
             CommandError::InconsistentHistory(what) => {
                 write!(f, "undo history is inconsistent with the document: {what}")
             }
@@ -157,6 +160,14 @@ pub enum Command {
     /// no way to say otherwise — an STL, an OBJ with no groups — which is the
     /// only way to get at the pieces afterwards.
     SplitIntoParts { node: NodeId },
+    /// `scene.unwrap_uvs` — a part's surface laid out flat as its first UV
+    /// set (`crate::uv`), so labels and textures can be placed on it
+    /// anywhere; the sets it had move up one.
+    ///
+    /// The part gets a mesh of its own, the unwrapped one, under a new key:
+    /// parts that shared the old mesh keep it, and undo points the part back
+    /// at it.
+    UnwrapUvs { node: NodeId, options: crate::uv::UnwrapOptions },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -164,6 +175,13 @@ pub enum Command {
     /// single undo step. Two commands would leave the user pressing Ctrl+Z
     /// twice for one menu item, with the first press appearing to do nothing.
     SetVisibility { states: Vec<(NodeId, bool)> },
+    /// `scene.set_layer_visibility` — every node on a CAD layer, as the
+    /// file named it, shown or hidden as one step.
+    ///
+    /// The layer (`crate::layers`) rather than its nodes, so a script or the
+    /// Layers list says what it means and the journal records it; it lands
+    /// as the nodes' own visibility, which is what undo restores.
+    SetLayerVisibility { layer: String, visible: bool },
     /// `scene.set_locked` — a lock per node: a locked node, and everything
     /// under it, refuses edits until unlocked.
     SetLocked { states: Vec<(NodeId, bool)> },
@@ -218,9 +236,12 @@ pub enum Command {
         parameter: MaterialParameter,
     },
     /// `material.add_decal` — a label, an image projected onto a material.
-    /// PNG, JPEG or Photoshop artwork; or a video (MP4, MOV and the rest the
-    /// system plays), sent with `time` in seconds, whose frame then is the
-    /// picture (kept under "Video frames" among Tequila's settings).
+    /// Artwork as PNG, JPEG, TIFF, TGA, BMP, WebP, GIF, JPEG XL, DDS,
+    /// Photoshop (PSD, PSB) or SVG (drawn 4096 pixels on its long side, or
+    /// more for a larger document, up to 8192); or a video
+    /// (MP4, MOV and the rest the system plays), sent with `time` in seconds,
+    /// whose frame then is the picture (kept under "Video frames" among
+    /// Tequila's settings).
     AddDecal {
         material: MaterialKey,
         source: TextureSource,
@@ -1007,9 +1028,11 @@ impl Command {
             Command::AddGroup { .. } => "scene.add_group",
             Command::DeleteNodes { .. } => "scene.delete_nodes",
             Command::SplitIntoParts { .. } => "scene.split_parts",
+            Command::UnwrapUvs { .. } => "scene.unwrap_uvs",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
+            Command::SetLayerVisibility { .. } => "scene.set_layer_visibility",
             Command::SetLocked { .. } => "scene.set_locked",
             Command::SetRays { .. } => "scene.set_rays",
             Command::SetPivot { .. } => "scene.set_pivot",
@@ -1063,7 +1086,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 56] = [
+    pub const CATALOG: [&'static str; 57] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1074,6 +1097,7 @@ impl Command {
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
+        "scene.set_layer_visibility",
         "scene.set_locked",
         "scene.set_rays",
         "scene.set_pivot",
@@ -1132,12 +1156,15 @@ impl Command {
             | Command::DeleteNodes { .. }
             | Command::Group { .. }
             | Command::SplitIntoParts { .. }
+            | Command::UnwrapUvs { .. }
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
             Command::SetTransform { .. } | Command::TurnProduct { .. } => SceneChange::InstanceTransform,
             Command::SetAnimation { .. } => SceneChange::SelectionChange,
-            Command::SetVisibility { .. } | Command::SetRays { .. } => SceneChange::VisibilityToggle,
+            Command::SetVisibility { .. } | Command::SetLayerVisibility { .. } | Command::SetRays { .. } => {
+                SceneChange::VisibilityToggle
+            }
             Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
                 SceneChange::MaterialAssignment
             }
@@ -1271,7 +1298,7 @@ enum Undo {
     /// An update: what it added, and each touched node as it was before.
     Reimported {
         added: Box<Undo>,
-        previous: Vec<(NodeId, NodeKind, Transform, Option<MaterialKey>, std::collections::BTreeMap<String, String>, Option<String>)>,
+        previous: Vec<(NodeId, NodeKind, Transform, Option<MaterialKey>, std::collections::BTreeMap<String, String>, Option<String>, Vec<String>)>,
         hidden: Vec<NodeId>,
     },
     /// A part that became a group of parts. The node keeps its identity, so
@@ -1284,6 +1311,9 @@ enum Undo {
         children: Vec<NodeId>,
         meshes: Vec<MeshKey>,
     },
+    /// A part given an unwrapped mesh: the mesh it had, kept in the store,
+    /// and the one it was given.
+    Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
     Name(NodeId, String),
@@ -1875,6 +1905,13 @@ impl Reissue {
                 split: Some((children.clone(), meshes.clone())),
                 composite: None,
             },
+            // The mesh an unwrap made, as a split's are: no children.
+            Undo::Unwrapped { unwrapped, .. } => Reissue {
+                node: None,
+                material: None,
+                split: Some((Vec::new(), vec![*unwrapped])),
+                composite: None,
+            },
             Undo::Grouped { group, .. } => Reissue {
                 node: Some(*group),
                 material: None,
@@ -2159,6 +2196,7 @@ fn execute(
                     node.material,
                     node.metadata.clone(),
                     node.path_key.clone(),
+                    node.layers.clone(),
                 ));
                 node.kind = update.kind.clone();
                 if let Some(transform) = update.transform {
@@ -2167,6 +2205,7 @@ fn execute(
                 node.material = update.material;
                 node.metadata = update.metadata.clone();
                 node.path_key = update.path_key.clone();
+                node.layers = update.layers.clone();
             }
             for &node in &payload.hidden {
                 document.tree.get_mut(node)?.visible = false;
@@ -2202,6 +2241,26 @@ fn execute(
                 }
             }
             Ok(Undo::RemovedNodes(removed))
+        }
+
+        Command::UnwrapUvs { node, options } => {
+            check_unlocked(document, *node)?;
+            let source = document.tree.get(*node).ok_or(CommandError::InconsistentHistory("no such node"))?;
+            let NodeKind::Part { mesh: previous } = source.kind else {
+                return Err(CommandError::InconsistentHistory("only a part can be unwrapped"));
+            };
+            let geometry = document.geometry.get(previous).ok_or(CommandError::InconsistentHistory("the part has no mesh"))?;
+            if geometry.triangle_count() == 0 {
+                return Err(CommandError::InconsistentHistory("the part has no surface to unwrap"));
+            }
+            let (unwrapped, _) = crate::uv::unwrap(geometry, options);
+            let key = match &reissue.split {
+                Some((children, meshes)) if children.is_empty() && meshes.len() == 1 => meshes[0],
+                _ => reserve_keys(document, 1, 0, 0).0[0],
+            };
+            document.geometry.insert_with_key(key, unwrapped);
+            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: key };
+            Ok(Undo::Unwrapped { node: *node, previous, unwrapped: key })
         }
 
         Command::SplitIntoParts { node } => {
@@ -2312,6 +2371,19 @@ fn execute(
             for (node, visible) in states {
                 previous.push((*node, document.tree.get_mut(*node)?.visible));
                 document.tree.get_mut(*node)?.visible = *visible;
+            }
+            Ok(Undo::Visibility(previous))
+        }
+
+        Command::SetLayerVisibility { layer, visible } => {
+            let nodes = crate::layers::members(document, layer);
+            if nodes.is_empty() {
+                return Err(CommandError::NoSuchLayer(layer.clone()));
+            }
+            let mut previous = Vec::with_capacity(nodes.len());
+            for node in nodes {
+                previous.push((node, document.tree.get_mut(node)?.visible));
+                document.tree.get_mut(node)?.visible = *visible;
             }
             Ok(Undo::Visibility(previous))
         }
@@ -3043,16 +3115,28 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             for &node in hidden {
                 document.tree.get_mut(node)?.visible = true;
             }
-            for (node, kind, transform, material, metadata, path_key) in previous {
+            for (node, kind, transform, material, metadata, path_key, layers) in previous {
                 let restored = document.tree.get_mut(*node)?;
                 restored.kind = kind.clone();
                 restored.transform = *transform;
                 restored.material = *material;
                 restored.metadata = metadata.clone();
                 restored.path_key = path_key.clone();
+                restored.layers = layers.clone();
             }
             // Last: the new meshes are what the updated parts pointed at.
             revert(document, added)
+        }
+
+        Undo::Unwrapped { node, previous, unwrapped } => {
+            // The mesh it had was never removed: the part points at it again
+            // and the unwrapped one goes, unless something else took it.
+            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: *previous };
+            let still_used = document.tree.iter().any(|n| matches!(n.kind, NodeKind::Part { mesh } if mesh == *unwrapped));
+            if !still_used {
+                document.geometry.retain_keys(&|key| key != *unwrapped);
+            }
+            Ok(())
         }
 
         Undo::Split {
@@ -3828,6 +3912,11 @@ pub fn metadata_keys(document: &SceneDocument) -> BTreeMap<String, usize> {
         for key in node.metadata.keys() {
             *counts.entry(key.clone()).or_insert(0) += 1;
         }
+        // Layers read as a field (`crate::metadata::LAYER`), so they are
+        // one to search on and a column to export.
+        if !node.layers.is_empty() && !node.metadata.contains_key(crate::metadata::LAYER) {
+            *counts.entry(crate::metadata::LAYER.to_string()).or_insert(0) += 1;
+        }
     }
     counts
 }
@@ -4547,9 +4636,10 @@ mod label_placement_tests {
     fn a_label_on_a_uv_mapped_part_keeps_its_uv_placement() {
         let (mut document, mut bus, material) = plate(true);
         add_label(&mut document, &mut bus, material);
+        // The layout as it is, the label turning as a whole as artwork does.
         assert_eq!(
             only_label(&document, material).mapping,
-            tequila_texture::projection::Mapping::default(),
+            tequila_texture::projection::Mapping { rigid: true, ..Default::default() },
             "a UV-mapped part had its authored layout overridden"
         );
     }

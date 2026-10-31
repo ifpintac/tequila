@@ -218,16 +218,172 @@ impl RenderEngine {
     }
 
     /// The Cycles device it renders on. On the graphics card: Metal on a Mac;
-    /// elsewhere OptiX - an NVIDIA card's ray-tracing cores - which
-    /// `tequila_render_cycles` falls back from to plain CUDA where OptiX
-    /// will not start.
+    /// elsewhere "GPU", which `tequila_render_cycles` makes the best kind of
+    /// card there is - OptiX on an NVIDIA card's ray-tracing cores, CUDA on
+    /// another NVIDIA card, HIP on an AMD one - every card of that kind at
+    /// once, and plain CUDA where OptiX will not start.
     pub fn cycles_device(self) -> &'static str {
         match self {
             RenderEngine::CyclesGpu if cfg!(target_os = "macos") => "METAL",
-            RenderEngine::CyclesGpu => "OPTIX",
+            RenderEngine::CyclesGpu => "GPU",
             _ => "CPU",
         }
     }
+}
+
+/// What a render makes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RenderKind {
+    /// The picture: path traced by the engine.
+    #[default]
+    Photo,
+    /// A line drawing of the model's edges, drawn rather than traced: the
+    /// viewport's Wireframe at the render's size, in a second or two. A job
+    /// asks for it ("Render wireframe"); the document's own settings stay
+    /// on Photo unless a script says otherwise, so one wireframe does not
+    /// turn every render after it into one.
+    Wireframe,
+}
+
+impl RenderKind {
+    pub const ALL: [RenderKind; 2] = [RenderKind::Photo, RenderKind::Wireframe];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            RenderKind::Photo => "photo",
+            RenderKind::Wireframe => "wireframe",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<RenderKind> {
+        RenderKind::ALL.into_iter().find(|kind| kind.key() == key)
+    }
+}
+
+/// Which edges a wireframe draws.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WireEdges {
+    /// Every edge of every triangle, as the viewport's Wireframe shows them.
+    #[default]
+    Mesh,
+    /// The part's own edges - a CAD part's B-rep edges, or a mesh's creases
+    /// and borders - and its outline as the camera sees it: a line drawing
+    /// rather than the tessellation.
+    Model,
+}
+
+impl WireEdges {
+    pub const ALL: [WireEdges; 2] = [WireEdges::Mesh, WireEdges::Model];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            WireEdges::Mesh => "mesh",
+            WireEdges::Model => "model",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<WireEdges> {
+        WireEdges::ALL.into_iter().find(|edges| edges.key() == key)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WireEdges::Mesh => "Every triangle",
+            WireEdges::Model => "Model edges and outline",
+        }
+    }
+}
+
+/// What a wireframe does with the edges behind the model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HiddenLines {
+    /// Drawn faint, so the structure reads through itself, as the viewport
+    /// draws them.
+    #[default]
+    Faint,
+    /// Left out: a hidden-line drawing.
+    Hidden,
+    /// Drawn as strongly as the ones in front.
+    Shown,
+}
+
+impl HiddenLines {
+    pub const ALL: [HiddenLines; 3] = [HiddenLines::Faint, HiddenLines::Hidden, HiddenLines::Shown];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            HiddenLines::Faint => "faint",
+            HiddenLines::Hidden => "hidden",
+            HiddenLines::Shown => "shown",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<HiddenLines> {
+        HiddenLines::ALL.into_iter().find(|hidden| hidden.key() == key)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HiddenLines::Faint => "Faint",
+            HiddenLines::Hidden => "Hidden",
+            HiddenLines::Shown => "Shown",
+        }
+    }
+
+    /// How strongly a hidden edge is drawn, against one in front at 1.
+    pub fn strength(self) -> f32 {
+        match self {
+            // The viewport's, a touch firmer: a print loses what a screen
+            // shows of a faint line.
+            HiddenLines::Faint => 0.2,
+            HiddenLines::Hidden => 0.0,
+            HiddenLines::Shown => 1.0,
+        }
+    }
+}
+
+/// How a wireframe render looks. Colours are as they appear in the file,
+/// sRGB from 0 to 1: a drawing is not lit, so nothing develops them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WireframeSettings {
+    pub edges: WireEdges,
+    pub hidden: HiddenLines,
+    /// In pixels of the image, so a 4K drawing's lines are as thick as a
+    /// 1080p one's unless asked otherwise.
+    pub line_width: f32,
+    pub line_colour: [f32; 3],
+    /// The background, from the top of the image to the bottom; a file with
+    /// alpha (the render's alpha mode) leaves it out.
+    pub background_top: [f32; 3],
+    pub background_bottom: [f32; 3],
+}
+
+impl Default for WireframeSettings {
+    fn default() -> Self {
+        WireframeSettings::DARK
+    }
+}
+
+impl WireframeSettings {
+    /// The viewport's: light lines over a dark ground.
+    pub const DARK: WireframeSettings = WireframeSettings {
+        edges: WireEdges::Mesh,
+        hidden: HiddenLines::Faint,
+        line_width: 1.5,
+        line_colour: [0.82, 0.82, 0.84],
+        background_top: [0.2, 0.2, 0.21],
+        background_bottom: [0.11, 0.11, 0.115],
+    };
+
+    /// A drawing on paper: dark lines on white.
+    pub const LIGHT: WireframeSettings = WireframeSettings {
+        edges: WireEdges::Mesh,
+        hidden: HiddenLines::Faint,
+        line_width: 1.5,
+        line_colour: [0.1, 0.1, 0.11],
+        background_top: [1.0, 1.0, 1.0],
+        background_bottom: [1.0, 1.0, 1.0],
+    };
 }
 
 /// Everything a render is told before it starts.
@@ -235,6 +391,14 @@ impl RenderEngine {
 pub struct RenderSettings {
     /// What renders the image: Tequila's own path tracer, or Cycles.
     pub engine: RenderEngine,
+    /// The picture, or a wireframe drawing of the model.
+    pub kind: RenderKind,
+    /// How a wireframe looks, kept for the next one.
+    pub wireframe: WireframeSettings,
+    /// Whether Tequila's renderer traces wavelengths or RGB (`docs/01`
+    /// §7.4): by default spectral only where something disperses light.
+    /// Cycles renders RGB whatever this says.
+    pub spectral: tequila_render_core::settings::SpectralMode,
     pub width: usize,
     pub height: usize,
     /// Dots per inch, for the print-size calculator. Carried even though the
@@ -323,6 +487,9 @@ impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
             engine: RenderEngine::default(),
+            kind: RenderKind::Photo,
+            wireframe: WireframeSettings::default(),
+            spectral: tequila_render_core::settings::SpectralMode::Auto,
             width: 1920,
             height: 1080,
             dpi: 300.0,

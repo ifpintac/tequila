@@ -122,8 +122,29 @@ pub struct Material {
 
     // --- fuzz ------------------------------------------------------------
     pub fuzz_weight: f32,
+    /// The sheen's tint, and the colour of the fibres when there are any.
     pub fuzz_color: Spectrum,
+    /// The sheen's roughness, and the fibres' own.
     pub fuzz_roughness: f32,
+    // §4.4's Fuzz, geometric: real fibres grown out of the surface when the
+    // scene is built (`tequila_scene::fuzz`), for the renders where a sheen
+    // alone is too smooth. Not in §2.2's OpenPBR block, which has none; kept
+    // beside the sheen they thicken.
+    /// Fibres to the square centimetre of surface. Zero grows none, and is
+    /// the default: the sheen alone.
+    pub fuzz_density: f32,
+    /// A fibre's length, in scene units.
+    pub fuzz_length: f32,
+    /// A fibre's width at its root, in scene units; it tapers to a fifth of
+    /// that at the tip.
+    pub fuzz_thickness: f32,
+    /// How far the fibres lean from standing straight up, 0 to 1.
+    pub fuzz_lean: f32,
+    /// How much each fibre bends along its length, 0 to 1.
+    pub fuzz_curl: f32,
+    /// How much darker than the fuzz colour a fibre may be, 0 (all alike) to
+    /// 1 (anything down to black).
+    pub fuzz_color_variation: f32,
 
     // --- thin film -------------------------------------------------------
     pub thin_film_weight: f32,
@@ -262,6 +283,12 @@ impl Default for Material {
             fuzz_weight: 0.0,
             fuzz_color: Spectrum::ONE,
             fuzz_roughness: 0.3,
+            fuzz_density: 0.0,
+            fuzz_length: 0.002,
+            fuzz_thickness: 0.00004,
+            fuzz_lean: 0.35,
+            fuzz_curl: 0.3,
+            fuzz_color_variation: 0.2,
 
             thin_film_weight: 0.0,
             thin_film_thickness: 500.0,
@@ -501,13 +528,8 @@ impl Material {
         }
         // Density thickens the medium: the same colour and scatter reached in
         // a shorter distance.
-        let depth = self.transmission_depth / self.volume_density.max(1e-6);
-        let per_channel = |colour: f32, scatter: f32| -> (f32, f32) {
-            let absorption = -colour.clamp(1e-4, 1.0).ln() / depth;
-            let scattering = scatter.max(0.0) / depth;
-            let extinction = absorption + scattering;
-            (extinction, if extinction > 0.0 { scattering / extinction } else { 0.0 })
-        };
+        let depth = self.volume_depth();
+        let per_channel = |colour: f32, scatter: f32| volume_coefficients(colour, scatter, depth);
         let (c, s) = (self.transmission_color, self.transmission_scatter);
         let (r, g, b) = (per_channel(c.r, s.r), per_channel(c.g, s.g), per_channel(c.b, s.b));
         Some(SubsurfaceMedium {
@@ -515,6 +537,13 @@ impl Material {
             albedo: Spectrum { r: r.1, g: g.1, b: b.1 },
             anisotropy: self.transmission_scatter_anisotropy.clamp(-0.95, 0.95),
         })
+    }
+
+    /// The depth at which a volume reaches its transmission colour, its
+    /// density taken in: the same colour and scatter reached in a shorter
+    /// distance where it is denser.
+    pub fn volume_depth(&self) -> f32 {
+        self.transmission_depth / self.volume_density.max(1e-6)
     }
 
     /// The colour a quick preview shades the surface with: the base, and
@@ -686,6 +715,15 @@ impl Material {
         self.fuzz_weight = unit(self.fuzz_weight);
         self.fuzz_color = colour(self.fuzz_color);
         self.fuzz_roughness = unit(self.fuzz_roughness);
+        // The bounds the Material tab offers (`Param::range`): past them a
+        // part is a lawn, or a fibre a rope.
+        let between = |v: f32, low: f32, high: f32, fallback: f32| if v.is_finite() { v.clamp(low, high) } else { fallback };
+        self.fuzz_density = between(self.fuzz_density, 0.0, 5000.0, 0.0);
+        self.fuzz_length = between(self.fuzz_length, 0.00005, 0.05, 0.002);
+        self.fuzz_thickness = between(self.fuzz_thickness, 0.000002, 0.001, 0.00004);
+        self.fuzz_lean = unit(self.fuzz_lean);
+        self.fuzz_curl = unit(self.fuzz_curl);
+        self.fuzz_color_variation = unit(self.fuzz_color_variation);
 
         self.thin_film_weight = unit(self.thin_film_weight);
         self.thin_film_thickness = if self.thin_film_thickness.is_finite() {
@@ -782,6 +820,16 @@ impl SurfaceFrame {
     }
 }
 
+/// A clear volume's extinction and single-scattering albedo, one channel of
+/// it (§2.2): the transmission colour `colour` reached at `depth` sets the
+/// absorption, and `scatter`, in inverse depths, the scattering.
+pub fn volume_coefficients(colour: f32, scatter: f32, depth: f32) -> (f32, f32) {
+    let absorption = -colour.clamp(1e-4, 1.0).ln() / depth;
+    let scattering = scatter.max(0.0) / depth;
+    let extinction = absorption + scattering;
+    (extinction, if extinction > 0.0 { scattering / extinction } else { 0.0 })
+}
+
 /// A random walk's extinction and single-scattering albedo for a surface
 /// albedo `albedo`, a mean free path `radius` and an anisotropy `g`.
 ///
@@ -791,7 +839,12 @@ impl SurfaceFrame {
 /// Kutz & Burley 2016, "Practical and Controllable Subsurface Scattering for
 /// Production Path Tracing"] extended to anisotropy by Wrenninge, Villemin &
 /// Hery. See THIRD_PARTY_LICENSES.md.
-fn walk_coefficients(albedo: f32, radius: f32, g: f32) -> (f32, f32) {
+///
+/// Public, and one channel at a time, so that a spectral path can make the
+/// medium per wavelength from the colour's spectrum: the remap is far from
+/// linear, and making it per channel and then upsampling the result gives a
+/// different colour from the one asked for.
+pub fn walk_coefficients(albedo: f32, radius: f32, g: f32) -> (f32, f32) {
     let (g2, g3, g4, g5, g6, g7) = (g * g, g * g * g, g.powi(4), g.powi(5), g.powi(6), g.powi(7));
     let a = 1.8260523782 - 1.28451056436 * g - 1.79904629312 * g2 + 9.19393289202 * g3 - 22.8215585862 * g4
         + 32.0234874259 * g5 - 23.6264803333 * g6 + 7.21067002658 * g7;

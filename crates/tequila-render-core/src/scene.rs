@@ -50,7 +50,74 @@ pub struct Mesh {
     /// The model's own edges as segment end points in pairs (a CAD part's
     /// B-rep edges), for the views that draw them. Not rendered.
     pub edge_lines: Vec<Vec3>,
+    /// Fibres in place of triangles (§4.4's Fuzz): a mesh that has these has
+    /// no triangles, and the renderers trace it as curves. Anything that
+    /// reads a mesh only for its triangles - the Solid view, picking a face,
+    /// a wireframe - sees an empty mesh, which is what fur is to those.
+    pub fibres: Option<Arc<Fibres>>,
     bounds: Aabb,
+}
+
+/// Fibres standing out of a part's surface: §4.4's geometric Fuzz, grown by
+/// `tequila_scene::fuzz` and rendered as curves.
+///
+/// Each fibre is a polyline of [`Fibres::POINTS`] points from its root to
+/// its tip, with a radius at each, in the mesh's own space. Every fibre has
+/// as many points as every other, so segment `s` belongs to fibre
+/// `s / SEGMENTS` and no index table is needed.
+#[derive(Clone, Debug, Default)]
+pub struct Fibres {
+    pub points: Vec<Vec3>,
+    pub radii: Vec<f32>,
+    /// A number from 0 to 1 per fibre, drawn when it was grown: how much of
+    /// the material's colour variation darkens this fibre.
+    pub random: Vec<f32>,
+}
+
+impl Fibres {
+    /// Points along a fibre: four segments, enough for its curl to read as
+    /// a curve at any distance a fibre is seen from.
+    pub const POINTS: usize = 5;
+    pub const SEGMENTS: usize = Self::POINTS - 1;
+
+    pub fn count(&self) -> usize {
+        self.random.len()
+    }
+
+    pub fn segment_count(&self) -> usize {
+        self.count() * Self::SEGMENTS
+    }
+
+    /// The first point of segment `segment`; the next is its other end.
+    #[inline]
+    pub fn segment_start(segment: usize) -> usize {
+        segment / Self::SEGMENTS * Self::POINTS + segment % Self::SEGMENTS
+    }
+
+    /// The box every fibre lies in, its thickness included.
+    pub fn bounds(&self) -> Aabb {
+        let mut bounds = Aabb::EMPTY;
+        for (p, r) in self.points.iter().zip(&self.radii) {
+            bounds.extend_point(*p - Vec3::splat(*r));
+            bounds.extend_point(*p + Vec3::splat(*r));
+        }
+        bounds
+    }
+}
+
+/// Where a ray met a fibre, as the fibre's BSDF reads it (see
+/// `tequila_materials::lobes::Fibre`).
+#[derive(Clone, Copy, Debug)]
+pub struct FibreHit {
+    /// Along the fibre, in world space.
+    pub tangent: Vec3,
+    /// Square to the fibre and toward the viewer: the shading normal.
+    pub facing: Vec3,
+    /// Where across the fibre the ray met it, -1 to 1 along
+    /// `facing × tangent`.
+    pub offset: f32,
+    /// The fibre's own random number ([`Fibres::random`]).
+    pub random: f32,
 }
 
 impl Mesh {
@@ -69,8 +136,15 @@ impl Mesh {
             colors: Vec::new(),
             indices,
             edge_lines: Vec::new(),
+            fibres: None,
             bounds,
         }
+    }
+
+    /// A mesh of fibres and nothing else.
+    pub fn of_fibres(fibres: Fibres) -> Self {
+        let bounds = fibres.bounds();
+        Mesh { fibres: Some(Arc::new(fibres)), bounds, ..Mesh::default() }
     }
 
     pub fn with_curvature(mut self, curvature: Vec<f32>) -> Self {
@@ -355,6 +429,39 @@ pub struct SceneSnapshot {
     /// and walking all of them once a path to find that out is the cost this
     /// exists to remove.
     transmissive: bool,
+    /// Whether any material disperses light, which decides whether an
+    /// `Auto` render is spectral ([`SceneSnapshot::has_dispersion`]).
+    dispersive: DispersionCache,
+    /// The clear glass among the materials, by material, which shadow rays
+    /// pass ([`Pane`]). Empty when there is none, which is what keeps a
+    /// scene without glass on the one any-hit query per shadow ray.
+    panes: PaneCache,
+    /// Where the glass that bends light is ([`SceneSnapshot::bending_bounds`]).
+    bending: BendingCache,
+}
+
+/// [`SceneSnapshot::bending_bounds`], worked out once. A copy starts
+/// without it, as [`EmitterCache`] does: a part moved or a material changed
+/// is what a copy is made for.
+#[derive(Debug, Default)]
+struct BendingCache(std::sync::OnceLock<Vec<Aabb>>);
+
+impl Clone for BendingCache {
+    fn clone(&self) -> Self {
+        BendingCache::default()
+    }
+}
+
+/// [`SceneSnapshot::pane`]'s table, worked out the first time it is asked
+/// for, as [`DispersionCache`] is: the materials are public, and a preview
+/// changes one in place after the snapshot is made.
+#[derive(Debug, Default)]
+struct PaneCache(std::sync::OnceLock<Vec<Option<Pane>>>);
+
+impl Clone for PaneCache {
+    fn clone(&self) -> Self {
+        PaneCache::default()
+    }
 }
 
 /// [`SceneSnapshot::emitters`], worked out once. A copy starts without it:
@@ -369,6 +476,36 @@ impl Clone for EmitterCache {
     }
 }
 
+/// [`SceneSnapshot::has_dispersion`], worked out the first time it is asked:
+/// once per render, rather than once per path walking every material. A copy
+/// starts without it, as [`EmitterCache`] does, since materials are what a
+/// copy is made to change.
+#[derive(Debug, Default)]
+struct DispersionCache(std::sync::OnceLock<bool>);
+
+impl Clone for DispersionCache {
+    fn clone(&self) -> Self {
+        DispersionCache::default()
+    }
+}
+
+/// Whether a parameter block refracts with an Abbe number: the materials a
+/// path meets as the integrator disperses them.
+#[inline]
+fn disperses(material: &Material) -> bool {
+    material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0
+}
+
+/// The same for a graph: its folded constants, or what it computes, or the
+/// surface it is mixed with.
+fn program_disperses(program: &CompiledGraph) -> bool {
+    use tequila_materials::material_type::Param;
+    let driven = |wanted: Param| program.driven.iter().any(|(param, _)| *param == wanted);
+    let transmits = program.constants.transmission_weight > 0.0 || driven(Param::TransmissionWeight);
+    let abbe = program.constants.transmission_dispersion_abbe > 0.0 || driven(Param::Abbe);
+    (transmits && abbe) || program.layer.as_ref().is_some_and(|layer| program_disperses(&layer.shader))
+}
+
 /// Whether this parameter block describes a surface light can pass through
 /// without being deviated.
 ///
@@ -378,6 +515,236 @@ impl Clone for EmitterCache {
 #[inline]
 fn is_cut_out(material: &Material) -> bool {
     material.geometry_opacity < 0.999
+}
+
+/// Clear glass as a shadow ray meets it ([`SceneSnapshot::pane`]): how much
+/// light it lets by on the way straight through.
+///
+/// KeyShot's renderer, with its caustics off, lets light through glass to
+/// what is behind it, and so does this one: a shadow ray stopped by every
+/// pane leaves what is under a display cover or inside a bottle lit only by
+/// the paths that happen to refract into a light, which on a product is a
+/// screen of white speckle on black. Straight on is exact for a pane or a
+/// flat slab, whose two refractions cancel, and close for anything else.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pane {
+    /// What reaches the transmission lobe: its weight, less what metal and
+    /// cutout there are.
+    pub weight: f32,
+    /// The opacity a cutout has, the rest passing untouched.
+    pub opacity: f32,
+    pub ior: f32,
+    pub coat: f32,
+    pub coat_ior: f32,
+    /// The surface's tint at each crossing, the square root of its colour,
+    /// as the transmission lobe has it.
+    pub tint: Spectrum,
+    /// The volume behind the surface, for Beer-Lambert between the way in
+    /// and the way out: its colour, and the distance that colour is reached
+    /// in. `None` for glass with no depth, tinted at the surface alone.
+    pub volume: Option<(Spectrum, f32)>,
+    /// An infinitely thin shell, which light leaves straight on.
+    pub thin: bool,
+    /// Glass and nothing else: all transmission, solid, no coat, film,
+    /// fuzz or flakes, and a plain white reflection. What it does with
+    /// light is the interface's Fresnel alone, which [`Pane::split`] can
+    /// then do without the surface's BSDF.
+    pub plain: bool,
+}
+
+impl Pane {
+    /// The glass a parameter block is, if it is glass a shadow ray can pass:
+    /// mirror-smooth, scattering nothing inside or under its surface.
+    /// Frosted glass blurs what is behind it, so light straight through it
+    /// is not what reaches the far side, and it stays solid to shadows.
+    pub fn of(material: &Material) -> Option<Pane> {
+        let index_matched = material.specular_ior <= 1.0 + 1e-3;
+        let smooth = index_matched
+            || tequila_materials::microfacet::Ggx::from_roughness(
+                material.specular_roughness.clamp(0.0, 1.0),
+                material.specular_roughness_anisotropy,
+            )
+            .is_smooth();
+        let weight = material.transmission_weight.clamp(0.0, 1.0) * (1.0 - material.base_metalness.clamp(0.0, 1.0));
+        if weight <= 1e-4
+            || !smooth
+            || material.subsurface_weight > 1e-4
+            || !material.transmission_scatter.is_black()
+        {
+            return None;
+        }
+        let has_depth = !material.geometry_thin_walled && material.transmission_depth > 0.0;
+        let c = if has_depth {
+            material.transmission_tint
+        } else {
+            material.transmission_color * material.transmission_tint
+        };
+        let plain = weight >= 0.999
+            && material.geometry_opacity >= 0.999
+            && material.coat_weight <= 1e-3
+            && material.thin_film_weight <= 1e-3
+            && material.fuzz_weight <= 1e-3
+            && material.flake_weight <= 1e-3
+            && (material.specular_weight - 1.0).abs() <= 1e-3
+            && material.specular_color == Spectrum::ONE
+            && material.transmission_dispersion_abbe <= 0.0;
+        Some(Pane {
+            weight,
+            opacity: material.geometry_opacity.clamp(0.0, 1.0),
+            ior: material.specular_ior.max(1.0),
+            coat: material.coat_weight.clamp(0.0, 1.0),
+            coat_ior: material.coat_ior.max(1.0),
+            tint: Spectrum { r: c.r.max(0.0).sqrt(), g: c.g.max(0.0).sqrt(), b: c.b.max(0.0).sqrt() },
+            volume: has_depth.then(|| (material.transmission_color, material.volume_depth())),
+            thin: material.geometry_thin_walled,
+            plain,
+        })
+    }
+
+    /// The two ways light leaves plain glass ([`Self::plain`]) met from
+    /// `wo`, in the shading frame with the surface facing it: what it
+    /// reflects, and the way through with what that carries, as the
+    /// transmission lobe would weigh its sample were it always chosen.
+    /// `eta` is the index ahead over the index behind. `None` for glass
+    /// that is not plain, and where all of the light is reflected.
+    pub fn split(&self, wo: Vec3, eta: f32) -> Option<(f32, tequila_materials::bsdf::BsdfSample)> {
+        if !self.plain || wo.z <= 0.0 {
+            return None;
+        }
+        let reflected = tequila_materials::fresnel::dielectric(wo.z, eta);
+        if reflected >= 1.0 {
+            return None;
+        }
+        let (wi, scale, crossing) = if self.thin {
+            (-wo, 1.0, 1.0)
+        } else {
+            // Snell, about the normal the ray arrives against.
+            let sin2_t = (1.0 - wo.z * wo.z).max(0.0) / (eta * eta);
+            if sin2_t >= 1.0 {
+                return None;
+            }
+            let cos_t = (1.0 - sin2_t).sqrt();
+            (-wo / eta + Vec3::Z * (wo.z / eta - cos_t), 1.0 / (eta * eta), eta)
+        };
+        let cos = wi.z.abs();
+        if cos <= 0.0 {
+            return None;
+        }
+        Some((
+            reflected,
+            tequila_materials::bsdf::BsdfSample {
+                wi,
+                f: self.tint * ((1.0 - reflected) * scale / cos),
+                pdf: 1.0,
+                is_delta: true,
+                is_transmission: true,
+                eta: crossing,
+                flags: tequila_materials::bsdf::BsdfFlags::TRANSMISSION | tequila_materials::bsdf::BsdfFlags::DELTA,
+            },
+        ))
+    }
+
+    /// The same for a graph: from its folded constants, as long as nothing
+    /// that decides what passes is computed per point and no other surface
+    /// is mixed in.
+    fn of_program(program: &CompiledGraph) -> Option<Pane> {
+        use tequila_materials::material_type::Param;
+        let varies = program.driven.iter().any(|(param, _)| {
+            matches!(
+                param,
+                Param::BaseMetalness
+                    | Param::SpecularRoughness
+                    | Param::SpecularIor
+                    | Param::Anisotropy
+                    | Param::TransmissionWeight
+                    | Param::TransmissionColor
+                    | Param::TransmissionDepth
+                    | Param::TransmissionTint
+                    | Param::TransmissionScatter
+                    | Param::VolumeDensity
+                    | Param::SubsurfaceWeight
+                    | Param::CoatWeight
+                    | Param::CoatIor
+                    | Param::Opacity
+            )
+        });
+        if varies || program.layer.is_some() {
+            return None;
+        }
+        Pane::of(&program.constants)
+    }
+
+    /// The light through the surface, met at `cos` to its normal: what the
+    /// coat and the interface do not reflect, tinted. The same index from
+    /// either side, since straight on a ray inside meets the far face at
+    /// the angle it met the near one, where a refracted ray would have
+    /// turned back to it.
+    pub fn crossing(&self, cos: f32) -> Spectrum {
+        let cos = cos.abs().clamp(0.0, 1.0);
+        let surface = 1.0 - tequila_materials::fresnel::dielectric(cos, self.ior);
+        let coat = 1.0 - self.coat * tequila_materials::fresnel::dielectric(cos, self.coat_ior);
+        let glass = self.tint * (self.weight * surface * coat);
+        Spectrum::splat(1.0 - self.opacity) + glass * self.opacity
+    }
+
+    /// What `distance` of the volume behind the surface lets by.
+    pub fn inside(&self, distance: f32) -> Spectrum {
+        match self.volume {
+            Some((colour, depth)) if depth > 0.0 && distance > 0.0 => {
+                let exponent = distance / depth;
+                let survive = |c: f32| if c.is_finite() { c.clamp(0.0, 1.0).powf(exponent) } else { 0.0 };
+                Spectrum { r: survive(colour.r), g: survive(colour.g), b: survive(colour.b) }
+            }
+            _ => Spectrum::ONE,
+        }
+    }
+
+    /// Whether the volume behind the surface absorbs.
+    pub fn has_volume(&self) -> bool {
+        self.volume.is_some()
+    }
+
+    /// Whether light through the glass leaves it bent: a solid's surface at
+    /// an index other than air's, with no holes in it. Not a thin wall,
+    /// which light leaves straight on, nor glass with a cutout, part of
+    /// whose light passes the holes unbent. What manifold next event
+    /// estimation solves the way through (`integrator::manifold`).
+    pub fn bends(&self) -> bool {
+        !self.thin && self.ior > 1.0 + 1e-3 && self.opacity >= 0.999
+    }
+
+    /// Whether a shadow ray taking in `glass` passes this glass.
+    pub fn passes(&self, glass: crate::settings::ShadowGlass) -> bool {
+        match glass {
+            crate::settings::ShadowGlass::Solid => false,
+            crate::settings::ShadowGlass::Clear => true,
+            crate::settings::ShadowGlass::Unbent => !self.bends(),
+        }
+    }
+
+    /// The light through the surface along a refracted path, met at `cos`
+    /// to its normal on one side, `eta` the index on the other side over
+    /// the index on this one: what the coat and the interface do not
+    /// reflect, tinted. Fresnel's share through is the same from either
+    /// side of a refraction, so either side's angle will do with its own
+    /// `eta`. Radiance squeezed or spread by the change of index is left to
+    /// the caller.
+    pub fn refracted(&self, cos: f32, eta: f32) -> Spectrum {
+        let cos = cos.abs().clamp(0.0, 1.0);
+        let surface = 1.0 - tequila_materials::fresnel::dielectric(cos, eta);
+        let coat = 1.0 - self.coat * tequila_materials::fresnel::dielectric(cos, self.coat_ior);
+        self.tint * (self.weight * surface * coat)
+    }
+}
+
+/// The panes by material, or none at all when no material is one.
+fn panes(each: impl Iterator<Item = Option<Pane>>) -> Vec<Option<Pane>> {
+    let panes: Vec<Option<Pane>> = each.collect();
+    if panes.iter().any(Option::is_some) {
+        panes
+    } else {
+        Vec::new()
+    }
 }
 
 impl SceneSnapshot {
@@ -408,6 +775,9 @@ impl SceneSnapshot {
             cutters: Arc::new(Vec::new()),
             emitters: EmitterCache::default(),
             transmissive: materials.iter().any(Material::is_transmissive),
+            dispersive: DispersionCache::default(),
+            panes: PaneCache::default(),
+            bending: BendingCache::default(),
             materials,
         }
     }
@@ -438,11 +808,60 @@ impl SceneSnapshot {
         self.cutouts
     }
 
+    /// Whether any material is clear glass a shadow ray can pass ([`Pane`]).
+    #[inline]
+    pub fn has_panes(&self) -> bool {
+        !self.panes().is_empty()
+    }
+
+    /// The glass a material is to a shadow ray, if it is clear glass.
+    #[inline]
+    pub fn pane(&self, id: MaterialId) -> Option<&Pane> {
+        self.panes().get(id.index()).and_then(Option::as_ref)
+    }
+
+    /// The world bounds of each part of glass that bends light
+    /// ([`Pane::bends`]): what a straight line has to pass for manifold next
+    /// event estimation to have a path to solve for.
+    pub fn bending_bounds(&self) -> &[Aabb] {
+        self.bending.0.get_or_init(|| {
+            if !self.has_panes() {
+                return Vec::new();
+            }
+            self.instances
+                .iter()
+                .filter(|instance| self.pane(instance.material).is_some_and(Pane::bends))
+                .filter_map(|instance| self.meshes.get(instance.mesh.index()).map(|mesh| mesh.bounds().transformed(&instance.transform)))
+                .collect()
+        })
+    }
+
+    fn panes(&self) -> &[Option<Pane>] {
+        self.panes.0.get_or_init(|| {
+            panes(self.materials.iter().enumerate().map(|(i, material)| match self.programs.get(i).and_then(|p| p.as_ref()) {
+                Some(program) => Pane::of_program(program),
+                None => Pane::of(material),
+            }))
+        })
+    }
+
     /// Whether any material refracts, so which side of a surface a path is on
     /// is a question with two possible answers.
     #[inline]
     pub fn has_transmissive(&self) -> bool {
         self.transmissive
+    }
+
+    /// Whether any material disperses light (glass or a gem with an Abbe
+    /// number), so that an `Auto` render traces wavelengths
+    /// ([`crate::settings::SpectralMode`]).
+    pub fn has_dispersion(&self) -> bool {
+        *self.dispersive.0.get_or_init(|| {
+            self.materials.iter().enumerate().any(|(i, material)| match self.programs.get(i).and_then(|p| p.as_ref()) {
+                Some(program) => program_disperses(program),
+                None => disperses(material),
+            })
+        })
     }
 
     /// Whether a surface of this instance stops a shadow ray. One with its
@@ -467,6 +886,7 @@ impl SceneSnapshot {
         textures: Arc<TextureTable>,
     ) -> Self {
         self.emitters = EmitterCache::default();
+        self.dispersive = DispersionCache::default();
         // Recomputed rather than or-ed in: a graph can fold opacity to a
         // constant, and the folded value is the one that shades, so the
         // material block alone is not the whole answer once programs exist.
@@ -493,6 +913,8 @@ impl SceneSnapshot {
                 None => material.is_transmissive(),
             }
         });
+        self.panes = PaneCache::default();
+        self.bending = BendingCache::default();
         self.bumps = programs
             .iter()
             .map(|program| {
@@ -567,6 +989,35 @@ impl SceneSnapshot {
         let v = (d22 * d31 - d12 * d32) / det;
         let w = (d11 * d32 - d12 * d31) / det;
         Some(([a, b, c], [1.0 - v - w, v, w]))
+    }
+
+    /// The fibre a hit is on, if it is on one, as seen along `direction`:
+    /// its frame, and where across it the ray met it.
+    ///
+    /// Measured from where the hit is against the fibre's centre line at the
+    /// same point along it, so it does not depend on which way the curve
+    /// primitive happens to number its width.
+    pub fn fibre_at(&self, hit: &crate::intersect::Hit, direction: Vec3) -> Option<FibreHit> {
+        let instance = self.instances.get(hit.instance.0 as usize)?;
+        let fibres = self.meshes.get(instance.mesh.index())?.fibres.as_ref()?;
+        let segment = hit.primitive as usize;
+        if segment >= fibres.segment_count() {
+            return None;
+        }
+        let first = Fibres::segment_start(segment);
+        let (a, b) = (fibres.points[first], fibres.points[first + 1]);
+        let along = hit.uv.x.clamp(0.0, 1.0);
+        let transform = &instance.transform;
+        let tangent = transform.vector(b - a).try_normalize()?;
+        let centre = transform.point(a + (b - a) * along);
+        let radius = (fibres.radii[first] * (1.0 - along) + fibres.radii[first + 1] * along) / transform.inv_length_scale();
+        let to_viewer = -direction;
+        let facing = (to_viewer - tangent * tangent.dot(to_viewer))
+            .try_normalize()
+            .unwrap_or_else(|| tequila_core::math::Onb::from_normal(tangent).t);
+        let across = facing.cross(tangent);
+        let offset = if radius > 0.0 { ((hit.position - centre).dot(across) / radius).clamp(-1.0, 1.0) } else { 0.0 };
+        Some(FibreHit { tangent, facing, offset, random: fibres.random[segment / Fibres::SEGMENTS] })
     }
 
     /// The mean curvature at a hit, in inverse scene units, interpolated

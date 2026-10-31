@@ -372,7 +372,7 @@
  },
  {
   "name": "tequila_render",
-  "description": "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples).",
+  "description": "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples). wireframe=true draws the model's edges instead, as the project's Wireframe settings say - no ray tracing, a second or two at any size.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -384,6 +384,9 @@
     },
     "samples": {
      "type": "integer"
+    },
+    "wireframe": {
+     "type": "boolean"
     }
    },
    "required": [],

@@ -695,6 +695,8 @@ impl SceneDocument {
                 format!("{id} rays: {:?} vs {:?}", a.rays, b.rays)
             } else if a.metadata != b.metadata {
                 format!("{id} metadata: {:?} vs {:?}", a.metadata, b.metadata)
+            } else if a.layers != b.layers {
+                format!("{id} layers: {:?} vs {:?}", a.layers, b.layers)
             } else if a.children != b.children {
                 format!("{id} children: {:?} vs {:?}", a.children, b.children)
             } else if a.parent != b.parent {

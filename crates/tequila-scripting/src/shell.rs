@@ -561,7 +561,12 @@ pub fn parse(line: &str) -> Result<Parsed, String> {
                 .split_first()
                 .ok_or("render needs a path, and optionally a size and a sample count")?;
             let mut numbers = Vec::new();
+            let mut wireframe = false;
             for token in rest {
+                if token.text.eq_ignore_ascii_case("wireframe") {
+                    wireframe = true;
+                    continue;
+                }
                 // `1200x800` as well as `1200 800`: it is how sizes are
                 // written everywhere else, and refusing it would be pedantry.
                 for part in token.text.split(['x', 'X']) {
@@ -579,6 +584,9 @@ pub fn parse(line: &str) -> Result<Parsed, String> {
             }
             for (name, number) in names.iter().zip(&numbers) {
                 out.set(name, *number as f64);
+            }
+            if wireframe {
+                out.set("wireframe", true);
             }
             Parsed::Request { json: request(out), view: View::Json }
         }
@@ -1029,6 +1037,14 @@ mod tests {
             Operation::Import { path, .. } => {
                 assert_eq!(path, r"C:\Users\someone\My Models\q3\scene.gltf")
             }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_draws_a_wireframe_when_asked() {
+        match operation("render lines.png 1920x1080 wireframe") {
+            Operation::Render { width, height, wireframe, .. } => assert_eq!((width, height, wireframe), (1920, 1080, true)),
             other => panic!("{other:?}"),
         }
     }

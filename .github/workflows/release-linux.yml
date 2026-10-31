@@ -2,10 +2,10 @@ name: Linux release
 
 # Tequila for Linux on x86-64, as a .tar.gz to unpack anywhere, built on
 # Ubuntu 22.04 so it runs there and on anything newer (glibc 2.35: Debian
-# 12, Fedora 36, Arch). Tequila's own renderer and STEP reader: Cycles and
-# OpenCASCADE's reader are not built for Linux yet. Run it by hand
-# (Actions > Linux release > Run workflow), or it runs when a release is
-# published and attaches the archive to it.
+# 12, Fedora 36, Arch). With Cycles (CUDA and OptiX for NVIDIA cards, HIP
+# for AMD ones, Blender 5.0.1's kernels) and OpenCASCADE's STEP reader,
+# both built here. Run it by hand (Actions > Linux release > Run workflow),
+# or it runs when a release is published and attaches the archive to it.
 
 on:
   workflow_dispatch:
@@ -26,7 +26,10 @@ env:
 jobs:
   tarball:
     runs-on: ubuntu-22.04
-    timeout-minutes: 150
+    timeout-minutes: 330
+    env:
+      CYCLES_WORK: ${{ github.workspace }}/../cycles-work
+      OCCT_WORK: ${{ github.workspace }}/../occt-work
     steps:
       - uses: actions/checkout@v4
 
@@ -36,12 +39,16 @@ jobs:
         with:
           workspaces: ". -> target-package"
 
-      # patchelf for the libraries' rpath; a display and software OpenGL
-      # for the application's smoke test, which a runner has no screen for.
+      # patchelf for the libraries' rpath; CMake, Ninja and Git LFS for
+      # Cycles and OpenCASCADE; FreeType and X11 for OpenCASCADE's
+      # visualization libraries, which XCAF's colours come through; a
+      # display and software OpenGL for the application's smoke test.
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y patchelf xvfb libgl1-mesa-dri libegl1 libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libwayland-client0
+          sudo apt-get install -y patchelf cmake ninja-build git-lfs libfreetype-dev libx11-dev \
+            xvfb libgl1-mesa-dri libegl1 libxkbcommon-x11-0 libxcursor1 libxrandr2 libxi6 libwayland-client0
+          git lfs install
 
       - name: Cache third-party SDKs
         uses: actions/cache@v4
@@ -52,6 +59,63 @@ jobs:
       - name: Fetch third-party SDKs
         run: bash scripts/fetch-third-party.sh
 
+      # OpenCASCADE takes most of an hour to build and changes only with its
+      # version: kept between runs, and kept as soon as it is built, so a
+      # later step failing does not throw the hour away.
+      - name: Restore OpenCASCADE
+        id: occt-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.OCCT_WORK }}/install
+          key: occt-8.0.1-linux-x64-${{ hashFiles('native/occt/build-occt-library.sh') }}
+
+      - name: OpenCASCADE
+        run: bash native/occt/build-occt-library.sh "$OCCT_WORK"
+
+      - name: Keep OpenCASCADE
+        if: steps.occt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.OCCT_WORK }}/install
+          key: occt-8.0.1-linux-x64-${{ hashFiles('native/occt/build-occt-library.sh') }}
+
+      - name: STEP reader (OpenCASCADE)
+        run: OCCT_DIR="$OCCT_WORK/install" bash native/occt/build-occt.sh
+
+      # Cycles' sources, Blender's libraries and the build, kept between
+      # runs, keyed on what decides them - and kept once built, as
+      # OpenCASCADE is.
+      - name: Restore Cycles
+        id: cycles-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CYCLES_WORK }}
+          key: cycles-linux-x64-${{ hashFiles('native/cycles/**') }}
+          restore-keys: cycles-linux-x64-
+
+      # Blender 5.0.1's GPU kernels, which the Cycles build matches.
+      - name: GPU kernels
+        run: |
+          kernels="$CYCLES_WORK/kernels/lib"
+          if [ ! -f "$kernels/kernel_optix.ptx.zst" ]; then
+            mkdir -p "$kernels"
+            curl -fsSL https://download.blender.org/release/Blender5.0/blender-5.0.1-linux-x64.tar.xz -o "$RUNNER_TEMP/blender.tar.xz"
+            tar -xJf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP" --wildcards '*/5.0/scripts/addons_core/cycles/lib/kernel_*'
+            cp "$RUNNER_TEMP"/blender-5.0.1-linux-x64/5.0/scripts/addons_core/cycles/lib/kernel_* "$kernels/"
+            rm -rf "$RUNNER_TEMP/blender.tar.xz" "$RUNNER_TEMP/blender-5.0.1-linux-x64"
+          fi
+          echo "$(ls "$kernels" | wc -l) kernel files: $(ls "$kernels" | sed -E 's/kernel_([a-z]+).*/\1/' | sort | uniq -c | tr '\n' ' ')"
+
+      - name: Cycles
+        run: bash native/cycles/build-cycles.sh "$CYCLES_WORK"
+
+      - name: Keep Cycles
+        if: steps.cycles-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CYCLES_WORK }}
+          key: cycles-linux-x64-${{ hashFiles('native/cycles/**') }}
+
       - name: Package
         env:
           TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release }}
@@ -61,16 +125,22 @@ jobs:
           if [[ "$TAG" =~ ^v([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([0-9]{2})([0-9]{2})$ ]]; then
             export TEQUILA_PACKAGE_STAMP="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}-${BASH_REMATCH[4]}${BASH_REMATCH[5]}00"
           fi
-          bash scripts/package-linux.sh
+          TEQUILA_CYCLES_WORK="$CYCLES_WORK" bash scripts/package-linux.sh
 
       # Until here it was only built. Start what was packaged: the renderer
-      # without a window, a STEP file through Tequila's own reader, then the
-      # application, driven through its scripting channel.
+      # without a window, with Tequila's own engine and with Cycles (on the
+      # processor: a runner has no graphics card), a STEP file through
+      # OpenCASCADE, then the application, driven through its scripting
+      # channel.
       - name: Smoke test the renderer
         run: |
           out="$(ls -d dist/Tequila-Linux-*/Tequila | tail -1)"
           "$out/tequila-cli" --width 160 --height 100 --samples 4 --output smoke-tequila.png
-          "$out/tequila-cli" --input crates/tequila-import/tests/data/two_bodies.step --width 160 --height 100 --samples 4 --output smoke-step.png
+          "$out/tequila-cli" --engine cycles --device CPU --width 160 --height 100 --samples 4 --output smoke-cycles.png 2>&1 | tee cycles.log
+          if grep -qi "not installed\|not available" cycles.log; then echo "Cycles did not load"; exit 1; fi
+          "$out/tequila-cli" --input crates/tequila-import/tests/data/two_bodies.step --width 160 --height 100 --samples 4 --output smoke-step.png 2>&1 | tee step.log
+          if grep -q "own reader instead" step.log; then echo "The STEP file was not read by OpenCASCADE"; exit 1; fi
+          "$out/tequila-cli" --input crates/tequila-import/tests/data/two_bodies.step --wireframe --edges model --width 320 --height 200 --output smoke-wireframe.png
           ls -la smoke-*.png
 
       - name: Smoke test the application
@@ -87,6 +157,8 @@ jobs:
           path: |
             smoke-*.png
             app-window.png
+            cycles.log
+            step.log
           if-no-files-found: ignore
 
       - name: Keep the archive

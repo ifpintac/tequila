@@ -32,6 +32,80 @@ pub use tequila_materials::openpbr::{Material, SurfaceFrame};
 /// because one of these is built at every path vertex on every core.
 pub type MaterialBsdf = tequila_materials::lobes::OpenPbrBsdf;
 
+/// What scatters light at a path vertex: a surface's layer stack, or one of
+/// §4.4's fibres grown out of it.
+///
+/// Two, because a fibre is not a surface: it scatters all round itself, in
+/// a frame that runs along it, and none of the stack's layering means
+/// anything there. The integrator asks this for everything it asks a BSDF.
+#[derive(Clone, Debug)]
+pub enum Scattering {
+    Surface(MaterialBsdf),
+    Fibre(tequila_materials::lobes::Fibre),
+}
+
+impl tequila_materials::Bsdf for Scattering {
+    fn eval(&self, wo: tequila_core::math::Vec3, wi: tequila_core::math::Vec3) -> tequila_core::spectrum::Spectrum {
+        match self {
+            Scattering::Surface(b) => b.eval(wo, wi),
+            Scattering::Fibre(b) => b.eval(wo, wi),
+        }
+    }
+
+    fn pdf(&self, wo: tequila_core::math::Vec3, wi: tequila_core::math::Vec3) -> f32 {
+        match self {
+            Scattering::Surface(b) => b.pdf(wo, wi),
+            Scattering::Fibre(b) => b.pdf(wo, wi),
+        }
+    }
+
+    fn sample(&self, wo: tequila_core::math::Vec3, u: tequila_core::math::Vec2, uc: f32) -> Option<tequila_materials::BsdfSample> {
+        match self {
+            Scattering::Surface(b) => b.sample(wo, u, uc),
+            Scattering::Fibre(b) => b.sample(wo, u, uc),
+        }
+    }
+
+    fn albedo(&self, wo: tequila_core::math::Vec3) -> tequila_core::spectrum::Spectrum {
+        match self {
+            Scattering::Surface(b) => b.albedo(wo),
+            Scattering::Fibre(b) => b.albedo(wo),
+        }
+    }
+
+    fn flags(&self) -> tequila_materials::BsdfFlags {
+        match self {
+            Scattering::Surface(b) => b.flags(),
+            Scattering::Fibre(b) => b.flags(),
+        }
+    }
+
+    fn eval_selective(&self, wo: tequila_core::math::Vec3, wi: tequila_core::math::Vec3, diffuse: bool, specular: bool) -> tequila_core::spectrum::Spectrum {
+        match self {
+            Scattering::Surface(b) => b.eval_selective(wo, wi, diffuse, specular),
+            Scattering::Fibre(b) => b.eval_selective(wo, wi, diffuse, specular),
+        }
+    }
+}
+
+/// The fibre BSDF for a hit on one of `material`'s fibres: the fuzz's
+/// colour, darkened by the fibre's own share of the colour variation, and
+/// the fuzz's roughness, raised to `roughness_floor` as every lobe is deep
+/// in a path.
+pub fn fibre_bsdf(material: &Material, fibre: &crate::scene::FibreHit, roughness_floor: f32) -> tequila_materials::lobes::Fibre {
+    tequila_materials::lobes::Fibre::new(
+        fibre_colour(material, fibre.random),
+        material.fuzz_roughness.max(roughness_floor),
+        fibre.offset,
+    )
+}
+
+/// The colour of the fibre with random number `random`: what Cycles'
+/// translation computes from the same number at the same fibre.
+pub fn fibre_colour(material: &Material, random: f32) -> tequila_core::spectrum::Spectrum {
+    material.fuzz_color * (1.0 - material.fuzz_color_variation.clamp(0.0, 1.0) * random.clamp(0.0, 1.0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +183,32 @@ mod tests {
             plastic.bsdf(0.0).eval(wo(), wi),
             generic.bsdf(0.0).eval(wo(), wi)
         );
+    }
+
+    /// A fibre wears the fuzz colour, darkened by its own random number's
+    /// share of the variation: none without variation, at most the whole
+    /// variation for the darkest fibre, and the fuzz roughness raised to the
+    /// path's floor.
+    #[test]
+    fn a_fibre_is_shaded_by_its_own_colour() {
+        let velvet = Material {
+            fuzz_color: Spectrum { r: 0.8, g: 0.1, b: 0.2 },
+            fuzz_color_variation: 0.5,
+            fuzz_roughness: 0.4,
+            ..Material::default()
+        };
+        assert_eq!(fibre_colour(&velvet, 0.0), velvet.fuzz_color);
+        assert!((fibre_colour(&velvet, 1.0).r - 0.4).abs() < 1e-6);
+        assert!((fibre_colour(&velvet, 0.5).g - 0.075).abs() < 1e-6);
+        let uniform = Material { fuzz_color_variation: 0.0, ..velvet.clone() };
+        assert_eq!(fibre_colour(&uniform, 0.9), velvet.fuzz_color);
+
+        // Darker fibres send on less of the light.
+        let hit = |random| crate::scene::FibreHit { tangent: Vec3::X, facing: Vec3::Z, offset: 0.1, random };
+        let wo = vec3(0.2, 0.0, 0.98).normalize();
+        let light = fibre_bsdf(&velvet, &hit(0.0), 0.0).albedo(wo);
+        let dark = fibre_bsdf(&velvet, &hit(1.0), 0.0).albedo(wo);
+        assert!(dark.r < light.r, "{dark:?} against {light:?}");
     }
 
     #[test]

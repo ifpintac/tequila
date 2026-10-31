@@ -391,7 +391,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests_support {
+pub(crate) mod tests_support {
     use crate::command::{reserve_keys, ImportPayload};
     use crate::tree::{NodeId, NodeKind, SceneNode};
     use crate::{Command, CommandBus, SceneDocument};

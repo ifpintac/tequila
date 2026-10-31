@@ -366,20 +366,51 @@ fn layers_and_attributes_arrive_as_metadata() {
     assert_eq!(housing.metadata.get("Definition").map(String::as_str), Some("Production release"));
     assert_eq!(housing.metadata.get("Finish").map(String::as_str), Some("Mold-Tech 11010"));
     let (box_part, pin) = (node("Box"), node("Pin"));
-    assert_eq!(box_part.metadata.get("Layer").map(String::as_str), Some("Outer"));
+    assert_eq!(box_part.layers, ["Outer"]);
     assert_eq!(box_part.metadata.get("Material").map(String::as_str), Some("ABS"));
     assert!(!box_part.hidden, "the box's layer is on");
-    assert_eq!(pin.metadata.get("Layer").map(String::as_str), Some("Construction"));
+    assert_eq!(pin.layers, ["Construction"]);
     assert!(pin.hidden, "the pin's layer is switched off");
 
     // And in the document: the pin hidden, the box shown, and the layer
     // there for a search or a rule to find.
     let mut document = SceneDocument::new();
     let (command, _) = build(&document, None, scene, &ImportOptions::default(), None).unwrap();
-    CommandBus::new().apply(&mut document, command).unwrap();
-    let placed = |name: &str| document.tree.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("no `{name}` in the document"));
-    assert!(!placed("Pin").visible && placed("Box").visible);
-    assert_eq!(placed("Box").metadata.get("Layer").map(String::as_str), Some("Outer"));
+    let mut bus = CommandBus::new();
+    bus.apply(&mut document, command).unwrap();
+    let placed = |document: &SceneDocument, name: &str| {
+        document.tree.iter().find(|n| n.name == name).cloned().unwrap_or_else(|| panic!("no `{name}` in the document"))
+    };
+    assert!(!placed(&document, "Pin").visible && placed(&document, "Box").visible);
+    assert_eq!(placed(&document, "Box").layers, ["Outer"]);
+    let query = tequila_scene::metadata::Query::parse("Layer = Outer").unwrap();
+    assert_eq!(tequila_scene::metadata::find(&document, &query), [placed(&document, "Box").id]);
+
+    // The file's layers are the document's, the switched-off one hidden,
+    // and showing it shows its part.
+    let layers = tequila_scene::layers::layers(&document);
+    let shown: Vec<(&str, tequila_scene::layers::Shown)> = layers.iter().map(|l| (l.name.as_str(), l.shown())).collect();
+    assert_eq!(shown, [("Outer", tequila_scene::layers::Shown::All), ("Construction", tequila_scene::layers::Shown::None)]);
+    bus.apply(&mut document, tequila_scene::Command::SetLayerVisibility { layer: "Construction".into(), visible: true }).unwrap();
+    assert!(placed(&document, "Pin").visible);
+}
+
+/// Where OpenCASCADE's helper is built (`native/occt/build-occt.bat`), it,
+/// not truck, reads the layers and attributes above.
+#[test]
+fn opencascade_reads_the_layers_and_attributes_where_it_is_built() {
+    let name = if cfg!(windows) { "tequila-occt.exe" } else { "tequila-occt" };
+    let built = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../native/occt/build/occt").join(name);
+    if std::env::var_os("TEQUILA_OCCT").is_some() || !built.is_file() {
+        eprintln!("skipped: OpenCASCADE's helper is not built here");
+        return;
+    }
+    let scene = read(LAYERS);
+    assert!(scene.warnings.iter().all(|w| !w.contains("Tequila's own reader")), "the helper fell back: {:?}", scene.warnings);
+    let node = |name: &str| scene.nodes.iter().find(|n| n.name == name).unwrap_or_else(|| panic!("no node `{name}`"));
+    assert_eq!(node("Housing").metadata.get("Finish").map(String::as_str), Some("Mold-Tech 11010"));
+    assert_eq!(node("Box").layers, ["Outer"]);
+    assert!(node("Pin").hidden);
 }
 
 /// A file that says nothing about its parts adds nothing: the product

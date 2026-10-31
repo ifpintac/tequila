@@ -224,7 +224,7 @@ pub fn pick(folder: bool) -> Option<PathBuf> {
         dialog.pick_folder()
     } else {
         dialog
-            .add_filter("Texture pack", &["zip", "png", "jpg", "jpeg", "tif", "tiff", "exr", "hdr"])
+            .add_filter("Texture pack", &["zip", "png", "jpg", "jpeg", "tif", "tiff", "tga", "bmp", "webp", "dds", "jxl", "exr", "hdr"])
             .pick_file()
     }
 }
@@ -257,6 +257,9 @@ pub fn menu(ui: &mut egui::Ui) -> Option<bool> {
 pub enum Dropped {
     Model,
     Project,
+    /// A scene from another renderer (KeyShot's `.ksp`, `.bip`): opened as
+    /// a project of its own, with its cameras, lighting and look.
+    Scene,
     TexturePack,
     /// A material somebody shared: a package, or a preset's `.json`.
     Material,
@@ -264,8 +267,10 @@ pub enum Dropped {
 }
 
 /// Sort a dropped path by what it is. A folder or a ZIP is a pack; so is a
-/// loose picture, which stands for the folder it is in. An HDR or EXR is left
-/// alone: dropped on its own it is as likely an environment as a map.
+/// loose picture in a format packs come in, which stands for the folder it
+/// is in. An HDR or EXR is left alone: dropped on its own it is as likely an
+/// environment as a map. So are the artwork formats — PSD, SVG, GIF — which
+/// hold a label or a logo rather than a material's maps.
 pub fn classify_drop(path: &Path) -> Dropped {
     if path.is_dir() {
         return Dropped::TexturePack;
@@ -277,11 +282,12 @@ pub fn classify_drop(path: &Path) -> Dropped {
     match extension.as_str() {
         "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "usda" | "usd" | "ifc" => Dropped::Model,
         "tequila" | "freeshot" => Dropped::Project,
+        "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.
         "fsmat" | "json" | "zip" if tequila_format::library::is_material_file(path) => Dropped::Material,
         // KeyShot's material packages.
         "kmp" => Dropped::Material,
-        "zip" | "png" | "jpg" | "jpeg" | "tif" | "tiff" => Dropped::TexturePack,
+        "zip" | "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" | "bmp" | "webp" | "dds" | "jxl" => Dropped::TexturePack,
         _ => Dropped::Unknown,
     }
 }
@@ -507,9 +513,15 @@ mod tests {
         assert_eq!(classify_drop(&folder), Dropped::TexturePack);
         assert_eq!(classify_drop(Path::new("C:/packs/Leather037_1K-JPG.zip")), Dropped::TexturePack);
         assert_eq!(classify_drop(Path::new("C:/packs/wood/wood_diff_2k.JPG")), Dropped::TexturePack);
+        for map in ["Metal_Roughness.tga", "metal_nor_gl.TIF", "Bricks_Color.webp", "rock_albedo.dds", "rock_ao.jxl", "old_bump.bmp"] {
+            assert_eq!(classify_drop(&Path::new("C:/packs/maps").join(map)), Dropped::TexturePack, "{map}");
+        }
+        assert_eq!(classify_drop(Path::new("C:/art/logo.svg")), Dropped::Unknown, "artwork is not a pack");
         assert_eq!(classify_drop(Path::new("C:/models/bracket.STEP")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/models/headset.glb")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/work/shot.tequila")), Dropped::Project);
+        assert_eq!(classify_drop(Path::new("C:/work/speaker.KSP")), Dropped::Scene);
+        assert_eq!(classify_drop(Path::new("C:/work/speaker.bip")), Dropped::Scene);
         assert_eq!(classify_drop(Path::new("C:/notes.txt")), Dropped::Unknown);
         assert_eq!(classify_drop(Path::new("C:/hdri/studio_small_08_4k.exr")), Dropped::Unknown);
     }

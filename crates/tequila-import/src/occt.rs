@@ -1,4 +1,5 @@
-//! STEP read through OpenCASCADE, by `tequila-occt` (`native/occt`).
+//! STEP, and IGES where Tequila's own reader falls short, read through
+//! OpenCASCADE, by `tequila-occt` (`native/occt`).
 //!
 //! truck, Tequila's pure-Rust reader, gets some CAD packages' surfaces
 //! wrong: a 57 MB AP242 assembly written in metres lost a sixth of its
@@ -8,6 +9,12 @@
 //! started here, so a file it cannot handle costs that process rather than
 //! Tequila's window, and its answer is the bodies, products and colours
 //! [`crate::step`] lays out exactly as it lays out truck's.
+//!
+//! The helper reads IGES as well, through OpenCASCADE's IGES reader, for a
+//! file Tequila's own reader ([`crate::iges`]) cannot read whole. Either
+//! way its answer carries what the file says about each product and body
+//! besides its shape: named attributes, the layers it is on (an IGES
+//! file's levels) and whether they are all switched off.
 //!
 //! The helper is found beside Tequila (`occt/tequila-occt.exe`), where
 //! `TEQUILA_OCCT` says, or in a development build's `native/occt/build`.
@@ -62,7 +69,8 @@ pub(crate) struct Product {
 }
 
 /// What the helper says about a product or a body: its attributes, its
-/// layers, and whether they are all switched off.
+/// layers, and whether they are all switched off. A helper built before it
+/// wrote them gives none, which reads as a file that says nothing.
 fn about(value: &Value) -> crate::step::About {
     let mut about = crate::step::About::default();
     if let Some(Value::Object(attributes)) = value.get("attributes") {
@@ -104,9 +112,27 @@ impl Step {
     }
 }
 
-/// Read `bytes` (a STEP file) with the helper at `chord` (a fraction of
-/// each part's size) and `angle` (radians), reporting its steps as it goes.
-pub(crate) fn read(helper: &Path, bytes: &[u8], chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
+/// The kind of file the helper is given, which it tells by the name it is
+/// written under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Format {
+    Step,
+    Iges,
+}
+
+impl Format {
+    fn file_name(self) -> &'static str {
+        match self {
+            Format::Step => "model.step",
+            Format::Iges => "model.igs",
+        }
+    }
+}
+
+/// Read `bytes` (a file in `format`) with the helper at `chord` (a fraction
+/// of each part's size) and `angle` (radians), reporting its steps as it
+/// goes.
+pub(crate) fn read(helper: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
     static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let folder = std::env::temp_dir().join(format!(
         "tequila-occt-{}-{}",
@@ -114,13 +140,13 @@ pub(crate) fn read(helper: &Path, bytes: &[u8], chord: f64, angle: f64, progress
         COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-    let result = run(helper, &folder, bytes, chord, angle, progress);
+    let result = run(helper, &folder, bytes, format, chord, angle, progress);
     let _ = std::fs::remove_dir_all(&folder);
     result
 }
 
-fn run(helper: &Path, folder: &Path, bytes: &[u8], chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
-    let input = folder.join("model.step");
+fn run(helper: &Path, folder: &Path, bytes: &[u8], format: Format, chord: f64, angle: f64, progress: &dyn Fn(Step)) -> Result<Read, String> {
+    let input = folder.join(format.file_name());
     let output = folder.join("model.fsocc");
     std::fs::write(&input, bytes).map_err(|e| format!("{}: {e}", input.display()))?;
     let mut command = Command::new(helper);
@@ -318,6 +344,23 @@ mod tests {
         assert_eq!(Step::parse("progress 12"), None);
         assert_eq!(Step::parse("Warning: unit"), None);
         assert_eq!(Step::parse(""), None);
+    }
+
+    /// What the file says about a body and a product besides its shape
+    /// reads back; an answer from a helper built before it wrote any (the
+    /// one above) reads as a file that says nothing.
+    #[test]
+    fn attributes_and_layers_read_back_and_an_older_answer_still_reads() {
+        let products = r#"[{"name":"Fixture","matrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"bodies":[0],"children":[],"attributes":{"Part number":"PN-7","Mass":"0.25"},"layers":["Level 5","Outer, upper"],"hidden":true}]"#;
+        let read = parse(&answer(2, products)).expect("reads");
+        let about = &read.products[0].about;
+        assert_eq!(about.attributes, [("Mass".to_string(), "0.25".to_string()), ("Part number".to_string(), "PN-7".to_string())]);
+        assert_eq!(about.layers, ["Level 5", "Outer, upper"]);
+        assert!(about.hidden);
+
+        let older = parse(&answer(2, ONE)).expect("an older helper's answer reads");
+        assert_eq!(older.products[0].about, crate::step::About::default());
+        assert_eq!(older.bodies[0].about, crate::step::About::default());
     }
 
     #[test]

@@ -757,6 +757,24 @@ fn the_finer_cycles_controls_survive_a_round_trip() {
     assert_eq!(reopened.document.render, document.render);
 }
 
+/// Manifold caustics survive a save and a reopen; and a project with the
+/// photons every project had before there was a choice writes no method at
+/// all, so it is the same bytes it always was and reads back as photons.
+#[test]
+fn the_caustics_method_survives_a_round_trip() {
+    use tequila_render_core::settings::{CausticsMethod, IntegratorConfig, LightingSettings};
+    let mut document = SceneDocument::new();
+    document.lighting = LightingSettings { preset: None, custom: IntegratorConfig { caustics: true, ..IntegratorConfig::product() } };
+    let text = write(&document, &Preserved::default());
+    assert!(!String::from_utf8_lossy(&text).contains("caustics_method"), "a method written for photons");
+    let reopened = read(&text).expect("the file we just wrote must read");
+    assert_eq!(reopened.document.lighting.custom.caustics_method, CausticsMethod::Photons);
+
+    document.lighting.custom.caustics_method = CausticsMethod::Manifold;
+    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    assert!(reopened.document.lighting.custom.manifold_caustics(), "manifold caustics came back as {:?}", reopened.document.lighting.custom.caustics_method);
+}
+
 /// Measurements survive a save and a reopen, ends on parts and in the
 /// world alike, hidden ones included.
 #[test]
@@ -1188,4 +1206,94 @@ fn kept_cad_sources_survive_a_round_trip_while_named() {
     assert_eq!(reopened.document.sources.get(&iges_id).map(|b| b.as_slice()), Some(iges.as_slice()));
     assert!(reopened.document.sources.get(&orphan_id).is_none(), "a source no model names was kept");
     assert!(reopened.preserved.is_empty(), "the source came back as an unknown member");
+}
+
+/// A model of three parts as a CAD import leaves it: the housing on two
+/// layers (one with a comma in its name) and a part number, the pin on a
+/// switched-off layer and hidden, the screw on none.
+fn with_cad_layers(metadata_layer: Option<&str>) -> SceneDocument {
+    use tequila_scene::command::{reserve_keys, ImportPayload};
+    use tequila_scene::tree::{NodeKind, SceneNode};
+    let mut document = SceneDocument::new();
+    let mesh = tequila_scene::Mesh::new(vec![vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)], vec![0, 1, 2]);
+    let (meshes, _, ids) = reserve_keys(&document, 1, 0, 4);
+    let mut root = SceneNode::new(ids[0], "Model", NodeKind::Group);
+    root.children = ids[1..].to_vec();
+    let mut nodes = vec![root];
+    for (index, name, layers) in [(1, "Housing", vec!["Outer", "Shell, inner"]), (2, "Pin", vec!["Construction"]), (3, "Screw", vec![])] {
+        let mut node = SceneNode::new(ids[index], name, NodeKind::Part { mesh: meshes[0] });
+        node.parent = Some(ids[0]);
+        node.layers = layers.into_iter().map(String::from).collect();
+        node.visible = name != "Pin";
+        if name == "Housing" {
+            node.metadata.insert("Part number".into(), "PN-1042".into());
+        }
+        if let (Some(value), "Screw") = (metadata_layer, name) {
+            node.metadata.insert("Layer".into(), value.into());
+        }
+        nodes.push(node);
+    }
+    let payload = ImportPayload { meshes: vec![(meshes[0], mesh)], textures: Vec::new(), materials: Vec::new(), nodes, roots: vec![ids[0]] };
+    CommandBus::new().apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+    document
+}
+
+/// A part's CAD layers and metadata survive a save and a reopen, in their
+/// order and with their commas, and the second save is the first's bytes.
+/// A part on no layer writes none, so a project without layers is the file
+/// it always was.
+#[test]
+fn cad_layers_and_metadata_survive_a_round_trip() {
+    let document = with_cad_layers(None);
+    let first = write(&document, &Preserved::default());
+    let reopened = read(&first).expect("the file we just wrote must read");
+    let layers = |document: &SceneDocument, name: &str| document.tree.iter().find(|n| n.name == name).unwrap().layers.clone();
+    assert_eq!(layers(&reopened.document, "Housing"), ["Outer", "Shell, inner"]);
+    assert_eq!(layers(&reopened.document, "Pin"), ["Construction"]);
+    assert!(layers(&reopened.document, "Screw").is_empty());
+    let housing = reopened.document.tree.iter().find(|n| n.name == "Housing").unwrap();
+    assert_eq!(housing.metadata.get("Part number").map(String::as_str), Some("PN-1042"));
+    assert_eq!(reopened.document.difference_from(&document), None);
+    assert!(reopened.preserved.is_empty() && reopened.notes.is_empty(), "{:?}", reopened.notes);
+    assert!(write(&reopened.document, &reopened.preserved) == first, "the second save differs");
+
+    let shown: Vec<(String, tequila_scene::layers::Shown)> =
+        tequila_scene::layers::layers(&reopened.document).into_iter().map(|l| (l.name.clone(), l.shown())).collect();
+    use tequila_scene::layers::Shown;
+    assert_eq!(shown, [("Outer".into(), Shown::All), ("Shell, inner".into(), Shown::All), ("Construction".into(), Shown::None)]);
+
+    let scene = tequila_format::json::parse(tequila_format::zip::ZipArchive::read(&first).unwrap().get("scene.json").unwrap()).unwrap();
+    let written: Vec<bool> = scene.get("tree").unwrap().as_array().iter().map(|n| n.get("layers").is_some()).collect();
+    assert_eq!(written, [false, true, true, false], "only the parts on a layer write one");
+}
+
+/// A project saved before layers had their own field kept them as the
+/// metadata field `Layer`, joined with commas: it opens with them as
+/// layers, where the Layers list shows them and a search still finds them.
+#[test]
+fn a_project_that_kept_its_layers_as_metadata_opens_with_them_as_layers() {
+    let old = with_cad_layers(Some("Hardware, Fasteners"));
+    let reopened = read(&write(&old, &Preserved::default())).expect("reads");
+    let screw = reopened.document.tree.iter().find(|n| n.name == "Screw").unwrap();
+    assert_eq!(screw.layers, ["Hardware", "Fasteners"]);
+    assert!(!screw.metadata.contains_key("Layer"), "{:?}", screw.metadata);
+    let query = tequila_scene::metadata::Query::parse("Layer = Fasteners").unwrap();
+    assert_eq!(tequila_scene::metadata::find(&reopened.document, &query), [screw.id]);
+}
+
+/// A part's rays set back to the default after a reopen stay the default:
+/// kept as a field the reader did not know, the old rays came back.
+#[test]
+fn rays_set_back_to_the_default_stay_so_through_a_save() {
+    let document = with_cad_layers(None);
+    let screw = document.tree.iter().find(|n| n.name == "Screw").unwrap().id;
+    let mut document = document;
+    let mut bus = CommandBus::new();
+    let glossless = tequila_scene::tree::Rays { glossy: false, ..Default::default() };
+    bus.apply(&mut document, Command::set_rays(screw, glossless)).unwrap();
+    let mut reopened = read(&write(&document, &Preserved::default())).unwrap();
+    assert_eq!(reopened.document.tree.get(screw).unwrap().rays, glossless);
+    bus.apply(&mut reopened.document, Command::set_rays(screw, Default::default())).unwrap();
+    let again = read(&write(&reopened.document, &reopened.preserved)).unwrap();
+    assert!(again.document.tree.get(screw).unwrap().rays.is_default());
 }

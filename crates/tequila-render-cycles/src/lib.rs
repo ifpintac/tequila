@@ -17,6 +17,7 @@ pub mod translate;
 
 use std::ffi::{c_int, c_void, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 /// A Cycles node, as a session handed it out. Opaque, so only a session
 /// makes one: the methods that take one pass it to C, and taking a bare
@@ -38,6 +39,12 @@ pub fn has_passes() -> bool {
     })
 }
 
+/// Whether the installed library takes fibres, as hair (`Session::curves`):
+/// one from before leaves them out of its renders.
+pub fn has_curves() -> bool {
+    ffi::api().is_ok_and(|api| api.fsc_curves.is_some())
+}
+
 /// The devices Cycles can render on, as (type, description, id).
 pub fn devices() -> Result<Vec<(String, String, String)>, String> {
     let api = ffi::api()?;
@@ -55,6 +62,38 @@ pub fn devices() -> Result<Vec<(String, String, String)>, String> {
             Some((parts.next()?.to_string(), parts.next()?.to_string(), parts.next()?.to_string()))
         })
         .collect())
+}
+
+/// The kind of graphics card Cycles renders on here, best first: OptiX on an
+/// NVIDIA card with ray-tracing cores, CUDA on any other NVIDIA card, HIP
+/// on an AMD one, Metal on a Mac - or none. Asked once: listing the devices
+/// wakes every graphics driver.
+pub fn best_gpu() -> Option<&'static str> {
+    static BEST: OnceLock<Option<&'static str>> = OnceLock::new();
+    *BEST.get_or_init(|| {
+        let found = devices().ok()?;
+        best_of(found.iter().map(|(kind, _, _)| kind.as_str()))
+    })
+}
+
+/// The best of the device kinds listed, as [`best_gpu`] chooses.
+pub fn best_of<'a>(kinds: impl Iterator<Item = &'a str> + Clone) -> Option<&'static str> {
+    ["OPTIX", "CUDA", "HIP", "METAL"].into_iter().find(|wanted| kinds.clone().any(|kind| kind == *wanted))
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::best_of;
+
+    #[test]
+    fn the_best_card_is_chosen_whoever_made_it() {
+        assert_eq!(best_of(["CPU", "CUDA", "OPTIX"].into_iter()), Some("OPTIX"));
+        assert_eq!(best_of(["CPU", "CUDA"].into_iter()), Some("CUDA"));
+        assert_eq!(best_of(["HIP", "CPU"].into_iter()), Some("HIP"), "an AMD card");
+        assert_eq!(best_of(["HIP", "CUDA"].into_iter()), Some("CUDA"));
+        assert_eq!(best_of(["METAL", "CPU"].into_iter()), Some("METAL"));
+        assert_eq!(best_of(["CPU"].into_iter()), None, "the processor is not a card");
+    }
 }
 
 /// The folder holding Cycles' `lib/` of GPU kernels: `explicit`, else
@@ -136,6 +175,12 @@ impl Session {
     }
 
     fn create(device: &str, threads: usize, kernels: Option<&std::path::Path>, live: bool) -> Result<Session, String> {
+        // "GPU": whichever kind of card this computer has, every one of it.
+        let device = if device.eq_ignore_ascii_case("GPU") {
+            best_gpu().ok_or_else(|| "Cycles found no graphics card it can use".to_string())?
+        } else {
+            device
+        };
         match Session::create_on(device, threads, kernels, live) {
             // OptiX needs RTX hardware and a recent driver; CUDA runs on any
             // NVIDIA card Cycles supports, a little slower.
@@ -384,6 +429,34 @@ impl Session {
     pub fn mesh_attribute(&mut self, mesh: Node, name: &str, rgba: &[[f32; 4]]) -> Result<(), String> {
         let Some(send) = self.api.fsc_mesh_attribute else { return Err("this Cycles library predates vertex attributes".into()) };
         self.check(unsafe { send(self.raw, mesh.0, c(name).as_ptr(), rgba.len() as c_int, rgba.as_ptr().cast()) })
+    }
+
+    /// Whether this library takes fibres, as hair (`Session::curves`).
+    pub fn has_curves(&self) -> bool {
+        self.api.fsc_curves.is_some()
+    }
+
+    /// Fibres as Cycles hair: `points_per_curve` keys a curve, root first,
+    /// with a radius each, and a number a curve as its "tq_fibre_random"
+    /// attribute; shaded by `shader`.
+    pub fn curves(&mut self, points_per_curve: usize, keys: &[[f32; 3]], radii: &[f32], random: &[f32], shader: Node) -> Result<Node, String> {
+        let Some(send) = self.api.fsc_curves else {
+            return Err("this Cycles library predates fibres".into());
+        };
+        assert_eq!(keys.len(), radii.len());
+        assert_eq!(keys.len(), random.len() * points_per_curve);
+        let node = unsafe {
+            send(
+                self.raw,
+                random.len() as c_int,
+                points_per_curve as c_int,
+                keys.as_ptr().cast(),
+                radii.as_ptr(),
+                random.as_ptr(),
+                shader.0,
+            )
+        };
+        self.node_or_error(node)
     }
 
     /// Whether this library keeps passes beside a final render's image.

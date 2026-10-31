@@ -17,10 +17,31 @@
 //!
 //! Field names and values match regardless of case, as CAD exporters do not
 //! agree on either. Quotes around a value are taken off.
+//!
+//! A node's CAD layers answer to the field [`LAYER`], one value a layer:
+//! `Layer = Outer` finds what is on Outer, whatever else it is on.
 
 use crate::document::SceneDocument;
 use crate::templates::wildcard;
 use crate::tree::{NodeId, NodeKind, SceneNode};
+
+/// The field a node's CAD layers ([`SceneNode::layers`]) are read as by a
+/// search, a Material Templates rule and the CSV export. Layers arrived as
+/// a metadata field of this name before they had their own, so a rule or a
+/// habit written against it still finds them.
+pub const LAYER: &str = "Layer";
+
+/// What `node` has for the field `key`, matched regardless of case: its
+/// metadata field's value, and for [`LAYER`] each layer it is on too.
+pub fn values<'a>(node: &'a SceneNode, key: &str) -> Vec<&'a str> {
+    let key = key.trim();
+    let mut out: Vec<&str> =
+        node.metadata.iter().filter(|(k, _)| k.trim().eq_ignore_ascii_case(key)).map(|(_, v)| v.as_str()).collect();
+    if key.eq_ignore_ascii_case(LAYER) {
+        out.extend(node.layers.iter().map(String::as_str));
+    }
+    out
+}
 
 /// What a search asks for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,19 +94,23 @@ impl Query {
 
     /// Whether `node` is one the query asks for.
     pub fn matches(&self, node: &SceneNode) -> bool {
-        let field = |key: &str| node.metadata.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case(key)).map(|(_, v)| v);
         match self {
             Query::Text(text) => {
                 let text = text.to_lowercase();
                 node.name.to_lowercase().contains(&text)
-                    || node.metadata.values().any(|v| v.to_lowercase().contains(&text))
+                    || node.metadata.values().chain(&node.layers).any(|v| v.to_lowercase().contains(&text))
             }
-            Query::Equals { key, value } => field(key).is_some_and(|v| wildcard(value, v.trim())),
-            Query::NotEquals { key, value } => field(key).is_some_and(|v| !wildcard(value, v.trim())),
+            Query::Equals { key, value } => values(node, key).iter().any(|v| wildcard(value, v.trim())),
+            // Present, and no value it has is the one asked about: a part
+            // on Outer and Inner is not one whose layer is not Outer.
+            Query::NotEquals { key, value } => {
+                let found = values(node, key);
+                !found.is_empty() && !found.iter().any(|v| wildcard(value, v.trim()))
+            }
             Query::Contains { key, value } => {
-                field(key).is_some_and(|v| v.to_lowercase().contains(&value.to_lowercase()))
+                values(node, key).iter().any(|v| v.to_lowercase().contains(&value.to_lowercase()))
             }
-            Query::Has(key) => field(key).is_some(),
+            Query::Has(key) => !values(node, key).is_empty(),
         }
     }
 }
@@ -140,7 +165,14 @@ pub fn csv(document: &SceneDocument, columns: &[String]) -> String {
             if node.visible { "Yes" } else { "No" }.to_string(),
         ];
         for column in columns {
-            cells.push(node.metadata.get(column).cloned().unwrap_or_default());
+            // A field's own value as it is written; the layers, of which a
+            // part may have several, joined the way a person lists them.
+            let cell = match node.metadata.get(column) {
+                Some(value) => value.clone(),
+                None if column.eq_ignore_ascii_case(LAYER) => node.layers.join(", "),
+                None => String::new(),
+            };
+            cells.push(cell);
         }
         row(cells);
     }
@@ -255,6 +287,26 @@ mod tests {
         assert_eq!(lines[2], "Assembly/Housing,Housing,Part,Shell,Yes,ABS,,HS-4410");
         assert_eq!(lines[3], "Assembly/Screw A,Screw A,Part,Shell,Yes,Steel,\"Zinc, bright\",");
         assert_eq!(lines.len(), 6, "four rows, a header and the final line end");
+    }
+
+    /// A part's CAD layers answer to the field `Layer`, one value a layer,
+    /// in a search, in the field list and in the CSV export.
+    #[test]
+    fn layers_are_searched_and_exported_as_the_field_layer() {
+        let (mut document, ids) = assembly();
+        document.tree.get_mut(ids[1]).unwrap().layers = vec!["Outer".into()];
+        document.tree.get_mut(ids[2]).unwrap().layers = vec!["Outer".into(), "Hardware".into()];
+        let find = |s: &str| find(&document, &Query::parse(s).unwrap());
+        assert_eq!(find("Layer = Outer"), vec![ids[1], ids[2]]);
+        assert_eq!(find("layer = hard*"), vec![ids[2]]);
+        assert_eq!(find("Layer != Outer"), Vec::<NodeId>::new(), "both are on Outer, whatever else");
+        assert_eq!(find("Layer != Hardware"), vec![ids[1]]);
+        assert_eq!(find("Layer ="), vec![ids[1], ids[2]]);
+        assert_eq!(find("hardware"), vec![ids[2]], "plain text finds a layer too");
+        assert_eq!(crate::command::metadata_keys(&document).get(LAYER), Some(&2));
+        let text = csv(&document, &[LAYER.into()]);
+        let lines: Vec<&str> = text.trim_start_matches('\u{feff}').split("\r\n").collect();
+        assert_eq!(lines[3], "Assembly/Screw A,Screw A,Part,Shell,Yes,\"Outer, Hardware\"");
     }
 
     #[test]

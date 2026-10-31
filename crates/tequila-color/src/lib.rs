@@ -12,10 +12,10 @@
 //! brighter than mid-grey, and naive sRGB clipping turns every one of them
 //! into a flat white blob with a hard edge.
 //!
-//! The full OpenColorIO v2 integration with the ACES studio config arrives at
-//! M3. This module implements the same transforms analytically so that M0 has
-//! a correct pipeline rather than a placeholder — and so that the OCIO
-//! integration has something to be checked against.
+//! The OpenColorIO v2 integration, which develops through the ACES studio
+//! config, is [`ocio`]. This module implements the same transforms
+//! analytically so that M0 had a correct pipeline rather than a placeholder —
+//! and so that the OCIO integration has something to be checked against.
 
 #![warn(missing_debug_implementations)]
 

@@ -592,6 +592,11 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
             ),
         );
     }
+    // Written only where there are some, so a project without CAD layers
+    // reads as it always did.
+    if !node.layers.is_empty() {
+        object.set("layers", layers_to_json(&node.layers));
+    }
     // §2.3's persistent path key, which re-import matches on to keep
     // material assignments across an updated CAD file. Useless if it does not
     // survive a save.
@@ -610,6 +615,24 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     };
     out.extend(known);
     Value::Object(out)
+}
+
+/// A node's CAD layers, as the project and the journal write them: their
+/// names in order.
+pub(crate) fn layers_to_json(layers: &[String]) -> Value {
+    Value::Array(layers.iter().map(|l| Value::String(l.clone())).collect())
+}
+
+/// A node's CAD layers back, an empty name or a repeated one left out;
+/// absent, none.
+pub(crate) fn read_layers(value: Option<&Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in value.map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str) {
+        if !name.trim().is_empty() && !out.iter().any(|l| l == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 /// A node's transform as its 4x4 matrix, in row-major order.
@@ -1668,6 +1691,11 @@ pub(crate) fn integrator_to_json(config: &IntegratorConfig) -> Value {
             "russian_roulette_start_bounce",
             config.russian_roulette_start_bounce as f64,
         );
+    // Only when it is not the photons every project used before there was
+    // a choice, so such a project is the same bytes it always was.
+    if config.caustics_method != tequila_render_core::settings::CausticsMethod::default() {
+        object.set("caustics_method", config.caustics_method.key());
+    }
     // Only when something is set, so a project that sets none is the same
     // bytes it always was.
     if config.cycles != tequila_render_core::settings::CyclesTransport::NONE {
@@ -1723,6 +1751,11 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         light_source_materials: flag("light_source_materials", default.light_source_materials),
         ground_illumination: flag("ground_illumination", default.ground_illumination),
         caustics: flag("caustics", default.caustics),
+        caustics_method: value
+            .get("caustics_method")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_render_core::settings::CausticsMethod::from_key)
+            .unwrap_or(default.caustics_method),
         interior_mode: flag("interior_mode", default.interior_mode),
         regularization_start_bounce: count(
             "regularization_start_bounce",
@@ -1748,9 +1781,12 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         pixel_spread: default.pixel_spread,
         in_floor_reflection: false,
         floor_reflection_only: false,
+        reflected: false,
         cycles: read_cycles_transport(value.get("cycles")),
         // The render's, set per render.
         pixel_filter: default.pixel_filter,
+        spectral: default.spectral,
+        spectral_companions: default.spectral_companions,
     }
 }
 
@@ -1839,6 +1875,21 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         .set("write_xmp", settings.write_xmp)
         .set("write_text_metadata", settings.write_text_metadata);
     object.set("relight", settings.relight);
+    object.set("kind", settings.kind.key());
+    let wireframe = &settings.wireframe;
+    // Four places, which is finer than eight bits: an f32 widened to f64
+    // writes 0.11 as 0.10999999940395355.
+    let colour = |c: [f32; 3]| Value::Array(c.iter().map(|v| Value::from((*v as f64 * 1e4).round() / 1e4)).collect());
+    let mut lines = Object::new();
+    lines
+        .set("edges", wireframe.edges.key())
+        .set("hidden", wireframe.hidden.key())
+        .set("line_width", wireframe.line_width)
+        .set("line_colour", colour(wireframe.line_colour))
+        .set("background_top", colour(wireframe.background_top))
+        .set("background_bottom", colour(wireframe.background_bottom));
+    object.set("wireframe", lines.build());
+    object.set("spectral", settings.spectral.key());
     object.set(
         "layers",
         settings
@@ -1942,6 +1993,19 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
             .and_then(|v| v.as_str())
             .and_then(tequila_scene::render::RenderEngine::from_key)
             .unwrap_or_default(),
+        kind: value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_scene::render::RenderKind::from_key)
+            .unwrap_or_default(),
+        wireframe: read_wireframe(value.get("wireframe")),
+        // A project from before the choice, or naming one this build does
+        // not know, is Auto: spectral where something disperses.
+        spectral: value
+            .get("spectral")
+            .and_then(|v| v.as_str())
+            .and_then(tequila_render_core::settings::SpectralMode::from_key)
+            .unwrap_or_default(),
         width: dimension(0, default.width),
         height: dimension(1, default.height),
         dpi: number("dpi", default.dpi),
@@ -2020,6 +2084,36 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+/// A wireframe's look; what is missing or out of range is the default's.
+fn read_wireframe(value: Option<&Value>) -> tequila_scene::render::WireframeSettings {
+    use tequila_scene::render::{HiddenLines, WireEdges, WireframeSettings};
+    let default = WireframeSettings::default();
+    let Some(value) = value else {
+        return default;
+    };
+    let colour = |key: &str, fallback: [f32; 3]| {
+        let parts = value.get(key).map(|v| v.as_array()).unwrap_or(&[]);
+        let channel = |i: usize| parts.get(i).and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+        match (channel(0), channel(1), channel(2)) {
+            (Some(r), Some(g), Some(b)) => [r, g, b],
+            _ => fallback,
+        }
+    };
+    WireframeSettings {
+        edges: value.get("edges").and_then(|v| v.as_str()).and_then(WireEdges::from_key).unwrap_or(default.edges),
+        hidden: value.get("hidden").and_then(|v| v.as_str()).and_then(HiddenLines::from_key).unwrap_or(default.hidden),
+        line_width: value
+            .get("line_width")
+            .and_then(|v| v.as_f32())
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .map(|w| w.min(64.0))
+            .unwrap_or(default.line_width),
+        line_colour: colour("line_colour", default.line_colour),
+        background_top: colour("background_top", default.background_top),
+        background_bottom: colour("background_bottom", default.background_bottom),
     }
 }
 
@@ -2935,7 +3029,7 @@ fn read_tree(
 ) -> Result<(), FormatError> {
     // Every field `node_to_json` writes, or a project opened in the build
     // that wrote it reports itself as from a newer one.
-    const KNOWN_NODE_FIELDS: [&str; 13] = [
+    const KNOWN_NODE_FIELDS: [&str; 15] = [
         "id",
         "name",
         "kind",
@@ -2943,12 +3037,16 @@ fn read_tree(
         "transform",
         "visible",
         "locked",
+        // Kept as an unknown field, a part's rays came back on the next
+        // save after they were set back to the default, which writes none.
+        "rays",
         "children",
         "mesh",
         "light",
         "cutaway",
         "material",
         "metadata",
+        "layers",
     ];
 
     let nodes = root
@@ -3048,6 +3146,20 @@ fn read_tree(
             for (key, item) in map {
                 if let Some(text) = item.as_str() {
                     node.metadata.insert(key.clone(), text.to_string());
+                }
+            }
+        }
+        node.layers = read_layers(value.get("layers"));
+        // A project saved before layers had a field of their own kept them
+        // in a metadata field, `Layer`, joined with commas: moved across, so
+        // the Layers list and its eyes have them, and a search or a rule on
+        // `Layer` finds them where it always did.
+        if value.get("layers").is_none() {
+            if let Some(joined) = node.metadata.remove(tequila_scene::metadata::LAYER) {
+                for name in joined.split(", ").map(str::trim).filter(|n| !n.is_empty()) {
+                    if !node.layers.iter().any(|l| l == name) {
+                        node.layers.push(name.to_string());
+                    }
                 }
             }
         }
@@ -3166,6 +3278,52 @@ mod forward_compatibility_tests {
         assert!(loaded.notes.is_empty(), "the picture was reported as not understood: {:?}", loaded.notes);
         save(&path, &loaded.document, &loaded.preserved).unwrap();
         assert_eq!(read_preview(&path).as_deref(), Some(&b"a picture"[..]), "a save without a picture lost the old one");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A project saved before fibres (§4.4's Fuzz) opens without any, its
+    /// materials' fibre settings at their defaults, and one given fibres
+    /// keeps every setting across a save.
+    #[test]
+    fn fibre_settings_are_optional_and_kept() {
+        use tequila_materials::material_type::{Param, ParamValue};
+        let directory = std::env::temp_dir().join(format!("tequila-fibres-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("before fibres.tequila");
+        let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+        let key = document.materials.iter().next().unwrap().0;
+        save(&path, &document, &Preserved::default()).unwrap();
+        let material_member = format!("materials/{}.json", material_id(key));
+        let fibre_keys = [Param::FuzzDensity, Param::FuzzLength, Param::FuzzThickness, Param::FuzzLean, Param::FuzzCurl, Param::FuzzColorVariation];
+        rewrite(&path, &|name, mut value| {
+            if name == material_member {
+                if let Value::Object(map) = &mut value {
+                    for param in fibre_keys {
+                        map.remove(param.key());
+                    }
+                }
+            }
+            value
+        });
+        let loaded = load(&path).expect("an older project opens");
+        let material = loaded.document.materials.get(key).unwrap().material();
+        assert_eq!(material.fuzz_density, 0.0, "fibres nobody asked for");
+        assert_eq!(material.fuzz_length, tequila_materials::openpbr::Material::default().fuzz_length);
+
+        let values = [7.5f32, 0.0035, 0.00003, 0.45, 0.65, 0.15];
+        let mut definition = document.materials.get(key).unwrap().clone();
+        for (param, value) in fibre_keys.iter().zip(values) {
+            assert!(param.write(definition.material_mut(), ParamValue::Scalar(value)));
+        }
+        document.materials.insert_with_key(key, definition);
+        let again = directory.join("with fibres.tequila");
+        save(&again, &document, &Preserved::default()).unwrap();
+        let reloaded = load(&again).unwrap();
+        let material = reloaded.document.materials.get(key).unwrap().material();
+        for (param, value) in fibre_keys.iter().zip(values) {
+            assert_eq!(param.read(material), Some(ParamValue::Scalar(value)), "{}", param.key());
+        }
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -3298,6 +3456,52 @@ mod engine_tests {
         assert_eq!(read_render_settings_value(&old).engine, RenderEngine::CyclesGpu);
         let unknown = json::parse(br#"{"engine":"lux"}"#).unwrap();
         assert_eq!(read_render_settings_value(&unknown).engine, RenderEngine::CyclesGpu);
+    }
+
+    /// A wireframe's look is kept, a job's kind with it, and a project from
+    /// before there were wireframes renders photos with the default look.
+    #[test]
+    fn a_wireframe_is_kept_and_old_projects_render_photos() {
+        use tequila_scene::render::{HiddenLines, RenderKind, WireEdges, WireframeSettings};
+        let settings = RenderSettings {
+            kind: RenderKind::Wireframe,
+            wireframe: WireframeSettings {
+                edges: WireEdges::Model,
+                hidden: HiddenLines::Hidden,
+                line_width: 2.5,
+                line_colour: [0.1, 0.2, 0.3],
+                background_top: [0.9, 0.8, 0.7],
+                background_bottom: [0.6, 0.5, 0.4],
+            },
+            ..RenderSettings::default()
+        };
+        let again = read_render_settings_value(&render_settings_to_json(&settings));
+        assert_eq!(again.kind, RenderKind::Wireframe);
+        assert_eq!(again.wireframe, settings.wireframe);
+        let old = json::parse(br#"{"resolution":[640,480],"max_samples":64}"#).unwrap();
+        let old = read_render_settings_value(&old);
+        assert_eq!(old.kind, RenderKind::Photo);
+        assert_eq!(old.wireframe, WireframeSettings::default());
+        let odd = json::parse(br#"{"kind":"sketch","wireframe":{"edges":"curves","line_width":-3,"line_colour":[2,0.5]}}"#).unwrap();
+        let odd = read_render_settings_value(&odd);
+        assert_eq!(odd.kind, RenderKind::Photo, "a kind this build does not know renders a photo");
+        assert_eq!(odd.wireframe, WireframeSettings::default(), "and nonsense in the look is the default's");
+    }
+
+    /// Whether a render is spectral is kept, and a project from before the
+    /// choice, or naming one this build does not know, is Auto: spectral
+    /// where something disperses, as a new project is.
+    #[test]
+    fn spectral_is_kept_and_old_projects_are_auto() {
+        use tequila_render_core::settings::SpectralMode;
+        for spectral in SpectralMode::ALL {
+            let saved = render_settings_to_json(&RenderSettings { spectral, ..RenderSettings::default() });
+            assert_eq!(read_render_settings_value(&saved).spectral, spectral);
+        }
+        let old = json::parse(br#"{"resolution":[640,480],"max_samples":64}"#).unwrap();
+        assert_eq!(read_render_settings_value(&old).spectral, SpectralMode::Auto);
+        let unknown = json::parse(br#"{"spectral":"sometimes"}"#).unwrap();
+        assert_eq!(read_render_settings_value(&unknown).spectral, SpectralMode::Auto);
     }
 }
 

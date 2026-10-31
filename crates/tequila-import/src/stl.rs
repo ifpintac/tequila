@@ -37,6 +37,7 @@ pub fn read(bytes: &[u8], name: &str) -> Result<RawScene, ImportError> {
         source_unit: None,
         tessellation: None,
         warnings: Vec::new(),
+        setup: None,
     })
 }
 

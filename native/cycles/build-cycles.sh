@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# Build libtequila_cycles.dylib on a Mac: Cycles (Apache-2.0) with
-# Tequila's C interface, for Apple silicon, with Metal.
+# Build Cycles (Apache-2.0) with Tequila's C interface: on a Mac,
+# libtequila_cycles.dylib for Apple silicon with Metal; on Linux,
+# libtequila_cycles.so for x86-64 with CUDA, OptiX and HIP.
 #
 # The counterpart of build-cycles.ps1, from the same steps: Cycles from the
 # standalone repository at v5.0.0, its engine sources brought to Blender
 # 5.0.1's, and only the precompiled libraries it needs, at the commit Cycles
 # pins. On a Mac there are no GPU kernels to ship: Cycles compiles its Metal
 # kernels from source at the first GPU render, which is why the kernel
-# sources are copied beside the library.
-#
-# Written on Windows from build-cycles.ps1 and docs/MACOS_PORT.md, and not
-# yet run on a Mac: expect to adjust it on the first build.
+# sources are copied beside the library. On Linux the GPU kernels are
+# Blender 5.0.1's own, which these sources match (the Linux release
+# workflow fetches them, as Windows' does).
 #
 # Usage:  bash native/cycles/build-cycles.sh [work-folder]
-# Needs:  Xcode Command Line Tools, Git with LFS, Python 3, CMake and Ninja
-#         (Homebrew), and Tequila's own SDKs (bash scripts/fetch-third-party.sh).
-# Result: <work>/cycles/build/bin/libtequila_cycles.dylib and its libraries.
+# Needs:  a Mac: Xcode Command Line Tools, Git with LFS, Python 3, CMake and
+#         Ninja (Homebrew). Linux: GCC 11 or newer, Git with LFS, Python 3,
+#         CMake and Ninja. Both: Tequila's own SDKs
+#         (bash scripts/fetch-third-party.sh).
+# Result: <work>/cycles/build/bin/ with the library and its libraries.
 #         Point TEQUILA_CYCLES at that folder, or package it
-#         (scripts/package-macos.sh puts it in Contents/Frameworks/cycles).
+#         (scripts/package-macos.sh puts it in Contents/Frameworks/cycles,
+#         scripts/package-linux.sh in cycles/ beside the programs).
 set -euo pipefail
 
 shim="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,10 +29,12 @@ work="${1:-$(cd "$repo/.." && pwd)/cycles-spike}"
 mkdir -p "$work"
 cd "$work"
 
-if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-    echo "This builds Cycles for Apple silicon Macs; on Windows use build-cycles.ps1." >&2
-    exit 1
-fi
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) platform=macos_arm64 ;;
+    Linux-x86_64) platform=linux_x64 ;;
+    *) echo "This builds Cycles for Apple silicon Macs and x86-64 Linux; on Windows use build-cycles.ps1." >&2
+       exit 1 ;;
+esac
 
 # 1. Cycles, standalone, v5.0.0.
 if [ ! -d cycles ]; then
@@ -45,14 +50,14 @@ fi
 #    TEQUILA_CYCLES_ALL_LIBS=1 to take every folder (several GB) if CMake
 #    asks for one not in the list.
 git lfs version >/dev/null 2>&1 || { echo "Git LFS is needed: brew install git-lfs && git lfs install" >&2; exit 1; }
-lib="$work/lib/macos_arm64"
-commit="$(git -C cycles ls-tree HEAD lib/macos_arm64 | awk '{print $3}')"
-[ -n "$commit" ] || { echo "Cycles does not pin lib/macos_arm64 at this tag" >&2; exit 1; }
+lib="$work/lib/$platform"
+commit="$(git -C cycles ls-tree HEAD "lib/$platform" | awk '{print $3}')"
+[ -n "$commit" ] || { echo "Cycles does not pin lib/$platform at this tag" >&2; exit 1; }
 if [ "$(git -C "$lib" rev-parse -q --verify "$commit^{commit}" 2>/dev/null)" != "$commit" ]; then
     rm -rf "$lib"
     mkdir -p "$lib"
     git -C "$lib" init -q
-    git -C "$lib" remote add origin https://projects.blender.org/blender/lib-macos_arm64.git
+    git -C "$lib" remote add origin "https://projects.blender.org/blender/lib-$platform.git"
     git -C "$lib" fetch -q --depth 1 --filter=blob:none origin "$commit"
 fi
 if [ "${TEQUILA_CYCLES_ALL_LIBS:-}" = "1" ]; then
@@ -71,9 +76,9 @@ else
         git -C "$lib" checkout -q "$commit"
     fi
 fi
-if [ ! -L cycles/lib/macos_arm64 ]; then
-    rm -rf cycles/lib/macos_arm64
-    ln -s "$lib" cycles/lib/macos_arm64
+if [ ! -L "cycles/lib/$platform" ]; then
+    rm -rf "cycles/lib/$platform"
+    ln -s "$lib" "cycles/lib/$platform"
 fi
 
 # 3. Engine sources at Blender 5.0.1, leaving the standalone build files and
@@ -126,47 +131,92 @@ endif()
 CMAKE
 fi
 
-# 5. Configure and build: Metal on; CUDA, OptiX, HIP and oneAPI off; arm64;
-#    the dylib finds its libraries beside itself (@loader_path).
+# 4b. On Linux, NVIDIA's OptiX headers, at the version Blender 5.0.1's
+#     kernels were built with (as build-cycles.ps1 takes them).
+optix="$work/optix-8.0.0"
+if [ "$platform" = linux_x64 ] && [ ! -f "$optix/include/optix.h" ]; then
+    rm -rf "$optix"
+    git clone -q --depth 1 --branch v8.0.0 https://github.com/NVIDIA/optix-dev.git "$optix"
+fi
+
+# 5. Configure and build. On a Mac: Metal, arm64, the dylib finding its
+#    libraries beside itself (@loader_path). On Linux: CUDA and OptiX for
+#    NVIDIA cards and HIP for AMD ones, all three loaded at run time so no
+#    vendor's toolkit is needed here or on the computer it runs on, and the
+#    library finding its own beside itself ($ORIGIN).
+if [ "$platform" = macos_arm64 ]; then
+    devices=(-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_INSTALL_RPATH=@loader_path
+             -DWITH_CYCLES_DEVICE_METAL=ON
+             -DWITH_CYCLES_DEVICE_CUDA=OFF -DWITH_CYCLES_DEVICE_OPTIX=OFF -DWITH_CYCLES_DEVICE_HIP=OFF -DWITH_CYCLES_DEVICE_ONEAPI=OFF)
+else
+    devices=('-DCMAKE_INSTALL_RPATH=$ORIGIN'
+             -DWITH_CYCLES_DEVICE_CUDA=ON -DWITH_CUDA_DYNLOAD=ON -DWITH_CYCLES_CUDA_BINARIES=OFF
+             -DWITH_CYCLES_DEVICE_OPTIX=ON "-DOPTIX_ROOT_DIR=$optix"
+             -DWITH_CYCLES_DEVICE_HIP=ON -DWITH_HIP_DYNLOAD=ON -DWITH_CYCLES_HIP_BINARIES=OFF -DWITH_CYCLES_DEVICE_HIPRT=OFF
+             -DWITH_CYCLES_DEVICE_ONEAPI=OFF -DWITH_CYCLES_DEVICE_METAL=OFF)
+fi
 cd cycles
 cmake -G Ninja -B build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
-    -DCMAKE_INSTALL_RPATH=@loader_path \
     -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
     -DWITH_CYCLES_ALEMBIC=OFF -DWITH_CYCLES_OPENSUBDIV=OFF -DWITH_CYCLES_OPENVDB=OFF -DWITH_CYCLES_NANOVDB=OFF \
     -DWITH_CYCLES_OSL=OFF -DWITH_CYCLES_USD=OFF -DWITH_CYCLES_HYDRA_RENDER_DELEGATE=OFF -DWITH_CYCLES_STANDALONE_GUI=OFF \
-    -DWITH_CYCLES_DEVICE_METAL=ON \
-    -DWITH_CYCLES_DEVICE_CUDA=OFF -DWITH_CYCLES_DEVICE_OPTIX=OFF -DWITH_CYCLES_DEVICE_HIP=OFF -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
+    "${devices[@]}" \
     -DWITH_STRICT_BUILD_OPTIONS=ON -DWITH_CYCLES_PATH_GUIDING=ON \
     -DTEQUILA_SHIM_DIR="$shim"
 cmake --build build --target tequila_cycles
 cd ..
 
-# 6. Beside the dylib: the shared libraries of Blender's it loads, with
+# 6. Beside the library: the shared libraries of Blender's it loads, with
 #    Tequila's own Embree, TBB and OIDN in place of Blender's, so one copy
 #    of each is loaded (as on Windows).
 bin="$work/cycles/build/bin"
-# CMake puts a shared library in build/lib on a Mac (build/bin holds DLLs
-# on Windows): it is gathered into bin with what it loads.
+# CMake puts a shared library in build/lib on a Mac and on Linux (build/bin
+# holds DLLs on Windows): it is gathered into bin with what it loads.
 mkdir -p "$bin"
-cp -a "$work/cycles/build/lib/libtequila_cycles.dylib" "$bin/"
-find -L "$lib" -path '*/lib/*.dylib' | grep -v -i -E '/(embree|tbb|openimagedenoise)/' | while read -r dylib; do
-    cp -a "$dylib" "$bin/"
-done
-for sdk in "$repo"/third_party/embree-*.arm64.macosx "$repo"/third_party/oidn-*.arm64.macos; do
-    if [ -d "$sdk/lib" ]; then cp -a "$sdk"/lib/*.dylib "$bin/"; fi
-done
-# Anything the library still looks for outside its own folder would be
-# missing on another Mac, or after the build folder is gone: list it.
-echo "Libraries libtequila_cycles.dylib loads (all should be @rpath/@loader_path or /usr/lib, /System):"
-otool -L "$bin/libtequila_cycles.dylib" | tail -n +2
+if [ "$platform" = macos_arm64 ]; then
+    built=libtequila_cycles.dylib
+    cp -a "$work/cycles/build/lib/$built" "$bin/"
+    find -L "$lib" -path '*/lib/*.dylib' | grep -v -i -E '/(embree|tbb|openimagedenoise)/' | while read -r dylib; do
+        cp -a "$dylib" "$bin/"
+    done
+    for sdk in "$repo"/third_party/embree-*.arm64.macosx "$repo"/third_party/oidn-*.arm64.macos; do
+        if [ -d "$sdk/lib" ]; then cp -a "$sdk"/lib/*.dylib "$bin/"; fi
+    done
+    # Anything the library still looks for outside its own folder would be
+    # missing on another Mac, or after the build folder is gone: list it.
+    echo "Libraries $built loads (all should be @rpath/@loader_path or /usr/lib, /System):"
+    otool -L "$bin/$built" | tail -n +2
 
-# 7. The kernel sources the Metal device compiles from at the first GPU
-#    render (Cycles' `source` folder, beside the library).
-rm -rf "$bin/source"
-mkdir -p "$bin/source"
-cp -R cycles/src/kernel "$bin/source/kernel"
-cp -R cycles/src/util "$bin/source/util"
+    # 7. The kernel sources the Metal device compiles from at the first GPU
+    #    render (Cycles' `source` folder, beside the library).
+    rm -rf "$bin/source"
+    mkdir -p "$bin/source"
+    cp -R cycles/src/kernel "$bin/source/kernel"
+    cp -R cycles/src/util "$bin/source/util"
+else
+    built=libtequila_cycles.so
+    found="$(find "$work/cycles/build" -name "$built" -type f | head -1)"
+    [ -n "$found" ] || { echo "$built was not built" >&2; exit 1; }
+    cp -a "$found" "$bin/"
+    # Blender's Linux libraries are mostly static; the shared ones it links
+    # are carried, with their symbolic links.
+    find -L "$lib" -path '*/lib/*.so*' | grep -v -i -E '/(embree|tbb|openimagedenoise)/' | while read -r shared; do
+        cp -a "$shared" "$bin/"
+    done
+    for sdk in "$repo"/third_party/embree-*.x86_64.linux "$repo"/third_party/oidn-*.x86_64.linux; do
+        if [ -d "$sdk/lib" ]; then cp -a "$sdk"/lib/*.so* "$bin/"; fi
+    done
+    if command -v patchelf >/dev/null; then
+        for library in "$bin"/*.so*; do
+            if [ -f "$library" ] && [ ! -L "$library" ]; then patchelf --set-rpath '$ORIGIN' "$library"; fi
+        done
+    fi
+    # What the library finds outside its own folder should be the system's
+    # own (libc, libstdc++, libm, libdl): anything else would be missing on
+    # another computer.
+    echo "Libraries $built loads, and from where:"
+    LD_LIBRARY_PATH="$bin" ldd "$bin/$built" || true
+fi
 
-echo "Built: $bin/libtequila_cycles.dylib"
+echo "Built: $bin/$built"

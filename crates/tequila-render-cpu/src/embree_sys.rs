@@ -33,12 +33,20 @@ pub const RTC_GEOMETRY_TYPE_TRIANGLE: u32 = 0;
 /// scene to a user geometry is accepted by the compiler and rejected by
 /// Embree at commit time with a bare "invalid operation".
 pub const RTC_GEOMETRY_TYPE_INSTANCE: u32 = 121;
+/// Ray-facing ribbons along straight segments: the fast curves Embree
+/// offers for hair, whose width faces every ray that meets them. Their
+/// hits closer than twice the radius to a ray's origin are ignored, which is
+/// what lets a ray leave a fibre without meeting the same fibre again.
+pub const RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE: u32 = 17;
 
 pub const RTC_BUFFER_TYPE_INDEX: u32 = 0;
 pub const RTC_BUFFER_TYPE_VERTEX: u32 = 1;
 
+pub const RTC_FORMAT_UINT: u32 = 0x5001;
 pub const RTC_FORMAT_UINT3: u32 = 0x5003;
 pub const RTC_FORMAT_FLOAT3: u32 = 0x9003;
+/// A curve's control point: position and radius.
+pub const RTC_FORMAT_FLOAT4: u32 = 0x9004;
 pub const RTC_FORMAT_FLOAT3X4_COLUMN_MAJOR: u32 = 0x9234;
 
 // The full quality ladder is transcribed even though only HIGH is used yet.
@@ -115,6 +123,22 @@ impl Default for RTCHit {
     }
 }
 
+/// What Embree hands a filter callback: the hits in question, in
+/// structure-of-arrays form `n` wide (`RTCRayN`, `RTCHitN`), and for an
+/// instanced geometry in its object space. Setting a `valid` entry to 0
+/// rejects that hit, and the query goes on to the next.
+#[repr(C)]
+pub struct RTCFilterFunctionNArguments {
+    pub valid: *mut i32,
+    pub geometry_user_ptr: *mut c_void,
+    pub context: *mut c_void,
+    pub ray: *mut c_void,
+    pub hit: *mut c_void,
+    pub n: u32,
+}
+
+pub type RTCFilterFunctionN = Option<unsafe extern "C" fn(args: *const RTCFilterFunctionNArguments)>;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RTCRayHit {
@@ -163,6 +187,9 @@ extern "C" {
     );
     pub fn rtcSetGeometryInstancedScene(geometry: RTCGeometry, scene: RTCScene);
     pub fn rtcSetGeometryMask(geometry: RTCGeometry, mask: u32);
+    pub fn rtcSetGeometryUserData(geometry: RTCGeometry, ptr: *mut c_void);
+    pub fn rtcSetGeometryIntersectFilterFunction(geometry: RTCGeometry, filter: RTCFilterFunctionN);
+    pub fn rtcSetGeometryOccludedFilterFunction(geometry: RTCGeometry, filter: RTCFilterFunctionN);
     pub fn rtcSetGeometryTransform(
         geometry: RTCGeometry,
         time_step: u32,

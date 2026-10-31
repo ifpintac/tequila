@@ -172,7 +172,11 @@ pub fn fetch_latest() -> Result<Release, String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Windows,
+    /// A Mac with Apple silicon.
     Mac,
+    /// A Mac with an Intel processor, whose disk image is its own
+    /// (`-intel.dmg`, without Cycles).
+    IntelMac,
     /// Linux on x86-64, from a .tar.gz.
     Linux,
     /// Nothing is made for it.
@@ -183,6 +187,8 @@ impl Platform {
     pub fn this() -> Platform {
         if cfg!(target_os = "windows") {
             Platform::Windows
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            Platform::IntelMac
         } else if cfg!(target_os = "macos") {
             Platform::Mac
         } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
@@ -196,7 +202,7 @@ impl Platform {
     /// person does then.
     pub fn install_label(self) -> (&'static str, &'static str) {
         match self {
-            Platform::Mac => ("Open the disk image", "Drag Tequila into Applications, replacing the one there, then open it again."),
+            Platform::Mac | Platform::IntelMac => ("Open the disk image", "Drag Tequila into Applications, replacing the one there, then open it again."),
             Platform::Linux => (
                 "Show the download",
                 "Unpack it in place of this Tequila's folder, then open it again. Your materials, plugins and settings stay.",
@@ -209,7 +215,7 @@ impl Platform {
 /// The file to fetch to go from `current` to `release`: on Windows the
 /// update installer made from exactly this version when there is one, a
 /// tenth of the size, and the full installer otherwise; on a Mac the disk
-/// image.
+/// image made for its processor.
 pub fn asset_for(release: &Release, current: Option<Version>, platform: Platform) -> Option<&Asset> {
     let named = |name: String| release.assets.iter().find(|a| a.name == name);
     let latest = release.version;
@@ -218,6 +224,7 @@ pub fn asset_for(release: &Release, current: Option<Version>, platform: Platform
             .and_then(|from| named(format!("Tequila-Update-{from}-to-{latest}.exe")))
             .or_else(|| named(format!("Tequila-Setup-{latest}.exe"))),
         Platform::Mac => named(format!("Tequila-{latest}.dmg")),
+        Platform::IntelMac => named(format!("Tequila-{latest}-intel.dmg")),
         Platform::Linux => named(format!("Tequila-{latest}-linux-x86_64.tar.gz")),
         Platform::Other => None,
     }
@@ -300,7 +307,7 @@ pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, Strin
             .spawn()
             .map(|_| true)
             .map_err(|e| format!("the installer could not be started ({e})")),
-        Platform::Mac => std::process::Command::new("open")
+        Platform::Mac | Platform::IntelMac => std::process::Command::new("open")
             .arg(file)
             .spawn()
             .map(|_| false)
@@ -754,11 +761,16 @@ mod tests {
         assert_eq!(name(Version::parse("2026.10.20.1656"), Platform::Windows), Some("Tequila-Setup-2026.11.02.0930.exe"));
         assert_eq!(name(None, Platform::Windows), Some("Tequila-Setup-2026.11.02.0930.exe"));
         assert_eq!(name(from, Platform::Mac), Some("Tequila-2026.11.02.0930.dmg"));
+        assert_eq!(name(from, Platform::IntelMac), None, "this release made no Intel disk image");
         assert_eq!(name(from, Platform::Other), None);
         assert_eq!(name(from, Platform::Linux), None, "this release made no Linux archive");
         let mut with_linux = release.clone();
         with_linux.assets.push(Asset { name: "Tequila-2026.11.02.0930-linux-x86_64.tar.gz".into(), size: 1, url: String::new(), sha256: None });
         assert_eq!(asset_for(&with_linux, from, Platform::Linux).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930-linux-x86_64.tar.gz"));
+        let mut with_intel = release.clone();
+        with_intel.assets.push(Asset { name: "Tequila-2026.11.02.0930-intel.dmg".into(), size: 1, url: String::new(), sha256: None });
+        assert_eq!(asset_for(&with_intel, from, Platform::IntelMac).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930-intel.dmg"));
+        assert_eq!(asset_for(&with_intel, from, Platform::Mac).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930.dmg"));
     }
 
     /// Serve `body` once, over plain HTTP on a free port, and say where.

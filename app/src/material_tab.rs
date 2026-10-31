@@ -639,6 +639,8 @@ impl MaterialTab {
                     });
                     if let Some(reason) = param.unimplemented() {
                         row.response.on_hover_text(reason);
+                    } else if let Some(hint) = param.hint() {
+                        row.response.on_hover_text(hint);
                     }
                     if let Some((edit, ended)) = row.inner {
                         command = Some(Command::SetMaterialParameter {
@@ -724,11 +726,10 @@ impl MaterialTab {
         // Picking a file is a blocking dialog, so it happens after the panel
         // has finished drawing rather than in the middle of a layout pass.
         if let Some(param) = pending_texture {
+            // Every format the loader reads, from its own list, so the dialog
+            // neither offers a file that then fails nor hides one that works.
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter(
-                    "Images",
-                    &["png", "jpg", "jpeg", "psd", "exr", "hdr", "tif", "tiff"],
-                )
+                .add_filter("Images", &tequila_texture::image::Image::DECODABLE)
                 .set_title(format!("Image for {}", param.label()))
                 .pick_file()
             {
@@ -895,8 +896,10 @@ fn parameter_row(
     match (param.ui(), value) {
         (ParamUi::Scalar, ParamValue::Scalar(current)) => {
             let range = param.range()?;
-            let mut next = current;
-            let mut slider = crate::field::Slider::new(&mut next, range.low..=range.high).text(label);
+            // A fibre's microns read as microns, not as 0.0000 metres.
+            let (factor, unit) = param.shown_in().unwrap_or((1.0, ""));
+            let mut next = current * factor;
+            let mut slider = crate::field::Slider::new(&mut next, range.low * factor..=range.high * factor).text(label).suffix(unit);
             if range.logarithmic {
                 slider = slider.logarithmic(true);
             }
@@ -904,6 +907,7 @@ fn parameter_row(
                 slider = slider.step_by(1.0).fixed_decimals(0);
             }
             let response = ui.add(slider);
+            let next = next / factor;
             if response.changed() {
                 edited = Some((ParamValue::Scalar(next), false));
             }

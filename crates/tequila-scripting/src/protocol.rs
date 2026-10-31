@@ -78,6 +78,9 @@ pub enum Operation {
         width: usize,
         height: usize,
         samples: u32,
+        /// Draw the model's edges instead, as the document's Wireframe
+        /// settings say: no samples, a second or two.
+        wireframe: bool,
     },
     /// Several operations, in order, as **one undo step**.
     ///
@@ -326,6 +329,8 @@ pub struct UiChange {
     pub updates: Option<bool>,
     /// The Assistant's Connect an AI window, open: AI apps and providers.
     pub connect: Option<bool>,
+    /// The UV editor, open on the selected part.
+    pub uv_editor: Option<bool>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
@@ -826,6 +831,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             height: index(value, "height", 600),
             // Saturating: a count past u32 wrapped round to a small one.
             samples: index(value, "samples", 64).min(u32::MAX as usize) as u32,
+            wireframe: opt_bool(value, "wireframe")?.unwrap_or(false),
         },
         "batch" => {
             if depth >= BATCH_DEPTH {
@@ -875,6 +881,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
             connect: opt_bool(value, "connect")?,
+            uv_editor: opt_bool(value, "uv_editor")?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),
@@ -954,6 +961,7 @@ impl Operation {
                 }
             }
             Operation::Screenshot { path, .. } => format!("screenshot {path}"),
+            Operation::Render { width, height, wireframe: true, .. } => format!("wireframe {width}x{height}"),
             Operation::Render {
                 width,
                 height,
@@ -1139,7 +1147,9 @@ mod tests {
                 width,
                 height,
                 samples,
+                wireframe,
             } => {
+                assert!(!wireframe, "a photo unless asked");
                 assert_eq!(path, "out.png");
                 assert_eq!(samples, 256);
                 // Unstated size falls back rather than failing: a script that

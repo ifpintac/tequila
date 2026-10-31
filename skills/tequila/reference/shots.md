@@ -94,6 +94,7 @@ The fields people ask about:
 | `resolution` | `[width, height]` |
 | `max_samples`, `max_seconds` | When to stop; more samples mean less noise |
 | `denoise` | `true` cleans the remaining noise |
+| `spectral` | `"auto"` (the default: wavelengths where a gem or glass disperses light, so it shows its fire; RGB elsewhere), `"on"`, `"off"`. Tequila's renderer only; Cycles renders RGB |
 | `format` | `"png"`, `"jpeg"`, `"tiff"`, `"exr"`, `"psd"` |
 | `alpha_mode` | `"none"`, `"straight"`, `"premultiplied"`, `"aliased"`, `"silhouette"` |
 | `output_directory`, `filename_template` | Where files go; the template takes `{project}`, `{camera}`, `{date}` |

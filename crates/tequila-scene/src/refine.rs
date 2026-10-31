@@ -319,6 +319,7 @@ pub fn replace_meshes(document: &SceneDocument, parts: &[NodeId], make: impl Fn(
                 material: node.material,
                 metadata: node.metadata.clone(),
                 path_key: node.path_key.clone(),
+                layers: node.layers.clone(),
             });
         }
     }

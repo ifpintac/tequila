@@ -63,6 +63,7 @@ Set with `{"command": "material.set_parameter", "material": <id>, "parameter": "
 | `transmission_tint` | The surface's own tint on light through it, on top of the volume's colour: what makes a thin edge of dyed plastic coloured | White unless the plastic is dyed; translucent PLA 0.45 + 0.55 x its colour |
 | `subsurface_weight`, `subsurface_color`, `subsurface_radius` | Light scattering inside (wax, skin) | Radius a few millimetres: 0.002-0.01 |
 | `fuzz_weight`, `fuzz_color`, `fuzz_roughness` | The soft sheen of fabric | Velvet 1 |
+| `fuzz_density`, `fuzz_length`, `fuzz_thickness`, `fuzz_lean`, `fuzz_curl`, `fuzz_color_variation` | Real fibres grown out of the surface, in the fuzz colour: felt's halo, a tennis ball's nap, velvet's pile | Density 0 (none); felt 300-1500 a cm2, length 0.002 m, thickness 0.00003-0.00005 m |
 | `flake_weight`, `flake_color`, `flake_size` | Metallic flakes in paint | Size 0.00002-0.0001 m |
 | `thin_film_weight`, `thin_film_thickness` | Iridescence | |
 
@@ -94,4 +95,4 @@ When no preset fits, write a recipe: `recipes.md`.
 
 ## Textures
 
-Only when the user gives files: `material.set_texture` puts an image on a parameter (see `commands.md`), and `{"op": "texture_set", "path": "<folder or .zip of a PBR texture pack>", "nodes": [ids]}` makes materials from a whole pack (base colour, roughness, normal…) and puts the first on the parts.
+Only when the user gives files: `material.set_texture` puts an image on a parameter (see `commands.md`), and `{"op": "texture_set", "path": "<folder or .zip of a PBR texture pack>", "nodes": [ids]}` makes materials from a whole pack (base colour, roughness, normal…) and puts the first on the parts. Images can be PNG, JPEG, TIFF, TGA, BMP, WebP, GIF, JPEG XL, DDS, PSD/PSB, SVG, EXR or HDR; HEIC and AVIF are not read, so ask for another format.

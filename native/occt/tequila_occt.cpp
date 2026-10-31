@@ -1,10 +1,13 @@
-// tequila-occt: a STEP file read and divided by OpenCASCADE, for Tequila.
+// tequila-occt: a STEP or IGES file read and divided by OpenCASCADE, for
+// Tequila.
 //
 //   tequila-occt IN.step OUT.fsocc CHORD ANGLE
+//   tequila-occt IN.igs OUT.fsocc CHORD ANGLE
 //
 // Reads the file through OCCT's document layer (XDE), which keeps the
 // assembly, every component's placement, product names and colours, and the
-// layers, materials and attributes a CAD package wrote; divides
+// layers, materials and attributes a CAD package wrote (an IGES file's
+// layers are its levels, and it has no attributes to give); divides
 // each part once with BRepMesh at CHORD (a fraction of the part's size, as
 // Tequila's own importer does) and ANGLE (radians); and writes what
 // Tequila's importer needs to lay it out exactly as its pure-Rust reader
@@ -15,17 +18,26 @@
 //   f32 positions xyz, f32 normals xyz, u32 triangle corners, f32 edge
 //   segment end points xyz.
 //
+// Each body and product also carries "attributes" (name to text), "layers"
+// (names) and "hidden" (every layer it is on is switched off); a reader that
+// predates them finds nothing it needs missing.
+//
 // Positions are in the file's own length unit, which the JSON names. It runs
 // as a process of its own so that a file OCCT chokes on costs this process,
 // not Tequila's window. Progress goes to standard output: "reading PERCENT"
 // while OCCT turns the file into shapes, then "progress DONE TOTAL" in faces
-// as they are divided.
+// as they are divided. The file is read as IGES when its name ends in .igs
+// or .iges, and as STEP otherwise.
 
 #include <BRepBndLib.hxx>
 #include <DESTEP_Parameters.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
+#include <IGESCAFControl_Reader.hxx>
+#include <IGESControl_Controller.hxx>
+#include <IGESData_GlobalSection.hxx>
+#include <IGESData_IGESModel.hxx>
 #include <Message.hxx>
 #include <Message_Messenger.hxx>
 #include <Message_ProgressIndicator.hxx>
@@ -51,10 +63,12 @@
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_LayerTool.hxx>
 #include <XCAFDoc_MaterialTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
 #include <XCAFPrs_DocumentExplorer.hxx>
+#include <XCAFPrs_Style.hxx>
 #include <Standard_Version.hxx>
 
 #include <algorithm>
@@ -281,6 +295,26 @@ public:
     // Millimetres inside, as OCCT reads by default; the file's own unit is
     // what positions are written in.
     XCAFDoc_DocumentTool::SetLengthUnit(myDoc, 1.0, UnitsMethods_LengthUnit_Millimeter);
+    myIges = is_iges(path);
+    if (!(myIges ? read_iges(path, error) : read_step(path, error)))
+    {
+      return false;
+    }
+    myShapes    = XCAFDoc_DocumentTool::ShapeTool(myDoc->Main());
+    myLayers    = XCAFDoc_DocumentTool::LayerTool(myDoc->Main());
+    return true;
+  }
+
+  static bool is_iges(const std::string& path)
+  {
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    auto ends = [&](const std::string& end) { return lower.size() >= end.size() && lower.compare(lower.size() - end.size(), end.size(), end) == 0; };
+    return ends(".igs") || ends(".iges");
+  }
+
+  bool read_step(const char* path, std::string& error)
+  {
     STEPCAFControl_Reader reader;
     reader.SetColorMode(true);
     reader.SetNameMode(true);
@@ -315,8 +349,56 @@ public:
       error = "OpenCASCADE could not turn the file's entities into shapes";
       return false;
     }
-    myShapes    = XCAFDoc_DocumentTool::ShapeTool(myDoc->Main());
-    myLayers    = XCAFDoc_DocumentTool::LayerTool(myDoc->Main());
+    return true;
+  }
+
+  // IGES through XDE: names, colours and levels, which XDE keeps as layers.
+  // IGES has no product attributes for a metadata mode to read.
+  bool read_iges(const char* path, std::string& error)
+  {
+    IGESControl_Controller::Init();
+    IGESCAFControl_Reader reader;
+    reader.SetColorMode(true);
+    reader.SetNameMode(true);
+    reader.SetLayerMode(true);
+    // Blanked entities are left out, as Tequila's own reader leaves them:
+    // a CAD package blanks construction surfaces nobody meant to render.
+    reader.SetReadVisible(true);
+    if (reader.ReadFile(path) != IFSelect_RetDone)
+    {
+      error = "OpenCASCADE could not read the file";
+      return false;
+    }
+    // IGES numbers its units. Positions are written in the file's own where
+    // Tequila knows it (inches, millimetres, feet, metres, centimetres), and
+    // in millimetres where it does not (miles, mils, microns).
+    const IGESData_GlobalSection& global = reader.IGESModel()->GlobalSection();
+    switch (global.UnitFlag())
+    {
+      case 1: myUnitName = "INCH"; break;
+      case 2: myUnitName = "MILLIMETRE"; break;
+      case 4: myUnitName = "FOOT"; break;
+      case 6: myUnitName = "METRE"; break;
+      case 10: myUnitName = "CENTIMETRE"; break;
+      case 3:
+        if (!global.UnitName().IsNull())
+        {
+          myUnitName = global.UnitName()->ToCString();
+        }
+        break;
+      default: myUnitName = "MILLIMETRE"; break;
+    }
+    myUnitMm = unit_in_mm(myUnitName);
+    if (myUnitMm == 1.0)
+    {
+      myUnitName = "MILLIMETRE";
+    }
+    occ::handle<Printer> printer = new Printer();
+    if (!reader.Transfer(myDoc, printer->Start()))
+    {
+      error = "OpenCASCADE could not turn the file's entities into shapes";
+      return false;
+    }
     return true;
   }
 
@@ -570,7 +652,17 @@ private:
       }
     }
 
-    for (RWMesh_FaceIterator face(part.label, TopLoc_Location(), true); face.More(); face.Next())
+    // A colour on the part as a whole, for the faces that have none of their
+    // own. RWMesh does not hand it down to a part that is a lone face, which
+    // is how IGES writes a surface: without it, every coloured IGES surface
+    // came out grey.
+    XCAFPrs_Style      style;
+    Quantity_ColorRGBA whole;
+    if (XCAFDoc_ColorTool::GetColor(part.label, XCAFDoc_ColorSurf, whole) || XCAFDoc_ColorTool::GetColor(part.label, XCAFDoc_ColorGen, whole))
+    {
+      style.SetColorSurf(whole);
+    }
+    for (RWMesh_FaceIterator face(part.label, TopLoc_Location(), true, style); face.More(); face.Next())
     {
       if (face.IsEmptyMesh())
       {
@@ -746,7 +838,7 @@ private:
         bool any_visible = false;
         for (int i = 1; i <= layers.Length(); ++i)
         {
-          const std::string layer = name_of(layers.Value(i));
+          const std::string layer = layer_name(name_of(layers.Value(i)));
           if (!layer.empty() && std::find(about.layers.begin(), about.layers.end(), layer) == about.layers.end())
           {
             about.layers.push_back(layer);
@@ -792,6 +884,14 @@ private:
     });
   }
 
+  // IGES layers are levels, which XDE names by their number alone: "Level
+  // 5" says what it is in a list of layers, as Tequila's own reader names it.
+  std::string layer_name(const std::string& name) const
+  {
+    const bool number = !name.empty() && std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+    return myIges && number ? "Level " + name : name;
+  }
+
   // OCCT's names for a product's own fields, as a person would say them.
   static std::string attribute_name(const std::string& key)
   {
@@ -802,6 +902,7 @@ private:
   }
 
   double                         myChord, myAngle;
+  bool                           myIges = false;
   occ::handle<TDocStd_Document>  myDoc;
   occ::handle<XCAFDoc_ShapeTool> myShapes;
   occ::handle<XCAFDoc_LayerTool> myLayers;

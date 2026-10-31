@@ -134,12 +134,17 @@ impl Image {
     /// complaint and then rendered untextured, with the fallback colour
     /// standing in and nothing anywhere saying why.
     ///
-    /// Six of the eight `docs/02-MATERIAL-SYSTEM.md` §5.1 asks for (PSD by
-    /// its flattened image, see [`crate::psd`]). TIFF, TGA and WebP are not
-    /// implemented; they now produce that warning instead of a flat render,
+    /// All eight `docs/02-MATERIAL-SYSTEM.md` §5.1 asks for (PSD by its
+    /// flattened image, see [`crate::psd`]), and BMP, GIF (its first frame),
+    /// DDS, JPEG XL and SVG (rasterized, see [`crate::svg`]) besides. What
+    /// is still refused — HEIC and AVIF, whose decoders are C libraries, and
+    /// KTX2 among others — produces that warning instead of a flat render,
     /// which is the difference between a feature that is missing and one
     /// that appears to be broken.
-    pub const DECODABLE: [&str; 7] = ["png", "jpg", "jpeg", "hdr", "exr", "psd", "psb"];
+    pub const DECODABLE: [&str; 17] = [
+        "png", "jpg", "jpeg", "tif", "tiff", "tga", "bmp", "webp", "gif", "jxl", "dds", "svg", "svgz", "hdr", "exr",
+        "psd", "psb",
+    ];
 
     /// Whether [`Image::load`] can decode a path, by its extension.
     pub fn is_decodable(path: impl AsRef<Path>) -> bool {
@@ -154,7 +159,9 @@ impl Image {
     ///
     /// `.hdr` (Radiance RGBE) and `.exr` (OpenEXR) are the environment
     /// formats `TEQUILA_SPEC.md` §1.5 requires. Both store linear data, so no
-    /// transfer function is removed.
+    /// transfer function is removed. Nor is one from a floating-point TIFF,
+    /// DDS or JPEG XL; every integer format has its sRGB curve removed, as a
+    /// PNG does.
     pub fn load(path: impl AsRef<Path>) -> Result<Image, ImageError> {
         let path = path.as_ref();
         let ext = path
@@ -168,7 +175,7 @@ impl Image {
             "hdr" => Self::load_radiance(path),
             "exr" => Self::load_exr(path),
             "psd" | "psb" => Self::load_psd(path, false),
-            other => Err(ImageError::UnsupportedFormat(other.to_string())),
+            other => Ok(Self::decode(path, other)?.into_image(false)),
         }
     }
 
@@ -176,7 +183,8 @@ impl Image {
     /// a normal map, a roughness or metalness map, a height map — keeping
     /// them as they are stored.
     ///
-    /// [`Image::load`] removes the sRGB curve from PNG and JPEG, which is
+    /// [`Image::load`] removes the sRGB curve from PNG, JPEG and every other
+    /// integer format, which is
     /// right for artwork and wrong for data: a flat normal's 128 comes out as
     /// 0.22 rather than 0.5 and leans every normal the same way, and a
     /// roughness of 0.5 comes out as 0.22. Relabelling the result Raw
@@ -199,8 +207,27 @@ impl Image {
                 Ok(Self::from_raw8(width, height, 4, &rgba))
             }
             "psd" | "psb" => Self::load_psd(path, true),
-            _ => Self::load(path),
+            "hdr" | "exr" => Self::load(path),
+            other => Ok(Self::decode(path, other)?.into_image(true)),
         }
+    }
+
+    /// The formats past the first few, by extension, each read to pixels
+    /// that [`Decoded::into_image`] then decodes — or not, for a raw map —
+    /// in one place for all of them.
+    fn decode(path: &Path, ext: &str) -> Result<Decoded, ImageError> {
+        let read = || std::fs::read(path).map_err(ImageError::Io);
+        Ok(match ext {
+            "tif" | "tiff" => Self::tiff_pixels(path)?,
+            "webp" => Self::webp_pixels(path)?,
+            "gif" => Self::gif_pixels(path)?,
+            "jxl" => Self::jxl_pixels(path)?,
+            "tga" => Decoded::eight(crate::tga::decode(&read()?).map_err(ImageError::Decode)?),
+            "bmp" => Decoded::eight(crate::bmp::decode(&read()?).map_err(ImageError::Decode)?),
+            "dds" => crate::dds::decode(&read()?).map_err(ImageError::Decode)?,
+            "svg" | "svgz" => Decoded::eight(crate::svg::rasterize(path).map_err(ImageError::Decode)?),
+            other => return Err(ImageError::UnsupportedFormat(other.to_string())),
+        })
     }
 
     /// A Photoshop document's flattened image as RGBA, unassociated: linear
@@ -209,20 +236,197 @@ impl Image {
     pub fn load_psd(path: impl AsRef<Path>, raw: bool) -> Result<Image, ImageError> {
         let bytes = std::fs::read(path.as_ref()).map_err(ImageError::Io)?;
         let composite = crate::psd::composite(&bytes).map_err(ImageError::Decode)?;
-        let decode = !raw && !composite.linear;
-        let data = composite
-            .rgba
+        let pixels = if composite.linear { Pixels::Linear(composite.rgba) } else { Pixels::Display(composite.rgba) };
+        Ok(Decoded { width: composite.width, height: composite.height, pixels }.into_image(raw))
+    }
+
+    /// A TIFF's first image, by the `tiff` crate: 8 or 16 bits a channel
+    /// (display-encoded, so decoded like a PNG's) or 32- and 64-bit floats
+    /// (linear, as a TIFF32 render is written); greyscale, RGB or a
+    /// palette; with alpha; uncompressed, LZW, Deflate or PackBits, with or
+    /// without a predictor.
+    ///
+    /// A channel past the colour ones is the alpha when `ExtraSamples`
+    /// says so (premultiplied or not) or says nothing at all, which is how
+    /// the `tiff` crate writes one, Tequila's own renders included. One
+    /// marked "unspecified" is a saved selection or a spot channel, and
+    /// taking it for alpha would cut holes in the picture. The orientation
+    /// tag is honoured. CMYK, YCbCr, Lab and channels stored as separate
+    /// planes are refused with a message saying so.
+    fn tiff_pixels(path: &Path) -> Result<Decoded, ImageError> {
+        use tiff::decoder::{Decoder, DecodingResult, Limits};
+        use tiff::tags::Tag;
+        let fail = |e: tiff::TiffError| ImageError::Decode(e.to_string());
+        let refuse = |why: &str| ImageError::Decode(format!("this TIFF {why}"));
+        let file = std::io::BufReader::new(std::fs::File::open(path)?);
+        // The default limits stop at 256 MB, which an 8K texture at sixteen
+        // bits passes; the file is one the user chose.
+        let mut decoder = Decoder::new(file).map_err(fail)?.with_limits(Limits::unlimited());
+        let (width, height) = decoder.dimensions().map_err(fail)?;
+        let (width, height) = (width as usize, height as usize);
+        let mut tag = |tag: Tag| decoder.find_tag_unsigned::<u32>(tag).map_err(fail);
+        let samples = tag(Tag::SamplesPerPixel)?.unwrap_or(1) as usize;
+        let photometric = tag(Tag::PhotometricInterpretation)?.unwrap_or(1);
+        let planar = tag(Tag::PlanarConfiguration)?.unwrap_or(1);
+        let orientation = tag(Tag::Orientation)?.unwrap_or(1);
+        let extra = decoder.find_tag_unsigned_vec::<u32>(Tag::ExtraSamples).map_err(fail)?.unwrap_or_default();
+        let colours = match photometric {
+            0 | 1 | 3 => 1,
+            2 => 3,
+            5 => return Err(refuse("is CMYK; re-save it as RGB")),
+            6 => return Err(refuse("is YCbCr; re-save it as RGB")),
+            8..=10 => return Err(refuse("is Lab; re-save it as RGB")),
+            other => return Err(refuse(&format!("has photometric interpretation {other}, which this reader does not know"))),
+        };
+        if planar == 2 && samples > 1 {
+            return Err(refuse("stores each channel separately; re-save it with interleaved pixels"));
+        }
+        if samples < colours {
+            return Err(refuse("has fewer channels than its colour needs"));
+        }
+        // Some(premultiplied) when the first extra channel is alpha.
+        let alpha = (samples > colours)
+            .then(|| match extra.first() {
+                None | Some(2) => Some(false),
+                Some(1) => Some(true),
+                _ => None,
+            })
+            .flatten();
+        let palette = if photometric == 3 {
+            let map = decoder.find_tag_unsigned_vec::<u16>(Tag::ColorMap).map_err(fail)?;
+            Some(map.ok_or_else(|| refuse("is a palette image with no palette"))?)
+        } else {
+            None
+        };
+
+        let (values, float): (Vec<f32>, bool) = match decoder.read_image().map_err(fail)? {
+            // Indices stay indices; everything else comes to 0 to 1.
+            DecodingResult::U8(v) if palette.is_some() => (v.into_iter().map(|v| v as f32).collect(), false),
+            DecodingResult::U16(v) if palette.is_some() => (v.into_iter().map(|v| v as f32).collect(), false),
+            DecodingResult::U8(v) => (v.into_iter().map(|v| v as f32 / 255.0).collect(), false),
+            DecodingResult::U16(v) => (v.into_iter().map(|v| v as f32 / 65535.0).collect(), false),
+            DecodingResult::U32(v) => (v.into_iter().map(|v| (v as f64 / u32::MAX as f64) as f32).collect(), false),
+            DecodingResult::F32(v) => (v, true),
+            DecodingResult::F64(v) => (v.into_iter().map(|v| v as f32).collect(), true),
+            _ => return Err(refuse("holds signed integers, which this reader does not read")),
+        };
+        let count = width * height;
+        if values.len() < count * samples {
+            return Err(refuse("holds fewer pixels than its size"));
+        }
+        let mut rgba = Vec::with_capacity(count * 4);
+        for p in values.chunks_exact(samples).take(count) {
+            let (r, g, b) = match (photometric, &palette) {
+                (3, Some(map)) => {
+                    let n = map.len() / 3;
+                    let i = p[0] as usize;
+                    if i >= n {
+                        return Err(refuse(&format!("uses colour {i}, which its palette does not have")));
+                    }
+                    let c = |k: usize| map[k * n + i] as f32 / 65535.0;
+                    (c(0), c(1), c(2))
+                }
+                // White is zero: a scanner's or a fax's grey, inverted.
+                (0, _) if !float => (1.0 - p[0], 1.0 - p[0], 1.0 - p[0]),
+                (0 | 1, _) => (p[0], p[0], p[0]),
+                _ => (p[0], p[1], p[2]),
+            };
+            let a = if alpha.is_some() { p[colours] } else { 1.0 };
+            rgba.extend_from_slice(&[r, g, b, a]);
+        }
+        if alpha == Some(true) {
+            unpremultiply(&mut rgba);
+        }
+        let (width, height, rgba) = upright(rgba, width, height, orientation);
+        Ok(Decoded { width, height, pixels: if float { Pixels::Linear(rgba) } else { Pixels::Display(rgba) } })
+    }
+
+    /// A WebP, lossy or lossless, with its alpha; the first frame of an
+    /// animated one.
+    fn webp_pixels(path: &Path) -> Result<Decoded, ImageError> {
+        let fail = |e: image_webp::DecodingError| ImageError::Decode(e.to_string());
+        let file = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut decoder = image_webp::WebPDecoder::new(file).map_err(fail)?;
+        let (width, height) = decoder.dimensions();
+        let size = decoder.output_buffer_size().ok_or_else(|| ImageError::Decode("the WebP is too large to hold".into()))?;
+        let mut buffer = vec![0; size];
+        decoder.read_image(&mut buffer).map_err(fail)?;
+        let rgba = if decoder.has_alpha() {
+            buffer
+        } else {
+            buffer.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect()
+        };
+        Ok(Decoded { width: width as usize, height: height as usize, pixels: Pixels::Eight(rgba) })
+    }
+
+    /// A GIF's first frame, placed where it sits on the picture's canvas
+    /// and transparent around it, as a viewer shows it before it plays.
+    fn gif_pixels(path: &Path) -> Result<Decoded, ImageError> {
+        let fail = |e: gif::DecodingError| ImageError::Decode(e.to_string());
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(std::io::BufReader::new(std::fs::File::open(path)?)).map_err(fail)?;
+        let (screen_width, screen_height) = (decoder.width() as usize, decoder.height() as usize);
+        let frame = decoder.read_next_frame().map_err(fail)?.ok_or_else(|| ImageError::Decode("the GIF has no frames".into()))?;
+        let (left, top) = (frame.left as usize, frame.top as usize);
+        let (frame_width, frame_height) = (frame.width as usize, frame.height as usize);
+        // A canvas smaller than its own frame is a broken header; the frame
+        // is the better witness.
+        let width = screen_width.max(left + frame_width);
+        let height = screen_height.max(top + frame_height);
+        let mut rgba = vec![0u8; width * height * 4];
+        if frame_width > 0 {
+            for (y, row) in frame.buffer.chunks_exact(frame_width * 4).take(frame_height).enumerate() {
+                let at = ((top + y) * width + left) * 4;
+                rgba[at..at + row.len()].copy_from_slice(row);
+            }
+        }
+        Ok(Decoded { width, height, pixels: Pixels::Eight(rgba) })
+    }
+
+    /// A JPEG XL's first frame, by `jxl-oxide`: rendered to sRGB, or to
+    /// linear sRGB when its samples are floats, so that it is decoded the
+    /// way every other format of the same kind is. Its orientation is
+    /// applied; CMYK is refused.
+    fn jxl_pixels(path: &Path) -> Result<Decoded, ImageError> {
+        use jxl_oxide::{EnumColourEncoding, ExtraChannelType, JxlImage, RenderingIntent};
+        let fail = |e: Box<dyn std::error::Error + Send + Sync>| ImageError::Decode(e.to_string());
+        let mut image = JxlImage::builder().open(path).map_err(fail)?;
+        let metadata = &image.image_header().metadata;
+        let float = matches!(metadata.bit_depth, jxl_oxide::image::BitDepth::FloatSample { .. });
+        let premultiplied = metadata
+            .ec_info
             .iter()
-            .enumerate()
-            .map(|(i, &v)| if decode && i % 4 != 3 { srgb_eotf(v) } else { v })
-            .collect();
-        Ok(Image {
-            width: composite.width,
-            height: composite.height,
-            channels: 4,
-            data,
-            color_space: if raw && !composite.linear { ColorSpace::Raw } else { ColorSpace::LinearSrgb },
-        })
+            .any(|ec| matches!(ec.ty, ExtraChannelType::Alpha { alpha_associated: true }));
+        let intent = RenderingIntent::Relative;
+        let mut encoding =
+            if metadata.grayscale() { EnumColourEncoding::gray_srgb(intent) } else { EnumColourEncoding::srgb(intent) };
+        if float {
+            encoding.tf = jxl_oxide::color::TransferFunction::Linear;
+        }
+        image.request_color_encoding(encoding);
+        if image.pixel_format().has_black() {
+            return Err(ImageError::Decode("this JPEG XL is CMYK; re-save it as RGB".into()));
+        }
+        let render = image.render_frame(0).map_err(fail)?;
+        let mut stream = render.stream();
+        let (width, height) = (stream.width() as usize, stream.height() as usize);
+        let channels = stream.channels() as usize;
+        let mut samples = vec![0f32; width * height * channels];
+        stream.write_to_buffer(&mut samples);
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        for p in samples.chunks_exact(channels.max(1)) {
+            rgba.extend_from_slice(&match channels {
+                1 => [p[0], p[0], p[0], 1.0],
+                2 => [p[0], p[0], p[0], p[1]],
+                3 => [p[0], p[1], p[2], 1.0],
+                _ => [p[0], p[1], p[2], p[3]],
+            });
+        }
+        if premultiplied {
+            unpremultiply(&mut rgba);
+        }
+        Ok(Decoded { width, height, pixels: if float { Pixels::Linear(rgba) } else { Pixels::Display(rgba) } })
     }
 
     /// Decode PNG artwork to linear RGBA, preserving unassociated alpha.
@@ -425,6 +629,92 @@ impl Image {
     }
 }
 
+/// Pixels as a reader hands them over, before any colour decoding: RGBA,
+/// unassociated, from the top row down.
+#[derive(Debug)]
+pub(crate) struct Decoded {
+    pub width: usize,
+    pub height: usize,
+    pub pixels: Pixels,
+}
+
+#[derive(Debug)]
+pub(crate) enum Pixels {
+    /// Eight bits a channel, display-encoded: what most files hold.
+    Eight(Vec<u8>),
+    /// 0 to 1 and display-encoded, from a format with more than eight bits.
+    Display(Vec<f32>),
+    /// Scene-linear floats, which may pass 1.
+    Linear(Vec<f32>),
+}
+
+impl Decoded {
+    pub(crate) fn eight((width, height, rgba): (usize, usize, Vec<u8>)) -> Decoded {
+        Decoded { width, height, pixels: Pixels::Eight(rgba) }
+    }
+
+    /// As an [`Image`]: display-encoded values with the sRGB curve taken
+    /// off, or kept as stored when `raw`; linear values are the same either
+    /// way. The one place every format past PNG and JPEG is decoded, so
+    /// that a map's role means the same thing whatever file it came in.
+    pub(crate) fn into_image(self, raw: bool) -> Image {
+        let Decoded { width, height, pixels } = self;
+        let image = |data: Vec<f32>, color_space| Image { width, height, channels: 4, data, color_space };
+        match pixels {
+            Pixels::Eight(bytes) if raw => Image::from_raw8(width, height, 4, &bytes),
+            Pixels::Eight(bytes) => Image::from_srgb8(width, height, 4, &bytes),
+            Pixels::Display(data) if raw => image(data, ColorSpace::Raw),
+            Pixels::Display(mut data) => {
+                for (i, v) in data.iter_mut().enumerate() {
+                    // Alpha is never gamma-encoded.
+                    if i % 4 != 3 {
+                        *v = srgb_eotf(*v);
+                    }
+                }
+                image(data, ColorSpace::LinearSrgb)
+            }
+            Pixels::Linear(data) => image(data, ColorSpace::LinearSrgb),
+        }
+    }
+}
+
+/// Premultiplied RGBA to unassociated, in place.
+fn unpremultiply(rgba: &mut [f32]) {
+    for p in rgba.chunks_exact_mut(4) {
+        if p[3] > 0.0 {
+            for c in 0..3 {
+                p[c] /= p[3];
+            }
+        }
+    }
+}
+
+/// RGBA stored in TIFF (and EXIF) orientation `orientation`, turned
+/// upright: 1 is as stored, 2 to 4 mirror and turn it half round, and 5 to
+/// 8 lie on their side, so their width and height trade places.
+fn upright(rgba: Vec<f32>, width: usize, height: usize, orientation: u32) -> (usize, usize, Vec<f32>) {
+    if !(2..=8).contains(&orientation) {
+        return (width, height, rgba);
+    }
+    let (w, h) = if orientation >= 5 { (height, width) } else { (width, height) };
+    let mut out = vec![0.0; rgba.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let (sx, sy) = match orientation {
+                2 => (width - 1 - x, y),
+                3 => (width - 1 - x, height - 1 - y),
+                4 => (x, height - 1 - y),
+                5 => (y, x),
+                6 => (y, height - 1 - x),
+                7 => (width - 1 - y, height - 1 - x),
+                _ => (width - 1 - y, x),
+            };
+            out[(y * w + x) * 4..][..4].copy_from_slice(&rgba[(sy * width + sx) * 4..][..4]);
+        }
+    }
+    (w, h, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,8 +845,330 @@ mod tests {
 
     #[test]
     fn unknown_extensions_are_reported_not_guessed() {
-        let e = Image::load("nope.tga").unwrap_err();
+        let e = Image::load("nope.heic").unwrap_err();
         assert!(matches!(e, ImageError::UnsupportedFormat(_)), "{e:?}");
+        let e = Image::load_raw("nope.heic").unwrap_err();
+        assert!(matches!(e, ImageError::UnsupportedFormat(_)), "{e:?}");
+    }
+
+    /// A file of `bytes` under `name` in the temporary folder, removed
+    /// when dropped.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str, bytes: &[u8]) -> Scratch {
+            let path = std::env::temp_dir().join(format!("tequila-{}-{name}", std::process::id()));
+            std::fs::write(&path, bytes).unwrap();
+            Scratch(path)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn rgba_at(image: &Image, x: usize, y: usize) -> [f32; 4] {
+        assert_eq!(image.channels, 4);
+        let i = (y * image.width + x) * 4;
+        image.data[i..i + 4].try_into().unwrap()
+    }
+
+    fn near(a: [f32; 4], b: [f32; 4], tolerance: f32) -> bool {
+        a.iter().zip(b).all(|(a, b)| (a - b).abs() <= tolerance)
+    }
+
+    /// The hand-read formats arrive the way a PNG does: the sRGB curve off
+    /// for artwork, the stored numbers kept for data, alpha untouched.
+    #[test]
+    fn hand_read_formats_decode_by_role_like_a_png() {
+        let mut tga = crate::tga::tests::header(2, 1, 1, 32, 0x28);
+        tga.extend_from_slice(&[0, 128, 255, 64]);
+        let mut bmp = b"BM".to_vec();
+        let mut dib = vec![0u8; 40];
+        dib[0] = 40;
+        dib[4] = 1;
+        dib[8] = 1;
+        dib[12] = 1;
+        dib[14] = 32;
+        bmp.extend_from_slice(&(14u32 + 40 + 4).to_le_bytes());
+        bmp.extend_from_slice(&[0; 4]);
+        bmp.extend_from_slice(&54u32.to_le_bytes());
+        bmp.extend_from_slice(&dib);
+        bmp.extend_from_slice(&[0, 128, 255, 64]);
+        for (name, bytes) in [("pixel.tga", tga), ("pixel.BMP", bmp)] {
+            let file = Scratch::new(name, &bytes);
+            let art = Image::load(&file.0).unwrap();
+            assert_eq!(art.color_space, ColorSpace::LinearSrgb);
+            let expected = [1.0, srgb_eotf(128.0 / 255.0), 0.0, 64.0 / 255.0];
+            assert!(near(rgba_at(&art, 0, 0), expected, 1e-5), "{name}: {:?}", rgba_at(&art, 0, 0));
+            let data = Image::load_raw(&file.0).unwrap();
+            assert_eq!(data.color_space, ColorSpace::Raw);
+            assert!(near(rgba_at(&data, 0, 0), [1.0, 128.0 / 255.0, 0.0, 64.0 / 255.0], 1e-5), "{name} raw");
+        }
+    }
+
+    /// TIFFs at each depth and compression the `tiff` crate writes, read
+    /// back through `Image::load`: pixels, rows in order, alpha, and the
+    /// precision of sixteen bits and of floats.
+    #[test]
+    fn tiffs_read_at_every_depth_and_compression() {
+        use tiff::encoder::{colortype, compression, TiffEncoder};
+        let write = |name: &str, f: &dyn Fn(&mut TiffEncoder<&mut std::io::Cursor<Vec<u8>>>)| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            f(&mut TiffEncoder::new(&mut bytes).unwrap());
+            Scratch::new(name, bytes.get_ref())
+        };
+
+        // 8-bit RGB, LZW: red, green on the top row; blue, white below.
+        let rgb8 = [255u8, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let file = write("rgb8.tif", &|e| e.write_image_with_compression::<colortype::RGB8, _>(2, 2, compression::Lzw, &rgb8).unwrap());
+        let image = Image::load(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (2, 2));
+        assert_eq!(rgba_at(&image, 1, 0), [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(rgba_at(&image, 0, 1), [0.0, 0.0, 1.0, 1.0], "the second row is the bottom one");
+
+        // 8-bit RGBA, PackBits, as Tequila's own renders are written: no
+        // ExtraSamples tag, and the fourth channel is alpha.
+        let rgba8 = [200u8, 100, 50, 128];
+        let file = write("rgba8.tiff", &|e| e.write_image_with_compression::<colortype::RGBA8, _>(1, 1, compression::Packbits, &rgba8).unwrap());
+        let raw = Image::load_raw(&file.0).unwrap();
+        assert!(near(rgba_at(&raw, 0, 0), [200.0 / 255.0, 100.0 / 255.0, 50.0 / 255.0, 128.0 / 255.0], 1e-6));
+        let art = Image::load(&file.0).unwrap();
+        assert!((rgba_at(&art, 0, 0)[0] - srgb_eotf(200.0 / 255.0)).abs() < 1e-6, "the sRGB curve is removed");
+
+        // 16-bit grey, Deflate: a value eight bits cannot hold survives.
+        let grey16 = [0u16, 1000, 40000, 65535];
+        let file = write("grey16.tif", &|e| {
+            e.write_image_with_compression::<colortype::Gray16, _>(4, 1, compression::Deflate::default(), &grey16).unwrap()
+        });
+        let raw = Image::load_raw(&file.0).unwrap();
+        let p = rgba_at(&raw, 1, 0);
+        assert!((p[0] - 1000.0 / 65535.0).abs() < 1e-7 && p[0] == p[1] && p[1] == p[2] && p[3] == 1.0, "{p:?}");
+
+        // 32-bit float RGBA: linear, past one, the same whichever way it is
+        // loaded.
+        let float = [12.0f32, 0.5, 0.25, 1.0, 0.0, 0.0, 0.0, 0.0];
+        let file = write("float.tif", &|e| e.write_image::<colortype::RGBA32Float>(2, 1, &float).unwrap());
+        for image in [Image::load(&file.0).unwrap(), Image::load_raw(&file.0).unwrap()] {
+            assert_eq!(image.color_space, ColorSpace::LinearSrgb);
+            assert_eq!(rgba_at(&image, 0, 0), [12.0, 0.5, 0.25, 1.0]);
+            assert_eq!(rgba_at(&image, 1, 0)[3], 0.0);
+        }
+    }
+
+    /// The tags the `tiff` crate leaves to its callers: an orientation, a
+    /// premultiplied alpha, and an extra channel that is not alpha at all.
+    #[test]
+    fn tiff_orientation_and_extra_channels_are_honoured() {
+        use tiff::encoder::{colortype, TiffEncoder};
+        use tiff::tags::Tag;
+        let write = |name: &str, width: u32, height: u32, data: &[u8], tags: &[(Tag, u16)]| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            let mut encoder = TiffEncoder::new(&mut bytes).unwrap();
+            let mut image = encoder.new_image::<colortype::RGBA8>(width, height).unwrap();
+            for (tag, value) in tags {
+                image.encoder().write_tag(*tag, *value).unwrap();
+            }
+            image.write_data(data).unwrap();
+            Scratch::new(name, bytes.get_ref())
+        };
+        // Stored as two rows of three: red green blue, then black white grey.
+        let stored = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, //
+            0, 0, 0, 255, 255, 255, 255, 255, 128, 128, 128, 255,
+        ];
+
+        // Orientation 4: stored bottom row first.
+        let file = write("flipped.tif", 3, 2, &stored, &[(Tag::Orientation, 4)]);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!(rgba_at(&image, 0, 0), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(rgba_at(&image, 0, 1), [1.0, 0.0, 0.0, 1.0]);
+
+        // Orientation 6: turned a quarter clockwise to stand upright, so
+        // three across becomes three down, and the first stored row ends
+        // up as the right-hand column.
+        let file = write("turned.tif", 3, 2, &stored, &[(Tag::Orientation, 6)]);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (2, 3));
+        assert_eq!(rgba_at(&image, 1, 0), [1.0, 0.0, 0.0, 1.0], "red: top right");
+        assert_eq!(rgba_at(&image, 1, 2), [0.0, 0.0, 1.0, 1.0], "blue: bottom right");
+        assert_eq!(rgba_at(&image, 0, 0), [0.0, 0.0, 0.0, 1.0], "black: top left");
+
+        // Premultiplied: 100 at alpha 0.5 is 200 as a colour.
+        let file = write("associated.tif", 1, 1, &[100, 50, 0, 128], &[(Tag::ExtraSamples, 1)]);
+        let p = rgba_at(&Image::load_raw(&file.0).unwrap(), 0, 0);
+        assert!(near(p, [100.0 / 128.0, 50.0 / 128.0, 0.0, 128.0 / 255.0], 1e-5), "{p:?}");
+
+        // Unspecified: a saved selection, not alpha.
+        let file = write("selection.tif", 1, 1, &[100, 50, 0, 0], &[(Tag::ExtraSamples, 0)]);
+        assert_eq!(rgba_at(&Image::load_raw(&file.0).unwrap(), 0, 0)[3], 1.0);
+    }
+
+    /// Lossless WebP, encoded here, comes back bit for bit with its alpha.
+    #[test]
+    fn a_lossless_webp_keeps_every_value_and_its_alpha() {
+        let rgba: Vec<u8> = (0..4 * 3).flat_map(|i: u32| [(i * 20) as u8, 255 - (i * 20) as u8, 7, (i * 21) as u8]).collect();
+        let mut bytes = Vec::new();
+        image_webp::WebPEncoder::new(&mut bytes).encode(&rgba, 4, 3, image_webp::ColorType::Rgba8).unwrap();
+        let file = Scratch::new("lossless.webp", &bytes);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (4, 3));
+        for (i, (got, wanted)) in image.data.iter().zip(&rgba).enumerate() {
+            assert!((got - *wanted as f32 / 255.0).abs() < 1e-6, "value {i}: {got} for {wanted}");
+        }
+
+        let mut bytes = Vec::new();
+        image_webp::WebPEncoder::new(&mut bytes).encode(&[10, 20, 30, 40, 50, 60], 2, 1, image_webp::ColorType::Rgb8).unwrap();
+        let file = Scratch::new("opaque.webp", &bytes);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert!(near(rgba_at(&image, 1, 0), [40.0 / 255.0, 50.0 / 255.0, 60.0 / 255.0, 1.0], 1e-6));
+    }
+
+    /// Lossy WebP. No pure-Rust encoder writes it, so these are written
+    /// out in full: a browser's own encoder (Chromium's canvas, quality 0.9)
+    /// given a 32 by 32 picture of four 16-pixel quadrants, with its ICC
+    /// profile chunk taken out. The first is red (220, 30, 30) and green
+    /// (30, 200, 40) over blue (30, 40, 220) at half alpha and nothing at
+    /// all, so it is lossy colour with a lossless alpha chunk (VP8X, ALPH,
+    /// VP8); the second the same with an opaque near-white (250) for the
+    /// last quadrant, a bare VP8 stream.
+    const LOSSY_WITH_ALPHA: [u8; 178] = [
+        0x52, 0x49, 0x46, 0x46, 0xaa, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58,
+        0x0a, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x41, 0x4c,
+        0x50, 0x48, 0x1d, 0x00, 0x00, 0x00, 0x01, 0x17, 0x20, 0x10, 0x48, 0x52, 0x9f, 0x7c, 0x8d, 0x88,
+        0x08, 0x07, 0x32, 0x69, 0x9b, 0x98, 0x9c, 0xc9, 0x7a, 0xdd, 0x1f, 0xd1, 0xff, 0x09, 0xd8, 0xfd,
+        0x2a, 0xf8, 0x05, 0x00, 0x56, 0x50, 0x38, 0x20, 0x66, 0x00, 0x00, 0x00, 0x90, 0x05, 0x00, 0x9d,
+        0x01, 0x2a, 0x20, 0x00, 0x20, 0x00, 0x3e, 0x2d, 0x10, 0x86, 0x42, 0xa1, 0xa1, 0x0d, 0xfa, 0x00,
+        0x0c, 0x01, 0x62, 0x5a, 0x00, 0x27, 0x4c, 0xa1, 0x1c, 0x0d, 0xe0, 0x1f, 0x80, 0x1f, 0xb0, 0x1f,
+        0xda, 0xf9, 0xc3, 0x34, 0x0b, 0xb0, 0x1f, 0xb7, 0x3f, 0xd9, 0x33, 0xfe, 0xc2, 0xe0, 0x2d, 0x58,
+        0x00, 0x00, 0xfe, 0xf5, 0x58, 0xbf, 0xfe, 0x89, 0x9b, 0x9c, 0xc6, 0xff, 0xed, 0x50, 0x90, 0x44,
+        0x17, 0x82, 0x26, 0xef, 0x99, 0x6f, 0x73, 0x2e, 0x87, 0xd7, 0x7f, 0x7f, 0x88, 0x80, 0x2c, 0x4f,
+        0x1b, 0xda, 0x6a, 0x4b, 0xd2, 0xe7, 0x5f, 0xf1, 0x6e, 0xdd, 0x26, 0x42, 0x7e, 0xb8, 0x6f, 0x64,
+        0x00, 0x00,
+    ];
+
+    const LOSSY_OPAQUE: [u8; 122] = [
+        0x52, 0x49, 0x46, 0x46, 0x72, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+        0x66, 0x00, 0x00, 0x00, 0x90, 0x05, 0x00, 0x9d, 0x01, 0x2a, 0x20, 0x00, 0x20, 0x00, 0x3e, 0x2d,
+        0x10, 0x86, 0x42, 0xa1, 0xa1, 0x0d, 0xfa, 0x00, 0x0c, 0x01, 0x62, 0x5a, 0x00, 0x27, 0x4c, 0xa1,
+        0x1c, 0x0d, 0xe0, 0x1f, 0x80, 0x1f, 0xb0, 0x1f, 0xda, 0xf9, 0xc3, 0x34, 0x0b, 0xb0, 0x1f, 0xb7,
+        0x3f, 0xd9, 0x33, 0xfe, 0xc2, 0xe0, 0x2c, 0xbe, 0x00, 0x00, 0xfe, 0xf5, 0x58, 0xbf, 0xfe, 0x89,
+        0x9b, 0x9c, 0xc6, 0xff, 0xed, 0x50, 0x90, 0x44, 0x17, 0x82, 0x26, 0xef, 0x99, 0x6f, 0x73, 0x2e,
+        0x87, 0xd7, 0x7f, 0x7f, 0x88, 0x80, 0x57, 0xaf, 0xec, 0x41, 0x20, 0xd0, 0x03, 0x0b, 0x9f, 0xfe,
+        0x4b, 0x80, 0xd0, 0x13, 0xe9, 0x96, 0x1c, 0x1f, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn lossy_webp_decodes_near_the_colours_it_was_made_from() {
+        let file = Scratch::new("lossy-alpha.webp", &LOSSY_WITH_ALPHA);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (32, 32));
+        let at = |x: usize, y: usize| rgba_at(&image, x, y).map(|v| v * 255.0);
+        // Lossy colour, so near; at the middle of each quadrant, away from
+        // the blur at its edges.
+        let tolerance = 12.0;
+        assert!(near(at(8, 8), [220.0, 30.0, 30.0, 255.0], tolerance), "top left {:?}", at(8, 8));
+        assert!(near(at(24, 8), [30.0, 200.0, 40.0, 255.0], tolerance), "top right {:?}", at(24, 8));
+        let blue = at(8, 24);
+        assert!((blue[3] - 128.0).abs() <= 1.0, "alpha is coded losslessly: {blue:?}");
+        assert!(near([blue[0], blue[1], blue[2], 0.0], [30.0, 40.0, 220.0, 0.0], tolerance), "bottom left {blue:?}");
+        assert_eq!(at(24, 24)[3], 0.0, "bottom right is transparent");
+
+        let file = Scratch::new("lossy.webp", &LOSSY_OPAQUE);
+        let image = Image::load(&file.0).unwrap();
+        assert_eq!(image.color_space, ColorSpace::LinearSrgb);
+        let (white, expected) = (rgba_at(&image, 24, 24), srgb_eotf(250.0 / 255.0));
+        assert!(near(white, [expected, expected, expected, 1.0], 0.05), "{white:?}");
+        assert!(rgba_at(&image, 8, 8)[0] > 0.6, "red decodes as red, the curve removed");
+    }
+
+    /// A GIF's first frame, smaller than its canvas and set into it, with
+    /// its transparent colour; a second frame is not shown.
+    #[test]
+    fn a_gif_shows_its_first_frame_in_place() {
+        let mut bytes = Vec::new();
+        {
+            // Red, blue, and a third colour that the frame calls transparent.
+            let palette = [255, 0, 0, 0, 0, 255, 9, 9, 9];
+            let mut encoder = gif::Encoder::new(&mut bytes, 4, 3, &palette).unwrap();
+            let mut first = gif::Frame { left: 1, top: 1, width: 2, height: 2, transparent: Some(2), ..Default::default() };
+            first.buffer = std::borrow::Cow::Owned(vec![0, 1, 2, 0]);
+            encoder.write_frame(&first).unwrap();
+            let second = gif::Frame { width: 4, height: 3, buffer: std::borrow::Cow::Owned(vec![1; 12]), ..Default::default() };
+            encoder.write_frame(&second).unwrap();
+        }
+        let file = Scratch::new("frames.gif", &bytes);
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (4, 3), "the canvas, not the frame");
+        assert_eq!(rgba_at(&image, 1, 1), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(rgba_at(&image, 2, 1), [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(rgba_at(&image, 1, 2)[3], 0.0, "the transparent colour");
+        assert_eq!(rgba_at(&image, 2, 2), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(rgba_at(&image, 0, 0)[3], 0.0, "outside the first frame is transparent");
+        assert_eq!(rgba_at(&image, 3, 2)[3], 0.0);
+    }
+
+    /// JPEG XL, encoded here losslessly, comes back exactly: eight-bit RGBA
+    /// with its alpha, and sixteen-bit grey with its precision.
+    #[test]
+    fn a_jpeg_xl_decodes_exactly() {
+        use zune_core::{bit_depth::BitDepth, colorspace::ColorSpace as Layout, options::EncoderOptions};
+        let encode = |data: &[u8], width: usize, height: usize, layout: Layout, depth: BitDepth| {
+            let mut out = Vec::new();
+            zune_jpegxl::JxlSimpleEncoder::new(data, EncoderOptions::new(width, height, layout, depth))
+                .encode(&mut out)
+                .unwrap();
+            out
+        };
+
+        let rgba: Vec<u8> = (0..4 * 3u32).flat_map(|i| [(i * 20) as u8, 200 - (i * 10) as u8, 7, (255 - i * 15) as u8]).collect();
+        let file = Scratch::new("pixels.jxl", &encode(&rgba, 4, 3, Layout::RGBA, BitDepth::Eight));
+        let raw = Image::load_raw(&file.0).unwrap();
+        assert_eq!((raw.width, raw.height), (4, 3));
+        assert_eq!(raw.color_space, ColorSpace::Raw);
+        for (i, (got, wanted)) in raw.data.iter().zip(&rgba).enumerate() {
+            assert!((got * 255.0 - *wanted as f32).abs() < 0.01, "value {i}: {} for {wanted}", got * 255.0);
+        }
+        let art = Image::load(&file.0).unwrap();
+        assert!((art.data[4] - srgb_eotf(20.0 / 255.0)).abs() < 1e-4, "the sRGB curve is removed");
+
+        let grey: Vec<u16> = vec![0, 1000, 40000, 65535, 12345, 54321];
+        let bytes: Vec<u8> = grey.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let file = Scratch::new("grey16.jxl", &encode(&bytes, 3, 2, Layout::Luma, BitDepth::Sixteen));
+        let raw = Image::load_raw(&file.0).unwrap();
+        let p = rgba_at(&raw, 1, 0);
+        assert!((p[0] - 1000.0 / 65535.0).abs() < 1e-6 && p[0] == p[2] && p[3] == 1.0, "{p:?}");
+        assert!((rgba_at(&raw, 2, 1)[0] - 54321.0 / 65535.0).abs() < 1e-6);
+    }
+
+    /// DDS and SVG through `Image::load`, by role like every other format.
+    #[test]
+    fn dds_and_svg_load_by_extension() {
+        let mut dds = b"DDS ".to_vec();
+        let mut words = [0u32; 31];
+        words[0] = 124;
+        words[2] = 1;
+        words[3] = 1;
+        words[18] = 32;
+        words[19] = 0x41;
+        words[21] = 32;
+        words[22..26].copy_from_slice(&[0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000]);
+        for w in words {
+            dds.extend_from_slice(&w.to_le_bytes());
+        }
+        dds.extend_from_slice(&[255, 128, 0, 64]);
+        let file = Scratch::new("pixel.dds", &dds);
+        let p = rgba_at(&Image::load(&file.0).unwrap(), 0, 0);
+        assert!(near(p, [1.0, srgb_eotf(128.0 / 255.0), 0.0, 64.0 / 255.0], 1e-5), "{p:?}");
+
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"><rect width="1" height="1" fill="#808080"/></svg>"##;
+        let file = Scratch::new("half.svg", svg.as_bytes());
+        let image = Image::load_raw(&file.0).unwrap();
+        assert_eq!((image.width, image.height), (4096, 2048));
+        assert!(near(rgba_at(&image, 1000, 1000), [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0], 1e-6));
+        assert_eq!(rgba_at(&image, 3000, 1000)[3], 0.0);
     }
 
     /// Write a JPEG of known colours, read it back through `Image::load`.
@@ -648,8 +1260,12 @@ mod tests {
                 }
                 _ => {}
             }
+            if let Err(ImageError::UnsupportedFormat(_)) = Image::load_raw(&path) {
+                panic!("`{ext}` is listed as decodable but `load_raw` refuses it")
+            }
         }
-        assert!(!Image::is_decodable("photo.tga"));
+        assert!(Image::is_decodable("photo.tga"));
+        assert!(!Image::is_decodable("photo.heic"));
         assert!(!Image::is_decodable("no-extension"));
         // Extensions come off files a person named, so case is not a signal.
         assert!(Image::is_decodable("COLOUR.JPG"));

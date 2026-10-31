@@ -6,12 +6,14 @@
 //! [`caustics`] traces from the lights when caustics are on.
 
 pub mod caustics;
+pub mod manifold;
 
 use crate::intersect::{Hit, Intersector};
 use crate::light::LightLinks;
+use crate::material::Scattering;
 use crate::scene::ShadowCatcher;
 use crate::shade;
-use crate::settings::IntegratorConfig;
+use crate::settings::{IntegratorConfig, ShadowGlass};
 use tequila_core::ids::InstanceId;
 use tequila_core::math::{offset_ray_origin, Onb, Ray, Vec2, Vec3};
 use tequila_core::sampler::Sampler;
@@ -19,6 +21,7 @@ use tequila_core::sampling::mis_power;
 use tequila_core::spectrum::Spectrum;
 use crate::aov::PathPasses;
 use crate::lpe::{LpeMatcher, Scatter, Transport};
+use crate::spectral::{Carried, PathColour};
 use tequila_materials::{Bsdf, BsdfFlags};
 
 /// Radiance plus the auxiliary outputs a single path produces.
@@ -71,12 +74,21 @@ pub struct PathResult {
     /// (§7.4). Its radiance is then coloured by that wavelength, which firefly
     /// rejection has to see past or it clips some colours more than others.
     pub wavelength: Option<f32>,
+    /// On a spectral path (§7.4), how luminous the film finds the light it
+    /// carries per unit, for the same reason: the luminance a flat spectrum
+    /// gives through its wavelengths, or through its hero alone once a
+    /// dispersive surface has dropped the others. `None` on an RGB path.
+    pub hue: Option<f32>,
     /// The part of `radiance` that is the background the camera saw where
     /// nothing covered it: all of it for a ray that escaped (through a
     /// cutout's holes included), the backdrop's share on a shadow catcher.
     /// An image with alpha leaves it out, since there the background is
     /// transparent; one without keeps it.
     pub background: Spectrum,
+    /// The camera ray met one of §4.4's fibres first: something finer than
+    /// a pixel, whose glints are a few of its samples by right rather than
+    /// outliers among them (see `Framebuffer`'s firefly rejection).
+    pub fine: bool,
 }
 
 /// The light-path machinery a path carries while it is traced.
@@ -120,10 +132,11 @@ impl PathAovs {
     /// scattered off this vertex that way and then by the `beyond` events on
     /// its way to the light, from the states in `saved`, which are the path
     /// before this vertex. Leaves the matcher moved on; the caller restores
-    /// it.
+    /// it. `carried` is what the path makes of a part on its way to the film:
+    /// the part times its throughput.
     fn contribute_lit(
         &mut self,
-        throughput: Spectrum,
+        carried: impl Fn(Spectrum) -> Spectrum,
         lit: Lit,
         group: crate::lpe::LightGroup,
         saved: &[u64],
@@ -142,7 +155,7 @@ impl PathAovs {
             for &(transport, scatter) in beyond {
                 self.matcher.scatter(transport, scatter);
             }
-            self.contribute(throughput * part, group);
+            self.contribute(carried(part), group);
         }
     }
 }
@@ -186,6 +199,10 @@ impl Lit {
         self.diffuse + self.glossy
     }
 }
+
+/// One in how many vertices past the first surface the camera sees take a
+/// manifold sample, each counted as many times (`manifold`).
+const MANIFOLD_PAST_BOUNCE: f32 = 4.0;
 
 /// How many cutout surfaces one ray may cross before it gives up.
 ///
@@ -344,19 +361,78 @@ struct Medium {
     /// leaves through it unbent — which is what lets light be sampled from
     /// inside it.
     index_matched: bool,
+    /// What `scattering` was made from, so a spectral path can make it again
+    /// per wavelength.
+    recipe: Option<MediumRecipe>,
+}
+
+/// The colours a walk's medium is made from, per channel: a spectral path
+/// reads them as spectra and makes the medium at each wavelength, since
+/// neither remap is linear, and the medium made per RGB channel and then
+/// upsampled is a different colour from the one asked for — a milky
+/// medium came back dE 7 from its RGB render, a translucent one dE 5.6.
+#[derive(Clone, Copy, Debug)]
+enum MediumRecipe {
+    /// A subsurface lobe's: its colour and radius, by
+    /// [`tequila_materials::openpbr::walk_coefficients`].
+    Subsurface { colour: Spectrum, radius: Spectrum },
+    /// A volume's: the transmission colour reached at `depth` and its
+    /// scatter, by [`tequila_materials::openpbr::volume_coefficients`].
+    Volume { colour: Spectrum, scatter: Spectrum, depth: f32 },
+}
+
+impl MediumRecipe {
+    fn volume(material: &crate::material::Material) -> MediumRecipe {
+        MediumRecipe::Volume {
+            colour: material.transmission_color,
+            scatter: material.transmission_scatter,
+            depth: material.volume_depth(),
+        }
+    }
+}
+
+/// A walk's extinction and albedo as the path carries them: as they are for
+/// an RGB path, and for a spectral one made from the recipe's colours at
+/// each wavelength.
+fn walk_medium<C: PathColour>(
+    colour: &C,
+    walk: &tequila_materials::openpbr::SubsurfaceMedium,
+    recipe: Option<&MediumRecipe>,
+) -> (C::Value, C::Value) {
+    let per_wavelength = |first: C::Value, second: C::Value, make: &dyn Fn(f32, f32) -> (f32, f32)| {
+        let mut made = [(0.0f32, 0.0f32); crate::spectral::WAVELENGTHS];
+        for (i, m) in made.iter_mut().enumerate().take(<C::Value as Carried>::CHANNELS) {
+            *m = make(first.channel(i), second.channel(i));
+        }
+        (C::Value::from_channels(|i| made[i].0), C::Value::from_channels(|i| made[i].1))
+    };
+    match recipe {
+        Some(MediumRecipe::Subsurface { colour: albedo, radius }) if C::SPECTRAL => per_wavelength(
+            colour.reflectance(*albedo),
+            colour.unbounded(*radius),
+            &|albedo, radius| tequila_materials::openpbr::walk_coefficients(albedo.clamp(0.0, 1.0), radius, walk.anisotropy),
+        ),
+        Some(MediumRecipe::Volume { colour: tint, scatter, depth }) if C::SPECTRAL => per_wavelength(
+            colour.reflectance(*tint),
+            colour.unbounded(*scatter),
+            &|tint, scatter| tequila_materials::openpbr::volume_coefficients(tint, scatter, *depth),
+        ),
+        _ => (colour.unbounded(walk.extinction), colour.reflectance(walk.albedo)),
+    }
 }
 
 impl Medium {
     fn of(instance: InstanceId, material: &crate::material::Material) -> Medium {
+        let scattering = material.volume_scattering();
         Medium {
             instance,
             priority: material.medium_priority,
             ior: material.specular_ior,
             // A volume that scatters absorbs in the walk; one that does not,
             // along the path.
-            volume: (material.has_volume() && material.volume_scattering().is_none())
-                .then(|| material.clone()),
-            scattering: material.volume_scattering(),
+            volume: (material.has_volume() && scattering.is_none()).then(|| material.clone()),
+            recipe: scattering.map(|_| MediumRecipe::volume(material)),
+            scattering,
             doorway: false,
             density: None,
             index_matched: (material.specular_ior - 1.0).abs() < 1e-3,
@@ -387,11 +463,17 @@ impl Medium {
         });
         // At density 1: the walk multiplies in each block's bound as it goes.
         let scattering = coefficients.filter(|_| field.max() > 0.0);
+        // Absorbing only, the volume's recipe with no scatter.
+        let recipe = match unit.volume_scattering() {
+            Some(_) => MediumRecipe::volume(&unit),
+            None => MediumRecipe::Volume { colour: unit.transmission_color, scatter: Spectrum::ZERO, depth: unit.transmission_depth },
+        };
         Medium {
             instance,
             priority: material.medium_priority,
             ior: material.specular_ior,
             volume: None,
+            recipe: scattering.map(|_| recipe),
             scattering,
             doorway: false,
             density: Some(field),
@@ -423,6 +505,7 @@ impl Medium {
             doorway: true,
             density: None,
             index_matched: false,
+            recipe: Some(MediumRecipe::Subsurface { colour: material.subsurface_color, radius: material.subsurface_radius }),
         })
     }
 }
@@ -438,7 +521,7 @@ impl Medium {
 /// be with one medium — and a surface that does not change which medium is
 /// present is not an interface at all: the glass's inner wall, inside the
 /// liquid, is crossed without scattering.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct MediumStack {
     media: [Option<Medium>; MAX_MEDIA],
     len: usize,
@@ -572,7 +655,35 @@ pub fn trace_path_with_aovs(
 }
 
 /// The same, reading a pass's caustic photons (§6.5) where there are some.
+///
+/// Spectral or RGB as `config.spectral` decides for this scene (§7.4): the
+/// same path either way, carrying four wavelengths or three channels.
 pub fn trace_path_with_caustics(
+    intersector: &dyn Intersector,
+    config: &IntegratorConfig,
+    ray: Ray,
+    film: Vec2,
+    sampler: &mut Sampler,
+    aovs: &mut PathAovs,
+    caustic_map: Option<&caustics::CausticMap>,
+) -> PathResult {
+    if config.spectral.resolve(intersector.scene()) {
+        let wavelengths = crate::spectral::Wavelengths::new(sampler.wavelength());
+        trace(intersector, config, ray, film, sampler, aovs, caustic_map, &wavelengths)
+    } else {
+        trace(intersector, config, ray, film, sampler, aovs, caustic_map, &crate::spectral::Rgb)
+    }
+}
+
+/// One path, in whatever its colour is carried as.
+///
+/// Every colour the scene describes enters the path through `colour`: a
+/// filter as a [`reflectance`](PathColour::reflectance), light as an
+/// [`unbounded`](PathColour::unbounded) value, and what reaches the film or
+/// the passes leaves through [`rgb`](PathColour::rgb). For an RGB path each
+/// of those is the value itself.
+#[allow(clippy::too_many_arguments)]
+fn trace<C: PathColour>(
     intersector: &dyn Intersector,
     config: &IntegratorConfig,
     mut ray: Ray,
@@ -582,6 +693,7 @@ pub fn trace_path_with_caustics(
     sampler: &mut Sampler,
     aovs: &mut PathAovs,
     caustic_map: Option<&caustics::CausticMap>,
+    colour: &C,
 ) -> PathResult {
     aovs.passes.clear();
     aovs.matcher.begin();
@@ -602,10 +714,25 @@ pub fn trace_path_with_caustics(
     let mut bump_registers = shade::Registers::new();
     let mut bump_scratch = crate::material::Material::default();
 
-    let mut radiance = Spectrum::ZERO;
-    let mut throughput = Spectrum::ONE;
+    let mut radiance = C::Value::ZERO;
+    let mut throughput = C::Value::ONE;
+    // Whether a spectral path carries its hero wavelength alone: from a
+    // dispersive refraction on, or from the start when it is measuring what
+    // the companions buy.
+    let mut alone = false;
+    if colour.hero().is_some() && !config.spectral_companions {
+        throughput = colour.hero_alone(throughput);
+        alone = true;
+    }
     let mut bounce = 0u32;
     let mut transmission_bounces = 0u32;
+    // Light that went on through a fibre (§4.4's Fuzz) rather than back off
+    // it: counted as a transmission and not against the bounces, as Cycles
+    // counts its hair's. A felt is many fibres deep, and its colour is the
+    // light that wanders through them; at the bounces a surface needs, the
+    // pile of a felt ball came out 4% darker and a tenth less red than in
+    // Cycles, and with them counted apart the two agree to 2%.
+    let mut fibre_passes = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth
     // budget, or a row of chain-link fences would go black. Counted only so
@@ -623,6 +750,9 @@ pub fn trace_path_with_caustics(
     // tens to hundreds of steps and each is cheap.
     let mut walk_steps = 0u32;
     let mut null_steps = 0u32;
+    // The last walk's medium, its extinction and albedo, and the two as the
+    // path carries them.
+    let mut walk_spectra: Option<(Spectrum, Spectrum, C::Value, C::Value)> = None;
     // The medium whose last scattering event already sampled the lights
     // directly, and the density with which its phase function then chose the
     // way on: until the path meets anything but that medium's own surface,
@@ -630,8 +760,9 @@ pub fn trace_path_with_caustics(
     // it, and is weighted as one.
     let mut lit_from_medium: Option<InstanceId> = None;
     let mut lit_phase_pdf = 0.0f32;
-    // The one wavelength this path carries, once it has met a dispersive
-    // material (§7.4), in nanometres. `None` is an ordinary RGB path.
+    // The one wavelength an RGB path carries, once it has met a dispersive
+    // material (§7.4), in nanometres. `None` is an ordinary RGB path, and
+    // always a spectral one, which has its wavelengths from the start.
     let mut wavelength: Option<f32> = None;
     // The media the path is inside (§6.1), which decide which side of an
     // interface it meets, the relative index there, and what absorbs along
@@ -658,7 +789,16 @@ pub fn trace_path_with_caustics(
     let mut catcher_view = !config.in_floor_reflection;
     // What kind of ray this is, for the parts some rays do not see
     // (`Instance::seen_by_diffuse` and the rest).
-    let mut seen_as = if config.in_floor_reflection { Seen::FloorMirror } else { Seen::Camera };
+    let mut seen_as = if config.in_floor_reflection {
+        Seen::FloorMirror
+    } else if config.reflected {
+        Seen::Glossy
+    } else {
+        Seen::Camera
+    };
+    // What the reflection split off the first glass the camera sees brings,
+    // added to the film with the rest (see "Splitting" below).
+    let mut split_light = Spectrum::ZERO;
     // Accumulated relative IOR squared. §3.1: omitting this from Russian
     // roulette "makes glass unnecessarily noisy".
     let mut eta_scale = 1.0f32;
@@ -672,6 +812,22 @@ pub fn trace_path_with_caustics(
     // Every surface so far focuses light (`caustics::caustic_surface`): the
     // next that does not is where the photons are read.
     let mut focused_chain = true;
+    // Whether the surface the path last scattered off sampled the lights
+    // through clear glass (`IntegratorConfig::light_through_glass`), and the
+    // path has gone straight on through such glass alone since. The light
+    // it reaches then is light that sample also looked for, and the two are
+    // weighed against each other as seen from there: the glass between is
+    // no new vertex to them, and counted as one, as a delta bounce resets
+    // the weighting, it doubled what was seen through every pane.
+    let mut through_panes = false;
+    // Whether the surface the path last scattered off took a manifold sample
+    // (`manifold`), and the path has gone on through glass that bends light
+    // alone since. A lamp's light along the way it is going is that
+    // sample's: roughened by the regularization floor, the glass would
+    // sample the lamp again through its own far side and count the light
+    // twice, as specks where the solved path has it smooth. So such glass
+    // samples the environment and glowing parts, as ever, and no lamp.
+    let mut after_manifold = false;
 
     loop {
         let hit = intersector.intersect(&ray);
@@ -715,7 +871,7 @@ pub fn trace_path_with_caustics(
                 scene
                     .background
                     .radiance(&scene.environment, ray.origin, ray.direction, film)
-            } else if bounce == 0 {
+            } else if bounce == 0 && !config.reflected {
                 scene
                     .environment
                     .background_radiance_from(ray.origin, ray.direction)
@@ -744,15 +900,15 @@ pub fn trace_path_with_caustics(
                     let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
                     mis_power(prev_pdf_solid_angle, pdf_light)
                 };
-                let contribution = throughput * emitted * weight;
+                let contribution = throughput * colour.unbounded(emitted) * weight;
                 radiance += contribution;
                 if bounce == 0 {
-                    out.background += contribution;
+                    out.background += colour.rgb(contribution);
                 }
                 // The environment is a light, so the path ends at one — which
                 // is what puts a camera ray that sees the sky into the beauty
                 // pass and out of every component pass.
-                aovs.contribute(contribution, crate::lpe::ENVIRONMENT);
+                aovs.contribute(colour.rgb(contribution), crate::lpe::ENVIRONMENT);
             }
             if bounce == 0 {
                 out.escaped = true;
@@ -774,15 +930,26 @@ pub fn trace_path_with_caustics(
         // reaches the next surface. The distance is sampled in one channel,
         // chosen in proportion to the path's throughput, and weighted over
         // all three — §6.2's spectral MIS, which keeps a medium whose
-        // channels differ from turning into colour noise.
+        // channels differ from turning into colour noise. A spectral path
+        // does the same over its four wavelengths.
         let field = media.top(None).and_then(|m| m.density.clone());
         if let Some(walk) = media.top(None).and_then(|m| m.scattering) {
             walk_steps += 1;
             if walk_steps > MAX_WALK_STEPS {
                 break;
             }
-            let sigma = [walk.extinction.r, walk.extinction.g, walk.extinction.b];
-            let survive = |t: f32| [(-sigma[0] * t).exp(), (-sigma[1] * t).exp(), (-sigma[2] * t).exp()];
+            // The medium as the path carries it, read once per medium rather
+            // than at each of a walk's thousands of steps.
+            let (sigma, albedo) = match walk_spectra {
+                Some((extinction, albedo, sigma, carried)) if extinction == walk.extinction && albedo == walk.albedo => (sigma, carried),
+                _ => {
+                    let read = walk_medium(colour, &walk, media.top(None).and_then(|m| m.recipe.as_ref()));
+                    walk_spectra = Some((walk.extinction, walk.albedo, read.0, read.1));
+                    read
+                }
+            };
+            let channels = <C::Value as Carried>::CHANNELS;
+            let survive = |t: f32| C::Value::from_channels(|c| (-sigma.channel(c) * t).exp());
             // Flights along this one ray until a real collision or the
             // surface. Null collisions (a Volume Map's medium, tracked at its
             // densest) carry the path on along the same line, so they are
@@ -792,40 +959,45 @@ pub fn trace_path_with_caustics(
             let mut collided_at: Option<f32> = None;
             let mut lost = false;
             loop {
-                let weights = [throughput.r.max(0.0), throughput.g.max(0.0), throughput.b.max(0.0)];
-                let total = weights[0] + weights[1] + weights[2];
+                let weights = C::Value::from_channels(|c| throughput.channel(c).max(0.0));
+                let mut total = weights.channel(0);
+                for c in 1..channels {
+                    total += weights.channel(c);
+                }
                 let chance = if total > 0.0 {
-                    [weights[0] / total, weights[1] / total, weights[2] / total]
+                    C::Value::from_channels(|c| weights.channel(c) / total)
                 } else {
-                    [1.0 / 3.0; 3]
+                    C::Value::from_channels(|_| 1.0 / channels as f32)
                 };
                 let pick = sampler.next_unstructured();
-                let channel = if pick < chance[0] {
-                    0
-                } else if pick < chance[0] + chance[1] {
-                    1
-                } else {
-                    2
-                };
+                let mut channel = channels - 1;
+                let mut below = 0.0f32;
+                for c in 0..channels - 1 {
+                    below += chance.channel(c);
+                    if pick < below {
+                        channel = c;
+                        break;
+                    }
+                }
                 // An optical depth to fly, in density times distance: plain
                 // distance in a uniform medium, and through a Volume Map
                 // each majorant block's bound times the length crossed.
-                let depth = -(1.0 - sampler.next_unstructured()).max(1e-12).ln() / sigma[channel].max(1e-9);
+                let depth = -(1.0 - sampler.next_unstructured()).max(1e-12).ln() / sigma.channel(channel).max(1e-9);
                 let (t, bound) = match fly(field.as_deref(), &ray, travelled, hit.t, depth) {
                     Flight::Collided { t, bound } => (t, bound),
                     Flight::Reached { depth } => {
                         let kept = survive(depth);
-                        let probability: f32 = (0..3).map(|c| chance[c] * kept[c]).sum();
+                        let probability: f32 = (0..channels).map(|c| chance.channel(c) * kept.channel(c)).sum();
                         if probability <= 0.0 {
                             lost = true;
                         } else {
-                            throughput *= Spectrum { r: kept[0], g: kept[1], b: kept[2] } * (1.0 / probability);
+                            throughput *= kept * (1.0 / probability);
                         }
                         break;
                     }
                 };
                 let kept = survive(depth);
-                let density: f32 = (0..3).map(|c| chance[c] * sigma[c] * kept[c]).sum();
+                let density: f32 = (0..channels).map(|c| chance.channel(c) * sigma.channel(c) * kept.channel(c)).sum();
                 if density <= 0.0 {
                     lost = true;
                     break;
@@ -841,11 +1013,7 @@ pub fn trace_path_with_caustics(
                     let real = field.at(at) / bound.max(1e-12);
                     if sampler.next_unstructured() >= real {
                         null_steps += 1;
-                        throughput *= Spectrum {
-                            r: sigma[0] * kept[0],
-                            g: sigma[1] * kept[1],
-                            b: sigma[2] * kept[2],
-                        } * (1.0 / density);
+                        throughput *= C::Value::from_channels(|c| sigma.channel(c) * kept.channel(c)) * (1.0 / density);
                         if null_steps > MAX_NULL_STEPS || !throughput.is_finite() || throughput.is_black() {
                             lost = true;
                             break;
@@ -853,16 +1021,12 @@ pub fn trace_path_with_caustics(
                         continue;
                     }
                 }
-                throughput *= Spectrum {
-                    r: walk.albedo.r * sigma[0] * kept[0],
-                    g: walk.albedo.g * sigma[1] * kept[1],
-                    b: walk.albedo.b * sigma[2] * kept[2],
-                } * (1.0 / density);
+                throughput *= C::Value::from_channels(|c| albedo.channel(c) * sigma.channel(c) * kept.channel(c)) * (1.0 / density);
                 // Russian roulette in a long walk: after dozens of events a
                 // path's weight is small and its remaining steps cost as much
                 // as the first. Kept with the chance of what it carries and
                 // scaled up by it, so the average is unchanged.
-                let carried = throughput.r.max(throughput.g).max(throughput.b);
+                let carried = throughput.max_component();
                 if carried < 0.1 {
                     if sampler.next_unstructured() >= carried {
                         lost = true;
@@ -900,10 +1064,10 @@ pub fn trace_path_with_caustics(
                         instance,
                         sampler,
                     );
-                    let (sky, lights) = (throughput * sky, throughput * lights);
+                    let (sky, lights) = (throughput * colour.unbounded(sky), throughput * colour.unbounded(lights));
                     radiance += sky + lights;
-                    aovs.contribute(sky, crate::lpe::ENVIRONMENT);
-                    aovs.contribute(lights, group);
+                    aovs.contribute(colour.rgb(sky), crate::lpe::ENVIRONMENT);
+                    aovs.contribute(colour.rgb(lights), group);
                     lit_from_medium = Some(instance);
                 }
                 let next = tequila_core::sampling::sample_henyey_greenstein(
@@ -922,6 +1086,8 @@ pub fn trace_path_with_caustics(
                 specular_chain = false;
                 read_caustics = false;
                 focused_chain = false;
+                through_panes = false;
+                after_manifold = false;
                 continue;
             }
         }
@@ -1010,6 +1176,16 @@ pub fn trace_path_with_caustics(
                 // behind it as that light would a real floor.
                 // Not on a floor with its shadows off (`caustics::trace_photon`).
                 let caustic = match caustic_map {
+                    // A lamp's through glass that bends it, by the same
+                    // measure (`manifold::on_catcher`).
+                    None if catcher.shadows && config.manifold_caustics() => {
+                        let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 {
+                            hit.geometric_normal
+                        } else {
+                            -hit.geometric_normal
+                        };
+                        behind * manifold::on_catcher(intersector, config, &hit, facing, &media, bounce, sampler)
+                    }
                     Some(map) if catcher.shadows => {
                         let facing = if hit.geometric_normal.dot(-ray.direction) > 0.0 {
                             hit.geometric_normal
@@ -1025,16 +1201,16 @@ pub fn trace_path_with_caustics(
                     }
                     _ => Spectrum::ZERO,
                 };
-                let contribution = throughput * (caught.radiance + caustic);
+                let contribution = throughput * colour.unbounded(caught.radiance + caustic);
                 radiance += contribution;
                 if bounce == 0 {
                     // What shows of the backdrop where the shadow does not.
-                    out.background += throughput * behind * (1.0 - caught.coverage);
+                    out.background += colour.rgb(throughput * colour.unbounded(behind) * (1.0 - caught.coverage));
                 }
                 // The backdrop seen through the floor, darkened where
                 // shadows fall: the environment's, for the passes. Left out,
                 // the Beauty pass had no floor and a relit image lost it.
-                aovs.contribute(contribution, crate::lpe::ENVIRONMENT);
+                aovs.contribute(colour.rgb(contribution), crate::lpe::ENVIRONMENT);
                 if bounce == 0 {
                     // Through cutouts, whose own share is settled: the
                     // catcher adds its shadow's, on the paths that reach it,
@@ -1077,9 +1253,9 @@ pub fn trace_path_with_caustics(
                 } else {
                     1.0
                 };
-                let emitted = throughput * glow * open;
+                let emitted = throughput * colour.unbounded(glow) * open;
                 radiance += emitted;
-                aovs.contribute(emitted, crate::lpe::ENVIRONMENT);
+                aovs.contribute(colour.rgb(emitted), crate::lpe::ENVIRONMENT);
                 break;
             }
             // Unless ground illumination is on, in which case the floor is
@@ -1093,6 +1269,8 @@ pub fn trace_path_with_caustics(
                 let (geometric, _) = hit.facing_forward(ray.direction);
                 ray = Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction);
                 prev_pdf_solid_angle = f32::INFINITY;
+                through_panes = false;
+                after_manifold = false;
                 continue;
             }
         }
@@ -1111,11 +1289,18 @@ pub fn trace_path_with_caustics(
             // twice as dim here as in a render through Cycles.
             let glow = volume.emitted_over(hit.t) * (ior * ior).max(1.0);
             if !glow.is_black() {
-                let emitted = throughput * glow;
+                let emitted = throughput * colour.unbounded(glow);
                 radiance += emitted;
-                aovs.contribute(emitted, crate::lpe::EMISSIVE);
+                aovs.contribute(colour.rgb(emitted), crate::lpe::EMISSIVE);
             }
-            throughput *= volume.transmittance_over(hit.t);
+            // A spectral path filters by the spectrum of what RGB lets
+            // through over this stretch, not by the colour's spectrum raised
+            // to the depths crossed. That would be Beer-Lambert per
+            // wavelength, and it narrows a dye's spectrum the deeper it goes,
+            // so a coloured liquid came out dE 6 from its RGB render — and
+            // an Auto render would recolour the liquid whenever a gem was
+            // added to the scene beside it.
+            throughput *= colour.reflectance(volume.transmittance_over(hit.t));
             if !throughput.is_finite() || throughput.is_black() {
                 break;
             }
@@ -1141,7 +1326,14 @@ pub fn trace_path_with_caustics(
         // nothing changes there, so the path carries straight on, as through
         // a cutout, and only the record of what it is inside changes.
         let base = scene.material(hit.material);
-        let boundary = is_boundary(base);
+        // A fibre (§4.4's Fuzz) wears its part's material, but is no
+        // interface of it: it scatters all round itself, and a path that
+        // passes through one stays where it was.
+        let fibre = scene.fibre_at(&hit, ray.direction);
+        if bounce == 0 {
+            out.fine = fibre.is_some();
+        }
+        let boundary = is_boundary(base) && fibre.is_none();
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
             && media.beyond(hit.instance, base.medium_priority) == media.top(None).map(|m| m.instance)
@@ -1179,7 +1371,9 @@ pub fn trace_path_with_caustics(
         // brackets, the inside of a housing — and making them pay for the
         // general case is how a feature that helps a few surfaces slows down
         // the whole render.
-        let point = scene.program(hit.material).map(|_| {
+        // A fibre has no surface for a graph to be read on: it takes the
+        // material's own values.
+        let point = scene.program(hit.material).filter(|_| fibre.is_none()).map(|_| {
             let mut point = scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction);
             point.world.ray = seen_as.ray();
             point
@@ -1218,7 +1412,7 @@ pub fn trace_path_with_caustics(
         // if any, and how it leans. The shading point is needed for it even
         // where the material has no graph.
         let flaked;
-        let material = if material.flake_weight > 1e-4 {
+        let material = if material.flake_weight > 1e-4 && fibre.is_none() {
             let at = point.unwrap_or_else(|| scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction));
             flaked = crate::flakes::apply(material, &at);
             &flaked
@@ -1234,7 +1428,7 @@ pub fn trace_path_with_caustics(
         // cost Tequila's renderer 40% on a product all of whose parts are
         // rounded. The bump bends what it leaves, as Bevel feeds Cycles'
         // Bump.
-        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 {
+        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 && fibre.is_none() {
             crate::bevel::rounded_normal(intersector, &hit, shading_normal, material.edge_radius, material.edge_samples as u32, sampler)
         } else {
             shading_normal
@@ -1309,7 +1503,7 @@ pub fn trace_path_with_caustics(
         // With Light source materials off, a glowing surface lights nothing
         // round it: met by a diffuse bounce, its light is left out. Seen
         // directly, through glass or in a reflection it still glows.
-        if material.is_emissive() && !hit.is_backface(ray.direction) && (config.light_source_materials || seen_as != Seen::Diffuse) {
+        if material.is_emissive() && fibre.is_none() && !hit.is_backface(ray.direction) && (config.light_source_materials || seen_as != Seen::Diffuse) {
             // A glow the last vertex also aimed a light sample at
             // (`sample_emissive_surfaces`) is weighed against it. Any other is
             // found by bounces alone: a glow seen straight on, through
@@ -1330,7 +1524,7 @@ pub fn trace_path_with_caustics(
                 }
                 _ => 1.0,
             };
-            let contribution = throughput * material.emission() * weight;
+            let contribution = throughput * colour.unbounded(material.emission()) * weight;
             radiance += contribution;
             // A light's visible stand-in is that light, and goes in its
             // layer; any other glowing surface is a group of its own.
@@ -1338,14 +1532,18 @@ pub fn trace_path_with_caustics(
                 Some(instance) if instance.light_proxy => instance.light_layer.min(crate::lpe::LAST_LAYER),
                 _ => crate::lpe::EMISSIVE,
             };
-            aovs.contribute(contribution, group);
+            aovs.contribute(colour.rgb(contribution), group);
         }
 
-        if bounce >= config.max_bounces {
+        if bounce - fibre_passes >= config.max_bounces {
             break;
         }
 
-        let onb = if material.specular_roughness_anisotropy > 0.0 {
+        let onb = if let Some(fibre) = &fibre {
+            // Along the fibre, and facing the viewer square to it: the frame
+            // the fibre's BSDF is written in.
+            Onb::from_normal_tangent(fibre.facing, fibre.tangent)
+        } else if material.specular_roughness_anisotropy > 0.0 {
             // The graph's own direction where it draws one, in the part's
             // space: read from the registers the material was just shaded
             // into.
@@ -1392,13 +1590,20 @@ pub fn trace_path_with_caustics(
         // on bends as light of that wavelength does — at this surface and at
         // every dispersive one after it, entering and leaving alike, so the
         // index a medium was entered with is the one it is left by.
+        //
+        // A spectral path has its wavelengths already, and bends by its
+        // hero's; it keeps all four off the surface, where every wavelength
+        // reflects the same way, and drops the other three only if it goes
+        // through (below).
+        let disperses = material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0 && fibre.is_none();
         let dispersed;
-        let material = if material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0 {
-            let lambda = match wavelength {
-                Some(lambda) => lambda,
-                None => {
+        let material = if disperses {
+            let lambda = match (colour.hero(), wavelength) {
+                (Some(hero), _) => hero,
+                (None, Some(lambda)) => lambda,
+                (None, None) => {
                     let lambda = tequila_materials::dispersion::sample(sampler.next_unstructured());
-                    throughput *= tequila_materials::dispersion::weight(lambda);
+                    throughput *= colour.reflectance(tequila_materials::dispersion::weight(lambda));
                     wavelength = Some(lambda);
                     lambda
                 }
@@ -1444,16 +1649,27 @@ pub fn trace_path_with_caustics(
         // in by, turned round. What the part is made of has already been
         // counted, by the walk.
         let exiting_walk = media.walking_in(hit.instance);
+        // Clear glass the last light sample was taken through, met on the
+        // way on from there.
+        let passing = through_panes
+            && !exiting_walk
+            && fibre.is_none()
+            && scene.pane(hit.material).is_some_and(|pane| pane.passes(config.shadow_glass()));
+        // Glass that bends light, met on the way on from a manifold sample.
+        let bent = after_manifold && !exiting_walk && fibre.is_none() && scene.pane(hit.material).is_some_and(|pane| pane.bends());
         // Past the photons, glass stays glass: roughened by the floor it
         // would stop being mirror-smooth, and light through it would be
-        // counted here as well as by the photons.
-        let floor = if read_caustics { 0.0 } else { roughness_floor };
-        let bsdf = if exiting_walk {
-            walk_exit().bsdf(floor)
+        // counted here as well as by the photons. So too past a light sample
+        // that went through it.
+        let floor = if read_caustics || passing { 0.0 } else { roughness_floor };
+        let bsdf = if let Some(fibre) = &fibre {
+            Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
+        } else if exiting_walk {
+            Scattering::Surface(walk_exit().bsdf(floor))
         } else if from_inside {
-            material.bsdf_from_inside(floor)
+            Scattering::Surface(material.bsdf_from_inside(floor))
         } else {
-            material.bsdf(floor)
+            Scattering::Surface(material.bsdf(floor))
         };
         let smooth_here = caustic_map.is_some() && caustics::caustic_surface(material, &bsdf);
 
@@ -1476,9 +1692,14 @@ pub fn trace_path_with_caustics(
         // a lit surface and removes an entire class of "the HDRI stopped
         // contributing when I added a lamp".
         // Past the photons, a focusing surface's direct light is theirs too.
-        emitters_from = None;
+        // Glass being passed samples none either: the light through it is
+        // the last sample's, which keeps its say over the bounce.
+        let samples_lights = config.direct_lighting && !bsdf.flags().is_pure_delta() && !(read_caustics && smooth_here) && !passing;
+        if !passing {
+            emitters_from = None;
+        }
         let passes = !aovs.is_off();
-        if config.direct_lighting && !bsdf.flags().is_pure_delta() && !(read_caustics && smooth_here) {
+        if samples_lights {
             let environment_direct = sample_environment_light(
                 intersector,
                 config,
@@ -1489,22 +1710,26 @@ pub fn trace_path_with_caustics(
                 geometric_normal,
                 sampler,
                 &mut out,
-                throughput,
+                colour.rgb(throughput),
                 passes,
             );
-            let (analytic_direct, layer) = sample_analytic_lights(
-                intersector,
-                config,
-                &hit,
-                &bsdf,
-                &onb,
-                wo,
-                geometric_normal,
-                sampler,
-                &mut out,
-                throughput,
-                passes,
-            );
+            let (analytic_direct, layer) = if bent {
+                (Lit::default(), 0)
+            } else {
+                sample_analytic_lights(
+                    intersector,
+                    config,
+                    &hit,
+                    &bsdf,
+                    &onb,
+                    wo,
+                    geometric_normal,
+                    sampler,
+                    &mut out,
+                    colour.rgb(throughput),
+                    passes,
+                )
+            };
             // The glowing surfaces too, unless light source materials are
             // off, when a glow lights nothing round it.
             if config.light_source_materials && !scene.emitters().is_empty() {
@@ -1524,13 +1749,64 @@ pub fn trace_path_with_caustics(
                     wo,
                     sampler,
                     &mut out,
-                    throughput,
+                    colour.rgb(throughput),
                     passes,
                 ),
                 None => Lit::default(),
             };
-            let contribution =
-                throughput * (environment_direct.total() + analytic_direct.total() + emissive_direct.total());
+            // A lamp's light through glass that bends it, which the shadow
+            // ray above stopped at: the path through the glass solved for
+            // (`manifold`). The same lamp and point on it, the other paths
+            // from it. At every surface the camera sees, and past a bounce
+            // one time in `MANIFOLD_PAST_BOUNCE`, counted that many times
+            // over: a walk costs tens of rays where a shadow ray costs one,
+            // and the caustic a bounce carries is dim beside the one the
+            // camera sees.
+            let manifold_here = config.manifold_caustics()
+                && !bent
+                && (specular_chain || sampler.next_unstructured() * MANIFOLD_PAST_BOUNCE < 1.0);
+            let (manifold_direct, manifold_layer, crossed) = if manifold_here {
+                let (lit, layer, crossed) = manifold::sample_caustic(
+                    intersector,
+                    config,
+                    &hit,
+                    &bsdf,
+                    &onb,
+                    wo,
+                    geometric_normal,
+                    &media,
+                    bounce,
+                    transmission_bounces,
+                    sampler,
+                    passes,
+                );
+                let scale = if specular_chain { 1.0 } else { MANIFOLD_PAST_BOUNCE };
+                (Lit { diffuse: lit.diffuse * scale, glossy: lit.glossy * scale, through: lit.through }, layer, crossed)
+            } else {
+                (Lit::default(), 0, 0)
+            };
+            // Light sampled through a rough dispersive surface came through by
+            // the hero's index, and is the hero's alone, as a bounce through
+            // it would be.
+            let through_hero = disperses && !alone && colour.hero().is_some();
+            let lit_by = |lit: &Lit| {
+                if through_hero && lit.through {
+                    colour.hero_alone(throughput)
+                } else {
+                    throughput
+                }
+            };
+            let contribution = if through_hero {
+                lit_by(&environment_direct) * colour.unbounded(environment_direct.total())
+                    + lit_by(&analytic_direct) * colour.unbounded(analytic_direct.total())
+                    + lit_by(&emissive_direct) * colour.unbounded(emissive_direct.total())
+                    + lit_by(&manifold_direct) * colour.unbounded(manifold_direct.total())
+            } else {
+                throughput
+                    * colour.unbounded(
+                        environment_direct.total() + analytic_direct.total() + emissive_direct.total() + manifold_direct.total(),
+                    )
+            };
             radiance += contribution;
             // Next-event estimation ends the path at a light *and then the path
             // keeps going*, so the matcher is rewound afterwards. Without that,
@@ -1541,9 +1817,17 @@ pub fn trace_path_with_caustics(
             // environment's, whichever analytic light was sampled, and the
             // glowing surfaces'.
             let saved = aovs.matcher.save();
-            aovs.contribute_lit(throughput, environment_direct, crate::lpe::ENVIRONMENT, &saved, &[]);
-            aovs.contribute_lit(throughput, analytic_direct, layer, &saved, &[]);
-            aovs.contribute_lit(throughput, emissive_direct, crate::lpe::EMISSIVE, &saved, &[]);
+            let carried = |lit: &Lit| {
+                let by = lit_by(lit);
+                move |part: Spectrum| colour.rgb(by * colour.unbounded(part))
+            };
+            aovs.contribute_lit(carried(&environment_direct), environment_direct, crate::lpe::ENVIRONMENT, &saved, &[]);
+            aovs.contribute_lit(carried(&analytic_direct), analytic_direct, layer, &saved, &[]);
+            aovs.contribute_lit(carried(&emissive_direct), emissive_direct, crate::lpe::EMISSIVE, &saved, &[]);
+            // Through the glass on its way, a specular transmission at each
+            // crossing.
+            let crossings = [(Transport::Transmit, Scatter::Specular); manifold::MAX_CROSSINGS];
+            aovs.contribute_lit(carried(&manifold_direct), manifold_direct, manifold_layer, &saved, &crossings[..crossed]);
             aovs.matcher.restore(&saved);
         }
 
@@ -1564,7 +1848,7 @@ pub fn trace_path_with_caustics(
                     bsdf.eval(wo, wi)
                 }
             });
-            radiance += throughput * caustic;
+            radiance += throughput * colour.unbounded(caustic);
             // In the passes, as light that came by way of a surface that
             // focuses it, off this one diffusely or glossily. Which surface
             // that was, and whether the photons went off it or through it,
@@ -1582,13 +1866,66 @@ pub fn trace_path_with_caustics(
                 });
                 let lit = Lit { diffuse, glossy: caustic - diffuse, through: false };
                 let saved = aovs.matcher.save();
-                aovs.contribute_lit(throughput, lit, crate::lpe::ENVIRONMENT, &saved, &[(Transport::Transmit, Scatter::Specular)]);
+                let carried = |part: Spectrum| colour.rgb(throughput * colour.unbounded(part));
+                aovs.contribute_lit(carried, lit, crate::lpe::ENVIRONMENT, &saved, &[(Transport::Transmit, Scatter::Specular)]);
                 aovs.matcher.restore(&saved);
             }
         }
 
+        // ---- Splitting at the first glass the camera sees ---------------
+        //
+        // Plain glass reflects or lets light by, and a path that picks one at
+        // random sees, through a dark cover in a bright studio, either the
+        // studio or the dark: white specks on black, at any number of samples
+        // a preview gets. So at the first glass the camera ray meets both are
+        // followed, each weighted by its share - the reflection as a path of
+        // its own, the camera's carrying on through - which is how a product
+        // renderer shows the glass in front of it. Not while passes are kept,
+        // which the reflection's path does not route.
+        // What the path carries to here, as a filter on the reflection's RGB:
+        // the RGB itself, or for wavelengths the one weight they all share,
+        // since the reflection's own wavelengths are these and a filter read
+        // from them would count their noise twice.
+        let carried = if C::SPECTRAL {
+            let first = throughput.channel(0);
+            (1..<C::Value as Carried>::CHANNELS).all(|c| throughput.channel(c) == first).then(|| Spectrum::splat(first))
+        } else {
+            Some(colour.rgb(throughput))
+        };
+        let split = if bounce == 0
+            && !config.reflected
+            && !config.in_floor_reflection
+            && !config.floor_reflection_only
+            && aovs.is_off()
+            && !exiting_walk
+            && !disperses
+            && fibre.is_none()
+        {
+            let eta = if from_inside { 1.0 / relative_ior } else { relative_ior };
+            carried.and_then(|carried| scene.pane(hit.material).and_then(|pane| pane.split(wo, eta)).map(|split| (carried, split)))
+        } else {
+            None
+        };
+        if let Some((carried, (share, _))) = split {
+            let mirrored = onb.to_world(Vec3 { x: -wo.x, y: -wo.y, z: wo.z });
+            if share > 0.0 && mirrored.dot(geometric_normal) > 0.0 {
+                let reflection = IntegratorConfig {
+                    reflected: true,
+                    max_bounces: config.max_bounces.saturating_sub(1),
+                    ..config.clone()
+                };
+                let mirror = Ray::new(offset_ray_origin(hit.position, geometric_normal), mirrored);
+                let seen = trace_path_with_caustics(intersector, &reflection, mirror, film, sampler, &mut PathAovs::default(), caustic_map);
+                split_light += carried * seen.radiance * share;
+            }
+        }
+
         // ---- BSDF sampling: extend the path ----------------------------
-        let Some(sample) = bsdf.sample(wo, sampler.bsdf_direction(), sampler.bsdf_lobe()) else {
+        let sampled = match split {
+            Some((_, (_, through))) => Some(through),
+            None => bsdf.sample(wo, sampler.bsdf_direction(), sampler.bsdf_lobe()),
+        };
+        let Some(sample) = sampled else {
             break;
         };
         seen_as = if sample.is_transmission {
@@ -1623,13 +1960,32 @@ pub fn trace_path_with_caustics(
             break;
         }
 
-        throughput *= sample.throughput_weight();
-        if sample.is_transmission {
-            eta_scale *= sample.eta * sample.eta;
+        throughput *= colour.reflectance(sample.throughput_weight());
+        // Through a dispersive surface each wavelength leaves by a direction
+        // of its own, and this path has only its hero's: the other three end
+        // here, and the hero carries on for all four, as Wilkie et al. do at
+        // a specular dispersive event.
+        if disperses && sample.is_transmission && !alone && colour.hero().is_some() {
+            throughput = colour.hero_alone(throughput);
+            alone = true;
+        }
+        // At a fibre, by the lobe the path took - through it, or off it -
+        // whichever side of the facing normal that leaves by.
+        let through = match &fibre {
+            Some(_) => sample.flags.contains(BsdfFlags::TRANSMISSION),
+            None => sample.is_transmission,
+        };
+        if fibre.is_some() && through {
+            fibre_passes += 1;
+        }
+        if through {
             transmission_bounces += 1;
             if transmission_bounces > config.max_transmission_bounces {
                 break;
             }
+        }
+        if sample.is_transmission {
+            eta_scale *= sample.eta * sample.eta;
             // Crossing the interface enters the instance or leaves it. A
             // thin-walled surface stands for a shell with no inside to be in,
             // so passing through one leaves the path where it was — which is
@@ -1647,11 +2003,22 @@ pub fn trace_path_with_caustics(
             break;
         }
 
-        prev_pdf_solid_angle = if sample.is_delta {
-            f32::INFINITY
-        } else {
-            sample.pdf
-        };
+        // Straight on through the glass, the last light sample's weighting
+        // carries over; turned back off it, the path goes where no light
+        // sample looked.
+        let onward = passing && sample.is_transmission && sample.is_delta;
+        if !onward {
+            prev_pdf_solid_angle = if sample.is_delta {
+                f32::INFINITY
+            } else {
+                sample.pdf
+            };
+            if passing {
+                emitters_from = None;
+            }
+        }
+        through_panes = onward || (samples_lights && config.shadows && config.light_through_glass());
+        after_manifold = bent || (samples_lights && config.manifold_caustics());
         specular_chain = specular_chain && sample.is_delta;
         catcher_view = catcher_view
             && (sample.is_delta || (!sample.is_transmission && sampler.next_unstructured() < catcher_view_through(shaded)));
@@ -1709,8 +2076,9 @@ pub fn trace_path_with_caustics(
         }
     }
 
-    out.radiance = radiance.sanitized();
+    out.radiance = colour.finish(colour.rgb(radiance) + split_light);
     out.wavelength = wavelength;
+    out.hue = colour.hue(alone);
     if out.normal == Vec3::ZERO {
         out.normal = -ray.direction;
     }
@@ -2023,7 +2391,7 @@ fn shadow_at(
                 continue;
             };
             if chance < sample.keep || (last && sample.keep > 0.0) {
-                return blocked_towards(intersector, hit, normal, sample.direction, sample.distance, &LightLinks::All);
+                return blocked_towards(intersector, config.shadow_glass(), hit, normal, sample.direction, sample.distance, &LightLinks::All);
             }
             continue;
         }
@@ -2052,7 +2420,7 @@ fn shadow_at(
         let keep = sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density / bound;
         if chance < keep || (last && keep > 0.0) {
             return if light.visibility.shadow {
-                blocked_towards(intersector, hit, normal, sample.direction, sample.distance, &light.shadow_links)
+                blocked_towards(intersector, config.shadow_glass(), hit, normal, sample.direction, sample.distance, &light.shadow_links)
             } else {
                 0.0
             };
@@ -2102,7 +2470,9 @@ fn occlusion_at(
     let direction = onb.to_world(local);
     // Bounded: occlusion is about what is *near*, and letting it reach the
     // whole scene turns a contact shadow into a second, wrong drop shadow.
-    blocked_towards(intersector, hit, normal, direction, radius.max(1e-3), &LightLinks::All)
+    // Glass stays solid here: occlusion is the darkening of what is close,
+    // whatever it is made of.
+    blocked_towards(intersector, ShadowGlass::Solid, hit, normal, direction, radius.max(1e-3), &LightLinks::All)
 }
 
 /// How much of a shadow ray survives the surfaces between its ends.
@@ -2129,43 +2499,58 @@ fn occlusion_at(
 /// `blockers` are the parts that cast this light's shadow (shadow linking);
 /// the rest let it by. Every part, for a light without shadow links, takes
 /// the one `occluded` as before.
+///
+/// Clear glass `glass` takes in ([`IntegratorConfig::shadow_glass`]) lets
+/// the light by as well, tinted by its colour and less what it reflects
+/// ([`crate::scene::Pane`]), which is why the answer is a colour.
 fn shadow_transmittance(
     intersector: &dyn Intersector,
+    glass: ShadowGlass,
     from: Vec3,
     from_normal: Vec3,
     to: Vec3,
     to_normal: Vec3,
     blockers: &LightLinks,
-) -> f32 {
-    if !intersector.scene().has_cutouts() && blockers.is_all() {
+) -> Spectrum {
+    let scene = intersector.scene();
+    let glass = if scene.has_panes() { glass } else { ShadowGlass::Solid };
+    if !scene.has_cutouts() && glass == ShadowGlass::Solid && blockers.is_all() {
         return if intersector.occluded(from, from_normal, to, to_normal) {
-            0.0
+            Spectrum::ZERO
         } else {
-            1.0
+            Spectrum::ONE
         };
     }
-    cutout_transmittance(intersector, from, from_normal, to, to_normal, blockers)
+    cutout_transmittance(intersector, glass, from, from_normal, to, to_normal, blockers)
 }
 
-/// [`shadow_transmittance`] in a scene with cutouts: every surface on the
-/// segment visited, and the light through their holes multiplied up.
+/// [`shadow_transmittance`] in a scene with cutouts or glass: every surface
+/// on the segment visited, and the light through their holes and panes
+/// multiplied up.
 ///
 /// Out of line so the walk's size never decides whether the common case —
 /// one `occluded` — is inlined into the callers that make it per pixel.
 #[inline(never)]
 fn cutout_transmittance(
     intersector: &dyn Intersector,
+    glass: ShadowGlass,
     from: Vec3,
     from_normal: Vec3,
     to: Vec3,
     to_normal: Vec3,
     blockers: &LightLinks,
-) -> f32 {
+) -> Spectrum {
     let scene = intersector.scene();
     let ray = crate::intersect::shadow_ray(from, from_normal, to, to_normal);
     let mut origin = ray.origin;
     let mut remaining = ray.t_max;
-    let mut through = 1.0f32;
+    let mut through = Spectrum::ONE;
+    // How far along the ray this segment starts, and the glass with a
+    // volume it is inside and where it went in: the volume absorbs between
+    // the way in and the way out. Told apart by count, in then out, rather
+    // than by the winding, which an inside-out CAD part has backwards.
+    let mut along = 0.0f32;
+    let mut inside: Option<(InstanceId, f32)> = None;
     // Shading scratch, made only if some surface on this ray actually needs
     // it. A material whose opacity is a number rather than a map — which is
     // every cutout until someone wires one in the editor — is answered from
@@ -2182,8 +2567,34 @@ fn cutout_transmittance(
         // A part that casts no shadow is open to a shadow ray whatever its
         // opacity, as it is to `occluded` on the way in - and so is one
         // this light's shadow links leave out.
+        let open = !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0);
+        let at = along + hit.t;
+        if let Some(pane) = scene.pane(hit.material).filter(|pane| pane.passes(glass) && !open) {
+            through *= pane.crossing(ray.direction.dot(hit.geometric_normal));
+            if pane.has_volume() {
+                match inside {
+                    None => inside = Some((hit.instance, at)),
+                    Some((instance, since)) if instance == hit.instance => {
+                        through *= pane.inside(at - since);
+                        inside = None;
+                    }
+                    Some(_) => {}
+                }
+            }
+            if through.max_component() < 1e-3 {
+                return Spectrum::ZERO;
+            }
+            let travelled = hit.t.max(1e-6);
+            remaining -= travelled;
+            if remaining <= 0.0 {
+                return through;
+            }
+            origin = hit.position + ray.direction * 1e-4;
+            along = at + 1e-4;
+            continue;
+        }
         let opacity = match scene.opacity_of(hit.material) {
-            _ if !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => 0.0,
+            _ if open => 0.0,
             Some(constant) => constant,
             None => {
                 let (registers, material) = scratch.get_or_insert_with(|| {
@@ -2210,8 +2621,8 @@ fn cutout_transmittance(
         through *= 1.0 - opacity.clamp(0.0, 1.0);
         // Nothing past here can lighten it, and a shadow this deep is a
         // shadow.
-        if through < 1e-3 {
-            return 0.0;
+        if through.max_component() < 1e-3 {
+            return Spectrum::ZERO;
         }
 
         let travelled = hit.t.max(1e-6);
@@ -2220,10 +2631,11 @@ fn cutout_transmittance(
             return through;
         }
         origin = hit.position + ray.direction * 1e-4;
+        along = at + 1e-4;
     }
     // Past the bound. Treated as blocked, which errs towards a shadow rather
     // than towards light leaking through a scene nobody meant to build.
-    0.0
+    Spectrum::ZERO
 }
 
 /// How much of a camera ray's pixel sample is covered, where the first
@@ -2306,9 +2718,12 @@ fn carried_past(hit: &Hit, ray: &Ray) -> Ray {
 }
 
 /// How much of the light from `direction` the scene stops before it reaches
-/// this point, 0 to 1.
+/// this point, 0 to 1. Clear glass `glass` takes in stops only what it
+/// reflects and absorbs, so a glass on a shadow catcher casts the faint
+/// shadow it casts on a floor.
 fn blocked_towards(
     intersector: &dyn Intersector,
+    glass: ShadowGlass,
     hit: &Hit,
     normal: Vec3,
     direction: Vec3,
@@ -2330,7 +2745,7 @@ fn blocked_towards(
     // the same question the lighting does and takes the same answer: the
     // share that gets through. It used to split at half, so a part more than
     // half open left the floor lit and one less than half open, black.
-    1.0 - shadow_transmittance(intersector, hit.position, normal, target, -direction, blockers)
+    1.0 - shadow_transmittance(intersector, glass, hit.position, normal, target, -direction, blockers).luminance().clamp(0.0, 1.0)
 }
 
 /// Where a flight through a medium ends.
@@ -2611,10 +3026,11 @@ fn sample_environment_light(
     // they are the same number and the ratio is 1.
     out.direct_unshadowed += throughput * unshadowed;
 
-    // How much of the light survives the trip. Without cutouts it is 1 or 0
-    // and the shadow test could return early; with them it is a fraction that
-    // has to reach every use of the contribution below.
-    let mut visibility = 1.0f32;
+    // How much of the light survives the trip. Without cutouts or glass it
+    // is 1 or 0 and the shadow test could return early; with them it is a
+    // fraction, a colour through tinted glass, that has to reach every use
+    // of the contribution below.
+    let mut visibility = Spectrum::ONE;
     if config.shadows {
         // Aim the shadow ray at the dome, or — for a dome that is infinitely
         // far away — far outside the scene. Tracing past a *finite* dome would
@@ -2640,13 +3056,14 @@ fn sample_environment_light(
         };
         visibility = shadow_transmittance(
             intersector,
+            config.shadow_glass(),
             hit.position,
             leaving,
             target,
             -light.direction,
             &LightLinks::All,
         );
-        if visibility <= 0.0 {
+        if visibility.is_black() {
             return Lit::default();
         }
     }
@@ -2718,7 +3135,7 @@ fn sample_emissive_surfaces(
     let unshadowed = f * scale;
     out.direct_unshadowed += throughput * unshadowed;
 
-    let mut visibility = 1.0f32;
+    let mut visibility = Spectrum::ONE;
     if config.shadows {
         let leaving = if below {
             -geometric_normal
@@ -2730,13 +3147,14 @@ fn sample_emissive_surfaces(
         // was aimed at rather than meeting it.
         visibility = shadow_transmittance(
             intersector,
+            config.shadow_glass(),
             from.position,
             leaving,
             light.position,
             light.normal,
             &LightLinks::All,
         );
-        if visibility <= 0.0 {
+        if visibility.is_black() {
             return Lit::default();
         }
     }
@@ -2841,7 +3259,7 @@ fn sample_analytic_lights(
     let unshadowed = f * sample.radiance * (wi.z.abs() * weight_preview / density_preview);
     out.direct_unshadowed += throughput * unshadowed;
 
-    let mut visibility = 1.0f32;
+    let mut visibility = Spectrum::ONE;
     if config.shadows && light.visibility.shadow {
         // Stop just short of the light, or the emitter's own surface blocks
         // the ray it was traced towards.
@@ -2860,13 +3278,14 @@ fn sample_analytic_lights(
         };
         visibility = shadow_transmittance(
             intersector,
+            config.shadow_glass(),
             hit.position,
             leaving,
             target,
             -sample.direction,
             &light.shadow_links,
         );
-        if visibility <= 0.0 {
+        if visibility.is_black() {
             return (Lit::default(), 0);
         }
     }
@@ -2902,7 +3321,7 @@ fn sample_analytic_lights(
     // describes, and the test named for it says so within a second.
     let diffuse = || bsdf.eval_selective(wo, wi, light.visibility.diffuse, false);
     (
-        Lit::of(f, diffuse, sample.radiance * (wi.z.abs() / density * visibility), wi.z < 0.0, passes),
+        Lit::of(f, diffuse, sample.radiance * (wi.z.abs() / density) * visibility, wi.z < 0.0, passes),
         light.layer.min(crate::lpe::LAST_LAYER),
     )
 }
@@ -3450,6 +3869,7 @@ mod tests {
             ));
             shadow_transmittance(
                 &intersector,
+                ShadowGlass::Clear,
                 vec3(0.0, 5.0, 0.0),
                 -Vec3::Y,
                 vec3(0.0, -5.0, 0.0),
@@ -3458,12 +3878,93 @@ mod tests {
             )
         };
         for cutouts in [false, true] {
-            assert_eq!(through(true, cutouts), 0.0, "an opaque part let light by (cutouts: {cutouts})");
+            assert_eq!(through(true, cutouts), Spectrum::ZERO, "an opaque part let light by (cutouts: {cutouts})");
             assert_eq!(
                 through(false, cutouts),
-                1.0,
+                Spectrum::ONE,
                 "a part that casts no shadow still blocked the light (cutouts: {cutouts})"
             );
+        }
+    }
+
+    /// Clear glass lets a light sample by, tinted and less what its two faces
+    /// reflect, unless the caustics pass is carrying that light instead;
+    /// frosted glass and plain plastic stay solid to it.
+    #[test]
+    fn clear_glass_lets_a_shadow_ray_through() {
+        let through = |material: Material, glass: bool| {
+            let scene = SceneSnapshot::new(
+                Vec::new(),
+                vec![crate::scene::Instance::new(
+                    tequila_core::ids::InstanceId(0),
+                    tequila_core::ids::MeshId(0),
+                    tequila_core::ids::MaterialId(0),
+                )],
+                vec![material],
+                Arc::new(Environment::uniform(Spectrum::ONE)),
+            );
+            let intersector = AnalyticIntersector::new(scene).with_sphere(Sphere::new(
+                Vec3::ZERO,
+                1.0,
+                tequila_core::ids::MaterialId(0),
+            ));
+            shadow_transmittance(
+                &intersector,
+                if glass { ShadowGlass::Clear } else { ShadowGlass::Solid },
+                vec3(0.0, 5.0, 0.0),
+                -Vec3::Y,
+                vec3(0.0, -5.0, 0.0),
+                Vec3::Y,
+                &LightLinks::All,
+            )
+        };
+        let clear = Material {
+            transmission_color: Spectrum::ONE,
+            transmission_depth: 0.0,
+            ..Material::preset(tequila_materials::material_type::MaterialType::GlassSolid)
+        };
+        // Head on, each face of 1.5 glass reflects 4%.
+        let passed = through(clear.clone(), true);
+        let expected = 0.96f32 * 0.96;
+        assert!((passed.g - expected).abs() < 2e-3, "clear glass passed {passed:?}, not {expected}");
+        assert_eq!(through(clear.clone(), false), Spectrum::ZERO, "glass let light by beside the caustics pass");
+
+        // Tinted at the surface, the colour once in and out again.
+        let green = Material { transmission_color: Spectrum { r: 0.25, g: 1.0, b: 0.25 }, ..clear.clone() };
+        let tinted = through(green, true);
+        assert!((tinted.r - 0.25 * expected).abs() < 2e-3 && (tinted.g - expected).abs() < 2e-3, "tinted glass passed {tinted:?}");
+
+        // A volume absorbs across the ball's diameter, 2: its colour at
+        // depth 1, squared.
+        let deep = Material { transmission_color: Spectrum::splat(0.5), transmission_depth: 1.0, ..clear.clone() };
+        let absorbed = through(deep, true);
+        assert!((absorbed.g - 0.25 * expected).abs() < 3e-3, "a volume of glass passed {absorbed:?}");
+
+        let frosted = Material { specular_roughness: 0.4, ..clear };
+        assert_eq!(through(frosted, true), Spectrum::ZERO, "frosted glass let light straight through");
+        assert_eq!(through(Material::diffuse(Spectrum::splat(0.5)), true), Spectrum::ZERO, "plastic let light by");
+    }
+
+    /// Black glass the camera sees in a white sky shows the sky's
+    /// reflection, its Fresnel share of it, in every sample: the camera's
+    /// path is split there rather than choosing at random between the
+    /// reflection and the dark, which left a few white specks on black.
+    #[test]
+    fn the_first_glass_the_camera_sees_is_split_not_gambled() {
+        let black = Material {
+            transmission_color: Spectrum::ZERO,
+            transmission_depth: 0.0,
+            ..Material::preset(tequila_materials::material_type::MaterialType::Glass)
+        };
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![black], Arc::new(Environment::uniform(Spectrum::ONE)));
+        let intersector = AnalyticIntersector::new(scene).with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+        let angle = 60f32.to_radians();
+        let ray = Ray::new(vec3(0.0, 1.0, 0.0), vec3(angle.sin(), -angle.cos(), 0.0));
+        let expected = tequila_materials::fresnel::dielectric(angle.cos(), 1.5);
+        for i in 0..64 {
+            let mut sampler = Sampler::new(2, 3, i, 5);
+            let seen = trace_path(&intersector, &IntegratorConfig::product(), ray, Vec2::ZERO, &mut sampler).radiance;
+            assert!((seen.g - expected).abs() < 1e-4, "sample {i} saw {}, not the reflection's {expected}", seen.g);
         }
     }
 

@@ -200,11 +200,16 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             }
             Reply::Value(out.build())
         }
+        Operation::Render { path, width, height, wireframe: true, .. } => match wireframe_to_file(app, path, *width, *height) {
+            Ok(value) => Reply::Value(value),
+            Err(error) => Reply::Failed(error),
+        },
         Operation::Render {
             path,
             width,
             height,
             samples,
+            ..
         } => match render_to_file(app, path, *width, *height, *samples) {
             Ok(value) => Reply::Value(value),
             Err(error) => Reply::Failed(error),
@@ -482,6 +487,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         }
         Some(false) => app.updates.open = false,
         None => {}
+    }
+    if let Some(open) = change.uv_editor {
+        app.start_screen.open &= !open;
+        app.uv_editor.open = open;
+        if open {
+            app.uv_editor.label = None;
+        }
     }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
@@ -1423,6 +1435,29 @@ fn absolute(path: &std::path::Path) -> String {
 /// the right trade for a scripted render: the client asked for a finished
 /// picture and has nothing to do until it exists, and a progress protocol for
 /// an operation nobody is watching would be machinery for its own sake.
+/// A wireframe of the view to a PNG, as Render wireframe draws one: the
+/// document's Wireframe settings, at the size asked for.
+fn wireframe_to_file(app: &mut TequilaApp, path: &str, width: usize, height: usize) -> Result<Value, String> {
+    if !(1..=16384).contains(&width) || !(1..=16384).contains(&height) {
+        return Err("width and height must be between 1 and 16384 pixels".into());
+    }
+    let started = std::time::Instant::now();
+    let settings = tequila_scene::render::RenderSettings { width, height, ..app.project.document().render.clone() };
+    let scene = app.project.scene();
+    let output = crate::batch::wireframe_output(&scene, &app.camera.camera, &settings)?;
+    output
+        .write(std::path::Path::new(path), tequila_format::output::ImageFormat::Png(tequila_format::psd::Depth::Eight))
+        .map_err(|e| e.to_string())?;
+    let mut out = Object::new();
+    out.set("path", absolute(std::path::Path::new(path)))
+        .set("width", width as f64)
+        .set("height", height as f64)
+        .set("wireframe", true)
+        .set("edges", settings.wireframe.edges.key())
+        .set("seconds", started.elapsed().as_secs_f64());
+    Ok(out.build())
+}
+
 fn render_to_file(
     app: &mut TequilaApp,
     path: &str,
@@ -1735,6 +1770,38 @@ mod handler_tests {
         let named: Vec<&String> = document.tree.iter().filter_map(|n| n.metadata.get(tequila_scene::document::BREP)).collect();
         assert!(!named.is_empty(), "the model names no source");
         assert!(named.iter().all(|id| document.sources.get(id).is_some()), "the model names a source the project does not keep");
+    }
+
+    /// A script sees a CAD file's layers and attributes - each node's, and
+    /// the scene's list of layers with whether they are shown - and shows a
+    /// switched-off layer by name, as one command.
+    #[test]
+    fn a_script_reads_layers_and_metadata_and_shows_a_layer() {
+        let mut app = TequilaApp::for_tests();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/tequila-import/tests/data/layers.step").replace('\\', "/");
+        let reply = ask(&mut app, &format!(r#"{{"op":"import","path":"{path}"}}"#));
+        assert!(!matches!(reply, Reply::Failed(_)), "{reply:?}");
+        let layer = |app: &mut TequilaApp, name: &str| -> String {
+            let context = value(app, r#"{"op":"query","what":"context"}"#);
+            let layers = context.get("scene").and_then(|s| s.get("layers")).expect("the scene lists its layers").as_array().to_vec();
+            let entry = layers.iter().find(|l| l.get("name").and_then(Value::as_str) == Some(name)).unwrap_or_else(|| panic!("no layer {name}: {layers:?}"));
+            assert!(!entry.get("nodes").unwrap().as_array().is_empty());
+            entry.get("shown").and_then(Value::as_str).unwrap().to_string()
+        };
+        assert_eq!(layer(&mut app, "Outer"), "all");
+        assert_eq!(layer(&mut app, "Construction"), "none");
+
+        let nodes = value(&mut app, r#"{"op":"query","what":"nodes"}"#);
+        let node = |name: &str| nodes.get("nodes").unwrap().as_array().iter().find(|n| n.get("name").and_then(Value::as_str) == Some(name)).cloned().unwrap();
+        let part = node("Box");
+        let on: Vec<&str> = part.get("layers").unwrap().as_array().iter().filter_map(Value::as_str).collect();
+        assert_eq!(on, ["Outer"]);
+        assert_eq!(node("Housing").get("metadata").and_then(|m| m.get("Finish")).and_then(Value::as_str), Some("Mold-Tech 11010"));
+
+        value(&mut app, r#"{"op":"apply","command":{"command":"scene.set_layer_visibility","layer":"Construction","visible":true}}"#);
+        assert_eq!(layer(&mut app, "Construction"), "all");
+        let message = failure(&mut app, r#"{"op":"apply","command":{"command":"scene.set_layer_visibility","layer":"Hatching","visible":false}}"#);
+        assert!(message.contains("Hatching"), "{message}");
     }
 
     /// A file that does not say its unit comes in at the unit its size

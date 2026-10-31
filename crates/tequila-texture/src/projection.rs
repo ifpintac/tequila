@@ -164,6 +164,15 @@ pub struct Mapping {
     /// across should stay 50 mm across whether it lands on a bracket or on a
     /// door panel, and under a repeat count it would not.
     pub real_world_units: bool,
+    /// Turn the texture as a whole: [`Mapping::rotation`] turns it before
+    /// [`Mapping::scale`] stretches it, so stretched artwork - a label wider
+    /// than it is tall - turns without shearing.
+    ///
+    /// Off, the order glTF's texture transform and Blender's point mapping
+    /// use, and so what an imported or exported texture means: stretched,
+    /// then turned, which keeps the stretch along the coordinates' own axes -
+    /// a wide label turned a little comes out squashed. Labels are rigid.
+    pub rigid: bool,
 }
 
 impl Default for Mapping {
@@ -182,6 +191,7 @@ impl Default for Mapping {
             flip_v: false,
             blend_sharpness: 6.0,
             real_world_units: false,
+            rigid: false,
         }
     }
 }
@@ -525,12 +535,7 @@ impl Mapping {
         let (mut u, mut v) = (u * su, v * sv);
 
         if self.rotation != 0.0 {
-            let angle = self.rotation * std::f32::consts::TAU;
-            let (sin, cos) = angle.sin_cos();
-            // About the pivot, which is the origin unless someone placed it.
-            let (pu, pv) = (u - self.pivot.x, v - self.pivot.y);
-            u = pu * cos - pv * sin + self.pivot.x;
-            v = pu * sin + pv * cos + self.pivot.y;
+            (u, v) = self.spin(u, v, self.rotation, su, sv);
         }
 
         u += self.offset.x;
@@ -555,6 +560,54 @@ impl Mapping {
 
     pub fn wrap(&self) -> (Wrap, Wrap) {
         (self.wrap_u, self.wrap_v)
+    }
+
+    /// The scale as repeats per projected unit, whichever way it is stated.
+    pub fn repeats(&self) -> (f32, f32) {
+        if self.real_world_units {
+            (1.0 / self.scale.x.abs().max(1e-6), 1.0 / self.scale.y.abs().max(1e-6))
+        } else {
+            (self.scale.x, self.scale.y)
+        }
+    }
+
+    /// A turn of `turns` about the pivot, on coordinates already scaled by
+    /// (`su`, `sv`): as it is, or - rigid - with the scale taken out for the
+    /// turn and put back after, so the texture turns as a whole.
+    fn spin(&self, u: f32, v: f32, turns: f32, su: f32, sv: f32) -> (f32, f32) {
+        let (sin, cos) = (turns * std::f32::consts::TAU).sin_cos();
+        // About the pivot, which is the origin unless someone placed it.
+        let (pu, pv) = (u - self.pivot.x, v - self.pivot.y);
+        if self.rigid {
+            let safe = |s: f32| if s.abs() < 1e-12 { 1e-12f32.copysign(s) } else { s };
+            let (du, dv) = (pu / safe(su), pv / safe(sv));
+            ((du * cos - dv * sin) * su + self.pivot.x, (du * sin + dv * cos) * sv + self.pivot.y)
+        } else {
+            (pu * cos - pv * sin + self.pivot.x, pu * sin + pv * cos + self.pivot.y)
+        }
+    }
+
+    /// Where a projected (u, v) lands on the texture: its scale, turn, offset
+    /// and flips.
+    pub fn apply_to(&self, u: f32, v: f32) -> (f32, f32) {
+        let coords = self.finish(u, v, 0.0);
+        (coords.u, coords.v)
+    }
+
+    /// The projected (u, v) that lands on (`u`, `v`) of the texture:
+    /// [`Mapping::apply_to`] undone, the forward order reversed. Getting the
+    /// order wrong is not visible in the arithmetic: it shows as a frame that
+    /// is right until the label is turned, and then drifts.
+    pub fn unapply(&self, u: f32, v: f32) -> (f32, f32) {
+        let (mut u, mut v) = (if self.flip_u { -u } else { u }, if self.flip_v { -v } else { v });
+        u -= self.offset.x;
+        v -= self.offset.y;
+        let (su, sv) = self.repeats();
+        if self.rotation != 0.0 {
+            (u, v) = self.spin(u, v, -self.rotation, su, sv);
+        }
+        let safe = |s: f32| if s.abs() < 1e-9 { 1e-9 } else { s };
+        (u / safe(su), v / safe(sv))
     }
 
     /// The artwork mirrored where it sits: across its width (`horizontal`)
@@ -614,6 +667,36 @@ mod tests {
     fn only(contributions: &[Contribution]) -> TextureCoords {
         assert_eq!(contributions.len(), 1, "expected a single contribution");
         contributions[0].coords
+    }
+
+    /// Artwork twice as wide as it is tall, turned an eighth: rigid, its
+    /// corners on the layout are still a rectangle twice as wide as tall;
+    /// as glTF turns a texture, they are not. Undone, every point comes back.
+    #[test]
+    fn a_rigid_turn_keeps_stretched_artwork_rectangular() {
+        let base = Mapping { scale: vec3(2.0, 4.0, 1.0), rotation: 0.125, pivot: vec2(0.6, 1.2), offset: vec2(0.1, -0.3), ..Mapping::default() };
+        let corners = |m: &Mapping| [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].map(|(u, v)| m.unapply(u, v));
+        let edge = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let right_angle = |c: [(f32, f32); 4]| {
+            let (e1, e2) = ((c[1].0 - c[0].0, c[1].1 - c[0].1), (c[3].0 - c[0].0, c[3].1 - c[0].1));
+            (e1.0 * e2.0 + e1.1 * e2.1).abs() < 1e-5
+        };
+        let rigid = Mapping { rigid: true, ..base };
+        let c = corners(&rigid);
+        assert!(right_angle(c), "a rectangle still: {c:?}");
+        assert!((edge(c[0], c[1]) / edge(c[0], c[3]) - 2.0).abs() < 1e-4, "twice as wide as tall: {c:?}");
+        assert!(!right_angle(corners(&base)), "glTF's order shears it, as glTF does");
+        for m in [base, rigid] {
+            for (u, v) in [(0.1, 0.2), (0.9, -0.4), (2.5, 1.5)] {
+                let (a, b) = m.apply_to(u, v);
+                let (x, y) = m.unapply(a, b);
+                assert!((x - u).abs() < 1e-4 && (y - v).abs() < 1e-4, "rigid {}: ({u},{v}) came back as ({x},{y})", m.rigid);
+            }
+        }
+        // Scaled evenly, the two orders are the same thing.
+        let even = Mapping { scale: vec3(3.0, 3.0, 1.0), ..base };
+        let (a, b) = (even.apply_to(0.3, 0.7), Mapping { rigid: true, ..even }.apply_to(0.3, 0.7));
+        assert!((a.0 - b.0).abs() < 1e-5 && (a.1 - b.1).abs() < 1e-5);
     }
 
     /// Mirroring a label turns the picture over where it sits: every point

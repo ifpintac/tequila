@@ -49,6 +49,7 @@ fn document_with_everything() -> SceneDocument {
     part.locked = true;
     part.visible = false;
     part.rays = tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() };
+    part.layers = vec!["Outer".into()];
 
     bus.apply(
         &mut document,

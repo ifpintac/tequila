@@ -29,8 +29,15 @@ pub struct IntegratorConfig {
     /// [`crate::integrator::caustics`]): photons traced from the lights
     /// through glass, liquids, gems and mirrors onto what is around them,
     /// read by the camera path at the first surface it sees that is not
-    /// mirror-smooth. Off, such light is found only by chance.
+    /// mirror-smooth. Off, shadow rays pass clear glass instead
+    /// ([`Self::light_through_glass`]), as KeyShot's renderer does with its
+    /// caustics off, and light focused by anything else is found only by
+    /// chance. How the pass finds that light is [`Self::caustics_method`].
     pub caustics: bool,
+    /// How the caustics pass finds focused light, when it is on: photons
+    /// from every light, or the paths from each lamp through smooth glass
+    /// solved for at every surface ([`CausticsMethod`]).
+    pub caustics_method: CausticsMethod,
     /// Portal sampling and increased NEE weighting for enclosed scenes.
     pub interior_mode: bool,
     /// Bounce at which the roughness floor starts being applied (§3.5).
@@ -66,6 +73,11 @@ pub struct IntegratorConfig {
     /// as a ratio of the backdrop, so on a black one nothing shows). Never
     /// saved.
     pub floor_reflection_only: bool,
+    /// Set on the path traced for what plain glass the camera sees reflects,
+    /// split off the camera's path there (`integrator::trace`): it splits
+    /// no glass of its own, and the sky it reaches is a reflection's, not
+    /// the backdrop the camera sees. Never saved.
+    pub reflected: bool,
     /// What Cycles is told beyond the above (Blender's Light Paths): `None`
     /// throughout is what it was always told.
     pub cycles: CyclesTransport,
@@ -73,6 +85,122 @@ pub struct IntegratorConfig {
     /// final render; one pixel's box otherwise. Set per render, never saved
     /// here (it is the render's setting, `RenderSettings::pixel_filter`).
     pub pixel_filter: PixelFilter,
+    /// Whether paths carry wavelengths rather than RGB (§7.4,
+    /// [`crate::spectral`]). From the render settings, never saved here
+    /// (`RenderSettings::spectral`).
+    pub spectral: SpectralMode,
+    /// Whether a spectral path carries its hero wavelength's three
+    /// companions, as Wilkie et al. have it, or the hero alone from the
+    /// start. Only ever off to measure what the companions buy; never saved.
+    pub spectral_companions: bool,
+}
+
+/// Whether a render traces wavelengths or RGB (`docs/01` §7.4).
+///
+/// RGB cannot split light by wavelength, and a spectral path, which can,
+/// costs more per vertex: each colour it meets is read as a spectrum at its
+/// four wavelengths. So by default a scene is rendered spectrally only when
+/// something in it disperses light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SpectralMode {
+    /// Spectral when the scene has a dispersive material, RGB otherwise.
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl SpectralMode {
+    pub const ALL: [SpectralMode; 3] = [SpectralMode::Auto, SpectralMode::On, SpectralMode::Off];
+
+    /// The name in the file format.
+    pub const fn key(self) -> &'static str {
+        match self {
+            SpectralMode::Auto => "auto",
+            SpectralMode::On => "on",
+            SpectralMode::Off => "off",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            SpectralMode::Auto => "Auto",
+            SpectralMode::On => "On",
+            SpectralMode::Off => "Off",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<SpectralMode> {
+        SpectralMode::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    /// Whether `scene` is rendered spectrally.
+    pub fn resolve(self, scene: &crate::scene::SceneSnapshot) -> bool {
+        match self {
+            SpectralMode::Auto => scene.has_dispersion(),
+            SpectralMode::On => true,
+            SpectralMode::Off => false,
+        }
+    }
+}
+
+/// How the caustics pass ([`IntegratorConfig::caustics`]) finds the light
+/// that glass, liquids, gems and mirrors focus onto what is around them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CausticsMethod {
+    /// Photons traced from every light, the environment's included,
+    /// through glass and off mirrors ([`crate::integrator::caustics`]):
+    /// soft at first and sharper the longer a render runs.
+    #[default]
+    Photons,
+    /// Manifold next event estimation ([`crate::integrator::manifold`]):
+    /// at each surface, the path from a lamp through smooth glass to it is
+    /// solved for, so a caustic is sharp from the first samples where the
+    /// path is found - but only the path the straight line to the lamp
+    /// leads to, so light that crosses the glass elsewhere is missed, and
+    /// at equal time it is noisier than the photons (`docs/01` §6.5).
+    /// Lamps through refracting glass only: the environment and glowing
+    /// parts reach through glass by bounces, and mirrors focus nothing here.
+    Manifold,
+}
+
+impl CausticsMethod {
+    pub const ALL: [CausticsMethod; 2] = [CausticsMethod::Photons, CausticsMethod::Manifold];
+
+    /// The name in the file format.
+    pub const fn key(self) -> &'static str {
+        match self {
+            CausticsMethod::Photons => "photons",
+            CausticsMethod::Manifold => "manifold",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            CausticsMethod::Photons => "Photons",
+            CausticsMethod::Manifold => "Manifold",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<CausticsMethod> {
+        CausticsMethod::ALL.into_iter().find(|m| m.key() == key)
+    }
+}
+
+/// The clear glass ([`crate::scene::Pane`]) a shadow ray passes on its way
+/// to a light, which follows from how caustics are found
+/// ([`IntegratorConfig::shadow_glass`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ShadowGlass {
+    /// None: glass stops it as anything solid does, and the light glass
+    /// lets by is the photons'.
+    Solid,
+    /// All of it, straight through, tinted and less what it reflects.
+    Clear,
+    /// Glass that lets light by without bending it - a thin wall, glass at
+    /// the index of air - and nothing that bends it, the light through
+    /// which manifold next event estimation finds along the bent path.
+    Unbent,
 }
 
 /// [`IntegratorConfig::pixel_spread`] when nothing better is known.
@@ -283,6 +411,48 @@ impl Default for IntegratorConfig {
 }
 
 impl IntegratorConfig {
+    /// Whether shadow rays pass clear glass ([`crate::scene::Pane`]), so
+    /// what is behind a pane or inside a bottle is lit through it. Not with
+    /// the caustics pass, whose photons already carry the light glass lets
+    /// by: a shadow ray that passed it too would count that light twice.
+    /// With manifold caustics, only glass that does not bend light
+    /// ([`Self::shadow_glass`]).
+    #[inline]
+    pub fn light_through_glass(&self) -> bool {
+        self.shadow_glass() != ShadowGlass::Solid
+    }
+
+    /// Which clear glass shadow rays pass. All of it with the caustics pass
+    /// off, as KeyShot's renderer does; none with photons, which carry that
+    /// light; and with manifold caustics only what does not bend light. Glass
+    /// that bends it then stops every shadow ray, the environment's and a
+    /// glowing part's too: a lamp's light through it is the manifold
+    /// sample's, and theirs is found by bounces through the glass, which
+    /// meet them where the bent path really leads. Let by straight as well,
+    /// the light under a glass ball would be counted twice, once spread
+    /// over its shadow and once focused.
+    #[inline]
+    pub fn shadow_glass(&self) -> ShadowGlass {
+        match (self.caustics, self.caustics_method) {
+            (false, _) => ShadowGlass::Clear,
+            (true, CausticsMethod::Photons) => ShadowGlass::Solid,
+            (true, CausticsMethod::Manifold) => ShadowGlass::Unbent,
+        }
+    }
+
+    /// Whether this render traces caustic photons.
+    #[inline]
+    pub fn photon_caustics(&self) -> bool {
+        self.caustics && self.caustics_method == CausticsMethod::Photons
+    }
+
+    /// Whether lamps' light through smooth glass is found by manifold next
+    /// event estimation ([`crate::integrator::manifold`]).
+    #[inline]
+    pub fn manifold_caustics(&self) -> bool {
+        self.caustics && self.caustics_method == CausticsMethod::Manifold
+    }
+
     /// Values shared by every preset. §3.4 fixes Russian roulette at bounce 3:
     /// "earlier termination adds variance at little speed gain in typical
     /// product scenes". §3.5 fixes the roughness floor at 0.09.
@@ -295,6 +465,7 @@ impl IntegratorConfig {
             light_source_materials: true,
             ground_illumination: false,
             caustics: false,
+            caustics_method: CausticsMethod::Photons,
             interior_mode: false,
             regularization_start_bounce: 2,
             regularization_roughness: 0.09,
@@ -304,8 +475,11 @@ impl IntegratorConfig {
             pixel_spread: DEFAULT_PIXEL_SPREAD,
             in_floor_reflection: false,
             floor_reflection_only: false,
+            reflected: false,
             cycles: CyclesTransport::NONE,
             pixel_filter: PixelFilter::BOX,
+            spectral: SpectralMode::Auto,
+            spectral_companions: true,
         }
     }
 

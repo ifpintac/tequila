@@ -60,6 +60,8 @@ fn a_card_that_cannot_render_says_so() {
         ground_illumination: false,
         light_materials: true,
         light_groups: false,
+        shadow_glass: tequila_render_core::settings::IntegratorConfig::product().shadow_glass(),
+        manifold_caustics: false,
     };
     session.begin_edit();
     let built = translate::build_with(&mut session, &scene, &view, &mut translate::Images::default()).and_then(|_| {

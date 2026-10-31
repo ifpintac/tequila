@@ -83,14 +83,18 @@ impl GpuDenoiser {
 
     fn create() -> Result<Arc<GpuDenoiser>, String> {
         // The graphics card's own kind: Metal on a Mac (with
-        // libOpenImageDenoise_device_metal beside the library), CUDA
-        // elsewhere.
-        let (kind, name) = if cfg!(target_os = "macos") { (sys::OIDN_DEVICE_TYPE_METAL, "Metal") } else { (sys::OIDN_DEVICE_TYPE_CUDA, "CUDA") };
-        // SAFETY: an enumerator OIDN defines; the call cannot fail unsafely.
-        let device = unsafe { sys::oidnNewDevice(kind) };
-        if device.is_null() {
-            return Err(format!("no {name} denoising device"));
-        }
+        // libOpenImageDenoise_device_metal beside the library), CUDA on an
+        // NVIDIA card elsewhere, HIP on an AMD one.
+        let kinds: &[(i32, &str)] = if cfg!(target_os = "macos") {
+            &[(sys::OIDN_DEVICE_TYPE_METAL, "Metal")]
+        } else {
+            &[(sys::OIDN_DEVICE_TYPE_CUDA, "CUDA"), (sys::OIDN_DEVICE_TYPE_HIP, "HIP")]
+        };
+        // SAFETY: enumerators OIDN defines; the call cannot fail unsafely.
+        let Some(device) = kinds.iter().map(|(kind, _)| unsafe { sys::oidnNewDevice(*kind) }).find(|d| !d.is_null()) else {
+            let names: Vec<&str> = kinds.iter().map(|(_, name)| *name).collect();
+            return Err(format!("no {} denoising device", names.join(" or ")));
+        };
         // SAFETY: non-null and freshly created.
         unsafe { sys::oidnCommitDevice(device) };
         let device = Arc::new(RawDevice(device));
