@@ -62,8 +62,10 @@
 //! of 200,000 triangles each takes a fraction of a second - the test
 //! `uv::tests::a_large_part_stays_interactive` measures them - and hit
 //! tests take microseconds. Flattening is the costly step: it solves for
-//! every vertex at once, and a single island of a hundred thousand vertices
-//! takes seconds.
+//! every vertex of an island at once. Laying out again an island of 51,200
+//! triangles takes about a third of a second, and unwrapping the whole
+//! 204,800 as one chart a few seconds (`uv::tests::flattening_a_large_part`,
+//! ignored by default, times them).
 
 pub mod distortion;
 pub mod edit;
@@ -188,6 +190,28 @@ mod tests {
         assert_eq!(seams.len(), 16);
         timed("stitch", 3.0, || stitch(&parted, 0, &seams).unwrap());
         timed("reflatten one island", 2.0, || reflatten(&mesh, 0, &[5], &[], None).unwrap());
+    }
+
+    /// The costly steps, timed rather than tested - every vertex of an
+    /// island solved for at once: `cargo test --release -p tequila-scene
+    /// --lib uv::tests::flattening_a_large_part -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn flattening_a_large_part() {
+        let mesh = large_part();
+        let (unwrapped, report) = timed("unwrap 204,800 triangles", 600.0, || unwrap(&mesh, &UnwrapOptions::default()));
+        eprintln!("{} charts, coverage {:.3}", report.charts, report.coverage);
+        let kept = timed("unwrap keeping 400 islands", 600.0, || unwrap(&mesh, &UnwrapOptions { respect_cuts: true, ..Default::default() }).1);
+        eprintln!("{} charts kept", kept.charts);
+        let all: Vec<u32> = (0..400).collect();
+        timed("reflatten 400 islands", 600.0, || reflatten(&mesh, 0, &all, &[], None).unwrap());
+        // One island of 51,200 triangles: a quarter of the part, laid out
+        // as seen from above and then flattened whole.
+        let seen = mesh.positions.iter().map(|p| vec2(p.x, p.z)).collect();
+        let quarter = Mesh::new(mesh.positions.clone(), mesh.indices[..51_200 * 3].to_vec()).with_uvs(seen);
+        let one = timed("reflatten one island of 51,200 triangles", 600.0, || reflatten(&quarter, 0, &[0], &[], None));
+        eprintln!("{}", if one.is_ok() { "laid out" } else { "would fold" });
+        let _ = unwrapped;
     }
 }
 

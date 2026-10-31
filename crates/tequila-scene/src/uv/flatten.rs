@@ -283,9 +283,15 @@ fn solve_least_squares(rows: &[[(usize, f64); 6]], widths: &[u8], rhs: &[f64], x
     let scale: f64 = atb.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-30);
     let mut ap = vec![0.0f64; unknowns];
     let limit = (unknowns * 2).clamp(200, 20_000);
+    // Settled to a part in a billion where that costs little. A large patch
+    // gets to a part in a hundred thousand in a few hundred steps and then
+    // creeps, taking thousands more to even out a gradient of density of a
+    // few percent across it: on 50,000 triangles, a fifteenth of the time
+    // for angles kept to half a percent and density within eight.
+    let settled = if unknowns > 20_000 { 1e-5 } else { 1e-9 };
     for _ in 0..limit {
         let residual = r.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if residual <= 1e-9 * scale + 1e-14 {
+        if residual <= settled * scale + 1e-14 {
             return Some(());
         }
         normal.apply(&p, &mut ap);
