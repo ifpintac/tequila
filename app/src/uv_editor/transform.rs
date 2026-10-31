@@ -149,9 +149,13 @@ fn length(ui: &mut egui::Ui, prefix: &str, value: &mut f32, scale: Scale, tip: &
     };
     let unit = scale.unit.numeric();
     let low = if positive { scale.shown(placement::SMALLEST) } else { f32::MIN };
+    // A value already outside the range - an edge's box, as good as no
+    // width - is shown as it is: clamped, the field would report a change
+    // nobody made, and the selection would be scaled by it.
     let field = egui::DragValue::new(&mut shown)
         .speed(speed)
         .range(low..=f32::MAX)
+        .clamp_existing_to_range(false)
         .prefix(format!("{prefix} "))
         .suffix(format!(" {}", scale.unit.suffix()))
         .max_decimals(scale.decimals() + 1)
@@ -285,6 +289,97 @@ pub fn labels(ui: &mut egui::Ui, panel: &mut Panel, labels: &mut [tequila_materi
         changed = true;
     }
     changed
+}
+
+/// What the panel did to a selection of the layout's own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LayoutChange {
+    /// Moved, sized or turned: the map from where it is shown to where the
+    /// numbers put it.
+    Map(tequila_scene::uv::UvAffine),
+    /// Mirrored left to right (true) or top to bottom.
+    Flip(bool),
+    /// Turned a quarter, clockwise as shown, or back.
+    Quarter(i32),
+}
+
+/// The panel for islands, edges or vertices: the box round them, its place
+/// and size, a turn by so many degrees, flips and quarter turns. The change,
+/// if there was one.
+pub fn layout(ui: &mut egui::Ui, panel: &mut Panel, frame: &Frame, scale: Scale) -> Option<LayoutChange> {
+    let mut out = None;
+    let pivot = panel.reference.point(frame);
+    ui.horizontal(|ui| {
+        picker(ui, &mut panel.reference);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+            let mut at = pivot;
+            ui.horizontal(|ui| {
+                let x = length(ui, "X", &mut at.x, scale, "Across the layout, from its left edge, to the chosen point", false);
+                let y = length(ui, "Y", &mut at.y, scale, "Down the layout, from its top edge, to the chosen point", false);
+                if x || y {
+                    out = Some(LayoutChange::Map(super::editing::moved(at - pivot)));
+                }
+            });
+            ui.horizontal(|ui| {
+                let mut size = frame.size;
+                let w = length(ui, "W", &mut size.x, scale, "The width of the box round the selection", true);
+                let h = length(ui, "H", &mut size.y, scale, "The height of the box round the selection", true);
+                if panel.keep_aspect {
+                    if w {
+                        size.y = frame.size.y * size.x / frame.size.x.max(1e-9);
+                    } else if h {
+                        size.x = frame.size.x * size.y / frame.size.y.max(1e-9);
+                    }
+                }
+                let lock = crate::icons::button(ui, if panel.keep_aspect { crate::icons::Icon::Link } else { crate::icons::Icon::Unlink }, panel.keep_aspect, 24.0, egui::Sense::click());
+                if crate::icons::tip(lock, "Keep proportions", "Width and height change together", "").clicked() {
+                    panel.keep_aspect = !panel.keep_aspect;
+                }
+                // A box with no width, or no height - the edges along a
+                // line - has nothing to scale that way.
+                let flat = |extent: f32| extent <= 1e-6;
+                if w && flat(frame.size.x) || h && flat(frame.size.y) {
+                    size = frame.size;
+                }
+                if size != frame.size && !flat(frame.size.x) && !flat(frame.size.y) {
+                    let to = resized(*frame, panel.reference, size);
+                    out = Some(LayoutChange::Map(super::editing::panel_change(frame, &to, pivot, pivot)));
+                } else if size != frame.size {
+                    // One way only, the other kept as it is.
+                    let k = vec2(if flat(frame.size.x) { 1.0 } else { size.x / frame.size.x }, if flat(frame.size.y) { 1.0 } else { size.y / frame.size.y });
+                    out = Some(LayoutChange::Map(super::editing::scaled(pivot, k)));
+                }
+            });
+        });
+    });
+    ui.horizontal(|ui| {
+        let mut degrees = 0.0f32;
+        let response = ui
+            .add_sized([96.0, 24.0], egui::DragValue::new(&mut degrees).speed(0.5).prefix("Turn by ").suffix("°").max_decimals(2))
+            .on_hover_text("Turn the selection, anticlockwise, about the chosen point");
+        if response.changed() && degrees.is_finite() && degrees != 0.0 {
+            out = Some(LayoutChange::Map(super::editing::turned(pivot, -degrees.to_radians())));
+        }
+        for (icon, title, detail, change) in [
+            (crate::icons::Icon::QuarterCcw, "Turn a quarter anticlockwise", "About the selection's middle", LayoutChange::Quarter(-1)),
+            (crate::icons::Icon::QuarterCw, "Turn a quarter clockwise", "About the selection's middle", LayoutChange::Quarter(1)),
+            (crate::icons::Icon::FlipAcross, "Flip horizontal", "Mirror left to right about the selection's middle. A mirrored island prints its artwork backwards", LayoutChange::Flip(true)),
+            (crate::icons::Icon::FlipDown, "Flip vertical", "Mirror top to bottom about the selection's middle. A mirrored island prints its artwork backwards", LayoutChange::Flip(false)),
+        ] {
+            let keys = match change {
+                LayoutChange::Quarter(1) => "]",
+                LayoutChange::Quarter(_) => "[",
+                LayoutChange::Flip(true) => "Shift + H",
+                _ => "Shift + V",
+            };
+            let response = crate::icons::button(ui, icon, false, 24.0, egui::Sense::click());
+            if crate::icons::tip(response, title, detail, keys).clicked() {
+                out = Some(change);
+            }
+        }
+    });
+    out
 }
 
 /// The panel for a texture: its offset, repeats and turn. The changed

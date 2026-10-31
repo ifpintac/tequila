@@ -132,6 +132,35 @@ pub enum Icon {
     Keyboard,
     /// Where a row is taken to drag it.
     Grip,
+    /// What the UV editor picks: labels, islands, edges or vertices.
+    Sticker,
+    Islands,
+    EdgeSelect,
+    VertexSelect,
+    /// The UV editor's island tools: cut, stitch, pin and unpin, lay out
+    /// flat again, pack, straighten, even the sizes, unwrap again, and cut
+    /// faces picked on the part out of the layout.
+    Scissors,
+    Stitch,
+    Pin,
+    Unpin,
+    Reflatten,
+    Pack,
+    Straighten,
+    EvenSize,
+    Unwrap,
+    CutFaces,
+    /// A quarter turn clockwise, and anticlockwise.
+    QuarterCw,
+    QuarterCcw,
+    /// The stretch heatmap.
+    Heat,
+    /// A part's UV sets.
+    UvSets,
+    /// A picture written out of the application.
+    ExportImage,
+    ArrowUp,
+    ArrowDown,
 }
 
 impl Icon {
@@ -225,6 +254,27 @@ impl Icon {
             Icon::Unlink => 0xe109,
             Icon::Keyboard => 0xe283,
             Icon::Grip => 0xe0ee,
+            Icon::Sticker => 0xe301,
+            Icon::Islands => 0xe4b7,
+            Icon::EdgeSelect => 0xe38e,
+            Icon::VertexSelect => 0xe348,
+            Icon::Scissors => 0xe151,
+            Icon::Stitch => 0xe450,
+            Icon::Pin => 0xe258,
+            Icon::Unpin => 0xe2b5,
+            Icon::Reflatten => 0xe35a,
+            Icon::Pack => 0xe104,
+            Icon::Straighten => 0xe257,
+            Icon::EvenSize => 0xe1bc,
+            Icon::Unwrap => 0xe2cb,
+            Icon::CutFaces => 0xe4f0,
+            Icon::QuarterCw => 0xe5d5,
+            Icon::QuarterCcw => 0xe5d4,
+            Icon::Heat => 0xe0d7,
+            Icon::UvSets => 0xe52e,
+            Icon::ExportImage => 0xe540,
+            Icon::ArrowUp => 0xe04e,
+            Icon::ArrowDown => 0xe046,
         };
         char::from_u32(code)
     }
@@ -792,6 +842,103 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 disc(x, y, 1.0, color);
             }
         }
+        Icon::Sticker => {
+            poly(&[(9.5, 14.0), (2.0, 14.0), (2.0, 2.0), (14.0, 2.0), (14.0, 9.5), (9.5, 14.0)]);
+            poly(&[(9.5, 14.0), (9.5, 9.5), (14.0, 9.5)]);
+        }
+        Icon::Islands => {
+            closed(&[(5.0, 1.5), (8.5, 7.0), (1.5, 7.0)]);
+            rounded(9.0, 9.0, 14.5, 14.5, 1.0);
+            circle(4.5, 11.5, 3.0);
+        }
+        Icon::EdgeSelect => {
+            line((4.0, 12.0), (12.0, 4.0));
+            circle(3.0, 13.0, 1.8);
+            circle(13.0, 3.0, 1.8);
+        }
+        Icon::VertexSelect => {
+            circle(8.0, 8.0, 6.3);
+            disc(8.0, 8.0, 1.8, color);
+        }
+        Icon::Scissors | Icon::CutFaces => {
+            if icon == Icon::CutFaces {
+                rounded(1.5, 1.5, 14.5, 14.5, 2.0);
+            }
+            circle(5.0, 11.0, 2.0);
+            circle(11.0, 11.0, 2.0);
+            line((6.4, 9.6), (11.5, 3.0));
+            line((9.6, 9.6), (4.5, 3.0));
+        }
+        Icon::Stitch => {
+            rounded(1.5, 4.0, 8.5, 12.0, 1.5);
+            rounded(7.5, 4.0, 14.5, 12.0, 1.5);
+        }
+        Icon::Pin | Icon::Unpin => {
+            line((8.0, 10.5), (8.0, 15.0));
+            closed(&[(5.5, 2.0), (10.5, 2.0), (10.0, 6.5), (12.5, 10.5), (3.5, 10.5), (6.0, 6.5)]);
+            if icon == Icon::Unpin {
+                line((2.0, 2.0), (14.0, 14.0));
+            }
+        }
+        Icon::Reflatten => {
+            line((2.0, 14.0), (10.5, 5.5));
+            for (x, y) in [(12.5, 2.5), (13.5, 7.0), (9.0, 1.5)] {
+                disc(x, y, 0.9, color);
+            }
+        }
+        Icon::Pack => {
+            rounded(2.0, 2.0, 7.0, 7.0, 1.0);
+            rounded(9.0, 2.0, 14.0, 7.0, 1.0);
+            rounded(2.0, 9.0, 7.0, 14.0, 1.0);
+            rounded(9.0, 9.0, 14.0, 14.0, 1.0);
+        }
+        Icon::Straighten => {
+            poly(&[(2.0, 5.0), (2.0, 2.0), (5.0, 2.0)]);
+            poly(&[(11.0, 2.0), (14.0, 2.0), (14.0, 5.0)]);
+            poly(&[(14.0, 11.0), (14.0, 14.0), (11.0, 14.0)]);
+            poly(&[(5.0, 14.0), (2.0, 14.0), (2.0, 11.0)]);
+            line((4.5, 8.0), (11.5, 8.0));
+        }
+        Icon::EvenSize => {
+            line((3.0, 6.0), (13.0, 6.0));
+            line((3.0, 10.0), (13.0, 10.0));
+        }
+        Icon::Unwrap => {
+            closed(&[(2.0, 6.0), (8.0, 9.0), (14.0, 6.0), (14.0, 12.0), (8.0, 15.0), (2.0, 12.0)]);
+            poly(&[(2.0, 6.0), (5.0, 2.0)]);
+            poly(&[(14.0, 6.0), (11.0, 2.0)]);
+            line((8.0, 9.0), (8.0, 15.0));
+        }
+        Icon::QuarterCw | Icon::QuarterCcw => {
+            rounded(4.5, 4.5, 11.5, 11.5, 1.0);
+            if icon == Icon::QuarterCw {
+                arc(8.0, 8.0, 6.5, 6.5, -2.4, -0.4);
+                head((8.0 + 6.5 * (-0.4f32).cos(), 8.0 + 6.5 * (-0.4f32).sin()), ((-0.4f32).sin() * -1.0, (-0.4f32).cos()), 2.2);
+            } else {
+                arc(8.0, 8.0, 6.5, 6.5, -2.7, -0.7);
+                head((8.0 + 6.5 * (-2.7f32).cos(), 8.0 + 6.5 * (-2.7f32).sin()), ((-2.7f32).sin(), -(-2.7f32).cos()), 2.2);
+            }
+        }
+        Icon::Heat => {
+            poly(&[(8.0, 1.5), (11.5, 6.5), (12.0, 10.0), (10.0, 13.5), (8.0, 14.5), (6.0, 13.5), (4.0, 10.0), (4.5, 6.5), (6.5, 8.0), (8.0, 1.5)]);
+        }
+        Icon::UvSets => {
+            closed(&[(8.0, 2.0), (14.5, 5.5), (8.0, 9.0), (1.5, 5.5)]);
+            poly(&[(1.5, 9.0), (8.0, 12.5), (14.5, 9.0)]);
+        }
+        Icon::ExportImage => {
+            rounded(2.0, 2.0, 14.0, 14.0, 2.0);
+            line((8.0, 4.5), (8.0, 10.5));
+            poly(&[(5.5, 8.0), (8.0, 10.5), (10.5, 8.0)]);
+        }
+        Icon::ArrowUp | Icon::ArrowDown => {
+            line((8.0, 2.5), (8.0, 13.5));
+            if icon == Icon::ArrowUp {
+                poly(&[(3.5, 7.0), (8.0, 2.5), (12.5, 7.0)]);
+            } else {
+                poly(&[(3.5, 9.0), (8.0, 13.5), (12.5, 9.0)]);
+            }
+        }
     }
 }
 
@@ -987,8 +1134,12 @@ pub fn paint_button(ui: &egui::Ui, rect: Rect, response: &egui::Response, icon: 
     if tone == Tone::On && hovered {
         painter.rect_stroke(rect, 7.0, Stroke::new(1.0_f32, p.accent.gamma_multiply(0.5)));
     }
+    // Disabled: between the resting icon and faint text, opaque. A disabled
+    // ui fades what it draws halfway to the panel by itself, and a colour
+    // that was faint and translucent too all but vanished on the light
+    // panels.
     let colour = if !enabled {
-        p.text_faint.gamma_multiply(0.6)
+        theme::mix(p.icon, p.text_faint, 0.35)
     } else if tone == Tone::On {
         p.accent_text
     } else {
@@ -1332,6 +1483,10 @@ mod tests {
             Icon::Guides, Icon::Rulers, Icon::Edges, Icon::AlignLeft, Icon::AlignCentre, Icon::AlignRight,
             Icon::AlignTop, Icon::AlignMiddle, Icon::AlignBottom, Icon::DistributeAcross, Icon::DistributeDown,
             Icon::FlipAcross, Icon::FlipDown, Icon::Link, Icon::Unlink, Icon::Keyboard, Icon::Grip,
+            Icon::Sticker, Icon::Islands, Icon::EdgeSelect, Icon::VertexSelect, Icon::Scissors, Icon::Stitch,
+            Icon::Pin, Icon::Unpin, Icon::Reflatten, Icon::Pack, Icon::Straighten, Icon::EvenSize, Icon::Unwrap,
+            Icon::CutFaces, Icon::QuarterCw, Icon::QuarterCcw, Icon::Heat, Icon::UvSets, Icon::ExportImage,
+            Icon::ArrowUp, Icon::ArrowDown,
         ]
     }
 

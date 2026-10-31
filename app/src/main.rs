@@ -407,6 +407,9 @@ struct TequilaApp {
     gpu_solid_submitted: bool,
     /// Instance ids to ring, shared by both Solid paths.
     outlined: Vec<u32>,
+    /// Which of the faces the UV editor lights the camera sees, and what
+    /// for: the part, the faces and the view.
+    uv_link_seen: Option<(UvLinkKey, Vec<bool>)>,
     assistant: assistant::Assistant,
     /// Set by a scripted `quit` that has already settled unsaved work, so the
     /// close goes through without asking a question nobody is there to answer.
@@ -621,6 +624,10 @@ enum Action {
 }
 
 /// Where the journal and auto-save snapshots live (§4.5).
+/// What the UV editor's lit faces were found seen or hidden for: the part,
+/// the scene's rebuild, the faces, and the eye.
+type UvLinkKey = (Option<tequila_scene::tree::NodeId>, u64, usize, u32, [u32; 3]);
+
 fn journal_directory() -> std::path::PathBuf {
     // Disposable QA sessions must not rewrite the user's persisted queue.
     if let Some(directory) = std::env::var_os("TEQUILA_JOURNAL_DIR") {
@@ -879,6 +886,7 @@ impl TequilaApp {
             solid: solid_gpu::SolidView::new(false),
             gpu_solid_submitted: false,
             outlined: Vec::new(),
+            uv_link_seen: None,
             assistant: assistant::Assistant::default(),
             quit_requested: false,
             close_approved: false,
@@ -1928,6 +1936,18 @@ impl TequilaApp {
             });
         }
 
+        // The UV editor, open on a part: the face of it under the pointer
+        // is lit on its layout. One ray a frame, and only then.
+        if self.uv_editor.open {
+            let pointed = self.uv_editor.shown_part().filter(|_| !response.dragged() && !presenting).and_then(|part| {
+                let at = response.hover_pos()?;
+                let ray = gizmo_ui::ray_through(&self.camera.camera, rect, at)?;
+                let hit = self.orchestrator.pick(&ray)?;
+                (self.project.mapping().node_of(hit.instance) == Some(part)).then(|| uv_editor::link::hover_of(&self.project, part, hit.primitive, hit.position)).flatten()
+            });
+            self.uv_editor.viewport_hover = pointed;
+        }
+
         let dragging = response.dragged() || gestures.moves() || ui.input(|i| i.raw_scroll_delta.y != 0.0);
         if dragging != self.interacting {
             self.interacting = dragging;
@@ -1986,6 +2006,19 @@ impl TequilaApp {
             self.gizmo.draw(ui, rect, &self.camera.camera);
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
+            // What the UV editor points at, lit on the part; what another
+            // part hides found again only when that or the view changes.
+            if let Some(hint) = self.uv_editor.viewport_hint() {
+                let eye = self.camera.camera.position();
+                let key: UvLinkKey = (hint.node, self.project.rebuilds(), hint.triangles.len(), hint.triangles.first().copied().unwrap_or(u32::MAX), [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
+                if self.uv_link_seen.as_ref().map(|(k, _)| k) != Some(&key) {
+                    let (orchestrator, mapping) = (&self.orchestrator, self.project.mapping());
+                    let seen = uv_editor::link::seen(&self.project, &self.camera.camera, hint, |ray| orchestrator.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
+                    self.uv_link_seen = Some((key, seen));
+                }
+                let seen = self.uv_link_seen.as_ref().map(|(_, s)| s.as_slice()).unwrap_or(&[]);
+                uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, seen);
+            }
         }
 
         if rect != area {

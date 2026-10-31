@@ -5,6 +5,7 @@
 //! default.
 
 use super::units::Unit;
+use tequila_scene::uv::Measure;
 
 /// How the grid's spacing is given.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +37,8 @@ pub struct Prefs {
     pub guides_locked: bool,
     /// How strongly the labels' artwork is drawn over the layout.
     pub artwork_opacity: f32,
+    /// The stretch heatmap over the layout: by area, by angle, or none.
+    pub stretch: Option<Measure>,
 }
 
 impl Default for Prefs {
@@ -55,6 +58,7 @@ impl Default for Prefs {
             subdivisions: 4,
             guides_locked: false,
             artwork_opacity: 0.9,
+            stretch: None,
         }
     }
 }
@@ -63,7 +67,7 @@ impl Prefs {
     pub fn to_text(&self) -> String {
         let flag = |b: bool| if b { "on" } else { "off" };
         format!(
-            "size = {} {}\nsnapping = {}\ngrid = {}\nguides = {}\nrulers = {}\nartwork = {}\nedges = {}\nunit = {}\nspacing = {}\ngrid_mm = {}\ndivisions = {}\nsubdivisions = {}\nguides_locked = {}\nartwork_opacity = {}\n",
+            "size = {} {}\nsnapping = {}\ngrid = {}\nguides = {}\nrulers = {}\nartwork = {}\nedges = {}\nunit = {}\nspacing = {}\ngrid_mm = {}\ndivisions = {}\nsubdivisions = {}\nguides_locked = {}\nartwork_opacity = {}\nstretch = {}\n",
             self.size.x.round(),
             self.size.y.round(),
             flag(self.snapping),
@@ -82,6 +86,11 @@ impl Prefs {
             self.subdivisions,
             flag(self.guides_locked),
             self.artwork_opacity,
+            match self.stretch {
+                None => "off",
+                Some(Measure::Area) => "area",
+                Some(Measure::Angle) => "angle",
+            },
         )
     }
 
@@ -123,6 +132,13 @@ impl Prefs {
                 "subdivisions" => out.subdivisions = number(out.subdivisions as f32, 1.0, 20.0) as u32,
                 "guides_locked" => out.guides_locked = flag(out.guides_locked),
                 "artwork_opacity" => out.artwork_opacity = number(out.artwork_opacity, 0.0, 1.0),
+                "stretch" => {
+                    out.stretch = match value {
+                        "area" => Some(Measure::Area),
+                        "angle" => Some(Measure::Angle),
+                        _ => None,
+                    }
+                }
                 _ => {}
             }
         }
@@ -163,7 +179,7 @@ mod tests {
 
     #[test]
     fn the_settings_read_back_as_written() {
-        let prefs = Prefs { size: egui::vec2(1400.0, 900.0), grid: false, unit: Unit::Inches, spacing: Spacing::Length, grid_mm: 2.5, subdivisions: 5, guides_locked: true, artwork_opacity: 0.5, ..Prefs::default() };
+        let prefs = Prefs { size: egui::vec2(1400.0, 900.0), grid: false, unit: Unit::Inches, spacing: Spacing::Length, grid_mm: 2.5, subdivisions: 5, guides_locked: true, artwork_opacity: 0.5, stretch: Some(Measure::Angle), ..Prefs::default() };
         assert_eq!(Prefs::from_text(&prefs.to_text()), prefs);
         // Nonsense is the default, a line at a time.
         let read = Prefs::from_text("size = big\nunit = furlongs\nsubdivisions = 900\nwhatever = 3\n");

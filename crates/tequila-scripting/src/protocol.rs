@@ -419,6 +419,8 @@ pub struct UvEditorChange {
     /// `add`, `copy`, `delete`, `up` or `down`: what the set picker does to
     /// the set shown.
     pub set_action: Option<String>,
+    /// The set picker's list, open.
+    pub set_menu: Option<bool>,
     /// The layout written as a picture, as the Export dialog does.
     pub export: Option<UvExport>,
     /// The Export dialog, open.
@@ -590,6 +592,7 @@ fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
         heatmap: opt_string(value, "heatmap")?,
         set: opt_index(value, "set")?,
         set_action: opt_string(value, "set_action")?,
+        set_menu: opt_bool(value, "set_menu")?,
         export: match value.get("export") {
             None | Some(Value::Null) => None,
             Some(object @ Value::Object(_)) => Some(UvExport {

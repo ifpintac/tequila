@@ -144,6 +144,21 @@ pub fn flipped_about(mapping: Mapping, about: Vec2, across: bool) -> Mapping {
     centred(reflected.mirrored(across), to)
 }
 
+/// Carried with the island it is on, by how the island went from where it
+/// was to where an edit put it: mirrored across first if the island was,
+/// then turned and scaled with it, its middle where the island took it - so
+/// it prints where it printed on the part.
+pub fn carried(mapping: Mapping, likeness: &super::editing::Likeness) -> Mapping {
+    let at = likeness.apply(centre(&mapping));
+    let mut m = mapping;
+    if likeness.mirror {
+        m = flipped_about(m, centre(&m), true);
+    }
+    m = turned(m, turn(&m) + likeness.angle);
+    m = resized(m, size(&m) * likeness.scale);
+    centred(m, at)
+}
+
 /// Inside the island, as large as it goes keeping the artwork's shape, in
 /// the label's own turn, square on the island's middle.
 pub fn fitted(mapping: Mapping, island: &[Vec2]) -> Mapping {
@@ -302,6 +317,27 @@ mod tests {
         let reflect = |p: Vec2| vec2(1.0 - p.x, p.y);
         for corner in corners(&mirrored) {
             assert!(corners(&a).iter().any(|c| near(reflect(*c), corner)), "{corner:?}");
+        }
+    }
+
+    /// A label carried with its island lands where the island's own points
+    /// went: its corners are the old corners put through the same move,
+    /// turn, scale and mirror.
+    #[test]
+    fn a_label_is_carried_with_its_island() {
+        let a = turned(centred(label(), vec2(0.3, 0.4)), 0.3);
+        let maps = [
+            crate::uv_editor::editing::turned(vec2(0.5, 0.5), 0.8).then(&crate::uv_editor::editing::moved(vec2(0.1, -0.2))),
+            crate::uv_editor::editing::scaled(vec2(0.2, 0.2), vec2(-1.5, 1.5)),
+        ];
+        for map in maps {
+            let island = [vec2(0.1, 0.1), vec2(0.6, 0.15), vec2(0.5, 0.7), vec2(0.15, 0.6)];
+            let moved: Vec<Vec2> = island.iter().map(|p| map.apply(*p)).collect();
+            let likeness = crate::uv_editor::editing::likeness(&island, &moved).unwrap();
+            let carried = carried(a, &likeness);
+            for (before, after) in corners(&a).iter().zip(corners(&carried)) {
+                assert!(near(map.apply(*before), after), "{:?} went to {after:?}, not {:?}", before, map.apply(*before));
+            }
         }
     }
 

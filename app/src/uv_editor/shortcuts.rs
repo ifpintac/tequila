@@ -5,12 +5,14 @@
 //! deleting labels, the rulers - and undo, redo and save mean what they
 //! mean everywhere.
 
+use super::selection::Mode;
 use super::tools::Tool;
 use tequila_core::math::{vec2, Vec2};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     Tool(Tool),
+    Mode(Mode),
     /// A nudge one step this way, or ten with Shift.
     Nudge(Vec2, bool),
     Delete,
@@ -26,19 +28,32 @@ pub enum Action {
     Snapping,
     Rulers,
     Help,
+    Cut,
+    Stitch,
+    /// Pinned, or with false unpinned.
+    Pin(bool),
+    Pack,
+    /// Quarter turns, clockwise as the editor shows them.
+    Quarter(i32),
+    /// Flipped across (left for right), or down.
+    Flip(bool),
 }
 
 /// Every key, by group, for the help popover: the keys as key caps, and
-/// what they do.
+/// what they do. In three columns, as `COLUMNS` splits them.
 pub const LIST: &[(&str, &[(&str, &str)])] = &[
     (
         "Tools",
         &[("V", "Select"), ("W", "Move"), ("E", "Rotate"), ("R", "Scale"), ("M", "Measure")],
     ),
     (
+        "What a click picks",
+        &[("1", "Labels"), ("2", "Islands"), ("3", "Edges"), ("4", "Vertices")],
+    ),
+    (
         "Selection",
         &[
-            ("Ctrl + A", "Select every label"),
+            ("Ctrl + A", "Select everything the mode picks"),
             ("Esc", "Select nothing, clear the measure"),
             ("Delete", "Delete the selected labels or guide"),
             ("Ctrl + D", "Duplicate the selected labels"),
@@ -50,10 +65,22 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
         "While dragging",
         &[
             ("Ctrl", "No snapping for this drag"),
-            ("Shift", "Turn by 15°"),
-            ("Shift", "Scale width and height apart"),
-            ("Shift", "Move only across or down; measure at 0, 45 or 90°"),
+            ("Shift", "Keep it straight: a move across or down, a turn in 15° steps, a measure at 0, 45 or 90°; a scale's width and height apart"),
             ("Alt", "Scale about the middle"),
+        ],
+    ),
+    (
+        "Island tools",
+        &[
+            ("C", "Cut along the selected edges"),
+            ("S", "Stitch the selected seams, or the seams between the selected islands"),
+            ("P", "Pin the selected vertices"),
+            ("Shift + P", "Unpin them"),
+            ("Ctrl + P", "Pack the selected islands, or all"),
+            ("]", "Turn a quarter clockwise"),
+            ("[", "Turn a quarter anticlockwise"),
+            ("Shift + H", "Flip horizontal"),
+            ("Shift + V", "Flip vertical"),
         ],
     ),
     (
@@ -86,6 +113,9 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
+/// Where the popover's columns begin in `LIST`.
+pub const COLUMNS: [usize; 3] = [0, 3, 5];
+
 /// The actions pressed this frame, each with the modifiers it was pressed
 /// with.
 pub fn read(ctx: &egui::Context) -> Vec<Action> {
@@ -105,12 +135,26 @@ pub fn action(key: egui::Key, modifiers: egui::Modifiers) -> Option<Action> {
     use egui::Key;
     let command = modifiers.command;
     let plain = !command && !modifiers.alt;
+    let only_shift = modifiers.shift && !command && !modifiers.alt;
     Some(match key {
         Key::V if !modifiers.any() => Action::Tool(Tool::Select),
         Key::W if !modifiers.any() => Action::Tool(Tool::Move),
         Key::E if !modifiers.any() => Action::Tool(Tool::Rotate),
         Key::R if !modifiers.any() => Action::Tool(Tool::Scale),
         Key::M if !modifiers.any() => Action::Tool(Tool::Measure),
+        Key::Num1 if !modifiers.any() => Action::Mode(Mode::Labels),
+        Key::Num2 if !modifiers.any() => Action::Mode(Mode::Islands),
+        Key::Num3 if !modifiers.any() => Action::Mode(Mode::Edges),
+        Key::Num4 if !modifiers.any() => Action::Mode(Mode::Vertices),
+        Key::C if !modifiers.any() => Action::Cut,
+        Key::S if !modifiers.any() => Action::Stitch,
+        Key::P if !modifiers.any() => Action::Pin(true),
+        Key::P if only_shift => Action::Pin(false),
+        Key::P if command && !modifiers.shift => Action::Pack,
+        Key::CloseBracket if !modifiers.any() => Action::Quarter(1),
+        Key::OpenBracket if !modifiers.any() => Action::Quarter(-1),
+        Key::H if only_shift => Action::Flip(true),
+        Key::V if only_shift => Action::Flip(false),
         Key::ArrowLeft if plain => Action::Nudge(vec2(-1.0, 0.0), modifiers.shift),
         Key::ArrowRight if plain => Action::Nudge(vec2(1.0, 0.0), modifiers.shift),
         Key::ArrowUp if plain => Action::Nudge(vec2(0.0, -1.0), modifiers.shift),
@@ -155,11 +199,29 @@ mod tests {
         assert_eq!(action(egui::Key::ArrowLeft, egui::Modifiers::SHIFT), Some(Action::Nudge(vec2(-1.0, 0.0), true)));
         assert_eq!(action(egui::Key::D, ctrl), Some(Action::Duplicate));
         assert_eq!(action(egui::Key::Z, ctrl), None, "undo is everywhere's, not the editor's");
-        // Every key the list names for a tool is the tool's.
+        // Every key the list names for a tool is the tool's, and for a mode
+        // the mode's.
         for info in super::super::tools::TOOLS {
             let key = egui::Key::from_name(info.key).unwrap();
             assert_eq!(action(key, none), Some(Action::Tool(info.tool)), "{}", info.name);
             assert!(LIST[0].1.iter().any(|(k, what)| *k == info.key && *what == info.name));
         }
+        for mode in Mode::ALL {
+            let key = egui::Key::from_name(mode.key_name()).unwrap();
+            assert_eq!(action(key, none), Some(Action::Mode(mode)));
+            assert!(LIST[1].1.iter().any(|(k, what)| *k == mode.key_name() && *what == mode.name()));
+        }
+        // Ctrl with a number is still the zoom.
+        assert_eq!(action(egui::Key::Num1, ctrl), Some(Action::Zoom(1.0)));
+        assert_eq!(action(egui::Key::P, none), Some(Action::Pin(true)));
+        assert_eq!(action(egui::Key::P, egui::Modifiers::SHIFT), Some(Action::Pin(false)));
+        assert_eq!(action(egui::Key::P, ctrl), Some(Action::Pack));
+        assert_eq!(action(egui::Key::V, egui::Modifiers::SHIFT), Some(Action::Flip(false)), "Shift + V flips, V alone selects");
+        assert_eq!(action(egui::Key::CloseBracket, none), Some(Action::Quarter(1)));
+        // Each group heads a column, and every row names one key.
+        assert_eq!(COLUMNS[0], 0);
+        assert!(COLUMNS.windows(2).all(|w| w[0] < w[1]) && *COLUMNS.last().unwrap() < LIST.len());
+        let shifts = LIST.iter().find(|(title, _)| *title == "While dragging").unwrap().1.iter().filter(|(k, _)| *k == "Shift").count();
+        assert_eq!(shifts, 1, "one Shift row while dragging, saying all it does");
     }
 }

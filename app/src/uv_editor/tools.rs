@@ -7,13 +7,16 @@
 //! canvas updates as the pointer moves, snapping it through
 //! `super::snapping`, and which ends as an edit when the button is let go.
 //!
-//! The layout engine's tools - cut and stitch, pin, straighten - join
-//! `Tool` and [`ENGINE_TOOLS`] when its editing is wired in: each begins a
-//! gesture of its own, and ends it as an engine command.
+//! The tools work on whatever the mode picks (`super::selection::Mode`):
+//! labels and textures, or the layout's own islands, edges and vertices,
+//! whose drag ends as one `uv.transform`. The layout engine's other edits -
+//! cut, stitch, pin, pack - are actions on the selection rather than tools
+//! (`super::actions`).
 
 use super::selection::Item;
 use crate::icons::Icon;
 use tequila_core::math::Vec2;
+use tequila_scene::uv::UvAffine;
 use tequila_texture::projection::Mapping;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -36,16 +39,12 @@ pub struct ToolInfo {
 }
 
 pub const TOOLS: [ToolInfo; 5] = [
-    ToolInfo { tool: Tool::Select, icon: Icon::Pointer, name: "Select", detail: "Click a label to select it, Shift-click to add one, drag on empty space to select with a box. Drag a label or its handles to move, scale or turn it.", key: "V" },
+    ToolInfo { tool: Tool::Select, icon: Icon::Pointer, name: "Select", detail: "Click to select what the mode picks - a label, an island, an edge, a vertex - Shift-click to add, drag on empty space to select with a box. Drag it or its handles to move, scale or turn it.", key: "V" },
     ToolInfo { tool: Tool::Move, icon: Icon::Move, name: "Move", detail: "Drag anywhere to move the selection. Shift keeps to across or down.", key: "W" },
     ToolInfo { tool: Tool::Rotate, icon: Icon::Turn, name: "Rotate", detail: "Drag anywhere to turn the selection about its middle. Shift turns by 15°.", key: "E" },
     ToolInfo { tool: Tool::Scale, icon: Icon::Scale, name: "Scale", detail: "Drag anywhere to scale the selection about its middle, keeping its shape. Shift scales width and height apart.", key: "R" },
     ToolInfo { tool: Tool::Measure, icon: Icon::Ruler, name: "Measure", detail: "Drag to measure a distance and an angle on the part. Shift keeps to 0, 45 or 90°. Esc clears it.", key: "M" },
 ];
-
-/// The layout engine's tools, in the toolbar's island group: none until its
-/// editing is wired in.
-pub const ENGINE_TOOLS: &[ToolInfo] = &[];
 
 impl Tool {
     /// Its name on the scripting channel.
@@ -136,6 +135,10 @@ pub enum Gesture {
     Guide { index: Option<usize>, across: bool, at: f32, removing: bool },
     /// A dimension drawn by the Measure tool.
     Measure { from: Vec2, to: Vec2 },
+    /// The layout's own islands, edges or vertices moved, scaled or turned:
+    /// the map so far, which the canvas draws them through and which, let
+    /// go, is one `uv.transform`; and the UV vertices it carries.
+    Layout { grab: Grab, from: Vec2, frame: Frame, current: UvAffine, moving: Vec<u32> },
 }
 
 #[cfg(test)]
