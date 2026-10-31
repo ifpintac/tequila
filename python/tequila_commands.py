@@ -239,12 +239,12 @@ class SceneCommands(_Commands):
         """
         return self._apply('scene.split_parts', {'node': node})
 
-    def unwrap_uvs(self, *, cone_degrees=_UNSET, crease_degrees=_UNSET, in_place=_UNSET, margin=_UNSET, node=_UNSET, respect_cuts=_UNSET):
-        r"""`scene.unwrap_uvs`: A part's surface laid out flat as its first UV set (`crate::uv`), so labels and textures can be placed on it anywhere; the sets it had move up one. With `respect_cuts`, the islands of its first set are kept, each laid out again whole. With `in_place`, the set it names is laid out again where it is - its islands kept, with `respect_cuts` - and no set moves.
+    def unwrap_uvs(self, *, cone_degrees=_UNSET, crease_degrees=_UNSET, in_place=_UNSET, margin=_UNSET, method=_UNSET, node=_UNSET, respect_cuts=_UNSET):
+        r"""`scene.unwrap_uvs`: A part's surface laid out flat as its first UV set (`crate::uv`), so labels and textures can be placed on it anywhere; the sets it had move up one. With `respect_cuts`, the islands of its first set are kept, each laid out again whole. With `in_place`, the set it names is laid out again where it is - its islands kept, with `respect_cuts` - and no set moves. Each piece is laid out by `method`: `conformal`, or `least_stretch` from there.
 
-        { "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "node": 2, "respect_cuts": true }
+        { "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "method": "conformal", "node": 2, "respect_cuts": true }
         """
-        return self._apply('scene.unwrap_uvs', {'cone_degrees': cone_degrees, 'crease_degrees': crease_degrees, 'in_place': in_place, 'margin': margin, 'node': node, 'respect_cuts': respect_cuts})
+        return self._apply('scene.unwrap_uvs', {'cone_degrees': cone_degrees, 'crease_degrees': crease_degrees, 'in_place': in_place, 'margin': margin, 'method': method, 'node': node, 'respect_cuts': respect_cuts})
 
     def rename(self, *, name=_UNSET, node=_UNSET):
         r"""`scene.rename`: A node's name.
@@ -461,7 +461,7 @@ class UvCommands(_Commands):
         return self._apply('uv.move_set', {'from': from_, 'node': node, 'to': to})
 
     def set_positions(self, *, node=_UNSET, set=_UNSET, uv=_UNSET, vertices=_UNSET):
-        r"""`uv.set_positions`: UV vertices of a part's UV set put where an edit worked out they go: `vertices` by their number in the layout, `uv` each one's place, `[u, v]`. What the tools that reshape a layout come down to (vertices lined up, one island's shape laid over another's) where no one affine map does it. Refused where it would fold the layout.
+        r"""`uv.set_positions`: UV vertices of a part's UV set put at new places: `vertices[i]`, by the layout's own number for it (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`, `[u, v]`. What a tool that reshapes the layout - a path laid straight, an island laid out as a grid, relaxed, welded or mirrored, vertices lined up, one island's shape laid over another's - worked out, as one step, where no one affine map does it. Refused where it would fold the layout.
 
         { "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.75, 0.5] ], "vertices": [3, 7] }
         """

@@ -465,7 +465,7 @@ mod tests {
         let (_, s) = shapes(&turned);
         let m = correspond(&s[0], &s[1], false).unwrap();
         let (vertices, places) = laid_over(&s[0], &s[1], &m, vec2(0.0, 0.0));
-        let out = crate::uv::set_positions(&turned, 0, &vertices, &places).unwrap();
+        let out = crate::uv::set_positions_from_lists(&turned, 0, &vertices, &places).unwrap();
         let (_, after) = shapes(&out);
         for (i, &j) in m.pairs.iter().enumerate() {
             assert!((after[1].uv[j as usize] - after[0].uv[i]).length() < 1e-6);

@@ -324,12 +324,13 @@ A part's surface laid out flat as its first UV set (`crate::uv`), so labels
 and textures can be placed on it anywhere; the sets it had move up one. With
 `respect_cuts`, the islands of its first set are kept, each laid out again
 whole. With `in_place`, the set it names is laid out again where it is - its
-islands kept, with `respect_cuts` - and no set moves.
+islands kept, with `respect_cuts` - and no set moves. Each piece is laid out
+by `method`: `conformal`, or `least_stretch` from there.
 
-`fs.commands.scene.unwrap_uvs(cone_degrees=..., crease_degrees=..., in_place=..., margin=..., node=..., respect_cuts=...)`
+`fs.commands.scene.unwrap_uvs(cone_degrees=..., crease_degrees=..., in_place=..., margin=..., method=..., node=..., respect_cuts=...)`
 
 ```json
-{ "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "node": 2, "respect_cuts": true }
+{ "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "method": "conformal", "node": 2, "respect_cuts": true }
 ```
 
 #### `scene.rename`
@@ -673,11 +674,12 @@ what the part wears follow it, and the sets it passes.
 
 #### `uv.set_positions`
 
-UV vertices of a part's UV set put where an edit worked out they go:
-`vertices` by their number in the layout, `uv` each one's place, `[u, v]`.
-What the tools that reshape a layout come down to (vertices lined up, one
-island's shape laid over another's) where no one affine map does it. Refused
-where it would fold the layout.
+UV vertices of a part's UV set put at new places: `vertices[i]`, by the
+layout's own number for it (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`,
+`[u, v]`. What a tool that reshapes the layout - a path laid straight, an
+island laid out as a grid, relaxed, welded or mirrored, vertices lined up,
+one island's shape laid over another's - worked out, as one step, where no
+one affine map does it. Refused where it would fold the layout.
 
 `fs.commands.uv.set_positions(node=..., set=..., uv=..., vertices=...)`
 

@@ -420,7 +420,7 @@ mod tests {
         let top: Vec<u32> = (0..layout.uv_vertices.len() as u32).filter(|&v| mesh.positions[layout.uv_vertices[v as usize].vertex as usize].z == 0.0).collect();
         let lowest = top.iter().map(|&v| layout.uv_vertices[v as usize].uv.y).fold(f32::INFINITY, f32::min);
         let places = line_up(&layout, &[top.clone()], LineUp { across: false, side: -1, against: None });
-        let out = crate::uv::set_positions(&mesh, 0, &places.vertices, &places.uv).unwrap();
+        let out = crate::uv::set_positions_from_lists(&mesh, 0, &places.vertices, &places.uv).unwrap();
         let after = UvLayout::new(&out, 0).unwrap();
         for &v in &top {
             assert!((after.uv_vertices[v as usize].uv.y - lowest).abs() < 1e-6);
@@ -428,7 +428,7 @@ mod tests {
         let middle = line_up(&layout, &[top.clone()], LineUp { across: false, side: 0, against: Some((0.0, 1.0)) });
         assert!(middle.uv.iter().all(|p| (p[1] - 0.5).abs() < 1e-6));
         let onto = onto_line(&layout, &[top.clone()]);
-        let out = crate::uv::set_positions(&mesh, 0, &onto.vertices, &onto.uv).unwrap();
+        let out = crate::uv::set_positions_from_lists(&mesh, 0, &onto.vertices, &onto.uv).unwrap();
         let after = UvLayout::new(&out, 0).unwrap();
         let points: Vec<Vec2> = top.iter().map(|&v| after.uv_vertices[v as usize].uv).collect();
         let (a, b) = (points[0], points[points.len() - 1]);
@@ -450,7 +450,7 @@ mod tests {
             .collect();
         let path = edge_chains(&layout, &top).remove(0).vertices;
         let even = spread(&layout, &mesh, &path, false);
-        let out = crate::uv::set_positions(&mesh, 0, &even.vertices, &even.uv).unwrap();
+        let out = crate::uv::set_positions_from_lists(&mesh, 0, &even.vertices, &even.uv).unwrap();
         let after = UvLayout::new(&out, 0).unwrap();
         let xs: Vec<f32> = path.iter().map(|&v| after.uv_vertices[v as usize].uv.x).collect();
         let steps: Vec<f32> = xs.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
@@ -476,7 +476,7 @@ mod tests {
         let layout = UvLayout::new(&mesh, 0).unwrap();
         let all: Vec<u32> = (0..layout.edges.len() as u32).collect();
         let places = square_edges(&layout, &mesh, &all, 15f32.to_radians());
-        let out = crate::uv::set_positions(&mesh, 0, &places.vertices, &places.uv).expect("no fold");
+        let out = crate::uv::set_positions_from_lists(&mesh, 0, &places.vertices, &places.uv).expect("no fold");
         let after = UvLayout::new(&out, 0).unwrap();
         for edge in &after.edges {
             let [a, b] = edge.vertices.map(|v| mesh.positions[v as usize]);
@@ -495,7 +495,7 @@ mod tests {
         let layout = UvLayout::new(&mesh, 0).unwrap();
         let all: Vec<u32> = (0..layout.edges.len() as u32).collect();
         let places = square_edges(&layout, &mesh, &all, 15f32.to_radians());
-        let out = crate::uv::set_positions(&mesh, 0, &places.vertices, &places.uv).expect("no fold");
+        let out = crate::uv::set_positions_from_lists(&mesh, 0, &places.vertices, &places.uv).expect("no fold");
         let after = UvLayout::new(&out, 0).unwrap();
         for edge in &after.edges {
             let [a, b] = edge.vertices.map(|v| mesh.positions[v as usize]);

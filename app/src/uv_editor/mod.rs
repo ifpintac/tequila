@@ -60,6 +60,7 @@ mod prefs;
 mod rulers;
 mod select_tools;
 mod selection;
+mod shape_tools;
 mod shortcuts;
 mod snapping;
 mod textures;
@@ -231,6 +232,8 @@ pub struct UvEditor {
     display: display::Display,
     /// The Select menu, asked open or shut by a script.
     select_open: Option<bool>,
+    /// The Unwrap, Shape and Symmetry panels' tools and their settings.
+    shape: shape_tools::State,
 }
 
 impl Default for UvEditor {
@@ -296,6 +299,7 @@ impl Default for UvEditor {
             checker_picture: None,
             display: display::Display::default(),
             select_open: None,
+            shape: shape_tools::State::default(),
         }
     }
 }
@@ -756,6 +760,7 @@ impl UvEditor {
                 self.cursor_to_selection(part, layout, &labels);
             }
             MenuAction::CursorToCentre => self.cursor_to_centre(part),
+            MenuAction::Shape(tool) => self.shape.pending.push(tool),
         }
     }
 
@@ -800,6 +805,7 @@ impl UvEditor {
                 let labels = canvas::labels_of(edits, part).to_vec();
                 self.cursor_to_selection(part, layout, &labels);
             }
+            Action::Shape(tool) => self.shape.pending.push(tool),
         }
     }
 
@@ -1208,6 +1214,9 @@ impl UvEditor {
         crate::field::Fold::new("Islands").id_salt("uv-islands").default_open(true).show(ui, |ui| {
             self.islands_panel(ui, part, layout, edits);
         });
+
+        // ---- Unwrap, Shape, Symmetry -----------------------------------------
+        self.shape_panels(ui, part, layout, project);
     }
 
     /// The help popover: every key, by group, as key caps.
@@ -1224,7 +1233,7 @@ impl UvEditor {
                     ui.small("Active while the editor is under the pointer or has the keyboard.");
                     // Columns of groups, each row the keys in a column of
                     // their own and what they do wrapped beside them.
-                    let (column, keys_width) = (300.0, 118.0);
+                    let (column, keys_width) = (280.0, 118.0);
                     // Rows as tight as the key caps, so the whole list fits beside
                     // the canvas without scrolling.
                     ui.spacing_mut().item_spacing.y = 2.0;
@@ -1290,6 +1299,7 @@ impl UvEditor {
             Some("layout") => Some(Ask::OnLayout),
             Some(other) => return Err(format!("`{other}` is not a way to place a label: layout, fit, centre, along or square")),
         };
+        self.shape_script(&change.shape)?;
         if let Some(pack) = &change.pack {
             if let Some(unit) = &pack.unit {
                 self.pack.unit = match unit.as_str() {
@@ -1595,7 +1605,8 @@ impl UvEditor {
                 Some(Measure::Angle) => "angle",
             })
             .set("export_dialog", self.export.open)
-            .set("message", self.message.as_ref().map(|(text, _, _)| Value::String(text.clone())).unwrap_or(Value::Null));
+            .set("message", self.message.as_ref().map(|(text, _, _)| Value::String(text.clone())).unwrap_or(Value::Null))
+            .set("shape", self.shape_state());
         if let Some((_, _, layout)) = &self.layout {
             // What is under the pointer, as the layout names it.
             let mut under = tequila_format::json_write::Object::new();
@@ -1672,7 +1683,7 @@ pub fn show(ctx: &egui::Context, editor: &mut UvEditor, project: &mut Project) {
     };
     if editor.unwrap_pending {
         editor.unwrap_pending = false;
-        let options = tequila_scene::uv::UnwrapOptions { cone_degrees: editor.cone, ..Default::default() };
+        let options = tequila_scene::uv::UnwrapOptions { cone_degrees: editor.cone, method: editor.shape.settings.again.method, ..Default::default() };
         project.end_interaction();
         match project.apply(Command::UnwrapUvs { node: part.node, options }) {
             Ok(_) => project.status = format!("Unwrapped {} to place its label on the layout", part.name),
@@ -1885,6 +1896,8 @@ impl UvEditor {
                 }
             }
         }
+        // The shape tools asked for this frame, by any of the ways there are.
+        self.run_shape_tools(part, layout, project, edits);
         if self.help {
             self.help_popover(ui.ctx());
         }
@@ -1932,7 +1945,7 @@ impl UvEditor {
             }
         }
         if edits.unwrap {
-            let options = tequila_scene::uv::UnwrapOptions { cone_degrees: self.cone, ..Default::default() };
+            let options = tequila_scene::uv::UnwrapOptions { cone_degrees: self.cone, method: self.shape.settings.again.method, ..Default::default() };
             project.end_interaction();
             match project.apply(Command::UnwrapUvs { node: part.node, options }) {
                 Ok(_) => project.status = format!("Unwrapped {}", part.name),

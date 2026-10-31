@@ -69,6 +69,8 @@ pub enum MenuAction {
     Arrange(super::arrange_tools::Request),
     CursorToSelection,
     CursorToCentre,
+    /// One of the shape tools.
+    Shape(super::shape_tools::Tool),
 }
 
 /// Where each item of the selection is drawn this frame: the gesture's
@@ -1086,6 +1088,8 @@ impl UvEditor {
             }
         }
 
+        self.draw_shape_overlay(&painter, &xform);
+
         // Vertices: every one in the Vertices mode when they can be told
         // apart, the selected, the one under the pointer, and the pins.
         if self.mode == Mode::Vertices && layout.typical_edge * xform.scale >= DOTS_AT {
@@ -1580,6 +1584,7 @@ fn draw_measure(painter: &egui::Painter, xform: &Xform, from: Vec2, to: Vec2, sc
 fn context_menu(ui: &mut egui::Ui, editor: &UvEditor, part: &Part, layout: &Layout) -> Option<MenuAction> {
     use super::actions::Action;
     let mut out = None;
+    let mut shape = None;
     let mut item = |ui: &mut egui::Ui, enabled: bool, text: &str, keys: &str, action: MenuAction| {
         let button = egui::Button::new(text).shortcut_text(crate::theme::keys(keys));
         if ui.add_enabled(enabled, button).clicked() {
@@ -1630,6 +1635,8 @@ fn context_menu(ui: &mut egui::Ui, editor: &UvEditor, part: &Part, layout: &Layo
             return picked;
         }
         ui.separator();
+        shape = super::shape_tools::context_menu(ui, editor, layout).map(MenuAction::Shape);
+        ui.separator();
     } else {
         let labels = !editor.selection.labels().is_empty();
         item(ui, labels, "Duplicate", "Ctrl+D", MenuAction::Duplicate);
@@ -1655,5 +1662,5 @@ fn context_menu(ui: &mut egui::Ui, editor: &UvEditor, part: &Part, layout: &Layo
     ui.separator();
     item(ui, !part.guides.is_empty(), if editor.prefs.guides_locked { "Unlock guides" } else { "Lock guides" }, "", MenuAction::LockGuides);
     item(ui, !part.guides.is_empty(), "Clear guides", "", MenuAction::ClearGuides);
-    out
+    out.or(shape)
 }

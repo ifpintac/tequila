@@ -168,7 +168,8 @@ pub enum Command {
     /// anywhere; the sets it had move up one. With `respect_cuts`, the
     /// islands of its first set are kept, each laid out again whole. With
     /// `in_place`, the set it names is laid out again where it is - its
-    /// islands kept, with `respect_cuts` - and no set moves.
+    /// islands kept, with `respect_cuts` - and no set moves. Each piece is
+    /// laid out by `method`: `conformal`, or `least_stretch` from there.
     ///
     /// The part gets a mesh of its own, the unwrapped one, under a new key:
     /// parts that shared the old mesh keep it, and undo points the part back
@@ -240,12 +241,13 @@ pub enum Command {
     /// labels and textures of what the part wears follow it, and the sets
     /// it passes.
     MoveUvSet { node: NodeId, from: usize, to: usize },
-    /// `uv.set_positions` — UV vertices of a part's UV set put where an
-    /// edit worked out they go: `vertices` by their number in the layout,
-    /// `uv` each one's place, `[u, v]`. What the tools that reshape a layout
-    /// come down to (vertices lined up, one island's shape laid over
-    /// another's) where no one affine map does it. Refused where it would
-    /// fold the layout.
+    /// `uv.set_positions` — UV vertices of a part's UV set put at new places:
+    /// `vertices[i]`, by the layout's own number for it
+    /// (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`, `[u, v]`. What a
+    /// tool that reshapes the layout - a path laid straight, an island laid
+    /// out as a grid, relaxed, welded or mirrored, vertices lined up, one
+    /// island's shape laid over another's - worked out, as one step, where
+    /// no one affine map does it. Refused where it would fold the layout.
     SetUvPositions { node: NodeId, set: usize, vertices: Vec<u32>, uv: Vec<[f32; 2]> },
     /// `uv.place_islands` — islands of a part's UV set each moved whole by
     /// an affine map of its own, `maps` one `[a, b, tx, c, d, ty]` for each
@@ -2456,7 +2458,11 @@ fn execute(
             edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
         }
         Command::SetUvPositions { node, set, vertices, uv } => {
-            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::set_positions(mesh, *set, vertices, uv))
+            if vertices.len() != uv.len() {
+                return Err(CommandError::InvalidValue("uv.set_positions needs one place for each vertex"));
+            }
+            let moves: Vec<(u32, tequila_core::math::Vec2)> = vertices.iter().zip(uv).map(|(&v, &[u, w])| (v, tequila_core::math::vec2(u, w))).collect();
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::set_positions(mesh, *set, &moves))
         }
         Command::PlaceUvIslands { node, set, islands, maps } => {
             edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::place_islands(mesh, *set, islands, maps))

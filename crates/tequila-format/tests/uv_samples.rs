@@ -348,7 +348,7 @@ fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
             places.extend(p);
         }
         picture(&mesh, &format!("{tag}-1-stack-before"), Fill::Islands);
-        let stacked = set_positions(&mesh, 0, &vertices, &places).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let stacked = set_positions_from_lists(&mesh, 0, &vertices, &places).unwrap_or_else(|e| panic!("{name}: {e}"));
         picture(&stacked, &format!("{tag}-1-stack-after"), Fill::Islands);
         let after = UvLayout::new(&stacked, 0).unwrap();
         for &other in &repeated[1..] {
@@ -385,7 +385,7 @@ fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
         let edges: Vec<u32> = (0..layout.edges.len() as u32).collect();
         let squared = vertices::square_edges(&layout, &mesh, &edges, 15f32.to_radians());
         if !squared.is_empty() {
-            if let Ok(out) = set_positions(&mesh, 0, &squared.vertices, &squared.uv) {
+            if let Ok(out) = set_positions_from_lists(&mesh, 0, &squared.vertices, &squared.uv) {
                 no_folds(&out, "squared");
             }
         }
@@ -400,5 +400,5 @@ fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
     let (island, m) = target.expect("Name R has Name L's first piece");
     let theirs = similar::IslandShape::of(&rl, &right, island);
     let (vertices, places) = similar::laid_over(&copied, &theirs, &m, theirs.centre() - copied.centre());
-    no_folds(&set_positions(&right, 0, &vertices, &places).unwrap(), "pasted");
+    no_folds(&set_positions_from_lists(&right, 0, &vertices, &places).unwrap(), "pasted");
 }

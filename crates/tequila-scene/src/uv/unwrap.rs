@@ -43,13 +43,16 @@ pub struct UnwrapOptions {
     /// first set: the other sets keep their numbers, so what reads each
     /// still reads it. An unwrap done again, not one more.
     pub in_place: Option<usize>,
+    /// How each chart is laid out flat: conformally, or with least stretch
+    /// from there ([`super::least_stretch`]).
+    pub method: super::least_stretch::Method,
 }
 
 impl Default for UnwrapOptions {
     fn default() -> Self {
         // Blender's Smart UV Project's angle, which splits a box into its
         // sides and a cylinder into a handful of strips.
-        UnwrapOptions { cone_degrees: 66.0, crease_degrees: 60.0, margin: 0.005, respect_cuts: false, in_place: None }
+        UnwrapOptions { cone_degrees: 66.0, crease_degrees: 60.0, margin: 0.005, respect_cuts: false, in_place: None, method: Default::default() }
     }
 }
 
@@ -99,7 +102,7 @@ pub fn unwrap(mesh: &Mesh, options: &UnwrapOptions) -> (Mesh, UnwrapReport) {
     let mut charts = Vec::new();
     let mut layouts: Vec<Layout> = Vec::new();
     while let Some(chart) = queue.pop() {
-        let layout = flatten(mesh, &keys, &normals, &chart);
+        let layout = flatten(mesh, &keys, &normals, &chart, options.method);
         if chart.kept && layout.projected && chart.triangles.len() > 1 {
             let pieces = grow_charts(mesh, &weld, &normals, options, Some(&chart.triangles));
             if pieces.len() > 1 {
@@ -378,8 +381,9 @@ struct Layout {
 }
 
 /// One chart laid out flat: conformally where that settles without folding,
-/// else projected along its direction.
-fn flatten(mesh: &Mesh, keys: &[u32], normals: &[Vec3], chart: &Chart) -> Layout {
+/// else projected along its direction; then, asked to, with least stretch
+/// from the conformal layout where that does not fold.
+fn flatten(mesh: &Mesh, keys: &[u32], normals: &[Vec3], chart: &Chart, method: super::least_stretch::Method) -> Layout {
     let mut local: HashMap<u32, usize> = HashMap::new();
     let mut points: Vec<Vec3> = Vec::new();
     let mut faces: Vec<[usize; 3]> = Vec::new();
@@ -402,6 +406,16 @@ fn flatten(mesh: &Mesh, keys: &[u32], normals: &[Vec3], chart: &Chart) -> Layout
         _ => (projected, true),
     };
     let uv = to_true_area(&points, &faces, uv);
+    let uv = match method {
+        super::least_stretch::Method::LeastStretch if !projected_only => {
+            let least = super::least_stretch::least_stretch(&points, &faces, &uv, false, &[], super::least_stretch::Axes::Both, super::least_stretch::ROUNDS);
+            match least {
+                Some((least, _)) if !folds(&least, &faces, Some(true)) => least,
+                _ => uv,
+            }
+        }
+        _ => uv,
+    };
     let area = super::flatten::areas(&points, &faces, &uv).1 as f32;
     let by_key = local.iter().map(|(&key, &i)| (key, uv[i])).collect();
     Layout { uv: by_key, area, projected: projected_only }
@@ -550,6 +564,24 @@ mod tests {
             let after = out.triangle(t).map(|v| out.uv_sets[1][v as usize]);
             assert_eq!(before, after);
         }
+    }
+
+    /// Laid out with least stretch, a dome is stretched less than laid out
+    /// conformally, and reads the right way without a fold.
+    #[test]
+    fn least_stretch_stretches_a_dome_less() {
+        let dome = sheet(10, 10, |x, z| 0.35 - ((x - 0.5).powi(2) + (z - 0.5).powi(2)) * 1.2);
+        let measure = |mesh: &Mesh| {
+            let points = &mesh.positions;
+            let faces: Vec<[usize; 3]> = (0..mesh.triangle_count()).map(|t| mesh.triangle(t).map(|v| v as usize)).collect();
+            super::super::least_stretch::stretch_left(points, &faces, &mesh.uv_sets[0])
+        };
+        let (conformal, _) = unwrap(&dome, &UnwrapOptions::default());
+        let (least, report) = unwrap(&dome, &UnwrapOptions { method: super::super::Method::LeastStretch, ..Default::default() });
+        assert_eq!(report.projected, 0);
+        assert!(measure(&least) < measure(&conformal) * 0.8, "{} against {}", measure(&least), measure(&conformal));
+        let layout = UvLayout::new(&least, 0).unwrap();
+        assert!(layout.folded_triangles().is_empty() && layout.islands.iter().all(|i| !i.mirrored));
     }
 
     /// A tube cut once along its length by hand: unwrapped keeping its

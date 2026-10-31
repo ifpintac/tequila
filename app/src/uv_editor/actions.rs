@@ -16,7 +16,7 @@ use super::{Edits, Part, UvEditor};
 use crate::icons::{self, Icon};
 use tequila_core::math::vec2;
 use tequila_scene::guides::GuideAxis;
-use tequila_scene::uv::{Alignment, DensityTarget, PackOptions, StraightenBy, UnwrapOptions, UvAffine, UvRect};
+use tequila_scene::uv::{Alignment, DensityTarget, PackOptions, StraightenBy, UvAffine, UvRect};
 use tequila_scene::Command;
 
 /// What the island tools do, as the toolbar, the panel and the keys offer
@@ -321,16 +321,8 @@ impl UvEditor {
                 let done = format!("Evened the size of {}", plural(islands.len(), "island", "islands"));
                 self.command(edits, Command::EvenUvDensity { node, set, islands, target: DensityTarget::Average }, action, done);
             }
-            Action::Unwrap => {
-                let islands = self.chosen_islands(layout);
-                if islands.is_empty() {
-                    let options = UnwrapOptions { cone_degrees: self.cone, respect_cuts: true, in_place: Some(set), ..Default::default() };
-                    self.command(edits, Command::UnwrapUvs { node, options }, action, "Unwrapped the layout again, its cuts kept".into());
-                } else {
-                    let done = format!("Laid {} out flat again", plural(islands.len(), "island", "islands"));
-                    self.command(edits, Command::ReflattenUvs { node, set, islands, pins: Vec::new(), repack: false }, action, done);
-                }
-            }
+            // As the Unwrap panel's options say: the shape tools do it.
+            Action::Unwrap => self.shape.pending.push(super::shape_tools::Tool::Unwrap),
             Action::FromFaces => {
                 let islands = layout.uv.islands_of_faces(&part.faces);
                 self.mode = Mode::Islands;
@@ -521,6 +513,7 @@ impl UvEditor {
         ui.horizontal_wrapped(|ui| {
             button(ui, self, Action::FromFaces, &mut act);
             button(ui, self, Action::CutFaces, &mut act);
+            self.project_faces_button(ui, part, layout);
         });
 
         crate::theme::section(ui, "Labels on an island");

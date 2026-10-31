@@ -41,10 +41,12 @@ pub enum Action {
     Arrange(super::arrange_tools::Tool),
     /// The 2D cursor to the middle of the selection.
     CursorToSelection,
+    /// One of the shape tools.
+    Shape(super::shape_tools::Tool),
 }
 
 /// Every key, by group, for the help popover: the keys as key caps, and
-/// what they do. In three columns, as `COLUMNS` splits them.
+/// what they do. In four columns, as `COLUMNS` splits them.
 pub const LIST: &[(&str, &[(&str, &str)])] = &[
     (
         "Tools",
@@ -100,6 +102,21 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Shape tools",
+        &[
+            ("Alt + U", "Unwrap again, as its options say"),
+            ("Alt + L", "Straight line"),
+            ("Alt + G", "Grid"),
+            ("Alt + B", "Rectangle"),
+            ("Alt + P", "Project from the faces' direction"),
+            ("Alt + R", "Relax"),
+            ("Alt + O", "Circle"),
+            ("Alt + W", "Weld nearby"),
+            ("Alt + M", "Match seam sides"),
+            ("Alt + Y", "Symmetrize"),
+        ],
+    ),
+    (
         "View",
         &[
             ("F", "Frame the selection"),
@@ -130,7 +147,7 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
 ];
 
 /// Where the popover's columns begin in `LIST`.
-pub const COLUMNS: [usize; 3] = [0, 3, 6];
+pub const COLUMNS: [usize; 4] = [0, 3, 5, 7];
 
 /// The actions pressed this frame, each with the modifiers it was pressed
 /// with.
@@ -152,6 +169,24 @@ pub fn action(key: egui::Key, modifiers: egui::Modifiers) -> Option<Action> {
     let command = modifiers.command;
     let plain = !command && !modifiers.alt;
     let only_shift = modifiers.shift && !command && !modifiers.alt;
+    let only_alt = modifiers.alt && !command && !modifiers.shift;
+    if only_alt {
+        use super::shape_tools::Tool;
+        let tool = match key {
+            Key::U => Tool::Unwrap,
+            Key::L => Tool::Straight,
+            Key::G => Tool::Grid,
+            Key::B => Tool::Rectangle,
+            Key::P => Tool::Project,
+            Key::R => Tool::Relax,
+            Key::O => Tool::Circle,
+            Key::W => Tool::Weld,
+            Key::M => Tool::MatchSeams,
+            Key::Y => Tool::Symmetrize,
+            _ => return None,
+        };
+        return Some(Action::Shape(tool));
+    }
     Some(match key {
         Key::V if !modifiers.any() => Action::Tool(Tool::Select),
         Key::W if !modifiers.any() => Action::Tool(Tool::Move),
@@ -248,6 +283,16 @@ mod tests {
         assert_eq!(action(egui::Key::F, none), Some(Action::FrameSelection));
         assert_eq!(action(egui::Key::C, shift), Some(Action::CursorToSelection));
         assert_eq!(action(egui::Key::U, shift), Some(Action::Arrange(super::super::arrange_tools::Tool::Upright)));
+        // The shape tools on Alt and a letter, as the list says, and each
+        // tool's own keys are those.
+        let alt = egui::Modifiers::ALT;
+        let shape = LIST.iter().find(|(title, _)| *title == "Shape tools").unwrap().1;
+        for (keys, _) in shape {
+            let letter = keys.trim_start_matches("Alt + ");
+            let Some(Action::Shape(tool)) = action(egui::Key::from_name(letter).unwrap(), alt) else { panic!("{keys} is no shape tool") };
+            assert_eq!(tool.keys(), *keys, "{}", tool.name());
+        }
+        assert_eq!(action(egui::Key::R, alt), Some(Action::Shape(super::super::shape_tools::Tool::Relax)), "Alt + R relaxes, R alone scales");
         // Each group heads a column, and every row names one key.
         assert_eq!(COLUMNS[0], 0);
         assert!(COLUMNS.windows(2).all(|w| w[0] < w[1]) && *COLUMNS.last().unwrap() < LIST.len());
