@@ -24,7 +24,7 @@
 
 use super::edit::UvError;
 use super::layout::{weld, UvLayout};
-use super::shape::{cannot, edge_ends, islands_of_pick, layout, Moves, Pick, ShapeError};
+use super::shape::{cannot, carried, edge_ends, islands_of_pick, layout, Moves, Patch, Pick, ShapeError};
 use crate::geometry::Mesh;
 use std::collections::HashMap;
 use tequila_core::math::{vec2, Vec2, Vec3};
@@ -306,6 +306,13 @@ pub struct SymmetrizeReport {
     /// Vertices of the part on the side made over with no pair: the part's
     /// two sides differ there.
     pub unpaired: usize,
+    /// Vertices whose pair is on an island that is not their island's
+    /// mirror: the two sides are cut differently there. Carried along, as
+    /// the unpaired are.
+    pub elsewhere: usize,
+    /// Places let go of their mirror's place, as a triangle there turned
+    /// over: the two sides are split into triangles differently.
+    pub eased: usize,
 }
 
 /// The least share of a part's vertices that must pair for it to count as
@@ -370,29 +377,108 @@ pub fn symmetrize(mesh: &Mesh, set: usize, plane: Plane, pick: &Pick, line: Line
     };
     let target: i8 = if from_plus { -1 } else { 1 };
     let islands = islands_of_pick(&layout, pick)?;
+    let mirrors = mirror_islands(&layout, &pairs);
     let mut moves = Moves::new();
     let mut unpaired: Vec<u32> = Vec::new();
+    let mut elsewhere: Vec<u32> = Vec::new();
+    let mut report = SymmetrizeReport { axis: mirror.axis, from_plus, ..Default::default() };
     for i in islands {
-        for &g in &layout.islands[i as usize].uv_vertices {
+        let island = &layout.islands[i as usize];
+        // An island across the plane is its own mirror, and an island of
+        // one side has its mirror on the other: a place whose pair is on
+        // neither is where the two sides are cut differently.
+        let own = mirrors[i as usize];
+        let mut placed: Vec<(u32, Vec2)> = Vec::new();
+        for &g in &island.uv_vertices {
             let pair = pairs[g as usize];
             let p = layout.uv_vertices[g as usize].uv;
             if pair == g {
-                moves.push((g, line.onto(p)));
+                placed.push((g, line.onto(p)));
             } else if side[g as usize] == target {
                 if pair == NONE {
                     unpaired.push(layout.uv_vertices[g as usize].weld);
+                } else if layout.uv_vertices[pair as usize].island != own {
+                    elsewhere.push(layout.uv_vertices[g as usize].weld);
                 } else {
-                    moves.push((g, line.reflect(layout.uv_vertices[pair as usize].uv)));
+                    placed.push((g, line.reflect(layout.uv_vertices[pair as usize].uv)));
                 }
             }
         }
+        if placed.is_empty() {
+            continue;
+        }
+        // The places with no mirror to go by carried along with the rest.
+        // Where the two sides are split into triangles differently, a
+        // sliver put on its mirror's places can turn over: its corners are
+        // let go to be carried too, a few times, until none does.
+        let patch = Patch::new(mesh, &layout, &island.triangles);
+        let weights = patch.weights();
+        let reads_right = !island.mirrored;
+        let mut held: Vec<(usize, Vec2)> = placed.iter().map(|&(g, p)| (patch.local[&g], p)).collect();
+        let mut laid = None;
+        for _ in 0..6 {
+            let Some(uv) = carried(&patch, &held, &weights) else { break };
+            if !patch.folds(&uv, reads_right) {
+                laid = Some(uv);
+                break;
+            }
+            let sign = if reads_right { 1.0 } else { -1.0 };
+            let area = |f: &[usize; 3]| super::flatten::facing(uv[f[0]], uv[f[1]], uv[f[2]]) * sign;
+            let hair = patch.faces.iter().map(|f| area(f).abs()).sum::<f32>() * super::flatten::FOLD_HAIR;
+            let turned: Vec<usize> = patch.faces.iter().filter(|f| area(f) < -hair).flat_map(|f| f.iter().copied()).collect();
+            let before = held.len();
+            held.retain(|(i, _)| !turned.contains(i) || pairs[patch.vertices[*i] as usize] == patch.vertices[*i]);
+            if held.len() == before {
+                break;
+            }
+            report.eased += before - held.len();
+        }
+        match laid {
+            Some(uv) => moves.extend(patch.moves(&uv)),
+            None => moves.extend(placed),
+        }
     }
-    unpaired.sort_unstable();
-    unpaired.dedup();
+    for list in [&mut unpaired, &mut elsewhere] {
+        list.sort_unstable();
+        list.dedup();
+    }
     if moves.is_empty() {
         return cannot("nothing picked is on the side to make over, or has a mirror");
     }
-    Ok((moves.clone(), SymmetrizeReport { axis: mirror.axis, from_plus, moved: moves.len(), unpaired: unpaired.len() }))
+    report.moved = moves.len();
+    report.unpaired = unpaired.len();
+    report.elsewhere = elsewhere.len();
+    Ok((moves, report))
+}
+
+/// The line the layout of the islands `pick` is on - every island when it
+/// picks nothing - is nearest symmetric about, for the part's mirror across
+/// `plane`: where, on the whole, each place and its pair have their middle,
+/// across (`vertical`) or down - or, where an island crosses the plane, the
+/// line its places on the plane are on, which a symmetric layout keeps
+/// where they are. What to mirror about when such an island does not have
+/// its middle there. None where nothing picked has a pair.
+pub fn fitted_line(mesh: &Mesh, set: usize, plane: Plane, pick: &Pick, vertical: bool) -> Result<Option<f32>, ShapeError> {
+    let layout = layout(mesh, set)?;
+    let mirror = checked_mirror(mesh, plane)?;
+    let pairs = place_pairs(&layout, &mirror);
+    let (mut middles, mut on): (Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new());
+    for i in islands_of_pick(&layout, pick)? {
+        for &g in &layout.islands[i as usize].uv_vertices {
+            let p = pairs[g as usize];
+            if p != NONE {
+                let middle = (layout.uv_vertices[g as usize].uv + layout.uv_vertices[p as usize].uv) * 0.5;
+                let at = if vertical { middle.x } else { middle.y };
+                if p == g { on.push(at) } else { middles.push(at) }
+            }
+        }
+    }
+    let list = if on.is_empty() { &mut middles } else { &mut on };
+    if list.is_empty() {
+        return Ok(None);
+    }
+    list.sort_by(|a, b| a.total_cmp(b));
+    Ok(Some(list[list.len() / 2]))
 }
 
 /// What snapping to the mirror did.
@@ -634,6 +720,17 @@ mod tests {
             let (a, b) = (after.uv_vertices[g].uv, after.uv_vertices[p as usize].uv);
             assert!((a.x - (1.0 - b.x)).abs() < 1e-5 && (a.y - b.y).abs() < 1e-5, "{a:?} {b:?}");
         }
+    }
+
+    #[test]
+    fn the_fitted_line_is_where_the_layout_is_symmetric_about() {
+        let mesh = wavy();
+        // Laid out symmetric about u = 0.5, dent and all aside.
+        let fitted = fitted_line(&mesh, 0, Plane::X, &Pick::default(), true).unwrap().unwrap();
+        assert!((fitted - 0.5).abs() < 1e-5, "{fitted}");
+        let moved = crate::uv::transform(&mesh, 0, &crate::uv::UvSelection::Islands(vec![0]), &crate::uv::UvAffine::translation(vec2(0.13, 0.0)), crate::uv::Pivot::Origin).unwrap();
+        let fitted = fitted_line(&moved, 0, Plane::X, &Pick::default(), true).unwrap().unwrap();
+        assert!((fitted - 0.63).abs() < 1e-5, "{fitted}");
     }
 
     #[test]

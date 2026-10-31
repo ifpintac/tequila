@@ -111,7 +111,9 @@ pub fn rectangle(mesh: &Mesh, set: usize, pick: &Pick, options: &RectangleOption
         let patch = Patch::new(mesh, &layout, &region.triangles);
         let held: Vec<(usize, Vec2)> = placed.iter().map(|&(g, p)| (patch.local[&g], p)).collect();
         let inside = match options.inside {
-            Inside::Reflatten => reflatten_holding(&patch, &held),
+            // Where the conformal layout folds, the surface's own weights
+            // kept above nothing, which inside a rectangle cannot.
+            Inside::Reflatten => reflatten_holding(&patch, &held).or_else(|| even_fill(&patch, &held, &patch.weights())),
             Inside::Smooth => even_fill(&patch, &held, &patch.even_weights()),
         };
         let Some(inside) = inside else { return cannot("the inside would fold: try spreading it evenly, or other corners") };
@@ -127,45 +129,46 @@ pub fn rectangle(mesh: &Mesh, set: usize, pick: &Pick, options: &RectangleOption
     Ok((moves, report))
 }
 
-/// The four places a loop turns most sharply, the way it runs round, each
-/// at least an eighth of the loop from the others: their places in it, in
+/// The four corners of a loop: of the places it turns most sharply, the
+/// way it runs round - and, for a loop with no corners to speak of, places
+/// evenly round it - the four that hold the most area between them. A
+/// rounded corner turns over several vertices and gives several
+/// candidates, of which the one furthest out wins; a thin strip's two
+/// corners a vertex apart are both there. Their places in the loop, in
 /// order.
 fn sharpest_turns(layout: &UvLayout, outer: &[u32]) -> [usize; 4] {
     let n = outer.len();
     let place = |k: usize| layout.uv_vertices[outer[k % n] as usize].uv;
     let points: Vec<Vec2> = (0..n).map(place).collect();
     let winding = polygon_area(&points).signum() as f32;
-    // A corner rounded over a few short edges turns over them all: the turn
-    // is measured between edges a few vertices either side.
-    let reach = (n / 40).max(1);
     let turn = |k: usize| {
-        let (a, b, c) = (place(k + n - reach), place(k), place(k + reach));
+        let (a, b, c) = (place(k + n - 1), place(k), place(k + 1));
         let (d1, d2) = (b - a, c - b);
         let cross = d1.y * d2.x - d1.x * d2.y;
         cross.atan2(d1.dot(d2)) * winding
     };
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| turn(b).total_cmp(&turn(a)));
-    let apart = (n / 8).max(1);
-    let mut chosen: Vec<usize> = Vec::new();
-    for k in order {
-        let near = chosen.iter().any(|&c| {
-            let d = (c as isize - k as isize).unsigned_abs();
-            d.min(n - d) < apart
-        });
-        if !near {
-            chosen.push(k);
-        }
-        if chosen.len() == 4 {
-            break;
+    let mut candidates: Vec<usize> = order.into_iter().take(24).collect();
+    candidates.extend((0..16).map(|i| i * n / 16));
+    candidates.sort_unstable();
+    candidates.dedup();
+    let m = candidates.len();
+    let mut best = ([0, n / 4, n / 2, 3 * n / 4], f64::NEG_INFINITY);
+    for a in 0..m {
+        for b in a + 1..m {
+            for c in b + 1..m {
+                for d in c + 1..m {
+                    let quad = [candidates[a], candidates[b], candidates[c], candidates[d]];
+                    let area = polygon_area(&quad.map(|k| points[k])).abs();
+                    if area > best.1 {
+                        best = (quad, area);
+                    }
+                }
+            }
         }
     }
-    // Fewer than four apart: the loop's quarters.
-    while chosen.len() < 4 {
-        chosen.push(chosen.len() * n / 4);
-    }
-    chosen.sort_unstable();
-    [chosen[0], chosen[1], chosen[2], chosen[3]]
+    best.0
 }
 
 /// A border loop laid on a rectangle with its corners at `corners`.
@@ -266,6 +269,21 @@ mod tests {
             let laid = UvLayout::new(&bulging, 0).unwrap().islands[0].uv_area;
             assert!((area / laid - 1.0).abs() < 0.02, "{area} {laid}");
         }
+    }
+
+    /// A long thin strip's corners are its four, though two of them are
+    /// only a few vertices apart: as a rectangle it is as long and as thin.
+    #[test]
+    fn a_long_strip_keeps_its_proportions() {
+        let strip = sheet(2, 40, |x, _| (x * 4.0).sin() * 0.05);
+        let positions: Vec<tequila_core::math::Vec3> = strip.positions.iter().map(|p| tequila_core::math::vec3(p.x, p.y, p.z * 0.06)).collect();
+        let mesh = unwrapped(Mesh::new(positions, strip.indices.clone()));
+        let (moves, _) = rectangle(&mesh, 0, &Pick::default(), &RectangleOptions::default()).unwrap();
+        let out = set_positions(&mesh, 0, &moves).unwrap();
+        let island = &UvLayout::new(&out, 0).unwrap().islands[0];
+        let size = island.max - island.min;
+        let ratio = size.x.max(size.y) / size.x.min(size.y);
+        assert!((ratio - 1.0 / 0.06).abs() < 1.0, "as long and thin as the part: {size:?}");
     }
 
     #[test]

@@ -15,6 +15,11 @@
 //! island's density, so the grid is the patch's own size; turned square to
 //! the layout the way that lies best over where the patch was, and put
 //! there. A grid of part of an island has the rest laid out again round it.
+//!
+//! An unwrap's pieces often end part way through a quad, leaving a
+//! triangle or two at their ends: a few such - one face in twenty, or two -
+//! are laid out again round the grid rather than refused; more, and the
+//! patch is no grid.
 
 use super::shape::{best_fit, box_middle, cannot, island_round, layout, regions, turned, Moves, Pick, ShapeError};
 use super::flatten::facing;
@@ -36,9 +41,12 @@ pub struct GridOptions {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GridReport {
     pub grids: usize,
-    /// The largest grid's columns and rows of faces.
+    /// The largest grid's columns of faces, across the layout, and rows,
+    /// down it.
     pub columns: usize,
     pub rows: usize,
+    /// Faces that are not four-sided, laid out round the grids.
+    pub odd: usize,
 }
 
 /// The faces `pick` names - picked on the part, or whole islands - laid
@@ -49,23 +57,27 @@ pub fn grid(mesh: &Mesh, set: usize, pick: &Pick, options: &GridOptions) -> Resu
     let mut report = GridReport::default();
     for region in regions(&layout, pick)? {
         let (quads, odd) = quads(mesh, &layout, &region.triangles);
-        if odd > 0 {
+        if odd > (region.triangles.len() / 20).max(2) || quads.is_empty() {
             return cannot(if odd == 1 { "1 face isn't four-sided".to_string() } else { format!("{odd} faces aren't four-sided") });
         }
+        report.odd += odd;
         let density = layout.islands[region.island as usize].density();
         if density <= 0.0 {
             return cannot(format!("island {} has no area to lay out", region.island + 1));
         }
         let mut placed: Vec<(u32, Vec2)> = Vec::new();
         for piece in walk(&quads)? {
-            let (columns, rows) = (piece.values().map(|c| c.0).max().unwrap_or(0) as usize, piece.values().map(|c| c.1).max().unwrap_or(0) as usize);
+            let (laid, upright) = lay_out(mesh, &layout, &region.triangles, &piece, density.sqrt(), options);
+            // Columns across the layout as it is laid, rows down it.
+            let (i, j) = (piece.values().map(|c| c.0).max().unwrap_or(0) as usize, piece.values().map(|c| c.1).max().unwrap_or(0) as usize);
+            let (columns, rows) = if upright { (j, i) } else { (i, j) };
             if columns * rows > report.columns * report.rows {
                 (report.columns, report.rows) = (columns, rows);
             }
             report.grids += 1;
-            placed.extend(lay_out(mesh, &layout, &region.triangles, &piece, density.sqrt(), options));
+            placed.extend(laid);
         }
-        if region.whole {
+        if region.whole && odd == 0 {
             moves.extend(placed);
         } else {
             moves.extend(island_round(mesh, &layout, region.island, &placed, &[], "round the grid")?);
@@ -203,8 +215,9 @@ fn walk(quads: &[[u32; 4]]) -> Result<Vec<HashMap<u32, (i32, i32)>>, ShapeError>
 
 /// One piece's grid on the layout: columns and rows as long as their edges
 /// on the part, `scale` layout units to the metre, square to the layout as
-/// it lies best over the old, and centred where the old was.
-fn lay_out(mesh: &Mesh, layout: &UvLayout, triangles: &[u32], piece: &HashMap<u32, (i32, i32)>, scale: f32, options: &GridOptions) -> Vec<(u32, Vec2)> {
+/// it lies best over the old, and centred where the old was; and whether
+/// its columns were turned to run down the layout.
+fn lay_out(mesh: &Mesh, layout: &UvLayout, triangles: &[u32], piece: &HashMap<u32, (i32, i32)>, scale: f32, options: &GridOptions) -> (Vec<(u32, Vec2)>, bool) {
     let columns = piece.values().map(|c| c.0).max().unwrap_or(0) as usize;
     let rows = piece.values().map(|c| c.1).max().unwrap_or(0) as usize;
     let mut by_place: HashMap<(i32, i32), u32> = HashMap::new();
@@ -258,7 +271,8 @@ fn lay_out(mesh: &Mesh, layout: &UvLayout, triangles: &[u32], piece: &HashMap<u3
     }
     // Turned square, the quarter that lies best over the old.
     let quarter = std::f32::consts::FRAC_PI_2;
-    let angle = (best_fit(&new, &old).0 / quarter).round() * quarter;
+    let quarters = (best_fit(&new, &old).0 / quarter).round();
+    let angle = quarters * quarter;
     let mut new: Vec<Vec2> = new.iter().map(|p| turned(*p, angle)).collect();
     if options.fit_square {
         let (low, high) = new.iter().fold((Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)), |(l, h), p| (l.min(*p), h.max(*p)));
@@ -268,7 +282,7 @@ fn lay_out(mesh: &Mesh, layout: &UvLayout, triangles: &[u32], piece: &HashMap<u3
         let shift = box_middle(old.iter().copied()) - box_middle(new.iter().copied());
         new.iter_mut().for_each(|p| *p = *p + shift);
     }
-    vertices.into_iter().zip(new).collect()
+    (vertices.into_iter().zip(new).collect(), (quarters as i32).rem_euclid(2) == 1)
 }
 
 #[cfg(test)]
@@ -321,8 +335,21 @@ mod tests {
             }))
             .collect();
         let indices: Vec<u32> = (0..3).flat_map(|i| [0, 1 + (i + 1) % 3, 1 + i]).collect();
-        let mesh = unwrapped(Mesh::new(positions, indices));
-        let error = grid(&mesh, 0, &Pick::default(), &GridOptions::default()).unwrap_err();
+        let fan = unwrapped(Mesh::new(positions, indices));
+        let error = grid(&fan, 0, &Pick::default(), &GridOptions::default()).unwrap_err();
         assert!(matches!(&error, ShapeError::Cannot(why) if why == "3 faces aren't four-sided"), "{error}");
+        // A grid with its corner quad made four triangles round a middle
+        // still lies out, the four following.
+        let mut sheet = sheet(10, 10, |_, _| 0.0);
+        let (a, b, c, d) = (sheet.indices[0], sheet.indices[1], sheet.indices[2], sheet.indices[5]);
+        let middle = sheet.positions.len() as u32;
+        let centre = (sheet.positions[a as usize] + sheet.positions[c as usize]) * 0.5;
+        sheet.positions.push(centre);
+        let rest = sheet.indices[6..].to_vec();
+        sheet.indices = [a, b, middle, b, c, middle, c, d, middle, d, a, middle].into_iter().chain(rest).collect();
+        let mesh = unwrapped(sheet);
+        let (moves, report) = grid(&mesh, 0, &Pick::default(), &GridOptions::default()).unwrap();
+        assert_eq!(report.odd, 4);
+        assert!(UvLayout::new(&set_positions(&mesh, 0, &moves).unwrap(), 0).unwrap().folded_triangles().is_empty());
     }
 }

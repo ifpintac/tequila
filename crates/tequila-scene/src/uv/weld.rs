@@ -5,8 +5,10 @@
 //! of a seam meets, its islands are one.
 //!
 //! Vertices of one triangle are never welded to each other: that would
-//! squash the triangle to nothing, which is no join. A group they would be
-//! in is left as it is, and counted.
+//! squash the triangle to nothing, which is no join. Nor are two places of
+//! one island, but the two sides of a slit: what lies between them would be
+//! squashed. Groups are made from the nearest pairs up, a pair that would
+//! put two corners of one triangle together left out, and counted.
 
 use super::layout::UnionFind;
 use super::shape::{cannot, edge_ends, layout, Moves, Pick, ShapeError};
@@ -22,7 +24,8 @@ pub struct WeldReport {
     pub places: usize,
     /// Places where copies of one vertex of the part came together.
     pub joined: usize,
-    /// Groups left alone, as they hold two corners of one triangle.
+    /// Pairs within the distance not welded, as that would put two corners
+    /// of one triangle together.
     pub skipped: usize,
 }
 
@@ -52,6 +55,7 @@ pub fn weld_nearby(mesh: &Mesh, set: usize, pick: &Pick, radius: f32) -> Result<
     chosen.sort_unstable();
     chosen.dedup();
     let index: HashMap<u32, usize> = chosen.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+    let mut report = WeldReport::default();
     // Corners of one triangle, which are never welded together.
     let mut sharing: HashSet<(u32, u32)> = HashSet::new();
     for t in 0..layout.island_of.len() {
@@ -69,34 +73,54 @@ pub fn weld_nearby(mesh: &Mesh, set: usize, pick: &Pick, radius: f32) -> Result<
     for (i, &v) in chosen.iter().enumerate() {
         cells.entry(cell(place(v))).or_default().push(i);
     }
-    let mut groups = UnionFind::new(chosen.len());
+    // Every pair within the distance, nearest first - copies of one vertex
+    // of the part sooner than others as near - each joining two groups
+    // only where no two of their vertices share a triangle: a row of
+    // vertices close above each other is never one group, as each is
+    // nearer its own copy across a seam than its neighbour's.
+    let mut pairs: Vec<(f32, usize, usize)> = Vec::new();
     for (i, &v) in chosen.iter().enumerate() {
         let (cx, cy) = cell(place(v));
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for &j in cells.get(&(cx + dx, cy + dy)).map(|l| l.as_slice()).unwrap_or(&[]) {
                     let w = chosen[j];
-                    if j > i && (place(w) - place(v)).length() <= radius && !sharing.contains(&(v.min(w), v.max(w))) {
-                        groups.union(i, j);
+                    let d = (place(w) - place(v)).length();
+                    let (a, b) = (&layout.uv_vertices[v as usize], &layout.uv_vertices[w as usize]);
+                    let same = a.weld == b.weld;
+                    // Two places of one island come together only as the two
+                    // sides of a slit: any others squash what is between them.
+                    if j > i && d <= radius && (a.island != b.island || same) && !sharing.contains(&(v.min(w), v.max(w))) {
+                        pairs.push((if same { d * 0.5 } else { d }, i, j));
                     }
                 }
             }
         }
     }
-    let mut members: HashMap<usize, Vec<u32>> = HashMap::new();
-    for (i, &v) in chosen.iter().enumerate() {
-        members.entry(groups.find(i)).or_default().push(v);
-    }
-    let mut report = WeldReport::default();
-    let mut moves = Moves::new();
-    let mut list: Vec<Vec<u32>> = members.into_values().filter(|m| m.len() > 1).collect();
-    list.sort();
-    for group in list {
-        let squashes = group.iter().enumerate().any(|(k, &a)| group[k + 1..].iter().any(|&b| sharing.contains(&(a.min(b), a.max(b)))));
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    let mut groups = UnionFind::new(chosen.len());
+    let mut members: HashMap<usize, Vec<u32>> = (0..chosen.len()).map(|i| (i, vec![chosen[i]])).collect();
+    for (_, i, j) in pairs {
+        let (a, b) = (groups.find(i), groups.find(j));
+        if a == b {
+            continue;
+        }
+        let squashes = members[&a].iter().any(|&p| members[&b].iter().any(|&q| sharing.contains(&(p.min(q), p.max(q)))));
         if squashes {
             report.skipped += 1;
             continue;
         }
+        groups.union(a, b);
+        let root = groups.find(a);
+        let mut all = members.remove(&a).unwrap_or_default();
+        all.extend(members.remove(&b).unwrap_or_default());
+        members.insert(root, all);
+    }
+    let mut moves = Moves::new();
+    let mut list: Vec<Vec<u32>> = members.into_values().filter(|m| m.len() > 1).collect();
+    list.iter_mut().for_each(|m| m.sort_unstable());
+    list.sort();
+    for group in list {
         let middle = group.iter().fold(Vec2::ZERO, |s, &v| s + place(v)) / group.len() as f32;
         let mut welds: Vec<u32> = group.iter().map(|&v| layout.uv_vertices[v as usize].weld).collect();
         welds.sort_unstable();
@@ -135,6 +159,10 @@ mod tests {
         assert_eq!(UvLayout::new(&parted, 0).unwrap().islands.len(), 2);
         let (moves, report) = weld_nearby(&parted, 0, &Pick::islands(vec![0, 1]), 0.006).unwrap();
         assert_eq!((report.places, report.joined, report.welded), (3, 3, 6), "{report:?}");
+        // Picked with a distance larger than the rows are apart, the rows
+        // still weld each to its own copy and not to each other.
+        let (_, wide) = weld_nearby(&parted, 0, &Pick::islands(vec![0, 1]), 0.3).unwrap();
+        assert_eq!(wide.joined, 3, "{wide:?}");
         let out = set_positions(&parted, 0, &moves).unwrap();
         let layout = UvLayout::new(&out, 0).unwrap();
         assert_eq!(layout.islands.len(), 1, "one island again");

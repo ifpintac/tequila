@@ -50,11 +50,6 @@ pub struct MatchReport {
 /// nothing is picked) - lined up with their copies; `pins` held.
 pub fn match_seams(mesh: &Mesh, set: usize, pick: &Pick, line_up: LineUp, mover: Mover, pins: &[u32]) -> Result<(Moves, MatchReport), ShapeError> {
     let layout = layout(mesh, set)?;
-    // Every UV vertex of each welded vertex: its copies.
-    let mut copies: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (g, v) in layout.uv_vertices.iter().enumerate() {
-        copies.entry(v.weld).or_default().push(g as u32);
-    }
     let picked: Vec<u32> = if !pick.vertices.is_empty() {
         layout.uv_vertices_of(&pick.vertices)
     } else if !pick.edges.is_empty() {
@@ -67,15 +62,38 @@ pub fn match_seams(mesh: &Mesh, set: usize, pick: &Pick, line_up: LineUp, mover:
         let islands = islands_of_pick(&layout, pick)?;
         islands.iter().flat_map(|&i| layout.islands[i as usize].uv_vertices.iter().copied()).collect()
     };
-    // Each welded vertex once, with the side picked first.
+    // Each welded vertex once, with the side picked first, and its copies
+    // across the seams it is on: those along the picked run where it is
+    // on one - a corner of an island is on two seams, and only one is
+    // being lined up - else every seam's.
+    let mut picked_sorted = picked.clone();
+    picked_sorted.sort_unstable();
+    let is_picked = |g: u32| picked_sorted.binary_search(&g).is_ok();
+    let mut across: HashMap<u32, Vec<(u32, bool)>> = HashMap::new();
+    for edge in &layout.edges {
+        let (super::layout::EdgeKind::Seam, Some(twin)) = (edge.kind, edge.twin) else { continue };
+        let twin = &layout.edges[twin as usize];
+        for (k, &g) in edge.ends.iter().enumerate() {
+            let other = edge.ends[1 - k];
+            let weld = layout.uv_vertices[g as usize].weld;
+            if let Some(&copy) = twin.ends.iter().find(|&&c| layout.uv_vertices[c as usize].weld == weld) {
+                across.entry(g).or_default().push((copy, is_picked(other)));
+            }
+        }
+    }
     let mut groups: BTreeMap<u32, (u32, Vec<u32>)> = BTreeMap::new();
     for &g in &picked {
         let weld = layout.uv_vertices[g as usize].weld;
-        let all = &copies[&weld];
-        if all.len() < 2 {
+        let Some(sides) = across.get(&g) else { continue };
+        let along = sides.iter().any(|(_, run)| *run);
+        let mut all: Vec<u32> = sides.iter().filter(|(_, run)| *run || !along).map(|(c, _)| *c).collect();
+        all.push(g);
+        all.sort_unstable();
+        all.dedup();
+        if all.len() < 2 || groups.contains_key(&weld) {
             continue;
         }
-        groups.entry(weld).or_insert_with(|| (g, all.clone()));
+        groups.insert(weld, (g, all));
     }
     if groups.is_empty() {
         return cannot("none of the picked vertices is on a seam");
@@ -182,6 +200,22 @@ mod tests {
             .collect();
         let parted = cut(&mesh, 0, &edges, &CutOptions { reflatten: false, gap: 0.1 }).unwrap();
         transform(&parted, 0, &UvSelection::Islands(vec![1]), &UvAffine::translation(vec2(0.0, 0.07)), Pivot::Origin).unwrap()
+    }
+
+    /// The seam picked as the run of its vertices on one side: the corner
+    /// vertices are on the sheet's edge too, but only this seam lines up.
+    #[test]
+    fn a_picked_run_lines_up_with_its_own_seam_only() {
+        let mesh = halves();
+        let layout = UvLayout::new(&mesh, 0).unwrap();
+        let run: Vec<u32> = layout.islands[0].uv_vertices.iter().map(|&g| layout.uv_vertices[g as usize].vertex).filter(|&v| (mesh.positions[v as usize].x - 0.5).abs() < 1e-5).collect();
+        assert_eq!(run.len(), 3);
+        let (moves, report) = match_seams(&mesh, 0, &Pick::vertices(run), LineUp::Height, Mover::Other, &[]).unwrap();
+        assert_eq!(report.vertices, 3);
+        let out = set_positions(&mesh, 0, &moves).unwrap();
+        let after = UvLayout::new(&out, 0).unwrap();
+        let before = UvLayout::new(&mesh, 0).unwrap();
+        assert!((after.islands[1].centre - before.islands[1].centre - vec2(0.0, -0.07)).length() < 1e-4);
     }
 
     #[test]

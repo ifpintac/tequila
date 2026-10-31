@@ -284,6 +284,13 @@ pub(crate) fn even_fill(patch: &Patch, held: &[(usize, Vec2)], weights: &[(usize
 /// where it is. None where that folds.
 pub(crate) fn follow(patch: &Patch, held: &[(usize, Vec2)], weights: &[(usize, usize, f64)]) -> Option<Vec<Vec2>> {
     let mirrored = patch.signed_area(&patch.uv) < 0.0;
+    let out = carried(patch, held, weights)?;
+    (!patch.folds(&out, !mirrored)).then_some(out)
+}
+
+/// As [`follow`], folded or not: for a tool that eases its moves where
+/// they fold.
+pub(crate) fn carried(patch: &Patch, held: &[(usize, Vec2)], weights: &[(usize, usize, f64)]) -> Option<Vec<Vec2>> {
     let mut fixed: Vec<Option<Vec2>> = vec![None; patch.len()];
     for &(i, p) in held {
         fixed[i] = Some(p - patch.uv[i]);
@@ -292,8 +299,7 @@ pub(crate) fn follow(patch: &Patch, held: &[(usize, Vec2)], weights: &[(usize, u
     // A hair of pull toward staying put, so a piece no move reaches stays.
     let mean = weights.iter().map(|e| e.2).sum::<f64>() / weights.len().max(1) as f64;
     let moved = harmonic(&zero, &fixed, weights, mean * 1e-9)?;
-    let out: Vec<Vec2> = patch.uv.iter().zip(&moved).map(|(p, d)| *p + *d).collect();
-    (!patch.folds(&out, !mirrored)).then_some(out)
+    Some(patch.uv.iter().zip(&moved).map(|(p, d)| *p + *d).collect())
 }
 
 /// The values on a graph's vertices, `fixed` where they are given and each
@@ -703,7 +709,11 @@ pub(crate) fn island_round(mesh: &Mesh, layout: &UvLayout, island: u32, placed: 
         held.iter().for_each(|&(i, p)| uv[i] = p);
         return Ok(patch.moves(&uv));
     }
-    match reflatten_holding(&patch, &held) {
+    // As true to the surface as it can be; where that folds - long thin
+    // triangles' angles pull the wrong way - each vertex the average of its
+    // neighbours, which inside a convex border cannot fold.
+    let laid = reflatten_holding(&patch, &held).or_else(|| even_fill(&patch, &held, &patch.weights())).or_else(|| even_fill(&patch, &held, &patch.even_weights()));
+    match laid {
         Some(uv) => Ok(patch.moves(&uv)),
         None => cannot(format!("island {} would fold {what}: cut it, or pick less", island + 1)),
     }
