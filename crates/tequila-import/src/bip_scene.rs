@@ -860,10 +860,14 @@ pub(crate) fn read(bytes: &[u8], name: &str, pictures: Pictures, quality: Tessel
 
     // The materials, then each body's.
     let mut scene = RawScene { source_unit: Some(LengthUnit::Millimetre), tessellation: Some(quality.label().to_string()), ..RawScene::default() };
+    // Its own folder even when two packages open in the same instant, as
+    // tests on a busy machine do: the clock alone let one remove the other's.
+    static OPENED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let scratch = std::env::temp_dir().join(format!(
-        "tequila-ksp-{}-{}",
+        "tequila-ksp-{}-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0),
+        OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     let materials = materials(&file, &pictures, &scratch, &mut scene, &mut builder.notes);
     let _ = std::fs::remove_dir_all(&scratch);
