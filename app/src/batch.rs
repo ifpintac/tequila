@@ -777,6 +777,8 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
         ground_illumination: job.config.ground_illumination,
         light_materials: job.config.light_source_materials,
         light_groups: keeping,
+        shadow_glass: job.config.shadow_glass(),
+        manifold_caustics: job.config.manifold_caustics(),
     };
     let translation = if keeping {
         let names = translate::Names { objects: job.object_names.clone(), materials: job.material_names.clone() };
@@ -2478,6 +2480,134 @@ mod tests {
                 assert!((a[c] - b[c]).abs() < 0.15 * a[c].max(20.0), "{name}: dispersion tinted the glass, {a:.1?} to {b:.1?}");
             }
         }
+    }
+
+    /// A box from `min` to `max` with a normal per face, for glass whose
+    /// faces are flat.
+    fn glass_block(min: Vec3, max: Vec3) -> tequila_render_core::scene::Mesh {
+        let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+        let corner = |x: usize, y: usize, z: usize| vec3([min.x, max.x][x], [min.y, max.y][y], [min.z, max.z][z]);
+        // Each face's corners counter-clockwise seen from outside.
+        let faces = [
+            (Vec3::X, [corner(1, 0, 0), corner(1, 1, 0), corner(1, 1, 1), corner(1, 0, 1)]),
+            (-Vec3::X, [corner(0, 0, 1), corner(0, 1, 1), corner(0, 1, 0), corner(0, 0, 0)]),
+            (Vec3::Y, [corner(0, 1, 0), corner(0, 1, 1), corner(1, 1, 1), corner(1, 1, 0)]),
+            (-Vec3::Y, [corner(0, 0, 0), corner(1, 0, 0), corner(1, 0, 1), corner(0, 0, 1)]),
+            (Vec3::Z, [corner(0, 0, 1), corner(1, 0, 1), corner(1, 1, 1), corner(0, 1, 1)]),
+            (-Vec3::Z, [corner(0, 1, 0), corner(1, 1, 0), corner(1, 0, 0), corner(0, 0, 0)]),
+        ];
+        for (normal, quad) in faces {
+            let base = positions.len() as u32;
+            positions.extend_from_slice(&quad);
+            normals.extend_from_slice(&[normal; 4]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        tequila_render_core::scene::Mesh::new(positions, indices).with_normals(normals)
+    }
+
+    /// The demo's sphere and floor, in the dark but for a dim sky and a
+    /// point light high above at `lamp`, with a wide slab of clear glass
+    /// between them when `covered`.
+    fn under_a_cover(covered: bool, lamp: Vec3) -> tequila_render_core::scene::SceneSnapshot {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{Light, LightKind, LightSet, PointLight};
+        let demo = tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        let (mut meshes, mut instances, mut materials) = (demo.meshes.clone(), demo.instances.clone(), demo.materials.clone());
+        if covered {
+            meshes.push(Arc::new(glass_block(vec3(-6.0, 2.6, -6.0), vec3(6.0, 2.7, 6.0))));
+            materials.push(tequila_materials::openpbr::Material {
+                transmission_color: Spectrum::ONE,
+                transmission_depth: 0.0,
+                ..tequila_materials::material_type::MaterialType::GlassSolid.defaults()
+            });
+            instances.push(tequila_render_core::scene::Instance::new(InstanceId(2), MeshId(2), MaterialId(2)));
+        }
+        let lamp = Light::new(LightKind::Point(PointLight { position: lamp, intensity: Spectrum::splat(40.0), radius: 0.0 }));
+        let mut scene = tequila_render_core::scene::SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.02))))
+            .with_lights(Arc::new(LightSet::new(vec![lamp])));
+        scene.background = Background::Environment;
+        scene
+    }
+
+    /// `scene` through `engine` under `config`'s lighting, from the test
+    /// job's camera: the mean of the developed image.
+    fn developed_mean(name: &str, engine: tequila_scene::render::RenderEngine, scene: tequila_render_core::scene::SceneSnapshot, config: IntegratorConfig) -> f64 {
+        let directory = scratch(&format!("tequila-glass-{name}-{}", engine.key()));
+        let renderer = BatchRenderer::new();
+        let mut render = job(1, &directory, RenderSettings {
+            engine,
+            width: 96, height: 72, max_samples: 128, denoise: false,
+            ..Default::default()
+        });
+        render.scene = Arc::new(scene);
+        render.config = config;
+        renderer.submit(render);
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { preview, .. } => {
+                preview.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>() / (preview.len() / 4 * 3) as f64
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// The demo under a slab of glass and without, lit from `lamp`, in both
+    /// engines, under `config`: each engine's two means.
+    fn covered_and_bare(name: &str, config: IntegratorConfig, lamp: Vec3) -> [(f64, f64); 2] {
+        [tequila_scene::render::RenderEngine::Tequila, tequila_scene::render::RenderEngine::CyclesCpu].map(|engine| {
+            let covered = developed_mean(&format!("{name}-covered"), engine, under_a_cover(true, lamp), config.clone());
+            let bare = developed_mean(&format!("{name}-bare"), engine, under_a_cover(false, lamp), config.clone());
+            println!("{}: {covered:.2} under the glass, {bare:.2} without", engine.key());
+            (covered, bare)
+        })
+    }
+
+    /// Clear glass lets a lamp's light through to what is under it, in
+    /// Cycles as in Tequila's renderer with caustics off: under a wide slab
+    /// of it, the demo's sphere and floor are lit by a point light above,
+    /// as bright in both, and darker than without the slab by much the same
+    /// share - what its two faces reflect. Cycles' glass stopped every
+    /// shadow ray, and under the slab the lamp was found only by the bounces
+    /// that refracted into it, which Cycles' point light, a sphere however
+    /// small, lets them: specks. Skipped where Cycles is not installed.
+    #[test]
+    fn a_part_under_clear_glass_is_lit_through_it_in_both_renderers() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let [(tequila, tequila_bare), (cycles, cycles_bare)] = covered_and_bare("off", IntegratorConfig::product(), vec3(0.6, 5.0, 0.8));
+        let (tequila_share, cycles_share) = (tequila / tequila_bare, cycles / cycles_bare);
+        assert!(cycles_share > 0.8, "under clear glass Cycles kept {cycles_share:.3} of the light, Tequila {tequila_share:.3}");
+        assert!((tequila_share - cycles_share).abs() < 0.05, "under clear glass Tequila kept {tequila_share:.3} of the light, Cycles {cycles_share:.3}");
+        assert!((cycles / tequila - 1.0).abs() < 0.1, "under clear glass Cycles' image is {cycles:.2}, Tequila's {tequila:.2}");
+    }
+
+    /// With manifold caustics a lamp's light through glass is solved for, by
+    /// Tequila's renderer and by Cycles' own manifold next event estimation:
+    /// the demo under the slab is lit through it in both, as bright, while
+    /// shadow rays stop at the glass. The lamp straight overhead: off to the
+    /// side, Cycles' walk finds no path in bands across the floor and the
+    /// sphere, and a quarter of the light under the slab goes, which
+    /// Tequila's renderer does not show. Skipped where Cycles is not
+    /// installed.
+    #[test]
+    fn manifold_caustics_light_a_part_under_glass_in_both_renderers() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let config = IntegratorConfig {
+            caustics: true,
+            caustics_method: tequila_render_core::settings::CausticsMethod::Manifold,
+            ..IntegratorConfig::product()
+        };
+        let [(tequila, tequila_bare), (cycles, cycles_bare)] = covered_and_bare("manifold", config, vec3(0.0, 5.0, 0.0));
+        let (tequila_share, cycles_share) = (tequila / tequila_bare, cycles / cycles_bare);
+        assert!(tequila_share > 0.8 && cycles_share > 0.8, "through the slab by manifold caustics Tequila kept {tequila_share:.3} of the light, Cycles {cycles_share:.3}");
+        assert!((tequila_share - cycles_share).abs() < 0.05, "through the slab by manifold caustics Tequila kept {tequila_share:.3} of the light, Cycles {cycles_share:.3}");
     }
 
     /// A thin-walled shell passes light straight through, in Cycles as in
@@ -5083,6 +5213,330 @@ mod tests {
             Ok(false) => RenderEngine::CyclesCpu,
         };
         assert_eq!(engine_for(&RenderSettings::default(), false).0, expected);
+    }
+
+    /// A surface of revolution about the vertical through the origin:
+    /// `profile`, (radius, height) pairs from a point on the axis to another,
+    /// turned `around` times, wound so its outside is to the right of the
+    /// profile as it runs, and smooth.
+    fn lathe(profile: &[(f32, f32)], around: usize) -> tequila_render_core::scene::Mesh {
+        let last = profile.len() - 1;
+        let mut positions = Vec::new();
+        let mut rings = Vec::new();
+        for (i, &(r, y)) in profile.iter().enumerate() {
+            let start = positions.len() as u32;
+            if i == 0 || i == last {
+                positions.push(vec3(0.0, y, 0.0));
+            } else {
+                for j in 0..around {
+                    let phi = j as f32 / around as f32 * std::f32::consts::TAU;
+                    positions.push(vec3(r * phi.cos(), y, r * phi.sin()));
+                }
+            }
+            rings.push(start);
+        }
+        let mut indices = Vec::new();
+        for i in 0..last {
+            for j in 0..around {
+                let k = (j + 1) % around;
+                let at = |ring: usize, j: usize| if ring == 0 || ring == last { rings[ring] } else { rings[ring] + j as u32 };
+                let (a, b, c, d) = (at(i, j), at(i, k), at(i + 1, j), at(i + 1, k));
+                // Off the first pole and onto the last, a ring's quad is
+                // one triangle.
+                if i != 0 {
+                    indices.extend_from_slice(&[a, c, b]);
+                }
+                if i + 1 != last {
+                    indices.extend_from_slice(&[b, c, d]);
+                }
+            }
+        }
+        let mut mesh = tequila_render_core::scene::Mesh::new(positions, indices);
+        mesh.compute_smooth_normals();
+        mesh
+    }
+
+    /// A quarter circle of `steps` points from `from` round to `to` about
+    /// `centre`, for a profile's rounded corner.
+    fn corner(centre: (f32, f32), radius: f32, from: f32, to: f32, steps: usize) -> Vec<(f32, f32)> {
+        (0..=steps)
+            .map(|i| {
+                let a = (from + (to - from) * i as f32 / steps as f32).to_radians();
+                (centre.0 + radius * a.cos(), centre.1 + radius * a.sin())
+            })
+            .collect()
+    }
+
+    /// A glass ball and a perfume flacon - solid glass, a coloured liquid
+    /// inside it, a gold cap - on a pale floor, lit from behind by a spot
+    /// and a softbox so their caustics fall towards the camera, under a dim
+    /// sky.
+    fn caustics_studio() -> (tequila_render_core::scene::SceneSnapshot, Camera) {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::math::Transform;
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_materials::openpbr::Material;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{AreaLight, Light, LightKind, LightSet, SpotLight};
+        use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
+        let floor = Mesh::new(vec![vec3(-3.0, 0.0, -3.0), vec3(3.0, 0.0, -3.0), vec3(3.0, 0.0, 3.0), vec3(-3.0, 0.0, 3.0)], vec![0, 2, 1, 0, 3, 2])
+            .with_normals(vec![Vec3::Y; 4]);
+        let ball = tequila_scene::demo::uv_sphere(0.1, 160, 80);
+        // The flacon: a rounded block of glass 0.12 wide and 0.15 high,
+        // its shoulder narrowing to a neck.
+        let mut outer = vec![(0.0, 0.0)];
+        outer.extend(corner((0.05, 0.012), 0.012, -90.0, 0.0, 6));
+        outer.extend(corner((0.05, 0.128), 0.012, 0.0, 90.0, 6));
+        outer.extend([(0.03, 0.142), (0.016, 0.148), (0.016, 0.16), (0.0, 0.16)]);
+        let flacon = lathe(&outer, 128);
+        let mut inner = vec![(0.0, 0.016)];
+        inner.extend(corner((0.034, 0.03), 0.014, -90.0, 0.0, 6));
+        inner.extend(corner((0.034, 0.1), 0.014, 0.0, 90.0, 6));
+        inner.push((0.0, 0.114));
+        let liquid = lathe(&inner, 128);
+        let cap = lathe(&[(0.0, 0.155), (0.024, 0.155), (0.026, 0.157), (0.026, 0.198), (0.024, 0.2), (0.0, 0.2)], 96);
+
+        let clear = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, ..MaterialType::GlassSolid.defaults() };
+        let scent = Material {
+            transmission_color: Spectrum { r: 0.95, g: 0.55, b: 0.35 },
+            transmission_depth: 0.05,
+            specular_ior: 1.36,
+            ..MaterialType::Liquid.defaults()
+        };
+        let gold = Material::metal(tequila_materials::fresnel::metals::GOLD, 0.15);
+        let pale = Material { base_color: Spectrum::splat(0.75), ..MaterialType::Diffuse.defaults() };
+        let meshes = vec![Arc::new(floor), Arc::new(ball), Arc::new(flacon), Arc::new(liquid), Arc::new(cap)];
+        let materials = vec![pale, clear.clone(), clear, scent, gold];
+        let at = |x: f32, y: f32, z: f32| Transform::translation(vec3(x, y, z));
+        let instances = vec![
+            Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
+            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(at(-0.17, 0.1, 0.02)),
+            Instance::new(InstanceId(2), MeshId(2), MaterialId(2)).with_transform(at(0.13, 0.0, -0.03)),
+            Instance::new(InstanceId(3), MeshId(3), MaterialId(3)).with_transform(at(0.13, 0.0, -0.03)),
+            Instance::new(InstanceId(4), MeshId(4), MaterialId(4)).with_transform(at(0.13, 0.0, -0.03)),
+        ];
+        let towards = |from: Vec3, to: Vec3| (to - from).normalize();
+        let spot_at = vec3(-0.45, 0.62, -0.6);
+        let spot = Light::new(LightKind::Spot(SpotLight {
+            position: spot_at,
+            direction: towards(spot_at, vec3(-0.12, 0.0, 0.1)),
+            intensity: Spectrum::splat(1.6),
+            inner_angle: 12f32.to_radians(),
+            outer_angle: 22f32.to_radians(),
+            falloff: 1.0,
+        }));
+        // The softbox faces the flacon: cross(u, v) towards it.
+        let box_at = vec3(0.55, 0.5, -0.55);
+        let facing = towards(box_at, vec3(0.13, 0.05, -0.03));
+        let side = facing.cross(Vec3::Y).normalize();
+        let up = side.cross(facing).normalize();
+        let softbox = Light::new(LightKind::Area(AreaLight {
+            position: box_at,
+            half_u: up * 0.07,
+            half_v: side * 0.07,
+            radiance: Spectrum::splat(60.0),
+            disc: false,
+            two_sided: false,
+            spread: std::f32::consts::PI,
+        }));
+        let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.025))))
+            .with_lights(Arc::new(LightSet::new(vec![spot, softbox])));
+        scene.background = Background::Environment;
+        (scene, Camera::look_at(vec3(-0.02, 0.5, 0.82), vec3(-0.02, 0.02, 0.03), Vec3::Y))
+    }
+
+    /// A part under a clear glass bell on a pale floor: a red puck and a
+    /// white ball under a solid glass dome, lit by a spot and a softbox.
+    fn under_a_bell() -> (tequila_render_core::scene::SceneSnapshot, Camera) {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::math::Transform;
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_materials::openpbr::Material;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{AreaLight, Light, LightKind, LightSet, SpotLight};
+        use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
+        let floor = Mesh::new(vec![vec3(-3.0, 0.0, -3.0), vec3(3.0, 0.0, -3.0), vec3(3.0, 0.0, 3.0), vec3(-3.0, 0.0, 3.0)], vec![0, 2, 1, 0, 3, 2])
+            .with_normals(vec![Vec3::Y; 4]);
+        // The bell, 4 mm thick: down its inside from the top, out across its
+        // rim, up its outside and over.
+        let (outside, inside, wall) = (0.14f32, 0.136f32, 0.12f32);
+        let mut bell = vec![(0.0, wall + inside)];
+        bell.extend(corner((0.0, wall), inside, 90.0, 0.0, 16).into_iter().skip(1));
+        bell.extend([(inside, 0.001), (outside, 0.001)]);
+        bell.extend(corner((0.0, wall), outside, 0.0, 90.0, 16));
+        let bell = lathe(&bell, 160);
+        let puck = lathe(&[(0.0, 0.0), (0.06, 0.0), (0.065, 0.004), (0.065, 0.026), (0.06, 0.03), (0.0, 0.03)], 96);
+        let ball = tequila_scene::demo::uv_sphere(0.028, 64, 32);
+        let clear = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, ..MaterialType::GlassSolid.defaults() };
+        let red = Material::plastic(Spectrum { r: 0.7, g: 0.05, b: 0.04 }, 0.25);
+        let white = Material::plastic(Spectrum::splat(0.8), 0.15);
+        let pale = Material { base_color: Spectrum::splat(0.75), ..MaterialType::Diffuse.defaults() };
+        let meshes = vec![Arc::new(floor), Arc::new(bell), Arc::new(puck), Arc::new(ball)];
+        let instances = vec![
+            Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
+            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)),
+            Instance::new(InstanceId(2), MeshId(2), MaterialId(2)),
+            Instance::new(InstanceId(3), MeshId(3), MaterialId(3)).with_transform(Transform::translation(vec3(0.0, 0.058, 0.0))),
+        ];
+        let towards = |from: Vec3, to: Vec3| (to - from).normalize();
+        let spot_at = vec3(-0.5, 0.7, 0.45);
+        let spot = Light::new(LightKind::Spot(SpotLight {
+            position: spot_at,
+            direction: towards(spot_at, vec3(0.0, 0.03, 0.0)),
+            intensity: Spectrum::splat(1.5),
+            inner_angle: 15f32.to_radians(),
+            outer_angle: 25f32.to_radians(),
+            falloff: 1.0,
+        }));
+        let box_at = vec3(0.6, 0.55, -0.3);
+        let facing = towards(box_at, vec3(0.0, 0.05, 0.0));
+        let side = facing.cross(Vec3::Y).normalize();
+        let up = side.cross(facing).normalize();
+        let softbox = Light::new(LightKind::Area(AreaLight {
+            position: box_at,
+            half_u: up * 0.1,
+            half_v: side * 0.1,
+            radiance: Spectrum::splat(28.0),
+            disc: false,
+            two_sided: false,
+            spread: std::f32::consts::PI,
+        }));
+        let materials = vec![pale, clear, red, white];
+        let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.04))))
+            .with_lights(Arc::new(LightSet::new(vec![spot, softbox])));
+        scene.background = Background::Environment;
+        (scene, Camera::look_at(vec3(0.0, 0.3, 0.55), vec3(0.0, 0.05, 0.0), Vec3::Y))
+    }
+
+    /// The pictures behind the caustics work, written to the folder
+    /// `TEQUILA_PICTURES` names: the glass ball and the flacon with caustics
+    /// off, by photons and by the manifold sample, each given the same time,
+    /// and through Cycles with and without its own manifold next event
+    /// estimation; and the part under a glass bell through Tequila's
+    /// renderer and through Cycles before and after its shadow rays passed
+    /// clear glass. Prints each one's samples and seconds, and how far each
+    /// equal-time picture is from a long render of the same kind. Run by
+    /// hand: `cargo test -p tequila-app --release caustics_pictures --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn caustics_pictures() {
+        use tequila_render_core::settings::{CausticsMethod, IntegratorConfig};
+        use tequila_scene::render::RenderEngine;
+        let Some(folder) = std::env::var_os("TEQUILA_PICTURES").map(std::path::PathBuf::from) else {
+            eprintln!("skipped: no TEQUILA_PICTURES folder");
+            return;
+        };
+        std::fs::create_dir_all(&folder).unwrap();
+        let seconds: u32 = std::env::var("TEQUILA_PICTURE_SECONDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+        let (width, height) = (640, 420);
+        let configured = |caustics: Option<CausticsMethod>| IntegratorConfig {
+            caustics: caustics.is_some(),
+            caustics_method: caustics.unwrap_or_default(),
+            ..IntegratorConfig::product()
+        };
+        let render = |name: &str, scene: &(tequila_render_core::scene::SceneSnapshot, Camera), engine: RenderEngine, config: IntegratorConfig, time: Option<u32>, samples: u32| {
+            let directory = scratch(&format!("tequila-caustics-pictures-{name}"));
+            let renderer = BatchRenderer::new();
+            let mut job = job(1, &directory, RenderSettings {
+                engine,
+                width,
+                height,
+                max_samples: samples,
+                max_seconds: time,
+                denoise: false,
+                adaptive: false,
+                filename_template: name.into(),
+                ..Default::default()
+            });
+            job.scene = Arc::new(scene.0.clone());
+            job.camera = scene.1;
+            job.config = config;
+            renderer.submit(job);
+            let deadline = Instant::now() + Duration::from_secs(3600);
+            let finished = loop {
+                let mut done = None;
+                for event in renderer.drain() {
+                    if matches!(event, BatchEvent::Finished { .. } | BatchEvent::Failed { .. }) {
+                        done = Some(event);
+                    }
+                }
+                if let Some(event) = done {
+                    break event;
+                }
+                assert!(Instant::now() < deadline, "{name} never finished");
+                std::thread::sleep(Duration::from_millis(50));
+            };
+            match finished {
+                BatchEvent::Finished { path, samples, seconds, preview, .. } => {
+                    let to = folder.join(format!("{name}.png"));
+                    std::fs::copy(&path, &to).unwrap();
+                    println!("{name}: {samples} samples in {seconds:.1} s -> {}", to.display());
+                    preview
+                }
+                BatchEvent::Failed { message, .. } => panic!("{name}: {message}"),
+                _ => unreachable!(),
+            }
+        };
+        // RMS apart, 0 to 255, over the whole picture and in the boxes the
+        // ball's and the flacon's caustics fall in.
+        let boxes = [(0, 0, width, height), (150, 240, 290, 330), (380, 190, 600, 270)];
+        let distance = |a: &[u8], b: &[u8]| {
+            boxes.map(|(x0, y0, x1, y1)| {
+                let (mut squares, mut count) = (0.0f64, 0usize);
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        for c in 0..3 {
+                            let i = (y * width + x) * 4 + c;
+                            squares += (f64::from(a[i]) - f64::from(b[i])).powi(2);
+                            count += 1;
+                        }
+                    }
+                }
+                (squares / count as f64).sqrt()
+            })
+        };
+
+        let studio = caustics_studio();
+        let cpu = RenderEngine::Tequila;
+        let unlimited = 1_000_000;
+        let off = render("tequila-off", &studio, cpu, configured(None), Some(seconds), unlimited);
+        let photons = render("tequila-photons", &studio, cpu, configured(Some(CausticsMethod::Photons)), Some(seconds), unlimited);
+        let manifold = render("tequila-manifold", &studio, cpu, configured(Some(CausticsMethod::Manifold)), Some(seconds), unlimited);
+        let long = seconds * 8;
+        let photons_long = render("tequila-photons-long", &studio, cpu, configured(Some(CausticsMethod::Photons)), Some(long), unlimited);
+        let manifold_long = render("tequila-manifold-long", &studio, cpu, configured(Some(CausticsMethod::Manifold)), Some(long), unlimited);
+        println!(
+            "RMS from the long render of the same kind, 0-255, whole picture / ball's caustic / flacon's: photons {:.2?}, manifold {:.2?}; the two long renders {:.2?} apart; caustics off {:.2?} from the long manifold",
+            distance(&photons, &photons_long),
+            distance(&manifold, &manifold_long),
+            distance(&photons_long, &manifold_long),
+            distance(&off, &manifold_long),
+        );
+        if tequila_render_cycles::available().is_ok() {
+            let cycles = RenderEngine::CyclesCpu;
+            let plain = render("cycles-plain", &studio, cycles, configured(Some(CausticsMethod::Photons)), Some(seconds), unlimited);
+            let mnee = render("cycles-manifold", &studio, cycles, configured(Some(CausticsMethod::Manifold)), Some(seconds), unlimited);
+            let mnee_long = render("cycles-manifold-long", &studio, cycles, configured(Some(CausticsMethod::Manifold)), Some(long), unlimited);
+            println!(
+                "Cycles RMS from its long manifold render, the same three: plain {:.2?}, manifold {:.2?}; Cycles' long manifold {:.2?} from Tequila's",
+                distance(&plain, &mnee_long),
+                distance(&mnee, &mnee_long),
+                distance(&mnee_long, &manifold_long),
+            );
+        }
+
+        let bell = under_a_bell();
+        let samples = 256;
+        render("bell-tequila", &bell, cpu, configured(None), None, samples);
+        if tequila_render_cycles::available().is_ok() {
+            // Before: the glass stopping shadow rays, as Cycles' was always
+            // given it - which is how it is given with photons.
+            render("bell-cycles-before", &bell, RenderEngine::CyclesCpu, configured(Some(CausticsMethod::Photons)), None, samples);
+            render("bell-cycles-after", &bell, RenderEngine::CyclesCpu, configured(None), None, samples);
+        }
     }
 
     fn job(id: u64, directory: &std::path::Path, settings: RenderSettings) -> BatchJob {

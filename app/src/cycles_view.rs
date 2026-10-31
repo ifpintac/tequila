@@ -48,9 +48,10 @@ pub struct CyclesView {
     objects: Vec<Option<tequila_render_cycles::Node>>,
     /// Each material's Cycles shader, to build a changed one again in place.
     shaders: Vec<tequila_render_cycles::Node>,
-    /// The lighting the scene was translated with: Ground illumination, and
-    /// the bounce limits.
-    lighting: (bool, u32, u32),
+    /// The lighting the scene was translated with: Ground illumination, the
+    /// bounce limits, and the glass shadows pass (which follows from how
+    /// caustics are found).
+    lighting: (bool, u32, u32, tequila_render_core::settings::ShadowGlass),
     /// Whether frames come with the background left out, for Tequila's to
     /// go under them (`Translation::background_under`).
     background_under: bool,
@@ -85,7 +86,7 @@ impl CyclesView {
             images: translate::Images::default(),
             objects: Vec::new(),
             shaders: Vec::new(),
-            lighting: (false, 0, 0),
+            lighting: (false, 0, 0, tequila_render_core::settings::ShadowGlass::Clear),
             background_under: false,
             under: Vec::new(),
             under_size: (0, 0),
@@ -128,9 +129,10 @@ impl CyclesView {
             .then(|| self.scene.as_ref().and_then(|scene| translate::changed_materials(scene, &request.scene)))
             .flatten();
         // Ground illumination decides what the floor is to Cycles, and the
-        // bounce limits how far its paths go.
+        // bounce limits how far its paths go; how caustics are found, which
+        // glass shadows pass and which parts cast and receive caustics.
         let config = &request.config;
-        let lighting = (config.ground_illumination, config.max_bounces, config.max_transmission_bounces);
+        let lighting = (config.ground_illumination, config.max_bounces, config.max_transmission_bounces, config.shadow_glass());
         let relit = lighting != self.lighting;
         let mut rescene = (!same && !moved && repainted.is_none()) || relit;
         let moved = moved && !relit;
@@ -155,12 +157,14 @@ impl CyclesView {
             ground_illumination: request.config.ground_illumination,
             light_materials: request.config.light_source_materials,
             light_groups: false,
+            shadow_glass: request.config.shadow_glass(),
+            manifold_caustics: request.config.manifold_caustics(),
         };
         self.session.begin_edit();
         if let Some(changed) = &repainted {
             // A library that cannot rebuild a shader in place, or a shader that
             // would not build, translates everything instead.
-            match translate::update_materials(&mut self.session, &request.scene, &self.shaders, changed, &mut self.images, request.config.light_source_materials) {
+            match translate::update_materials(&mut self.session, &request.scene, &self.shaders, changed, &mut self.images, request.config.light_source_materials, request.config.shadow_glass()) {
                 Ok(true) => {}
                 Ok(false) => rescene = true,
                 Err(error) => {
