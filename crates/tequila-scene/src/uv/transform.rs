@@ -217,7 +217,12 @@ pub(crate) fn islands_of(layout: &UvLayout, vertices: &[u32]) -> Vec<u32> {
 }
 
 /// Refuse a new layout of these islands that turns over a triangle that
-/// read with the rest of its island before, or flattens one that had area.
+/// read with the rest of its island before, or flattens them.
+///
+/// A sliver - a CAD triangle with next to no area - can turn over by the
+/// rounding of a move alone. Turned by less than a hair of its island
+/// ([`super::flatten::FOLD_HAIR`]), before or after, it is not counted:
+/// the fold rule does not count it either.
 pub(crate) fn check_no_new_folds(layout: &UvLayout, islands: &[u32], uv: &[Vec2]) -> Result<(), UvError> {
     for &i in islands {
         let island = &layout.islands[i as usize];
@@ -231,14 +236,22 @@ pub(crate) fn check_no_new_folds(layout: &UvLayout, islands: &[u32], uv: &[Vec2]
         let before: Vec<f32> = island.triangles.iter().map(|&t| corners(t, &before_uv)).collect();
         let after: Vec<f32> = island.triangles.iter().map(|&t| corners(t, &after_uv)).collect();
         let (total_before, total_after): (f32, f32) = (before.iter().sum(), after.iter().sum());
-        if total_after == 0.0 || !total_after.is_finite() {
+        if !total_after.is_finite() {
+            return Err(UvError::Degenerate);
+        }
+        // An island of slivers with no area to speak of has none to lose.
+        if total_before == 0.0 {
+            continue;
+        }
+        if total_after == 0.0 {
             return Err(UvError::Degenerate);
         }
         let (was, now) = (total_before.signum(), total_after.signum());
+        let hair_before = total_before.abs() * super::flatten::FOLD_HAIR;
+        let hair_after = total_after.abs() * super::flatten::FOLD_HAIR;
         for (b, a) in before.iter().zip(&after) {
-            let read_before = *b * was > 0.0;
-            if read_before && *a * now <= 0.0 {
-                return Err(if *a == 0.0 { UvError::Degenerate } else { UvError::WouldFold });
+            if *b * was > hair_before && *a * now < -hair_after {
+                return Err(UvError::WouldFold);
             }
         }
     }
@@ -441,6 +454,21 @@ mod tests {
         let moved = out.uv_sets[0][vertex as usize];
         assert!((moved - layout.uv_vertices[inner.unwrap()].uv - vec2(0.01, 0.0)).length() < 1e-6);
         assert_eq!(transform(&mesh, 0, &UvSelection::Islands(vec![0]), &UvAffine::uniform(0.0), Pivot::Islands), Err(UvError::Degenerate));
+    }
+
+    /// An island of slivers laid out as a line has no area to lose, and is
+    /// moved like any other.
+    #[test]
+    fn an_island_with_no_area_still_moves() {
+        let mut mesh = unwrapped(cube());
+        let layout = UvLayout::new(&mesh, 0).unwrap();
+        for &v in &layout.islands[0].vertices {
+            let p = mesh.uv_sets[0][v as usize];
+            mesh.uv_sets[0][v as usize] = vec2(p.x, 0.5);
+        }
+        let moved = transform(&mesh, 0, &UvSelection::Islands(vec![0]), &UvAffine::translation(vec2(0.1, 0.1)), Pivot::Origin).unwrap();
+        let v = layout.islands[0].vertices[0] as usize;
+        assert!((moved.uv_sets[0][v] - mesh.uv_sets[0][v] - vec2(0.1, 0.1)).length() < 1e-6);
     }
 
     #[test]

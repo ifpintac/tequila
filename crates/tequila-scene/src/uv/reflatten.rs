@@ -31,7 +31,8 @@ pub fn reflatten(mesh: &Mesh, set: usize, islands: &[u32], pins: &[u32], repack:
     for &i in &chosen {
         let island = &layout.islands[i as usize];
         let held: Vec<u32> = island.uv_vertices.iter().copied().filter(|v| pinned.binary_search(v).is_ok()).collect();
-        let placed = relax(mesh, &layout.corner_vertex, &island.triangles, &island.uv_vertices, &uv, &held, island.mirrored).ok_or(UvError::CannotFlatten(i))?;
+        let placed = relax(mesh, &layout.corner_vertex, &island.triangles, &island.uv_vertices, &uv, &held, island.mirrored, island.density())
+            .ok_or(UvError::CannotFlatten(i))?;
         for (&v, p) in island.uv_vertices.iter().zip(placed) {
             uv[v as usize] = p;
         }
@@ -45,8 +46,13 @@ pub fn reflatten(mesh: &Mesh, set: usize, islands: &[u32], pins: &[u32], repack:
 
 /// A piece of the layout - its triangles, on these UV vertices, now at
 /// `uv` - flattened again: each UV vertex's new place, in the order given.
-/// None where it will not lie flat without folding, even projected.
-pub(crate) fn relax(mesh: &Mesh, corner_vertex: &[u32], triangles: &[u32], vertices: &[u32], uv: &[Vec2], held: &[u32], mirrored: bool) -> Option<Vec<Vec2>> {
+/// With fewer than two `held`, it comes out `density` dense, texture to
+/// surface: the island's own, so the piece is the size it should be on the
+/// layout, not the size it happened to be - a sliver a layout had fattened
+/// comes back a sliver. None where it will not lie flat without folding,
+/// even projected.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn relax(mesh: &Mesh, corner_vertex: &[u32], triangles: &[u32], vertices: &[u32], uv: &[Vec2], held: &[u32], mirrored: bool, density: f32) -> Option<Vec<Vec2>> {
     let local: std::collections::HashMap<u32, usize> = vertices.iter().enumerate().map(|(i, &v)| (v, i)).collect();
     let corners_of = |t: u32| [0, 1, 2].map(|k| corner_vertex[t as usize * 3 + k]);
     // Each UV vertex's point on the part: any corner on it says, as they
@@ -77,15 +83,17 @@ pub(crate) fn relax(mesh: &Mesh, corner_vertex: &[u32], triangles: &[u32], verti
         }
         (!folds(&seen, &faces, reads_right)).then_some(seen)
     })?;
-    Some(fit(&candidate, &start, &faces, pins.first().copied()))
+    let surface = super::flatten::areas(&points, &faces, &candidate).0;
+    let area = if density > 0.0 && density.is_finite() && surface > 0.0 { Some(surface * density as f64) } else { None };
+    Some(fit(&candidate, &start, &faces, pins.first().copied(), area))
 }
 
 /// A new layout of a piece put where the old one was: turned to match it
-/// best, as large in area, centred on the old box, or with its one pin
-/// exactly on the pin's place.
-pub(crate) fn fit(new: &[Vec2], old: &[Vec2], faces: &[[usize; 3]], pin: Option<(usize, Vec2)>) -> Vec<Vec2> {
-    let area = |p: &[Vec2]| faces.iter().map(|f| facing(p[f[0]], p[f[1]], p[f[2]]).abs() as f64).sum::<f64>();
-    let (new_area, old_area) = (area(new), area(old));
+/// best, `area` large (or as large as the old one), centred on the old box,
+/// or with its one pin exactly on the pin's place.
+pub(crate) fn fit(new: &[Vec2], old: &[Vec2], faces: &[[usize; 3]], pin: Option<(usize, Vec2)>, area: Option<f64>) -> Vec<Vec2> {
+    let measure = |p: &[Vec2]| faces.iter().map(|f| facing(p[f[0]], p[f[1]], p[f[2]]).abs() as f64).sum::<f64>();
+    let (new_area, old_area) = (measure(new), area.unwrap_or_else(|| measure(old)));
     let scale = if new_area > 0.0 && old_area > 0.0 { (old_area / new_area).sqrt() as f32 } else { 1.0 };
     // The turn that matches them best, about their middles (Procrustes).
     let mean = |p: &[Vec2]| p.iter().fold(Vec2::ZERO, |a, q| a + *q) / p.len().max(1) as f32;

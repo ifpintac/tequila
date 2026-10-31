@@ -112,7 +112,7 @@ pub fn cut(mesh: &Mesh, set: usize, edges: &[MeshEdge], options: &CutOptions) ->
                 let mut vertices: Vec<u32> = triangles.iter().flat_map(|&t| (0..3).map(move |k| t as usize * 3 + k)).map(|c| corner_group[c]).collect();
                 vertices.sort_unstable();
                 vertices.dedup();
-                if let Some(placed) = relax(mesh, &corner_group, triangles, &vertices, &uv, &[], island.mirrored) {
+                if let Some(placed) = relax(mesh, &corner_group, triangles, &vertices, &uv, &[], island.mirrored, island.density()) {
                     for (&v, at) in vertices.iter().zip(placed) {
                         uv[v as usize] = at;
                     }
@@ -158,9 +158,10 @@ fn centroid(triangles: &[u32], corner_group: &[u32], uv: &[Vec2]) -> Vec2 {
 /// Islands joined along `edges`, seams each named by the mesh vertices at
 /// its ends on either side: the smaller of two islands moved onto the
 /// larger - turned, scaled and, if it is mirrored against it, mirrored - so
-/// the seam's two sides meet, and then put exactly on each other. A seam
-/// inside one island is closed where it is. Refused where that would fold
-/// the layout.
+/// the seam's two sides meet, and then put exactly on each other; where
+/// that turns the smaller's triangles over beside the seam, it is laid out
+/// again with its side of the seam pinned there. A seam inside one island
+/// is closed where it is. Refused where the result would still fold.
 pub fn stitch(mesh: &Mesh, set: usize, edges: &[MeshEdge]) -> Result<Mesh, UvError> {
     let layout = layout_of(mesh, set)?;
     if edges.is_empty() {
@@ -187,6 +188,7 @@ pub fn stitch(mesh: &Mesh, set: usize, edges: &[MeshEdge]) -> Result<Mesh, UvErr
     let mut uv: Vec<Vec2> = layout.uv_vertices.iter().map(|v| v.uv).collect();
     let mut joined = UnionFind::new(islands);
     let mut members: Vec<Vec<u32>> = layout.islands.iter().map(|i| i.uv_vertices.clone()).collect();
+    let mut triangles: Vec<Vec<u32>> = layout.islands.iter().map(|i| i.triangles.clone()).collect();
     let mut area: Vec<f64> = layout.islands.iter().map(|i| i.uv_area as f64).collect();
     let mut mirrored: Vec<bool> = layout.islands.iter().map(|i| i.mirrored).collect();
     let mut touched: Vec<u32> = Vec::new();
@@ -242,13 +244,34 @@ pub fn stitch(mesh: &Mesh, set: usize, edges: &[MeshEdge]) -> Result<Mesh, UvErr
         for &(x, y) in &pairs {
             uv[x as usize] = uv[y as usize];
         }
+        // Two sides laid out apart need not have the same shape, and a seam
+        // snapped shut can turn over the thin triangles beside it. Then the
+        // smaller is laid out again with its side of the seam pinned where
+        // it was put, so it follows the larger's - when it is one island,
+        // which has no stitched seam of its own to come open.
+        let one_island = triangles[mover].iter().all(|&t| layout.island_of[t as usize] == layout.island_of[triangles[mover][0] as usize]);
+        if one_island && turns_over(cv, &triangles[mover], &uv, mirrored[mover]) {
+            let mut held: Vec<u32> = pairs.iter().map(|(x, _)| *x).collect();
+            held.sort_unstable();
+            held.dedup();
+            let density = layout.islands[layout.island_of[triangles[mover][0] as usize] as usize].density() * scale * scale;
+            if let Some(placed) = relax(mesh, cv, &triangles[mover], &members[mover], &uv, &held, mirrored[mover], density) {
+                for (&v, at) in members[mover].iter().zip(placed) {
+                    uv[v as usize] = at;
+                }
+            }
+        }
         let moved = std::mem::take(&mut members[mover]);
+        let moved_triangles = std::mem::take(&mut triangles[mover]);
         let gained = area[mover] * (scale as f64) * (scale as f64);
         joined.union(stay, mover);
         let root = joined.find(stay);
         let mut all = std::mem::take(&mut members[stay]);
         all.extend(moved);
         members[root] = all;
+        let mut all = std::mem::take(&mut triangles[stay]);
+        all.extend(moved_triangles);
+        triangles[root] = all;
         area[root] = area[stay] + gained;
         mirrored[root] = mirrored[stay];
     }
@@ -260,6 +283,21 @@ pub fn stitch(mesh: &Mesh, set: usize, edges: &[MeshEdge]) -> Result<Mesh, UvErr
     moved.sort_unstable();
     check_no_new_folds(&layout, &moved, &uv)?;
     Ok(finish(mesh, set, cv, &uv))
+}
+
+/// Whether any of these triangles is turned over, by more than a hair,
+/// against the way their island reads.
+fn turns_over(corner_vertex: &[u32], triangles: &[u32], uv: &[Vec2], mirrored: bool) -> bool {
+    let sign = if mirrored { -1.0 } else { 1.0 };
+    let areas: Vec<f32> = triangles
+        .iter()
+        .map(|&t| {
+            let [a, b, c] = [0, 1, 2].map(|k| uv[corner_vertex[t as usize * 3 + k] as usize]);
+            facing(a, b, c) * sign
+        })
+        .collect();
+    let hair = areas.iter().map(|a| a.abs()).sum::<f32>() * super::flatten::FOLD_HAIR;
+    areas.iter().any(|&a| a < -hair)
 }
 
 /// The turn, scale and move that best put `from` on `to` (Umeyama): the map,
