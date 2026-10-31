@@ -1023,7 +1023,28 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       hero's Fresnel; caustic photons, and light sampled from inside a
       scattering medium, stay RGB and are upsampled where the path reads
       them; Cycles renders RGB.
-- [ ] Manifold Next Event Estimation as an unbiased alternative to SPPM caustics.
+- [x] Manifold Next Event Estimation as an unbiased alternative to SPPM
+      caustics: Caustics Off / Photons / Manifold (`caustics_method`, the
+      CLI's `--caustics-method`), a lamp's light through smooth glass solved
+      for at every surface (`integrator/manifold.rs`, ported from Cycles'
+      `mnee.h`), Cycles given its own MNEE by the same switch. Measured: a
+      point light, the sun, and a point light through water in glass match
+      their closed forms to four digits; an area lamp through a lens matches
+      brute-force path tracing within 1.3%; behind a perfume flacon (glass,
+      scent, scent, glass) it finds 45% of the light path tracing does.
+      Studio test (a glass ball and the flacon under a spot and a softbox,
+      640 x 420, 20 s each on the CPU): 22 samples against the photons' 52
+      and 124 with caustics off; its caustics are sharper than the photons'
+      but further from its own 160 s render (RMS 8.1 against 4.0 over the
+      picture, 10.9 against 3.7 in the ball's caustic, 0 to 255) - a walk
+      costs tens of rays, and a sample takes one lamp of the two - so at
+      equal time it is not yet the less noisy. Cycles' own MNEE there: 86
+      samples, RMS 4.3 in the ball's caustic, with blotches in it and
+      nothing through the flacon. *Open:* one path per lamp point, so where
+      several paths through glass meet (a ball's focal spot, the flacon's
+      lens) the caustic is darker than the truth, as in Cycles; a sample's
+      cost; no environment or glowing-part MNEE, no internal reflections,
+      mirror caustics or frosted glass, no dispersion in the solved path.
 - [x] Post-render relighting UI driven by light-group AOVs: "Keep light
       groups for relighting" and the Render window's Relight section,
       which rebalances and tints each group live and saves `…_relit`

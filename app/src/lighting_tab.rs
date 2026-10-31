@@ -13,7 +13,7 @@
 //! transform cannot express.
 
 use eframe::egui;
-use tequila_render_core::settings::LightingPreset;
+use tequila_render_core::settings::{CausticsMethod, LightingPreset};
 use tequila_scene::lighting::{Intensity, LightSettings, LightShape};
 use tequila_scene::tree::{NodeId, NodeKind};
 use tequila_scene::Command;
@@ -119,12 +119,40 @@ impl LightingTab {
                 ui.add(crate::field::Checkbox::new(&mut config.light_source_materials, "Light source materials"));
                 ui.add(crate::field::Checkbox::new(&mut config.ground_illumination, "Ground illumination"))
                     .on_hover_text("Let the ground plane bounce light back into the scene.");
-                ui.add(crate::field::Checkbox::new(&mut config.caustics, "Caustics")).on_hover_text(
-                    "Trace light through glass, liquids and gems, and off mirrors, onto \
-                     what is around them: the bright patterns under a glass or beside a \
-                     bottle. Needs solid glass (Glass Solid, Liquid, Gem); a thin pane \
-                     passes light straight through. Slower; Jewelry turns it on.",
-                );
+                // Off, or one of the two ways of finding caustics: the
+                // setting is the switch and the method together.
+                let mut caustics = config.caustics.then_some(config.caustics_method);
+                egui::ComboBox::from_label("Caustics")
+                    .selected_text(caustics.map_or("Off", CausticsMethod::label))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut caustics, None, "Off").on_hover_text(
+                            "Light passes clear glass straight on, tinted, onto what is behind it, \
+                             and is focused nowhere.",
+                        );
+                        ui.selectable_value(&mut caustics, Some(CausticsMethod::Photons), CausticsMethod::Photons.label())
+                            .on_hover_text(
+                                "Photons from every light, the environment's included, through glass, \
+                                 liquids and gems and off mirrors: soft at first, sharper the longer \
+                                 it renders. Jewelry uses these.",
+                            );
+                        ui.selectable_value(&mut caustics, Some(CausticsMethod::Manifold), CausticsMethod::Manifold.label())
+                            .on_hover_text(
+                                "The path from each lamp through smooth glass, solved for at every \
+                                 surface: caustics sharp from the first samples, each sample slower. \
+                                 Lamps only, through glass that bends light; the environment's light \
+                                 through glass is found by bounces, and mirrors focus nothing.",
+                            );
+                    })
+                    .response
+                    .on_hover_text(
+                        "The bright patterns glass, liquids and gems focus under and beside \
+                         themselves. Needs solid glass (Glass Solid, Liquid, Gem); a thin pane \
+                         passes light straight through.",
+                    );
+                config.caustics = caustics.is_some();
+                if let Some(method) = caustics {
+                    config.caustics_method = method;
+                }
                 ui.add(crate::field::Checkbox::new(&mut config.interior_mode, "Interior mode"));
                 ui.add(
                     crate::field::Slider::new(&mut config.regularization_roughness, 0.0..=0.4)
