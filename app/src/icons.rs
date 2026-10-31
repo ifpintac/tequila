@@ -104,6 +104,34 @@ pub enum Icon {
     FilePlus,
     /// A newer version to install.
     Update,
+    /// The UV editor's tools: select, turn, measure; and what its canvas
+    /// shows: the grid, guides, rulers and the layout's edges.
+    Pointer,
+    Turn,
+    Ruler,
+    Grid,
+    Guides,
+    Rulers,
+    Edges,
+    /// Lining things up: by their left, centre or right; their top, middle
+    /// or bottom; and spread evenly across or down.
+    AlignLeft,
+    AlignCentre,
+    AlignRight,
+    AlignTop,
+    AlignMiddle,
+    AlignBottom,
+    DistributeAcross,
+    DistributeDown,
+    /// Mirrored left to right, and top to bottom.
+    FlipAcross,
+    FlipDown,
+    /// Width and height kept in proportion, or not.
+    Link,
+    Unlink,
+    Keyboard,
+    /// Where a row is taken to drag it.
+    Grip,
 }
 
 impl Icon {
@@ -176,6 +204,27 @@ impl Icon {
             Icon::ExternalLink => 0xe0bd,
             Icon::FilePlus => 0xe0cd,
             Icon::Update => 0xe07c,
+            Icon::Pointer => 0xe1c2,
+            Icon::Turn => 0xe14c,
+            Icon::Ruler => 0xe14e,
+            Icon::Grid => 0xe0ec,
+            Icon::Guides => 0xe1c8,
+            Icon::Rulers => 0xe12f,
+            Icon::Edges => 0xe191,
+            Icon::AlignLeft => 0xe270,
+            Icon::AlignCentre => 0xe26c,
+            Icon::AlignRight => 0xe26e,
+            Icon::AlignTop => 0xe26f,
+            Icon::AlignMiddle => 0xe26b,
+            Icon::AlignBottom => 0xe26d,
+            Icon::DistributeAcross => 0xe03d,
+            Icon::DistributeDown => 0xe27d,
+            Icon::FlipAcross => 0xe361,
+            Icon::FlipDown => 0xe363,
+            Icon::Link => 0xe108,
+            Icon::Unlink => 0xe109,
+            Icon::Keyboard => 0xe283,
+            Icon::Grip => 0xe0ee,
         };
         char::from_u32(code)
     }
@@ -632,6 +681,116 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             circle(8.0, 8.0, 6.0);
             line((8.0, 5.0), (8.0, 11.0));
             poly(&[(5.5, 8.5), (8.0, 11.0), (10.5, 8.5)]);
+        }
+        Icon::Pointer => {
+            closed(&[(3.0, 3.0), (13.0, 7.0), (8.6, 8.6), (7.0, 13.0)]);
+        }
+        Icon::Turn => {
+            arc(8.0, 8.0, 5.5, 5.5, -2.2, 2.6);
+            poly(&[(12.6, 2.6), (12.6, 5.6), (9.6, 5.6)]);
+        }
+        Icon::Ruler => {
+            closed(&[(1.5, 10.5), (10.5, 1.5), (14.5, 5.5), (5.5, 14.5)]);
+            line((5.0, 7.0), (6.6, 8.6));
+            line((7.5, 4.5), (9.1, 6.1));
+            line((10.0, 2.0), (11.6, 3.6));
+        }
+        Icon::Grid => {
+            rounded(2.0, 2.0, 14.0, 14.0, 2.0);
+            line((6.0, 2.0), (6.0, 14.0));
+            line((10.0, 2.0), (10.0, 14.0));
+            line((2.0, 6.0), (14.0, 6.0));
+            line((2.0, 10.0), (14.0, 10.0));
+        }
+        Icon::Guides => {
+            line((8.0, 1.5), (8.0, 14.5));
+            poly(&[(4.0, 5.5), (1.5, 8.0), (4.0, 10.5)]);
+            poly(&[(12.0, 5.5), (14.5, 8.0), (12.0, 10.5)]);
+        }
+        Icon::Rulers => {
+            rounded(2.0, 2.0, 14.0, 14.0, 2.0);
+            line((2.0, 6.0), (14.0, 6.0));
+            line((6.0, 6.0), (6.0, 14.0));
+        }
+        Icon::Edges => {
+            closed(&[(8.0, 2.0), (14.0, 13.5), (2.0, 13.5)]);
+        }
+        Icon::AlignLeft | Icon::AlignCentre | Icon::AlignRight => {
+            let x = match icon {
+                Icon::AlignLeft => 2.0,
+                Icon::AlignCentre => 8.0,
+                _ => 14.0,
+            };
+            line((x, 1.5), (x, 14.5));
+            let bar = |y0: f32, y1: f32, width: f32| {
+                let x0 = match icon {
+                    Icon::AlignLeft => 4.0,
+                    Icon::AlignCentre => 8.0 - width * 0.5,
+                    _ => 12.0 - width,
+                };
+                rounded(x0, y0, x0 + width, y1, 1.0);
+            };
+            bar(3.5, 7.0, 9.0);
+            bar(9.0, 12.5, 6.0);
+        }
+        Icon::AlignTop | Icon::AlignMiddle | Icon::AlignBottom => {
+            let y = match icon {
+                Icon::AlignTop => 2.0,
+                Icon::AlignMiddle => 8.0,
+                _ => 14.0,
+            };
+            line((1.5, y), (14.5, y));
+            let bar = |x0: f32, x1: f32, height: f32| {
+                let y0 = match icon {
+                    Icon::AlignTop => 4.0,
+                    Icon::AlignMiddle => 8.0 - height * 0.5,
+                    _ => 12.0 - height,
+                };
+                rounded(x0, y0, x1, y0 + height, 1.0);
+            };
+            bar(3.5, 7.0, 9.0);
+            bar(9.0, 12.5, 6.0);
+        }
+        Icon::DistributeAcross => {
+            line((2.0, 1.5), (2.0, 14.5));
+            line((14.0, 1.5), (14.0, 14.5));
+            rounded(5.5, 4.0, 10.5, 12.0, 1.0);
+        }
+        Icon::DistributeDown => {
+            line((1.5, 2.0), (14.5, 2.0));
+            line((1.5, 14.0), (14.5, 14.0));
+            rounded(4.0, 5.5, 12.0, 10.5, 1.0);
+        }
+        Icon::FlipAcross => {
+            line((8.0, 1.5), (8.0, 14.5));
+            closed(&[(6.0, 3.5), (6.0, 12.5), (2.0, 12.5)]);
+            closed(&[(10.0, 3.5), (10.0, 12.5), (14.0, 12.5)]);
+        }
+        Icon::FlipDown => {
+            line((1.5, 8.0), (14.5, 8.0));
+            closed(&[(3.5, 6.0), (12.5, 6.0), (12.5, 2.0)]);
+            closed(&[(3.5, 10.0), (12.5, 10.0), (12.5, 14.0)]);
+        }
+        Icon::Link | Icon::Unlink => {
+            poly(&[(6.5, 5.0), (4.5, 5.0), (2.0, 8.0), (4.5, 11.0), (6.5, 11.0)]);
+            poly(&[(9.5, 5.0), (11.5, 5.0), (14.0, 8.0), (11.5, 11.0), (9.5, 11.0)]);
+            if icon == Icon::Link {
+                line((5.5, 8.0), (10.5, 8.0));
+            } else {
+                line((3.0, 2.5), (13.0, 13.5));
+            }
+        }
+        Icon::Keyboard => {
+            rounded(1.5, 3.5, 14.5, 12.5, 1.5);
+            for x in [4.5, 8.0, 11.5] {
+                disc(x, 6.5, 0.7, color);
+            }
+            line((5.0, 9.8), (11.0, 9.8));
+        }
+        Icon::Grip => {
+            for (x, y) in [(6.0, 4.0), (10.0, 4.0), (6.0, 8.0), (10.0, 8.0), (6.0, 12.0), (10.0, 12.0)] {
+                disc(x, y, 1.0, color);
+            }
         }
     }
 }
@@ -1169,7 +1328,10 @@ mod tests {
             Icon::Package, Icon::House, Icon::Gem, Icon::Sliders, Icon::History, Icon::SearchX, Icon::Star,
             Icon::Clock, Icon::Plus, Icon::FolderOpen, Icon::Copy, Icon::Pencil, Icon::Trash, Icon::Download,
             Icon::Upload, Icon::Puzzle, Icon::Refresh, Icon::Discord, Icon::Github, Icon::Book,
-            Icon::ExternalLink, Icon::FilePlus, Icon::Update,
+            Icon::ExternalLink, Icon::FilePlus, Icon::Update, Icon::Pointer, Icon::Turn, Icon::Ruler, Icon::Grid,
+            Icon::Guides, Icon::Rulers, Icon::Edges, Icon::AlignLeft, Icon::AlignCentre, Icon::AlignRight,
+            Icon::AlignTop, Icon::AlignMiddle, Icon::AlignBottom, Icon::DistributeAcross, Icon::DistributeDown,
+            Icon::FlipAcross, Icon::FlipDown, Icon::Link, Icon::Unlink, Icon::Keyboard, Icon::Grip,
         ]
     }
 
