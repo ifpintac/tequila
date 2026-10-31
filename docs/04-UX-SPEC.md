@@ -280,6 +280,24 @@ The editor is driven as Blender's node editor is: the same keys, the same mouse,
 - **Undo** is the global command stack: every edit is a `material.set_graph` command, and a drag is one step. Ctrl Z, Ctrl Y and Ctrl S work with the pointer over the editor.
 - Still to come: node groups with exposed inputs, and a minimap for very large graphs.
 
+### 7.1 UV editor
+
+A part's surface laid out flat, with its labels and the material's UV-mapped textures placed on it by hand, laid out as a drawing program is (`app/src/uv_editor/`). It opens from View › UV editor, from a label's **UV editor** button in the Labels section (which unwraps a part that has no layout yet, as one undo step), or as the **UV layout** workspace, which puts the Material page beside it. It is a window of its own and remembers its size.
+
+- **Layout:** a toolbar along the top; rulers along the canvas's top and left; Layers, Transform, Align and Islands down the right; the pointer's place, what a drag snapped to, the selection and the zoom along the bottom.
+- **Tools:** Select (V), Move (W), Rotate (E), Scale (R) and Measure (M), as in the viewport. Select picks, Shift-click adds, and a drag on empty space draws a box. The others act on the selection from anywhere. Handles on the selection's frame scale it (corners keep its shape, Shift frees it, Alt scales about the middle) and its stalk turns it (Shift by 15°). Island tools, which come with the layout engine, have a place of their own in the toolbar.
+- **Snapping** is on by default and shown by the magnet. Drags land on the grid, guides, the layout's edges and middle, islands' boxes and middles, their vertices and edge middles once the view is close enough to tell them apart, and the other labels' edges and middles. The distance is 8 points on screen whatever the zoom. What was snapped to is drawn in pink, with a note by the pointer ("guide", "island centre"). Ctrl held during a drag drags freely.
+- **Rulers** read in millimetres, centimetres or inches from the part's own size where its layout is one size all over, and in UV units, 1 across the square, where it is not. Their ticks keep a readable spacing at any zoom, and the pointer's place is marked on both. The corner switches the unit.
+- **Guides** are dragged out of a ruler, moved by dragging, and removed by dragging back onto the ruler or with Delete. A double-click types a guide's place. They can be locked and cleared, and are saved with the part (`scene.set_uv_guides`).
+- **Grid:** a spacing as a length on the part or a fraction of the square, split into fainter subdivisions.
+- **Measure:** a drag draws a dimension with its length on the part and its angle. It stays until the next one or Esc. Shift keeps it to 0, 45 or 90°.
+- **Layers:** the labels, top of the stack first, each with its artwork, an eye, a lock, its name (double-click to rename), its opacity and a grip to drag it up or down. Duplicate, delete and add a label from an image file. Below them, the material's textures on the layout: one selected is placed by its tile's outline (offset, repeats and turn). A hidden or locked label cannot be picked on the canvas.
+- **Transform:** X and Y of one of nine points of the selection's frame, W and H with a proportion lock, the turn in degrees, flips and opacity, for one label or several.
+- **Align:** to the selection, the island last clicked, or the layout's square, by left, centre, right, top, middle or bottom; and spread across or down with equal gaps.
+- **Keys** work only while the editor is under the pointer or has the keyboard: arrows nudge (Shift ten times as far), Delete, Ctrl D, Ctrl A, Esc, F frames the selection and Home everything, Ctrl ' the grid, Ctrl ; guides, Ctrl Shift ; snapping, Ctrl R rulers. The keyboard button (or ?) lists them all.
+- **Right-click** without dragging offers what can be done to the selection; a right-drag pans.
+- **Undo:** each edit is one step: a label's as `material.set_decals`, a texture's as `material.set_mapping`, the guides' as `scene.set_uv_guides`.
+
 ---
 
 ## 8. The command bus, undo, and API parity
