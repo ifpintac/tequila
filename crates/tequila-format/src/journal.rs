@@ -157,6 +157,9 @@ pub fn encode(command: &Command) -> String {
                 .set("key", key.clone())
                 .set_some("value", value.clone());
         }
+        Command::SetUvGuides { node, guides } => {
+            out.set("node", node.0).set("guides", crate::uv_guides_to_json(guides));
+        }
         Command::SetUnits { unit, mode } => {
             out.set("unit", crate::unit_name(*unit)).set(
                 "mode",
@@ -612,6 +615,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 .get("value")
                 .and_then(|v| v.as_str())
                 .map(String::from),
+        },
+        "scene.set_uv_guides" => Command::SetUvGuides {
+            node: node("node")?,
+            guides: crate::read_uv_guides(value.get("guides"))?,
         },
         "scene.set_units" => Command::SetUnits {
             unit: crate::unit_from_name(&text("unit")?)
@@ -1393,6 +1400,9 @@ fn node_to_json(node: &SceneNode) -> Value {
     if !node.layers.is_empty() {
         out.set("layers", crate::layers_to_json(&node.layers));
     }
+    if !node.uv_guides.is_empty() {
+        out.set("uv_guides", crate::uv_guides_to_json(&node.uv_guides));
+    }
     out.build()
 }
 
@@ -1539,6 +1549,7 @@ fn node_from_json(value: &Value) -> Result<SceneNode, FormatError> {
         }
     }
     node.layers = crate::read_layers(value.get("layers"));
+    node.uv_guides = crate::read_uv_guides(value.get("uv_guides"))?;
     Ok(node)
 }
 

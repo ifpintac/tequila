@@ -697,6 +697,8 @@ impl SceneDocument {
                 format!("{id} metadata: {:?} vs {:?}", a.metadata, b.metadata)
             } else if a.layers != b.layers {
                 format!("{id} layers: {:?} vs {:?}", a.layers, b.layers)
+            } else if a.uv_guides != b.uv_guides {
+                format!("{id} UV guides: {:?} vs {:?}", a.uv_guides, b.uv_guides)
             } else if a.children != b.children {
                 format!("{id} children: {:?} vs {:?}", a.children, b.children)
             } else if a.parent != b.parent {

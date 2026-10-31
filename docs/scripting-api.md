@@ -75,7 +75,7 @@ Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `mate
 
 ## Commands
 
-57 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+58 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -408,6 +408,18 @@ One metadata field on a node, set, or removed with no value.
 
 ```json
 { "command": "scene.set_metadata", "key": "Mass_g", "node": 2, "value": "42.1" }
+```
+
+#### `scene.set_uv_guides`
+
+The guides on a part's UV layout, the whole list at once: lines across the
+layout at a place along `u` or `v`, which the UV editor's moves and handles
+snap to. Saved with the part; nothing that renders changes.
+
+`fs.commands.scene.set_uv_guides(guides=..., node=...)`
+
+```json
+{ "command": "scene.set_uv_guides", "guides": [ { "u": 0.5 }, { "v": 0.25 } ], "node": 2 }
 ```
 
 #### `scene.set_units`

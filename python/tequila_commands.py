@@ -32,6 +32,7 @@ CATALOG = (
     'scene.group',
     'scene.ungroup',
     'scene.set_metadata',
+    'scene.set_uv_guides',
     'scene.set_units',
     'material.assign',
     'material.unlink',
@@ -300,6 +301,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_metadata", "key": "Mass_g", "node": 2, "value": "42.1" }
         """
         return self._apply('scene.set_metadata', {'key': key, 'node': node, 'value': value})
+
+    def set_uv_guides(self, *, guides=_UNSET, node=_UNSET):
+        r"""`scene.set_uv_guides`: The guides on a part's UV layout, the whole list at once: lines across the layout at a place along `u` or `v`, which the UV editor's moves and handles snap to. Saved with the part; nothing that renders changes.
+
+        { "command": "scene.set_uv_guides", "guides": [ { "u": 0.5 }, { "v": 0.25 } ], "node": 2 }
+        """
+        return self._apply('scene.set_uv_guides', {'guides': guides, 'node': node})
 
     def set_units(self, *, mode=_UNSET, unit=_UNSET):
         r"""`scene.set_units`: The unit lengths are shown in. They are stored in metres either way; `mode` says whether the scene keeps its size (`KeepSceneSize`) or keeps its numbers and is rescaled to them (`ScaleScene`), with its lights and cameras.

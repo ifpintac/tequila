@@ -96,6 +96,10 @@ pub(crate) fn decals_to_json(decals: &[tequila_materials::decal::Decal]) -> Valu
         o.set("name", d.name.clone()).set("texture", d.texture.0 as f64)
             .set("mapping", mapping_to_json(&d.mapping)).set("opacity", d.opacity)
             .set("roughness", d.roughness).set("metallic", d.metallic).set("enabled", d.enabled);
+        // Absent unless locked, so an unlocked label writes what it always did.
+        if d.locked {
+            o.set("locked", true);
+        }
         // Absent for a label on both sides, as every label was before.
         if d.side != tequila_materials::decal::DecalSide::Both {
             o.set("side", d.side.key());
@@ -119,6 +123,7 @@ pub(crate) fn decals_from_json(value: Option<&Value>) -> Result<Vec<tequila_mate
         d.roughness = v.get("roughness").and_then(Value::as_f32).unwrap_or(0.35);
         d.metallic = v.get("metallic").and_then(Value::as_bool).unwrap_or(false);
         d.enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+        d.locked = v.get("locked").and_then(Value::as_bool).unwrap_or(false);
         if let Some(ink) = v.get("ink").and_then(Value::as_f32_array).filter(|c| c.len() == 3) {
             d.ink = tequila_core::spectrum::Spectrum { r: ink[0], g: ink[1], b: ink[2] };
         }
@@ -1395,6 +1400,7 @@ mod tests {
         graph.decals.push(label.clone());
         label.name = "Top print".into();
         label.enabled = false;
+        label.locked = true;
         label.metallic = true;
         label.side = tequila_materials::decal::DecalSide::Negative;
         label.ink = tequila_core::spectrum::Spectrum { r: 0.45, g: 0.46, b: 0.46 };
@@ -1402,7 +1408,7 @@ mod tests {
         assert_eq!(round_trip(&graph).decals, graph.decals);
         // A label on both sides writes nothing new: as a file from before.
         let written = crate::json_write::to_string(&decals_to_json(&graph.decals[..1]));
-        assert!(!written.contains("side") && !written.contains("ink"), "{written}");
+        assert!(!written.contains("side") && !written.contains("ink") && !written.contains("locked"), "{written}");
         let wrong = crate::json::parse(br#"[{"texture":1,"side":"inside"}]"#).unwrap();
         assert!(decals_from_json(Some(&wrong)).is_err());
     }

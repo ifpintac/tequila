@@ -545,6 +545,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::Group { .. }
         | Command::Ungroup { .. }
         | Command::SetMetadata { .. }
+        | Command::SetUvGuides { .. }
         | Command::SetUnits { .. }
         | Command::AssignMaterial { .. }
         | Command::UnlinkMaterial { .. }
@@ -647,6 +648,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             key: String::new(),
             value: None,
         },
+        Command::SetUvGuides { node: NodeId(1), guides: Vec::new() },
         Command::SetUnits {
             unit: LengthUnit::Metre,
             mode: ConversionMode::ScaleScene,

@@ -1297,3 +1297,57 @@ fn rays_set_back_to_the_default_stay_so_through_a_save() {
     let again = read(&write(&reopened.document, &reopened.preserved)).unwrap();
     assert!(again.document.tree.get(screw).unwrap().rays.is_default());
 }
+
+/// A part's UV guides survive a save and a reopen, in their order, through
+/// the command that lays them down; the second save is the first's bytes.
+/// A part without guides writes none, so a project nobody laid one down in
+/// is the file it always was. Undone, the part has none again.
+#[test]
+fn uv_guides_survive_a_round_trip() {
+    use tequila_scene::guides::{GuideAxis, UvGuide};
+    let mut document = with_cad_layers(None);
+    let housing = document.tree.iter().find(|n| n.name == "Housing").unwrap().id;
+    let model = document.tree.iter().find(|n| n.name == "Model").unwrap().id;
+    let before = write(&document, &Preserved::default());
+    let guides = vec![UvGuide::new(GuideAxis::U, 0.25), UvGuide::new(GuideAxis::V, 0.625), UvGuide::new(GuideAxis::U, -0.125)];
+    let mut bus = CommandBus::new();
+    bus.apply(&mut document, Command::SetUvGuides { node: housing, guides: guides.clone() }).unwrap();
+    assert!(
+        bus.apply(&mut document, Command::SetUvGuides { node: model, guides: guides.clone() }).is_err(),
+        "a group has no UV layout to put guides on"
+    );
+    assert!(bus
+        .apply(&mut document, Command::SetUvGuides { node: housing, guides: vec![UvGuide::new(GuideAxis::V, f32::INFINITY)] })
+        .is_err());
+
+    let first = write(&document, &Preserved::default());
+    let reopened = read(&first).expect("the file we just wrote must read");
+    assert_eq!(reopened.document.tree.get(housing).unwrap().uv_guides, guides);
+    assert_eq!(reopened.document.difference_from(&document), None);
+    assert!(reopened.preserved.is_empty() && reopened.notes.is_empty(), "{:?}", reopened.notes);
+    assert!(write(&reopened.document, &reopened.preserved) == first, "the second save differs");
+
+    let scene = tequila_format::json::parse(tequila_format::zip::ZipArchive::read(&first).unwrap().get("scene.json").unwrap()).unwrap();
+    let written: Vec<bool> = scene.get("tree").unwrap().as_array().iter().map(|n| n.get("uv_guides").is_some()).collect();
+    assert_eq!(written, [false, true, false, false], "only the part with guides writes them");
+    let entries = scene.get("tree").unwrap().as_array()[1].get("uv_guides").unwrap().as_array().to_vec();
+    let entry = |i: usize, axis: &str| entries[i].get(axis).and_then(|v| v.as_f32());
+    assert_eq!((entry(0, "u"), entry(1, "v"), entry(2, "u")), (Some(0.25), Some(0.625), Some(-0.125)), "each guide is its axis and its place");
+
+    bus.undo(&mut document).unwrap();
+    assert!(document.tree.get(housing).unwrap().uv_guides.is_empty());
+    assert!(write(&document, &Preserved::default()) == before, "with the guides undone, the file is as it was");
+
+    // A guide that is not one axis and a place is refused by name.
+    let text = String::from_utf8_lossy(tequila_format::zip::ZipArchive::read(&first).unwrap().get("scene.json").unwrap()).into_owned();
+    assert!(text.contains("\"u\": 0.25"), "{text}");
+    let bad = text.replacen("\"u\": 0.25", "\"w\": 0.25", 1);
+    let archive = tequila_format::zip::ZipArchive::read(&first).unwrap();
+    let mut out = tequila_format::zip::ZipWriter::new();
+    for name in archive.names() {
+        let bytes = if name == "scene.json" { bad.clone().into_bytes() } else { archive.get(name).unwrap().to_vec() };
+        out.add(name.clone(), bytes);
+    }
+    let error = read(&out.finish()).err().expect("an unknown axis is refused");
+    assert!(error.to_string().contains("UV guide"), "{error}");
+}

@@ -212,6 +212,15 @@ pub enum Command {
         key: String,
         value: Option<String>,
     },
+    /// `scene.set_uv_guides` — the guides on a part's UV layout, the whole
+    /// list at once: lines across the layout at a place along `u` or `v`,
+    /// which the UV editor's moves and handles snap to. Saved with the part;
+    /// nothing that renders changes.
+    ///
+    /// The list rather than one guide, as labels and pins are edited: adding,
+    /// moving and removing one are all edits to the list, and a guide has no
+    /// identity of its own to address.
+    SetUvGuides { node: NodeId, guides: Vec<crate::guides::UvGuide> },
     /// `scene.set_units` — the unit lengths are shown in. They are stored in
     /// metres either way; `mode` says whether the scene keeps its size
     /// (`KeepSceneSize`) or keeps its numbers and is rescaled to them
@@ -1040,6 +1049,7 @@ impl Command {
             Command::Group { .. } => "scene.group",
             Command::Ungroup { .. } => "scene.ungroup",
             Command::SetMetadata { .. } => "scene.set_metadata",
+            Command::SetUvGuides { .. } => "scene.set_uv_guides",
             Command::SetUnits { .. } => "scene.set_units",
             Command::AssignMaterial { .. } => "material.assign",
             Command::UnlinkMaterial { .. } => "material.unlink",
@@ -1086,7 +1096,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 57] = [
+    pub const CATALOG: [&'static str; 58] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1105,6 +1115,7 @@ impl Command {
         "scene.group",
         "scene.ungroup",
         "scene.set_metadata",
+        "scene.set_uv_guides",
         "scene.set_units",
         "material.assign",
         "material.unlink",
@@ -1214,6 +1225,8 @@ impl Command {
             | Command::SetLocked { .. }
             | Command::SetPivot { .. }
             | Command::SetMetadata { .. }
+            // Lines over the UV editor's canvas, never in the picture.
+            | Command::SetUvGuides { .. }
             | Command::AddCamera { .. }
             | Command::RemoveCamera { .. }
             | Command::RenameCamera { .. }
@@ -1340,6 +1353,7 @@ enum Undo {
         members: Vec<(NodeId, usize)>,
     },
     Metadata(NodeId, String, Option<String>),
+    UvGuides(NodeId, Vec<crate::guides::UvGuide>),
     /// Boxed for the same reason as `Ungrouped`: it holds the cameras, the
     /// environment and every top node's transform.
     Units(SceneUnits, Box<crate::units::Rescaled>),
@@ -2519,6 +2533,18 @@ fn execute(
             Ok(Undo::Metadata(*node, key.clone(), previous))
         }
 
+        Command::SetUvGuides { node, guides } => {
+            if !guides.iter().all(crate::guides::UvGuide::is_valid) {
+                return Err(CommandError::InvalidValue("a guide's place must be a finite number on the layout"));
+            }
+            let target = document.tree.get_mut(*node)?;
+            if !matches!(target.kind, NodeKind::Part { .. }) {
+                return Err(CommandError::InvalidValue("guides go on a part's UV layout, and this is not a part"));
+            }
+            let previous = std::mem::replace(&mut target.uv_guides, guides.clone());
+            Ok(Undo::UvGuides(*node, previous))
+        }
+
         Command::SetUnits { unit, mode } => {
             let previous = document.units;
             let plan = ConversionPlan::compute(previous, *unit, *mode);
@@ -3255,6 +3281,11 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
                     document.tree.get_mut(*node)?.metadata.remove(key);
                 }
             }
+            Ok(())
+        }
+
+        Undo::UvGuides(node, guides) => {
+            document.tree.get_mut(*node)?.uv_guides = guides.clone();
             Ok(())
         }
 

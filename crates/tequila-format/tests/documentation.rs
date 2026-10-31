@@ -50,6 +50,7 @@ fn document_with_everything() -> SceneDocument {
     part.visible = false;
     part.rays = tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() };
     part.layers = vec!["Outer".into()];
+    part.uv_guides = vec![tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::U, 0.5)];
 
     bus.apply(
         &mut document,

@@ -171,6 +171,9 @@ pub struct SceneNode {
     /// the source file. Re-import matches on this to preserve material
     /// assignments across an updated CAD file.
     pub path_key: Option<String>,
+    /// Guides on the part's UV layout (`crate::guides`), laid down in the UV
+    /// editor. Empty for every part nobody has put one on.
+    pub uv_guides: Vec<crate::guides::UvGuide>,
 }
 
 impl SceneNode {
@@ -195,6 +198,7 @@ impl SceneNode {
             children: Vec::new(),
             pivot: None,
             path_key: None,
+            uv_guides: Vec::new(),
         }
     }
 

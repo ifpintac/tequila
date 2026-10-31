@@ -398,6 +398,13 @@ pub fn commands() -> Vec<Command> {
             key: "Mass_g".into(),
             value: None,
         },
+        Command::SetUvGuides {
+            node: ids[1],
+            guides: vec![
+                tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::U, 0.5),
+                tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::V, 0.25),
+            ],
+        },
         Command::SetUnits {
             unit: LengthUnit::Inch,
             mode: ConversionMode::ScaleScene,

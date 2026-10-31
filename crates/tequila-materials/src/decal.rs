@@ -48,6 +48,10 @@ pub struct Decal {
     /// hot-stamped logo or a foil seal (§1.11's per-label finish).
     pub metallic: bool,
     pub enabled: bool,
+    /// Locked in the UV editor: shown, but not picked or moved there, so
+    /// artwork placed with care stays put while others are moved around it.
+    /// It prints as any label does.
+    pub locked: bool,
     /// Which faces it prints on, for a planar label.
     pub side: DecalSide,
     /// The ink: the artwork's colour multiplied by it, so white artwork
@@ -66,6 +70,7 @@ impl Decal {
             roughness: 0.35,
             metallic: false,
             enabled: true,
+            locked: false,
             side: DecalSide::Both,
             ink: tequila_core::spectrum::Spectrum::ONE,
         }
