@@ -5524,6 +5524,12 @@ mod tests {
     /// camera: the floor's reflection of the ball shows the softbox through
     /// it, turned over as a ball turns what is behind it. Under a dim sky.
     fn ball_on_a_glossy_floor(roughness: f32) -> (tequila_render_core::scene::SceneSnapshot, Camera) {
+        softbox_over_a_glossy_floor(roughness, true)
+    }
+
+    /// The floor and softbox of [`ball_on_a_glossy_floor`], with the ball or
+    /// without it.
+    fn softbox_over_a_glossy_floor(roughness: f32, with_ball: bool) -> (tequila_render_core::scene::SceneSnapshot, Camera) {
         use tequila_core::ids::{InstanceId, MaterialId, MeshId};
         use tequila_core::math::Transform;
         use tequila_core::spectrum::Spectrum;
@@ -5537,10 +5543,14 @@ mod tests {
         let ball = tequila_scene::demo::uv_sphere(0.05, 160, 80);
         let clear = Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, ..MaterialType::GlassSolid.defaults() };
         let glossy = Material::plastic(Spectrum::splat(0.04), roughness);
-        let instances = vec![
-            Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
-            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(Transform::translation(vec3(0.0, 0.05, 0.0))),
-        ];
+        let mut meshes = vec![Arc::new(floor)];
+        let mut materials = vec![glossy];
+        let mut instances = vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))];
+        if with_ball {
+            meshes.push(Arc::new(ball));
+            materials.push(clear);
+            instances.push(Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(Transform::translation(vec3(0.0, 0.05, 0.0))));
+        }
         // The softbox faces the camera: cross(u, v) towards it.
         let box_at = vec3(0.0, 0.1, -0.5);
         let softbox = Light::new(LightKind::Area(AreaLight {
@@ -5552,8 +5562,59 @@ mod tests {
             two_sided: false,
             spread: std::f32::consts::PI,
         }));
-        let mut scene = SceneSnapshot::new(vec![Arc::new(floor), Arc::new(ball)], instances, vec![glossy, clear], Arc::new(Environment::uniform(Spectrum::splat(0.1))))
+        let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.1))))
             .with_lights(Arc::new(LightSet::new(vec![softbox])));
+        scene.background = Background::Environment;
+        (scene, Camera::look_at(vec3(0.0, 0.06, 0.45), vec3(0.0, 0.03, 0.0), Vec3::Y))
+    }
+
+    /// The glossy floor of [`softbox_over_a_glossy_floor`] with a white
+    /// plastic ball on it, lit by a lamp no ray can meet where the softbox
+    /// was: a point (`"point"`), a small sphere (`"sphere"`), a spot aimed at
+    /// the ball (`"spot"`) or an IES downlight's profile aimed the same way
+    /// (`"ies"`).
+    fn point_lamp_over_a_glossy_floor(roughness: f32, kind: &str) -> (tequila_render_core::scene::SceneSnapshot, Camera) {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::math::Transform;
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::openpbr::Material;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{IesLight, Light, LightKind, LightSet, PointLight, SpotLight};
+        use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
+        let floor = Mesh::new(vec![vec3(-3.0, 0.0, -3.0), vec3(3.0, 0.0, -3.0), vec3(3.0, 0.0, 3.0), vec3(-3.0, 0.0, 3.0)], vec![0, 2, 1, 0, 3, 2])
+            .with_normals(vec![Vec3::Y; 4]);
+        let ball = tequila_scene::demo::uv_sphere(0.04, 96, 48);
+        let instances = vec![
+            Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
+            Instance::new(InstanceId(1), MeshId(1), MaterialId(1)).with_transform(Transform::translation(vec3(0.0, 0.04, -0.1))),
+        ];
+        let at = vec3(0.0, 0.1, -0.5);
+        let aim = (vec3(0.0, 0.04, -0.1) - at).normalize();
+        let kind = match kind {
+            "point" => LightKind::Point(PointLight { position: at, intensity: Spectrum::splat(0.3), radius: 0.0 }),
+            "sphere" => LightKind::Point(PointLight { position: at, intensity: Spectrum::splat(0.3), radius: 0.01 }),
+            "spot" => LightKind::Spot(SpotLight {
+                position: at,
+                direction: aim,
+                intensity: Spectrum::splat(0.6),
+                inner_angle: 20f32.to_radians(),
+                outer_angle: 35f32.to_radians(),
+                falloff: 1.0,
+            }),
+            _ => {
+                let mut text = String::from("IESNA:LM-63-2002\nTILT=NONE\n1 -1 1 10 1 1 2 0 0 0\n1 1 100\n");
+                text.push_str(&(0..10).map(|i| format!("{}", i * 10)).collect::<Vec<_>>().join(" "));
+                text.push_str("\n0\n");
+                text.push_str(&(0..10).map(|i| format!("{}", 1000.0 * (i as f32 * 10.0).to_radians().cos())).collect::<Vec<_>>().join(" "));
+                text.push('\n');
+                let profile = tequila_render_core::ies::IesProfile::parse(&text).expect("a profile");
+                let right = aim.cross(Vec3::Y).normalize();
+                LightKind::Ies(IesLight { position: at, direction: aim, right, intensity: Spectrum::splat(0.0006), profile: Arc::new(profile) })
+            }
+        };
+        let materials = vec![Material::plastic(Spectrum::splat(0.04), roughness), Material::plastic(Spectrum::splat(0.8), 0.3)];
+        let mut scene = SceneSnapshot::new(vec![Arc::new(floor), Arc::new(ball)], instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.1))))
+            .with_lights(Arc::new(LightSet::new(vec![Light::new(kind)])));
         scene.background = Background::Environment;
         (scene, Camera::look_at(vec3(0.0, 0.06, 0.45), vec3(0.0, 0.03, 0.0), Vec3::Y))
     }
@@ -5596,10 +5657,21 @@ mod tests {
     /// The box of a `size` picture of `scene` round the floor's reflection
     /// of `point`: 120 by 36 pixels of a picture 640 wide, as much of any
     /// other.
-    fn mirrored_box(scene: &(tequila_render_core::scene::SceneSnapshot, Camera), point: Vec3, (width, height): (usize, usize)) -> (usize, usize, usize, usize) {
-        let film = scene.1.project(vec3(point.x, -point.y, point.z), width as f32 / height as f32).expect("in view");
+    fn mirrored_box(scene: &(tequila_render_core::scene::SceneSnapshot, Camera), point: Vec3, size: (usize, usize)) -> (usize, usize, usize, usize) {
+        film_box(scene, vec3(point.x, -point.y, point.z), (60, 18), size)
+    }
+
+    /// The box of a `size` picture of `scene` round where `point` is seen,
+    /// `half` across and up in pixels of a picture 640 wide.
+    fn film_box(
+        scene: &(tequila_render_core::scene::SceneSnapshot, Camera),
+        point: Vec3,
+        (half_width, half_height): (usize, usize),
+        (width, height): (usize, usize),
+    ) -> (usize, usize, usize, usize) {
+        let film = scene.1.project(point, width as f32 / height as f32).expect("in view");
         let (x, y) = ((film.x * width as f32) as usize, (film.y * height as f32) as usize);
-        let (half_width, half_height) = (60 * width / 640, 18 * width / 640);
+        let (half_width, half_height) = (half_width * width / 640, half_height * width / 640);
         (x - half_width, y.saturating_sub(half_height), x + half_width, (y + half_height).min(height))
     }
 
@@ -5666,6 +5738,84 @@ mod tests {
         report("bell-tequila", &picture_into(&folder, "bell-tequila", &bell, RenderEngine::Tequila, off.clone(), None, samples, size));
         report("bell-cycles-before", &picture_into(&folder, "bell-cycles-before", &bell, RenderEngine::CyclesCpu, before.clone(), None, samples, size));
         report("bell-cycles-now", &picture_into(&folder, "bell-cycles-now", &bell, RenderEngine::CyclesCpu, off.clone(), None, samples, size));
+    }
+
+    /// Pictures of a lamp in glossy surfaces with no glass between, written
+    /// to the folder `TEQUILA_PICTURES` names: a softbox mirrored in a dark
+    /// glossy floor at roughness 0.04 and 0.2, through Tequila's renderer and
+    /// through Cycles; the glass ball's floor, where the softbox shows on
+    /// either side of the ball's reflection; the bell; and the floor lit by
+    /// lamps no ray can meet - a point, a small sphere, a spot and an IES
+    /// light - whose reflections only light samples find. Prints the mean
+    /// and the speckle of the lamp's reflection on the floor and, under the
+    /// bell, of the white ball, its highlight, the puck and the floor;
+    /// `picture_into` says how long each took. Run by hand, as
+    /// `caustics_pictures` is.
+    #[test]
+    #[ignore]
+    fn lamp_reflection_pictures() {
+        use tequila_scene::render::RenderEngine;
+        let Some(folder) = std::env::var_os("TEQUILA_PICTURES").map(std::path::PathBuf::from) else {
+            eprintln!("skipped: no TEQUILA_PICTURES folder");
+            return;
+        };
+        std::fs::create_dir_all(&folder).unwrap();
+        let cycles = tequila_render_cycles::available().is_ok();
+        let size = (640, 420);
+        let samples: u32 = std::env::var("TEQUILA_PICTURE_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(256);
+        let off = IntegratorConfig::product();
+        for (roughness, ball) in [(0.04f32, false), (0.2, false), (0.04, true), (0.1, true)] {
+            let scene = softbox_over_a_glossy_floor(roughness, ball);
+            let name = |what: &str| format!("{}-{roughness}-{what}", if ball { "ball" } else { "floor" });
+            // The softbox's reflection: its middle on the bare floor, its
+            // left end beside the ball's reflection.
+            let mirrored = if ball {
+                film_box(&scene, vec3(-0.13, -0.1, -0.5), (6, 10), size)
+            } else {
+                film_box(&scene, vec3(0.0, -0.1, -0.5), (40, 10), size)
+            };
+            let report = |name: &str, image: &[u8]| {
+                println!("{name}: softbox in the floor {:.1}, speckle {:.2}", box_mean(image, size.0, mirrored), speckle(image, size.0, mirrored));
+            };
+            report(&name("tequila"), &picture_into(&folder, &name("tequila"), &scene, RenderEngine::Tequila, off.clone(), None, samples, size));
+            if cycles && !ball {
+                report(&name("cycles"), &picture_into(&folder, &name("cycles"), &scene, RenderEngine::CyclesCpu, off.clone(), None, samples, size));
+            }
+        }
+        let bell = under_a_bell();
+        let aspect = size.0 as f32 / size.1 as f32;
+        let at = |p: Vec3, half: usize| {
+            let film = bell.1.project(p, aspect).expect("in view");
+            let (x, y) = ((film.x * size.0 as f32) as usize, (film.y * size.1 as f32) as usize);
+            (x - half, y - half, x + half, y + half)
+        };
+        let (ball, puck, floor) = (at(vec3(0.0, 0.058, 0.0), 22), at(vec3(0.0, 0.015, 0.064), 14), at(vec3(0.0, 0.0, 0.11), 18));
+        // The softbox's highlight on the white ball.
+        let highlight = (330, 166, 354, 190);
+        let image = picture_into(&folder, "bell-tequila", &bell, RenderEngine::Tequila, off.clone(), None, samples, size);
+        println!(
+            "bell-tequila: ball {:.1}, ball speckle {:.2}, highlight speckle {:.2}, puck speckle {:.2}, floor speckle {:.2}",
+            box_mean(&image, size.0, ball),
+            speckle(&image, size.0, ball),
+            speckle(&image, size.0, highlight),
+            speckle(&image, size.0, puck),
+            speckle(&image, size.0, floor)
+        );
+        // Lamps no ray can meet, in the same floor.
+        for kind in ["point", "sphere", "spot", "ies"] {
+            for roughness in [0.04f32, 0.2] {
+                let scene = point_lamp_over_a_glossy_floor(roughness, kind);
+                let lamp = film_box(&scene, vec3(0.0, -0.1, -0.5), (20, 10), size);
+                let name = format!("{kind}-{roughness}-tequila");
+                let image = picture_into(&folder, &name, &scene, RenderEngine::Tequila, off.clone(), None, samples, size);
+                println!(
+                    "{name}: picture {:.2}, lamp in the floor {:.1}, speckle {:.2}",
+                    box_mean(&image, size.0, (0, 0, size.0, size.1)),
+                    box_mean(&image, size.0, lamp),
+                    speckle(&image, size.0, lamp)
+                );
+            }
+        }
     }
 
     /// A surface of revolution about the vertical through the origin:

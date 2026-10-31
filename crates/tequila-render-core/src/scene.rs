@@ -715,7 +715,7 @@ impl Pane {
 
     /// Whether a shadow ray taking in `glass` passes this glass, or a
     /// bounce that passes what its light sample passed: a glossy one takes
-    /// in `Unbent` with caustics off (`integrator::sees_glass`).
+    /// in `Unbent` with caustics off (`integrator::seeing_share`).
     pub fn passes(&self, glass: crate::settings::ShadowGlass) -> bool {
         match glass {
             crate::settings::ShadowGlass::Solid => false,

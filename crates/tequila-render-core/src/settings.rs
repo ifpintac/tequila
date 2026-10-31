@@ -447,7 +447,7 @@ impl IntegratorConfig {
     /// sampled the lights through glass pass it as its shadow rays did, and
     /// its glossy bounces pass only glass that does not bend light
     /// (`Unbent`): glass that bends it they see as glass, and meet what is
-    /// past it along the bent path (`integrator::sees_glass`).
+    /// past it along the bent path (`integrator::seeing_share`).
     #[inline]
     pub fn shadow_glass(&self) -> ShadowGlass {
         match (self.caustics, self.caustics_method) {

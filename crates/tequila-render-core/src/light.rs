@@ -871,7 +871,8 @@ impl Light {
     /// What a ray from `from` along `direction` meets of this light, if it
     /// can be met at all: the radiance it sees and how far along the ray,
     /// infinitely far for a sun. Analytic lights are no geometry, and only
-    /// the bounces that see glass look for them (`integrator`).
+    /// the bounces off a sharp enough reflection look for them
+    /// (`integrator::seeing_share`).
     pub fn met_along(&self, from: Vec3, direction: Vec3) -> Option<(Spectrum, f32)> {
         if !self.enabled {
             return None;
