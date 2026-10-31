@@ -151,6 +151,20 @@ impl Lobe {
             Lobe::Subsurface(l) => l,
         }
     }
+
+    /// The roughness of a reflection off the coat, the dielectric
+    /// interface or a metal (a flake's included): the lobes that mirror
+    /// what is round the surface, sharply or blurred. `None` for the rest -
+    /// the diffuse substrate, the fuzz, the walk's doorway, and the
+    /// transmission lobe, which reflects too but is glass.
+    #[inline]
+    fn reflection_roughness(&self) -> Option<f32> {
+        match self {
+            Lobe::Coat(l) | Lobe::Specular(l) => Some(l.distribution.roughness()),
+            Lobe::Metal(l) => Some(l.distribution.roughness()),
+            _ => None,
+        }
+    }
 }
 
 /// Which layer of §2.1's stack a lobe belongs to. Deeper layers are
@@ -698,6 +712,110 @@ impl OpenPbrBsdf {
             .take(self.count)
             .filter_map(|(i, slot)| slot.as_ref().map(|l| (i, l)))
     }
+
+    /// [`Bsdf::sample`], and the roughness of the reflection it chose: the
+    /// coat's, the dielectric interface's or a metal's, `None` where it
+    /// chose any other lobe. The integrator asks what kind of bounce it
+    /// is, which the sample's flags say only in part: a glossy reflection
+    /// of roughness 0.05 and one of 0.8 are both `GLOSSY`.
+    pub fn sample_reflection(&self, wo: Vec3, u: Vec2, uc: f32) -> Option<(BsdfSample, Option<f32>)> {
+        if self.count == 0 {
+            return None;
+        }
+
+        // Choose a lobe, and rescale `uc` so the chosen lobe gets a fresh
+        // uniform value rather than one correlated with the choice. Reusing
+        // it directly biases nested discrete decisions — the transmission
+        // lobe's own reflect-or-refract split, for one.
+        let mut cumulative = 0.0;
+        let mut chosen = None;
+        for (index, entry) in self.active() {
+            let p = self.probabilities[index];
+            if uc < cumulative + p || index == self.count - 1 {
+                let rescaled = if p > 0.0 {
+                    ((uc - cumulative) / p).clamp(0.0, 1.0 - f32::EPSILON)
+                } else {
+                    0.5
+                };
+                chosen = Some((index, entry, rescaled));
+                break;
+            }
+            cumulative += p;
+        }
+        let (index, (lobe, depth, scale, weight), lobe_uc) = chosen?;
+        let roughness = lobe.reflection_roughness();
+
+        // A flake samples in its own frame and hands the direction back in
+        // the shading frame; one that leaves below the surface is lost.
+        let sample = match (depth, &self.flake_frame) {
+            (Depth::Flake, Some(frame)) => {
+                let local = frame.to_local(wo);
+                if local.z <= 0.0 {
+                    return None;
+                }
+                let sample = lobe.as_bsdf().sample(local, u, lobe_uc)?;
+                let wi = frame.to_world(sample.wi);
+                if wi.z <= 1e-6 {
+                    return None;
+                }
+                // A delta sample's value is returned as it stands, so it
+                // takes the cosine conversion here; anything else is
+                // re-evaluated through `eval`, which applies it.
+                let f = if sample.is_delta { sample.f * (sample.wi.z / wi.z) } else { sample.f };
+                BsdfSample { wi, f, ..sample }
+            }
+            _ => lobe.as_bsdf().sample(wo, u, lobe_uc)?,
+        };
+        let probability = self.probabilities[index].max(1e-6);
+
+        if sample.is_delta {
+            // A delta lobe's value is already divided by its own PDF, and no
+            // other lobe can produce this direction, so the only correction
+            // is the probability of having chosen it.
+            let through = self.attenuation(*depth, wo, sample.wi);
+            return Some((
+                BsdfSample {
+                    f: sample.f * (*scale * (*weight * through / probability)),
+                    pdf: 1.0,
+                    ..sample
+                },
+                roughness,
+            ));
+        }
+
+        // For everything else, re-evaluate the *whole* stack in the sampled
+        // direction. Both the value and the density must describe the mixture,
+        // not the component.
+        let pdf = self.pdf(wo, sample.wi);
+        if pdf <= 0.0 {
+            return None;
+        }
+        let f = self.eval(wo, sample.wi);
+        if f.is_black() {
+            return None;
+        }
+        Some((BsdfSample { f, pdf, ..sample }, roughness))
+    }
+
+    /// The density [`Bsdf::pdf`] gives `wi` from the reflections
+    /// [`Self::sample_reflection`] names a roughness for, each weighed by
+    /// `share` of its roughness: the density of [`Self::sample_reflection`]
+    /// choosing one of them, keeping it with chance `share`, and leaving by
+    /// `wi`. Mirror-smooth lobes have no density, and add none.
+    pub fn pdf_reflection(&self, wo: Vec3, wi: Vec3, share: impl Fn(f32) -> f32) -> f32 {
+        let mut total = 0.0;
+        for (index, (lobe, depth, _, _)) in self.active() {
+            let p = self.probabilities[index];
+            let Some(roughness) = lobe.reflection_roughness() else {
+                continue;
+            };
+            let kept = share(roughness);
+            if p > 0.0 && kept > 0.0 {
+                total += p * kept * self.lobe_pdf(lobe, *depth, wo, wi);
+            }
+        }
+        total
+    }
 }
 
 impl Bsdf for OpenPbrBsdf {
@@ -752,82 +870,7 @@ impl Bsdf for OpenPbrBsdf {
     }
 
     fn sample(&self, wo: Vec3, u: Vec2, uc: f32) -> Option<BsdfSample> {
-        if self.count == 0 {
-            return None;
-        }
-
-        // Choose a lobe, and rescale `uc` so the chosen lobe gets a fresh
-        // uniform value rather than one correlated with the choice. Reusing
-        // it directly biases nested discrete decisions — the transmission
-        // lobe's own reflect-or-refract split, for one.
-        let mut cumulative = 0.0;
-        let mut chosen = None;
-        for (index, entry) in self.active() {
-            let p = self.probabilities[index];
-            if uc < cumulative + p || index == self.count - 1 {
-                let rescaled = if p > 0.0 {
-                    ((uc - cumulative) / p).clamp(0.0, 1.0 - f32::EPSILON)
-                } else {
-                    0.5
-                };
-                chosen = Some((index, entry, rescaled));
-                break;
-            }
-            cumulative += p;
-        }
-        let (index, (lobe, depth, scale, weight), lobe_uc) = chosen?;
-
-        // A flake samples in its own frame and hands the direction back in
-        // the shading frame; one that leaves below the surface is lost.
-        let sample = match (depth, &self.flake_frame) {
-            (Depth::Flake, Some(frame)) => {
-                let local = frame.to_local(wo);
-                if local.z <= 0.0 {
-                    return None;
-                }
-                let sample = lobe.as_bsdf().sample(local, u, lobe_uc)?;
-                let wi = frame.to_world(sample.wi);
-                if wi.z <= 1e-6 {
-                    return None;
-                }
-                // A delta sample's value is returned as it stands, so it
-                // takes the cosine conversion here; anything else is
-                // re-evaluated through `eval`, which applies it.
-                let f = if sample.is_delta { sample.f * (sample.wi.z / wi.z) } else { sample.f };
-                BsdfSample { wi, f, ..sample }
-            }
-            _ => lobe.as_bsdf().sample(wo, u, lobe_uc)?,
-        };
-        let probability = self.probabilities[index].max(1e-6);
-
-        if sample.is_delta {
-            // A delta lobe's value is already divided by its own PDF, and no
-            // other lobe can produce this direction, so the only correction
-            // is the probability of having chosen it.
-            let through = self.attenuation(*depth, wo, sample.wi);
-            return Some(BsdfSample {
-                f: sample.f * (*scale * (*weight * through / probability)),
-                pdf: 1.0,
-                ..sample
-            });
-        }
-
-        // For everything else, re-evaluate the *whole* stack in the sampled
-        // direction. Both the value and the density must describe the mixture,
-        // not the component.
-        let pdf = self.pdf(wo, sample.wi);
-        if pdf <= 0.0 {
-            return None;
-        }
-        let f = self.eval(wo, sample.wi);
-        if f.is_black() {
-            return None;
-        }
-        Some(BsdfSample {
-            f,
-            pdf,
-            ..sample
-        })
+        self.sample_reflection(wo, u, uc).map(|(sample, _)| sample)
     }
 
     fn albedo(&self, wo: Vec3) -> Spectrum {
@@ -929,6 +972,57 @@ mod tests {
             }
         }
         (total / SAMPLES as f64) as f32
+    }
+
+    /// `sample_reflection` takes the sample `sample` does and says which
+    /// reflection it took, with its roughness, for the integrator's choice
+    /// of how a bounce meets clear glass; `pdf_reflection` is that
+    /// reflection's part of the mixture's density, scaled by the share asked
+    /// of it, and the whole of a metal's and none of a matte surface's.
+    #[test]
+    fn a_sample_names_the_reflection_it_took_and_its_share_of_the_density() {
+        // Plastic: a reflection off the interface over a diffuse substrate.
+        let material = Material { base_color: Spectrum::splat(0.6), specular_roughness: 0.3, ..Default::default() };
+        let bsdf = OpenPbrBsdf::new(&material, 0.0);
+        let wo = direction(0.6);
+        let (mut reflections, mut others) = (0, 0);
+        for i in 0..256 {
+            let u = Vec2 { x: (i as f32 + 0.5) / 256.0, y: ((i * 37) % 256) as f32 / 256.0 };
+            let uc = ((i * 13) % 256) as f32 / 256.0;
+            let Some((sample, roughness)) = bsdf.sample_reflection(wo, u, uc) else { continue };
+            // The same sample as the trait's.
+            let plain = bsdf.sample(wo, u, uc).expect("the same sample");
+            assert_eq!((plain.wi, plain.pdf), (sample.wi, sample.pdf));
+            match roughness {
+                Some(roughness) => {
+                    assert!((roughness - 0.3).abs() < 1e-4, "the reflection's roughness is {roughness}");
+                    assert!(sample.flags.contains(crate::BsdfFlags::GLOSSY));
+                    reflections += 1;
+                }
+                None => {
+                    assert!(sample.flags.contains(crate::BsdfFlags::DIFFUSE));
+                    others += 1;
+                }
+            }
+            // The reflection's density is part of the stack's, scaled by
+            // the share asked for, and the diffuse substrate's the rest.
+            let all = bsdf.pdf(wo, sample.wi);
+            let reflected = bsdf.pdf_reflection(wo, sample.wi, |_| 1.0);
+            let half = bsdf.pdf_reflection(wo, sample.wi, |r| if r > 0.2 { 0.5 } else { 1.0 });
+            assert!(reflected > 0.0 && reflected < all, "{reflected} of {all}");
+            assert!((half - 0.5 * reflected).abs() <= 1e-5 * reflected.max(1.0));
+        }
+        assert!(reflections > 10 && others > 10, "{reflections} reflections, {others} others");
+
+        // A metal is all reflection; a matte surface none.
+        let metal = OpenPbrBsdf::new(&Material::metal(crate::fresnel::metals::SILVER, 0.2), 0.0);
+        let matte = OpenPbrBsdf::new(&Material { specular_weight: 0.0, ..Default::default() }, 0.0);
+        // Near the mirror direction of `wo`.
+        let wi = direction(-0.55);
+        assert!(metal.pdf(wo, wi) > 0.0);
+        assert!((metal.pdf_reflection(wo, wi, |_| 1.0) - metal.pdf(wo, wi)).abs() <= 1e-5 * metal.pdf(wo, wi).max(1.0));
+        assert!(matte.pdf(wo, wi) > 0.0);
+        assert_eq!(matte.pdf_reflection(wo, wi, |_| 1.0), 0.0);
     }
 
     /// §2.4's rule, tested directly: the density reported by `sample` must be

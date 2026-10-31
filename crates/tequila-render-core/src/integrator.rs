@@ -812,14 +812,24 @@ fn trace<C: PathColour>(
     // Every surface so far focuses light (`caustics::caustic_surface`): the
     // next that does not is where the photons are read.
     let mut focused_chain = true;
-    // Whether the surface the path last scattered off sampled the lights
-    // through clear glass (`IntegratorConfig::light_through_glass`), and the
-    // path has gone straight on through such glass alone since. The light
-    // it reaches then is light that sample also looked for, and the two are
-    // weighed against each other as seen from there: the glass between is
-    // no new vertex to them, and counted as one, as a delta bounce resets
-    // the weighting, it doubled what was seen through every pane.
-    let mut through_panes = false;
+    // The clear glass the path passes, as the light sample at the surface
+    // it last scattered off did (`IntegratorConfig::light_through_glass`),
+    // the path having gone straight on through such glass alone since;
+    // `Solid` for none. The light it reaches then is light that sample
+    // also looked for, and the two are weighed against each other as seen
+    // from there: the glass between is no new vertex to them, and counted
+    // as one, as a delta bounce resets the weighting, it doubled what was
+    // seen through every pane. A glossy bounce passes only glass that does
+    // not bend light, and sees the rest as glass (`sees_glass`).
+    let mut through_glass = ShadowGlass::Solid;
+    // The density the lobes that pass glass gave the direction the path
+    // left that surface by (`sees_glass`): what the light it reaches
+    // through glass that bends light is weighed by, against the light
+    // sample.
+    let mut pass_pdf = f32::INFINITY;
+    // The surface a glossy bounce that sees glass left, while the path goes
+    // on from it through mirror-smooth glass alone (`SeenFrom`).
+    let mut seen_from: Option<SeenFrom> = None;
     // Whether the surface the path last scattered off took a manifold sample
     // (`manifold`), and the path has gone on through glass that bends light
     // alone since. A lamp's light along the way it is going is that
@@ -831,6 +841,33 @@ fn trace<C: PathColour>(
 
     loop {
         let hit = intersector.intersect(&ray);
+
+        // The lamps a glossy bounce meets past glass that bends light, which
+        // it sees as glass (`SeenFrom`): no geometry, they are looked for
+        // along the ray. Not on a path the camera sees along, where a lamp
+        // shows by its stand-in or not at all.
+        if let Some(from) = seen_from.filter(|from| from.met && !specular_chain) {
+            let reach = hit.as_ref().map_or(f32::INFINITY, |h| h.t);
+            for (index, light) in scene.lights.lights().iter().enumerate() {
+                if !met_past_glass(light, from.instance) {
+                    continue;
+                }
+                let Some((emitted, t)) = light.met_along(ray.origin, ray.direction) else {
+                    continue;
+                };
+                if t >= reach && !(t.is_infinite() && reach.is_infinite()) {
+                    continue;
+                }
+                // What the light sample had for it along the way the bounce
+                // left, chosen as the sample chooses lamps, by power.
+                let straight = light.density_along(from.position, from.direction)
+                    * scene.lights.selection_pdf(tequila_core::ids::LightId(index as u32));
+                let along = light.met_along(from.position, from.direction).map_or(f32::INFINITY, |(_, t)| t);
+                let contribution = throughput * colour.unbounded(emitted) * from.weight(intersector, straight, along);
+                radiance += contribution;
+                aovs.contribute(colour.rgb(contribution), light.layer.min(crate::lpe::LAST_LAYER));
+            }
+        }
 
         // The floor's reflection alone: only a camera ray meeting the floor
         // has anything to give (`IntegratorConfig::floor_reflection_only`).
@@ -896,6 +933,10 @@ fn trace<C: PathColour>(
                     mis_power(lit_phase_pdf, pdf_light)
                 } else if specular_chain || !config.direct_lighting {
                     1.0
+                } else if let Some(from) = seen_from.filter(|from| from.met) {
+                    // Past glass a glossy bounce saw: weighed against the sky's
+                    // sample there, straight on the way it left (`SeenFrom`).
+                    from.weight(intersector, scene.environment.pdf_from(from.position, from.direction), f32::INFINITY)
                 } else {
                     let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
                     mis_power(prev_pdf_solid_angle, pdf_light)
@@ -1086,7 +1127,8 @@ fn trace<C: PathColour>(
                 specular_chain = false;
                 read_caustics = false;
                 focused_chain = false;
-                through_panes = false;
+                through_glass = ShadowGlass::Solid;
+                seen_from = None;
                 after_manifold = false;
                 continue;
             }
@@ -1269,7 +1311,8 @@ fn trace<C: PathColour>(
                 let (geometric, _) = hit.facing_forward(ray.direction);
                 ray = Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction);
                 prev_pdf_solid_angle = f32::INFINITY;
-                through_panes = false;
+                through_glass = ShadowGlass::Solid;
+                seen_from = None;
                 after_manifold = false;
                 continue;
             }
@@ -1508,8 +1551,10 @@ fn trace<C: PathColour>(
             // (`sample_emissive_surfaces`) is weighed against it. Any other is
             // found by bounces alone: a glow seen straight on, through
             // mirrors, or one that is not among the lights.
-            let weight = match emitters_from {
-                Some(from) if prev_pdf_solid_angle.is_finite() => {
+            // Past glass a glossy bounce saw, against the sample's straight
+            // line (`SeenFrom`).
+            let weight = match (emitters_from, seen_from.filter(|from| from.met)) {
+                (Some(from), _) if prev_pdf_solid_angle.is_finite() => {
                     let density = scene.emitters().density(&from, hit.instance, hit.primitive);
                     if density > 0.0 {
                         let pdf_light = tequila_core::sampling::area_to_solid_angle_pdf(
@@ -1522,6 +1567,7 @@ fn trace<C: PathColour>(
                         1.0
                     }
                 }
+                (_, Some(seen)) => seen.weight_of_glow(intersector),
                 _ => 1.0,
             };
             let contribution = throughput * colour.unbounded(material.emission()) * weight;
@@ -1650,18 +1696,33 @@ fn trace<C: PathColour>(
         // counted, by the walk.
         let exiting_walk = media.walking_in(hit.instance);
         // Clear glass the last light sample was taken through, met on the
-        // way on from there.
-        let passing = through_panes
-            && !exiting_walk
-            && fibre.is_none()
-            && scene.pane(hit.material).is_some_and(|pane| pane.passes(config.shadow_glass()));
+        // way on from there by a bounce that passes it. A bounce that sees
+        // glass passes what casts no shadow, which the light sample passed
+        // as if it were not there.
+        let pane = scene.pane(hit.material).filter(|_| !exiting_walk && fibre.is_none());
+        let passing = pane.is_some_and(|pane| {
+            pane.passes(through_glass) || (through_glass == ShadowGlass::Unbent && !scene.casts_shadows(hit.instance))
+        });
+        // Glass that bends light the lobes that see it would have met as
+        // glass: what is found past it was the others' to find, and is
+        // weighed by their density against the light sample's.
+        if passing && through_glass == ShadowGlass::Clear && pane.is_some_and(|pane| pane.bends()) {
+            prev_pdf_solid_angle = prev_pdf_solid_angle.min(pass_pdf);
+        }
+        // Glass met as glass by a glossy bounce that sees it (`SeenFrom`).
+        let seeing = seen_from.is_some() && pane.is_some() && !passing;
         // Glass that bends light, met on the way on from a manifold sample.
         let bent = after_manifold && !exiting_walk && fibre.is_none() && scene.pane(hit.material).is_some_and(|pane| pane.bends());
         // Past the photons, glass stays glass: roughened by the floor it
         // would stop being mirror-smooth, and light through it would be
         // counted here as well as by the photons. So too past a light sample
-        // that went through it.
-        let floor = if read_caustics || passing { 0.0 } else { roughness_floor };
+        // that went through it, and on a glossy bounce that sees it, which
+        // is to meet what is past it along the bent path, lamps included:
+        // roughened, the glass would sample the lamps itself, and with the
+        // bounce meeting them too they were counted twice. Its far side
+        // sampling them alone, through a lobe the floor makes 0.09 rough,
+        // found them in specks or not at all.
+        let floor = if read_caustics || passing || seeing { 0.0 } else { roughness_floor };
         let bsdf = if let Some(fibre) = &fibre {
             Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
         } else if exiting_walk {
@@ -1699,6 +1760,15 @@ fn trace<C: PathColour>(
             emitters_from = None;
         }
         let passes = !aovs.is_off();
+        // The density of the lobes here that see glass that bends light
+        // (`sees_glass`), for a direction: the share of the light through
+        // such glass the light samples below leave to the bounces off them.
+        // Only where shadow rays pass all clear glass: with manifold
+        // caustics they stop at glass that bends light, and the bounces
+        // pass what they pass.
+        let seen_density = |wi: Vec3| bsdf.pdf_reflection(wo, wi, sees_glass);
+        let seen: Option<&dyn Fn(Vec3) -> f32> =
+            (config.shadow_glass() == ShadowGlass::Clear && scene.has_panes()).then_some(&seen_density);
         if samples_lights {
             let environment_direct = sample_environment_light(
                 intersector,
@@ -1712,6 +1782,7 @@ fn trace<C: PathColour>(
                 &mut out,
                 colour.rgb(throughput),
                 passes,
+                seen,
             );
             let (analytic_direct, layer) = if bent {
                 (Lit::default(), 0)
@@ -1728,6 +1799,7 @@ fn trace<C: PathColour>(
                     &mut out,
                     colour.rgb(throughput),
                     passes,
+                    seen,
                 )
             };
             // The glowing surfaces too, unless light source materials are
@@ -1751,6 +1823,7 @@ fn trace<C: PathColour>(
                     &mut out,
                     colour.rgb(throughput),
                     passes,
+                    seen,
                 ),
                 None => Lit::default(),
             };
@@ -1922,10 +1995,10 @@ fn trace<C: PathColour>(
 
         // ---- BSDF sampling: extend the path ----------------------------
         let sampled = match split {
-            Some((_, (_, through))) => Some(through),
-            None => bsdf.sample(wo, sampler.bsdf_direction(), sampler.bsdf_lobe()),
+            Some((_, (_, through))) => Some((through, None)),
+            None => bsdf.sample_reflection(wo, sampler.bsdf_direction(), sampler.bsdf_lobe()),
         };
-        let Some(sample) = sampled else {
+        let Some((sample, reflection)) = sampled else {
             break;
         };
         seen_as = if sample.is_transmission {
@@ -2007,17 +2080,60 @@ fn trace<C: PathColour>(
         // carries over; turned back off it, the path goes where no light
         // sample looked.
         let onward = passing && sample.is_transmission && sample.is_delta;
+        // Whether this bounce sees glass that bends light as glass: off a
+        // reflection sharp enough to show it (`sees_glass`). The others
+        // pass it, as the light sample did.
+        let lit_through = samples_lights && config.shadows && config.light_through_glass();
+        let sees = lit_through
+            && !onward
+            && seen.is_some()
+            && match reflection {
+                Some(_) if sample.is_delta => true,
+                Some(roughness) => {
+                    let share = sees_glass(roughness);
+                    share >= 1.0 || (share > 0.0 && sampler.next_unstructured() < share)
+                }
+                None => false,
+            };
         if !onward {
             prev_pdf_solid_angle = if sample.is_delta {
                 f32::INFINITY
             } else {
                 sample.pdf
             };
+            pass_pdf = match seen {
+                Some(seen) if !sample.is_delta && !sees => (sample.pdf - seen(sample.wi)).max(0.0),
+                _ => prev_pdf_solid_angle,
+            };
             if passing {
                 emitters_from = None;
             }
         }
-        through_panes = onward || (samples_lights && config.shadows && config.light_through_glass());
+        seen_from = if sees {
+            Some(SeenFrom {
+                position: hit.position,
+                normal: geometric_normal,
+                direction: wi_world,
+                instance: hit.instance,
+                density: if sample.is_delta { f32::INFINITY } else { seen_density(sample.wi) },
+                receiver: emitters_from,
+                met: false,
+            })
+        } else if sample.is_delta && !samples_lights && (seeing || passing) {
+            // On through mirror-smooth glass.
+            seen_from.map(|from| SeenFrom { met: from.met || (seeing && pane.is_some_and(|pane| pane.bends())), ..from })
+        } else {
+            None
+        };
+        through_glass = if onward {
+            through_glass
+        } else if !lit_through {
+            ShadowGlass::Solid
+        } else if sees {
+            ShadowGlass::Unbent
+        } else {
+            config.shadow_glass()
+        };
         after_manifold = bent || (samples_lights && config.manifold_caustics());
         specular_chain = specular_chain && sample.is_delta;
         catcher_view = catcher_view
@@ -2108,6 +2224,132 @@ enum Seen {
     Diffuse,
     Glossy,
     Transmission,
+}
+
+/// How much of a bounce off a reflection of `roughness` sees clear glass
+/// that bends light as glass (`SeenFrom`), rather than passing it straight
+/// as the light sample at the surface did. Off a reflection the coat, the
+/// dielectric interface or a metal gives
+/// (`OpenPbrBsdf::sample_reflection`); the rest pass it.
+///
+/// Told from the lobe the bounce took, not from the material, as Cycles
+/// tells a glossy ray from a diffuse one by the closure it sampled: off
+/// plastic, the diffuse substrate, the fuzz and the walk's doorway scatter
+/// what they meet into a blur and pass the glass, its reflection sees it;
+/// glass's own transmission lobe, rough deep in a path, passes the glass
+/// beyond as ever. And by how rough the reflection is, which the lobe's flags
+/// cannot say (`GLOSSY` at 0.05 and at 0.9 alike): up to 0.5, a reflection
+/// through a prism, lamp and glowing panel alike, was the light along the
+/// bent path, and at 0.45 smoother than the straight shadow ray's specks;
+/// by 0.8 a lobe scatters nearly as widely as the diffuse one, its bounces
+/// seldom meet a lamp, and the light sample's straight line, smooth under a
+/// flat cover, does better (`tequila-render-cpu/tests/glossy_reflection_of_glass.rs`).
+/// Faded between, so a roughness map draws no seam.
+fn sees_glass(roughness: f32) -> f32 {
+    const SEEN_UP_TO: f32 = 0.5;
+    const PASSED_FROM: f32 = 0.8;
+    let t = ((roughness - SEEN_UP_TO) / (PASSED_FROM - SEEN_UP_TO)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// The surface a glossy bounce that sees glass left (`sees_glass`), while
+/// the path goes on from it through mirror-smooth glass alone.
+#[derive(Clone, Copy, Debug)]
+struct SeenFrom {
+    position: Vec3,
+    /// Its geometric normal, on the side the bounce left by.
+    normal: Vec3,
+    /// The way the bounce left.
+    direction: Vec3,
+    instance: InstanceId,
+    /// The density the lobes that see glass give `direction`; infinite off
+    /// a mirror-smooth lobe, which no light sample stands in for.
+    density: f32,
+    /// Where the surface sampled the glowing parts from, if it did.
+    receiver: Option<crate::emitters::Receiver>,
+    /// Whether the path has met glass that bends light since, as glass.
+    met: bool,
+}
+
+impl SeenFrom {
+    /// The weight of light the bounce meets past glass, where `straight` is
+    /// the density the light sample here gave the same light along the way
+    /// the bounce left, and `reach` how far along it that light is
+    /// (`left_to_bounces`). Weighed against the sample where its straight
+    /// line gets there; where something stops it, the sample found nothing
+    /// that way, and the bounce takes all of it.
+    fn weight(&self, intersector: &dyn Intersector, straight: f32, reach: f32) -> f32 {
+        if !(straight > 0.0) || self.density.is_infinite() {
+            return 1.0;
+        }
+        let weight = mis_power(self.density, straight);
+        if weight >= 1.0 {
+            return 1.0;
+        }
+        let reach = if reach.is_finite() {
+            reach * (1.0 - 1e-3)
+        } else {
+            intersector.scene().bounds().bounding_radius().max(1.0) * 1e4
+        };
+        let target = self.position + self.direction * reach;
+        let open = shadow_transmittance(intersector, ShadowGlass::Clear, self.position, self.normal, target, -self.direction, &LightLinks::All);
+        if open.is_black() {
+            1.0
+        } else {
+            weight
+        }
+    }
+
+    /// The weight of a glowing part the bounce meets past glass: as
+    /// [`SeenFrom::weight`], the light sample's density being that of the
+    /// glowing surface its straight line meets first past clear glass, if
+    /// it meets one facing it.
+    fn weight_of_glow(&self, intersector: &dyn Intersector) -> f32 {
+        let Some(receiver) = self.receiver.filter(|_| self.density.is_finite()) else {
+            return 1.0;
+        };
+        let scene = intersector.scene();
+        let mut ray = Ray::new(offset_ray_origin(self.position, self.normal), self.direction);
+        for _ in 0..MAX_CUTOUT_CROSSINGS {
+            let Some(hit) = intersector.intersect(&ray) else {
+                return 1.0;
+            };
+            // Past what a shadow ray passes: what casts no shadow, clear
+            // glass, a cutout.
+            let passed = !scene.casts_shadows(hit.instance)
+                || scene.pane(hit.material).is_some()
+                || scene.opacity_of(hit.material).is_none_or(|opacity| opacity < 0.999);
+            if passed {
+                ray = Ray::new(hit.position + self.direction * 1e-4, self.direction);
+                continue;
+            }
+            let density = scene.emitters().density(&receiver, hit.instance, hit.primitive);
+            if density <= 0.0 || hit.is_backface(self.direction) {
+                return 1.0;
+            }
+            let straight = tequila_core::sampling::area_to_solid_angle_pdf(
+                density,
+                (hit.position - receiver.position).length_squared(),
+                self.direction.dot(hit.geometric_normal),
+            );
+            return mis_power(self.density, straight);
+        }
+        1.0
+    }
+}
+
+/// Whether a glossy bounce off `instance` that sees glass looks for `light`
+/// past it, and the light samples there leave it that share
+/// (`left_to_bounces`): a light a ray can meet, which lights `instance`, in
+/// its diffuse and its glossy light alike, and whose shadow every part
+/// casts. The rest are their light samples' alone, as before.
+fn met_past_glass(light: &crate::light::Light, instance: InstanceId) -> bool {
+    light.can_be_met()
+        && light.visibility.diffuse
+        && light.visibility.specular
+        && light.visibility.shadow
+        && light.shadow_links.is_all()
+        && light.links.lights(instance.0)
 }
 
 /// The chance that a path reflected off `material` still sees a shadow
@@ -2512,13 +2754,28 @@ fn shadow_transmittance(
     to_normal: Vec3,
     blockers: &LightLinks,
 ) -> Spectrum {
+    shadow_transmittance_through(intersector, glass, from, from_normal, to, to_normal, blockers).0
+}
+
+/// [`shadow_transmittance`], and whether the light came through glass that
+/// bends light ([`crate::scene::Pane::bends`]) on the way: straight on, as
+/// a shadow ray takes it, where the light really took a bent path.
+fn shadow_transmittance_through(
+    intersector: &dyn Intersector,
+    glass: ShadowGlass,
+    from: Vec3,
+    from_normal: Vec3,
+    to: Vec3,
+    to_normal: Vec3,
+    blockers: &LightLinks,
+) -> (Spectrum, bool) {
     let scene = intersector.scene();
     let glass = if scene.has_panes() { glass } else { ShadowGlass::Solid };
     if !scene.has_cutouts() && glass == ShadowGlass::Solid && blockers.is_all() {
         return if intersector.occluded(from, from_normal, to, to_normal) {
-            Spectrum::ZERO
+            (Spectrum::ZERO, false)
         } else {
-            Spectrum::ONE
+            (Spectrum::ONE, false)
         };
     }
     cutout_transmittance(intersector, glass, from, from_normal, to, to_normal, blockers)
@@ -2539,12 +2796,14 @@ fn cutout_transmittance(
     to: Vec3,
     to_normal: Vec3,
     blockers: &LightLinks,
-) -> Spectrum {
+) -> (Spectrum, bool) {
     let scene = intersector.scene();
     let ray = crate::intersect::shadow_ray(from, from_normal, to, to_normal);
     let mut origin = ray.origin;
     let mut remaining = ray.t_max;
     let mut through = Spectrum::ONE;
+    // Whether a pane passed bends light.
+    let mut bent = false;
     // How far along the ray this segment starts, and the glass with a
     // volume it is inside and where it went in: the volume absorbs between
     // the way in and the way out. Told apart by count, in then out, rather
@@ -2561,7 +2820,7 @@ fn cutout_transmittance(
         let mut segment = Ray::new(origin, ray.direction);
         segment.t_max = remaining;
         let Some(hit) = intersector.intersect(&segment) else {
-            return through;
+            return (through, bent);
         };
 
         // A part that casts no shadow is open to a shadow ray whatever its
@@ -2571,6 +2830,7 @@ fn cutout_transmittance(
         let at = along + hit.t;
         if let Some(pane) = scene.pane(hit.material).filter(|pane| pane.passes(glass) && !open) {
             through *= pane.crossing(ray.direction.dot(hit.geometric_normal));
+            bent |= pane.bends();
             if pane.has_volume() {
                 match inside {
                     None => inside = Some((hit.instance, at)),
@@ -2582,12 +2842,12 @@ fn cutout_transmittance(
                 }
             }
             if through.max_component() < 1e-3 {
-                return Spectrum::ZERO;
+                return (Spectrum::ZERO, false);
             }
             let travelled = hit.t.max(1e-6);
             remaining -= travelled;
             if remaining <= 0.0 {
-                return through;
+                return (through, bent);
             }
             origin = hit.position + ray.direction * 1e-4;
             along = at + 1e-4;
@@ -2622,20 +2882,20 @@ fn cutout_transmittance(
         // Nothing past here can lighten it, and a shadow this deep is a
         // shadow.
         if through.max_component() < 1e-3 {
-            return Spectrum::ZERO;
+            return (Spectrum::ZERO, false);
         }
 
         let travelled = hit.t.max(1e-6);
         remaining -= travelled;
         if remaining <= 0.0 {
-            return through;
+            return (through, bent);
         }
         origin = hit.position + ray.direction * 1e-4;
         along = at + 1e-4;
     }
     // Past the bound. Treated as blocked, which errs towards a shadow rather
     // than towards light leaking through a scene nobody meant to build.
-    Spectrum::ZERO
+    (Spectrum::ZERO, false)
 }
 
 /// How much of a camera ray's pixel sample is covered, where the first
@@ -2968,6 +3228,7 @@ fn sample_environment_light(
     out: &mut PathResult,
     throughput: Spectrum,
     passes: bool,
+    seen: Option<&dyn Fn(Vec3) -> f32>,
 ) -> Lit {
     let scene = intersector.scene();
     let Some(light) = scene
@@ -3054,7 +3315,8 @@ fn sample_environment_light(
         } else {
             geometric_normal
         };
-        visibility = shadow_transmittance(
+        let bent;
+        (visibility, bent) = shadow_transmittance_through(
             intersector,
             config.shadow_glass(),
             hit.position,
@@ -3066,10 +3328,48 @@ fn sample_environment_light(
         if visibility.is_black() {
             return Lit::default();
         }
+        out.direct_visible += throughput * unshadowed * visibility;
+        // Through glass that bends light, shared with the bounces that pass
+        // it and those that see it (`left_to_bounces`).
+        if let Some(seen) = seen.filter(|_| bent) {
+            let (passing, pass_pdf, seen_pdf) = left_to_bounces(pdf_bsdf, seen(wi));
+            let weight = passing * mis_power(light.pdf, pass_pdf) + (1.0 - passing) * mis_power(light.pdf, seen_pdf);
+            let scale = light.radiance * (wi.z.abs() * weight / light.pdf);
+            return Lit::of(f, || bsdf.eval_selective(wo, wi, true, false), scale * visibility, wi.z < 0.0, passes);
+        }
+    } else {
+        out.direct_visible += throughput * unshadowed;
     }
-
-    out.direct_visible += throughput * unshadowed * visibility;
     Lit::of(f, || bsdf.eval_selective(wo, wi, true, false), scale * visibility, wi.z < 0.0, passes)
+}
+
+/// How the light a light sample finds through glass that bends light is
+/// shared out, where `pdf` is the surface's density for its direction and
+/// `seen` the part of that from the lobes whose bounces see such glass as
+/// glass (`sees_glass`): the share the other lobes' density makes up, that
+/// density, and `seen`.
+///
+/// The bounces that pass the glass are left their share, the light straight
+/// through as the shadow ray has it, weighed against the light sample by
+/// their density as any bounce is; a lamp, which they cannot meet, is the
+/// sample's alone in it. Those that see the glass are left the rest, along
+/// the bent path, which they follow through mirror-smooth glass to what is
+/// past it: the sky, a glowing part, a lamp (`SeenFrom`). The light
+/// sample's straight line stands in for that too, weighed against them by
+/// their density as if it were the same light, which through a thin or
+/// flat pane it nearly is: there each finds what the other finds badly.
+/// Through a bottle it is not, and the sample's straight line is seldom
+/// the bounce's; where it is, the sample keeps its weight of the light
+/// straight through, as a diffuse lobe sees it, and the bounce its weight
+/// of the light along the bent path. So every direction's light is counted
+/// once, shared out, where letting every bounce see the glass counted what
+/// the shadow ray found through it twice.
+fn left_to_bounces(pdf: f32, seen: f32) -> (f32, f32, f32) {
+    if !(pdf > 0.0) {
+        return (1.0, pdf, 0.0);
+    }
+    let seen = seen.clamp(0.0, pdf);
+    ((pdf - seen) / pdf, pdf - seen, seen)
 }
 
 /// One next-event-estimation sample against the scene's glowing surfaces
@@ -3089,6 +3389,7 @@ fn sample_emissive_surfaces(
     out: &mut PathResult,
     throughput: Spectrum,
     passes: bool,
+    seen: Option<&dyn Fn(Vec3) -> f32>,
 ) -> Lit {
     let scene = intersector.scene();
     let Some(light) = scene.emitters().sample(scene, from, sampler.light_select(), sampler.light_sample()) else {
@@ -3130,7 +3431,8 @@ fn sample_emissive_surfaces(
 
     // Unlike an analytic light's, this light is geometry a bounce can hit,
     // so both strategies can find it and MIS shares it between them.
-    let weight = mis_power(pdf, bsdf.pdf(wo, wi));
+    let pdf_bsdf = bsdf.pdf(wo, wi);
+    let weight = mis_power(pdf, pdf_bsdf);
     let scale = light.radiance * (wi.z.abs() * weight / pdf);
     let unshadowed = f * scale;
     out.direct_unshadowed += throughput * unshadowed;
@@ -3145,7 +3447,8 @@ fn sample_emissive_surfaces(
         // The far end is moved off the glowing surface along its normal,
         // which faces this point, so the ray stops short of the surface it
         // was aimed at rather than meeting it.
-        visibility = shadow_transmittance(
+        let bent;
+        (visibility, bent) = shadow_transmittance_through(
             intersector,
             config.shadow_glass(),
             from.position,
@@ -3157,8 +3460,18 @@ fn sample_emissive_surfaces(
         if visibility.is_black() {
             return Lit::default();
         }
+        out.direct_visible += throughput * unshadowed * visibility;
+        // Through glass that bends light, shared as the environment's is
+        // (`left_to_bounces`).
+        if let Some(seen) = seen.filter(|_| bent) {
+            let (passing, pass_pdf, seen_pdf) = left_to_bounces(pdf_bsdf, seen(wi));
+            let weight = passing * mis_power(pdf, pass_pdf) + (1.0 - passing) * mis_power(pdf, seen_pdf);
+            let scale = light.radiance * (wi.z.abs() * weight / pdf);
+            return Lit::of(f, || bsdf.eval_selective(wo, wi, true, false), scale * visibility, wi.z < 0.0, passes);
+        }
+    } else {
+        out.direct_visible += throughput * unshadowed;
     }
-    out.direct_visible += throughput * unshadowed * visibility;
     Lit::of(f, || bsdf.eval_selective(wo, wi, true, false), scale * visibility, wi.z < 0.0, passes)
 }
 
@@ -3178,6 +3491,7 @@ fn sample_analytic_lights(
     out: &mut PathResult,
     throughput: Spectrum,
     passes: bool,
+    seen: Option<&dyn Fn(Vec3) -> f32>,
 ) -> (Lit, crate::lpe::LightGroup) {
     let scene = intersector.scene();
     if scene.lights.is_empty() {
@@ -3260,6 +3574,13 @@ fn sample_analytic_lights(
     out.direct_unshadowed += throughput * unshadowed;
 
     let mut visibility = Spectrum::ONE;
+    // The share of the light this sample counts. Through glass that bends
+    // light, a lamp a ray can meet is shared with the bounces that see the
+    // glass, which meet it past it; the bounces that pass the glass cannot
+    // meet it, and leave their share to this sample whole
+    // (`left_to_bounces`). Weighed as the bounces weigh it, by the lamp's
+    // density as chosen from all of them (`SeenFrom`).
+    let mut share = 1.0;
     if config.shadows && light.visibility.shadow {
         // Stop just short of the light, or the emitter's own surface blocks
         // the ray it was traced towards.
@@ -3276,7 +3597,8 @@ fn sample_analytic_lights(
         } else {
             geometric_normal
         };
-        visibility = shadow_transmittance(
+        let bent;
+        (visibility, bent) = shadow_transmittance_through(
             intersector,
             config.shadow_glass(),
             hit.position,
@@ -3287,6 +3609,11 @@ fn sample_analytic_lights(
         );
         if visibility.is_black() {
             return (Lit::default(), 0);
+        }
+        if let Some(seen) = seen.filter(|_| bent && met_past_glass(light, hit.instance)) {
+            let (passing, _, seen_pdf) = left_to_bounces(bsdf.pdf(wo, wi), seen(wi));
+            let density = light.density_along(hit.position, sample.direction) * scene.lights.selection_pdf(id);
+            share = passing + (1.0 - passing) * mis_power(density, seen_pdf);
         }
     }
     out.direct_visible += throughput * unshadowed * visibility;
@@ -3321,7 +3648,7 @@ fn sample_analytic_lights(
     // describes, and the test named for it says so within a second.
     let diffuse = || bsdf.eval_selective(wo, wi, light.visibility.diffuse, false);
     (
-        Lit::of(f, diffuse, sample.radiance * (wi.z.abs() / density) * visibility, wi.z < 0.0, passes),
+        Lit::of(f, diffuse, sample.radiance * (wi.z.abs() * share / density) * visibility, wi.z < 0.0, passes),
         light.layer.min(crate::lpe::LAST_LAYER),
     )
 }

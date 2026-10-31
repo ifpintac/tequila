@@ -29,10 +29,11 @@ pub struct IntegratorConfig {
     /// [`crate::integrator::caustics`]): photons traced from the lights
     /// through glass, liquids, gems and mirrors onto what is around them,
     /// read by the camera path at the first surface it sees that is not
-    /// mirror-smooth. Off, shadow rays pass clear glass instead
-    /// ([`Self::light_through_glass`]), as KeyShot's renderer does with its
-    /// caustics off, and light focused by anything else is found only by
-    /// chance. How the pass finds that light is [`Self::caustics_method`].
+    /// mirror-smooth. Off, shadow rays and diffuse bounces pass clear glass
+    /// instead ([`Self::light_through_glass`]), as KeyShot's renderer does
+    /// with its caustics off, glossy bounces see it as glass, and light
+    /// focused by anything else is found only by chance. How the pass finds
+    /// that light is [`Self::caustics_method`].
     pub caustics: bool,
     /// How the caustics pass finds focused light, when it is on: photons
     /// from every light, or the paths from each lamp through smooth glass
@@ -417,6 +418,16 @@ impl IntegratorConfig {
     /// by: a shadow ray that passed it too would count that light twice.
     /// With manifold caustics, only glass that does not bend light
     /// ([`Self::shadow_glass`]).
+    ///
+    /// The bounces off a surface that took such a light sample pass the
+    /// glass too, and are weighed against the sample as in the open - the
+    /// diffuse ones, and the glossy ones off a rough reflection. A bounce
+    /// off a sharper reflection (the coat's, the interface's, a metal's)
+    /// sees glass that bends light as glass, as the camera does, so a
+    /// bottle mirrored in a glossy floor is mirrored as glass, with what it
+    /// bends and the lamps it shows; the light through such glass is shared
+    /// between the sample and the bounces so that each direction's is
+    /// counted once (`integrator::left_to_bounces`).
     #[inline]
     pub fn light_through_glass(&self) -> bool {
         self.shadow_glass() != ShadowGlass::Solid
@@ -431,6 +442,12 @@ impl IntegratorConfig {
     /// meet them where the bent path really leads. Let by straight as well,
     /// the light under a glass ball would be counted twice, once spread
     /// over its shadow and once focused.
+    ///
+    /// With the caustics pass off, the diffuse bounces off a surface that
+    /// sampled the lights through glass pass it as its shadow rays did, and
+    /// its glossy bounces pass only glass that does not bend light
+    /// (`Unbent`): glass that bends it they see as glass, and meet what is
+    /// past it along the bent path (`integrator::sees_glass`).
     #[inline]
     pub fn shadow_glass(&self) -> ShadowGlass {
         match (self.caustics, self.caustics_method) {
