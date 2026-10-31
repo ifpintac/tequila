@@ -400,9 +400,12 @@ pub enum NodeKind {
     },
     /// §4.4's Fuzz, geometric: real fibres standing out of the surface - a
     /// peach skin, a felt's halo, a tennis ball's nap, a towel - grown as
-    /// fine tapering tubes in the part's own material when the scene is
+    /// fine tapering curves in the part's own material when the scene is
     /// built. Wired to nothing, as Bubbles. The shading-only fuzz is the
-    /// surface's own sheen (`fuzz_weight`). See `tequila_scene::fuzz`.
+    /// surface's own sheen (`fuzz_weight`). A material has the same
+    /// settings of its own (`fuzz_density` and the rest), which the Material
+    /// tab shows; this node, where there is one, wins over them. See
+    /// `tequila_scene::fuzz`.
     Fuzz {
         /// A fibre's length, in scene units.
         length: f32,
@@ -1495,6 +1498,19 @@ pub struct FuzzRequest {
 }
 
 impl FuzzRequest {
+    /// What a material's own fibre settings ask for, when they ask for any
+    /// fibres: its thickness is a width, a Fuzz node's a radius.
+    pub fn of_material(material: &crate::openpbr::Material) -> Option<FuzzRequest> {
+        (material.fuzz_density > 0.0 && material.fuzz_density.is_finite()).then(|| FuzzRequest {
+            length_bits: material.fuzz_length.to_bits(),
+            density_bits: material.fuzz_density.to_bits(),
+            thickness_bits: (material.fuzz_thickness * 0.5).to_bits(),
+            lean_bits: material.fuzz_lean.to_bits(),
+            curl_bits: material.fuzz_curl.to_bits(),
+            seed: 0,
+        })
+    }
+
     pub fn length(&self) -> f32 {
         f32::from_bits(self.length_bits)
     }

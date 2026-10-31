@@ -393,6 +393,8 @@ fn result_from(sample: preview::PreviewSample) -> PathResult {
         hue: None,
         // An escaped preview ray is the background and nothing else.
         background: if sample.escaped { sample.radiance } else { tequila_core::spectrum::Spectrum::ZERO },
+        // The preview passes through fibres to the surface.
+        fine: false,
     }
 }
 

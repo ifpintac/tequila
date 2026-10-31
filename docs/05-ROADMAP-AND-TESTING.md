@@ -561,14 +561,48 @@ Alembic deformation import serve neither.
       dense milk in a glass-sized ball kept 0.83 of a white world's light,
       now 0.98 to 1.00. *Open:* the CPU Solid fallback still shows such a
       medium at its described density.
-- [ ] Geometry nodes: Displace with adaptive tessellation, Flakes, Fuzz, Bubbles.
-      *Done:* Displace, Flakes, and Bubbles — real air pockets rather than
-      §4.4's density field, which reads as fuzzy specks: inside-out spheres
-      in the part's own material, so a ray meeting one leaves the liquid
-      into air with the right refraction and total-internal-reflection rim,
-      placed wholly inside the (closed) part without overlapping, seeded
-      and cached. *Open:* geometric Fuzz (shading-only fuzz is the fuzz
-      lobe); curve primitives are not in the Embree integration yet.
+- [x] Geometry nodes: Displace with adaptive tessellation, Flakes, Fuzz, Bubbles.
+      *Fuzz since October 31:* real fibres, grown when the scene is built
+      (`tequila_scene::fuzz`) by a material's own settings - Fibres (to the
+      square centimetre; 0, the default, grows none), length, thickness,
+      lean, curl and colour variation, offered wherever Sheen is - or by a
+      Fuzz node, which wins. Five points a fibre, rooted evenly by area,
+      tapering to a fifth at the tip, outward even on a part wound inside
+      out; capped at 250,000 a part, which grow in about 90 ms and build in
+      about 60, cached by mesh, scale and settings. Tequila's renderer
+      traces them as Embree's flat linear curves - ribbons facing each ray,
+      with a filter so a ray leaving a fibre does not meet it again - and
+      shades them with Chiang et al.'s fibre model, ported from Cycles'
+      Principled Hair, in the fuzz colour and roughness; Cycles gets them as
+      thick linear hair through an optional `fsc_curves` (an older library
+      warns and leaves them out) and shades them with Principled Hair,
+      Chiang. `sample`, `eval` and `pdf` agree (a white fibre's furnace by
+      its own sampling and by uniform directions, a χ² test over the
+      roughness ladder), white fur on a white ball in a white world reads
+      0.999, and `fibres_render_alike_in_both_renderers` holds a furred ball
+      to 2% in brightness, 3.5% in colour and 1% in the fuzz past its
+      outline (its light and shade correlated 0.95). That took a pass
+      through a fibre counting as a transmission rather than a bounce, as
+      Cycles counts hair's, and firefly rejection leaving fibres' glints
+      alone: before, Tequila's ball was 19% darker. Fibres take shadows,
+      cast them, show in reflections and keep their part's rays, holdout,
+      light links, render layer and name; picking one picks the part.
+      Measured at 960 x 600 and 256 samples: a tennis ball's 205,000 fibres
+      took a mid shot from 32 s to 131 s in Tequila's renderer and a
+      close-up from 76 s to 199 s (Cycles on the graphics card 18 to 28 s
+      and 12 to 26 s), a velvet cushion's 250,000 from 25 to 41 s and 31 to
+      72 s (Cycles 14 to 15 s and 11 to 15 s). That is a slower refinement
+      rather than a stall, so they stay in the Rendered view in both
+      engines; the Solid view, the Fast preview and the preview sphere show
+      the sheen alone. A document without fibres renders bit for bit as
+      before. *Before:* Displace, Flakes, and Bubbles
+      — real air pockets rather than §4.4's density field, which reads as
+      fuzzy specks: inside-out spheres in the part's own material, so a ray
+      meeting one leaves the liquid into air with the right refraction and
+      total-internal-reflection rim, placed wholly inside the (closed) part
+      without overlapping, seeded and cached. *Open:* fibres take their
+      colour and roughness as constants, so a texture on Sheen Color tints
+      the surface under them and not them.
 - [ ] ~~Animation nodes (Color Fade, Curve Fade)~~ — deferred with M5.
 - [x] HDRI Editor: light/image/gradient pins, sun & sky (Hosek-Wilkie), export to EXR, async CDF rebuild.
       *Hosek–Wilkie since September 26:* the authors' 1.4a reference code

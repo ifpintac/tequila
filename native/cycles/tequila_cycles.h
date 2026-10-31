@@ -146,6 +146,19 @@ FSC_API int fsc_mesh_colors(FscSession *session, FscNode mesh, int vertex_count,
 /* Four numbers a vertex, `rgba`, as the vertex attribute `name`: what an
  * Attribute node of that name reads, interpolated across each triangle. */
 FSC_API int fsc_mesh_attribute(FscSession *session, FscNode mesh, const char *name, int vertex_count, const float *rgba);
+/* Fibres, as Cycles hair (§4.4's Fuzz): curve_count curves of
+ * points_per_curve keys each, root first, keys 3 floats a key and radii one,
+ * drawn as straight segments between the keys as round tubes (Cycles' thick
+ * linear curves). random, if given, is a number a curve, kept as the curve
+ * attribute "tq_fibre_random" an "attribute" node reads. Returns the
+ * geometry, for fsc_object, or NULL. */
+FSC_API FscNode fsc_curves(FscSession *session,
+                           int curve_count,
+                           int points_per_curve,
+                           const float *keys,
+                           const float *radii,
+                           const float *random,
+                           FscNode shader);
 FSC_API FscNode fsc_object(FscSession *session,
                            FscNode mesh,
                            const float *matrix12,

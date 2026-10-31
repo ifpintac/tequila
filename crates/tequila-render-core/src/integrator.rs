@@ -9,6 +9,7 @@ pub mod caustics;
 
 use crate::intersect::{Hit, Intersector};
 use crate::light::LightLinks;
+use crate::material::Scattering;
 use crate::scene::ShadowCatcher;
 use crate::shade;
 use crate::settings::IntegratorConfig;
@@ -83,6 +84,10 @@ pub struct PathResult {
     /// An image with alpha leaves it out, since there the background is
     /// transparent; one without keeps it.
     pub background: Spectrum,
+    /// The camera ray met one of §4.4's fibres first: something finer than
+    /// a pixel, whose glints are a few of its samples by right rather than
+    /// outliers among them (see `Framebuffer`'s firefly rejection).
+    pub fine: bool,
 }
 
 /// The light-path machinery a path carries while it is traced.
@@ -716,6 +721,13 @@ fn trace<C: PathColour>(
     }
     let mut bounce = 0u32;
     let mut transmission_bounces = 0u32;
+    // Light that went on through a fibre (§4.4's Fuzz) rather than back off
+    // it: counted as a transmission and not against the bounces, as Cycles
+    // counts its hair's. A felt is many fibres deep, and its colour is the
+    // light that wanders through them; at the bounces a surface needs, the
+    // pile of a felt ball came out 4% darker and a tenth less red than in
+    // Cycles, and with them counted apart the two agree to 2%.
+    let mut fibre_passes = 0u32;
     // Crossings of a cutout surface. Not bounces: passing through a hole in a
     // leaf is not a scattering event and must not spend the path's depth
     // budget, or a row of chain-link fences would go black. Counted only so
@@ -1289,7 +1301,14 @@ fn trace<C: PathColour>(
         // nothing changes there, so the path carries straight on, as through
         // a cutout, and only the record of what it is inside changes.
         let base = scene.material(hit.material);
-        let boundary = is_boundary(base);
+        // A fibre (§4.4's Fuzz) wears its part's material, but is no
+        // interface of it: it scatters all round itself, and a path that
+        // passes through one stays where it was.
+        let fibre = scene.fibre_at(&hit, ray.direction);
+        if bounce == 0 {
+            out.fine = fibre.is_some();
+        }
+        let boundary = is_boundary(base) && fibre.is_none();
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
             && media.beyond(hit.instance, base.medium_priority) == media.top(None).map(|m| m.instance)
@@ -1327,7 +1346,9 @@ fn trace<C: PathColour>(
         // brackets, the inside of a housing — and making them pay for the
         // general case is how a feature that helps a few surfaces slows down
         // the whole render.
-        let point = scene.program(hit.material).map(|_| {
+        // A fibre has no surface for a graph to be read on: it takes the
+        // material's own values.
+        let point = scene.program(hit.material).filter(|_| fibre.is_none()).map(|_| {
             let mut point = scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction);
             point.world.ray = seen_as.ray();
             point
@@ -1366,7 +1387,7 @@ fn trace<C: PathColour>(
         // if any, and how it leans. The shading point is needed for it even
         // where the material has no graph.
         let flaked;
-        let material = if material.flake_weight > 1e-4 {
+        let material = if material.flake_weight > 1e-4 && fibre.is_none() {
             let at = point.unwrap_or_else(|| scene.shading_point_along(&hit, shading_normal, config.pixel_spread, ray.direction));
             flaked = crate::flakes::apply(material, &at);
             &flaked
@@ -1382,7 +1403,7 @@ fn trace<C: PathColour>(
         // cost Tequila's renderer 40% on a product all of whose parts are
         // rounded. The bump bends what it leaves, as Bevel feeds Cycles'
         // Bump.
-        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 {
+        let shading_normal = if material.edge_radius > 0.0 && bounce == 0 && fibre.is_none() {
             crate::bevel::rounded_normal(intersector, &hit, shading_normal, material.edge_radius, material.edge_samples as u32, sampler)
         } else {
             shading_normal
@@ -1457,7 +1478,7 @@ fn trace<C: PathColour>(
         // With Light source materials off, a glowing surface lights nothing
         // round it: met by a diffuse bounce, its light is left out. Seen
         // directly, through glass or in a reflection it still glows.
-        if material.is_emissive() && !hit.is_backface(ray.direction) && (config.light_source_materials || seen_as != Seen::Diffuse) {
+        if material.is_emissive() && fibre.is_none() && !hit.is_backface(ray.direction) && (config.light_source_materials || seen_as != Seen::Diffuse) {
             // A glow the last vertex also aimed a light sample at
             // (`sample_emissive_surfaces`) is weighed against it. Any other is
             // found by bounces alone: a glow seen straight on, through
@@ -1489,11 +1510,15 @@ fn trace<C: PathColour>(
             aovs.contribute(colour.rgb(contribution), group);
         }
 
-        if bounce >= config.max_bounces {
+        if bounce - fibre_passes >= config.max_bounces {
             break;
         }
 
-        let onb = if material.specular_roughness_anisotropy > 0.0 {
+        let onb = if let Some(fibre) = &fibre {
+            // Along the fibre, and facing the viewer square to it: the frame
+            // the fibre's BSDF is written in.
+            Onb::from_normal_tangent(fibre.facing, fibre.tangent)
+        } else if material.specular_roughness_anisotropy > 0.0 {
             // The graph's own direction where it draws one, in the part's
             // space: read from the registers the material was just shaded
             // into.
@@ -1545,7 +1570,7 @@ fn trace<C: PathColour>(
         // hero's; it keeps all four off the surface, where every wavelength
         // reflects the same way, and drops the other three only if it goes
         // through (below).
-        let disperses = material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0;
+        let disperses = material.transmission_weight > 0.0 && material.transmission_dispersion_abbe > 0.0 && fibre.is_none();
         let dispersed;
         let material = if disperses {
             let lambda = match (colour.hero(), wavelength) {
@@ -1601,18 +1626,20 @@ fn trace<C: PathColour>(
         let exiting_walk = media.walking_in(hit.instance);
         // Clear glass the last light sample was taken through, met on the
         // way on from there.
-        let passing = through_panes && !exiting_walk && scene.pane(hit.material).is_some();
+        let passing = through_panes && !exiting_walk && fibre.is_none() && scene.pane(hit.material).is_some();
         // Past the photons, glass stays glass: roughened by the floor it
         // would stop being mirror-smooth, and light through it would be
         // counted here as well as by the photons. So too past a light sample
         // that went through it.
         let floor = if read_caustics || passing { 0.0 } else { roughness_floor };
-        let bsdf = if exiting_walk {
-            walk_exit().bsdf(floor)
+        let bsdf = if let Some(fibre) = &fibre {
+            Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
+        } else if exiting_walk {
+            Scattering::Surface(walk_exit().bsdf(floor))
         } else if from_inside {
-            material.bsdf_from_inside(floor)
+            Scattering::Surface(material.bsdf_from_inside(floor))
         } else {
-            material.bsdf(floor)
+            Scattering::Surface(material.bsdf(floor))
         };
         let smooth_here = caustic_map.is_some() && caustics::caustic_surface(material, &bsdf);
 
@@ -1800,6 +1827,7 @@ fn trace<C: PathColour>(
             && aovs.is_off()
             && !exiting_walk
             && !disperses
+            && fibre.is_none()
         {
             let eta = if from_inside { 1.0 / relative_ior } else { relative_ior };
             carried.and_then(|carried| scene.pane(hit.material).and_then(|pane| pane.split(wo, eta)).map(|split| (carried, split)))
@@ -1869,12 +1897,23 @@ fn trace<C: PathColour>(
             throughput = colour.hero_alone(throughput);
             alone = true;
         }
-        if sample.is_transmission {
-            eta_scale *= sample.eta * sample.eta;
+        // At a fibre, by the lobe the path took - through it, or off it -
+        // whichever side of the facing normal that leaves by.
+        let through = match &fibre {
+            Some(_) => sample.flags.contains(BsdfFlags::TRANSMISSION),
+            None => sample.is_transmission,
+        };
+        if fibre.is_some() && through {
+            fibre_passes += 1;
+        }
+        if through {
             transmission_bounces += 1;
             if transmission_bounces > config.max_transmission_bounces {
                 break;
             }
+        }
+        if sample.is_transmission {
+            eta_scale *= sample.eta * sample.eta;
             // Crossing the interface enters the instance or leaves it. A
             // thin-walled surface stands for a shell with no inside to be in,
             // so passing through one leaves the path where it was — which is

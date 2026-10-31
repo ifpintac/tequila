@@ -105,7 +105,7 @@ pub fn plan(intersector: &dyn Intersector) -> Option<CausticPlan> {
     let scene = intersector.scene();
     let mut bounds = Aabb::EMPTY;
     for instance in &scene.instances {
-        if instance.shadow_catcher.is_some() || instance.light_proxy {
+        if instance.shadow_catcher.is_some() || instance.light_proxy || scene.mesh(instance.mesh).fibres.is_some() {
             continue;
         }
         let material = scene.material(instance.material);
@@ -340,6 +340,15 @@ fn trace_photon(
         // such a floor at all). The photon stops there either way.
         if instance.shadow_catcher.is_some() && !config.ground_illumination {
             if smooth_events > 0 && instance.shadow_catcher.is_some_and(|c| c.shadows) {
+                out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
+            }
+            return;
+        }
+
+        // A fibre focuses nothing, whatever it is made of: the photon lands
+        // on it, as on any rough surface.
+        if scene.fibre_at(&hit, ray.direction).is_some() {
+            if smooth_events > 0 {
                 out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
             }
             return;

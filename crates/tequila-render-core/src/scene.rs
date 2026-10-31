@@ -50,7 +50,74 @@ pub struct Mesh {
     /// The model's own edges as segment end points in pairs (a CAD part's
     /// B-rep edges), for the views that draw them. Not rendered.
     pub edge_lines: Vec<Vec3>,
+    /// Fibres in place of triangles (§4.4's Fuzz): a mesh that has these has
+    /// no triangles, and the renderers trace it as curves. Anything that
+    /// reads a mesh only for its triangles - the Solid view, picking a face,
+    /// a wireframe - sees an empty mesh, which is what fur is to those.
+    pub fibres: Option<Arc<Fibres>>,
     bounds: Aabb,
+}
+
+/// Fibres standing out of a part's surface: §4.4's geometric Fuzz, grown by
+/// `tequila_scene::fuzz` and rendered as curves.
+///
+/// Each fibre is a polyline of [`Fibres::POINTS`] points from its root to
+/// its tip, with a radius at each, in the mesh's own space. Every fibre has
+/// as many points as every other, so segment `s` belongs to fibre
+/// `s / SEGMENTS` and no index table is needed.
+#[derive(Clone, Debug, Default)]
+pub struct Fibres {
+    pub points: Vec<Vec3>,
+    pub radii: Vec<f32>,
+    /// A number from 0 to 1 per fibre, drawn when it was grown: how much of
+    /// the material's colour variation darkens this fibre.
+    pub random: Vec<f32>,
+}
+
+impl Fibres {
+    /// Points along a fibre: four segments, enough for its curl to read as
+    /// a curve at any distance a fibre is seen from.
+    pub const POINTS: usize = 5;
+    pub const SEGMENTS: usize = Self::POINTS - 1;
+
+    pub fn count(&self) -> usize {
+        self.random.len()
+    }
+
+    pub fn segment_count(&self) -> usize {
+        self.count() * Self::SEGMENTS
+    }
+
+    /// The first point of segment `segment`; the next is its other end.
+    #[inline]
+    pub fn segment_start(segment: usize) -> usize {
+        segment / Self::SEGMENTS * Self::POINTS + segment % Self::SEGMENTS
+    }
+
+    /// The box every fibre lies in, its thickness included.
+    pub fn bounds(&self) -> Aabb {
+        let mut bounds = Aabb::EMPTY;
+        for (p, r) in self.points.iter().zip(&self.radii) {
+            bounds.extend_point(*p - Vec3::splat(*r));
+            bounds.extend_point(*p + Vec3::splat(*r));
+        }
+        bounds
+    }
+}
+
+/// Where a ray met a fibre, as the fibre's BSDF reads it (see
+/// `tequila_materials::lobes::Fibre`).
+#[derive(Clone, Copy, Debug)]
+pub struct FibreHit {
+    /// Along the fibre, in world space.
+    pub tangent: Vec3,
+    /// Square to the fibre and toward the viewer: the shading normal.
+    pub facing: Vec3,
+    /// Where across the fibre the ray met it, -1 to 1 along
+    /// `facing × tangent`.
+    pub offset: f32,
+    /// The fibre's own random number ([`Fibres::random`]).
+    pub random: f32,
 }
 
 impl Mesh {
@@ -69,8 +136,15 @@ impl Mesh {
             colors: Vec::new(),
             indices,
             edge_lines: Vec::new(),
+            fibres: None,
             bounds,
         }
+    }
+
+    /// A mesh of fibres and nothing else.
+    pub fn of_fibres(fibres: Fibres) -> Self {
+        let bounds = fibres.bounds();
+        Mesh { fibres: Some(Arc::new(fibres)), bounds, ..Mesh::default() }
     }
 
     pub fn with_curvature(mut self, curvature: Vec<f32>) -> Self {
@@ -851,6 +925,35 @@ impl SceneSnapshot {
         let v = (d22 * d31 - d12 * d32) / det;
         let w = (d11 * d32 - d12 * d31) / det;
         Some(([a, b, c], [1.0 - v - w, v, w]))
+    }
+
+    /// The fibre a hit is on, if it is on one, as seen along `direction`:
+    /// its frame, and where across it the ray met it.
+    ///
+    /// Measured from where the hit is against the fibre's centre line at the
+    /// same point along it, so it does not depend on which way the curve
+    /// primitive happens to number its width.
+    pub fn fibre_at(&self, hit: &crate::intersect::Hit, direction: Vec3) -> Option<FibreHit> {
+        let instance = self.instances.get(hit.instance.0 as usize)?;
+        let fibres = self.meshes.get(instance.mesh.index())?.fibres.as_ref()?;
+        let segment = hit.primitive as usize;
+        if segment >= fibres.segment_count() {
+            return None;
+        }
+        let first = Fibres::segment_start(segment);
+        let (a, b) = (fibres.points[first], fibres.points[first + 1]);
+        let along = hit.uv.x.clamp(0.0, 1.0);
+        let transform = &instance.transform;
+        let tangent = transform.vector(b - a).try_normalize()?;
+        let centre = transform.point(a + (b - a) * along);
+        let radius = (fibres.radii[first] * (1.0 - along) + fibres.radii[first + 1] * along) / transform.inv_length_scale();
+        let to_viewer = -direction;
+        let facing = (to_viewer - tangent * tangent.dot(to_viewer))
+            .try_normalize()
+            .unwrap_or_else(|| tequila_core::math::Onb::from_normal(tangent).t);
+        let across = facing.cross(tangent);
+        let offset = if radius > 0.0 { ((hit.position - centre).dot(across) / radius).clamp(-1.0, 1.0) } else { 0.0 };
+        Some(FibreHit { tangent, facing, offset, random: fibres.random[segment / Fibres::SEGMENTS] })
     }
 
     /// The mean curvature at a hit, in inverse scene units, interpolated

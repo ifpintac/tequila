@@ -39,6 +39,12 @@ pub fn has_passes() -> bool {
     })
 }
 
+/// Whether the installed library takes fibres, as hair (`Session::curves`):
+/// one from before leaves them out of its renders.
+pub fn has_curves() -> bool {
+    ffi::api().is_ok_and(|api| api.fsc_curves.is_some())
+}
+
 /// The devices Cycles can render on, as (type, description, id).
 pub fn devices() -> Result<Vec<(String, String, String)>, String> {
     let api = ffi::api()?;
@@ -423,6 +429,34 @@ impl Session {
     pub fn mesh_attribute(&mut self, mesh: Node, name: &str, rgba: &[[f32; 4]]) -> Result<(), String> {
         let Some(send) = self.api.fsc_mesh_attribute else { return Err("this Cycles library predates vertex attributes".into()) };
         self.check(unsafe { send(self.raw, mesh.0, c(name).as_ptr(), rgba.len() as c_int, rgba.as_ptr().cast()) })
+    }
+
+    /// Whether this library takes fibres, as hair (`Session::curves`).
+    pub fn has_curves(&self) -> bool {
+        self.api.fsc_curves.is_some()
+    }
+
+    /// Fibres as Cycles hair: `points_per_curve` keys a curve, root first,
+    /// with a radius each, and a number a curve as its "tq_fibre_random"
+    /// attribute; shaded by `shader`.
+    pub fn curves(&mut self, points_per_curve: usize, keys: &[[f32; 3]], radii: &[f32], random: &[f32], shader: Node) -> Result<Node, String> {
+        let Some(send) = self.api.fsc_curves else {
+            return Err("this Cycles library predates fibres".into());
+        };
+        assert_eq!(keys.len(), radii.len());
+        assert_eq!(keys.len(), random.len() * points_per_curve);
+        let node = unsafe {
+            send(
+                self.raw,
+                random.len() as c_int,
+                points_per_curve as c_int,
+                keys.as_ptr().cast(),
+                radii.as_ptr(),
+                random.as_ptr(),
+                shader.0,
+            )
+        };
+        self.node_or_error(node)
     }
 
     /// Whether this library keeps passes beside a final render's image.

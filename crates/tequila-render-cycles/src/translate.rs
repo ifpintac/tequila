@@ -586,11 +586,23 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
             }
         };
         let key = (instance.mesh.index(), material);
+        // Fibres (§4.4's Fuzz) go over as hair, in their material's shader,
+        // which turns to a hair BSDF on them (`Builder::with_fibres`). A
+        // library from before fibres leaves them out, and the part keeps its
+        // sheen.
+        if mesh.fibres.is_some() && !builder.session.has_curves() {
+            builder.out.warn("this Cycles library predates fibres: they are left out, and the sheen under them stays");
+            builder.out.objects.push(None);
+            continue;
+        }
         // An occlusion-only floor's shader is its own, and a bouncing one's.
         let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2) {
             Some(m) => *m,
             None => {
-                let m = builder.mesh(mesh, shader)?;
+                let m = match &mesh.fibres {
+                    Some(fibres) => builder.curves(fibres, shader)?,
+                    None => builder.mesh(mesh, shader)?,
+                };
                 meshes.insert(key, m);
                 m
             }
@@ -1229,6 +1241,62 @@ impl Builder<'_> {
         let output = self.session.node(shader, "output")?;
         self.session.connect(shader, bsdf, "BSDF", output, "Surface")?;
         self.session.commit(shader)
+    }
+
+    /// A part's fibres as Cycles hair: the same points and radii, and each
+    /// fibre's random number, which its colour is darkened by.
+    fn curves(&mut self, fibres: &tequila_render_core::scene::Fibres, shader: Node) -> Result<Node, String> {
+        let keys: Vec<[f32; 3]> = fibres.points.iter().map(|p| [p.x, p.y, p.z]).collect();
+        self.session.curves(tequila_render_core::scene::Fibres::POINTS, &keys, &fibres.radii, &fibres.random, shader)
+    }
+
+    /// `surface`, unless the material grows fibres: then on a fibre (Hair
+    /// Info's Is Strand) Principled Hair in the Chiang model, which is the
+    /// one Tequila's fibre BSDF is ported from, with the same colour - the
+    /// fuzz's, darkened by the fibre's random number as
+    /// `tequila_render_core::material::fibre_colour` does - roughness along
+    /// and around alike, the index 1.55, no coat and no tilt.
+    fn with_fibres(&mut self, shader: Shader, index: usize, m: &Material, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
+        let node = self.scene.programs.get(index).and_then(|p| p.as_deref()).and_then(|p| p.requirements.fuzz);
+        if node.is_none() && tequila_materials::graph::FuzzRequest::of_material(m).is_none() {
+            return Ok(surface);
+        }
+        let random = self.session.node(shader, "attribute")?;
+        self.session.set_string(random, "attribute", "tq_fibre_random")?;
+        let colour = self.session.node(shader, "mix_color")?;
+        self.session.set_string(colour, "blend_type", "mix")?;
+        self.session.connect(shader, random, "Fac", colour, "Factor")?;
+        let variation = m.fuzz_color_variation.clamp(0.0, 1.0);
+        self.session.set_float3(colour, "A", rgb(m.fuzz_color))?;
+        self.session.set_float3(colour, "B", rgb(m.fuzz_color * (1.0 - variation)))?;
+        let hair = self.session.node(shader, "principled_hair_bsdf")?;
+        self.session.set_string(hair, "model", "Chiang")?;
+        self.session.set_string(hair, "parametrization", "Direct coloring")?;
+        self.session.connect(shader, colour, "Result", hair, "Color")?;
+        self.session.set_float(hair, "Roughness", m.fuzz_roughness)?;
+        self.session.set_float(hair, "Radial Roughness", m.fuzz_roughness)?;
+        self.session.set_float(hair, "Coat", 0.0)?;
+        self.session.set_float(hair, "IOR", tequila_materials::lobes::fibre::FIBRE_IOR)?;
+        self.session.set_float(hair, "Offset", 0.0)?;
+        self.session.set_float(hair, "Random Roughness", 0.0)?;
+        self.session.set_float(hair, "Random Color", 0.0)?;
+        let mut fibre = (hair, "BSDF");
+        // A cutout's holes go through its fibres too, as Tequila's renderer
+        // passes them.
+        if m.geometry_opacity < 0.999 {
+            let hole = self.session.node(shader, "transparent_bsdf")?;
+            let cut = self.session.node(shader, "mix_closure")?;
+            self.session.set_float(cut, "Fac", m.geometry_opacity)?;
+            self.session.connect(shader, hole, "BSDF", cut, "Closure1")?;
+            self.session.connect(shader, hair, "BSDF", cut, "Closure2")?;
+            fibre = (cut, "Closure");
+        }
+        let strand = self.session.node(shader, "hair_info")?;
+        let which = self.session.node(shader, "mix_closure")?;
+        self.session.connect(shader, strand, "Is Strand", which, "Fac")?;
+        self.session.connect(shader, surface.0, surface.1, which, "Closure1")?;
+        self.session.connect(shader, fibre.0, fibre.1, which, "Closure2")?;
+        Ok((which, "Closure"))
     }
 
     fn mesh(&mut self, mesh: &tequila_render_core::scene::Mesh, shader: Node) -> Result<Node, String> {
@@ -3519,6 +3587,7 @@ impl Builder<'_> {
                 Some(program) => self.layered(shader, program, surface, normal)?,
                 None => surface,
             };
+            let surface = self.with_fibres(shader, index, m, surface)?;
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
             return self.session.commit(shader);
         }
@@ -3618,7 +3687,8 @@ impl Builder<'_> {
             None => body,
         };
         self.session.connect(shader, body.0, body.1, cut, "Closure2")?;
-        self.session.connect(shader, cut, "Closure", output, "Surface")?;
+        let surface = self.with_fibres(shader, index, m, (cut, "Closure"))?;
+        self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
         self.session.commit(shader)
     }
 
