@@ -10,14 +10,19 @@
 //! set first changes what those read.
 
 use super::edit::UvError;
+use crate::document::SceneDocument;
 use crate::geometry::Mesh;
-use tequila_core::math::{vec2, Vec2, Vec3};
+use crate::material::MaterialDefinition;
+use crate::tree::{MaterialKey, NodeId};
+use tequila_materials::graph::{MaterialGraph, NodeKind as GraphNode};
+use tequila_texture::projection::{Mapping, Projection};
 
 /// A change to a part's list of UV sets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetChange {
-    /// A new set at the end: the part seen flat down its thinnest axis,
-    /// fitted into the unit square.
+    /// A new set at the end: the part unwrapped as `scene.unwrap_uvs` lays
+    /// it out, a layout to start from that reads the right way and does not
+    /// fold, where a projection of a closed part would lie over itself.
     Add,
     /// A copy of set `from`, put at `to` among them; those from there on
     /// move up one.
@@ -65,7 +70,20 @@ impl SetChange {
         let mut out = mesh.clone();
         let first_before = mesh.uv_sets.first().cloned();
         match *self {
-            SetChange::Add => out.uv_sets.push(flat_projection(&mesh.positions)),
+            SetChange::Add => {
+                // The unwrap puts its layout first, splitting vertices along
+                // its seams and carrying the other sets through them; this
+                // one goes last, and the first set stays first.
+                let (mut unwrapped, _) = super::unwrap(mesh, &super::UnwrapOptions::default());
+                let layout = unwrapped.uv_sets.remove(0);
+                unwrapped.uv_sets.push(layout);
+                // Tangent frames, where the part had them, for its first set.
+                unwrapped.tangents.clear();
+                if !mesh.tangents.is_empty() {
+                    unwrapped.generate_tangents();
+                }
+                return Ok(unwrapped);
+            }
             SetChange::Copy { from, to } => {
                 if from >= count {
                     return Err(UvError::NoSuchSet(from));
@@ -105,40 +123,69 @@ impl SetChange {
     }
 }
 
-/// The part seen flat down its thinnest axis, from the positive side, fitted
-/// into the unit square with its proportions kept and reading the right way.
-fn flat_projection(positions: &[Vec3]) -> Vec<Vec2> {
-    let (mut low, mut high) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
-    for p in positions {
-        low = low.min(*p);
-        high = high.max(*p);
+/// The materials a part wears - its own, and every variant of a
+/// multi-material it is in - with the mappings that read its UV sets by
+/// number renumbered for `change`: those whose mappings change, as they
+/// become.
+///
+/// Refused, naming it, for such a material another part wears too: the
+/// other part's sets did not move, so no one numbering is right for both.
+/// Unlinking it first gives this part its own. A material the part may be
+/// given later - by a configurator, a Studio - is not looked at.
+pub fn renumbered_materials(document: &SceneDocument, node: NodeId, change: SetChange) -> Result<Vec<(MaterialKey, MaterialDefinition)>, UvError> {
+    let mut worn: Vec<MaterialKey> = document.tree.get(node).and_then(|n| n.material).into_iter().collect();
+    for multi in document.multi_materials.iter().filter(|m| m.parts.contains(&node)) {
+        worn.extend(multi.variants.iter().copied());
     }
-    if positions.is_empty() {
-        return Vec::new();
+    worn.sort_unstable();
+    worn.dedup();
+    let mut out = Vec::new();
+    for key in worn {
+        let Some(definition) = document.materials.get(key) else { continue };
+        let mut renumbered = definition.clone();
+        if !renumber(&mut renumbered.graph, change) {
+            continue;
+        }
+        let elsewhere = document.tree.iter().any(|n| n.id != node && n.material == Some(key))
+            || document.multi_materials.iter().any(|m| m.variants.contains(&key) && m.parts.iter().any(|&p| p != node));
+        if elsewhere {
+            return Err(UvError::SharedMaterial(definition.name.clone()));
+        }
+        out.push((key, renumbered));
     }
-    let size = high - low;
-    // Across and down, seen from the positive side of the thinnest axis.
-    let (across, down): (fn(Vec3) -> f32, fn(Vec3) -> f32) = if size.x <= size.y && size.x <= size.z {
-        (|p| -p.z, |p| -p.y)
-    } else if size.y <= size.z {
-        (|p| p.x, |p| p.z)
-    } else {
-        (|p| p.x, |p| -p.y)
+    Ok(out)
+}
+
+/// Every label's and texture's mapping in a graph that reads a UV set,
+/// renumbered; whether any changed.
+fn renumber(graph: &mut MaterialGraph, change: SetChange) -> bool {
+    let mut changed = false;
+    let mut follow = |mapping: &mut Mapping| {
+        if mapping.projection == Projection::Uv {
+            let set = change.renumber(mapping.uv_set);
+            if set != mapping.uv_set {
+                mapping.uv_set = set;
+                changed = true;
+            }
+        }
     };
-    let flat: Vec<Vec2> = positions.iter().map(|p| vec2(across(*p), down(*p))).collect();
-    let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
-    for p in &flat {
-        lo = lo.min(*p);
-        hi = hi.max(*p);
+    for decal in &mut graph.decals {
+        follow(&mut decal.mapping);
     }
-    let side = (hi - lo).x.max((hi - lo).y).max(1e-12);
-    flat.into_iter().map(|p| (p - lo) / side).collect()
+    let mappings: Vec<_> = graph.nodes().filter(|(_, n)| matches!(n.kind, GraphNode::Mapping2d { .. })).map(|(id, _)| id).collect();
+    for id in mappings {
+        if let Some(GraphNode::Mapping2d { mapping }) = graph.node_mut(id).map(|n| &mut n.kind) {
+            follow(mapping);
+        }
+    }
+    changed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::uv::tests_support::*;
+    use tequila_core::math::vec2;
 
     fn with_sets(n: usize) -> Mesh {
         let mut mesh = cube();
@@ -188,27 +235,23 @@ mod tests {
         }
     }
 
-    /// A plate thin along each axis in turn, its new set seen from the
-    /// positive side of that axis: the face there reads the right way.
+    /// A new set is a layout to start from: unwrapped, reading the right way
+    /// and without folds, and the sets the part had are as they were,
+    /// corner by corner, with the first still first.
     #[test]
-    fn a_new_set_reads_the_right_way_round() {
-        use tequila_core::math::vec3;
-        for (axis, squash) in [(0usize, vec3(0.1, 1.0, 2.0)), (1, vec3(2.0, 0.1, 1.0)), (2, vec3(2.0, 1.0, 0.1))] {
-            let mut mesh = cube();
-            mesh.positions.iter_mut().for_each(|p| *p = *p * squash);
-            mesh.uv_sets.clear();
-            let out = SetChange::Add.apply(&mesh).unwrap();
-            let uv = &out.uv_sets[0];
-            let mut checked = 0;
-            for t in 0..out.triangle_count() {
-                let n = out.geometric_normal_scaled(t);
-                if [n.x, n.y, n.z][axis] > 0.0 && n.length() > 0.0 && [n.x, n.y, n.z][axis] / n.length() > 0.9 {
-                    let [a, b, c] = out.triangle(t).map(|v| uv[v as usize]);
-                    assert!(crate::uv::flatten::facing(a, b, c) > 0.0, "axis {axis}, triangle {t}");
-                    checked += 1;
-                }
-            }
-            assert_eq!(checked, 2);
+    fn a_new_set_is_an_unwrap_after_the_others() {
+        let mut mesh = tube(16, 4);
+        mesh.uv_sets = vec![(0..mesh.positions.len()).map(|i| vec2(i as f32 * 0.01, 0.5)).collect()];
+        let out = SetChange::Add.apply(&mesh).unwrap();
+        assert_eq!(out.uv_sets.len(), 2);
+        let layout = crate::uv::UvLayout::new(&out, 1).unwrap();
+        assert!(layout.folded_triangles().is_empty());
+        assert!(layout.islands.iter().all(|i| !i.mirrored));
+        for t in 0..out.triangle_count() {
+            assert_eq!(out.triangle(t).map(|v| out.uv_sets[0][v as usize]), mesh.triangle(t).map(|v| mesh.uv_sets[0][v as usize]));
         }
+        // And on a part with no sets, it is the first.
+        mesh.uv_sets.clear();
+        assert_eq!(SetChange::Add.apply(&mesh).unwrap().uv_sets.len(), 1);
     }
 }

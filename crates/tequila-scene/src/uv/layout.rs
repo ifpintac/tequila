@@ -37,7 +37,7 @@ pub fn weld(positions: &[Vec3]) -> Vec<u32> {
         high = high.max(*p);
     }
     let quantum = ((high - low).length() * 1e-6).max(1e-12);
-    let mut ids: HashMap<(i64, i64, i64), u32> = HashMap::with_capacity(positions.len());
+    let mut ids: HashMap<(i64, i64, i64), u32, std::hash::BuildHasherDefault<Quick>> = HashMap::with_capacity_and_hasher(positions.len(), Default::default());
     positions
         .iter()
         .map(|p| {
@@ -46,6 +46,32 @@ pub fn weld(positions: &[Vec3]) -> Vec<u32> {
             *ids.entry(key).or_insert(next)
         })
         .collect()
+}
+
+/// A hash for whole numbers that is quick rather than resistant to an
+/// attacker: the keys here are a mesh's own positions, a hundred thousand
+/// at a time.
+#[derive(Default)]
+struct Quick(u64);
+
+impl std::hash::Hasher for Quick {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+
+    fn write_i64(&mut self, x: i64) {
+        self.write_u64(x as u64);
+    }
 }
 
 /// What an edge of the layout is.
@@ -61,7 +87,7 @@ pub enum EdgeKind {
 }
 
 /// One edge of the layout, as it is drawn.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LayoutEdge {
     /// Its two ends, as UV vertices.
     pub ends: [u32; 2],
@@ -545,7 +571,26 @@ impl EdgeTable {
                 });
             }
         }
-        sides.sort_unstable_by_key(|s| ((s.lo as u64) << 32 | s.hi as u64, s.triangle, s.k));
+        // By welded vertex, counted into place, then within each by the
+        // other end: the triangles stay in order, as they were made.
+        let welded = sides.iter().map(|s| s.lo as usize + 1).max().unwrap_or(0);
+        let mut at = vec![0u32; welded + 1];
+        for s in &sides {
+            at[s.lo as usize + 1] += 1;
+        }
+        for i in 1..at.len() {
+            at[i] += at[i - 1];
+        }
+        let mut order = vec![0u32; sides.len()];
+        let mut fill = at.clone();
+        for (i, s) in sides.iter().enumerate() {
+            order[fill[s.lo as usize] as usize] = i as u32;
+            fill[s.lo as usize] += 1;
+        }
+        let mut sides: Vec<Side> = order.iter().map(|&i| sides[i as usize]).collect();
+        for w in at.windows(2) {
+            sides[w[0] as usize..w[1] as usize].sort_by_key(|s| s.hi);
+        }
         let mut starts = Vec::new();
         for (i, s) in sides.iter().enumerate() {
             if i == 0 || (sides[i - 1].lo, sides[i - 1].hi) != (s.lo, s.hi) {
@@ -581,14 +626,15 @@ impl EdgeTable {
 /// Every edge of the layout once as it is drawn, island by island, and each
 /// corner's.
 fn layout_edges(table: &EdgeTable, corner_vertex: &[u32], island_of: &[u32], indices: &[u32]) -> (Vec<LayoutEdge>, Vec<u32>) {
-    let mut edges: Vec<LayoutEdge> = Vec::new();
+    let mut edges: Vec<LayoutEdge> = Vec::with_capacity(table.sides.len());
     let mut corner_edge = vec![u32::MAX; corner_vertex.len()];
+    let (mut class_of, mut counts, mut seams): (Vec<usize>, Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new(), Vec::new());
     for group in table.groups() {
         let sides = &table.sides[group.clone()];
         // Sides on the same two UV vertices are one edge as drawn.
         let first = edges.len();
-        let mut class_of: Vec<usize> = Vec::with_capacity(sides.len());
-        let mut counts: Vec<usize> = Vec::new();
+        class_of.clear();
+        counts.clear();
         for s in sides {
             let ends = [corner_vertex[s.lo_corner()], corner_vertex[s.hi_corner()]];
             let found = (first..edges.len()).find(|&e| edges[e].ends == ends);
@@ -622,13 +668,14 @@ fn layout_edges(table: &EdgeTable, corner_vertex: &[u32], island_of: &[u32], ind
         }
         // A seam's twin: the next side round, which for the usual two is the
         // other one.
-        let seams: Vec<usize> = (first..edges.len()).filter(|&e| edges[e].kind == EdgeKind::Seam).collect();
+        seams.clear();
+        seams.extend((first..edges.len()).filter(|&e| edges[e].kind == EdgeKind::Seam));
         if seams.len() >= 2 {
             for (i, &e) in seams.iter().enumerate() {
                 edges[e].twin = Some(seams[(i + 1) % seams.len()] as u32);
             }
         }
-        for (s, e) in sides.iter().zip(class_of) {
+        for (s, &e) in sides.iter().zip(&class_of) {
             corner_edge[s.from_to().0] = e as u32;
         }
     }
@@ -639,7 +686,7 @@ fn layout_edges(table: &EdgeTable, corner_vertex: &[u32], island_of: &[u32], ind
     for (new, &old) in order.iter().enumerate() {
         new_index[old as usize] = new as u32;
     }
-    let mut sorted: Vec<LayoutEdge> = order.iter().map(|&e| edges[e as usize].clone()).collect();
+    let mut sorted: Vec<LayoutEdge> = order.iter().map(|&e| edges[e as usize]).collect();
     for edge in &mut sorted {
         edge.twin = edge.twin.map(|t| new_index[t as usize]);
     }

@@ -75,7 +75,7 @@ Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `mate
 
 ## Commands
 
-57 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+69 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -290,6 +290,19 @@ get at the pieces afterwards.
 { "command": "scene.split_parts", "node": 2 }
 ```
 
+#### `scene.unwrap_uvs`
+
+A part's surface laid out flat as its first UV set (`crate::uv`), so labels
+and textures can be placed on it anywhere; the sets it had move up one. With
+`respect_cuts`, the islands of its first set are kept, each laid out again
+whole.
+
+`fs.commands.scene.unwrap_uvs(cone_degrees=..., crease_degrees=..., margin=..., node=..., respect_cuts=...)`
+
+```json
+{ "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "margin": 0.005, "node": 2, "respect_cuts": false }
+```
+
 #### `scene.rename`
 
 A node's name.
@@ -484,6 +497,137 @@ The sets, and which is shown.
 
 ```json
 { "command": "scene.set_model_sets", "model_sets": { "active": 0, "sets": [ { "always_visible": true, "name": "Chassis A", "nodes": [1] } ] } }
+```
+
+### uv
+
+#### `uv.cut`
+
+A part's UV set `set` cut along edges of the part, each named by the mesh
+vertices at its two ends (`crate::uv::seams`): the pieces of an island it
+divides are moved apart, and with `reflatten` laid out flat again in place,
+which also opens a cut inside an island.
+
+`fs.commands.uv.cut(edges=..., node=..., reflatten=..., set=...)`
+
+```json
+{ "command": "uv.cut", "edges": [ [0, 1], [1, 2] ], "node": 2, "reflatten": true, "set": 0 }
+```
+
+#### `uv.stitch`
+
+Islands of a part's UV set joined along seams, each named by the mesh
+vertices at its ends: the smaller island turned, scaled and moved onto the
+larger so the seam meets, and shut.
+
+`fs.commands.uv.stitch(edges=..., node=..., set=...)`
+
+```json
+{ "command": "uv.stitch", "edges": [ [0, 1] ], "node": 2, "set": 0 }
+```
+
+#### `uv.transform`
+
+Islands, or vertices with every corner on the same place, moved by a 2 by 3
+affine `matrix` (`[a, b, tx, c, d, ty]`: u' = a u + b v + tx) about a
+`pivot`: `origin`, `selection`, `islands` (each about its own middle) or a
+point `[u, v]`. Refused where it would fold the layout.
+
+`fs.commands.uv.transform(islands=..., matrix=..., node=..., pivot=..., set=..., vertices=...)`
+
+```json
+{ "command": "uv.transform", "islands": [0, 2], "matrix": [0, -1, 0.25, 1, 0, 0], "node": 2, "pivot": "islands", "set": 0, "vertices": [] }
+```
+
+#### `uv.reflatten`
+
+Islands laid out flat again by conformal maps, their cuts kept, `pins` (mesh
+vertices) held where they are. With fewer than two pins an island keeps its
+place, size and turn; with `repack`, the whole layout is packed again after.
+
+`fs.commands.uv.reflatten(islands=..., node=..., pins=..., repack=..., set=...)`
+
+```json
+{ "command": "uv.reflatten", "islands": [1], "node": 2, "pins": [3, 7], "repack": false, "set": 0 }
+```
+
+#### `uv.pack`
+
+Islands, all of them when none are listed, packed into the unit square or a
+`region` `[u0, v0, u1, v1]`, as large as they fit, `margin` apart: turned a
+quarter if `rotate` allows, `normalize`d to one density first, `orient`ed to
+their tightest box.
+
+`fs.commands.uv.pack(islands=..., margin=..., node=..., normalize=..., orient=..., region=..., rotate=..., set=...)`
+
+```json
+{ "command": "uv.pack", "islands": [], "margin": 0.01, "node": 2, "normalize": true, "orient": true, "region": [0.5, 0, 1, 0.5], "rotate": false, "set": 0 }
+```
+
+#### `uv.straighten`
+
+Islands turned so their principal axis, or an `edge`, lies `horizontal`,
+`vertical` or whichever is `nearest`.
+
+`fs.commands.uv.straighten(edge=..., islands=..., node=..., set=..., to=...)`
+
+```json
+{ "command": "uv.straighten", "edge": [3, 4], "islands": [0], "node": 2, "set": 0, "to": "horizontal" }
+```
+
+#### `uv.even_density`
+
+Islands scaled so each is as dense, texture to surface, as their average, or
+as the island `match` names.
+
+`fs.commands.uv.even_density(islands=..., match=..., node=..., set=...)`
+
+```json
+{ "command": "uv.even_density", "islands": [0, 1, 2], "match": 1, "node": 2, "set": 0 }
+```
+
+#### `uv.add_set`
+
+A new UV set after a part's others: the part unwrapped, a layout to start
+from that does not fold.
+
+`fs.commands.uv.add_set(node=...)`
+
+```json
+{ "command": "uv.add_set", "node": 2 }
+```
+
+#### `uv.copy_set`
+
+A copy of a part's UV set `from`, put at `to` among them. The labels and
+textures of what the part wears follow the sets that move.
+
+`fs.commands.uv.copy_set(from_=..., node=..., to=...)`
+
+```json
+{ "command": "uv.copy_set", "from": 0, "node": 2, "to": 1 }
+```
+
+#### `uv.delete_set`
+
+A part's UV set removed. The labels and textures of what the part wears
+follow the sets that move; one on the set removed reads the first.
+
+`fs.commands.uv.delete_set(node=..., set=...)`
+
+```json
+{ "command": "uv.delete_set", "node": 2, "set": 1 }
+```
+
+#### `uv.move_set`
+
+A part's UV set `from` moved to `to` among them. The labels and textures of
+what the part wears follow it, and the sets it passes.
+
+`fs.commands.uv.move_set(from_=..., node=..., to=...)`
+
+```json
+{ "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
 ```
 
 ### lighting

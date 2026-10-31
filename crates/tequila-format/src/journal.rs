@@ -74,6 +74,63 @@ pub fn encode(command: &Command) -> String {
                 .set("margin", options.margin)
                 .set("respect_cuts", options.respect_cuts);
         }
+        Command::CutUvs { node, set, edges, reflatten } => {
+            out.set("node", node.0).set("set", *set).set("edges", edge_list(edges)).set("reflatten", *reflatten);
+        }
+        Command::StitchUvs { node, set, edges } => {
+            out.set("node", node.0).set("set", *set).set("edges", edge_list(edges));
+        }
+        Command::TransformUvs { node, set, selection, transform, pivot } => {
+            use tequila_scene::uv::UvSelection;
+            // Both lists, one of them empty, so a script sees it may give
+            // either.
+            let (islands, vertices): (&[u32], &[u32]) = match selection {
+                UvSelection::Islands(list) => (list, &[]),
+                UvSelection::Vertices(list) => (&[], list),
+            };
+            let m = transform.m;
+            out.set("node", node.0)
+                .set("set", *set)
+                .set("islands", numbers(islands))
+                .set("vertices", numbers(vertices))
+                .set("matrix", vec![m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2]])
+                .set("pivot", pivot_to_json(pivot));
+        }
+        Command::ReflattenUvs { node, set, islands, pins, repack } => {
+            out.set("node", node.0).set("set", *set).set("islands", numbers(islands)).set("pins", numbers(pins)).set("repack", *repack);
+        }
+        Command::PackUvs { node, set, islands, options } => {
+            let r = options.region;
+            out.set("node", node.0)
+                .set("set", *set)
+                .set("islands", numbers(islands))
+                .set("margin", options.margin)
+                .set("rotate", options.rotate)
+                .set("normalize", options.normalize)
+                .set("orient", options.orient)
+                .set("region", vec![r.min.x, r.min.y, r.max.x, r.max.y]);
+        }
+        Command::StraightenUvs { node, set, islands, by, to } => {
+            out.set("node", node.0).set("set", *set).set("islands", numbers(islands)).set("to", alignment_name(*to));
+            if let tequila_scene::uv::StraightenBy::Edge(edge) = by {
+                out.set("edge", numbers(edge));
+            }
+        }
+        Command::EvenUvDensity { node, set, islands, target } => {
+            out.set("node", node.0).set("set", *set).set("islands", numbers(islands));
+            if let tequila_scene::uv::DensityTarget::Island(island) = target {
+                out.set("match", *island as usize);
+            }
+        }
+        Command::AddUvSet { node } => {
+            out.set("node", node.0);
+        }
+        Command::CopyUvSet { node, from, to } | Command::MoveUvSet { node, from, to } => {
+            out.set("node", node.0).set("from", *from).set("to", *to);
+        }
+        Command::DeleteUvSet { node, set } => {
+            out.set("node", node.0).set("set", *set);
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -528,6 +585,8 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 },
             }
         }
+        "uv.cut" | "uv.stitch" | "uv.transform" | "uv.reflatten" | "uv.pack" | "uv.straighten" | "uv.even_density" | "uv.add_set"
+        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" => uv_command(name, &value)?,
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,
@@ -1163,6 +1222,154 @@ fn read_flags(value: &Value) -> Result<Vec<(NodeId, bool)>, FormatError> {
 
 fn ids(nodes: &[NodeId]) -> Value {
     Value::Array(nodes.iter().map(|n| Value::from(n.0)).collect())
+}
+
+fn numbers(list: &[u32]) -> Value {
+    Value::Array(list.iter().map(|&n| Value::from(n as u64)).collect())
+}
+
+/// Edges of a part as `[[a, b], ...]`, each by the mesh vertices at its ends.
+fn edge_list(edges: &[tequila_scene::uv::MeshEdge]) -> Value {
+    Value::Array(edges.iter().map(|edge| numbers(edge)).collect())
+}
+
+fn pivot_to_json(pivot: &tequila_scene::uv::Pivot) -> Value {
+    use tequila_scene::uv::Pivot;
+    match pivot {
+        Pivot::Origin => Value::from("origin"),
+        Pivot::Selection => Value::from("selection"),
+        Pivot::Islands => Value::from("islands"),
+        Pivot::Point(p) => Value::from(vec![p.x, p.y]),
+    }
+}
+
+fn alignment_name(alignment: tequila_scene::uv::Alignment) -> &'static str {
+    use tequila_scene::uv::Alignment;
+    match alignment {
+        Alignment::Horizontal => "horizontal",
+        Alignment::Vertical => "vertical",
+        Alignment::Nearest => "nearest",
+    }
+}
+
+/// The `uv.*` commands, from their journal lines. The set is the first when
+/// left out; lists left out are empty.
+fn uv_command(name: &str, value: &Value) -> Result<Command, FormatError> {
+    use tequila_core::math::vec2;
+    use tequila_scene::uv::{Alignment, DensityTarget, PackOptions, Pivot, StraightenBy, UvAffine, UvRect, UvSelection};
+    let invalid = |what: &str| FormatError::Invalid(format!("`{name}` {what}"));
+    let node = || value.get("node").and_then(|v| v.as_index()).map(|v| NodeId(v as u64)).ok_or_else(|| invalid("has no `node`"));
+    let index = |key: &str| value.get(key).and_then(|v| v.as_index());
+    let set = || index("set").unwrap_or(0);
+    let list = |key: &str| -> Result<Vec<u32>, FormatError> {
+        match value.get(key) {
+            None | Some(Value::Null) => Ok(Vec::new()),
+            Some(v) => v
+                .as_array()
+                .iter()
+                .map(|n| n.as_index().filter(|&n| n <= u32::MAX as usize).map(|n| n as u32))
+                .collect::<Option<Vec<u32>>>()
+                .ok_or_else(|| invalid(&format!("has a `{key}` that is not a list of numbers"))),
+        }
+    };
+    let edges = || -> Result<Vec<[u32; 2]>, FormatError> {
+        let mut out = Vec::new();
+        for entry in value.get("edges").map(|v| v.as_array()).unwrap_or(&[]) {
+            match entry.as_array() {
+                [a, b] => match (a.as_index(), b.as_index()) {
+                    (Some(a), Some(b)) => out.push([a as u32, b as u32]),
+                    _ => return Err(invalid("has an edge that is not two vertex numbers")),
+                },
+                _ => return Err(invalid("has an edge that is not two vertex numbers")),
+            }
+        }
+        Ok(out)
+    };
+    let flag = |key: &str, fallback: bool| value.get(key).and_then(|v| v.as_bool()).unwrap_or(fallback);
+    let pair = |key: &str| index(key).ok_or_else(|| invalid(&format!("has no `{key}`")));
+    Ok(match name {
+        "uv.cut" => Command::CutUvs { node: node()?, set: set(), edges: edges()?, reflatten: flag("reflatten", true) },
+        "uv.stitch" => Command::StitchUvs { node: node()?, set: set(), edges: edges()? },
+        "uv.transform" => {
+            let (islands, vertices) = (list("islands")?, list("vertices")?);
+            let selection = match (islands.is_empty(), vertices.is_empty()) {
+                (false, true) => UvSelection::Islands(islands),
+                (true, false) => UvSelection::Vertices(vertices),
+                (true, true) => return Err(invalid("names no `islands` or `vertices` to move")),
+                (false, false) => return Err(invalid("names both `islands` and `vertices`: one or the other")),
+            };
+            let m = value.get("matrix").and_then(|v| v.as_f32_array()).filter(|m| m.len() == 6 && m.iter().all(|x| x.is_finite()));
+            let m = m.ok_or_else(|| invalid("needs a `matrix` of six numbers, [a, b, tx, c, d, ty]"))?;
+            let pivot = match value.get("pivot") {
+                None | Some(Value::Null) => Pivot::Origin,
+                Some(Value::String(s)) => match s.as_str() {
+                    "origin" => Pivot::Origin,
+                    "selection" => Pivot::Selection,
+                    "islands" => Pivot::Islands,
+                    other => return Err(invalid(&format!("has a pivot `{other}`: origin, selection, islands or [u, v]"))),
+                },
+                Some(v) => match v.as_f32_array().as_deref() {
+                    Some(&[u, v]) if u.is_finite() && v.is_finite() => Pivot::Point(vec2(u, v)),
+                    _ => return Err(invalid("has a pivot that is not origin, selection, islands or [u, v]")),
+                },
+            };
+            Command::TransformUvs {
+                node: node()?,
+                set: set(),
+                selection,
+                transform: UvAffine { m: [[m[0], m[1], m[2]], [m[3], m[4], m[5]]] },
+                pivot,
+            }
+        }
+        "uv.reflatten" => Command::ReflattenUvs { node: node()?, set: set(), islands: list("islands")?, pins: list("pins")?, repack: flag("repack", false) },
+        "uv.pack" => {
+            let defaults = PackOptions::default();
+            let margin = value.get("margin").and_then(|v| v.as_f32()).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 0.25)).unwrap_or(defaults.margin);
+            let region = match value.get("region").and_then(|v| v.as_f32_array()).as_deref() {
+                Some(&[u0, v0, u1, v1]) => UvRect { min: vec2(u0, v0), max: vec2(u1, v1) },
+                _ => UvRect::UNIT,
+            };
+            let region = if region.is_valid() { region } else { return Err(invalid("has a `region` that is not [u0, v0, u1, v1] with u1 > u0 and v1 > v0")) };
+            Command::PackUvs {
+                node: node()?,
+                set: set(),
+                islands: list("islands")?,
+                options: PackOptions {
+                    margin,
+                    rotate: flag("rotate", defaults.rotate),
+                    normalize: flag("normalize", defaults.normalize),
+                    orient: flag("orient", defaults.orient),
+                    region,
+                },
+            }
+        }
+        "uv.straighten" => {
+            let to = match value.get("to").and_then(|v| v.as_str()) {
+                None | Some("nearest") => Alignment::Nearest,
+                Some("horizontal") => Alignment::Horizontal,
+                Some("vertical") => Alignment::Vertical,
+                Some(other) => return Err(invalid(&format!("has `to` `{other}`: horizontal, vertical or nearest"))),
+            };
+            let by = match list("edge")?.as_slice() {
+                [] => StraightenBy::Axis,
+                &[a, b] => StraightenBy::Edge([a, b]),
+                _ => return Err(invalid("has an `edge` that is not two vertex numbers")),
+            };
+            Command::StraightenUvs { node: node()?, set: set(), islands: list("islands")?, by, to }
+        }
+        "uv.even_density" => {
+            let target = match index("match") {
+                Some(island) => DensityTarget::Island(island as u32),
+                None => DensityTarget::Average,
+            };
+            Command::EvenUvDensity { node: node()?, set: set(), islands: list("islands")?, target }
+        }
+        "uv.add_set" => Command::AddUvSet { node: node()? },
+        "uv.copy_set" => Command::CopyUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
+        "uv.delete_set" => Command::DeleteUvSet { node: node()?, set: pair("set")? },
+        "uv.move_set" => Command::MoveUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
+        other => return Err(FormatError::Invalid(format!("`{other}` is not a UV command"))),
+    })
 }
 
 fn color(s: Spectrum) -> Value {

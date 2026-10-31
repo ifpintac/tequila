@@ -534,6 +534,17 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::DeleteNodes { .. }
         | Command::SplitIntoParts { .. }
         | Command::UnwrapUvs { .. }
+        | Command::CutUvs { .. }
+        | Command::StitchUvs { .. }
+        | Command::TransformUvs { .. }
+        | Command::ReflattenUvs { .. }
+        | Command::PackUvs { .. }
+        | Command::StraightenUvs { .. }
+        | Command::EvenUvDensity { .. }
+        | Command::AddUvSet { .. }
+        | Command::CopyUvSet { .. }
+        | Command::DeleteUvSet { .. }
+        | Command::MoveUvSet { .. }
         | Command::Rename { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }
@@ -610,6 +621,24 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::DeleteNodes { nodes: vec![] },
         Command::SplitIntoParts { node: NodeId(1) },
+        Command::UnwrapUvs { node: NodeId(1), options: Default::default() },
+        Command::CutUvs { node: NodeId(1), set: 0, edges: vec![[0, 1]], reflatten: true },
+        Command::StitchUvs { node: NodeId(1), set: 0, edges: vec![[0, 1]] },
+        Command::TransformUvs {
+            node: NodeId(1),
+            set: 0,
+            selection: tequila_scene::uv::UvSelection::Islands(vec![0]),
+            transform: tequila_scene::uv::UvAffine::IDENTITY,
+            pivot: tequila_scene::uv::Pivot::Origin,
+        },
+        Command::ReflattenUvs { node: NodeId(1), set: 0, islands: vec![0], pins: Vec::new(), repack: false },
+        Command::PackUvs { node: NodeId(1), set: 0, islands: Vec::new(), options: Default::default() },
+        Command::StraightenUvs { node: NodeId(1), set: 0, islands: vec![0], by: tequila_scene::uv::StraightenBy::Axis, to: Default::default() },
+        Command::EvenUvDensity { node: NodeId(1), set: 0, islands: vec![0], target: Default::default() },
+        Command::AddUvSet { node: NodeId(1) },
+        Command::CopyUvSet { node: NodeId(1), from: 0, to: 1 },
+        Command::DeleteUvSet { node: NodeId(1), set: 0 },
+        Command::MoveUvSet { node: NodeId(1), from: 0, to: 1 },
         Command::Reimport {
             payload: Box::new(tequila_scene::reimport::ReimportPayload {
                 added: tequila_scene::command::ImportPayload {

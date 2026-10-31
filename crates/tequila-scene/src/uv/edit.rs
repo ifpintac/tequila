@@ -36,6 +36,9 @@ pub enum UvError {
     CannotFlatten(u32),
     /// The islands do not fit the region at any size, with that margin.
     NoRoom,
+    /// A material the part wears reads its UV sets by number, and other
+    /// parts wear it too: renumbering it for this part would move them.
+    SharedMaterial(String),
 }
 
 impl std::fmt::Display for UvError {
@@ -51,6 +54,9 @@ impl std::fmt::Display for UvError {
             UvError::Degenerate => write!(f, "that would flatten the layout to a line"),
             UvError::CannotFlatten(island) => write!(f, "island {island} does not lie flat without folding: cut it first"),
             UvError::NoRoom => write!(f, "the islands do not fit there with that margin"),
+            UvError::SharedMaterial(name) => {
+                write!(f, "the material `{name}` reads this part's UV sets by number and other parts wear it too: unlink it first")
+            }
         }
     }
 }
