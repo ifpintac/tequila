@@ -73,6 +73,7 @@ pub mod export;
 pub mod flatten;
 pub mod layout;
 pub mod pack;
+pub mod positions;
 pub mod reflatten;
 pub mod seams;
 pub mod sets;
@@ -84,6 +85,7 @@ pub use edit::UvError;
 pub use export::{layout_png, layout_svg, Fill, LayoutPicture};
 pub use layout::{weld, EdgeKind, Island, LayoutEdge, SurfaceHit, TriangleHit, UvLayout, UvVertex, NO_ISLAND};
 pub use pack::{pack, PackOptions, PackReport, UvRect};
+pub use positions::set_positions;
 pub use reflatten::reflatten;
 pub use seams::{cut, stitch, CutOptions};
 pub use sets::SetChange;
@@ -390,6 +392,12 @@ mod command_tests {
             let layout = UvLayout::new(mesh, 0).unwrap();
             let seam = layout.edges.iter().find(|e| e.kind == EdgeKind::Seam).unwrap().vertices;
             let inner = layout.edges.iter().find(|e| e.kind == EdgeKind::Inner).unwrap().vertices;
+            // An inner edge's end, nudged a hair along the edge.
+            let inner_edge = layout.edges.iter().find(|e| e.kind == EdgeKind::Inner).unwrap();
+            let [a, b] = inner_edge.ends.map(|v| layout.uv_vertices[v as usize].uv);
+            let inner_vertex = inner_edge.ends[0];
+            let nudged = a + (b - a) * 0.01;
+            let inner_place = [nudged.x, nudged.y];
             vec![
                 Command::CutUvs { node, set: 0, edges: vec![inner], reflatten: true },
                 Command::StitchUvs { node, set: 0, edges: vec![seam] },
@@ -403,6 +411,7 @@ mod command_tests {
                 Command::CopyUvSet { node, from: 2, to: 0 },
                 Command::DeleteUvSet { node, set: 0 },
                 Command::MoveUvSet { node, from: 2, to: 0 },
+                Command::SetUvPositions { node, set: 0, vertices: vec![inner_vertex], uv: vec![inner_place] },
                 Command::UnwrapUvs { node, options: UnwrapOptions { respect_cuts: true, ..Default::default() } },
                 Command::UnwrapUvs { node, options: UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() } },
             ]

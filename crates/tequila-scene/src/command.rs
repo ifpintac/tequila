@@ -240,6 +240,13 @@ pub enum Command {
     /// labels and textures of what the part wears follow it, and the sets
     /// it passes.
     MoveUvSet { node: NodeId, from: usize, to: usize },
+    /// `uv.set_positions` — UV vertices of a part's UV set put at new places:
+    /// `vertices[i]`, by the layout's own number for it
+    /// (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`. What a tool that
+    /// reshapes the layout - a path laid straight, an island laid out as a
+    /// grid, relaxed, welded or mirrored - worked out, as one step. Refused
+    /// where it would fold the layout.
+    SetUvPositions { node: NodeId, set: usize, vertices: Vec<u32>, uv: Vec<[f32; 2]> },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -1121,6 +1128,7 @@ impl Command {
             Command::CopyUvSet { .. } => "uv.copy_set",
             Command::DeleteUvSet { .. } => "uv.delete_set",
             Command::MoveUvSet { .. } => "uv.move_set",
+            Command::SetUvPositions { .. } => "uv.set_positions",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
@@ -1179,7 +1187,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 70] = [
+    pub const CATALOG: [&'static str; 71] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1199,6 +1207,7 @@ impl Command {
         "uv.copy_set",
         "uv.delete_set",
         "uv.move_set",
+        "uv.set_positions",
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
@@ -1276,6 +1285,7 @@ impl Command {
             | Command::CopyUvSet { .. }
             | Command::DeleteUvSet { .. }
             | Command::MoveUvSet { .. }
+            | Command::SetUvPositions { .. }
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
@@ -2436,6 +2446,13 @@ fn execute(
         Command::MoveUvSet { node, from, to } => {
             let change = crate::uv::SetChange::Move { from: *from, to: *to };
             edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::SetUvPositions { node, set, vertices, uv } => {
+            if vertices.len() != uv.len() {
+                return Err(CommandError::InvalidValue("uv.set_positions needs one place for each vertex"));
+            }
+            let moves: Vec<(u32, tequila_core::math::Vec2)> = vertices.iter().zip(uv).map(|(&v, &[u, w])| (v, tequila_core::math::vec2(u, w))).collect();
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::set_positions(mesh, *set, &moves))
         }
 
         Command::SplitIntoParts { node } => {

@@ -132,6 +132,10 @@ pub fn encode(command: &Command) -> String {
         Command::DeleteUvSet { node, set } => {
             out.set("node", node.0).set("set", *set);
         }
+        Command::SetUvPositions { node, set, vertices, uv } => {
+            let places: Vec<Value> = uv.iter().map(|&[u, v]| Value::from(vec![u, v])).collect();
+            out.set("node", node.0).set("set", *set).set("vertices", numbers(vertices)).set("uv", Value::Array(places));
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -591,7 +595,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
         }
         "uv.cut" | "uv.stitch" | "uv.transform" | "uv.reflatten" | "uv.pack" | "uv.straighten" | "uv.even_density" | "uv.add_set"
-        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" => uv_command(name, &value)?,
+        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" | "uv.set_positions" => uv_command(name, &value)?,
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,
@@ -1377,6 +1381,20 @@ fn uv_command(name: &str, value: &Value) -> Result<Command, FormatError> {
         "uv.copy_set" => Command::CopyUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
         "uv.delete_set" => Command::DeleteUvSet { node: node()?, set: pair("set")? },
         "uv.move_set" => Command::MoveUvSet { node: node()?, from: pair("from")?, to: pair("to")? },
+        "uv.set_positions" => {
+            let vertices = list("vertices")?;
+            let mut uv = Vec::with_capacity(vertices.len());
+            for place in value.get("uv").map(|v| v.as_array()).unwrap_or(&[]) {
+                match place.as_f32_array().as_deref() {
+                    Some(&[u, v]) if u.is_finite() && v.is_finite() => uv.push([u, v]),
+                    _ => return Err(invalid("has a place in `uv` that is not [u, v]")),
+                }
+            }
+            if uv.len() != vertices.len() {
+                return Err(invalid(&format!("names {} vertices and {} places in `uv`: one each", vertices.len(), uv.len())));
+            }
+            Command::SetUvPositions { node: node()?, set: set(), vertices, uv }
+        }
         other => return Err(FormatError::Invalid(format!("`{other}` is not a UV command"))),
     })
 }

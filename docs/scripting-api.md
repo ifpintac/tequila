@@ -103,7 +103,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-70 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+71 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -669,6 +669,20 @@ what the part wears follow it, and the sets it passes.
 
 ```json
 { "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
+```
+
+#### `uv.set_positions`
+
+UV vertices of a part's UV set put at new places: `vertices[i]`, by the
+layout's own number for it (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`.
+What a tool that reshapes the layout - a path laid straight, an island laid
+out as a grid, relaxed, welded or mirrored - worked out, as one step.
+Refused where it would fold the layout.
+
+`fs.commands.uv.set_positions(node=..., set=..., uv=..., vertices=...)`
+
+```json
+{ "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.375, 0.5] ], "vertices": [4, 5] }
 ```
 
 ### lighting

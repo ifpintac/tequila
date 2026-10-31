@@ -199,6 +199,7 @@ pub fn commands() -> Vec<Command> {
         Command::CopyUvSet { node: ids[1], from: 0, to: 1 },
         Command::DeleteUvSet { node: ids[1], set: 1 },
         Command::MoveUvSet { node: ids[1], from: 1, to: 0 },
+        Command::SetUvPositions { node: ids[1], set: 0, vertices: vec![4, 5], uv: vec![[0.25, 0.5], [0.375, 0.5]] },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,

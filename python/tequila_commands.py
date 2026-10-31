@@ -33,6 +33,7 @@ CATALOG = (
     'uv.copy_set',
     'uv.delete_set',
     'uv.move_set',
+    'uv.set_positions',
     'scene.rename',
     'scene.set_transform',
     'scene.set_visibility',
@@ -457,6 +458,13 @@ class UvCommands(_Commands):
         { "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
         """
         return self._apply('uv.move_set', {'from': from_, 'node': node, 'to': to})
+
+    def set_positions(self, *, node=_UNSET, set=_UNSET, uv=_UNSET, vertices=_UNSET):
+        r"""`uv.set_positions`: UV vertices of a part's UV set put at new places: `vertices[i]`, by the layout's own number for it (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`. What a tool that reshapes the layout - a path laid straight, an island laid out as a grid, relaxed, welded or mirrored - worked out, as one step. Refused where it would fold the layout.
+
+        { "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.375, 0.5] ], "vertices": [4, 5] }
+        """
+        return self._apply('uv.set_positions', {'node': node, 'set': set, 'uv': uv, 'vertices': vertices})
 
 
 class LightingCommands(_Commands):
