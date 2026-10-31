@@ -268,7 +268,10 @@ fn is_diagonal(layout: &UvLayout, mesh: &Mesh, edge: u32) -> bool {
 /// across the layout made exactly across, and those within it of down made
 /// exactly down, by moving their vertices: the vertices joined by such edges
 /// take their average v (or u) together. A quad's long diagonal is left out,
-/// and so is a run of edges that would close up an edge the other way.
+/// and so is a run of edges that would close up an edge the other way, or
+/// turn over or flatten a face round it: on a real part's layout - a strip
+/// with a ragged end, a sliver joined on - the rest is squared and those
+/// runs are left as they were.
 pub fn square_edges(layout: &UvLayout, mesh: &Mesh, edges: &[u32], tolerance: f32) -> Places {
     let mut across = super::layout::UnionFind::new(layout.uv_vertices.len());
     let mut down = super::layout::UnionFind::new(layout.uv_vertices.len());
@@ -291,6 +294,18 @@ pub fn square_edges(layout: &UvLayout, mesh: &Mesh, edges: &[u32], tolerance: f3
     }
     let mut out = Places::default();
     let mut current: HashMap<u32, Vec2> = HashMap::new();
+    // The faces round each vertex, to see that a run turns none over.
+    let mut faces_of: HashMap<u32, Vec<u32>> = HashMap::new();
+    for [a, b] in flat.iter().chain(&upright) {
+        for v in [*a, *b] {
+            faces_of.entry(v).or_default();
+        }
+    }
+    for (c, &v) in layout.corner_vertex.iter().enumerate() {
+        if let Some(list) = faces_of.get_mut(&v) {
+            list.push((c / 3) as u32);
+        }
+    }
     for (sets, own, other, is_across) in [(&mut across, &flat, &upright, true), (&mut down, &upright, &flat, false)] {
         // Each run of joined vertices, and the average it takes.
         let mut runs: HashMap<usize, Vec<u32>> = HashMap::new();
@@ -320,12 +335,31 @@ pub fn square_edges(layout: &UvLayout, mesh: &Mesh, edges: &[u32], tolerance: f3
             let run = &runs[&root];
             let place = |current: &HashMap<u32, Vec2>, v: u32| *current.get(&v).unwrap_or(&layout.uv_vertices[v as usize].uv);
             let mean = run.iter().map(|&v| if is_across { place(&current, v).y } else { place(&current, v).x }).sum::<f32>() / run.len() as f32;
+            let mut proposed = current.clone();
             for &v in run {
                 let p = place(&current, v);
-                let to = if is_across { vec2(p.x, mean) } else { vec2(mean, p.y) };
-                current.insert(v, to);
-                out.push(v, to);
+                proposed.insert(v, if is_across { vec2(p.x, mean) } else { vec2(mean, p.y) });
             }
+            // Every face round the run still facing its island's way, and
+            // with area left.
+            let keeps = run.iter().flat_map(|v| faces_of.get(v).into_iter().flatten()).all(|&t| {
+                let island = &layout.islands[layout.island_of[t as usize] as usize];
+                let sign = if island.mirrored { -1.0 } else { 1.0 };
+                let hair = island.uv_area * super::flatten::FOLD_HAIR;
+                let corners = |positions: &HashMap<u32, Vec2>| [0, 1, 2].map(|k| place(positions, layout.corner_vertex[t as usize * 3 + k]));
+                let [a, b, c] = corners(&current);
+                let [p, q, r] = corners(&proposed);
+                let before = super::flatten::facing(a, b, c) * sign;
+                let after = super::flatten::facing(p, q, r) * sign;
+                before <= hair || after > hair
+            });
+            if !keeps {
+                continue;
+            }
+            for &v in run {
+                out.push(v, proposed[&v]);
+            }
+            current = proposed;
         }
     }
     out.moving(layout)

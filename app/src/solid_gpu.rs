@@ -357,6 +357,22 @@ pub struct Frame {
     /// Draw the parts' own edges over the shading: a CAD part's B-rep
     /// edges, or the creases and borders of a mesh that has none.
     pub model_edges: bool,
+    /// The UV editor's checker, on the part it shows: for looking only.
+    pub checker: Option<CheckerFrame>,
+}
+
+/// A pattern drawn on some parts in place of their base colour, through
+/// their first UV set (`crate::uv_editor::checker`): nothing in the scene,
+/// the material or the render, only in the GPU's picture.
+#[derive(Clone, Debug)]
+pub struct CheckerFrame {
+    /// Instance ids to draw it on.
+    pub instances: Vec<u32>,
+    /// Its picture: the side in pixels, and sRGB bytes, four a pixel, the
+    /// top row first.
+    pub image: Arc<(usize, Vec<u8>)>,
+    /// What the picture is, to know when to send it again.
+    pub key: u64,
 }
 
 /// What the GPU view draws, as Blender's viewport shading offers it.
@@ -502,6 +518,8 @@ struct Gpu {
     material_programs: Option<Vec<Option<glow::Program>>>,
     /// Uniform locations, by program and name. See [`Gpu::uniform`].
     uniforms: std::cell::RefCell<HashMap<(glow::Program, &'static str), Option<glow::UniformLocation>>>,
+    /// The UV editor's checker as sent, and what it was sent for.
+    checker: Option<(u64, glow::Texture)>,
 }
 
 /// The GPU Solid view. Cheap to clone into a paint callback.
@@ -691,6 +709,11 @@ uniform vec4 u_rough_uv[2];
 
 uniform int u_outline_pass;
 uniform vec3 u_outline_colour;
+
+// The UV editor's checker, in place of the base colour, on the part it
+// shows: for looking at the layout on the part, never in a render.
+uniform int u_checker;
+uniform sampler2D t_checker;
 
 // Material Preview: the scene's environment, and the display's exposure.
 uniform int u_mode;
@@ -1040,6 +1063,12 @@ void main() {
     if (u_label_count > 5) lay_label(t_label5, 5, base_colour, metalness, roughness_in, transmission_in);
     if (u_label_count > 6) lay_label(t_label6, 6, base_colour, metalness, roughness_in, transmission_in);
     if (u_label_count > 7) lay_label(t_label7, 7, base_colour, metalness, roughness_in, transmission_in);
+    if (u_checker == 1) {
+        base_colour = u_srgb_to_ap1 * texture(t_checker, v_uv).rgb;
+        metalness = 0.0;
+        roughness_in = 0.6;
+        transmission_in = 0.0;
+    }
 
     vec3 base = base_colour * clamp(u_base_weight, 0.0, 1.0);
 
@@ -1424,6 +1453,11 @@ impl Gpu {
         let aspect = width as f32 / height as f32;
 
         self.sync_scene(gl, &frame.scene)?;
+        // The UV editor's checker's picture, sent when it is another.
+        let checker_texture = match &frame.checker {
+            Some(checker) => self.checker_texture(gl, checker)?,
+            None => None,
+        };
         if frame.mode == GpuMode::MaterialPreview {
             self.sync_environment(gl, &frame.scene)?;
             if !self.shadow_failed {
@@ -1611,6 +1645,8 @@ impl Gpu {
             self.set_cutters(gl, program, &scene);
             gl.uniform_1_i32(gl.get_uniform_location(program, "u_outline_pass").as_ref(), 0);
             gl.uniform_1_f32(gl.get_uniform_location(program, "u_outline").as_ref(), 0.0);
+            gl.uniform_1_i32(gl.get_uniform_location(program, "u_checker").as_ref(), 0);
+            gl.uniform_1_i32(gl.get_uniform_location(program, "t_checker").as_ref(), 6);
         };
         let program = programs.surface;
         configure(program);
@@ -1669,11 +1705,19 @@ impl Gpu {
         gl.uniform_1_f32(location("u_outline").as_ref(), 0.0);
         let mut current = program;
         let mut configured = vec![program];
+        // The UV editor's checker, on the unit the backdrop's picture was
+        // on, which is drawn by now.
+        let checked: std::collections::HashSet<u32> = frame.checker.as_ref().map(|c| c.instances.iter().copied().collect()).unwrap_or_default();
+        if let (Some(texture), false) = (checker_texture, checked.is_empty()) {
+            gl.active_texture(glow::TEXTURE6);
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.active_texture(glow::TEXTURE0);
+        }
         // Parts light passes through are drawn after everything else, over
         // what is behind them: a clear housing showed only the environment
-        // where the parts inside it are.
+        // where the parts inside it are. A checked part is not see-through.
         let see_through = |instance: &tequila_render_core::scene::Instance| {
-            self.materials.get(instance.material.index()).is_some_and(|m| m.transmission > 0.01 && m.metalness < 0.5)
+            !checked.contains(&instance.id.0) && self.materials.get(instance.material.index()).is_some_and(|m| m.transmission > 0.01 && m.metalness < 0.5)
         };
         let mut through: Vec<(f32, &tequila_render_core::scene::Instance)> = Vec::new();
         for instance in scene.instances.iter().filter(drawable) {
@@ -1697,7 +1741,14 @@ impl Gpu {
             if current != program {
                 self.set_object(gl, current, instance, &scene);
             }
+            let check = checked.contains(&instance.id.0);
+            if check {
+                gl.uniform_1_i32(self.uniform(gl, current, "u_checker").as_ref(), 1);
+            }
             self.draw_instance(gl, current, instance, &scene);
+            if check {
+                gl.uniform_1_i32(self.uniform(gl, current, "u_checker").as_ref(), 0);
+            }
         }
         if !through.is_empty() {
             // Farthest first, each blended over what is drawn by then.
@@ -1763,6 +1814,34 @@ impl Gpu {
             gl.disable(glow::BLEND);
         }
         Ok(())
+    }
+
+    /// The checker's picture on the graphics card, sent again when it is
+    /// another; none where the card would not take it.
+    unsafe fn checker_texture(&mut self, gl: &glow::Context, checker: &CheckerFrame) -> Result<Option<glow::Texture>, String> {
+        if let Some((key, texture)) = self.checker {
+            if key == checker.key {
+                return Ok(Some(texture));
+            }
+            gl.delete_texture(texture);
+            self.checker = None;
+        }
+        let (side, bytes) = (&checker.image.0, &checker.image.1);
+        if *side == 0 || bytes.len() != side * side * 4 {
+            return Ok(None);
+        }
+        let handle = gl.create_texture()?;
+        gl.bind_texture(glow::TEXTURE_2D, Some(handle));
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+        gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::SRGB8_ALPHA8 as i32, *side as i32, *side as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, Some(bytes));
+        gl.generate_mipmap(glow::TEXTURE_2D);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
+        gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::REPEAT as i32);
+        gl.bind_texture(glow::TEXTURE_2D, None);
+        self.checker = Some((checker.key, handle));
+        Ok(Some(handle))
     }
 
     /// What a material's patterns read of the part: its scale, its random

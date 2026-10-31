@@ -65,6 +65,10 @@ pub enum MenuAction {
     FrameSelection,
     FrameAll,
     SelectAll,
+    /// One of the arranging tools, or the Select menu's.
+    Arrange(super::arrange_tools::Request),
+    CursorToSelection,
+    CursorToCentre,
 }
 
 /// Where each item of the selection is drawn this frame: the gesture's
@@ -242,7 +246,7 @@ impl UvEditor {
     /// Everything a drag can snap to, but what it moves: labels, or the
     /// layout's islands and vertices.
     #[allow(clippy::too_many_arguments)]
-    fn gather_targets(&self, part: &Part, layout: &Layout, labels: &[Decal], moving: &[Item], moving_vertices: &[u32], skip_guide: Option<usize>, xform: &Xform, canvas: egui::Rect) -> Targets {
+    pub(super) fn gather_targets(&self, part: &Part, layout: &Layout, labels: &[Decal], moving: &[Item], moving_vertices: &[u32], skip_guide: Option<usize>, xform: &Xform, canvas: egui::Rect) -> Targets {
         let mut targets = Targets::new();
         if self.prefs.grid {
             let (major, minor) = self.grid_steps(layout.density());
@@ -428,7 +432,7 @@ impl UvEditor {
         self.prefs.snapping && !self.modifiers.command
     }
 
-    fn snap_point(&self, at: Vec2, xform: &Xform) -> snapping::Snap {
+    pub(super) fn snap_point(&self, at: Vec2, xform: &Xform) -> snapping::Snap {
         if !self.snapping() {
             return snapping::Snap::none();
         }
@@ -443,6 +447,9 @@ impl UvEditor {
         let snapping = self.snapping();
         let (shift, alt) = (self.modifiers.shift, self.modifiers.alt);
         let mut snap = snapping::Snap::none();
+        // Turns and scales about the 2D cursor, where they go about it.
+        let about = self.cursors.about;
+        let pivoted = |frame: Frame| about.map_or(frame, |centre| Frame { centre, ..frame });
         let targets = std::mem::take(&mut self.targets);
         match &mut self.gesture {
             Some(Gesture::Transform { grab, from, frame, original, current }) => {
@@ -541,8 +548,8 @@ impl UvEditor {
                         };
                         editing::handle_scale(&frame, across, down, pointer, shift, alt)
                     }
-                    Grab::Scale => editing::tool_scale(&frame, *from, uv, shift),
-                    Grab::Turn => editing::tool_turn(&frame, *from, uv, shift.then_some(TURN_STEP)).0,
+                    Grab::Scale => editing::tool_scale(&pivoted(frame), *from, uv, shift),
+                    Grab::Turn => editing::tool_turn(&pivoted(frame), *from, uv, shift.then_some(TURN_STEP)).0,
                 };
             }
             Some(Gesture::Box { to, .. }) => *to = uv,
@@ -812,7 +819,13 @@ impl UvEditor {
                 }
             }
         }
-        if response.secondary_clicked() {
+        // Shift and a right click puts the 2D cursor down, and opens no menu.
+        let cursor_click = response.secondary_clicked() && self.modifiers.shift;
+        if cursor_click {
+            if let Some(at) = response.interact_pointer_pos() {
+                self.place_cursor(at, &xform, part, layout, &labels, canvas);
+            }
+        } else if response.secondary_clicked() {
             if let Some(at) = response.interact_pointer_pos() {
                 if let Hit::Item(item) = self.pick_any(at, &xform, &labels, part, layout) {
                     if !self.selection.contains(item) {
@@ -822,7 +835,9 @@ impl UvEditor {
             }
         }
         let mut menu = None;
-        response.context_menu(|ui| menu = context_menu(ui, self, part, layout));
+        if !cursor_click {
+            response.context_menu(|ui| menu = context_menu(ui, self, part, layout));
+        }
         if let Some(action) = menu {
             self.menu_action(action, part, layout, edits);
         }
@@ -839,11 +854,27 @@ impl UvEditor {
         }
         painter.rect_stroke(square, 0.0, egui::Stroke::new(1.0_f32, p.line_strong));
 
+        // The texture chosen to show behind the layout, tiled as it lays,
+        // in every mode, lighter or darker as View options say.
+        let exposure = self.exposure_tint();
+        if let Some(layer) = self.display.behind.filter(|p| self.selection.texture() != Some(*p)).and_then(|p| part.textures.iter().find(|t| t.param == p)) {
+            if let Some(picture) = layer.texture.and_then(|id| self.exposed_artwork(project, id, ui.ctx())) {
+                let tile = placement::corners(&layer.mapping);
+                let step = (tile[1] - tile[0], tile[3] - tile[0]);
+                for dy in -2i32..=2 {
+                    for dx in -2i32..=2 {
+                        let shift = step.0 * dx as f32 + step.1 * dy as f32;
+                        let quad = tile.map(|c| xform.to_screen(c + shift));
+                        textured_quad(&painter, &picture, quad, egui::Color32::WHITE.gamma_multiply(self.prefs.artwork_opacity * exposure));
+                    }
+                }
+            }
+        }
         // A texture being placed, under the labels: its tile, and the
         // outlines of the tiles round it.
         if let Some(param) = self.selection.texture() {
             if let (Some(mapping), Some(layer)) = (shown_mapping(self.gesture.as_ref(), Item::Texture(param), &labels, part), part.textures.iter().find(|t| t.param == param)) {
-                let picture = layer.texture.and_then(|id| super::artwork(&mut self.artwork, project, id, ui.ctx()));
+                let picture = layer.texture.and_then(|id| self.exposed_artwork(project, id, ui.ctx()));
                 let tile = placement::corners(&mapping);
                 let step = (tile[1] - tile[0], tile[3] - tile[0]);
                 for dy in -2i32..=2 {
@@ -852,7 +883,7 @@ impl UvEditor {
                         let quad = tile.map(|c| xform.to_screen(c + shift));
                         let main = dx == 0 && dy == 0;
                         if let Some(picture) = &picture {
-                            textured_quad(&painter, picture, quad, egui::Color32::WHITE.gamma_multiply(if main { 0.75 } else { 0.25 } * self.prefs.artwork_opacity));
+                            textured_quad(&painter, picture, quad, egui::Color32::WHITE.gamma_multiply(if main { 0.75 } else { 0.25 } * self.prefs.artwork_opacity * exposure));
                         }
                         outline(&painter, quad, egui::Stroke::new(1.0_f32, p.accent.gamma_multiply(if main { 0.9 } else { 0.3 })));
                     }
@@ -890,9 +921,9 @@ impl UvEditor {
                 }
             }
             let selected = self.selection.contains(item);
-            let strength = self.prefs.artwork_opacity * label.opacity.max(0.15) * if (dim && !selected) || layout_work { 0.35 } else { 1.0 };
+            let strength = self.prefs.artwork_opacity * label.opacity.max(0.15) * if (dim && !selected) || layout_work { 0.35 } else { 1.0 } * exposure;
             if self.prefs.artwork {
-                match super::artwork(&mut self.artwork, project, label.texture, ui.ctx()) {
+                match self.exposed_artwork(project, label.texture, ui.ctx()) {
                     Some(picture) => textured_quad(&painter, &picture, quad, egui::Color32::WHITE.gamma_multiply(strength)),
                     None => fill_quad(&painter, quad, p.accent.gamma_multiply(0.3 * strength)),
                 }
@@ -963,12 +994,27 @@ impl UvEditor {
         }
         if !part.faces.is_empty() {
             fill(&mut part.faces.iter().copied().filter(|&t| (t as usize) < layout.triangles.len()), &|_| tint.picked.gamma_multiply(0.38));
+            // A face with next to no area on the layout - one the Select
+            // menu found - is marked where it is, as its fill cannot be seen.
+            for &t in part.faces.iter().filter(|&&t| (t as usize) < layout.triangles.len()).take(20_000) {
+                let [a, b, c] = corners(t).map(|p| xform.to_screen(p));
+                let area = ((b - a).x * (c - a).y - (b - a).y * (c - a).x).abs() * 0.5;
+                if area < 6.0 {
+                    let middle = egui::pos2((a.x + b.x + c.x) / 3.0, (a.y + b.y + c.y) / 3.0);
+                    painter.circle_stroke(middle, 5.0, egui::Stroke::new(1.5_f32, tint.picked));
+                }
+            }
         }
         let linked = self.viewport_hover.filter(|h| h.node == part.node && (h.triangle as usize) < layout.triangles.len());
         if let Some(hover) = linked {
             let island = layout.uv.island_of[hover.triangle as usize];
             fill(&mut layout.uv.islands[island as usize].triangles.iter().copied(), &|_| tint.linked.gamma_multiply(0.16));
             fill(&mut std::iter::once(hover.triangle), &|_| tint.linked.gamma_multiply(0.55));
+        }
+
+        // The padding round each island, under its lines.
+        if self.prefs.padding {
+            self.draw_padding(&painter, &xform, part, layout);
         }
 
         // Every edge, faint, when there are few enough to see; the part's
@@ -1100,6 +1146,11 @@ impl UvEditor {
                 let width = if self.selected_guide == Some(index) { 2.0_f32 } else { 1.0 };
                 guide_line(&painter, canvas, &xform, guide.axis == GuideAxis::U, guide.at, egui::Stroke::new(width, guide_colour.gamma_multiply(strength)));
             }
+        }
+
+        // The 2D cursor.
+        if let (true, Some(at)) = (self.prefs.show_cursor, self.cursor_of(part)) {
+            super::cursor::draw(&painter, &xform, at);
         }
 
         // The selection's frame and its handles.
@@ -1553,6 +1604,30 @@ fn context_menu(ui: &mut egui::Ui, editor: &UvEditor, part: &Part, layout: &Layo
         item(ui, true, "Pack", "Ctrl+P", MenuAction::Island(Action::Pack));
         item(ui, true, "Straighten", "", MenuAction::Island(Action::Straighten));
         item(ui, true, "Even size", "", MenuAction::Island(Action::Even));
+        let mut picked = None;
+        ui.menu_button("Arrange", |ui| {
+            use super::arrange_tools::{Request, Tool};
+            for tool in [Tool::Upright, Tool::SquareEdges, Tool::Sort, Tool::MatchSize, Tool::Fit, Tool::Stack, Tool::CopyShape, Tool::PasteShape, Tool::Shuffle, Tool::AsOnPart] {
+                let ready = editor.can_arrange(tool, Some(layout)).is_ok();
+                let keys = tool.keys().replace(" + ", "+");
+                let button = egui::Button::new(tool.name()).shortcut_text(crate::theme::keys(&keys));
+                if ui.add_enabled(ready, button).clicked() {
+                    picked = Some(MenuAction::Arrange(Request::Tool(tool)));
+                    ui.close_menu();
+                }
+            }
+        });
+        ui.menu_button("Select", |ui| {
+            for pick in super::select_tools::Pick::ALL {
+                if ui.button(pick.name()).clicked() {
+                    picked = Some(MenuAction::Arrange(super::arrange_tools::Request::Select(pick)));
+                    ui.close_menu();
+                }
+            }
+        });
+        if picked.is_some() {
+            return picked;
+        }
         ui.separator();
     } else {
         let labels = !editor.selection.labels().is_empty();
@@ -1570,6 +1645,9 @@ fn context_menu(ui: &mut egui::Ui, editor: &UvEditor, part: &Part, layout: &Layo
         item(ui, labels && island, "Along the island", "", MenuAction::Along);
         ui.separator();
     }
+    item(ui, !editor.selection.is_empty(), "Cursor to selection", "Shift+C", MenuAction::CursorToSelection);
+    item(ui, true, "Cursor to layout centre", "", MenuAction::CursorToCentre);
+    ui.separator();
     item(ui, true, "Select all", "Ctrl+A", MenuAction::SelectAll);
     item(ui, true, "Frame selection", "F", MenuAction::FrameSelection);
     item(ui, true, "Frame all", "Home", MenuAction::FrameAll);

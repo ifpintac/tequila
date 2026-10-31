@@ -24,6 +24,10 @@
 //! - `rulers` and `guides`; `units`, the millimetres they read in;
 //! - `layers`, `transform` and `align`: the panels, their maths tested on
 //!   their own; `placement`, a label's maths;
+//! - `arrange_tools`, `density` and `select_tools`: the Arrange and Texel
+//!   density panels and the Select menu; `cursor`, the 2D cursor;
+//!   `display` and `checker`, the texture behind the layout, the padding
+//!   round its islands and the checker on the part in the viewport;
 //! - `export`: the layout written as a picture; `link`: the editor and the
 //!   viewport pointing at each other;
 //! - `shortcuts`: the keys, live only while the editor is under the
@@ -37,7 +41,14 @@
 
 mod actions;
 mod align;
+#[cfg(test)]
+mod arrange_tests;
+mod arrange_tools;
 mod canvas;
+mod checker;
+mod cursor;
+mod density;
+mod display;
 mod editing;
 mod export;
 mod guides;
@@ -47,6 +58,7 @@ pub mod link;
 mod placement;
 mod prefs;
 mod rulers;
+mod select_tools;
 mod selection;
 mod shortcuts;
 mod snapping;
@@ -206,6 +218,19 @@ pub struct UvEditor {
     message: Option<(String, bool, f64)>,
     /// What the viewport is to light on the part this frame.
     hint: link::Hint,
+    /// The 2D cursor of each part, and whether turns go about it.
+    cursors: cursor::Cursors,
+    /// The Arrange panel's settings, the shape copied, and what the
+    /// arranging tools wait to do at the end of the frame.
+    arrange: arrange_tools::Arrange,
+    texel: density::Texel,
+    /// The checker on the part in the viewport, never saved, and its
+    /// picture as last drawn.
+    checker: checker::Checker,
+    checker_picture: Option<((u32, checker::Pattern), std::sync::Arc<(usize, Vec<u8>)>)>,
+    display: display::Display,
+    /// The Select menu, asked open or shut by a script.
+    select_open: Option<bool>,
 }
 
 impl Default for UvEditor {
@@ -264,6 +289,13 @@ impl Default for UvEditor {
             export: export::Dialog::default(),
             message: None,
             hint: link::Hint::default(),
+            cursors: cursor::Cursors::default(),
+            arrange: arrange_tools::Arrange::default(),
+            texel: density::Texel::default(),
+            checker: checker::Checker::default(),
+            checker_picture: None,
+            display: display::Display::default(),
+            select_open: None,
         }
     }
 }
@@ -378,6 +410,10 @@ impl UvEditor {
         self.distortion = None;
         self.panel_preview = None;
         self.hint = link::Hint::default();
+        self.cursors.forget();
+        self.forget_display();
+        self.arrange.pending.clear();
+        self.texel = density::Texel::default();
     }
 
     /// The part the viewport is to light, and what of it, while the editor
@@ -649,7 +685,7 @@ impl UvEditor {
 
     fn align(&mut self, part: &Part, edits: &mut Edits, layout: &layout::Layout, how: align::Align) {
         if self.selection.is_layout() {
-            self.align_islands(part, layout, edits, Some(how), None);
+            self.align_layout(part, layout, edits, how);
             return;
         }
         let chosen: Vec<usize> = self.selected_labels(canvas::labels_of(edits, part)).into_iter().filter(|i| canvas::labels_of(edits, part)[*i].mapping.projection == Projection::Uv).collect();
@@ -657,10 +693,11 @@ impl UvEditor {
         let target = match self.align_to {
             align::Target::Selection if boxes.len() > 1 => align::union(&boxes),
             align::Target::Island => self.island.and_then(|i| layout.boxes.get(i).copied()),
+            align::Target::Cursor => self.cursor_of(part).map(|c| (c, c)),
             _ => Some((Vec2::ZERO, Vec2::splat(1.0))),
         };
         let Some(target) = target else {
-            edits.status = Some("Click an island to align to it".into());
+            edits.status = Some(if self.align_to == align::Target::Cursor { "Put the 2D cursor down first, with Shift and a right click".into() } else { "Click an island to align to it".into() });
             return;
         };
         let moves = align::align(&boxes, target, how);
@@ -670,9 +707,9 @@ impl UvEditor {
         }
     }
 
-    fn distribute(&mut self, part: &Part, layout: &layout::Layout, edits: &mut Edits, across: bool) {
+    fn distribute(&mut self, part: &Part, _layout: &layout::Layout, edits: &mut Edits, across: bool) {
         if self.selection.is_layout() {
-            self.align_islands(part, layout, edits, None, Some(across));
+            self.arrange.pending.push(arrange_tools::Request::Distribute(if across { arrange_tools::Way::Across } else { arrange_tools::Way::Down }));
             return;
         }
         let chosen: Vec<usize> = self.selected_labels(canvas::labels_of(edits, part)).into_iter().filter(|i| canvas::labels_of(edits, part)[*i].mapping.projection == Projection::Uv).collect();
@@ -713,6 +750,12 @@ impl UvEditor {
             MenuAction::FrameSelection => self.frame_selection(canvas::labels_of(edits, part), part, layout),
             MenuAction::FrameAll => self.frame_all(canvas::labels_of(edits, part), part, layout),
             MenuAction::SelectAll => self.select_everything(canvas::labels_of(edits, part), layout),
+            MenuAction::Arrange(request) => self.arrange.pending.push(request),
+            MenuAction::CursorToSelection => {
+                let labels = canvas::labels_of(edits, part).to_vec();
+                self.cursor_to_selection(part, layout, &labels);
+            }
+            MenuAction::CursorToCentre => self.cursor_to_centre(part),
         }
     }
 
@@ -752,6 +795,11 @@ impl UvEditor {
             Action::Pack => self.act(actions::Action::Pack, part, layout, edits),
             Action::Quarter(turns) => self.quarter(part, layout, edits, turns),
             Action::Flip(across) => self.flip(part, layout, edits, across),
+            Action::Arrange(tool) => self.arrange.pending.push(arrange_tools::Request::Tool(tool)),
+            Action::CursorToSelection => {
+                let labels = canvas::labels_of(edits, part).to_vec();
+                self.cursor_to_selection(part, layout, &labels);
+            }
         }
     }
 
@@ -793,6 +841,8 @@ impl UvEditor {
             if let (Some(action), Some(layout)) = (act, layout) {
                 self.act(action, part, layout, edits);
             }
+            ui.add_space(2.0);
+            self.select_menu(ui, layout);
             icons::vertical_divider(ui, 24.0);
             let toggle = |ui: &mut egui::Ui, value: &mut bool, icon: Icon, title: &str, detail: &str, keys: &str| {
                 let response = icons::button(ui, icon, *value, 30.0, egui::Sense::click());
@@ -810,8 +860,12 @@ impl UvEditor {
             if icons::tip(heat, "Stretch", "A heatmap of how much the layout stretches the part, by area; by angle in View options", "").clicked() {
                 self.prefs.stretch = if self.prefs.stretch.is_some() { None } else { Some(Measure::Area) };
             }
+            let checker = icons::button(ui, Icon::Checker, self.checker.on, 30.0, egui::Sense::click());
+            if icons::tip(checker, "Checker on the part", "Draw the part in the viewport with a checker through its first UV set, to see how the layout lies on it: in Solid and Material Preview, never in a render. Its squares and pattern are in View options", "").clicked() {
+                self.checker.on = !self.checker.on;
+            }
             ui.add_space(4.0);
-            self.view_options(ui, part, edits);
+            self.view_options(ui, part, layout, edits);
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let help = icons::button(ui, Icon::Keyboard, self.help, 30.0, egui::Sense::click());
@@ -845,7 +899,7 @@ impl UvEditor {
 
     /// View options: the unit, the grid, the guides, the stretch heatmap,
     /// the artwork's opacity.
-    fn view_options(&mut self, ui: &mut egui::Ui, part: &Part, edits: &mut Edits) {
+    fn view_options(&mut self, ui: &mut egui::Ui, part: &Part, layout: Option<&layout::Layout>, edits: &mut Edits) {
         let density = self.density;
         let button = egui::Button::new(egui::RichText::new("View options").size(12.5)).fill(crate::theme::p().control).rounding(6.0);
         let response = ui.add(button).on_hover_text("The unit, the grid's spacing, the guides, the stretch heatmap and the artwork");
@@ -902,6 +956,7 @@ impl UvEditor {
             if ui.add(crate::field::Slider::new(&mut percent, 0.0..=100.0).text("Opacity").suffix("%").fixed_decimals(0)).on_hover_text("How strongly the labels' artwork is drawn over the layout").changed() {
                 self.prefs.artwork_opacity = percent / 100.0;
             }
+            self.display_options(ui, part, layout);
         });
     }
 
@@ -1066,6 +1121,11 @@ impl UvEditor {
                     _ => "The selected vertices, by the box round them",
                 };
                 ui.label(egui::RichText::new(what).size(12.0).color(crate::theme::dim()));
+                self.transform.about = if self.cursors.pivot { self.cursor_of(part) } else { None };
+                if self.cursor_of(part).is_some() {
+                    ui.add(crate::field::Checkbox::new(&mut self.cursors.pivot, "Turn and scale about the 2D cursor"))
+                        .on_hover_text("Typed turns and sizes, the Rotate and Scale tools, quarter turns and flips go about the 2D cursor");
+                }
                 match transform::layout(ui, &mut self.transform, &frame, self.scale) {
                     Some(transform::LayoutChange::Map(map)) => {
                         self.panel_preview = Some(self.panel_preview.unwrap_or(UvAffine::IDENTITY).then(&map));
@@ -1120,45 +1180,17 @@ impl UvEditor {
 
         // ---- Align --------------------------------------------------------
         crate::field::Fold::new("Align").id_salt("uv-align").default_open(true).show(ui, |ui| {
-            let targets = [align::Target::Selection, align::Target::Island, align::Target::Layout].map(|t| (t, t.label()));
-            crate::theme::segmented(ui, &mut self.align_to, &targets);
-            ui.add_space(4.0);
-            let (count, things) = match (self.selection.is_layout(), layout) {
-                (true, Some(layout)) => (editing::islands(layout, &self.selection).len(), "islands"),
-                _ => (self.selected_labels(canvas::labels_of(edits, part)).len(), "labels"),
-            };
-            let can_align = count >= 1;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for how in align::Align::ALL {
-                    ui.add_enabled_ui(can_align, |ui| {
-                        let response = icons::button(ui, how.icon(), false, 28.0, egui::Sense::click());
-                        let detail = match self.align_to {
-                            align::Target::Selection => "To the box round the selection; one alone, to the layout's square",
-                            align::Target::Island => "To the island last clicked",
-                            align::Target::Layout => "To the layout's square",
-                        };
-                        let detail = if can_align { detail.to_string() } else { format!("Select {things} to line them up") };
-                        if icons::tip(response, how.name(), &detail, "").clicked() {
-                            if let Some(layout) = layout {
-                                self.align(part, edits, layout, how);
-                            }
-                        }
-                    });
-                }
-                icons::vertical_divider(ui, 22.0);
-                for (across, icon, name) in [(true, Icon::DistributeAcross, "Spread across"), (false, Icon::DistributeDown, "Spread down")] {
-                    ui.add_enabled_ui(count >= 3, |ui| {
-                        let response = icons::button(ui, icon, false, 28.0, egui::Sense::click());
-                        let detail = format!("Equal gaps between three or more {things}, the first and last staying put");
-                        if icons::tip(response, name, &detail, "").clicked() {
-                            if let Some(layout) = layout {
-                                self.distribute(part, layout, edits, across);
-                            }
-                        }
-                    });
-                }
-            });
+            self.align_panel(ui, part, layout, edits);
+        });
+
+        // ---- Arrange ------------------------------------------------------
+        crate::field::Fold::new("Arrange").id_salt("uv-arrange").default_open(true).show(ui, |ui| {
+            self.arrange_panel(ui, layout);
+        });
+
+        // ---- Texel density ------------------------------------------------
+        crate::field::Fold::new("Texel density").id_salt("uv-texel-density").default_open(true).show(ui, |ui| {
+            self.density_panel(ui, part, layout, project);
         });
 
         // ---- Islands ------------------------------------------------------
@@ -1412,10 +1444,13 @@ impl UvEditor {
             self.frame_request = Some(layout::rect(vec2(u0, v0), vec2(u1, v1)));
         }
         if let Some(how) = &change.align {
-            self.scripted_align = Some(align::Align::from_key(how).ok_or_else(|| format!("`{how}` is not a way to align: left, centre, right, top, middle or bottom"))?);
+            self.scripted_align = Some(align::Align::from_key(how).ok_or_else(|| format!("`{how}` is not a way to align: left, centre, right, top, middle, bottom, top_left, top_right, bottom_left or bottom_right"))?);
+        }
+        if let Some(open) = change.arrange.select_menu {
+            self.select_open = Some(open);
         }
         self.open = true;
-        Ok(())
+        self.script_arrange(&change.arrange)
     }
 
     /// A script's requests that need the part and its layout, done as the
@@ -1476,7 +1511,7 @@ impl UvEditor {
         }
         if self.selection.is_layout() {
             let Some(frame) = self.layout_frame(layout) else { return };
-            let pivot = self.transform.reference.point(&frame);
+            let pivot = self.pivot_or(part, self.transform.reference.point(&frame));
             let mut map = UvAffine::IDENTITY;
             if let Some([sx, sy]) = change.scale {
                 map = map.then(&editing::scaled(pivot, vec2(sx, sy)));
@@ -1574,6 +1609,7 @@ impl UvEditor {
         if let Subject::Part(node) = self.subject {
             out.set("part", node.0);
         }
+        self.arrange_state(&mut out);
         out.build()
     }
 }
@@ -1780,6 +1816,7 @@ impl UvEditor {
         let p = crate::theme::p();
         let held = ui.input(|i| i.pointer.any_down());
         self.scripted_asks(part, layout, project, edits);
+        self.cursors.about = if self.cursors.pivot { self.cursor_of(part) } else { None };
         egui::TopBottomPanel::top("uv-toolbar")
             .frame(egui::Frame::none().fill(p.chrome).inner_margin(egui::Margin::symmetric(8.0, 5.0)))
             .show_inside(ui, |ui| self.toolbar(ui, part, layout, edits));
@@ -1866,6 +1903,9 @@ impl UvEditor {
                 self.transform_layout(part, layout, map, edits, "Moved");
             }
         }
+        // What the arranging tools were asked this frame, with the part's
+        // mesh at hand.
+        self.arrange_pending(part, layout, project, edits);
     }
 
     /// Make this frame's edits commands: one step to undo for all of it, and

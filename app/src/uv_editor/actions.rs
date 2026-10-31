@@ -14,7 +14,7 @@ use super::layout::Layout;
 use super::selection::{Item, Mode};
 use super::{Edits, Part, UvEditor};
 use crate::icons::{self, Icon};
-use tequila_core::math::{vec2, Vec2};
+use tequila_core::math::vec2;
 use tequila_scene::guides::GuideAxis;
 use tequila_scene::uv::{Alignment, DensityTarget, PackOptions, StraightenBy, UnwrapOptions, UvAffine, UvRect};
 use tequila_scene::Command;
@@ -210,7 +210,7 @@ impl UvEditor {
 
     /// The UV set shown, and the islands an action works on: those
     /// selected, or that the selected edges and vertices are on.
-    fn chosen_islands(&self, layout: &Layout) -> Vec<u32> {
+    pub(super) fn chosen_islands(&self, layout: &Layout) -> Vec<u32> {
         editing::islands_touched(layout, &self.selection)
     }
 
@@ -355,7 +355,7 @@ impl UvEditor {
     }
 
     /// The selected islands, or every island when none is.
-    fn islands_or_all(&self, layout: &Layout) -> Vec<u32> {
+    pub(super) fn islands_or_all(&self, layout: &Layout) -> Vec<u32> {
         let chosen = self.chosen_islands(layout);
         if chosen.is_empty() { (0..layout.uv.islands.len() as u32).collect() } else { chosen }
     }
@@ -385,7 +385,8 @@ impl UvEditor {
     /// selection's middle.
     pub(super) fn quarter_layout(&mut self, part: &Part, layout: &Layout, turns: i32, edits: &mut Edits) {
         let Some(frame) = self.layout_frame(layout) else { return };
-        self.transform_layout(part, layout, UvAffine::quarter_turns(turns).about(frame.centre), edits, if turns > 0 { "Turned a quarter clockwise" } else { "Turned a quarter anticlockwise" });
+        let pivot = self.pivot_or(part, frame.centre);
+        self.transform_layout(part, layout, UvAffine::quarter_turns(turns).about(pivot), edits, if turns > 0 { "Turned a quarter clockwise" } else { "Turned a quarter anticlockwise" });
     }
 
     /// Mirrored left to right (`across`) or top to bottom, about the
@@ -393,42 +394,8 @@ impl UvEditor {
     pub(super) fn flip_layout(&mut self, part: &Part, layout: &Layout, across: bool, edits: &mut Edits) {
         let Some(frame) = self.layout_frame(layout) else { return };
         let map = if across { UvAffine::flip_u() } else { UvAffine::flip_v() };
-        self.transform_layout(part, layout, map.about(frame.centre), edits, if across { "Flipped horizontally" } else { "Flipped vertically" });
-    }
-
-    /// Islands lined up as the Align panel says: each moved on its own, all
-    /// of them one step.
-    pub(super) fn align_islands(&mut self, part: &Part, layout: &Layout, edits: &mut Edits, how: Option<super::align::Align>, distribute: Option<bool>) {
-        let islands = editing::islands(layout, &self.selection);
-        let boxes: Vec<super::align::Box2> = islands.iter().map(|&i| layout.boxes[i as usize]).collect();
-        let moves = match (how, distribute) {
-            (Some(how), _) => {
-                let target = match self.align_to {
-                    super::align::Target::Selection if boxes.len() > 1 => super::align::union(&boxes),
-                    super::align::Target::Island => self.island.and_then(|i| layout.boxes.get(i).copied()),
-                    _ => Some((Vec2::ZERO, Vec2::splat(1.0))),
-                };
-                let Some(target) = target else {
-                    self.say("Click an island to align to it", true);
-                    return;
-                };
-                super::align::align(&boxes, target, how)
-            }
-            (None, Some(across)) => super::align::distribute(&boxes, across),
-            (None, None) => return,
-        };
-        for (&island, delta) in islands.iter().zip(moves) {
-            if delta.length() > 1e-9 {
-                let command = Command::TransformUvs {
-                    node: part.node,
-                    set: layout.uv.set,
-                    selection: tequila_scene::uv::UvSelection::Islands(vec![island]),
-                    transform: UvAffine::translation(delta),
-                    pivot: tequila_scene::uv::Pivot::Origin,
-                };
-                edits.layout.push(super::LayoutEdit { command, verb: "line them up", done: "Lined the islands up".into(), carry: true });
-            }
-        }
+        let pivot = self.pivot_or(part, frame.centre);
+        self.transform_layout(part, layout, map.about(pivot), edits, if across { "Flipped horizontally" } else { "Flipped vertically" });
     }
 
     /// What the set picker does to the set shown.

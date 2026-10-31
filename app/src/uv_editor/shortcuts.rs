@@ -37,6 +37,10 @@ pub enum Action {
     Quarter(i32),
     /// Flipped across (left for right), or down.
     Flip(bool),
+    /// One of the Arrange panel's tools.
+    Arrange(super::arrange_tools::Tool),
+    /// The 2D cursor to the middle of the selection.
+    CursorToSelection,
 }
 
 /// Every key, by group, for the help popover: the keys as key caps, and
@@ -84,6 +88,18 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Arranging",
+        &[
+            ("Shift + Right click", "Put the 2D cursor down"),
+            ("Shift + C", "The 2D cursor to the selection"),
+            ("Shift + U", "Turn upright"),
+            ("Shift + O", "Sort"),
+            ("Shift + S", "Stack similar"),
+            ("Shift + F", "Fit to square"),
+            ("Shift + X", "Swap, or shuffle"),
+        ],
+    ),
+    (
         "View",
         &[
             ("F", "Frame the selection"),
@@ -114,7 +130,7 @@ pub const LIST: &[(&str, &[(&str, &str)])] = &[
 ];
 
 /// Where the popover's columns begin in `LIST`.
-pub const COLUMNS: [usize; 3] = [0, 3, 5];
+pub const COLUMNS: [usize; 3] = [0, 3, 6];
 
 /// The actions pressed this frame, each with the modifiers it was pressed
 /// with.
@@ -155,6 +171,12 @@ pub fn action(key: egui::Key, modifiers: egui::Modifiers) -> Option<Action> {
         Key::OpenBracket if !modifiers.any() => Action::Quarter(-1),
         Key::H if only_shift => Action::Flip(true),
         Key::V if only_shift => Action::Flip(false),
+        Key::C if only_shift => Action::CursorToSelection,
+        Key::U if only_shift => Action::Arrange(super::arrange_tools::Tool::Upright),
+        Key::O if only_shift => Action::Arrange(super::arrange_tools::Tool::Sort),
+        Key::S if only_shift => Action::Arrange(super::arrange_tools::Tool::Stack),
+        Key::F if only_shift => Action::Arrange(super::arrange_tools::Tool::Fit),
+        Key::X if only_shift => Action::Arrange(super::arrange_tools::Tool::Shuffle),
         Key::ArrowLeft if plain => Action::Nudge(vec2(-1.0, 0.0), modifiers.shift),
         Key::ArrowRight if plain => Action::Nudge(vec2(1.0, 0.0), modifiers.shift),
         Key::ArrowUp if plain => Action::Nudge(vec2(0.0, -1.0), modifiers.shift),
@@ -218,6 +240,14 @@ mod tests {
         assert_eq!(action(egui::Key::P, ctrl), Some(Action::Pack));
         assert_eq!(action(egui::Key::V, egui::Modifiers::SHIFT), Some(Action::Flip(false)), "Shift + V flips, V alone selects");
         assert_eq!(action(egui::Key::CloseBracket, none), Some(Action::Quarter(1)));
+        // The arranging keys take Shift, and leave the plain letters theirs.
+        let shift = egui::Modifiers::SHIFT;
+        assert_eq!(action(egui::Key::S, shift), Some(Action::Arrange(super::super::arrange_tools::Tool::Stack)));
+        assert_eq!(action(egui::Key::S, none), Some(Action::Stitch));
+        assert_eq!(action(egui::Key::F, shift), Some(Action::Arrange(super::super::arrange_tools::Tool::Fit)));
+        assert_eq!(action(egui::Key::F, none), Some(Action::FrameSelection));
+        assert_eq!(action(egui::Key::C, shift), Some(Action::CursorToSelection));
+        assert_eq!(action(egui::Key::U, shift), Some(Action::Arrange(super::super::arrange_tools::Tool::Upright)));
         // Each group heads a column, and every row names one key.
         assert_eq!(COLUMNS[0], 0);
         assert!(COLUMNS.windows(2).all(|w| w[0] < w[1]) && *COLUMNS.last().unwrap() < LIST.len());

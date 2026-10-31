@@ -39,6 +39,15 @@ pub struct Prefs {
     pub artwork_opacity: f32,
     /// The stretch heatmap over the layout: by area, by angle, or none.
     pub stretch: Option<Measure>,
+    /// The 2D cursor, drawn.
+    pub show_cursor: bool,
+    /// The artwork behind the layout made lighter or darker, in stops.
+    pub background_exposure: f32,
+    /// The padding round each island, drawn, for a texture of a size and
+    /// a padding in its pixels.
+    pub padding: bool,
+    pub padding_texture: u32,
+    pub padding_px: f32,
 }
 
 impl Default for Prefs {
@@ -59,6 +68,11 @@ impl Default for Prefs {
             guides_locked: false,
             artwork_opacity: 0.9,
             stretch: None,
+            show_cursor: true,
+            background_exposure: 0.0,
+            padding: false,
+            padding_texture: 2048,
+            padding_px: 8.0,
         }
     }
 }
@@ -67,7 +81,7 @@ impl Prefs {
     pub fn to_text(&self) -> String {
         let flag = |b: bool| if b { "on" } else { "off" };
         format!(
-            "size = {} {}\nsnapping = {}\ngrid = {}\nguides = {}\nrulers = {}\nartwork = {}\nedges = {}\nunit = {}\nspacing = {}\ngrid_mm = {}\ndivisions = {}\nsubdivisions = {}\nguides_locked = {}\nartwork_opacity = {}\nstretch = {}\n",
+            "size = {} {}\nsnapping = {}\ngrid = {}\nguides = {}\nrulers = {}\nartwork = {}\nedges = {}\nunit = {}\nspacing = {}\ngrid_mm = {}\ndivisions = {}\nsubdivisions = {}\nguides_locked = {}\nartwork_opacity = {}\nstretch = {}\nshow_cursor = {}\nbackground_exposure = {}\npadding = {}\npadding_texture = {}\npadding_px = {}\n",
             self.size.x.round(),
             self.size.y.round(),
             flag(self.snapping),
@@ -91,6 +105,11 @@ impl Prefs {
                 Some(Measure::Area) => "area",
                 Some(Measure::Angle) => "angle",
             },
+            flag(self.show_cursor),
+            self.background_exposure,
+            flag(self.padding),
+            self.padding_texture,
+            self.padding_px,
         )
     }
 
@@ -132,6 +151,11 @@ impl Prefs {
                 "subdivisions" => out.subdivisions = number(out.subdivisions as f32, 1.0, 20.0) as u32,
                 "guides_locked" => out.guides_locked = flag(out.guides_locked),
                 "artwork_opacity" => out.artwork_opacity = number(out.artwork_opacity, 0.0, 1.0),
+                "show_cursor" => out.show_cursor = flag(out.show_cursor),
+                "background_exposure" => out.background_exposure = number(out.background_exposure, -4.0, 4.0),
+                "padding" => out.padding = flag(out.padding),
+                "padding_texture" => out.padding_texture = number(out.padding_texture as f32, 64.0, 16384.0) as u32,
+                "padding_px" => out.padding_px = number(out.padding_px, 0.0, 512.0),
                 "stretch" => {
                     out.stretch = match value {
                         "area" => Some(Measure::Area),
@@ -179,7 +203,7 @@ mod tests {
 
     #[test]
     fn the_settings_read_back_as_written() {
-        let prefs = Prefs { size: egui::vec2(1400.0, 900.0), grid: false, unit: Unit::Inches, spacing: Spacing::Length, grid_mm: 2.5, subdivisions: 5, guides_locked: true, artwork_opacity: 0.5, stretch: Some(Measure::Angle), ..Prefs::default() };
+        let prefs = Prefs { size: egui::vec2(1400.0, 900.0), grid: false, unit: Unit::Inches, spacing: Spacing::Length, grid_mm: 2.5, subdivisions: 5, guides_locked: true, artwork_opacity: 0.5, stretch: Some(Measure::Angle), show_cursor: false, background_exposure: -1.5, padding: true, padding_texture: 4096, padding_px: 16.0, ..Prefs::default() };
         assert_eq!(Prefs::from_text(&prefs.to_text()), prefs);
         // Nonsense is the default, a line at a time.
         let read = Prefs::from_text("size = big\nunit = furlongs\nsubdivisions = 900\nwhatever = 3\n");

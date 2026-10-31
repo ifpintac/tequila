@@ -439,7 +439,13 @@ pub struct UvEditorChange {
     /// The selected labels put on the island last clicked: `fit`, `centre`,
     /// `along` or `square`, as the Islands panel's buttons do.
     pub place: Option<String>,
+    /// The arranging tools, the Select menu and what the editor shows: keys
+    /// of this same object, read apart (`uv_arrange`).
+    pub arrange: UvArrange,
 }
+
+mod uv_arrange;
+pub use uv_arrange::{UvArrange, UvCursor};
 
 /// A pack's settings, as the Pack popover has them. Absent fields keep the
 /// popover's.
@@ -614,6 +620,7 @@ fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
             Some(v) => Some(Some(v.as_index().ok_or_else(|| ProtocolError("`hover_face` is a face of the part, by number, or false".into()))?)),
         },
         place: opt_string(value, "place")?,
+        arrange: uv_arrange::uv_arrange(value)?,
     })
 }
 

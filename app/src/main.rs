@@ -1967,6 +1967,7 @@ impl TequilaApp {
                 mode: self.view_mode.gpu().unwrap_or_default(),
                 exposure: 2f32.powf(self.project.developed_style(&self.camera.camera).exposure),
                 model_edges: self.show_model_edges && self.presenting.is_none(),
+                checker: self.uv_editor.checker_frame(&self.project).filter(|_| self.presenting.is_none()),
             };
             ui.painter().add(self.solid.paint(rect, frame));
         } else if let Some(texture) = &self.texture {

@@ -1,7 +1,9 @@
-//! Align and distribute: labels lined up by their edges or middles, against
-//! each other, an island or the layout's square, and spread so the gaps
-//! between them are equal. Worked on the boxes square to the layout that
-//! hold each label, as turned; what comes back is how far to move each.
+//! Align and distribute: labels and islands lined up by their edges,
+//! middles or corners, against each other, an island, the layout's square or
+//! the 2D cursor, and spread so the gaps between them are equal. Worked on
+//! the boxes square to the layout that hold each, as turned; what comes back
+//! is how far to move each. The layout's vertices and edge paths line up in
+//! the engine (`tequila_scene::uv::vertices`), against the same targets.
 
 use tequila_core::math::{vec2, Vec2};
 
@@ -16,10 +18,32 @@ pub enum Align {
     Top,
     Middle,
     Bottom,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 impl Align {
     pub const ALL: [Align; 6] = [Align::Left, Align::Centre, Align::Right, Align::Top, Align::Middle, Align::Bottom];
+    pub const CORNERS: [Align; 4] = [Align::TopLeft, Align::TopRight, Align::BottomLeft, Align::BottomRight];
+
+    /// Which way it lines up across and down: -1 the low side (left, top),
+    /// 0 the middle, 1 the high side; none where it leaves that way alone.
+    pub fn sides(self) -> (Option<i8>, Option<i8>) {
+        match self {
+            Align::Left => (Some(-1), None),
+            Align::Centre => (Some(0), None),
+            Align::Right => (Some(1), None),
+            Align::Top => (None, Some(-1)),
+            Align::Middle => (None, Some(0)),
+            Align::Bottom => (None, Some(1)),
+            Align::TopLeft => (Some(-1), Some(-1)),
+            Align::TopRight => (Some(1), Some(-1)),
+            Align::BottomLeft => (Some(-1), Some(1)),
+            Align::BottomRight => (Some(1), Some(1)),
+        }
+    }
 
     pub fn icon(self) -> crate::icons::Icon {
         use crate::icons::Icon;
@@ -30,6 +54,10 @@ impl Align {
             Align::Top => Icon::AlignTop,
             Align::Middle => Icon::AlignMiddle,
             Align::Bottom => Icon::AlignBottom,
+            Align::TopLeft => Icon::AlignTopLeft,
+            Align::TopRight => Icon::AlignTopRight,
+            Align::BottomLeft => Icon::AlignBottomLeft,
+            Align::BottomRight => Icon::AlignBottomRight,
         }
     }
 
@@ -41,6 +69,10 @@ impl Align {
             Align::Top => "Align top edges",
             Align::Middle => "Align middles",
             Align::Bottom => "Align bottom edges",
+            Align::TopLeft => "Align top left corners",
+            Align::TopRight => "Align top right corners",
+            Align::BottomLeft => "Align bottom left corners",
+            Align::BottomRight => "Align bottom right corners",
         }
     }
 
@@ -53,13 +85,17 @@ impl Align {
             Align::Top => "top",
             Align::Middle => "middle",
             Align::Bottom => "bottom",
+            Align::TopLeft => "top_left",
+            Align::TopRight => "top_right",
+            Align::BottomLeft => "bottom_left",
+            Align::BottomRight => "bottom_right",
         }
     }
 
     pub fn from_key(key: &str) -> Option<Align> {
         match key {
             "center" => Some(Align::Centre),
-            _ => Align::ALL.into_iter().find(|a| a.key() == key),
+            _ => Align::ALL.into_iter().chain(Align::CORNERS).find(|a| a.key() == key),
         }
     }
 }
@@ -74,15 +110,34 @@ pub enum Target {
     Island,
     /// The layout's unit square.
     Layout,
+    /// The 2D cursor: a point, so left, middle and right edges all go to it.
+    Cursor,
 }
 
 impl Target {
+    pub const ALL: [Target; 4] = [Target::Selection, Target::Island, Target::Layout, Target::Cursor];
+
     pub fn label(self) -> &'static str {
         match self {
             Target::Selection => "Selection",
             Target::Island => "Island",
             Target::Layout => "Layout",
+            Target::Cursor => "2D cursor",
         }
+    }
+
+    /// Its name on the scripting channel.
+    pub fn key(self) -> &'static str {
+        match self {
+            Target::Selection => "selection",
+            Target::Island => "island",
+            Target::Layout => "layout",
+            Target::Cursor => "cursor",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Target> {
+        Target::ALL.into_iter().find(|t| t.key() == key)
     }
 }
 
@@ -91,21 +146,22 @@ pub fn union(boxes: &[Box2]) -> Option<Box2> {
     boxes.iter().copied().reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
 }
 
-/// How far to move each box to line it up with `target` as `how` says.
+/// How far to move each box to line it up with `target` as `how` says: a
+/// corner by both its sides. A target that is a point - the 2D cursor - has
+/// its edges and middle all there.
 pub fn align(boxes: &[Box2], target: Box2, how: Align) -> Vec<Vec2> {
-    let middle = (target.0 + target.1) * 0.5;
+    let (across, down) = how.sides();
+    let to = |side: i8, low: f32, high: f32, t_low: f32, t_high: f32| match side {
+        s if s < 0 => t_low - low,
+        0 => (t_low + t_high) * 0.5 - (low + high) * 0.5,
+        _ => t_high - high,
+    };
     boxes
         .iter()
         .map(|&(low, high)| {
-            let centre = (low + high) * 0.5;
-            match how {
-                Align::Left => vec2(target.0.x - low.x, 0.0),
-                Align::Centre => vec2(middle.x - centre.x, 0.0),
-                Align::Right => vec2(target.1.x - high.x, 0.0),
-                Align::Top => vec2(0.0, target.0.y - low.y),
-                Align::Middle => vec2(0.0, middle.y - centre.y),
-                Align::Bottom => vec2(0.0, target.1.y - high.y),
-            }
+            let x = across.map_or(0.0, |side| to(side, low.x, high.x, target.0.x, target.1.x));
+            let y = down.map_or(0.0, |side| to(side, low.y, high.y, target.0.y, target.1.y));
+            vec2(x, y)
         })
         .collect()
 }
@@ -169,6 +225,18 @@ mod tests {
         assert!(near(centred[0], vec2(0.35, 0.0)));
         let bottom = align(&boxes()[..1], square, Align::Bottom);
         assert!(near(bottom[0], vec2(0.0, 0.7)));
+        // A corner both ways; to a point, its corner onto the point.
+        let corner = align(&boxes(), all, Align::BottomRight);
+        assert!(near(corner[0], vec2(0.7, 0.5)) && near(corner[1], vec2(0.0, 0.55)), "{corner:?}");
+        let cursor = (vec2(0.5, 0.5), vec2(0.5, 0.5));
+        assert!(near(align(&boxes()[..1], cursor, Align::TopLeft)[0], vec2(0.4, 0.4)));
+        assert!(near(align(&boxes()[..1], cursor, Align::Centre)[0], vec2(0.35, 0.0)));
+        for how in Align::ALL.into_iter().chain(Align::CORNERS) {
+            assert_eq!(Align::from_key(how.key()), Some(how));
+        }
+        for target in Target::ALL {
+            assert_eq!(Target::from_key(target.key()), Some(target));
+        }
     }
 
     /// Spread across, the gaps between the three are equal and the ends

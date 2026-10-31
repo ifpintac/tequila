@@ -161,6 +161,30 @@ pub enum Icon {
     ExportImage,
     ArrowUp,
     ArrowDown,
+    /// Lining up by a corner: the top left, top right, bottom left or
+    /// bottom right.
+    AlignTopLeft,
+    AlignTopRight,
+    AlignBottomLeft,
+    AlignBottomRight,
+    /// The UV editor's arranging tools: sort, shuffle, upright, size alike,
+    /// fit to the square, stack the same shapes, paste a shape, lay out as
+    /// on the part, square a strip's edges, spread along a path; the
+    /// Select menu; a density read off.
+    Sort,
+    Shuffle,
+    Upright,
+    MatchSize,
+    FitSquare,
+    Stack,
+    Paste,
+    AsOnPart,
+    SquareEdges,
+    SpreadAlong,
+    SelectMenu,
+    Pipette,
+    /// A checker on the part, to see its layout on it.
+    Checker,
 }
 
 impl Icon {
@@ -275,6 +299,23 @@ impl Icon {
             Icon::ExportImage => 0xe540,
             Icon::ArrowUp => 0xe04e,
             Icon::ArrowDown => 0xe046,
+            Icon::AlignTopLeft => 0xe04f,
+            Icon::AlignTopRight => 0xe051,
+            Icon::AlignBottomLeft => 0xe047,
+            Icon::AlignBottomRight => 0xe049,
+            Icon::Sort => 0xe1d0,
+            Icon::Shuffle => 0xe161,
+            Icon::Upright => 0xe07f,
+            Icon::MatchSize => 0xe5d3,
+            Icon::FitSquare => 0xe115,
+            Icon::Stack => 0xe4a6,
+            Icon::Paste => 0xe3eb,
+            Icon::AsOnPart => 0xe2e4,
+            Icon::SquareEdges => 0xe180,
+            Icon::SpreadAlong => 0xe546,
+            Icon::SelectMenu => 0xe1ce,
+            Icon::Pipette => 0xe13e,
+            Icon::Checker => 0xe503,
         };
         char::from_u32(code)
     }
@@ -939,6 +980,76 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 poly(&[(3.5, 9.0), (8.0, 13.5), (12.5, 9.0)]);
             }
         }
+        Icon::AlignTopLeft | Icon::AlignTopRight | Icon::AlignBottomLeft | Icon::AlignBottomRight => {
+            let (right, bottom) = (matches!(icon, Icon::AlignTopRight | Icon::AlignBottomRight), matches!(icon, Icon::AlignBottomLeft | Icon::AlignBottomRight));
+            let x = |v: f32| if right { 16.0 - v } else { v };
+            let y = |v: f32| if bottom { 16.0 - v } else { v };
+            line((x(12.5), y(12.5)), (x(3.5), y(3.5)));
+            poly(&[(x(3.5), y(10.0)), (x(3.5), y(3.5)), (x(10.0), y(3.5))]);
+        }
+        Icon::Sort => {
+            for y in [4.0, 8.0, 12.0] {
+                line((6.5, y), (14.0, y));
+                disc(3.0, y, 1.1, color);
+            }
+        }
+        Icon::Shuffle => {
+            poly(&[(2.0, 4.5), (5.0, 4.5), (11.0, 11.5), (14.0, 11.5)]);
+            poly(&[(2.0, 11.5), (5.0, 11.5), (11.0, 4.5), (14.0, 4.5)]);
+        }
+        Icon::Upright => {
+            circle(8.0, 8.0, 6.5);
+            line((8.0, 11.5), (8.0, 4.5));
+            poly(&[(5.0, 7.5), (8.0, 4.5), (11.0, 7.5)]);
+        }
+        Icon::MatchSize => {
+            rounded(2.0, 3.0, 14.0, 13.0, 1.5);
+            line((5.0, 8.0), (11.0, 8.0));
+        }
+        Icon::FitSquare => {
+            poly(&[(2.0, 6.0), (2.0, 2.0), (6.0, 2.0)]);
+            poly(&[(10.0, 2.0), (14.0, 2.0), (14.0, 6.0)]);
+            poly(&[(14.0, 10.0), (14.0, 14.0), (10.0, 14.0)]);
+            poly(&[(6.0, 14.0), (2.0, 14.0), (2.0, 10.0)]);
+        }
+        Icon::Stack => {
+            rounded(6.0, 6.0, 14.0, 14.0, 1.5);
+            poly(&[(4.0, 11.0), (2.0, 11.0), (2.0, 2.0), (11.0, 2.0), (11.0, 4.0)]);
+        }
+        Icon::Paste => {
+            rounded(3.0, 3.0, 13.0, 14.5, 1.5);
+            rounded(6.0, 1.5, 10.0, 4.5, 1.0);
+        }
+        Icon::AsOnPart => {
+            line((8.0, 8.0), (8.0, 2.0));
+            line((8.0, 8.0), (14.0, 11.5));
+            line((8.0, 8.0), (2.0, 11.5));
+        }
+        Icon::SquareEdges => {
+            rounded(2.0, 2.0, 14.0, 14.0, 1.5);
+            line((2.0, 6.0), (14.0, 6.0));
+            line((2.0, 10.0), (14.0, 10.0));
+            line((8.0, 6.0), (8.0, 14.0));
+        }
+        Icon::SpreadAlong => {
+            poly(&[(3.0, 8.0), (8.0, 3.0), (13.0, 8.0), (8.0, 13.0)]);
+            for (x, y) in [(3.0, 8.0), (8.0, 3.0), (13.0, 8.0), (8.0, 13.0)] {
+                disc(x, y, 1.6, color);
+            }
+        }
+        Icon::SelectMenu => {
+            arc(8.0, 6.5, 6.0, 4.5, 0.6, 5.6);
+            poly(&[(12.6, 9.4), (11.0, 13.5)]);
+        }
+        Icon::Pipette => {
+            line((3.0, 13.0), (10.0, 6.0));
+            circle(11.5, 4.5, 2.2);
+        }
+        Icon::Checker => {
+            rounded(2.0, 2.0, 14.0, 14.0, 1.5);
+            line((8.0, 2.0), (8.0, 14.0));
+            line((2.0, 8.0), (14.0, 8.0));
+        }
     }
 }
 
@@ -1486,7 +1597,10 @@ mod tests {
             Icon::Sticker, Icon::Islands, Icon::EdgeSelect, Icon::VertexSelect, Icon::Scissors, Icon::Stitch,
             Icon::Pin, Icon::Unpin, Icon::Reflatten, Icon::Pack, Icon::Straighten, Icon::EvenSize, Icon::Unwrap,
             Icon::CutFaces, Icon::QuarterCw, Icon::QuarterCcw, Icon::Heat, Icon::UvSets, Icon::ExportImage,
-            Icon::ArrowUp, Icon::ArrowDown,
+            Icon::ArrowUp, Icon::ArrowDown, Icon::AlignTopLeft, Icon::AlignTopRight, Icon::AlignBottomLeft,
+            Icon::AlignBottomRight, Icon::Sort, Icon::Shuffle, Icon::Upright, Icon::MatchSize,
+            Icon::FitSquare, Icon::Stack, Icon::Paste, Icon::AsOnPart, Icon::SquareEdges, Icon::SpreadAlong,
+            Icon::SelectMenu, Icon::Pipette, Icon::Checker,
         ]
     }
 

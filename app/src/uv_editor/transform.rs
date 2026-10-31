@@ -97,16 +97,19 @@ pub fn apply_group(mapping: Mapping, from: Frame, to: Frame, reference: Referenc
 }
 
 /// The panel's own state: the point its numbers refer to, and whether width
-/// and height keep in proportion.
+/// and height keep in proportion; and for the layout's own, a point other
+/// than that one its turns and scales go about - the 2D cursor - set each
+/// frame.
 #[derive(Clone, Copy, Debug)]
 pub struct Panel {
     pub reference: Reference,
     pub keep_aspect: bool,
+    pub about: Option<Vec2>,
 }
 
 impl Default for Panel {
     fn default() -> Self {
-        Panel { reference: Reference::default(), keep_aspect: true }
+        Panel { reference: Reference::default(), keep_aspect: true, about: None }
     }
 }
 
@@ -308,17 +311,18 @@ pub enum LayoutChange {
 /// if there was one.
 pub fn layout(ui: &mut egui::Ui, panel: &mut Panel, frame: &Frame, scale: Scale) -> Option<LayoutChange> {
     let mut out = None;
-    let pivot = panel.reference.point(frame);
+    let point = panel.reference.point(frame);
+    let pivot = panel.about.unwrap_or(point);
     ui.horizontal(|ui| {
         picker(ui, &mut panel.reference);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-            let mut at = pivot;
+            let mut at = point;
             ui.horizontal(|ui| {
                 let x = length(ui, "X", &mut at.x, scale, "Across the layout, from its left edge, to the chosen point", false);
                 let y = length(ui, "Y", &mut at.y, scale, "Down the layout, from its top edge, to the chosen point", false);
                 if x || y {
-                    out = Some(LayoutChange::Map(super::editing::moved(at - pivot)));
+                    out = Some(LayoutChange::Map(super::editing::moved(at - point)));
                 }
             });
             ui.horizontal(|ui| {
