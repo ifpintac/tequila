@@ -1269,6 +1269,7 @@ impl eframe::App for TequilaApp {
         if self.seen_epoch != self.project.document_epoch() {
             self.seen_epoch = self.project.document_epoch();
             self.graph_editor.forget_document();
+            self.uv_editor.forget_document();
             self.assistant.forget_turn();
         }
 
@@ -3046,11 +3047,10 @@ impl TequilaApp {
                     ui.separator();
                     if ui
                         .button("UV editor")
-                        .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels on it by hand")
+                        .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels and textures on it by hand")
                         .clicked()
                     {
-                        self.uv_editor.open = true;
-                        self.uv_editor.label = None;
+                        self.uv_editor.open_on_selection();
                         ui.close_menu();
                     }
                 });
@@ -3099,6 +3099,20 @@ impl TequilaApp {
                             self.full_viewport = !library && !project;
                             ui.close_menu();
                         }
+                    }
+                    // Labels and the layout side by side: the Material page
+                    // beside the view, the UV editor open on the part.
+                    if ui
+                        .button("UV layout")
+                        .on_hover_text("The UV editor open on the selected part, beside its Material page, to place labels and textures on its layout")
+                        .clicked()
+                    {
+                        self.show_library = false;
+                        self.show_project = true;
+                        self.project_tab = ProjectTab::Material;
+                        self.full_viewport = false;
+                        self.uv_editor.open_on_selection();
+                        ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("Configurator").on_hover_text("Set up the product's options, rules and picker").clicked() {
@@ -4096,10 +4110,11 @@ impl TequilaApp {
         if pressed(egui::Key::F5) && !modifiers.any() && self.presenting.is_none() {
             self.start_presentation();
         }
-        // Over the graph editor, its own keys mean a node, not a part: only
-        // undo, redo and save reach through, which mean the same everywhere.
-        // Undo stopped working altogether over the editor before this.
-        if self.graph_editor.hovered {
+        // Over the graph editor or the UV editor, their own keys mean a node
+        // or a label, not a part: only undo, redo and save reach through,
+        // which mean the same everywhere. Undo stopped working altogether
+        // over the graph editor before this.
+        if self.graph_editor.hovered || self.uv_editor.hovered {
             if modifiers.command && pressed(egui::Key::Z) {
                 if modifiers.shift {
                     self.redo();
@@ -6171,6 +6186,7 @@ impl TequilaApp {
             windows::Kind::Graph => self.graph_editor.open,
             windows::Kind::Shortcuts => self.show_help,
             windows::Kind::Connect => self.assistant.providers_open(),
+            windows::Kind::Uv => self.uv_editor.open,
         }
     }
 }

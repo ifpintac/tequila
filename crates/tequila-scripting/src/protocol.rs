@@ -331,9 +331,111 @@ pub struct UiChange {
     pub connect: Option<bool>,
     /// The UV editor, open on the selected part.
     pub uv_editor: Option<bool>,
+    /// The UV editor driven from a script (`uv`): on a part or a label, its
+    /// tool and zoom, what is selected, and a drag held for a screenshot.
+    pub uv: Option<UvEditorChange>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
+}
+
+/// The UV editor, as a script asks for it. Absent fields are left alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvEditorChange {
+    /// Open on this part.
+    pub part: Option<u64>,
+    /// Open on this label: its material, and its place in the material's
+    /// list. A part with no layout is unwrapped, as the Labels tab's button
+    /// does.
+    pub label: Option<(u64, usize)>,
+    /// `select`, `move`, `rotate`, `scale` or `measure`.
+    pub tool: Option<String>,
+    /// How far in: 1 is the layout's square filling the view.
+    pub zoom: Option<f32>,
+    /// Everything framed (`"zoom": "fit"`).
+    pub fit: bool,
+    /// These labels selected, by their place in the material's list.
+    pub select: Option<Vec<usize>>,
+    /// A texture on the layout selected, by the parameter it drives.
+    pub texture: Option<String>,
+    /// An island selected, by its number from 0, as a click picks it.
+    pub island: Option<usize>,
+    /// The shortcuts popover.
+    pub help: Option<bool>,
+    /// Where the pointer is shown, on the layout; `Some(None)` gives it back.
+    pub pointer: Option<Option<[f32; 2]>>,
+    /// A drag with the editor's tool held from the first point of the layout
+    /// to the second; `Some(None)` lets it go without finishing it.
+    pub drag: Option<Option<[[f32; 2]; 2]>>,
+    /// Finish the held drag, as letting go of the button does.
+    pub release: bool,
+    /// The selected labels aligned as the Align panel does: `left`,
+    /// `centre`, `right`, `top`, `middle` or `bottom`.
+    pub align: Option<String>,
+    /// A click at a point of the layout, as a person's: it picks a label, a
+    /// guide or an island.
+    pub click: Option<[f32; 2]>,
+    /// The view framed on a box of the layout, from one corner to the other.
+    pub frame: Option<[[f32; 2]; 2]>,
+}
+
+fn point(value: &Value) -> Option<[f32; 2]> {
+    match value.as_array() {
+        [u, v] => Some([u.as_f64()? as f32, v.as_f64()? as f32]).filter(|p| p.iter().all(|c| c.is_finite())),
+        _ => None,
+    }
+}
+
+fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(ProtocolError("`uv` is an object, such as {\"tool\": \"measure\"}".into()));
+    }
+    let (zoom, fit) = match value.get("zoom") {
+        None | Some(Value::Null) => (None, false),
+        Some(Value::String(s)) if s == "fit" => (None, true),
+        Some(v) => (Some(v.as_f64().filter(|z| z.is_finite() && *z > 0.0).ok_or_else(|| ProtocolError("`zoom` is a number above 0, or \"fit\"".into()))? as f32), false),
+    };
+    let label = optional(value, "label", "a material and a label's place, [material, label]", |v| match v.as_array() {
+        [m, l] => Some((m.as_index()? as u64, l.as_index()?)),
+        _ => None,
+    })?;
+    let select = optional(value, "select", "a list of labels' places", |v| v.as_array().iter().map(Value::as_index).collect::<Option<Vec<_>>>())?;
+    let pointer = match value.get("pointer") {
+        None => None,
+        Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+        Some(v) => Some(Some(point(v).ok_or_else(|| ProtocolError("`pointer` is a point of the layout, [u, v], or false".into()))?)),
+    };
+    let drag = match value.get("drag") {
+        None => None,
+        Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+        Some(v) => {
+            let ends = match v.as_array() {
+                [a, b] => point(a).zip(point(b)).map(|(a, b)| [a, b]),
+                _ => None,
+            };
+            Some(Some(ends.ok_or_else(|| ProtocolError("`drag` is two points of the layout, [[u, v], [u, v]], or false".into()))?))
+        }
+    };
+    Ok(UvEditorChange {
+        part: opt_index(value, "part")?.map(|n| n as u64),
+        label,
+        tool: opt_string(value, "tool")?,
+        zoom,
+        fit,
+        select,
+        texture: opt_string(value, "texture")?,
+        island: opt_index(value, "island")?,
+        help: opt_bool(value, "help")?,
+        pointer,
+        drag,
+        release: opt_bool(value, "release")?.unwrap_or(false),
+        align: opt_string(value, "align")?,
+        click: optional(value, "click", "a point of the layout, [u, v]", point)?,
+        frame: optional(value, "frame", "two points of the layout, [[u, v], [u, v]]", |v| match v.as_array() {
+            [a, b] => Some([point(a)?, point(b)?]),
+            _ => None,
+        })?,
+    })
 }
 
 /// A background render. Absent fields come from the document's settings.
@@ -882,6 +984,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             updates: opt_bool(value, "updates")?,
             connect: opt_bool(value, "connect")?,
             uv_editor: opt_bool(value, "uv_editor")?,
+            uv: value.get("uv").map(uv_editor_change).transpose()?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),
