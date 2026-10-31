@@ -96,7 +96,7 @@ pub fn render_pass_with_aovs(
     // With caustics on, one sample at a time: each gets its own photons and
     // its own, smaller radius. Sharing one set across a batch would give a
     // render an eighth as many photon passes as samples.
-    if context.config.caustics && samples_per_pixel > 1 {
+    if context.config.photon_caustics() && samples_per_pixel > 1 {
         let mut aovs = aovs;
         for _ in 0..samples_per_pixel {
             render_pass_with_aovs(
@@ -172,7 +172,7 @@ pub fn render_pass_with_aovs(
 
     // This pass's caustic photons (§6.5), numbered by how far the image has
     // got, so each pass reads a fresh set with a smaller radius.
-    let caustic_map = if context.config.caustics {
+    let caustic_map = if context.config.photon_caustics() {
         build_caustics(intersector, &context.config, framebuffer.max_samples(), context.scene_seed)
     } else {
         None

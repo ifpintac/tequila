@@ -73,6 +73,7 @@ struct Options {
     alpha: bool,
     /// Caustics on or off, whatever the lighting says.
     caustics: Option<bool>,
+    caustics_method: Option<tequila_render_core::settings::CausticsMethod>,
     /// Render with Cycles (true) or Tequila's own path tracer (false);
     /// unsaid, a project renders with its own engine.
     cycles: Option<bool>,
@@ -162,6 +163,7 @@ impl Default for Options {
             display: None,
             alpha: false,
             caustics: None,
+            caustics_method: None,
             cycles: None,
             device: None,
             output_set: false,
@@ -242,6 +244,11 @@ usage: tequila [options]
       --no-ground       no floor: the model floats
       --caustics        trace light through glass and off mirrors onto
                         what is around them (--no-caustics to turn off)
+      --caustics-method M
+                        how, and caustics on: photons (from every light,
+                        the default) or manifold (each lamp's path through
+                        smooth glass solved for: sharp, but noisier than
+                        photons and short where several paths meet)
       --silhouette      cut out along the product's outline: glass stays
                         solid, the floor and its shadow go (implies alpha)
 
@@ -461,6 +468,13 @@ fn parse_args() -> Result<Options, String> {
             "--alpha" => options.alpha = true,
             "--caustics" => options.caustics = Some(true),
             "--no-caustics" => options.caustics = Some(false),
+            "--caustics-method" => {
+                let name = value()?;
+                options.caustics_method = Some(
+                    tequila_render_core::settings::CausticsMethod::from_key(&name.to_ascii_lowercase())
+                        .ok_or_else(|| format!("unknown caustics method {name:?}: photons or manifold"))?,
+                );
+            }
             "--engine" => match value()?.as_str() {
                 "cycles" => options.cycles = Some(true),
                 "tequila" => options.cycles = Some(false),
@@ -1163,6 +1177,10 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     if let Some(caustics) = options.caustics {
         config.caustics = caustics;
     }
+    if let Some(method) = options.caustics_method {
+        config.caustics = true;
+        config.caustics_method = method;
+    }
     // Wavelengths or RGB as the document's render settings say; Auto, a
     // new document's, for a model.
     config.spectral = settings.spectral;
@@ -1462,7 +1480,17 @@ fn render_with_cycles(
 
     let start = Instant::now();
     let mut session = Session::new(device, 0, std::env::var_os("TEQUILA_CYCLES_KERNELS").map(std::path::PathBuf::from).as_deref())?;
-    let view = translate::View { camera, width, height, transparent: keep_alpha, ground_illumination: lighting.ground_illumination, light_materials: lighting.light_source_materials, light_groups: false };
+    let view = translate::View {
+        camera,
+        width,
+        height,
+        transparent: keep_alpha,
+        ground_illumination: lighting.ground_illumination,
+        light_materials: lighting.light_source_materials,
+        light_groups: false,
+        shadow_glass: lighting.shadow_glass(),
+        manifold_caustics: lighting.manifold_caustics(),
+    };
     let translation = translate::build(&mut session, scene, &view)?;
     for warning in &translation.warnings {
         println!("  cycles: {warning}");

@@ -783,6 +783,20 @@ Every material parameter is now implemented; nothing is greyed out.
   stored setting without a solver are out of date. Thin-walled Glass passes
   light straight through, so it makes none; use Glass Solid.
 
+- **Manifold caustics** (Lighting → Transport → Caustics: Off / Photons /
+  Manifold; `--caustics-method manifold` on the command line;
+  `caustics_method` in a document and in scripting's `lighting.set_custom`).
+  Each lamp's light through smooth glass is solved for at every surface
+  (manifold next event estimation): sharp where it finds the path, but in
+  a test studio noisier than photons at equal time and short of light
+  where the light crosses the glass away from the straight line to the
+  lamp (a quarter of a perfume bottle's caustic), so Photons stays the
+  default; the environment's and glowing parts' light through glass is
+  found by bounces. Cycles is given its own MNEE by the same switch.
+  With caustics off, Cycles' clear glass now passes shadow rays as Tequila's
+  does, so what is under a glass cover is lit in both, and is still glass in
+  a glossy floor's reflection.
+
 - **Updating a model from its file** (right-click a part in the Scene tree:
   Reload from file, or Update from another file…; File → Reload model from
   file; scripting `reimport`). Parts keep their materials, labels, names,

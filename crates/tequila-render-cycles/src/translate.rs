@@ -66,6 +66,13 @@ pub struct View {
     /// light by its layer, `LightLayer0`..., the environment `Environment`,
     /// glowing parts `Emissive`.
     pub light_groups: bool,
+    /// The clear glass shadow rays pass, as the lighting has Tequila's
+    /// renderer pass it (`IntegratorConfig::shadow_glass`).
+    pub shadow_glass: tequila_render_core::settings::ShadowGlass,
+    /// The lighting's manifold caustics: Cycles' own manifold next event
+    /// estimation, from every lamp through the glass that bends light onto
+    /// everything else (`IntegratorConfig::manifold_caustics`).
+    pub manifold_caustics: bool,
 }
 
 /// A position or a direction from Cycles' Z-up world back into Tequila's.
@@ -503,7 +510,19 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
     let mut out = Translation::default();
     // What updates since the last translation used is asked again below.
     images.used.clear();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: view.light_groups };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials: view.light_materials,
+        light_groups: view.light_groups,
+        shadow_glass: view.shadow_glass,
+        manifold_caustics: view.manifold_caustics,
+    };
 
     // One Cycles shader per Tequila material.
     let mut shaders = Vec::with_capacity(scene.materials.len());
@@ -667,6 +686,18 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
         builder.session.set_int(object, "random_id", random_id as i32)?;
         if instance.holdout {
             builder.session.set_bool(object, "use_holdout", true)?;
+        }
+        // Manifold caustics: the glass that bends light casts them, as
+        // Tequila's renderer solves through it (`Pane::bends`), on a mesh
+        // with the vertex normals Cycles' walk needs too; everything else
+        // receives them, the floor included.
+        if view.manifold_caustics {
+            let bends = scene.pane(instance.material).is_some_and(|pane| pane.bends());
+            let caster = bends && instance.shadow_catcher.is_none() && mesh.normals.len() == mesh.positions.len();
+            let socket = if caster { "is_caustics_caster" } else { "is_caustics_receiver" };
+            if builder.session.set_bool(object, socket, true).is_err() {
+                builder.out.warn("this Cycles library has no manifold caustics: lamps' light through glass is left out");
+            }
         }
         if let Some(name) = names.and_then(|n| n.objects.get(builder.out.objects.len())) {
             builder.session.set_name(object, name)?;
@@ -1001,12 +1032,25 @@ pub fn update_materials(
     changed: &[usize],
     images: &mut Images,
     light_materials: bool,
+    shadow_glass: tequila_render_core::settings::ShadowGlass,
 ) -> Result<bool, String> {
     if !session.can_reopen() || changed.iter().any(|&i| i >= shaders.len()) {
         return Ok(false);
     }
     let mut out = Translation::default();
-    let mut builder = Builder { session, scene, out: &mut out, images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials, light_groups: false };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials,
+        light_groups: false,
+        shadow_glass,
+        manifold_caustics: false,
+    };
     for &index in changed {
         builder.material(index, Some(shaders[index]))?;
     }
@@ -1037,7 +1081,19 @@ pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Opt
 pub fn set_camera(session: &mut Session, scene: &SceneSnapshot, view: &View) -> Result<Translation, String> {
     let mut out = Translation::default();
     let mut images = Images::default();
-    let mut builder = Builder { session, scene, out: &mut out, images: &mut images, nodes: HashMap::new(), points: HashMap::new(), turned: HashMap::new(), light_materials: view.light_materials, light_groups: false };
+    let mut builder = Builder {
+        session,
+        scene,
+        out: &mut out,
+        images: &mut images,
+        nodes: HashMap::new(),
+        points: HashMap::new(),
+        turned: HashMap::new(),
+        light_materials: view.light_materials,
+        light_groups: false,
+        shadow_glass: view.shadow_glass,
+        manifold_caustics: view.manifold_caustics,
+    };
     builder.camera(view)?;
     Ok(out)
 }
@@ -1066,6 +1122,11 @@ struct Builder<'a> {
     light_materials: bool,
     /// [`View::light_groups`].
     light_groups: bool,
+    /// [`View::shadow_glass`].
+    shadow_glass: tequila_render_core::settings::ShadowGlass,
+    /// [`View::manifold_caustics`]: read only while a whole scene is built,
+    /// where its objects and lights are made.
+    manifold_caustics: bool,
 }
 
 /// What the camera sees of a floor whose bounce the rest of the scene sees.
@@ -3584,6 +3645,11 @@ impl Builder<'_> {
                 Some(program) => self.layered(shader, program, surface, normal)?,
                 None => surface,
             };
+            let surface = match self.scene.pane(tequila_core::ids::MaterialId(index as u32)) {
+                Some(pane) if pane.passes(self.shadow_glass) => self.shadows_through(shader, *pane, surface)?,
+                _ => surface,
+            };
+            // The fibres last, so a strand stays a strand to shadow rays too.
             let surface = self.with_fibres(shader, index, m, surface)?;
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
             return self.session.commit(shader);
@@ -3687,6 +3753,74 @@ impl Builder<'_> {
         let surface = self.with_fibres(shader, index, m, (cut, "Closure"))?;
         self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
         self.session.commit(shader)
+    }
+
+    /// Clear glass as a shadow ray meets it, as Tequila's renderer has it
+    /// (`Pane::crossing`): a transparent surface as clear as the glass is
+    /// straight on - its tint, less what its face and its coat reflect at
+    /// the angle the ray meets it, and its holes clear - to shadow rays and
+    /// to the diffuse bounces that are weighed against them. The camera,
+    /// glossy bounces, and rays off mirrors and glass meet `surface`.
+    /// Cycles' glass stopped every shadow ray, and what was under a glass
+    /// cover went black but for the light that happened to refract onto it,
+    /// as specks. A volume behind the surface still absorbs on the way, as
+    /// Cycles' transparent shadows go through it.
+    fn shadows_through(&mut self, shader: Shader, pane: tequila_render_core::scene::Pane, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
+        let facing = self.session.node(shader, "geometry")?;
+        // What a face lets by at an index: one less its Fresnel, by the same
+        // index from either side, since a ray straight through meets the far
+        // face at the angle it met the near one. Cycles' Fresnel inverts the
+        // index on a back face; the inverse cancels that.
+        let through = |builder: &mut Self, ior: f32| -> Result<Slot, String> {
+            let ior = ior.max(1e-5);
+            let fresnel = builder.session.node(shader, "fresnel")?;
+            let index = builder.madd(shader, Slot::Link(facing, "Backfacing"), num(1.0 / ior - ior), num(ior))?;
+            builder.feed(shader, fresnel, "IOR", index, false)?;
+            builder.sub(shader, num(1.0), Slot::Link(fresnel, "Fac"))
+        };
+        let mut share = through(self, pane.ior)?;
+        if pane.coat > 1e-3 {
+            // 1 - coat F: the coat reflects its weight's share of its Fresnel.
+            let coat = through(self, pane.coat_ior)?;
+            let coat = self.madd(shader, coat, num(pane.coat), num(1.0 - pane.coat))?;
+            share = self.mul(shader, share, coat)?;
+        }
+        let share = self.mul(shader, share, num(pane.weight * pane.opacity))?;
+        // The tint times that share, and the holes on top.
+        let spread = self.session.node(shader, "combine_xyz")?;
+        for axis in ["X", "Y", "Z"] {
+            self.feed(shader, spread, axis, share, false)?;
+        }
+        let colour = self.session.node(shader, "vector_math")?;
+        self.session.set_string(colour, "math_type", "multiply_add")?;
+        self.session.set_float3(colour, "Vector1", rgb(pane.tint))?;
+        self.session.connect(shader, spread, "Vector", colour, "Vector2")?;
+        let open = 1.0 - pane.opacity;
+        self.session.set_float3(colour, "Vector3", [open, open, open])?;
+        let clear = self.session.node(shader, "transparent_bsdf")?;
+        self.session.connect(shader, colour, "Vector", clear, "Color")?;
+        // Shadow rays, and diffuse bounces: the bounces that find most of the
+        // lamps the shadow rays were aimed at. Cycles' lamps are there to be
+        // hit, and a diffuse bounce off the floor that refracted through the
+        // glass into one counted as the only way of finding it, on top of
+        // the shadow ray that had passed the glass: twice the light under a
+        // cover, in specks. Passed straight on as the shadow ray was, a
+        // bounce is weighed against it as it is in the open. Glossy bounces
+        // still see glass, or a bottle on a glossy floor would be mirrored
+        // in it as a clear ghost, without its glass or what it holds; what
+        // they find of a lamp through the glass is counted on top of the
+        // shadow ray's, but next to a glossy lobe's own, a shadow ray's
+        // share is small - a per cent on a glossy ball under a glass bell,
+        // five on the demo under a slab - and grows only as the lobe gets
+        // rough. The camera, and what a mirror or glass sends on, see glass
+        // too.
+        let path = self.session.node(shader, "light_path")?;
+        let passes = self.float_op(shader, "maximum", Slot::Link(path, "Is Shadow Ray"), Slot::Link(path, "Is Diffuse Ray"))?;
+        let mix = self.session.node(shader, "mix_closure")?;
+        self.feed(shader, mix, "Fac", passes, false)?;
+        self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;
+        self.session.connect(shader, clear, "BSDF", mix, "Closure2")?;
+        Ok((mix, "Closure"))
     }
 
     /// Light through a rough thin wall, as Tequila's renderer passes it: on
@@ -4006,6 +4140,12 @@ impl Builder<'_> {
 
     fn light_flags(&mut self, node: Node, shadow: bool) -> Result<(), String> {
         self.session.set_bool(node, "cast_shadow", shadow)?;
+        // Its light through glass by Cycles' manifold next event estimation,
+        // as Tequila's renderer finds a lamp's. One that casts no shadow
+        // passes glass already.
+        if self.manifold_caustics && shadow && self.session.set_bool(node, "use_caustics", true).is_err() {
+            self.out.warn("this Cycles library has no manifold caustics: lamps' light through glass is left out");
+        }
         // As Blender sets them: sampled both from the surface and the light.
         self.session.set_bool(node, "use_mis", true)
     }

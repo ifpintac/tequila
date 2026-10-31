@@ -757,6 +757,24 @@ fn the_finer_cycles_controls_survive_a_round_trip() {
     assert_eq!(reopened.document.render, document.render);
 }
 
+/// Manifold caustics survive a save and a reopen; and a project with the
+/// photons every project had before there was a choice writes no method at
+/// all, so it is the same bytes it always was and reads back as photons.
+#[test]
+fn the_caustics_method_survives_a_round_trip() {
+    use tequila_render_core::settings::{CausticsMethod, IntegratorConfig, LightingSettings};
+    let mut document = SceneDocument::new();
+    document.lighting = LightingSettings { preset: None, custom: IntegratorConfig { caustics: true, ..IntegratorConfig::product() } };
+    let text = write(&document, &Preserved::default());
+    assert!(!String::from_utf8_lossy(&text).contains("caustics_method"), "a method written for photons");
+    let reopened = read(&text).expect("the file we just wrote must read");
+    assert_eq!(reopened.document.lighting.custom.caustics_method, CausticsMethod::Photons);
+
+    document.lighting.custom.caustics_method = CausticsMethod::Manifold;
+    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    assert!(reopened.document.lighting.custom.manifold_caustics(), "manifold caustics came back as {:?}", reopened.document.lighting.custom.caustics_method);
+}
+
 /// Measurements survive a save and a reopen, ends on parts and in the
 /// world alike, hidden ones included.
 #[test]
