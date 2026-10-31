@@ -878,6 +878,10 @@ impl UvEditor {
                     // Two columns of groups, each row the keys in a column of
                     // their own and what they do wrapped beside them.
                     let (column, keys_width) = (330.0, 140.0);
+                    // Rows as tight as the key caps, so the whole list fits beside
+                    // the canvas without scrolling.
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.spacing_mut().interact_size.y = 20.0;
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = 18.0;
                         for half in [&shortcuts::LIST[..3], &shortcuts::LIST[3..]] {
