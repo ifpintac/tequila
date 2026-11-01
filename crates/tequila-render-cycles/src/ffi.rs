@@ -42,6 +42,7 @@ macro_rules! api {
 
         impl Api {
             fn load(path: &Path) -> Result<Api, String> {
+                let path = &loadable(path);
                 let library = open(path)?;
                 unsafe {
                     $(
@@ -153,6 +154,22 @@ fn open(path: &Path) -> Result<libloading::Library, String> {
     }
 }
 
+/// `path` as LoadLibraryExW needs it: absolute, with backslashes, and `.`
+/// and `..` gone. Only then is the library's own folder searched for the
+/// libraries it depends on, so the same path with forward slashes
+/// (`C:/Users/.../tequila_cycles.dll`, as a script may set `TEQUILA_CYCLES`)
+/// would not load, and a relative one is undefined. A `\\?\` path is kept
+/// as it is: it loads.
+#[cfg(windows)]
+fn loadable(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(not(windows))]
+fn loadable(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 const LIBRARY: &str = if cfg!(windows) {
     "tequila_cycles.dll"
 } else if cfg!(target_os = "macos") {
@@ -203,6 +220,55 @@ mod location_tests {
         // Elsewhere, and outside a bundle, only beside the executable.
         assert_eq!(beside(Path::new("C:/Program Files/Tequila"), false).len(), 2);
         assert_eq!(beside(Path::new("/usr/local/bin"), true).len(), 2);
+    }
+
+    /// The library goes to LoadLibraryExW by an absolute path with
+    /// backslashes, however `TEQUILA_CYCLES` spells it: forward slashes, a
+    /// folder in it joined with the library's name, `..`, or relative.
+    #[cfg(windows)]
+    #[test]
+    fn a_library_is_loaded_by_a_path_with_backslashes() {
+        let text = |path: &Path| loadable(path).into_os_string().into_string().unwrap();
+        let installed = r"C:\Users\Someone\AppData\Local\Programs\Tequila\cycles\tequila_cycles.dll";
+        assert_eq!(text(Path::new(installed)), installed);
+        assert_eq!(text(Path::new("C:/Users/Someone/AppData/Local/Programs/Tequila/cycles/tequila_cycles.dll")), installed);
+        assert_eq!(text(&Path::new("C:/Users/Someone/AppData/Local/Programs/Tequila/cycles").join(LIBRARY)), installed);
+        assert_eq!(text(Path::new("C:/Users/Someone/AppData/Local/Programs/Tequila/python/../cycles/./tequila_cycles.dll")), installed);
+        let here = std::env::current_dir().unwrap().join(r"cycles\tequila_cycles.dll");
+        assert_eq!(text(Path::new("cycles/tequila_cycles.dll")), here.into_os_string().into_string().unwrap());
+        // A `\\?\` path loads as it is.
+        let verbatim = r"\\?\C:\Users\Someone\AppData\Local\Programs\Tequila\cycles\tequila_cycles.dll";
+        assert_eq!(text(Path::new(verbatim)), verbatim);
+    }
+
+    /// And so a library named with forward slashes loads, as it does with
+    /// backslashes: Windows searched its folder for OpenImageIO and the rest
+    /// only for the second. Skipped where Cycles is not installed
+    /// (`TEQUILA_CYCLES`), or will not load here under its own name either.
+    #[cfg(windows)]
+    #[test]
+    fn a_library_named_with_forward_slashes_loads() {
+        let Some(found) = candidates().into_iter().find(|p| p.exists()) else {
+            eprintln!("skipped: Cycles is not installed");
+            return;
+        };
+        // Once loaded under one name, it is found loaded under any other.
+        if libloading::os::windows::Library::open_already_loaded(loadable(&found)).is_ok() {
+            eprintln!("skipped: Cycles was loaded already");
+            return;
+        }
+        let forward = PathBuf::from(found.to_string_lossy().replace('\\', "/"));
+        // Kept loaded, as Tequila keeps it: Cycles is never unloaded.
+        match Api::load(&forward) {
+            Ok(api) => std::mem::forget(api),
+            Err(why) => match open(&loadable(&found)) {
+                Ok(library) => {
+                    std::mem::forget(library);
+                    panic!("{why}, though it loads named with backslashes");
+                }
+                Err(usual) => eprintln!("skipped: {usual}"),
+            },
+        }
     }
 }
 
