@@ -1,6 +1,7 @@
 // Tequila's website: the menu on narrow screens, the download that fits the
-// visitor's computer, the newest release from GitHub, the picture viewer and
-// the release notes. Every page works without it; it fills in the details.
+// visitor's computer, the newest release from GitHub, the Discord counts, the
+// picture viewer and the release notes, with pictures. Every page works
+// without it; it fills in the details.
 
 (function () {
   'use strict';
@@ -137,29 +138,55 @@
     });
   }
 
+  // ---------- Discord ----------
+
+  // How many people are on the server, and how many are there now, from
+  // Discord's public invite lookup. The links work without it.
+  var INVITE = 'Na5T2qgQBX';
+  if (document.querySelector('[data-discord-members], [data-discord-online]')) {
+    fetch('https://discord.com/api/v10/invites/' + INVITE + '?with_counts=true')
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (invite) {
+        var members = invite.approximate_member_count, online = invite.approximate_presence_count;
+        document.querySelectorAll('[data-discord-members]').forEach(function (el) {
+          if (members) { el.textContent = members + ' members'; el.hidden = false; }
+        });
+        document.querySelectorAll('[data-discord-online]').forEach(function (el) {
+          if (online) { el.textContent = online + ' online now'; el.hidden = false; }
+        });
+      })
+      .catch(function () { /* the counts stay hidden */ });
+  }
+
   // ---------- Picture viewer ----------
 
-  var zoomable = document.querySelectorAll('[data-zoom]');
-  if (zoomable.length) {
-    var box = document.createElement('div');
-    box.className = 'lightbox';
-    box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-modal', 'true');
-    box.setAttribute('aria-label', 'Picture');
-    box.innerHTML = '<img alt=""><button type="button" aria-label="Close"><i class="icon" aria-hidden="true"></i></button>';
-    document.body.appendChild(box);
-    var big = box.querySelector('img');
-    var close = function () { box.classList.remove('open'); big.removeAttribute('src'); };
-    box.addEventListener('click', close);
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
-    zoomable.forEach(function (img) {
-      img.addEventListener('click', function () {
-        big.src = img.getAttribute('data-zoom') || img.currentSrc || img.src;
-        big.alt = img.alt;
-        box.classList.add('open');
-      });
-    });
+  // Any picture marked data-zoom opens full size, the release notes' too,
+  // which arrive after the page has loaded.
+  var box = null, big = null;
+  function closeViewer() {
+    if (!box) return;
+    box.classList.remove('open');
+    big.removeAttribute('src');
   }
+  document.addEventListener('click', function (e) {
+    var img = e.target.closest && e.target.closest('img[data-zoom]');
+    if (!img) return;
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'lightbox';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-modal', 'true');
+      box.setAttribute('aria-label', 'Picture');
+      box.innerHTML = '<img alt=""><button type="button" aria-label="Close"><i class="icon" aria-hidden="true"></i></button>';
+      document.body.appendChild(box);
+      big = box.querySelector('img');
+      box.addEventListener('click', closeViewer);
+      document.addEventListener('keydown', function (k) { if (k.key === 'Escape') closeViewer(); });
+    }
+    big.src = img.getAttribute('data-zoom') || img.currentSrc || img.src;
+    big.alt = img.alt;
+    box.classList.add('open');
+  });
 
   // ---------- Release notes ----------
 
@@ -168,7 +195,8 @@
   }
 
   // The few kinds of Markdown the release notes use: headings, nested
-  // lists, paragraphs, rules, bold, inline code and links.
+  // lists, paragraphs, rules, bold, inline code, links, and pictures on a
+  // line of their own.
   function inline(text) {
     var out = escape(text);
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -178,6 +206,41 @@
       return '<a href="' + safe + '">' + label + '</a>';
     });
     return out;
+  }
+
+  function figure(src, alt) {
+    var safe = /^(https:|assets\/)/.test(src) ? src : '';
+    if (!safe) return '';
+    return '<figure><img src="' + escape(safe) + '" alt="' + escape(alt) + '" loading="lazy" data-zoom>' +
+      (alt ? '<figcaption>' + escape(alt) + '</figcaption>' : '') + '</figure>';
+  }
+
+  // Pictures for the releases the website has them for, by the section
+  // heading they go under. Later releases can carry their own in the notes.
+  var ART = {
+    'v2026.11.01.1340': {
+      'Wireframe renders': ['assets/img/wireframe.jpg', 'Render wireframe: the headphones as a line drawing, in a second or two.'],
+      'Labels and UV layouts': ['assets/img/app-uv.jpg', 'The UV editor, with a part laid out flat and the tools beside it.'],
+      'Materials': ['assets/img/fibres.jpg', 'Real fibres: a tennis ball’s fuzz.'],
+      'Rendering': ['assets/img/lighting-studio.jpg', 'Light through glass, and lamps reflected in it, rendered in Tequila’s own renderer.']
+    },
+    'v2026.10.30.1120': {
+      'Studio presets': ['assets/img/soft-studio.jpg', 'The headphones in Soft Studio, the preset that comes with Tequila.'],
+      'Turntables': ['assets/img/turntable.jpg', 'Six frames of a turntable.'],
+      'AI': ['assets/img/app-connect.jpg', 'Connect an AI: the AI apps on this computer, one click each.']
+    },
+    'v2026.10.20.1656': {
+      'Auto Materials 3.0': ['assets/img/materials-sheet.jpg', 'Materials from the library.']
+    }
+  };
+
+  function illustrate(notes, tag) {
+    var art = ART[tag];
+    if (!art) return;
+    notes.querySelectorAll('h3').forEach(function (h) {
+      var pick = art[h.textContent.trim()];
+      if (pick) h.insertAdjacentHTML('afterend', figure(pick[0], pick[1]));
+    });
   }
 
   function markdown(source) {
@@ -194,7 +257,11 @@
     lines.forEach(function (line) {
       var item = /^(\s*)[-*] (.*)$/.exec(line);
       var heading = /^(#{1,4}) (.*)$/.exec(line);
-      if (item) {
+      var picture = /^!\[([^\]]*)\]\(([^)\s]+)\)\s*$/.exec(line.trim());
+      if (picture) {
+        flush(); closeLists(0);
+        html.push(figure(picture[2], picture[1]));
+      } else if (item) {
         flush();
         var level = Math.floor(item[1].length / 2) + 1;
         if (level > depth.length) {
@@ -241,6 +308,7 @@
             '<div class="notes">' + markdown(release.body || 'No notes for this version.') + '</div>' +
             (i ? '<button type="button" class="button button-quiet button-small expand">Show all</button>' : '');
           list.appendChild(article);
+          illustrate(article.querySelector('.notes'), release.tag_name);
           var more = article.querySelector('.expand');
           if (more) more.addEventListener('click', function () {
             var open = article.classList.toggle('open');
