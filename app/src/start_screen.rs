@@ -1,8 +1,8 @@
 //! The start screen: what greets the person at launch, and is under Help →
 //! Start screen. A banner of one of the samples with the welcome on it; a
 //! new project, one to open or a model to import; the projects opened
-//! lately, each with the picture it was saved with; the two finished
-//! scenes to start from; and where to talk about Tequila.
+//! lately, each with the picture it was saved with; the finished scenes
+//! to start from; and where to talk about Tequila.
 
 use crate::{icons, theme};
 use eframe::egui;
@@ -27,7 +27,7 @@ pub struct Sample {
     banner: &'static [u8],
 }
 
-pub const SAMPLES: [Sample; 2] = [
+pub const SAMPLES: [Sample; 3] = [
     Sample {
         name: "Headphones",
         about: "Soft-touch, protein leather and brushed steel, rim-lit in the dark",
@@ -39,6 +39,13 @@ pub const SAMPLES: [Sample; 2] = [
         about: "Flint glass round amber parfum and gold, backlit by a warm glow",
         file: "assets/samples/Perfume bottle.tequila",
         banner: include_bytes!("../assets/start/perfume-bottle.png"),
+    },
+    // Its textures ship in `palma P8.textures` beside it.
+    Sample {
+        name: "palma P8",
+        about: "Clear lime polycarbonate over its boards, and a pixel-art screen",
+        file: "assets/samples/palma P8.tequila",
+        banner: include_bytes!("../assets/start/palma-p8.png"),
     },
 ];
 
@@ -174,7 +181,7 @@ impl StartScreen {
         choice
     }
 
-    /// Today's banner: one sample one day, the other the next.
+    /// Today's banner: each sample in turn, a day each.
     fn banner(&mut self, ctx: &egui::Context) -> Option<(egui::TextureHandle, &'static str)> {
         if self.banner.is_none() {
             let day = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0);
@@ -227,13 +234,17 @@ impl StartScreen {
     fn sample_list(&mut self, ui: &mut egui::Ui, samples: &[(&Sample, Option<PathBuf>)]) -> Option<Choice> {
         let mut choice = None;
         heading(ui, "Samples");
+        // As tall as there is room for: on a small window the rows share the
+        // column rather than running on under the footer.
+        let shown = samples.iter().filter(|(_, path)| path.is_some()).count().max(1) as f32;
+        let row = ((ui.available_height() - 10.0 * shown) / shown).clamp(48.0, 78.0);
         for (sample, path) in samples {
             let Some(path) = path else { continue };
             let picture = match self.pictures.get(path) {
                 Some(Picture::Shown(texture)) => Some(texture.clone()),
                 _ => None,
             };
-            if sample_row(ui, sample, picture.as_ref()).clicked() {
+            if sample_row(ui, sample, picture.as_ref(), row).clicked() {
                 choice = Some(Choice::Sample(path.clone()));
             }
             ui.add_space(10.0);
@@ -448,16 +459,16 @@ fn recent_tile(ui: &mut egui::Ui, width: f32, path: &Path, picture: Option<&egui
     row
 }
 
-/// A sample as a row: its picture, its name, and what it shows.
-fn sample_row(ui: &mut egui::Ui, sample: &Sample, picture: Option<&egui::TextureHandle>) -> egui::Response {
+/// A sample as a row `height` tall: its picture, its name, and what it shows.
+fn sample_row(ui: &mut egui::Ui, sample: &Sample, picture: Option<&egui::TextureHandle>, height: f32) -> egui::Response {
     let p = theme::p();
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 78.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let ease = ui.ctx().animate_bool_with_time(response.id.with("ease"), response.hovered(), 0.12);
     if ease > 0.0 {
         ui.painter().rect_filled(rect.expand(6.0), 12.0, p.hover.gamma_multiply(ease));
     }
-    let frame = Rect::from_min_size(rect.min, egui::vec2(124.0, 78.0));
+    let frame = Rect::from_min_size(rect.min, egui::vec2(height * 124.0 / 78.0, height));
     draw_picture(ui, frame, picture, icons::Icon::Gem, Rounding::same(9.0));
     ui.painter().rect_stroke(frame, 9.0, Stroke::new(1.0_f32, theme::mix(p.line, p.accent, ease)));
     let text_left = frame.right() + 12.0;

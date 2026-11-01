@@ -128,6 +128,9 @@ try {
     $samplesPath = Join-Path $assetsPath 'samples'
     New-Item -ItemType Directory -Path $samplesPath | Out-Null
     Copy-Item -Path (Join-Path $projectRoot 'assets/samples/*.tequila') -Destination $samplesPath
+    # A sample with pictures keeps them in a folder beside it ("palma P8.textures").
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot 'assets/samples') -Directory -Filter '*.textures' |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $samplesPath -Recurse }
     foreach ($name in @('LICENSE', 'NOTICE', 'THIRD_PARTY_LICENSES.md', 'TRADEMARKS.md')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot $name) -Destination $packagePath
     }

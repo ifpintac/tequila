@@ -2,7 +2,9 @@
 its own, lights as environment pins, and a seamless backdrop."""
 import math
 import os
+import struct
 import tempfile
+import zlib
 from pathlib import Path
 
 import tequila
@@ -73,3 +75,78 @@ class Studio:
         render = self.c.context()['document']['render']
         render['alpha_mode'] = 'none'
         self.c.apply('render.set_settings', render=render)
+
+
+def read_png(path):
+    """An 8-bit RGB or RGBA PNG, not interlaced: (width, height, channels,
+    rows of bytes). Enough for the pictures the samples make and use, with
+    no imaging library to install."""
+    data = Path(path).read_bytes()
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError(f'{path} is not a PNG')
+    pos, idat = 8, b''
+    while pos < len(data):
+        length = int.from_bytes(data[pos:pos + 4], 'big')
+        kind, body = data[pos + 4:pos + 8], data[pos + 8:pos + 8 + length]
+        if kind == b'IHDR':
+            width, height, depth, colour, _, _, interlace = struct.unpack('>IIBBBBB', body)
+            if depth != 8 or colour not in (2, 6) or interlace:
+                raise ValueError(f'{path}: only 8-bit RGB or RGBA, not interlaced')
+            channels = 3 if colour == 2 else 4
+        elif kind == b'IDAT':
+            idat += body
+        pos += 12 + length
+    raw = zlib.decompress(idat)
+    stride = width * channels
+    rows, above = [], bytearray(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        kind, line = raw[start], bytearray(raw[start + 1:start + 1 + stride])
+        for i in range(stride):
+            a = line[i - channels] if i >= channels else 0
+            b = above[i]
+            c = above[i - channels] if i >= channels else 0
+            if kind == 1:
+                line[i] = (line[i] + a) & 255
+            elif kind == 2:
+                line[i] = (line[i] + b) & 255
+            elif kind == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif kind == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append(bytes(line))
+        above = line
+    return width, height, channels, rows
+
+
+def write_png(path, width, height, channels, rows):
+    def chunk(kind, body):
+        return struct.pack('>I', len(body)) + kind + body + struct.pack('>I', zlib.crc32(kind + body) & 0xffffffff)
+    header = struct.pack('>IIBBBBB', width, height, 8, 2 if channels == 3 else 6, 0, 0, 0)
+    pixels = zlib.compress(b''.join(b'\x00' + row for row in rows), 9)
+    Path(path).write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', pixels) + chunk(b'IEND', b''))
+
+
+def lcd(source, dest, scale=16, gap=2, shade=0.73):
+    """Pixel art as an LCD shows it up close: each pixel a hard square
+    `scale` across, with the dark gaps between them."""
+    width, height, channels, rows = read_png(source)
+    out = []
+    for y in range(height * scale):
+        row, across = rows[y // scale], y % scale < gap
+        line = bytearray()
+        for x in range(width * scale):
+            pixel = row[(x // scale) * channels:(x // scale + 1) * channels]
+            if across or x % scale < gap:
+                pixel = bytes(int(v * shade) for v in pixel[:3]) + pixel[3:]
+            line += pixel
+        out.append(bytes(line))
+    write_png(dest, width * scale, height * scale, channels, out)
+
+
+def crop_png(path, left, width):
+    """Keep `width` pixels of every row from `left`."""
+    w, h, channels, rows = read_png(path)
+    write_png(path, width, h, channels, [row[left * channels:(left + width) * channels] for row in rows])

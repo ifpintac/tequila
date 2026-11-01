@@ -134,6 +134,8 @@ cp -R assets/studios "$resources/assets/studios"
 # tests' fixtures.
 mkdir -p "$resources/assets/samples"
 cp assets/samples/*.tequila "$resources/assets/samples/"
+# A sample with pictures keeps them in a folder beside it ("palma P8.textures").
+cp -R assets/samples/*.textures "$resources/assets/samples/"
 cp python/*.py "$resources/python/"
 cp -R plugins/examples "$resources/plugins"
 cp docs/SCRIPTING.md "$resources/SCRIPTING.md"

@@ -1351,3 +1351,33 @@ fn uv_guides_survive_a_round_trip() {
     let error = read(&out.finish()).err().expect("an unknown axis is refused");
     assert!(error.to_string().contains("UV guide"), "{error}");
 }
+
+/// A texture saved with a path relative to the project is found beside the
+/// project when it is opened, wherever that is: a shipped sample keeps its
+/// pictures in a folder beside it.
+#[test]
+fn a_relative_texture_path_is_found_beside_the_project() {
+    let mut document = SceneDocument::new();
+    let id = document.textures.intern(tequila_scene::textures::TextureSource::new(
+        "Sample.textures/screen.png",
+        tequila_texture::texture::MapRole::Color,
+    ));
+    let folder = std::env::temp_dir().join("tequila-relative-textures");
+    std::fs::create_dir_all(&folder).unwrap();
+    let project = folder.join("Sample.tequila");
+    std::fs::write(&project, write(&document, &Preserved::default())).unwrap();
+
+    let opened = tequila_format::load(&project).unwrap();
+    let path = &opened.document.textures.get(id).unwrap().path;
+    assert_eq!(path, &folder.join("Sample.textures").join("screen.png"));
+
+    // An absolute path is left as it was.
+    let absolute = folder.join("elsewhere.png");
+    let mut document = SceneDocument::new();
+    let id = document
+        .textures
+        .intern(tequila_scene::textures::TextureSource::new(absolute.clone(), tequila_texture::texture::MapRole::Color));
+    std::fs::write(&project, write(&document, &Preserved::default())).unwrap();
+    assert_eq!(tequila_format::load(&project).unwrap().document.textures.get(id).unwrap().path, absolute);
+    let _ = std::fs::remove_dir_all(&folder);
+}
