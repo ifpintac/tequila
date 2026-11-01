@@ -21,6 +21,20 @@ CATALOG = (
     'scene.add_group',
     'scene.delete_nodes',
     'scene.split_parts',
+    'scene.unwrap_uvs',
+    'uv.cut',
+    'uv.stitch',
+    'uv.transform',
+    'uv.reflatten',
+    'uv.pack',
+    'uv.straighten',
+    'uv.even_density',
+    'uv.add_set',
+    'uv.copy_set',
+    'uv.delete_set',
+    'uv.move_set',
+    'uv.set_positions',
+    'uv.place_islands',
     'scene.rename',
     'scene.set_transform',
     'scene.set_visibility',
@@ -32,6 +46,7 @@ CATALOG = (
     'scene.group',
     'scene.ungroup',
     'scene.set_metadata',
+    'scene.set_uv_guides',
     'scene.set_units',
     'material.assign',
     'material.unlink',
@@ -224,6 +239,13 @@ class SceneCommands(_Commands):
         """
         return self._apply('scene.split_parts', {'node': node})
 
+    def unwrap_uvs(self, *, cone_degrees=_UNSET, crease_degrees=_UNSET, in_place=_UNSET, margin=_UNSET, method=_UNSET, node=_UNSET, respect_cuts=_UNSET):
+        r"""`scene.unwrap_uvs`: A part's surface laid out flat as its first UV set (`crate::uv`), so labels and textures can be placed on it anywhere; the sets it had move up one. With `respect_cuts`, the islands of its first set are kept, each laid out again whole. With `in_place`, the set it names is laid out again where it is - its islands kept, with `respect_cuts` - and no set moves. Each piece is laid out by `method`: `conformal`, or `least_stretch` from there.
+
+        { "command": "scene.unwrap_uvs", "cone_degrees": 66, "crease_degrees": 60, "in_place": 1, "margin": 0.005, "method": "conformal", "node": 2, "respect_cuts": true }
+        """
+        return self._apply('scene.unwrap_uvs', {'cone_degrees': cone_degrees, 'crease_degrees': crease_degrees, 'in_place': in_place, 'margin': margin, 'method': method, 'node': node, 'respect_cuts': respect_cuts})
+
     def rename(self, *, name=_UNSET, node=_UNSET):
         r"""`scene.rename`: A node's name.
 
@@ -301,6 +323,13 @@ class SceneCommands(_Commands):
         """
         return self._apply('scene.set_metadata', {'key': key, 'node': node, 'value': value})
 
+    def set_uv_guides(self, *, guides=_UNSET, node=_UNSET):
+        r"""`scene.set_uv_guides`: The guides on a part's UV layout, the whole list at once: lines across the layout at a place along `u` or `v`, which the UV editor's moves and handles snap to. Saved with the part; nothing that renders changes.
+
+        { "command": "scene.set_uv_guides", "guides": [ { "u": 0.5 }, { "v": 0.25 } ], "node": 2 }
+        """
+        return self._apply('scene.set_uv_guides', {'guides': guides, 'node': node})
+
     def set_units(self, *, mode=_UNSET, unit=_UNSET):
         r"""`scene.set_units`: The unit lengths are shown in. They are stored in metres either way; `mode` says whether the scene keeps its size (`KeepSceneSize`) or keeps its numbers and is rescaled to them (`ScaleScene`), with its lights and cameras.
 
@@ -349,6 +378,101 @@ class SceneCommands(_Commands):
         { "command": "scene.set_model_sets", "model_sets": { "active": 0, "sets": [ { "always_visible": true, "name": "Chassis A", "nodes": [1] } ] } }
         """
         return self._apply('scene.set_model_sets', {'model_sets': model_sets})
+
+
+class UvCommands(_Commands):
+    """The `uv.*` commands."""
+
+    def cut(self, *, edges=_UNSET, node=_UNSET, reflatten=_UNSET, set=_UNSET):
+        r"""`uv.cut`: A part's UV set `set` cut along edges of the part, each named by the mesh vertices at its two ends (`crate::uv::seams`): the pieces of an island it divides are moved apart, and with `reflatten` laid out flat again in place, which also opens a cut inside an island.
+
+        { "command": "uv.cut", "edges": [ [0, 1], [1, 2] ], "node": 2, "reflatten": true, "set": 0 }
+        """
+        return self._apply('uv.cut', {'edges': edges, 'node': node, 'reflatten': reflatten, 'set': set})
+
+    def stitch(self, *, edges=_UNSET, node=_UNSET, set=_UNSET):
+        r"""`uv.stitch`: Islands of a part's UV set joined along seams, each named by the mesh vertices at its ends: the smaller island turned, scaled and moved onto the larger so the seam meets, and shut.
+
+        { "command": "uv.stitch", "edges": [ [0, 1] ], "node": 2, "set": 0 }
+        """
+        return self._apply('uv.stitch', {'edges': edges, 'node': node, 'set': set})
+
+    def transform(self, *, islands=_UNSET, matrix=_UNSET, node=_UNSET, pivot=_UNSET, set=_UNSET, vertices=_UNSET):
+        r"""`uv.transform`: Islands, or vertices with every corner on the same place, moved by a 2 by 3 affine `matrix` (`[a, b, tx, c, d, ty]`: u' = a u + b v + tx) about a `pivot`: `origin`, `selection`, `islands` (each about its own middle) or a point `[u, v]`. Refused where it would fold the layout.
+
+        { "command": "uv.transform", "islands": [0, 2], "matrix": [0, -1, 0.25, 1, 0, 0], "node": 2, "pivot": "islands", "set": 0, "vertices": [] }
+        """
+        return self._apply('uv.transform', {'islands': islands, 'matrix': matrix, 'node': node, 'pivot': pivot, 'set': set, 'vertices': vertices})
+
+    def reflatten(self, *, islands=_UNSET, node=_UNSET, pins=_UNSET, repack=_UNSET, set=_UNSET):
+        r"""`uv.reflatten`: Islands laid out flat again by conformal maps, their cuts kept, `pins` (mesh vertices) held where they are. With fewer than two pins an island keeps its place, size and turn; with `repack`, the whole layout is packed again after.
+
+        { "command": "uv.reflatten", "islands": [1], "node": 2, "pins": [3, 7], "repack": false, "set": 0 }
+        """
+        return self._apply('uv.reflatten', {'islands': islands, 'node': node, 'pins': pins, 'repack': repack, 'set': set})
+
+    def pack(self, *, islands=_UNSET, margin=_UNSET, node=_UNSET, normalize=_UNSET, orient=_UNSET, region=_UNSET, rotate=_UNSET, set=_UNSET):
+        r"""`uv.pack`: Islands, all of them when none are listed, packed into the unit square or a `region` `[u0, v0, u1, v1]`, as large as they fit, `margin` apart: turned a quarter if `rotate` allows, `normalize`d to one density first, `orient`ed to their tightest box.
+
+        { "command": "uv.pack", "islands": [], "margin": 0.01, "node": 2, "normalize": true, "orient": true, "region": [0.5, 0, 1, 0.5], "rotate": false, "set": 0 }
+        """
+        return self._apply('uv.pack', {'islands': islands, 'margin': margin, 'node': node, 'normalize': normalize, 'orient': orient, 'region': region, 'rotate': rotate, 'set': set})
+
+    def straighten(self, *, edge=_UNSET, islands=_UNSET, node=_UNSET, set=_UNSET, to=_UNSET):
+        r"""`uv.straighten`: Islands turned so their principal axis, or an `edge`, lies `horizontal`, `vertical` or whichever is `nearest`.
+
+        { "command": "uv.straighten", "edge": [3, 4], "islands": [0], "node": 2, "set": 0, "to": "horizontal" }
+        """
+        return self._apply('uv.straighten', {'edge': edge, 'islands': islands, 'node': node, 'set': set, 'to': to})
+
+    def even_density(self, *, islands=_UNSET, match=_UNSET, node=_UNSET, set=_UNSET):
+        r"""`uv.even_density`: Islands scaled so each is as dense, texture to surface, as their average, or as the island `match` names.
+
+        { "command": "uv.even_density", "islands": [0, 1, 2], "match": 1, "node": 2, "set": 0 }
+        """
+        return self._apply('uv.even_density', {'islands': islands, 'match': match, 'node': node, 'set': set})
+
+    def add_set(self, *, node=_UNSET):
+        r"""`uv.add_set`: A new UV set after a part's others: the part unwrapped, a layout to start from that does not fold.
+
+        { "command": "uv.add_set", "node": 2 }
+        """
+        return self._apply('uv.add_set', {'node': node})
+
+    def copy_set(self, *, from_=_UNSET, node=_UNSET, to=_UNSET):
+        r"""`uv.copy_set`: A copy of a part's UV set `from`, put at `to` among them. The labels and textures of what the part wears follow the sets that move.
+
+        { "command": "uv.copy_set", "from": 0, "node": 2, "to": 1 }
+        """
+        return self._apply('uv.copy_set', {'from': from_, 'node': node, 'to': to})
+
+    def delete_set(self, *, node=_UNSET, set=_UNSET):
+        r"""`uv.delete_set`: A part's UV set removed. The labels and textures of what the part wears follow the sets that move; one on the set removed reads the first.
+
+        { "command": "uv.delete_set", "node": 2, "set": 1 }
+        """
+        return self._apply('uv.delete_set', {'node': node, 'set': set})
+
+    def move_set(self, *, from_=_UNSET, node=_UNSET, to=_UNSET):
+        r"""`uv.move_set`: A part's UV set `from` moved to `to` among them. The labels and textures of what the part wears follow it, and the sets it passes.
+
+        { "command": "uv.move_set", "from": 1, "node": 2, "to": 0 }
+        """
+        return self._apply('uv.move_set', {'from': from_, 'node': node, 'to': to})
+
+    def set_positions(self, *, node=_UNSET, set=_UNSET, uv=_UNSET, vertices=_UNSET):
+        r"""`uv.set_positions`: UV vertices of a part's UV set put at new places: `vertices[i]`, by the layout's own number for it (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`, `[u, v]`. What a tool that reshapes the layout - a path laid straight, an island laid out as a grid, relaxed, welded or mirrored, vertices lined up, one island's shape laid over another's - worked out, as one step, where no one affine map does it. Refused where it would fold the layout.
+
+        { "command": "uv.set_positions", "node": 2, "set": 0, "uv": [ [0.25, 0.5], [0.75, 0.5] ], "vertices": [3, 7] }
+        """
+        return self._apply('uv.set_positions', {'node': node, 'set': set, 'uv': uv, 'vertices': vertices})
+
+    def place_islands(self, *, islands=_UNSET, maps=_UNSET, node=_UNSET, set=_UNSET):
+        r"""`uv.place_islands`: Islands of a part's UV set each moved whole by an affine map of its own, `maps` one `[a, b, tx, c, d, ty]` for each of `islands`: what arranging them comes down to (spread, sorted, sized alike, fitted, swapped, turned upright), as one step.
+
+        { "command": "uv.place_islands", "islands": [0, 2], "maps": [ [1, 0, 0.1, 0, 1, 0], [0, -1, 1, 1, 0, 0] ], "node": 2, "set": 0 }
+        """
+        return self._apply('uv.place_islands', {'islands': islands, 'maps': maps, 'node': node, 'set': set})
 
 
 class LightingCommands(_Commands):
@@ -533,6 +657,7 @@ class Commands:
     def __init__(self, client):
         self.material = MaterialCommands(client)
         self.scene = SceneCommands(client)
+        self.uv = UvCommands(client)
         self.lighting = LightingCommands(client)
         self.environment = EnvironmentCommands(client)
         self.studio = StudioCommands(client)

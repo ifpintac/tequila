@@ -490,9 +490,16 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if let Some(open) = change.uv_editor {
         app.start_screen.open &= !open;
-        app.uv_editor.open = open;
         if open {
-            app.uv_editor.label = None;
+            app.uv_editor.open_on_selection();
+        } else {
+            app.uv_editor.open = false;
+        }
+    }
+    if let Some(uv) = &change.uv {
+        app.start_screen.open = false;
+        if let Err(error) = app.uv_editor.script(uv, &app.project) {
+            return Reply::Failed(error);
         }
     }
     if let Some(open) = change.appearance {
@@ -538,6 +545,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
+        .set("uv", app.uv_editor.state())
         .set("recent", Value::Array(app.recent.iter().map(|p| Value::String(p.display().to_string())).collect()))
         .set("mode", app.pending_look.unwrap_or_else(crate::theme::appearance).mode.key())
         .set("theme", app.pending_look.unwrap_or_else(crate::theme::appearance).flavor.key())

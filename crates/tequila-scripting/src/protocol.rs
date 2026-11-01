@@ -331,9 +331,313 @@ pub struct UiChange {
     pub connect: Option<bool>,
     /// The UV editor, open on the selected part.
     pub uv_editor: Option<bool>,
+    /// The UV editor driven from a script (`uv`): on a part or a label, its
+    /// tool and zoom, what is selected, and a drag held for a screenshot.
+    pub uv: Option<UvEditorChange>,
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
+}
+
+/// The UV editor, as a script asks for it. Absent fields are left alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvEditorChange {
+    /// Open on this part.
+    pub part: Option<u64>,
+    /// Open on this label: its material, and its place in the material's
+    /// list. A part with no layout is unwrapped, as the Labels tab's button
+    /// does.
+    pub label: Option<(u64, usize)>,
+    /// `select`, `move`, `rotate`, `scale` or `measure`.
+    pub tool: Option<String>,
+    /// How far in: 1 is the layout's square filling the view.
+    pub zoom: Option<f32>,
+    /// Everything framed (`"zoom": "fit"`).
+    pub fit: bool,
+    /// These labels selected, by their place in the material's list.
+    pub select: Option<Vec<usize>>,
+    /// A texture on the layout selected, by the parameter it drives.
+    pub texture: Option<String>,
+    /// An island selected, by its number from 0, as a click picks it.
+    pub island: Option<usize>,
+    /// The shortcuts popover.
+    pub help: Option<bool>,
+    /// Where the pointer is shown, on the layout; `Some(None)` gives it back.
+    pub pointer: Option<Option<[f32; 2]>>,
+    /// A drag with the editor's tool held from the first point of the layout
+    /// to the second; `Some(None)` lets it go without finishing it.
+    pub drag: Option<Option<[[f32; 2]; 2]>>,
+    /// Finish the held drag, as letting go of the button does.
+    pub release: bool,
+    /// The selected labels aligned as the Align panel does: `left`,
+    /// `centre`, `right`, `top`, `middle` or `bottom`.
+    pub align: Option<String>,
+    /// A click at a point of the layout, as a person's: it picks a label, a
+    /// guide or an island.
+    pub click: Option<[f32; 2]>,
+    /// The view framed on a box of the layout, from one corner to the other.
+    pub frame: Option<[[f32; 2]; 2]>,
+    /// What a click picks: `labels`, `islands`, `edges` or `vertices`.
+    pub mode: Option<String>,
+    /// These islands selected, by number, in the Islands mode.
+    pub islands: Option<Vec<usize>>,
+    /// These edges selected, each by the mesh vertices at its ends, in the
+    /// Edges mode.
+    pub edges: Option<Vec<[usize; 2]>>,
+    /// These vertices selected, by mesh vertex, in the Vertices mode.
+    pub vertices: Option<Vec<usize>>,
+    /// Everything of the mode's kind selected, as Ctrl+A does.
+    pub select_all: bool,
+    /// The selected edges cut, as the Cut button does.
+    pub cut: bool,
+    /// The selected seams, or the seams between the selected islands,
+    /// stitched.
+    pub stitch: bool,
+    /// The selected vertices pinned (`true`) or unpinned.
+    pub pin: Option<bool>,
+    /// The selected islands laid out flat again with their pins; `repack`
+    /// packs the layout after.
+    pub reflatten: bool,
+    pub repack: Option<bool>,
+    /// The selected islands, or all of them, packed as the Pack popover
+    /// says, with any of its settings changed first.
+    pub pack: Option<UvPack>,
+    /// The Pack popover, open.
+    pub pack_options: Option<bool>,
+    /// The selected islands, or all, turned square; scaled to one density;
+    /// laid out flat again keeping their cuts.
+    pub straighten: bool,
+    pub even: bool,
+    pub unwrap: bool,
+    /// The selection moved, turned, scaled, flipped or turned a quarter, as
+    /// the Transform panel does it.
+    pub transform: Option<UvTransform>,
+    /// The stretch heatmap: `area`, `angle` or `off`.
+    pub heatmap: Option<String>,
+    /// The UV set shown.
+    pub set: Option<usize>,
+    /// `add`, `copy`, `delete`, `up` or `down`: what the set picker does to
+    /// the set shown.
+    pub set_action: Option<String>,
+    /// The set picker's list, open.
+    pub set_menu: Option<bool>,
+    /// The layout written as a picture, as the Export dialog does.
+    pub export: Option<UvExport>,
+    /// The Export dialog, open.
+    pub export_dialog: Option<bool>,
+    /// These faces of the part selected in the viewport, as picked there at
+    /// Face level.
+    pub faces: Option<Vec<usize>>,
+    /// The islands of the faces selected in the viewport selected here.
+    pub from_faces: bool,
+    /// The faces selected in the viewport cut out of the layout as an
+    /// island of their own.
+    pub cut_faces: bool,
+    /// A face of the part held under the viewport's pointer, as if a person
+    /// pointed at it there; `Some(None)` gives the pointer back.
+    pub hover_face: Option<Option<usize>>,
+    /// The selected labels put on the island last clicked: `fit`, `centre`,
+    /// `along` or `square`, as the Islands panel's buttons do.
+    pub place: Option<String>,
+    /// The arranging tools, the Select menu and what the editor shows: keys
+    /// of this same object, read apart (`uv_arrange`).
+    pub arrange: UvArrange,
+    /// The shape tools' keys as given, in the order of [`SHAPE_KEYS`]: the
+    /// UV editor reads each - its options, and the tool it runs - as the
+    /// Unwrap, Shape and Symmetry panels do.
+    pub shape: Vec<(String, Value)>,
+}
+
+mod uv_arrange;
+pub use uv_arrange::{UvArrange, UvCursor};
+
+/// The UV editor's shape tools, as `ui.uv` names them.
+pub const SHAPE_KEYS: &[&str] = &[
+    "shape_panel", "unwrap_options", "shape_options", "straight", "grid", "rectangle", "project", "relax", "circle", "grow", "weld",
+    "match_seams", "cut_angle", "symmetrize", "snap_mirror", "select_side", "select_mirror",
+];
+
+/// A pack's settings, as the Pack popover has them. Absent fields keep the
+/// popover's.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvPack {
+    /// The gap between islands, in `unit`.
+    pub margin: Option<f32>,
+    /// `mm`, or `px` of a texture `texture` pixels a side.
+    pub unit: Option<String>,
+    pub texture: Option<u32>,
+    pub rotate: Option<bool>,
+    /// `square`, the layout's square, or `guides`, the box between them.
+    pub into: Option<String>,
+}
+
+/// A move, turn, scale or flip of the selection, about the Transform
+/// panel's chosen point.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvTransform {
+    /// Across and down, in the layout's units.
+    pub offset: Option<[f32; 2]>,
+    /// Degrees, anticlockwise as the panel counts.
+    pub turn: Option<f32>,
+    /// Across and down; one number for both.
+    pub scale: Option<[f32; 2]>,
+    /// `horizontal` or `vertical`.
+    pub flip: Option<String>,
+    /// Quarter turns, clockwise as the editor shows them; negative the
+    /// other way.
+    pub quarter: Option<i32>,
+}
+
+/// The layout written as a picture, as the Export dialog writes it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UvExport {
+    pub path: String,
+    pub size: Option<u32>,
+    /// `islands`, `none`, `area` or `angle`.
+    pub fill: Option<String>,
+    /// `"#rrggbb"`.
+    pub line: Option<String>,
+    pub transparent: Option<bool>,
+}
+
+fn point(value: &Value) -> Option<[f32; 2]> {
+    match value.as_array() {
+        [u, v] => Some([u.as_f64()? as f32, v.as_f64()? as f32]).filter(|p| p.iter().all(|c| c.is_finite())),
+        _ => None,
+    }
+}
+
+fn uv_editor_change(value: &Value) -> Result<UvEditorChange, ProtocolError> {
+    if !matches!(value, Value::Object(_)) {
+        return Err(ProtocolError("`uv` is an object, such as {\"tool\": \"measure\"}".into()));
+    }
+    let (zoom, fit) = match value.get("zoom") {
+        None | Some(Value::Null) => (None, false),
+        Some(Value::String(s)) if s == "fit" => (None, true),
+        Some(v) => (Some(v.as_f64().filter(|z| z.is_finite() && *z > 0.0).ok_or_else(|| ProtocolError("`zoom` is a number above 0, or \"fit\"".into()))? as f32), false),
+    };
+    let label = optional(value, "label", "a material and a label's place, [material, label]", |v| match v.as_array() {
+        [m, l] => Some((m.as_index()? as u64, l.as_index()?)),
+        _ => None,
+    })?;
+    let select = optional(value, "select", "a list of labels' places", |v| v.as_array().iter().map(Value::as_index).collect::<Option<Vec<_>>>())?;
+    let pointer = match value.get("pointer") {
+        None => None,
+        Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+        Some(v) => Some(Some(point(v).ok_or_else(|| ProtocolError("`pointer` is a point of the layout, [u, v], or false".into()))?)),
+    };
+    let drag = match value.get("drag") {
+        None => None,
+        Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+        Some(v) => {
+            let ends = match v.as_array() {
+                [a, b] => point(a).zip(point(b)).map(|(a, b)| [a, b]),
+                _ => None,
+            };
+            Some(Some(ends.ok_or_else(|| ProtocolError("`drag` is two points of the layout, [[u, v], [u, v]], or false".into()))?))
+        }
+    };
+    Ok(UvEditorChange {
+        part: opt_index(value, "part")?.map(|n| n as u64),
+        label,
+        tool: opt_string(value, "tool")?,
+        zoom,
+        fit,
+        select,
+        texture: opt_string(value, "texture")?,
+        island: opt_index(value, "island")?,
+        help: opt_bool(value, "help")?,
+        pointer,
+        drag,
+        release: opt_bool(value, "release")?.unwrap_or(false),
+        align: opt_string(value, "align")?,
+        click: optional(value, "click", "a point of the layout, [u, v]", point)?,
+        frame: optional(value, "frame", "two points of the layout, [[u, v], [u, v]]", |v| match v.as_array() {
+            [a, b] => Some([point(a)?, point(b)?]),
+            _ => None,
+        })?,
+        mode: opt_string(value, "mode")?,
+        islands: indices(value, "islands")?,
+        edges: optional(value, "edges", "a list of edges, each the mesh vertices at its ends, [[a, b], ...]", |v| {
+            v.as_array()
+                .iter()
+                .map(|e| match e.as_array() {
+                    [a, b] => Some([a.as_index()?, b.as_index()?]),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        })?,
+        vertices: indices(value, "vertices")?,
+        select_all: opt_bool(value, "select_all")?.unwrap_or(false),
+        cut: opt_bool(value, "cut")?.unwrap_or(false),
+        stitch: opt_bool(value, "stitch")?.unwrap_or(false),
+        pin: opt_bool(value, "pin")?,
+        reflatten: opt_bool(value, "reflatten")?.unwrap_or(false),
+        repack: opt_bool(value, "repack")?,
+        pack: match value.get("pack") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+            Some(Value::Bool(true)) => Some(UvPack::default()),
+            Some(object @ Value::Object(_)) => Some(UvPack {
+                margin: opt_number(object, "margin")?,
+                unit: opt_string(object, "unit")?,
+                texture: opt_index(object, "texture")?.map(|n| n as u32),
+                rotate: opt_bool(object, "rotate")?,
+                into: opt_string(object, "into")?,
+            }),
+            Some(_) => return Err(ProtocolError("`pack` is true, or the popover's settings: {\"margin\": 2, \"unit\": \"mm\", \"rotate\": true, \"into\": \"guides\"}".into())),
+        },
+        pack_options: opt_bool(value, "pack_options")?,
+        straighten: opt_bool(value, "straighten")?.unwrap_or(false),
+        even: opt_bool(value, "even")?.unwrap_or(false),
+        unwrap: opt_bool(value, "unwrap")?.unwrap_or(false),
+        transform: match value.get("transform") {
+            None | Some(Value::Null) => None,
+            Some(object @ Value::Object(_)) => Some(UvTransform {
+                offset: optional(object, "offset", "a move of the layout, [du, dv]", point)?,
+                turn: opt_number(object, "turn")?,
+                scale: match object.get("scale") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::Number(k)) if k.is_finite() && *k > 0.0 => Some([*k as f32; 2]),
+                    Some(v) => Some(point(v).filter(|p| p.iter().all(|k| *k > 0.0)).ok_or_else(|| ProtocolError("`scale` is a number above 0, or [across, down]".into()))?),
+                },
+                flip: opt_string(object, "flip")?,
+                quarter: optional(object, "quarter", "a whole number of quarter turns", |v| v.as_f64().filter(|n| n.fract() == 0.0 && n.abs() <= 8.0).map(|n| n as i32))?,
+            }),
+            Some(_) => return Err(ProtocolError("`transform` is an object, such as {\"offset\": [0.1, 0], \"turn\": 15}".into())),
+        },
+        heatmap: opt_string(value, "heatmap")?,
+        set: opt_index(value, "set")?,
+        set_action: opt_string(value, "set_action")?,
+        set_menu: opt_bool(value, "set_menu")?,
+        export: match value.get("export") {
+            None | Some(Value::Null) => None,
+            Some(object @ Value::Object(_)) => Some(UvExport {
+                path: opt_string(object, "path")?.ok_or_else(|| ProtocolError("`export` needs a `path`, .svg or .png".into()))?,
+                size: opt_index(object, "size")?.map(|n| n as u32),
+                fill: opt_string(object, "fill")?,
+                line: opt_string(object, "line")?,
+                transparent: opt_bool(object, "transparent")?,
+            }),
+            Some(_) => return Err(ProtocolError("`export` is an object, such as {\"path\": \"C:/work/layout.png\", \"size\": 2048}".into())),
+        },
+        export_dialog: opt_bool(value, "export_dialog")?,
+        faces: indices(value, "faces")?,
+        from_faces: opt_bool(value, "from_faces")?.unwrap_or(false),
+        cut_faces: opt_bool(value, "cut_faces")?.unwrap_or(false),
+        hover_face: match value.get("hover_face") {
+            None => None,
+            Some(Value::Null) | Some(Value::Bool(false)) => Some(None),
+            Some(v) => Some(Some(v.as_index().ok_or_else(|| ProtocolError("`hover_face` is a face of the part, by number, or false".into()))?)),
+        },
+        place: opt_string(value, "place")?,
+        arrange: uv_arrange::uv_arrange(value)?,
+        shape: SHAPE_KEYS.iter().filter_map(|&key| value.get(key).map(|v| (key.to_string(), v.clone()))).collect(),
+    })
+}
+
+/// A list of whole numbers.
+fn indices(value: &Value, key: &str) -> Result<Option<Vec<usize>>, ProtocolError> {
+    optional(value, key, "a list of whole numbers", |v| v.as_array().iter().map(Value::as_index).collect::<Option<Vec<_>>>())
 }
 
 /// A background render. Absent fields come from the document's settings.
@@ -882,6 +1186,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             updates: opt_bool(value, "updates")?,
             connect: opt_bool(value, "connect")?,
             uv_editor: opt_bool(value, "uv_editor")?,
+            uv: value.get("uv").map(uv_editor_change).transpose()?,
             graph: match value.get("graph") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(false)) => Some(None),
@@ -1087,6 +1392,18 @@ mod tests {
             let request = json_write::to_string(example.get("request").unwrap());
             parse_request(&request).unwrap_or_else(|e| panic!("{request}: {e}"));
         }
+    }
+
+    /// The UV editor's shape tool keys come through as given, in the order
+    /// the editor reads them, for it to check and carry out.
+    #[test]
+    fn the_uv_shape_keys_are_carried_in_their_order() {
+        let request = parse_request(r#"{"op":"ui","uv":{"weld":{"within":2},"straight":true,"islands":[1],"shape_panel":"shape"}}"#).unwrap();
+        let Operation::Ui(UiChange { uv: Some(uv), .. }) = request.operation else { panic!("a ui change") };
+        let keys: Vec<&str> = uv.shape.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["shape_panel", "straight", "weld"]);
+        assert_eq!(uv.shape[2].1.get("within").and_then(|v| v.as_f64()), Some(2.0));
+        assert_eq!(uv.islands, Some(vec![1]));
     }
 
     #[test]

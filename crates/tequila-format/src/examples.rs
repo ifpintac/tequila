@@ -146,7 +146,67 @@ pub fn commands() -> Vec<Command> {
         // Non-default values wherever a default would round-trip by
         // accident.
         Command::SplitIntoParts { node: ids[1] },
+        // The first of a command's examples is the one its binding lists
+        // the fields of: this one has them all.
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { respect_cuts: true, in_place: Some(1), ..Default::default() } },
         Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions::default() },
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { cone_degrees: 45.0, respect_cuts: true, ..Default::default() } },
+        Command::UnwrapUvs { node: ids[1], options: tequila_scene::uv::UnwrapOptions { method: tequila_scene::uv::Method::LeastStretch, ..Default::default() } },
+        // The layout edits: islands by number, vertices by mesh vertex, an
+        // edge by the vertices at its ends.
+        Command::CutUvs { node: ids[1], set: 0, edges: vec![[0, 1], [1, 2]], reflatten: true },
+        Command::CutUvs { node: ids[1], set: 1, edges: vec![[2, 0]], reflatten: false },
+        Command::StitchUvs { node: ids[1], set: 0, edges: vec![[0, 1]] },
+        Command::TransformUvs {
+            node: ids[1],
+            set: 0,
+            selection: tequila_scene::uv::UvSelection::Islands(vec![0, 2]),
+            transform: tequila_scene::uv::UvAffine::quarter_turns(1).then(&tequila_scene::uv::UvAffine::translation(tequila_core::math::vec2(0.25, 0.0))),
+            pivot: tequila_scene::uv::Pivot::Islands,
+        },
+        Command::TransformUvs {
+            node: ids[1],
+            set: 1,
+            selection: tequila_scene::uv::UvSelection::Vertices(vec![4, 5]),
+            transform: tequila_scene::uv::UvAffine::uniform(1.5),
+            pivot: tequila_scene::uv::Pivot::Point(tequila_core::math::vec2(0.5, 0.25)),
+        },
+        Command::TransformUvs {
+            node: ids[1],
+            set: 0,
+            selection: tequila_scene::uv::UvSelection::Islands(vec![1]),
+            transform: tequila_scene::uv::UvAffine::flip_u(),
+            pivot: tequila_scene::uv::Pivot::Selection,
+        },
+        Command::ReflattenUvs { node: ids[1], set: 0, islands: vec![1], pins: vec![3, 7], repack: false },
+        Command::ReflattenUvs { node: ids[1], set: 0, islands: vec![0, 1], pins: Vec::new(), repack: true },
+        Command::PackUvs {
+            node: ids[1],
+            set: 0,
+            islands: Vec::new(),
+            options: tequila_scene::uv::PackOptions {
+                margin: 0.01,
+                rotate: false,
+                normalize: true,
+                orient: true,
+                region: tequila_scene::uv::UvRect { min: tequila_core::math::vec2(0.5, 0.0), max: tequila_core::math::vec2(1.0, 0.5) },
+            },
+        },
+        Command::StraightenUvs { node: ids[1], set: 0, islands: vec![0], by: tequila_scene::uv::StraightenBy::Edge([3, 4]), to: tequila_scene::uv::Alignment::Horizontal },
+        Command::StraightenUvs { node: ids[1], set: 0, islands: vec![0, 1], by: tequila_scene::uv::StraightenBy::Axis, to: tequila_scene::uv::Alignment::Nearest },
+        Command::EvenUvDensity { node: ids[1], set: 0, islands: vec![0, 1, 2], target: tequila_scene::uv::DensityTarget::Island(1) },
+        Command::EvenUvDensity { node: ids[1], set: 0, islands: vec![0, 1, 2], target: tequila_scene::uv::DensityTarget::Average },
+        Command::AddUvSet { node: ids[1] },
+        Command::CopyUvSet { node: ids[1], from: 0, to: 1 },
+        Command::DeleteUvSet { node: ids[1], set: 1 },
+        Command::MoveUvSet { node: ids[1], from: 1, to: 0 },
+        Command::SetUvPositions { node: ids[1], set: 0, vertices: vec![3, 7], uv: vec![[0.25, 0.5], [0.75, 0.5]] },
+        Command::PlaceUvIslands {
+            node: ids[1],
+            set: 0,
+            islands: vec![0, 2],
+            maps: vec![tequila_scene::uv::UvAffine::translation(tequila_core::math::vec2(0.1, 0.0)), tequila_scene::uv::UvAffine::quarter_turns(1).about(tequila_core::math::vec2(0.5, 0.5))],
+        },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,
@@ -397,6 +457,13 @@ pub fn commands() -> Vec<Command> {
             node: ids[1],
             key: "Mass_g".into(),
             value: None,
+        },
+        Command::SetUvGuides {
+            node: ids[1],
+            guides: vec![
+                tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::U, 0.5),
+                tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::V, 0.25),
+            ],
         },
         Command::SetUnits {
             unit: LengthUnit::Inch,

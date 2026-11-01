@@ -609,12 +609,60 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if let Some(pivot) = node.pivot {
         object.set("pivot", vec![pivot.x, pivot.y, pivot.z]);
     }
+    // Written only on a part that has some, so every project without them
+    // reads, and writes back, as it always did.
+    if !node.uv_guides.is_empty() {
+        object.set("uv_guides", uv_guides_to_json(&node.uv_guides));
+    }
 
     let Value::Object(known) = object.build() else {
         unreachable!()
     };
     out.extend(known);
     Value::Object(out)
+}
+
+/// A part's UV guides, as the project and the journal write them: one
+/// object each, its axis the key and its place on the layout the value,
+/// `{"u": 0.25}` for a line down the layout a quarter of the way across.
+pub(crate) fn uv_guides_to_json(guides: &[tequila_scene::guides::UvGuide]) -> Value {
+    Value::Array(
+        guides
+            .iter()
+            .map(|g| {
+                let mut entry = Object::new();
+                entry.set(g.axis.key(), g.at);
+                entry.build()
+            })
+            .collect(),
+    )
+}
+
+/// A part's UV guides back; absent, none. An entry that is not one axis and
+/// a finite place is refused rather than dropped, so a script that misspells
+/// one hears about it.
+pub(crate) fn read_uv_guides(value: Option<&Value>) -> Result<Vec<tequila_scene::guides::UvGuide>, FormatError> {
+    use tequila_scene::guides::{GuideAxis, UvGuide};
+    let Some(value) = value else { return Ok(Vec::new()) };
+    let Value::Array(entries) = value else {
+        return Err(FormatError::Invalid("`uv_guides` is a list of guides, such as [{\"u\": 0.5}]".into()));
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let guide = match entry {
+                Value::Object(fields) if fields.len() == 1 => fields
+                    .iter()
+                    .next()
+                    .and_then(|(key, at)| GuideAxis::from_key(key).zip(at.as_f32()))
+                    .map(|(axis, at)| UvGuide::new(axis, at)),
+                _ => None,
+            };
+            guide.filter(UvGuide::is_valid).ok_or_else(|| {
+                FormatError::Invalid("a UV guide is one axis and its place on the layout, such as {\"u\": 0.5} or {\"v\": 0.25}".into())
+            })
+        })
+        .collect()
 }
 
 /// A node's CAD layers, as the project and the journal write them: their
@@ -3029,7 +3077,7 @@ fn read_tree(
 ) -> Result<(), FormatError> {
     // Every field `node_to_json` writes, or a project opened in the build
     // that wrote it reports itself as from a newer one.
-    const KNOWN_NODE_FIELDS: [&str; 15] = [
+    const KNOWN_NODE_FIELDS: [&str; 16] = [
         "id",
         "name",
         "kind",
@@ -3047,6 +3095,7 @@ fn read_tree(
         "material",
         "metadata",
         "layers",
+        "uv_guides",
     ];
 
     let nodes = root
@@ -3150,6 +3199,8 @@ fn read_tree(
             }
         }
         node.layers = read_layers(value.get("layers"));
+        node.uv_guides = read_uv_guides(value.get("uv_guides"))
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         // A project saved before layers had a field of their own kept them
         // in a metadata field, `Layer`, joined with commas: moved across, so
         // the Layers list and its eyes have them, and a search or a rule on

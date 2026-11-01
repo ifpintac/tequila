@@ -55,9 +55,7 @@ pub fn show(
                  that says its print resolution arrives at its printed size.",
             );
             if ui.button("+ Add label…").clicked() {
-                // Every picture the loader reads but the two HDR formats,
-                // which hold light rather than artwork.
-                let artwork: Vec<&str> = Image::DECODABLE.into_iter().filter(|e| !matches!(*e, "hdr" | "exr")).collect();
+                let artwork = artwork_extensions();
                 let both: Vec<&str> = artwork.iter().chain(tequila_texture::video::EXTENSIONS).copied().collect();
                 if let Some(path) = rfd::FileDialog::new()
                     .add_filter("Artwork or video", &both)
@@ -74,21 +72,12 @@ pub fn show(
                             Err(error) => project.status = format!("Cannot use this video: {error}"),
                         }
                     } else {
-                        printed = tequila_texture::print_size::print_size(&path);
-                        match Image::load(&path) {
-                            Ok(_) => {
-                                let name = path
-                                    .file_stem()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .into_owned();
-                                action = Some(Command::AddDecal {
-                                    material: key,
-                                    source: TextureSource::new(path, MapRole::Color),
-                                    name,
-                                });
+                        match label_from_file(key, &path) {
+                            Ok((command, size)) => {
+                                printed = size;
+                                action = Some(command);
                             }
-                            Err(error) => project.status = format!("Cannot load label: {error}"),
+                            Err(error) => project.status = error,
                         }
                     }
                 }
@@ -254,6 +243,22 @@ pub fn show(
         project.end_interaction();
     }
     place_request
+}
+
+/// Every picture a label can be made from: what the loader reads but the
+/// two HDR formats, which hold light rather than artwork.
+pub fn artwork_extensions() -> Vec<&'static str> {
+    Image::DECODABLE.into_iter().filter(|e| !matches!(*e, "hdr" | "exr")).collect()
+}
+
+/// A label from an image file, as the Labels tab and the UV editor add
+/// one: the command, named after the file, and the size the file says it
+/// prints at, in metres, if it says.
+pub fn label_from_file(key: MaterialKey, path: &std::path::Path) -> Result<(Command, Option<(f32, f32)>), String> {
+    Image::load(path).map_err(|error| format!("Cannot load label: {error}"))?;
+    let printed = tequila_texture::print_size::print_size(path);
+    let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    Ok((Command::AddDecal { material: key, source: TextureSource::new(path, MapRole::Color), name }, printed))
 }
 
 /// A video chosen as a label's artwork, while the frame to print is picked.

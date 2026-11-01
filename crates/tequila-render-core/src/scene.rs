@@ -713,7 +713,9 @@ impl Pane {
         !self.thin && self.ior > 1.0 + 1e-3 && self.opacity >= 0.999
     }
 
-    /// Whether a shadow ray taking in `glass` passes this glass.
+    /// Whether a shadow ray taking in `glass` passes this glass, or a
+    /// bounce that passes what its light sample passed: a glossy one takes
+    /// in `Unbent` with caustics off (`integrator::seeing_share`).
     pub fn passes(&self, glass: crate::settings::ShadowGlass) -> bool {
         match glass {
             crate::settings::ShadowGlass::Solid => false,

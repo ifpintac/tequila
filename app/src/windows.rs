@@ -1,5 +1,6 @@
-//! Tequila's own windows — the Render window, the material graph, the
-//! Shortcuts and the AI connections — as windows of the operating system.
+//! Tequila's own windows — the Render window, the material graph, the UV
+//! editor, the Shortcuts and the AI connections — as windows of the
+//! operating system.
 //!
 //! Each opens as a window of its own rather than a panel drawn inside the
 //! main one, so it can be moved off the main window, onto a second display,
@@ -28,10 +29,11 @@ pub enum Kind {
     Graph,
     Shortcuts,
     Connect,
+    Uv,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect];
+    pub const ALL: [Kind; 5] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect, Kind::Uv];
 
     /// Its name on the scripting channel.
     pub fn key(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Kind {
             Kind::Graph => "graph",
             Kind::Shortcuts => "shortcuts",
             Kind::Connect => "connect",
+            Kind::Uv => "uv",
         }
     }
 

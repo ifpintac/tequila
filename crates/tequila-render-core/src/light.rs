@@ -270,6 +270,33 @@ impl AreaLight {
         (t > 1e-6).then_some(t)
     }
 
+    /// What a ray from `from` along `direction` meets of the light: the
+    /// radiance it sees there and how far along the ray that is. `None`
+    /// where it misses the light or meets its back.
+    pub fn met_along(&self, from: Vec3, direction: Vec3) -> Option<(Spectrum, f32)> {
+        let normal = self.normal();
+        let denominator = direction.dot(normal);
+        if denominator.abs() < 1e-6 {
+            return None;
+        }
+        let t = (self.position - from).dot(normal) / denominator;
+        if !(t > 1e-6) {
+            return None;
+        }
+        let offset = from + direction * t - self.position;
+        let (su, sv) = (
+            offset.dot(self.half_u) / self.half_u.length_squared().max(1e-12),
+            offset.dot(self.half_v) / self.half_v.length_squared().max(1e-12),
+        );
+        let inside = if self.disc { su * su + sv * sv <= 1.0 } else { su.abs() <= 1.0 && sv.abs() <= 1.0 };
+        let cos_light = if self.two_sided { denominator.abs() } else { -denominator };
+        if !inside || cos_light <= 1e-6 {
+            return None;
+        }
+        let spread = self.spread_attenuation(cos_light);
+        (spread > 0.0).then_some((self.radiance * spread, t))
+    }
+
     /// Density of sampling `direction` from `from`, for MIS.
     ///
     /// Must agree with whichever strategy [`AreaLight::sample`] would have
@@ -545,6 +572,25 @@ impl DistantLight {
             is_delta: false,
         })
     }
+
+    /// The radiance a ray along `direction` sees of the disc, where it
+    /// points into it, as [`DistantLight::sample`] has it. A sun with no
+    /// disc is never met.
+    pub fn met_along(&self, direction: Vec3) -> Option<Spectrum> {
+        if self.is_delta() || (-self.direction).dot(direction) < self.half_angle.cos() {
+            return None;
+        }
+        let sin_max = self.half_angle.sin();
+        Some(self.irradiance * (1.0 / (PI * sin_max * sin_max)))
+    }
+
+    /// The density [`DistantLight::sample`] gives `direction`.
+    pub fn pdf_along(&self, direction: Vec3) -> f32 {
+        if self.is_delta() || (-self.direction).dot(direction) < self.half_angle.cos() {
+            return 0.0;
+        }
+        1.0 / (TAU * (1.0 - self.half_angle.cos()))
+    }
 }
 
 /// A spotlight: a point light inside a cone, with a soft edge.
@@ -807,6 +853,45 @@ impl Light {
             LightKind::Point(l) => l.radius <= 0.0,
             LightKind::Spot(_) | LightKind::Ies(_) => true,
             LightKind::Distant(l) => l.is_delta(),
+        }
+    }
+
+    /// Whether a ray can meet this light ([`Light::met_along`]): a panel,
+    /// or a sun with a disc. A point, a spot and an IES light have no
+    /// extent to meet, and a point with a radius is sampled as a point.
+    pub fn can_be_met(&self) -> bool {
+        self.enabled
+            && match &self.kind {
+                LightKind::Area(_) => true,
+                LightKind::Distant(l) => !l.is_delta(),
+                LightKind::Point(_) | LightKind::Spot(_) | LightKind::Ies(_) => false,
+            }
+    }
+
+    /// What a ray from `from` along `direction` meets of this light, if it
+    /// can be met at all: the radiance it sees and how far along the ray,
+    /// infinitely far for a sun. Analytic lights are no geometry, and only
+    /// the bounces off a sharp enough reflection look for them
+    /// (`integrator::seeing_share`).
+    pub fn met_along(&self, from: Vec3, direction: Vec3) -> Option<(Spectrum, f32)> {
+        if !self.enabled {
+            return None;
+        }
+        match &self.kind {
+            LightKind::Area(l) => l.met_along(from, direction),
+            LightKind::Distant(l) => l.met_along(direction).map(|radiance| (radiance, f32::INFINITY)),
+            LightKind::Point(_) | LightKind::Spot(_) | LightKind::Ies(_) => None,
+        }
+    }
+
+    /// The density a light sample from `from` gives `direction` towards
+    /// this light, for a light a ray can meet, before the light is chosen:
+    /// [`Light::pdf`], and a sun's over its disc as well.
+    pub fn density_along(&self, from: Vec3, direction: Vec3) -> f32 {
+        match &self.kind {
+            LightKind::Area(l) => l.pdf(from, direction),
+            LightKind::Distant(l) => l.pdf_along(direction),
+            LightKind::Point(_) | LightKind::Spot(_) | LightKind::Ies(_) => 0.0,
         }
     }
 

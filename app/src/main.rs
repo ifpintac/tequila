@@ -407,6 +407,9 @@ struct TequilaApp {
     gpu_solid_submitted: bool,
     /// Instance ids to ring, shared by both Solid paths.
     outlined: Vec<u32>,
+    /// Which of the faces the UV editor lights the camera sees, and what
+    /// for: the part, the faces and the view.
+    uv_link_seen: Option<(UvLinkKey, Vec<bool>)>,
     assistant: assistant::Assistant,
     /// Set by a scripted `quit` that has already settled unsaved work, so the
     /// close goes through without asking a question nobody is there to answer.
@@ -621,6 +624,10 @@ enum Action {
 }
 
 /// Where the journal and auto-save snapshots live (§4.5).
+/// What the UV editor's lit faces were found seen or hidden for: the part,
+/// the scene's rebuild, the faces, and the eye.
+type UvLinkKey = (Option<tequila_scene::tree::NodeId>, u64, usize, u32, [u32; 3]);
+
 fn journal_directory() -> std::path::PathBuf {
     // Disposable QA sessions must not rewrite the user's persisted queue.
     if let Some(directory) = std::env::var_os("TEQUILA_JOURNAL_DIR") {
@@ -879,6 +886,7 @@ impl TequilaApp {
             solid: solid_gpu::SolidView::new(false),
             gpu_solid_submitted: false,
             outlined: Vec::new(),
+            uv_link_seen: None,
             assistant: assistant::Assistant::default(),
             quit_requested: false,
             close_approved: false,
@@ -968,7 +976,7 @@ impl TequilaApp {
         // scriptable this session. `TEQUILA_NO_CHANNEL` turns it off for
         // anyone who would rather not have a socket at all.
         if std::env::var_os("TEQUILA_NO_CHANNEL").is_none() {
-            match tequila_scripting::server::Channel::start() {
+            match tequila_scripting::server::Channel::start_with(tequila_scripting::document::APP_OWN_OPERATIONS) {
                 Ok(open) => {
                     app.project.status = format!(
                         "Scripting channel ready on port {} — see ~/.tequila/channel.json",
@@ -1269,6 +1277,7 @@ impl eframe::App for TequilaApp {
         if self.seen_epoch != self.project.document_epoch() {
             self.seen_epoch = self.project.document_epoch();
             self.graph_editor.forget_document();
+            self.uv_editor.forget_document();
             self.assistant.forget_turn();
         }
 
@@ -1287,14 +1296,25 @@ impl eframe::App for TequilaApp {
                 open.set_waker(move || waking.request_repaint());
                 self.channel_wakes = true;
             }
-            open.drain(|request| {
-                // A script that changes something wants the window, not the
-                // start screen; one that only looks leaves it be.
-                use tequila_scripting::protocol::Operation;
-                if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
-                    self.start_screen.open = false;
+            open.drain_with(|arrived| match arrived {
+                tequila_scripting::server::Arrived::Request(request) => {
+                    // A script that changes something wants the window, not
+                    // the start screen; one that only looks leaves it be.
+                    use tequila_scripting::protocol::Operation;
+                    if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
+                        self.start_screen.open = false;
+                    }
+                    channel::handle(self, request)
                 }
-                channel::handle(self, request)
+                // The application's own operations: a part's UV layout
+                // written as a picture.
+                tequila_scripting::server::Arrived::Own(value) => match value.get("op").and_then(|v| v.as_str()) {
+                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), value) {
+                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
+                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
+                    },
+                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
+                },
             });
             self.channel = Some(open);
         }
@@ -1916,6 +1936,18 @@ impl TequilaApp {
             });
         }
 
+        // The UV editor, open on a part: the face of it under the pointer
+        // is lit on its layout. One ray a frame, and only then.
+        if self.uv_editor.open {
+            let pointed = self.uv_editor.shown_part().filter(|_| !response.dragged() && !presenting).and_then(|part| {
+                let at = response.hover_pos()?;
+                let ray = gizmo_ui::ray_through(&self.camera.camera, rect, at)?;
+                let hit = self.orchestrator.pick(&ray)?;
+                (self.project.mapping().node_of(hit.instance) == Some(part)).then(|| uv_editor::link::hover_of(&self.project, part, hit.primitive, hit.position)).flatten()
+            });
+            self.uv_editor.viewport_hover = pointed;
+        }
+
         let dragging = response.dragged() || gestures.moves() || ui.input(|i| i.raw_scroll_delta.y != 0.0);
         if dragging != self.interacting {
             self.interacting = dragging;
@@ -1935,6 +1967,7 @@ impl TequilaApp {
                 mode: self.view_mode.gpu().unwrap_or_default(),
                 exposure: 2f32.powf(self.project.developed_style(&self.camera.camera).exposure),
                 model_edges: self.show_model_edges && self.presenting.is_none(),
+                checker: self.uv_editor.checker_frame(&self.project).filter(|_| self.presenting.is_none()),
             };
             ui.painter().add(self.solid.paint(rect, frame));
         } else if let Some(texture) = &self.texture {
@@ -1974,6 +2007,19 @@ impl TequilaApp {
             self.gizmo.draw(ui, rect, &self.camera.camera);
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
+            // What the UV editor points at, lit on the part; what another
+            // part hides found again only when that or the view changes.
+            if let Some(hint) = self.uv_editor.viewport_hint() {
+                let eye = self.camera.camera.position();
+                let key: UvLinkKey = (hint.node, self.project.rebuilds(), hint.triangles.len(), hint.triangles.first().copied().unwrap_or(u32::MAX), [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
+                if self.uv_link_seen.as_ref().map(|(k, _)| k) != Some(&key) {
+                    let (orchestrator, mapping) = (&self.orchestrator, self.project.mapping());
+                    let seen = uv_editor::link::seen(&self.project, &self.camera.camera, hint, |ray| orchestrator.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
+                    self.uv_link_seen = Some((key, seen));
+                }
+                let seen = self.uv_link_seen.as_ref().map(|(_, s)| s.as_slice()).unwrap_or(&[]);
+                uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, seen);
+            }
         }
 
         if rect != area {
@@ -3046,11 +3092,10 @@ impl TequilaApp {
                     ui.separator();
                     if ui
                         .button("UV editor")
-                        .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels on it by hand")
+                        .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels and textures on it by hand")
                         .clicked()
                     {
-                        self.uv_editor.open = true;
-                        self.uv_editor.label = None;
+                        self.uv_editor.open_on_selection();
                         ui.close_menu();
                     }
                 });
@@ -3099,6 +3144,20 @@ impl TequilaApp {
                             self.full_viewport = !library && !project;
                             ui.close_menu();
                         }
+                    }
+                    // Labels and the layout side by side: the Material page
+                    // beside the view, the UV editor open on the part.
+                    if ui
+                        .button("UV layout")
+                        .on_hover_text("The UV editor open on the selected part, beside its Material page, to place labels and textures on its layout")
+                        .clicked()
+                    {
+                        self.show_library = false;
+                        self.show_project = true;
+                        self.project_tab = ProjectTab::Material;
+                        self.full_viewport = false;
+                        self.uv_editor.open_on_selection();
+                        ui.close_menu();
                     }
                     ui.separator();
                     if ui.button("Configurator").on_hover_text("Set up the product's options, rules and picker").clicked() {
@@ -4096,10 +4155,11 @@ impl TequilaApp {
         if pressed(egui::Key::F5) && !modifiers.any() && self.presenting.is_none() {
             self.start_presentation();
         }
-        // Over the graph editor, its own keys mean a node, not a part: only
-        // undo, redo and save reach through, which mean the same everywhere.
-        // Undo stopped working altogether over the editor before this.
-        if self.graph_editor.hovered {
+        // Over the graph editor or the UV editor, their own keys mean a node
+        // or a label, not a part: only undo, redo and save reach through,
+        // which mean the same everywhere. Undo stopped working altogether
+        // over the graph editor before this.
+        if self.graph_editor.hovered || self.uv_editor.hovered {
             if modifiers.command && pressed(egui::Key::Z) {
                 if modifiers.shift {
                     self.redo();
@@ -6171,6 +6231,7 @@ impl TequilaApp {
             windows::Kind::Graph => self.graph_editor.open,
             windows::Kind::Shortcuts => self.show_help,
             windows::Kind::Connect => self.assistant.providers_open(),
+            windows::Kind::Uv => self.uv_editor.open,
         }
     }
 }

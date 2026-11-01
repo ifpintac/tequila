@@ -26,6 +26,15 @@
 //! exactly as a click does. A connection thread blocks on its own reply, so
 //! each client sees its requests complete in order without any of them
 //! needing to know about the others.
+//!
+//! # Operations of a session's own
+//!
+//! A channel can be opened with operations beyond the protocol's
+//! ([`Channel::start_at_with`]): a request whose `op` is one of them is
+//! queued as it came, and answered by the handler [`Channel::drain_with`]
+//! is given, so an end that has more to offer - `uv_layout`, which the
+//! application and the headless server answer - can offer it without every
+//! end having to.
 
 use crate::protocol::{encode_reply, parse_request, request_id, ProtocolError, Reply, Request};
 use std::collections::VecDeque;
@@ -33,11 +42,28 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
+use tequila_format::json::Value;
 
 /// One request waiting for the UI thread, and where its answer goes.
 struct Pending {
-    request: Request,
+    request: Incoming,
     reply: Sender<String>,
+}
+
+/// What arrived: a request of the protocol's, or one of the session's own
+/// operations, as it came.
+enum Incoming {
+    Request(Request),
+    Own { id: u64, value: Value },
+}
+
+impl Incoming {
+    fn id(&self) -> u64 {
+        match self {
+            Incoming::Request(request) => request.id,
+            Incoming::Own { id, .. } => *id,
+        }
+    }
 }
 
 /// The channel's end of a running application.
@@ -103,7 +129,13 @@ impl Channel {
     /// because a port was busy would be a worse tool than one that is simply
     /// not scriptable this session.
     pub fn start() -> Result<Channel, String> {
-        let mut channel = Channel::open()?;
+        Channel::start_with(&[])
+    }
+
+    /// As [`Channel::start`], answering the operations `own` names as well
+    /// as the protocol's: the application's `uv_layout`.
+    pub fn start_with(own: &'static [&'static str]) -> Result<Channel, String> {
+        let mut channel = Channel::open(own)?;
         channel.announce(&discovery_path());
         Ok(channel)
     }
@@ -112,7 +144,13 @@ impl Channel {
     /// session a script started for itself (`tequila --serve`), which must
     /// not take the shared file from the application a person has open.
     pub fn start_at(discovery: &std::path::Path) -> Result<Channel, String> {
-        let mut channel = Channel::open()?;
+        Channel::start_at_with(discovery, &[])
+    }
+
+    /// As [`Channel::start_at`], answering the operations `own` names as
+    /// well as the protocol's: see the module's documentation.
+    pub fn start_at_with(discovery: &std::path::Path, own: &'static [&'static str]) -> Result<Channel, String> {
+        let mut channel = Channel::open(own)?;
         channel.announce(discovery);
         Ok(channel)
     }
@@ -124,7 +162,7 @@ impl Channel {
     /// at a process that exited a second later — running the test suite
     /// quietly disconnected scripts and assistants from the Tequila that was
     /// actually open.
-    fn open() -> Result<Channel, String> {
+    fn open(own: &'static [&'static str]) -> Result<Channel, String> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .map_err(|e| format!("the scripting channel could not be opened: {e}"))?;
         let address = listener
@@ -151,7 +189,7 @@ impl Channel {
                     // than a shared poll loop that must not.
                     let _ = std::thread::Builder::new()
                         .name("tequila-channel-client".into())
-                        .spawn(move || serve(stream, queue, wake, expected));
+                        .spawn(move || serve(stream, queue, wake, expected, own));
                 }
             })
             .map_err(|e| format!("the scripting channel could not be started: {e}"))?;
@@ -236,15 +274,39 @@ impl Channel {
     }
 
     pub fn drain(&self, mut handler: impl FnMut(&Request) -> Reply) {
+        self.drain_with(|arrived| match arrived {
+            Arrived::Request(request) => handler(request),
+            Arrived::Own(value) => {
+                let op = value.get("op").and_then(|v| v.as_str()).unwrap_or_default();
+                Reply::Failed(format!("`{op}` is not an operation this understands"))
+            }
+        })
+    }
+
+    /// As [`Channel::drain`], the session's own operations among what
+    /// arrives, each as the request's JSON.
+    pub fn drain_with(&self, mut handler: impl FnMut(Arrived<'_>) -> Reply) {
         // Yield back to the UI even while clients continuously enqueue work.
         for _ in 0..16 {
             let Some(next) = self.pending.lock().ok().and_then(|mut q| q.pop_front()) else {
                 return;
             };
-            let reply = handler(&next.request);
-            let _ = next.reply.send(encode_reply(next.request.id, &reply));
+            let reply = match &next.request {
+                Incoming::Request(request) => handler(Arrived::Request(request)),
+                Incoming::Own { value, .. } => handler(Arrived::Own(value)),
+            };
+            let _ = next.reply.send(encode_reply(next.request.id(), &reply));
         }
     }
+}
+
+/// What [`Channel::drain_with`] hands its handler.
+#[derive(Debug)]
+pub enum Arrived<'a> {
+    /// A request of the protocol's.
+    Request(&'a Request),
+    /// One of the session's own operations, as its JSON.
+    Own(&'a Value),
 }
 
 impl Drop for Channel {
@@ -287,7 +349,23 @@ fn newest_listening(dir: &std::path::Path) -> Option<String> {
 /// What wakes the application when a request arrives.
 type Waker = Arc<Mutex<Option<Box<dyn Fn() + Send>>>>;
 
-fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, expected: String) {
+/// One of the session's own operations, if the line is a request for one:
+/// its id, token and JSON.
+fn own_operation(line: &str, own: &[&str]) -> Option<(u64, String, Value)> {
+    if own.is_empty() {
+        return None;
+    }
+    let value = tequila_format::json::parse(line.as_bytes()).ok()?;
+    let op = value.get("op").and_then(|v| v.as_str())?;
+    if !own.contains(&op) {
+        return None;
+    }
+    let id = value.get("id").and_then(|v| v.as_index()).unwrap_or(0) as u64;
+    let token = value.get("token").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    Some((id, token, value))
+}
+
+fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, expected: String, own: &'static [&'static str]) {
     let peer = stream
         .peer_addr()
         .map(|address| address.to_string())
@@ -297,25 +375,36 @@ fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, e
     };
     let mut out = write_half;
     let reader = BufReader::new(stream);
+    let mismatch = || {
+        Reply::Failed(
+            "that token does not match this instance; read the port and \
+             token from ~/.tequila/channel.json"
+                .into(),
+        )
+    };
 
     for line in reader.lines() {
         let Ok(line) = line else { return };
         if line.trim().is_empty() {
             continue;
         }
-        let reply = match parse_request(&line) {
-            Ok(request) if request.token != expected => Some((
-                request.id,
-                Reply::Failed(
-                    "that token does not match this instance; read the port and \
-                     token from ~/.tequila/channel.json"
-                        .into(),
-                ),
-            )),
+        let incoming = match parse_request(&line) {
+            Ok(request) if request.token != expected => Err((request.id, mismatch())),
             Ok(mut request) => {
-                let (sender, receiver) = channel();
-                let id = request.id;
                 request.peer = peer.clone();
+                Ok(Incoming::Request(request))
+            }
+            Err(ProtocolError(message)) => match own_operation(&line, own) {
+                Some((id, token, _)) if token != expected => Err((id, mismatch())),
+                Some((id, _, value)) => Ok(Incoming::Own { id, value }),
+                None => Err((request_id(&line), Reply::Failed(message))),
+            },
+        };
+        let reply = match incoming {
+            Err(refused) => Some(refused),
+            Ok(request) => {
+                let (sender, receiver) = channel();
+                let id = request.id();
                 if let Ok(mut queue) = queue.lock() {
                     queue.push_back(Pending {
                         request,
@@ -341,7 +430,6 @@ fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, e
                     Err(_) => Some((id, Reply::Failed("the application is closing".into()))),
                 }
             }
-            Err(ProtocolError(message)) => Some((request_id(&line), Reply::Failed(message))),
         };
 
         if let Some((id, reply)) = reply {
@@ -376,7 +464,7 @@ mod tests {
     #[test]
     fn a_test_channel_does_not_announce_itself() {
         let before = std::fs::read(discovery_path()).ok();
-        let _channel = Channel::open().expect("opens");
+        let _channel = Channel::open(&[]).expect("opens");
         assert_eq!(std::fs::read(discovery_path()).ok(), before);
     }
 
@@ -388,11 +476,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("channel.json");
 
-        let mut first = Channel::open().expect("opens");
+        let mut first = Channel::open(&[]).expect("opens");
         first.announce(&path);
         // Modification times order the records; keep them apart.
         std::thread::sleep(std::time::Duration::from_millis(50));
-        let mut second = Channel::open().expect("opens");
+        let mut second = Channel::open(&[]).expect("opens");
         second.announce(&path);
         let port = |text: String| field_of(&text, "port").as_f64().unwrap() as u16;
         assert_eq!(port(std::fs::read_to_string(&path).unwrap()), second.port(), "the newest wins");
@@ -405,7 +493,7 @@ mod tests {
         );
 
         // The first closing does not touch a file that is no longer its own…
-        let mut third = Channel::open().expect("opens");
+        let mut third = Channel::open(&[]).expect("opens");
         third.announce(&path);
         first.retire();
         assert_eq!(port(std::fs::read_to_string(&path).unwrap()), third.port());
@@ -421,7 +509,7 @@ mod tests {
     /// repaint - a fifth of a second - on every request.
     #[test]
     fn a_request_wakes_the_application() {
-        let channel = Channel::open().expect("opens");
+        let channel = Channel::open(&[]).expect("opens");
         let (woken, woke) = std::sync::mpsc::channel::<()>();
         let woken = Mutex::new(woken);
         channel.set_waker(move || {
@@ -443,7 +531,7 @@ mod tests {
     /// something standing in for the application.
     #[test]
     fn a_request_reaches_the_handler_and_the_answer_comes_back() {
-        let channel = Channel::open().expect("opens");
+        let channel = Channel::open(&[]).expect("opens");
         let port = channel.port();
         let token = channel.token.clone();
 
@@ -477,10 +565,50 @@ mod tests {
         assert_eq!(field_of(&line, "id"), Value::Number(42.0), "{line}");
     }
 
+    /// An operation of the session's own reaches its handler as the JSON it
+    /// came as; the same operation to a channel without it is refused.
+    #[test]
+    fn a_session_s_own_operation_reaches_its_own_handler() {
+        let send = |port: u16, token: String| {
+            std::thread::spawn(move || {
+                let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");
+                writeln!(stream, r#"{{"id":9,"token":"{token}","op":"uv_layout","node":3}}"#).expect("writes");
+                stream.flush().expect("flushes");
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).expect("reads");
+                line
+            })
+        };
+        let channel = Channel::open(&["uv_layout"]).expect("opens");
+        let client = send(channel.port(), channel.token.clone());
+        let mut seen = None;
+        for _ in 0..200 {
+            channel.drain_with(|arrived| match arrived {
+                Arrived::Own(value) => {
+                    seen = value.get("node").and_then(|v| v.as_index());
+                    Reply::Done
+                }
+                Arrived::Request(_) => Reply::Failed("not this one".into()),
+            });
+            if seen.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(seen, Some(3));
+        let line = client.join().expect("the client finished");
+        assert_eq!(field_of(&line, "ok"), Value::Bool(true), "{line}");
+        assert_eq!(field_of(&line, "id"), Value::Number(9.0), "{line}");
+
+        let plain = Channel::open(&[]).expect("opens");
+        let line = send(plain.port(), plain.token.clone()).join().expect("the client finished");
+        assert_eq!(field_of(&line, "ok"), Value::Bool(false), "{line}");
+    }
+
     /// A wrong token is refused before the application ever sees it.
     #[test]
     fn a_bad_token_never_reaches_the_document() {
-        let channel = Channel::open().expect("opens");
+        let channel = Channel::open(&[]).expect("opens");
         let port = channel.port();
 
         let client = std::thread::spawn(move || {
@@ -517,7 +645,7 @@ mod tests {
     /// this protocol can have.
     #[test]
     fn nonsense_is_answered_not_ignored() {
-        let channel = Channel::open().expect("opens");
+        let channel = Channel::open(&[]).expect("opens");
         let port = channel.port();
 
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");
@@ -538,7 +666,7 @@ mod tests {
     /// reply to some other request and dropped the connection.
     #[test]
     fn a_refused_request_is_answered_under_its_own_id() {
-        let channel = Channel::open().expect("opens");
+        let channel = Channel::open(&[]).expect("opens");
         let port = channel.port();
 
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");

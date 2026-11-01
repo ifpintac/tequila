@@ -2091,7 +2091,7 @@ fn shared_mapping(
 }
 
 /// The texture behind a node, following a chain of pure nodes back if need be.
-fn texture_behind(
+pub(crate) fn texture_behind(
     graph: &tequila_materials::graph::MaterialGraph,
     node: tequila_materials::graph::NodeId,
 ) -> Option<tequila_materials::graph::TextureId> {

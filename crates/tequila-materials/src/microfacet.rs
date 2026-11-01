@@ -68,6 +68,13 @@ impl Ggx {
         }
     }
 
+    /// The artist-facing roughness along the wider of the two directions:
+    /// how blurred the widest part of a reflection off it is.
+    #[inline]
+    pub fn roughness(&self) -> f32 {
+        self.alpha_x.max(self.alpha_y).max(0.0).sqrt()
+    }
+
     /// Effective isotropic roughness, for LUT lookups and heuristics.
     #[inline]
     pub fn average_alpha(&self) -> f32 {

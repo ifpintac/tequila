@@ -68,6 +68,8 @@ pub enum CommandError {
     InvalidValue(&'static str),
     /// A layer no node is on.
     NoSuchLayer(String),
+    /// A UV layout edit that could not be made, and why.
+    Uv(crate::uv::UvError),
 }
 
 impl From<TreeError> for CommandError {
@@ -90,6 +92,7 @@ impl std::fmt::Display for CommandError {
             CommandError::NotACutaway(id) => write!(f, "{id} is not a cutaway"),
             CommandError::InvalidValue(what) => write!(f, "{what}"),
             CommandError::NoSuchLayer(name) => write!(f, "no part is on the layer `{name}`"),
+            CommandError::Uv(error) => write!(f, "{error}"),
             CommandError::InconsistentHistory(what) => {
                 write!(f, "undo history is inconsistent with the document: {what}")
             }
@@ -162,12 +165,95 @@ pub enum Command {
     SplitIntoParts { node: NodeId },
     /// `scene.unwrap_uvs` — a part's surface laid out flat as its first UV
     /// set (`crate::uv`), so labels and textures can be placed on it
-    /// anywhere; the sets it had move up one.
+    /// anywhere; the sets it had move up one. With `respect_cuts`, the
+    /// islands of its first set are kept, each laid out again whole. With
+    /// `in_place`, the set it names is laid out again where it is - its
+    /// islands kept, with `respect_cuts` - and no set moves. Each piece is
+    /// laid out by `method`: `conformal`, or `least_stretch` from there.
     ///
     /// The part gets a mesh of its own, the unwrapped one, under a new key:
     /// parts that shared the old mesh keep it, and undo points the part back
     /// at it.
     UnwrapUvs { node: NodeId, options: crate::uv::UnwrapOptions },
+    /// `uv.cut` — a part's UV set `set` cut along edges of the part, each
+    /// named by the mesh vertices at its two ends (`crate::uv::seams`): the
+    /// pieces of an island it divides are moved apart, and with `reflatten`
+    /// laid out flat again in place, which also opens a cut inside an
+    /// island.
+    ///
+    /// Like every `uv.*` command that changes a layout, the part gets a mesh
+    /// of its own with the change under a new key: parts sharing the old
+    /// mesh keep it, undo points the part back at it, and a vertex keeps its
+    /// number, new ones going after the rest.
+    CutUvs { node: NodeId, set: usize, edges: Vec<crate::uv::MeshEdge>, reflatten: bool },
+    /// `uv.stitch` — islands of a part's UV set joined along seams, each
+    /// named by the mesh vertices at its ends: the smaller island turned,
+    /// scaled and moved onto the larger so the seam meets, and shut.
+    StitchUvs { node: NodeId, set: usize, edges: Vec<crate::uv::MeshEdge> },
+    /// `uv.transform` — islands, or vertices with every corner on the same
+    /// place, moved by a 2 by 3 affine `matrix` (`[a, b, tx, c, d, ty]`:
+    /// u' = a u + b v + tx) about a `pivot`: `origin`, `selection`,
+    /// `islands` (each about its own middle) or a point `[u, v]`. Refused
+    /// where it would fold the layout.
+    ///
+    /// The whole move, not a step of it: a drag sends one when it ends.
+    TransformUvs {
+        node: NodeId,
+        set: usize,
+        selection: crate::uv::UvSelection,
+        transform: crate::uv::UvAffine,
+        pivot: crate::uv::Pivot,
+    },
+    /// `uv.reflatten` — islands laid out flat again by conformal maps,
+    /// their cuts kept, `pins` (mesh vertices) held where they are. With
+    /// fewer than two pins an island keeps its place, size and turn; with
+    /// `repack`, the whole layout is packed again after.
+    ReflattenUvs { node: NodeId, set: usize, islands: Vec<u32>, pins: Vec<u32>, repack: bool },
+    /// `uv.pack` — islands, all of them when none are listed, packed into
+    /// the unit square or a `region` `[u0, v0, u1, v1]`, as large as they
+    /// fit, `margin` apart: turned a quarter if `rotate` allows,
+    /// `normalize`d to one density first, `orient`ed to their tightest box.
+    PackUvs { node: NodeId, set: usize, islands: Vec<u32>, options: crate::uv::PackOptions },
+    /// `uv.straighten` — islands turned so their principal axis, or an
+    /// `edge`, lies `horizontal`, `vertical` or whichever is `nearest`.
+    StraightenUvs {
+        node: NodeId,
+        set: usize,
+        islands: Vec<u32>,
+        by: crate::uv::StraightenBy,
+        to: crate::uv::Alignment,
+    },
+    /// `uv.even_density` — islands scaled so each is as dense, texture to
+    /// surface, as their average, or as the island `match` names.
+    EvenUvDensity { node: NodeId, set: usize, islands: Vec<u32>, target: crate::uv::DensityTarget },
+    /// `uv.add_set` — a new UV set after a part's others: the part
+    /// unwrapped, a layout to start from that does not fold.
+    AddUvSet { node: NodeId },
+    /// `uv.copy_set` — a copy of a part's UV set `from`, put at `to` among
+    /// them. The labels and textures of what the part wears follow the sets
+    /// that move.
+    CopyUvSet { node: NodeId, from: usize, to: usize },
+    /// `uv.delete_set` — a part's UV set removed. The labels and textures of
+    /// what the part wears follow the sets that move; one on the set removed
+    /// reads the first.
+    DeleteUvSet { node: NodeId, set: usize },
+    /// `uv.move_set` — a part's UV set `from` moved to `to` among them. The
+    /// labels and textures of what the part wears follow it, and the sets
+    /// it passes.
+    MoveUvSet { node: NodeId, from: usize, to: usize },
+    /// `uv.set_positions` — UV vertices of a part's UV set put at new places:
+    /// `vertices[i]`, by the layout's own number for it
+    /// (`crate::uv::UvLayout::uv_vertices`), at `uv[i]`, `[u, v]`. What a
+    /// tool that reshapes the layout - a path laid straight, an island laid
+    /// out as a grid, relaxed, welded or mirrored, vertices lined up, one
+    /// island's shape laid over another's - worked out, as one step, where
+    /// no one affine map does it. Refused where it would fold the layout.
+    SetUvPositions { node: NodeId, set: usize, vertices: Vec<u32>, uv: Vec<[f32; 2]> },
+    /// `uv.place_islands` — islands of a part's UV set each moved whole by
+    /// an affine map of its own, `maps` one `[a, b, tx, c, d, ty]` for each
+    /// of `islands`: what arranging them comes down to (spread, sorted,
+    /// sized alike, fitted, swapped, turned upright), as one step.
+    PlaceUvIslands { node: NodeId, set: usize, islands: Vec<u32>, maps: Vec<crate::uv::UvAffine> },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -212,6 +298,15 @@ pub enum Command {
         key: String,
         value: Option<String>,
     },
+    /// `scene.set_uv_guides` — the guides on a part's UV layout, the whole
+    /// list at once: lines across the layout at a place along `u` or `v`,
+    /// which the UV editor's moves and handles snap to. Saved with the part;
+    /// nothing that renders changes.
+    ///
+    /// The list rather than one guide, as labels and pins are edited: adding,
+    /// moving and removing one are all edits to the list, and a guide has no
+    /// identity of its own to address.
+    SetUvGuides { node: NodeId, guides: Vec<crate::guides::UvGuide> },
     /// `scene.set_units` — the unit lengths are shown in. They are stored in
     /// metres either way; `mode` says whether the scene keeps its size
     /// (`KeepSceneSize`) or keeps its numbers and is rescaled to them
@@ -1029,6 +1124,19 @@ impl Command {
             Command::DeleteNodes { .. } => "scene.delete_nodes",
             Command::SplitIntoParts { .. } => "scene.split_parts",
             Command::UnwrapUvs { .. } => "scene.unwrap_uvs",
+            Command::CutUvs { .. } => "uv.cut",
+            Command::StitchUvs { .. } => "uv.stitch",
+            Command::TransformUvs { .. } => "uv.transform",
+            Command::ReflattenUvs { .. } => "uv.reflatten",
+            Command::PackUvs { .. } => "uv.pack",
+            Command::StraightenUvs { .. } => "uv.straighten",
+            Command::EvenUvDensity { .. } => "uv.even_density",
+            Command::AddUvSet { .. } => "uv.add_set",
+            Command::CopyUvSet { .. } => "uv.copy_set",
+            Command::DeleteUvSet { .. } => "uv.delete_set",
+            Command::MoveUvSet { .. } => "uv.move_set",
+            Command::SetUvPositions { .. } => "uv.set_positions",
+            Command::PlaceUvIslands { .. } => "uv.place_islands",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
@@ -1040,6 +1148,7 @@ impl Command {
             Command::Group { .. } => "scene.group",
             Command::Ungroup { .. } => "scene.ungroup",
             Command::SetMetadata { .. } => "scene.set_metadata",
+            Command::SetUvGuides { .. } => "scene.set_uv_guides",
             Command::SetUnits { .. } => "scene.set_units",
             Command::AssignMaterial { .. } => "material.assign",
             Command::UnlinkMaterial { .. } => "material.unlink",
@@ -1086,7 +1195,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 57] = [
+    pub const CATALOG: [&'static str; 72] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1094,6 +1203,20 @@ impl Command {
         "scene.add_group",
         "scene.delete_nodes",
         "scene.split_parts",
+        "scene.unwrap_uvs",
+        "uv.cut",
+        "uv.stitch",
+        "uv.transform",
+        "uv.reflatten",
+        "uv.pack",
+        "uv.straighten",
+        "uv.even_density",
+        "uv.add_set",
+        "uv.copy_set",
+        "uv.delete_set",
+        "uv.move_set",
+        "uv.set_positions",
+        "uv.place_islands",
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
@@ -1105,6 +1228,7 @@ impl Command {
         "scene.group",
         "scene.ungroup",
         "scene.set_metadata",
+        "scene.set_uv_guides",
         "scene.set_units",
         "material.assign",
         "material.unlink",
@@ -1157,6 +1281,21 @@ impl Command {
             | Command::Group { .. }
             | Command::SplitIntoParts { .. }
             | Command::UnwrapUvs { .. }
+            // A layout is what every texture and label on the part is
+            // sampled by.
+            | Command::CutUvs { .. }
+            | Command::StitchUvs { .. }
+            | Command::TransformUvs { .. }
+            | Command::ReflattenUvs { .. }
+            | Command::PackUvs { .. }
+            | Command::StraightenUvs { .. }
+            | Command::EvenUvDensity { .. }
+            | Command::AddUvSet { .. }
+            | Command::CopyUvSet { .. }
+            | Command::DeleteUvSet { .. }
+            | Command::MoveUvSet { .. }
+            | Command::SetUvPositions { .. }
+            | Command::PlaceUvIslands { .. }
             | Command::Ungroup { .. }
             | Command::Reparent { .. }
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
@@ -1214,6 +1353,8 @@ impl Command {
             | Command::SetLocked { .. }
             | Command::SetPivot { .. }
             | Command::SetMetadata { .. }
+            // Lines over the UV editor's canvas, never in the picture.
+            | Command::SetUvGuides { .. }
             | Command::AddCamera { .. }
             | Command::RemoveCamera { .. }
             | Command::RenameCamera { .. }
@@ -1314,6 +1455,14 @@ enum Undo {
     /// A part given an unwrapped mesh: the mesh it had, kept in the store,
     /// and the one it was given.
     Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey },
+    /// A part given a mesh with its UV layout edited, as `Unwrapped`; and
+    /// the materials whose mappings followed its sets, as they were.
+    UvEdited {
+        node: NodeId,
+        previous: MeshKey,
+        edited: MeshKey,
+        materials: Vec<(MaterialKey, Box<MaterialDefinition>)>,
+    },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
     Name(NodeId, String),
@@ -1340,6 +1489,7 @@ enum Undo {
         members: Vec<(NodeId, usize)>,
     },
     Metadata(NodeId, String, Option<String>),
+    UvGuides(NodeId, Vec<crate::guides::UvGuide>),
     /// Boxed for the same reason as `Ungrouped`: it holds the cameras, the
     /// environment and every top node's transform.
     Units(SceneUnits, Box<crate::units::Rescaled>),
@@ -1912,6 +2062,12 @@ impl Reissue {
                 split: Some((Vec::new(), vec![*unwrapped])),
                 composite: None,
             },
+            Undo::UvEdited { edited, .. } => Reissue {
+                node: None,
+                material: None,
+                split: Some((Vec::new(), vec![*edited])),
+                composite: None,
+            },
             Undo::Grouped { group, .. } => Reissue {
                 node: Some(*group),
                 material: None,
@@ -2263,6 +2419,55 @@ fn execute(
             Ok(Undo::Unwrapped { node: *node, previous, unwrapped: key })
         }
 
+        Command::CutUvs { node, set, edges, reflatten } => {
+            let options = crate::uv::CutOptions { reflatten: *reflatten, ..Default::default() };
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::cut(mesh, *set, edges, &options))
+        }
+        Command::StitchUvs { node, set, edges } => edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::stitch(mesh, *set, edges)),
+        Command::TransformUvs { node, set, selection, transform, pivot } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::transform(mesh, *set, selection, transform, *pivot))
+        }
+        Command::ReflattenUvs { node, set, islands, pins, repack } => {
+            let options = repack.then(crate::uv::PackOptions::default);
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::reflatten(mesh, *set, islands, pins, options.as_ref()))
+        }
+        Command::PackUvs { node, set, islands, options } => {
+            let chosen = (!islands.is_empty()).then_some(islands.as_slice());
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::pack(mesh, *set, chosen, options).map(|(mesh, _)| mesh))
+        }
+        Command::StraightenUvs { node, set, islands, by, to } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::straighten(mesh, *set, islands, *by, *to))
+        }
+        Command::EvenUvDensity { node, set, islands, target } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::even_density(mesh, *set, islands, *target))
+        }
+        Command::AddUvSet { node } => {
+            let change = crate::uv::SetChange::Add;
+            edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::CopyUvSet { node, from, to } => {
+            let change = crate::uv::SetChange::Copy { from: *from, to: *to };
+            edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::DeleteUvSet { node, set } => {
+            let change = crate::uv::SetChange::Delete { set: *set };
+            edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::MoveUvSet { node, from, to } => {
+            let change = crate::uv::SetChange::Move { from: *from, to: *to };
+            edit_part_uvs(document, *node, &reissue, Some(change), |mesh| change.apply(mesh))
+        }
+        Command::SetUvPositions { node, set, vertices, uv } => {
+            if vertices.len() != uv.len() {
+                return Err(CommandError::InvalidValue("uv.set_positions needs one place for each vertex"));
+            }
+            let moves: Vec<(u32, tequila_core::math::Vec2)> = vertices.iter().zip(uv).map(|(&v, &[u, w])| (v, tequila_core::math::vec2(u, w))).collect();
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::set_positions(mesh, *set, &moves))
+        }
+        Command::PlaceUvIslands { node, set, islands, maps } => {
+            edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::place_islands(mesh, *set, islands, maps))
+        }
+
         Command::SplitIntoParts { node } => {
             check_unlocked(document, *node)?;
             let source = document
@@ -2517,6 +2722,18 @@ fn execute(
                 }
             }
             Ok(Undo::Metadata(*node, key.clone(), previous))
+        }
+
+        Command::SetUvGuides { node, guides } => {
+            if !guides.iter().all(crate::guides::UvGuide::is_valid) {
+                return Err(CommandError::InvalidValue("a guide's place must be a finite number on the layout"));
+            }
+            let target = document.tree.get_mut(*node)?;
+            if !matches!(target.kind, NodeKind::Part { .. }) {
+                return Err(CommandError::InvalidValue("guides go on a part's UV layout, and this is not a part"));
+            }
+            let previous = std::mem::replace(&mut target.uv_guides, guides.clone());
+            Ok(Undo::UvGuides(*node, previous))
         }
 
         Command::SetUnits { unit, mode } => {
@@ -3139,6 +3356,19 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::UvEdited { node, previous, edited, materials } => {
+            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: *previous };
+            let still_used = document.tree.iter().any(|n| matches!(n.kind, NodeKind::Part { mesh } if mesh == *edited));
+            if !still_used {
+                document.geometry.retain_keys(&|key| key != *edited);
+            }
+            for (material, definition) in materials {
+                let slot = document.materials.get_mut(*material).ok_or(CommandError::NoSuchMaterial(*material))?;
+                *slot = (**definition).clone();
+            }
+            Ok(())
+        }
+
         Undo::Split {
             node,
             mesh,
@@ -3255,6 +3485,11 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
                     document.tree.get_mut(*node)?.metadata.remove(key);
                 }
             }
+            Ok(())
+        }
+
+        Undo::UvGuides(node, guides) => {
+            document.tree.get_mut(*node)?.uv_guides = guides.clone();
             Ok(())
         }
 
@@ -3448,6 +3683,43 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
     }
+}
+
+/// What every `uv.*` command does around its edit: the part's mesh edited,
+/// given to the part under a key of its own - a redo's, or a new one - and,
+/// for a change to its sets, the mappings of what it wears renumbered.
+/// Nothing is changed when the edit is refused.
+fn edit_part_uvs(
+    document: &mut SceneDocument,
+    node: NodeId,
+    reissue: &Reissue,
+    change: Option<crate::uv::SetChange>,
+    edit: impl FnOnce(&Mesh) -> Result<Mesh, crate::uv::UvError>,
+) -> Result<Undo, CommandError> {
+    check_unlocked(document, node)?;
+    let source = document.tree.get(node).ok_or(CommandError::InconsistentHistory("no such node"))?;
+    let NodeKind::Part { mesh: previous } = source.kind else {
+        return Err(CommandError::InvalidValue("only a part has a UV layout"));
+    };
+    let geometry = document.geometry.get(previous).ok_or(CommandError::NoSuchMesh(previous))?;
+    let edited = edit(geometry).map_err(CommandError::Uv)?;
+    let renumbered = match change {
+        Some(change) => crate::uv::sets::renumbered_materials(document, node, change).map_err(CommandError::Uv)?,
+        None => Vec::new(),
+    };
+    let key = match &reissue.split {
+        Some((children, meshes)) if children.is_empty() && meshes.len() == 1 => meshes[0],
+        _ => reserve_keys(document, 1, 0, 0).0[0],
+    };
+    document.geometry.insert_with_key(key, edited);
+    document.tree.get_mut(node)?.kind = NodeKind::Part { mesh: key };
+    let mut materials = Vec::with_capacity(renumbered.len());
+    for (material, definition) in renumbered {
+        if let Some(slot) = document.materials.get_mut(material) {
+            materials.push((material, Box::new(std::mem::replace(slot, definition))));
+        }
+    }
+    Ok(Undo::UvEdited { node, previous, edited: key, materials })
 }
 
 fn check_unlocked(document: &SceneDocument, node: NodeId) -> Result<(), CommandError> {

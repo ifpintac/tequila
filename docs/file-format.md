@@ -307,6 +307,7 @@ Each is a light, a picture or a gradient painted onto the environment sphere.
 | `layers?` | string[] | The CAD layers the source file put the node on (an IGES file's levels, `Level 5`), in the file's order; the Scene tab shows and hides them as groups. Absent means none. A file without it whose `metadata` has a `Layer` field, as projects saved before 2026-10-30 kept layers, is read with that field's comma-separated names as its layers. |
 | `path_key` | string? | The source file's stable identifier for this node, so a re-import can match it and keep its material. |
 | `pivot` | number[3]? | A custom pivot in this node's local space, if one has been set. Absent means the gizmo uses a derived pivot. Stored because §04 §5 requires pivots to persist — they are what an animation track rotates about. |
+| `uv_guides` | object[]? | A part's guides on its UV layout, laid down in the UV editor and snapped to there, in the order they were added. Each is one key, the axis it marks a place along, with that place in layout units (0 to 1 across the unit square): `{"u": 0.25}` is a line down the layout a quarter of the way across, `{"v": 0.5}` one across it halfway down (`v` runs down the layout, as an image's rows do). Absent means none; written only on a part that has some. They change nothing that renders. |
 
 Parent and child links must agree: if A lists B as a child, B must name A as its
 parent. A loader that finds otherwise rejects the file rather than guessing.
@@ -549,9 +550,12 @@ A value is a single-key object naming its type: `{"float": 0.5}`,
 `{"color": [r, g, b]}`, `{"vector": [x, y, z]}` or `{"bool": true}`.
 
 The material's labels are `graph.decals`, bottom to top:
-`{name, texture, mapping, opacity, roughness, metallic, enabled, side?, ink?}`.
+`{name, texture, mapping, opacity, roughness, metallic, enabled, locked?, side?, ink?}`.
 `ink` is a linear colour the artwork's colour is multiplied by, absent for
 white.
+`locked` is `true` for a label locked in the UV editor's Layers list, which
+cannot be picked or moved there; it prints as any label does. Absent, it is
+not locked.
 `side` is for a planar label, which goes straight through a part:
 `positive` prints only on faces looking along its axis, and `negative` only on
 faces looking against it, each within 60 degrees of it. Absent, it prints on both, as every label did

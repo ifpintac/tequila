@@ -244,6 +244,30 @@ pub fn reference() -> String {
     out.push_str("\nQueries (`{\"op\":\"query\",\"what\":...}`): ");
     out.push_str(&crate::document::APP_QUERIES.iter().map(|q| format!("`{q}`")).collect::<Vec<_>>().join(", "));
     out.push_str("; a headless session answers all but `ui` and `jobs`.\n\n");
+    out.push_str(
+        "## UV layouts\n\n\
+         A part's UV layout is edited by the `uv.*` commands below, and written as a\n\
+         picture by `uv_layout`, which changes nothing and so is not a command: an\n\
+         SVG to draw artwork over, or a PNG drawn from it, the unit square `size`\n\
+         pixels a side with v down, as the texture's rows run.\n\n\
+         ```json\n\
+         {\"op\":\"uv_layout\",\"node\":12,\"path\":\"C:/work/bottle-uv.png\",\"set\":0,\"size\":2048,\"fill\":\"islands\"}\n\
+         ```\n\n\
+         `fill` is `islands`, `none`, or a heatmap of how much the layout stretches\n\
+         each triangle: `area` or `angle`. `edges`, `seams` and `note` (the square's\n\
+         size in millimetres, where the layout is as dense all over) are on unless\n\
+         set false; `line` draws the lines in one colour, `\"#rrggbb\"`, and\n\
+         `transparent` leaves out the white square under them. The format is the\n\
+         path's extension unless `format` says. From Python:\n\
+         `fs.uv_layout(node, path, size=2048, fill='islands')`. The application and\n\
+         a headless session both answer it; it cannot go inside a batch.\n\n\
+         In the commands, an island is named by its number - islands are numbered\n\
+         in the order of their first triangle - a vertex by its mesh vertex number,\n\
+         and an edge by the mesh vertices at its two ends, on either side of it.\n\
+         Edits keep vertex numbers, adding new vertices after the others where a\n\
+         cut splits them. A seam is an edge whose two sides the layout puts in\n\
+         different places; there is no seam attribute to set.\n\n",
+    );
     out.push_str(&format!(
         "## Commands\n\n{} commands, each applied as `{{\"op\":\"apply\",\"command\":{{\"command\":<name>, ...}}}}`, or from Python as\n`fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are\nplaceholders: read the real ones from the scene first.\n",
         all.len()

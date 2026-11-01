@@ -534,6 +534,19 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::DeleteNodes { .. }
         | Command::SplitIntoParts { .. }
         | Command::UnwrapUvs { .. }
+        | Command::CutUvs { .. }
+        | Command::StitchUvs { .. }
+        | Command::TransformUvs { .. }
+        | Command::ReflattenUvs { .. }
+        | Command::PackUvs { .. }
+        | Command::StraightenUvs { .. }
+        | Command::EvenUvDensity { .. }
+        | Command::AddUvSet { .. }
+        | Command::CopyUvSet { .. }
+        | Command::DeleteUvSet { .. }
+        | Command::MoveUvSet { .. }
+        | Command::SetUvPositions { .. }
+        | Command::PlaceUvIslands { .. }
         | Command::Rename { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }
@@ -545,6 +558,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::Group { .. }
         | Command::Ungroup { .. }
         | Command::SetMetadata { .. }
+        | Command::SetUvGuides { .. }
         | Command::SetUnits { .. }
         | Command::AssignMaterial { .. }
         | Command::UnlinkMaterial { .. }
@@ -610,6 +624,26 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::DeleteNodes { nodes: vec![] },
         Command::SplitIntoParts { node: NodeId(1) },
+        Command::UnwrapUvs { node: NodeId(1), options: Default::default() },
+        Command::CutUvs { node: NodeId(1), set: 0, edges: vec![[0, 1]], reflatten: true },
+        Command::StitchUvs { node: NodeId(1), set: 0, edges: vec![[0, 1]] },
+        Command::TransformUvs {
+            node: NodeId(1),
+            set: 0,
+            selection: tequila_scene::uv::UvSelection::Islands(vec![0]),
+            transform: tequila_scene::uv::UvAffine::IDENTITY,
+            pivot: tequila_scene::uv::Pivot::Origin,
+        },
+        Command::ReflattenUvs { node: NodeId(1), set: 0, islands: vec![0], pins: Vec::new(), repack: false },
+        Command::PackUvs { node: NodeId(1), set: 0, islands: Vec::new(), options: Default::default() },
+        Command::StraightenUvs { node: NodeId(1), set: 0, islands: vec![0], by: tequila_scene::uv::StraightenBy::Axis, to: Default::default() },
+        Command::EvenUvDensity { node: NodeId(1), set: 0, islands: vec![0], target: Default::default() },
+        Command::AddUvSet { node: NodeId(1) },
+        Command::CopyUvSet { node: NodeId(1), from: 0, to: 1 },
+        Command::DeleteUvSet { node: NodeId(1), set: 0 },
+        Command::MoveUvSet { node: NodeId(1), from: 0, to: 1 },
+        Command::SetUvPositions { node: NodeId(1), set: 0, vertices: vec![0], uv: vec![[0.5, 0.5]] },
+        Command::PlaceUvIslands { node: NodeId(1), set: 0, islands: vec![0], maps: vec![tequila_scene::uv::UvAffine::IDENTITY] },
         Command::Reimport {
             payload: Box::new(tequila_scene::reimport::ReimportPayload {
                 added: tequila_scene::command::ImportPayload {
@@ -647,6 +681,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             key: String::new(),
             value: None,
         },
+        Command::SetUvGuides { node: NodeId(1), guides: Vec::new() },
         Command::SetUnits {
             unit: LengthUnit::Metre,
             mode: ConversionMode::ScaleScene,
