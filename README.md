@@ -1,8 +1,10 @@
 # Tequila: Product Rendering
 
-**[Website](https://ifpintac.github.io/tequila/)** · **[Download](../../releases/latest)** · **[Discord](https://discord.gg/Na5T2qgQBX)**
+**[Website](https://ifpintac.github.io/tequila/)** · **[Download](../../releases/latest)** · **[Discord](https://discord.gg/Na5T2qgQBX)** · **[Support on Ko-fi](https://ko-fi.com/ifpintac)**
 
-**Free, open-source product rendering for Windows and Mac.** Bring in a CAD
+![Headphones rendered in Tequila, lit from behind on a black set](website/assets/img/hero-headphones.jpg)
+
+**Free, open-source product rendering for Windows, Mac and Linux.** Bring in a CAD
 model, put real materials on it, light it, and render pictures of the product
 - with the viewport rendering the final image live as you work.
 
@@ -42,13 +44,22 @@ not signed with a paid certificate:
   Settings > Privacy & Security**, scroll down and click **Open Anyway** next
   to Tequila.
 
-## Community
+## Community and support
 
 Questions, bugs, ideas and renders: join the
 **[Tequila Discord](https://discord.gg/Na5T2qgQBX)**. Bugs can also go in
 [GitHub issues](../../issues).
 
+Tequila is free, with no account, no licence key and no ads. If it saves you
+time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
+
 ## What it does
+
+<p>
+  <img src="website/assets/img/lighting-home.jpg" width="32%" alt="A perfume bottle on a mirror floor, its glass edges drawn by strip lights">
+  <img src="website/assets/img/holder-hero.jpg" width="32%" alt="An orange 3D-printed helmet holder on a teal wall, with its long shadow">
+  <img src="website/assets/img/app-uv.jpg" width="32%" alt="Tequila's UV editor">
+</p>
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
   OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
@@ -62,18 +73,27 @@ Questions, bugs, ideas and renders: join the
   bubbles, wood, stone...), a node editor, labels and decals, texture packs, KeyShot
   material packages (.kmp), colourways and variants. Drop a material on a
   part, on a selection or on a whole group.
+- **UV editor and labels** - unwrap a part in a click; cut and stitch seams,
+  pin, pack, straighten and relax islands; symmetry, a 2D cursor, snapping,
+  rulers, guides and layers; labels placed and sized in millimetres; texel
+  density and a stretch heatmap, and SVG or PNG layout export.
 - **Lighting** - HDRI environments and an HDRI editor, sun and sky, area,
   spot, point and IES lights, light groups you can relight after rendering,
-  and studio setups saved by name.
+  and studio presets that set up lights, cameras, floor and look for any
+  product in one step.
 - **Camera and look** - a photographic camera with depth of field,
   orthographic views, and AgX, ACES and PBR Neutral tone mapping.
 - **Floors** - shadow catchers, contact shadows, and objects-only mirror
   reflections.
-- **Rendering** - a queue, render layers and passes (Cryptomatte included),
-  region renders, EXR/PNG/JPEG, batch renders of every configuration, and
-  network rendering across computers.
-- **Sharing** - web export (live 3D or pre-rendered), a spin viewer, and glTF
-  and USD export; a full-screen presentation mode.
+- **Rendering** - Cycles on NVIDIA and AMD cards (every card at once) or the
+  processor, and Tequila's own path tracer with spectral rendering for gems;
+  a queue, render layers and passes (Cryptomatte included), region renders,
+  EXR/PNG/JPEG, batch renders of every configuration, turntables, network
+  rendering across computers, and **Render wireframe** for line drawings in
+  a second or two.
+- **Sharing** - web export (live 3D or pre-rendered:
+  [try one](https://ifpintac.github.io/tequila/demo/helmet-holder/)), a spin
+  viewer, and glTF and USD export; a full-screen presentation mode.
 - **Cutaways**, measurements, model sets and a configurator.
 - **AI apps and automation** - connect Claude, Cursor, VS Code (GitHub
   Copilot), Codex, Gemini CLI, Windsurf or LM Studio in one click, or any
@@ -83,7 +103,8 @@ Questions, bugs, ideas and renders: join the
   model;
   Python scripting, plugins, a command-line renderer, and a Blender live link.
 
-Animation is not part of Tequila yet.
+Beyond turntables, animation is not part of Tequila yet; it's on the
+[roadmap](https://ifpintac.github.io/tequila/roadmap.html).
 
 ## Building it yourself
 
@@ -116,11 +137,13 @@ cargo test --workspace --release
 
 ## Documentation
 
+- [The website's docs](https://ifpintac.github.io/tequila/docs.html), and
+  [what's new](https://ifpintac.github.io/tequila/whats-new.html) in each version
 - [Scripting and AI apps](docs/SCRIPTING.md) - Python, the command line, and
   MCP for AI apps
 - [Writing plugins](docs/plugins.md)
 - [Making materials](docs/materials-authoring.md)
-- [The specification](docs/TEQUILA_SPEC.md) and the [roadmap and status](docs/05-ROADMAP-AND-TESTING.md)
+- [The specification](docs/TEQUILA_SPEC.md), the engineering [roadmap and status](docs/05-ROADMAP-AND-TESTING.md), and the [public roadmap](https://ifpintac.github.io/tequila/roadmap.html)
 - [Code signing policy](docs/CODE-SIGNING.md)
 
 ## Licence
