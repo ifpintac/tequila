@@ -82,7 +82,7 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 .brand:hover { text-decoration: none; }
 .brand img { width: 30px; height: 30px; }
 .nav { display: flex; gap: 4px; margin-left: 8px; }
-.nav a { color: var(--text-soft); font-size: 15px; padding: 7px 12px; border-radius: 8px; }
+.nav a { color: var(--text-soft); font-size: 15px; padding: 7px 12px; border-radius: 8px; white-space: nowrap; }
 .nav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); text-decoration: none; }
 .nav a[aria-current="page"] { color: var(--text); }
 .header-end { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -293,9 +293,38 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .button, .swatch img, .strip img, a.card { transition: none; }
 }
 
+/* ---------- Roadmap ---------- */
+
+.updated { color: var(--text-faint); font-size: 15px; margin: 18px 0 0; }
+.board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.lane { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.lane.now { border-color: var(--teal-deep); box-shadow: 0 0 0 1px var(--teal-deep), 0 30px 60px -36px rgba(53, 199, 176, 0.4); }
+.lane > header { padding: 4px 4px 18px; }
+.lane h2 { font-size: 28px; display: flex; align-items: center; gap: 12px; margin: 0 0 6px; }
+.lane > header p { color: var(--text-soft); font-size: 15px; margin: 0; }
+.lane-dot { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--teal); flex: none; }
+.lane.now .lane-dot { background: var(--teal); box-shadow: 0 0 0 5px var(--teal-glow); }
+.lane.next .lane-dot { background: linear-gradient(90deg, var(--teal) 50%, transparent 50%); }
+.lane.later .lane-dot { border-color: var(--text-faint); }
+.item { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 20px; }
+.item + .item { margin-top: 12px; }
+.item h3 { font-size: 17px; display: flex; align-items: flex-start; gap: 10px; margin: 0 0 8px; line-height: 1.25; }
+.item h3 .icon { font-size: 18px; color: var(--teal); margin-top: 1px; }
+.lane.later .item h3 .icon { color: var(--text-soft); }
+.item p { color: var(--text-soft); font-size: 14.5px; margin: 0; }
+.item strong { color: var(--text); font-weight: 600; }
+
+.shipped { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.shipped .card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.shipped img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-bottom: 1px solid var(--line); }
+.shipped .body { padding: 20px 22px 24px; }
+.shipped time { color: var(--text-faint); font-size: 14px; }
+.shipped h3 { margin: 4px 0 8px; }
+
 /* ---------- Narrow screens ---------- */
 
-@media (max-width: 1100px) {
+/* Four download cards need about 1060 pixels of row, scrollbar aside. */
+@media (max-width: 1160px) {
   .platforms { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -305,12 +334,16 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 
-@media (max-width: 860px) {
+/* The six links need about 960 pixels; below that they fold into the menu button. */
+@media (max-width: 980px) {
   .nav { display: none; position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px var(--gutter) 18px; margin: 0; }
   .nav.open { display: flex; }
   .nav a { padding: 12px; font-size: 17px; }
   .menu-button { display: grid; place-items: center; }
   .header-end .button { display: none; }
+}
+
+@media (max-width: 860px) {
   .feature, .feature.flip { grid-template-columns: 1fr; }
   .feature.flip .feature-media { order: 0; }
   .cta { grid-template-columns: 1fr; }
@@ -321,6 +354,8 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .doc-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px; }
   .doc-nav .label { width: 100%; padding: 8px 4px 2px; }
   .two { grid-template-columns: 1fr; }
+  .board, .shipped { grid-template-columns: 1fr; }
+  .shipped img { aspect-ratio: 21 / 9; }
   .hero-art img { object-position: 70% 50%; }
   .hero-art::after { background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 0.35) 100%), linear-gradient(0deg, var(--bg) 0%, rgba(11, 12, 13, 0) 30%); }
 }
