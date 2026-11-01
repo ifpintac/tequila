@@ -22,10 +22,11 @@
       <a href="gallery.html">Gallery</a>
       <a href="docs.html" aria-current="page">Docs</a>
       <a href="whats-new.html">What's new</a>
+      <a href="roadmap.html">Roadmap</a>
       <a href="download.html">Download</a>
     </nav>
     <div class="header-end">
-      <a class="icon-link" href="https://discord.gg/Na5T2qgQBX" aria-label="Discord" title="Discord"><i class="icon" aria-hidden="true">&#xe411;</i></a>
+      <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Discord</a>
       <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
       <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
       <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
@@ -123,10 +124,15 @@ with tequila.open('product.step') as fs:
         <details class="faq"><summary>Is it really free?</summary><p>Yes. Tequila is open source under the Apache License 2.0: free to use for any work, commercial included, with no account and no licence key.</p></details>
         <details class="faq"><summary>Do I need a graphics card?</summary><p>No. With an NVIDIA or AMD card (or a Mac with Apple silicon), Cycles renders on it, which is much faster. Without one, Tequila renders on the processor.</p></details>
         <details class="faq"><summary>Is it a copy of KeyShot?</summary><p>No. Tequila follows the same kind of workflow as commercial product renderers, and it can open KeyShot scenes, but it's written independently from published rendering science. It isn't affiliated with Luxion, the makers of KeyShot.</p></details>
-        <details class="faq"><summary>Does it do animation?</summary><p>Not yet. Tequila renders stills, turntable spin viewers and web pages for now.</p></details>
+        <details class="faq"><summary>Does it do animation?</summary><p>Turntables, yes: the Studio tab makes one, and spin viewers and web pages go round the product too. Exploded views, fly-throughs and motion blur are on the <a href="roadmap.html">Roadmap</a>.</p></details>
         <details class="faq"><summary>Why does my computer warn me when I open it?</summary><p>Because it isn't signed with a paid certificate yet. The <a href="download.html">Download page</a> shows the two clicks that get past the warning on Windows and on a Mac.</p></details>
         <details class="faq"><summary>How do I update?</summary><p><strong>Help › Check for updates</strong> installs the newest version and keeps your materials, plugins and settings. Tequila also checks once a day when it starts, which you can turn off in the same window.</p></details>
         <details class="faq"><summary>Where do I get help or report a bug?</summary><p>Ask on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>, or open a <a href="https://github.com/ifpintac/tequila/issues">GitHub issue</a>. If Tequila closes unexpectedly, the next launch shows a crash report with a <strong>Copy for Discord</strong> button.</p></details>
+
+        <div class="discord-note">
+          <p><strong>Didn't find it here?</strong> Ask on the Discord.</p>
+          <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+        </div>
 
       </div>
     </div>
@@ -141,6 +147,7 @@ with tequila.open('product.step') as fs:
       <div class="footer-about">
         <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
         <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+        <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
       </div>
       <div>
         <h4>Tequila</h4>
@@ -149,6 +156,7 @@ with tequila.open('product.step') as fs:
           <li><a href="gallery.html">Gallery</a></li>
           <li><a href="download.html">Download</a></li>
           <li><a href="whats-new.html">What's new</a></li>
+        <li><a href="roadmap.html">Roadmap</a></li>
         </ul>
       </div>
       <div>

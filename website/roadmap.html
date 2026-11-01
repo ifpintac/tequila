@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap · Tequila</title>
+<meta name="description" content="What's being worked on in Tequila now, what comes next, and what's further out.">
+<meta property="og:title" content="Tequila's roadmap">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="docs.html">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="roadmap.html" aria-current="page">Roadmap</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Discord</a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker">Roadmap</span>
+    <h1>Where Tequila is going.</h1>
+    <p class="lede">What's being worked on now, what comes next, and what's further out. Plans move as people use Tequila and tell us what they need; what has actually shipped is on <a href="whats-new.html">What's new</a>.</p>
+    <p class="updated">Updated November 1, 2026</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="board">
+
+      <section class="lane now" aria-labelledby="lane-now">
+        <header>
+          <h2 id="lane-now"><span class="lane-dot" aria-hidden="true"></span>Now</h2>
+          <p>The work for the next release.</p>
+        </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe2d4;</i>Smooth curves in Tequila's renderer</h3>
+          <p>On curved glass and velvet, Tequila's own renderer can show the model's triangles, most of all in close-ups and in a mirror floor's reflection. Cycles draws the same models smooth.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe0b9;</i>Liquid inside glass in Cycles</h3>
+          <p>Where a liquid touches its bottle, Cycles bends the light as if the liquid met air, so perfume and drinks look paler than in Tequila's renderer. Both renderers should agree on bottles.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe361;</i>Inside-out models in Cycles</h3>
+          <p>Some exporters write a solid inside out. Tequila's renderer shows it as the solid it is, but Cycles shows an air bubble. Both should show the solid.</p>
+        </article>
+      </section>
+
+      <section class="lane next" aria-labelledby="lane-next">
+        <header>
+          <h2 id="lane-next"><span class="lane-dot" aria-hidden="true"></span>Next</h2>
+          <p>Planned once the work above ships.</p>
+        </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe2d7;</i>Glossy reflections, finished</h3>
+          <p>A lamp seen in a mirror-smooth surface on every light path, parts that cast no shadow treated the same everywhere, and less noise from weak lamps in scenes with many lights.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe0c2;</i>Fibres</h3>
+          <p>A texture on velvet or fur colours the fibres too, not only the surface under them, and large parts get denser fibres.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe104;</i>UV editor</h3>
+          <p>Pins saved with the project and undoable, lines on the part hidden behind it, tighter <strong>Line up edges</strong> and <strong>As on the part</strong>, and the checker in every view and on every UV set.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe52d;</i>Studios</h3>
+          <p>A picture of each Studio in the Studio tab, and reordering them by dragging.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe0ad;</i>Tested on more machines</h3>
+          <p>AMD graphics cards, several cards at once, and Intel and Apple-silicon Macs, tried on real computers as well as GitHub's. Have one? Tell us how it goes on <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</p>
+        </article>
+      </section>
+
+      <section class="lane later" aria-labelledby="lane-later">
+        <header>
+          <h2 id="lane-later"><span class="lane-dot" aria-hidden="true"></span>Later</h2>
+          <p>Wanted, but not scheduled yet.</p>
+        </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe29a;</i>More animation</h3>
+          <p>Exploded views, camera fly-throughs, part reveals and motion blur, on top of today's turntables.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe1fe;</i>A signed Windows installer</h3>
+          <p>Free signing through the SignPath Foundation, so Windows stops warning about Tequila the first time it runs.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe5a3;</i>KeyShot materials, closer</h3>
+          <p>Materials from KeyShot scenes matched more closely to how KeyShot renders them.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe35a;</i>AI image tools</h3>
+          <p>Restyle a finished render, change its background or upscale it, guided by the render's own depth, normals and masks.</p>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe472;</i>Review scenes together</h3>
+          <p>Look over a scene with others and leave notes on it, made practical by Tequila's open file format.</p>
+        </article>
+      </section>
+
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Recently shipped</span>
+      <h2>Already in Tequila.</h2>
+      <p>The last three releases. Every version's full notes are on <a href="whats-new.html">What's new</a>.</p>
+    </div>
+    <div class="shipped">
+      <a class="card" href="whats-new.html">
+        <img src="assets/img/app-uv.jpg" alt="The UV editor" loading="lazy">
+        <div class="body">
+          <time datetime="2026-11-01">November 1, 2026</time>
+          <h3>2026.11.01.1340</h3>
+          <p>A full UV editor, wireframe renders, KeyShot scenes, real fibres, spectral rendering, AMD cards and every card at once, Cycles on Linux, and Intel Macs.</p>
+        </div>
+      </a>
+      <a class="card" href="whats-new.html">
+        <img src="assets/img/headphones-three-quarter.jpg" alt="The headphones sample scene" loading="lazy">
+        <div class="body">
+          <time datetime="2026-10-30">October 30, 2026</time>
+          <h3>2026.10.30.1120</h3>
+          <p>Tequila on Linux, a start screen with sample scenes, updates from inside Tequila, studio presets, turntables, passes and relighting from Cycles, and AI apps in one click.</p>
+        </div>
+      </a>
+      <a class="card" href="whats-new.html">
+        <img src="assets/img/materials-sheet.jpg" alt="Library materials on spheres" loading="lazy">
+        <div class="body">
+          <time datetime="2026-10-20">October 20, 2026</time>
+          <h3>2026.10.20.1656</h3>
+          <p>Auto Materials 3.0, plugins turned on in one click, more labels in the viewport, measured car-paint flakes from KeyShot packages, and opening files from the Mac's Finder.</p>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="section" style="padding-top:0">
+  <div class="wrap">
+    <div class="cta reveal">
+      <div>
+        <h2>Something you need?</h2>
+        <p>Tell us on Discord, or open an issue on GitHub. What people using Tequila ask for shapes what moves up this list.</p>
+      </div>
+      <div class="buttons">
+        <a class="button button-primary" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+        <a class="button button-quiet" href="https://github.com/ifpintac/tequila/issues/new">Suggest on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+        <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+          <li><a href="roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="docs.html#start">Getting started</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#guides">Guides</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>
