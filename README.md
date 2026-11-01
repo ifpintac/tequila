@@ -1,6 +1,6 @@
 # Tequila: Product Rendering
 
-**[Download](../../releases/latest)** · **[Discord](https://discord.gg/Na5T2qgQBX)**
+**[Website](https://ifpintac.github.io/tequila/)** · **[Download](../../releases/latest)** · **[Discord](https://discord.gg/Na5T2qgQBX)**
 
 **Free, open-source product rendering for Windows and Mac.** Bring in a CAD
 model, put real materials on it, light it, and render pictures of the product

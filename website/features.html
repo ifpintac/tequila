@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features · Tequila</title>
+<meta name="description" content="Everything Tequila does: CAD import, over 300 materials, studio lighting, Cycles and Tequila's own renderer, a full UV editor, wireframe drawings, sharing, scripting and AI apps.">
+<meta property="og:title" content="Features · Tequila">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html" aria-current="page">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="docs.html">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="icon-link" href="https://discord.gg/Na5T2qgQBX" aria-label="Discord" title="Discord"><i class="icon" aria-hidden="true">&#xe411;</i></a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker">Features</span>
+    <h1>Everything it does.</h1>
+    <p class="lede">Tequila follows the workflow of a commercial product renderer: model in, materials on, lights up, picture out. Here is all of it.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="doc-layout">
+      <nav class="doc-nav" aria-label="On this page">
+        <span class="label">On this page</span>
+        <a href="#import">Import</a>
+        <a href="#materials">Materials</a>
+        <a href="#lighting">Lighting</a>
+        <a href="#rendering">Rendering</a>
+        <a href="#uv">UV editor and labels</a>
+        <a href="#camera">Camera and look</a>
+        <a href="#sharing">Sharing</a>
+        <a href="#automation">Scripting and AI</a>
+        <a href="#platforms">Platforms</a>
+      </nav>
+      <div class="prose">
+
+        <h2 id="import">Import</h2>
+        <p>Bring in what your CAD or 3D software makes, at full size, with its structure intact.</p>
+        <ul>
+          <li><strong>CAD:</strong> STEP through OpenCASCADE and IGES, with assemblies, names, colours, units, attributes and layers. Show or hide a layer at once.</li>
+          <li><strong>3D:</strong> glTF and GLB, OBJ (with ZBrush polypaint), STL, USD and IFC building models.</li>
+          <li><strong>Very large models.</strong> Re-tessellate a CAD part finer or coarser, and re-import a changed model without losing your materials, labels or names.</li>
+          <li><strong>Live from other apps:</strong> send models from Blender (live), SolidWorks and ZBrush.</li>
+          <li><strong>KeyShot scenes:</strong> open <code>.ksp</code> and <code>.bip</code> files with their parts, materials, labels, environments, cameras and model sets.</li>
+        </ul>
+
+        <h2 id="materials">Materials</h2>
+        <figure><img src="assets/img/materials-sheet.jpg" alt="Twenty-four material balls from Tequila's library" loading="lazy" data-zoom><figcaption>Some of the library, each ball rendered in Tequila.</figcaption></figure>
+        <ul>
+          <li><strong>A library of over 300</strong> procedural materials: plastics with mould textures, anodised, brushed and polished metals, car paint with flakes, glass, gems, liquids with bubbles, wood, stone, leather, ceramics, fabrics and 3D-print filaments.</li>
+          <li><strong>Real fibres:</strong> a material's Fuzz grows fibres for felt, velvet and tennis-ball fuzz, and both renderers draw them.</li>
+          <li><strong>A node editor</strong> for your own materials, with procedural patterns, and recipes that an AI app can write for you.</li>
+          <li><strong>Labels and decals</strong>, placed and sized in millimetres.</li>
+          <li><strong>Texture packs</strong> turned into materials in one go, and KeyShot material packages (<code>.kmp</code>).</li>
+          <li><strong>Colourways and variants</strong>, and multi-materials to switch between.</li>
+          <li><strong>Texture formats:</strong> PNG, JPEG, EXR, HDR, TGA, WebP, TIFF, BMP, SVG, GIF, DDS, JPEG XL and Photoshop files.</li>
+        </ul>
+
+        <h2 id="lighting">Lighting</h2>
+        <ul>
+          <li><strong>HDRI environments</strong>, and an HDRI editor with pins for placing highlights.</li>
+          <li><strong>Sun and sky</strong>, and area, spot, point and IES lights.</li>
+          <li><strong>Light groups</strong> you can rebalance after the render is done.</li>
+          <li><strong>Studios:</strong> lighting, camera and look saved by name, and a set of views to render in one go.</li>
+          <li><strong>Floors:</strong> shadow catchers, contact shadows, and mirror reflections of the product alone.</li>
+          <li><strong>Caustics</strong> off, by photons, or by working out each lamp's path through smooth glass.</li>
+        </ul>
+
+        <h2 id="rendering">Rendering</h2>
+        <figure><img src="assets/img/headphones-low.jpg" alt="Headphones rendered from low down" loading="lazy" data-zoom><figcaption>Rendered with Cycles on the graphics card.</figcaption></figure>
+        <ul>
+          <li><strong>Two renderers.</strong> Cycles, Blender's production path tracer, on NVIDIA and AMD graphics cards (every card at once) or the processor. And Tequila's own path tracer, which renders on any computer.</li>
+          <li><strong>The viewport renders the final picture live</strong>, denoised as it goes, with Wireframe, Solid and Material Preview views beside it.</li>
+          <li><strong>Spectral rendering</strong> in Tequila's own renderer, for the fire in gems and dispersive glass.</li>
+          <li><strong>A render queue</strong>, region renders, render layers and passes, Cryptomatte, and EXR, PNG and JPEG output.</li>
+          <li><strong>Batch renders</strong> of every configuration of a product, named by its choices.</li>
+          <li><strong>Network rendering</strong> across the computers in the room.</li>
+          <li><strong>Render wireframe:</strong> the model's edges drawn at any size in a second or two, as a technical drawing or a line drawing.</li>
+        </ul>
+
+        <h2 id="uv">UV editor and labels</h2>
+        <figure><img src="assets/img/app-uv.jpg" alt="The UV editor" loading="lazy" data-zoom><figcaption>The UV editor: a part's islands, the rulers, and the tools beside them.</figcaption></figure>
+        <ul>
+          <li><strong>Unwrap</strong> a part in a click; faces come apart at sharp edges, and curved surfaces in a few even pieces.</li>
+          <li><strong>Labels:</strong> drag, scale and turn them, fit them to a face, or set their width in millimetres.</li>
+          <li><strong>A workspace:</strong> snapping, rulers, guides saved with each part, a grid, a measure tool, a Transform panel, Align, and layers with locking.</li>
+          <li><strong>Islands:</strong> move, turn, scale and flip; cut and stitch seams; pin and lay out flat again; pack, straighten and even out the size.</li>
+          <li><strong>Shape tools:</strong> least-stretch unwrap, straight lines, grids, rectangles and circles, relax, weld, and cut by angle.</li>
+          <li><strong>Symmetry and arranging:</strong> make one side mirror the other, a 2D cursor, sort, stack repeated pieces, and lay islands out as the part looks.</li>
+          <li><strong>See it on the part:</strong> texel density, a stretch heatmap, a checker in the viewport, and padding at a texture size. Export the layout as SVG or PNG.</li>
+        </ul>
+
+        <h2 id="camera">Camera and look</h2>
+        <ul>
+          <li>A photographic camera with focal length, depth of field, lens shift and orthographic views. Several cameras per scene.</li>
+          <li>AgX, ACES and PBR Neutral tone mapping, with exposure and white balance.</li>
+          <li>ACES colour end to end through OpenColorIO, with every ACES 1.3 output transform and the common camera log curves.</li>
+        </ul>
+
+        <h2 id="sharing">Sharing</h2>
+        <ul>
+          <li><strong>Web export:</strong> a page with the product in live 3D, or pre-rendered.</li>
+          <li><strong>A spin viewer</strong>, and glTF and USD export.</li>
+          <li><strong>Presentation mode</strong>, full screen.</li>
+          <li><strong>Cutaways and measurements</strong>, model sets and a configurator.</li>
+        </ul>
+
+        <h2 id="automation">Scripting and AI</h2>
+        <ul>
+          <li><strong>Connect an AI app</strong> in one click: Claude, Cursor, VS Code (GitHub Copilot), Codex, Gemini CLI, Windsurf, LM Studio, or any other app that speaks MCP. It can set up materials, lighting and renders, make materials from a description, and write plugins.</li>
+          <li><strong>A built-in Assistant</strong> for OpenAI, Claude, Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq or a local model.</li>
+          <li><strong>Python scripting and plugins</strong>, a command-line renderer, and a Blender live link.</li>
+          <li>Every edit is an undoable command with a name, so scripts and AI apps can do anything the buttons do. See <a href="docs.html#scripting">Scripting</a>.</li>
+        </ul>
+
+        <h2 id="platforms">Platforms</h2>
+        <ul>
+          <li><strong>Windows</strong> 10 or 11, 64-bit.</li>
+          <li><strong>Mac</strong> with Apple silicon, and <strong>Intel Macs</strong> on macOS 12 or newer (with Tequila's own renderer).</li>
+          <li><strong>Linux</strong>, 64-bit, glibc 2.35 or newer.</li>
+          <li>NVIDIA (GTX 900 series or newer) and AMD (RX 5000 series or newer) cards render with Cycles; any other computer renders on the processor.</li>
+        </ul>
+        <p>Animation isn't part of Tequila yet.</p>
+        <p><a class="button button-primary" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download Tequila</a></p>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="docs.html#start">Getting started</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#guides">Guides</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>
