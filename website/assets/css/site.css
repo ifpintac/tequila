@@ -109,6 +109,9 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 /* Discord's own blue, so the way in to the community is seen at a glance. */
 .button-discord { background: #5865f2; color: #fff; box-shadow: 0 8px 28px -12px rgba(88, 101, 242, 0.9); }
 .button-discord:hover { background: #6c77f4; }
+/* Ko-fi's own red. */
+.button-kofi { background: #ff5e5b; color: #fff; box-shadow: 0 8px 28px -12px rgba(255, 94, 91, 0.85); }
+.button-kofi:hover { background: #ff7472; }
 .discord-link { color: #8f98ff !important; display: inline-flex; align-items: center; gap: 5px; }
 .discord-link .icon { font-size: 14px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
@@ -321,6 +324,11 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
 .discord-note { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: space-between; border: 1px solid rgba(88, 101, 242, 0.4); background: linear-gradient(90deg, rgba(88, 101, 242, 0.16), rgba(88, 101, 242, 0.03)); border-radius: var(--radius); padding: 18px 22px; margin: 28px 0; }
 .discord-note p { margin: 0; color: var(--text-soft); }
 .discord-note strong { color: var(--text); }
+.kofi-note { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: space-between; border: 1px solid rgba(255, 94, 91, 0.35); background: linear-gradient(90deg, rgba(255, 94, 91, 0.13), rgba(255, 94, 91, 0.02)); border-radius: var(--radius); padding: 18px 22px; margin: 0 0 28px; }
+.kofi-note p { margin: 0; color: var(--text-soft); }
+.kofi-note strong { color: var(--text); }
+.card-kofi .icon { color: #ff7d7a; background: rgba(255, 94, 91, 0.14); }
+.card-kofi .more { color: #ff8c89; }
 
 /* ---------- Roadmap ---------- */
 
