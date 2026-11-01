@@ -1,4 +1,5 @@
 import base64
+import difflib
 import io
 import json
 import socketserver
@@ -222,6 +223,24 @@ class RestrictedTests(unittest.TestCase):
         result = self.call('tequila_batch', {'ops': [{'op': 'select', 'nodes': [1]}, {'op': 'look', 'view': 'front'}]})['result']
         self.assertFalse(result['isError'])
         self.assertEqual(self.app.received[-1]['op'], 'batch')
+
+
+class BuiltInBridgeTests(unittest.TestCase):
+    """`tequila --mcp` offers these same tools, from a copy built into it."""
+
+    def test_the_built_in_bridge_carries_these_tools_exactly(self):
+        built_in = Path(tequila_mcp.__file__).resolve().parent.parent / 'crates' / 'tequila-cli' / 'src' / 'mcp_tools.json'
+        if not built_in.is_file():
+            self.skipTest('not in the source tree')
+        written = json.dumps(TOOLS, indent=1) + '\n'
+        carried = built_in.read_text(encoding='utf-8')
+        if carried != written:
+            diff = ''.join(difflib.unified_diff(carried.splitlines(True), written.splitlines(True),
+                                                'mcp_tools.json', 'TOOLS'))
+            self.fail('crates/tequila-cli/src/mcp_tools.json is no longer json.dumps(TOOLS, indent=1). '
+                      'Write it again, from the python folder:\n'
+                      r"""  python -c "import json, tequila_mcp; open('../crates/tequila-cli/src/mcp_tools.json', 'w', """
+                      r"""newline='\n').write(json.dumps(tequila_mcp.TOOLS, indent=1) + '\n')" """ '\n' + diff)
 
 
 class StdioTests(unittest.TestCase):
