@@ -250,6 +250,11 @@ a.card .more { color: var(--teal); font-size: 14px; margin-top: 14px; display: i
 .prose figcaption { color: var(--text-faint); font-size: 14px; margin-top: 10px; }
 /* A portrait picture at a size that leaves the text in view. */
 .prose figure.tall img { max-width: min(100%, 440px); }
+/* Two pictures side by side in one figure. */
+.prose .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.prose .pair img { width: 100%; height: auto; }
+/* A live page from Tequila's web export, framed like a picture. */
+.prose figure.demo iframe { display: block; width: 100%; aspect-ratio: 4 / 3; border: 1px solid var(--line); border-radius: var(--radius); background: #d9dcdf; }
 
 details.faq { border-bottom: 1px solid var(--line); padding: 18px 0; }
 details.faq summary { cursor: pointer; font-weight: 600; font-size: 17px; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
@@ -380,6 +385,8 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .doc-nav .label { width: 100%; padding: 8px 4px 2px; }
   .two { grid-template-columns: 1fr; }
   .board, .shipped { grid-template-columns: 1fr; }
+  .prose .pair { grid-template-columns: minmax(0, 1fr); }
+  .prose figure.demo iframe { aspect-ratio: 4 / 5; }
   .discord-band { grid-template-columns: 1fr; gap: 18px; }
   .shipped img { aspect-ratio: 21 / 9; }
   .hero-art img { object-position: 70% 50%; }
