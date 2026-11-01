@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs · Tequila</title>
+<meta name="description" content="Getting started with Tequila: your first render in three steps, the viewport, the renderers, scripting and AI apps, guides and common questions.">
+<meta property="og:title" content="Tequila docs">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="icon-link" href="https://discord.gg/Na5T2qgQBX" aria-label="Discord" title="Discord"><i class="icon" aria-hidden="true">&#xe411;</i></a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker">Docs</span>
+    <h1>Getting started.</h1>
+    <p class="lede">Your first render takes three steps. After that, here's how the viewport and the renderers work, how to script Tequila, and where the longer guides are.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="doc-layout">
+      <nav class="doc-nav" aria-label="On this page">
+        <span class="label">On this page</span>
+        <a href="#start">Your first render</a>
+        <a href="#viewport">The viewport</a>
+        <a href="#renderers">Which renderer</a>
+        <a href="#scripting">Scripting and AI apps</a>
+        <a href="#guides">Guides</a>
+        <a href="#faq">Questions</a>
+      </nav>
+      <div class="prose">
+
+        <h2 id="start">Your first render</h2>
+        <p>When Tequila opens, a welcome card lists the same three steps. The start screen also has two sample scenes, the headphones and the perfume bottle, if you'd like to look around first.</p>
+        <figure><img src="assets/img/app-start.jpg" alt="Tequila's welcome card with its three steps, over the headphones sample rendering live" loading="lazy" data-zoom><figcaption>The welcome card, over the headphones sample.</figcaption></figure>
+        <ol class="steps">
+          <li><strong>Bring in a model.</strong> Choose <strong>File › Import model…</strong>, or drop a file on the window: STEP, IGES, glTF, OBJ, STL, USD, IFC, or a KeyShot scene. Tequila keeps the model's parts, names and colours.</li>
+          <li><strong>Dress it.</strong> Open the <strong>Library</strong> and drag a material onto any part. Drop it on a selection or a group to dress several at once. The Material tab beside it fine-tunes what you dropped.</li>
+          <li><strong>Take the shot.</strong> Press <strong>Render</strong>, then choose the size, the quality and the file. The render window shows it as it finishes, and the queue keeps going while you work.</li>
+        </ol>
+        <figure><img src="assets/img/app-library.jpg" alt="The material library open beside the viewport" loading="lazy" data-zoom><figcaption>The Library: drag a ball onto a part.</figcaption></figure>
+        <p>For the light, pick an environment in the <strong>Environment</strong> tab, or a whole setup of lighting, camera and look in <strong>Studios</strong>. Then turn the environment until the highlights fall where you want them.</p>
+
+        <h2 id="viewport">The viewport</h2>
+        <p>The viewport has four views. Switch between them with the buttons at its top left.</p>
+        <ul>
+          <li><strong>Wireframe:</strong> the model's triangles, for checking a mesh.</li>
+          <li><strong>Solid:</strong> plain shading on the graphics card, for arranging parts quickly.</li>
+          <li><strong>Material Preview:</strong> materials and lighting on the graphics card, instantly.</li>
+          <li><strong>Rendered:</strong> the final picture, path traced and refining live. It's denoised as it goes, and pauses its denoising while you move the camera.</li>
+        </ul>
+        <p><strong>Help › Navigation and shortcuts</strong> lists the mouse and keyboard controls.</p>
+
+        <h2 id="renderers">Which renderer</h2>
+        <p>New projects render with <strong>Cycles on the graphics card</strong>: Blender's production path tracer, on NVIDIA (CUDA and OptiX), AMD (HIP) and Apple (Metal) graphics. You can change it per project in the render settings. Tequila picks another renderer by itself when it has to:</p>
+        <ul>
+          <li>With no graphics card Cycles can use, Cycles renders on the processor.</li>
+          <li>Where Cycles isn't available, as on Intel Macs, Tequila's own path tracer renders.</li>
+          <li>Render layers and render regions always come from Tequila's own renderer.</li>
+        </ul>
+        <p>Tequila's own renderer also does spectral rendering for gems and dispersive glass. Both renderers draw the same materials, lights and fibres, and their results are meant to look alike.</p>
+
+        <h2 id="scripting">Scripting and AI apps</h2>
+        <h3>Connect an AI app</h3>
+        <p>The <strong>Connect an AI</strong> window sets up an AI app in one click: Claude, Cursor, VS Code (GitHub Copilot), Codex, Gemini CLI, Windsurf or LM Studio, or any other app that speaks MCP. Then ask it, in your own words, to set up materials, lighting and renders, to make a material from a description, or to write a plugin. Tequila's built-in Assistant does the same with the provider you choose, or with a local model.</p>
+        <figure><img src="assets/img/app-connect.jpg" alt="The Connect an AI window" loading="lazy" data-zoom></figure>
+
+        <h3>Python</h3>
+        <p>The <code>tequila</code> Python module drives Tequila from scripts: open a model, dress it and render it, with or without the window.</p>
+<pre><code>import tequila
+
+with tequila.open('product.step') as fs:
+    fs.library.apply('Aluminium Anodised Blue', *fs.parts())
+    fs.render('product.png', width=1920, height=1080, samples=256)</code></pre>
+        <p><code>tequila.connect()</code> drives the Tequila you have open instead. Every edit a script makes is one step to undo, just like a click.</p>
+
+        <h3>The command line</h3>
+        <p><code>tequila-cli</code> renders projects and models without a window, for build servers and batch jobs:</p>
+<pre><code>tequila-cli -i product.tequila -o product.png -w 1920 -h 1080 -s 256 --engine cycles</code></pre>
+        <p><code>tequila-cli --help</code> lists everything, including <code>--wireframe</code> for line drawings and <code>--studio</code> to render a saved studio view.</p>
+
+        <h2 id="guides">Guides</h2>
+        <div class="grid grid-3" style="margin-top:8px">
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/SCRIPTING.md"><i class="icon" aria-hidden="true">&#xe097;</i><h3>Scripting and AI apps</h3><p>Python, the command line, and MCP for AI apps.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/scripting-api.md"><i class="icon" aria-hidden="true">&#xe063;</i><h3>Command reference</h3><p>Every command a script can send, with an example of each.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/plugins.md"><i class="icon" aria-hidden="true">&#xe12c;</i><h3>Plugins</h3><p>Add your own tools and panels in Python.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/materials-authoring.md"><i class="icon" aria-hidden="true">&#xe1dc;</i><h3>Making materials</h3><p>How library materials are written and shared.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/studio-presets.md"><i class="icon" aria-hidden="true">&#xe068;</i><h3>Studio presets</h3><p>Lighting, cameras and views saved and reused.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/keyshot-import.md"><i class="icon" aria-hidden="true">&#xe312;</i><h3>Opening KeyShot scenes</h3><p>What comes across from <code>.ksp</code> and <code>.bip</code> files.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/file-format.md"><i class="icon" aria-hidden="true">&#xe065;</i><h3>The project file</h3><p>What's inside a <code>.tequila</code> file.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/blob/main/docs/livelink-protocol.md"><i class="icon" aria-hidden="true">&#xe128;</i><h3>Live link</h3><p>How Blender and other apps send models live.</p></a>
+          <a class="card" href="https://github.com/ifpintac/tequila/tree/main/integrations"><i class="icon" aria-hidden="true">&#xe2cf;</i><h3>Integrations</h3><p>Blender, SolidWorks and ZBrush add-ons.</p></a>
+        </div>
+
+        <h2 id="faq">Questions</h2>
+        <details class="faq"><summary>Is it really free?</summary><p>Yes. Tequila is open source under the Apache License 2.0: free to use for any work, commercial included, with no account and no licence key.</p></details>
+        <details class="faq"><summary>Do I need a graphics card?</summary><p>No. With an NVIDIA or AMD card (or a Mac with Apple silicon), Cycles renders on it, which is much faster. Without one, Tequila renders on the processor.</p></details>
+        <details class="faq"><summary>Is it a copy of KeyShot?</summary><p>No. Tequila follows the same kind of workflow as commercial product renderers, and it can open KeyShot scenes, but it's written independently from published rendering science. It isn't affiliated with Luxion, the makers of KeyShot.</p></details>
+        <details class="faq"><summary>Does it do animation?</summary><p>Not yet. Tequila renders stills, turntable spin viewers and web pages for now.</p></details>
+        <details class="faq"><summary>Why does my computer warn me when I open it?</summary><p>Because it isn't signed with a paid certificate yet. The <a href="download.html">Download page</a> shows the two clicks that get past the warning on Windows and on a Mac.</p></details>
+        <details class="faq"><summary>How do I update?</summary><p><strong>Help › Check for updates</strong> installs the newest version and keeps your materials, plugins and settings. Tequila also checks once a day when it starts, which you can turn off in the same window.</p></details>
+        <details class="faq"><summary>Where do I get help or report a bug?</summary><p>Ask on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>, or open a <a href="https://github.com/ifpintac/tequila/issues">GitHub issue</a>. If Tequila closes unexpectedly, the next launch shows a crash report with a <strong>Copy for Discord</strong> button.</p></details>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="docs.html#start">Getting started</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#guides">Guides</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>
