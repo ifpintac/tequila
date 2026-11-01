@@ -220,6 +220,7 @@ a.card .more { color: var(--teal); font-size: 14px; margin-top: 14px; display: i
 .steps li strong { color: var(--text); }
 
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.two > *, .doc-layout > * { min-width: 0; }
 .note { background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 26px; }
 .note h3 { display: flex; align-items: center; gap: 10px; }
 .note h3 .icon { color: var(--warm); }
@@ -294,9 +295,12 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
 
 /* ---------- Narrow screens ---------- */
 
+@media (max-width: 1100px) {
+  .platforms { grid-template-columns: repeat(2, 1fr); }
+}
+
 @media (max-width: 1020px) {
   .grid { grid-template-columns: repeat(2, 1fr); }
-  .platforms { grid-template-columns: repeat(2, 1fr); }
   .swatches { grid-template-columns: repeat(4, 1fr); }
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
@@ -321,9 +325,13 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .hero-art::after { background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 0.35) 100%), linear-gradient(0deg, var(--bg) 0%, rgba(11, 12, 13, 0) 30%); }
 }
 
+@media (max-width: 640px) {
+  .platforms { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 560px) {
   body { font-size: 16px; }
-  .grid, .grid-3, .platforms { grid-template-columns: 1fr; }
+  .grid, .grid-3 { grid-template-columns: 1fr; }
   .swatches { grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .footer-grid { grid-template-columns: 1fr; }
   .buttons .button { width: 100%; justify-content: center; }
