@@ -15,7 +15,7 @@ use crate::scene::ShadowCatcher;
 use crate::shade;
 use crate::settings::{IntegratorConfig, ShadowGlass};
 use tequila_core::ids::InstanceId;
-use tequila_core::math::{offset_ray_origin, Onb, Ray, Vec2, Vec3};
+use tequila_core::math::{offset_ray_origin_at, Onb, Ray, Vec2, Vec3};
 use tequila_core::sampler::Sampler;
 use tequila_core::sampling::mis_power;
 use tequila_core::spectrum::Spectrum;
@@ -274,7 +274,7 @@ fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
         // on its own — offsetting along that instead would push the origin
         // back to the side it started on and find the same surface for ever.
         let (facing, _) = hit.facing_forward(probe.direction);
-        probe = Ray::new(offset_ray_origin(hit.position, -facing), probe.direction);
+        probe = Ray::new(hit.offset(-facing), probe.direction);
     }
 
     for (instance, material, n) in &counts[..used] {
@@ -1200,7 +1200,7 @@ fn trace<C: PathColour>(
             crossings += 1;
             let (geometric, _) = hit.facing_forward(ray.direction);
             ray = Ray::new(
-                tequila_core::math::offset_ray_origin(hit.position, -geometric),
+                hit.offset(-geometric),
                 ray.direction,
             );
             continue;
@@ -1345,7 +1345,7 @@ fn trace<C: PathColour>(
                 }
                 crossings += 1;
                 let (geometric, _) = hit.facing_forward(ray.direction);
-                ray = Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction);
+                ray = Ray::new(hit.offset(-geometric), ray.direction);
                 prev_pdf_solid_angle = f32::INFINITY;
                 through_glass = ShadowGlass::Solid;
                 seen_from = None;
@@ -1420,7 +1420,7 @@ fn trace<C: PathColour>(
             crossings += 1;
             media.cross_with(hit.instance, base, scene.density(hit.instance));
             let (geometric, _) = hit.facing_forward(ray.direction);
-            ray = Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction);
+            ray = Ray::new(hit.offset(-geometric), ray.direction);
             continue;
         }
 
@@ -1547,7 +1547,7 @@ fn trace<C: PathColour>(
             // the light through every surface along the ray, averaged
             // rather than sampled, as a shadow ray's is.
             if bounce == 0 && settled_coverage.is_none() {
-                let beyond = tequila_core::math::offset_ray_origin(hit.position, -geometric_normal);
+                let beyond = hit.offset(-geometric_normal);
                 let (coverage, catcher) = camera_coverage(intersector, beyond, ray.direction, material.geometry_opacity);
                 settled_coverage = Some(coverage);
                 catcher_behind = catcher;
@@ -1561,7 +1561,7 @@ fn trace<C: PathColour>(
                 // geometric normal points back towards where the ray came
                 // from, so the offset is away from it.
                 ray = Ray::new(
-                    tequila_core::math::offset_ray_origin(hit.position, -geometric_normal),
+                    hit.offset(-geometric_normal),
                     ray.direction,
                 );
                 // Everything else is deliberately untouched: no bounce spent,
@@ -1840,6 +1840,7 @@ fn trace<C: PathColour>(
             if config.light_source_materials && !scene.emitters().is_empty() {
                 emitters_from = Some(crate::emitters::Receiver {
                     position: hit.position,
+                    magnitude: hit.magnitude,
                     normal: geometric_normal,
                     two_sided: bsdf.flags().contains(BsdfFlags::TRANSMISSION),
                 });
@@ -2020,7 +2021,7 @@ fn trace<C: PathColour>(
                     max_bounces: config.max_bounces.saturating_sub(1),
                     ..config.clone()
                 };
-                let mirror = Ray::new(offset_ray_origin(hit.position, geometric_normal), mirrored);
+                let mirror = Ray::new(hit.offset(geometric_normal), mirrored);
                 let seen = trace_path_with_caustics(intersector, &reflection, mirror, film, sampler, &mut PathAovs::default(), caustic_map);
                 split_light += carried * seen.radiance * share;
             }
@@ -2147,6 +2148,7 @@ fn trace<C: PathColour>(
         seen_from = if sees {
             Some(SeenFrom {
                 position: hit.position,
+                magnitude: hit.magnitude,
                 normal: geometric_normal,
                 direction: wi_world,
                 instance: hit.instance,
@@ -2201,8 +2203,7 @@ fn trace<C: PathColour>(
         );
 
         ray = Ray {
-            origin: offset_ray_origin(
-                hit.position,
+            origin: hit.offset(
                 if sample.is_transmission {
                     -geometric_normal
                 } else {
@@ -2302,6 +2303,8 @@ fn seeing_share(roughness: f32) -> f32 {
 #[derive(Clone, Copy, Debug)]
 struct SeenFrom {
     position: Vec3,
+    /// Its hit's [`Hit::magnitude`].
+    magnitude: f32,
     /// Its geometric normal, on the side the bounce left by.
     normal: Vec3,
     /// The way the bounce left.
@@ -2342,7 +2345,8 @@ impl SeenFrom {
             intersector.scene().bounds().bounding_radius().max(1.0) * 1e4
         };
         let target = self.position + self.direction * reach;
-        let open = shadow_transmittance(intersector, ShadowGlass::Clear, self.position, self.normal, target, -self.direction, &LightLinks::All);
+        let from = offset_ray_origin_at(self.position, self.normal, self.magnitude);
+        let open = shadow_transmittance(intersector, ShadowGlass::Clear, from, self.normal, target, -self.direction, &LightLinks::All);
         if open.is_black() {
             1.0
         } else {
@@ -2359,7 +2363,7 @@ impl SeenFrom {
             return 1.0;
         };
         let scene = intersector.scene();
-        let mut ray = Ray::new(offset_ray_origin(self.position, self.normal), self.direction);
+        let mut ray = Ray::new(offset_ray_origin_at(self.position, self.normal, self.magnitude), self.direction);
         for _ in 0..MAX_CUTOUT_CROSSINGS {
             let Some(hit) = intersector.intersect(&ray) else {
                 return 1.0;
@@ -2370,7 +2374,7 @@ impl SeenFrom {
                 || scene.pane(hit.material).is_some()
                 || scene.opacity_of(hit.material).is_none_or(|opacity| opacity < 0.999);
             if passed {
-                ray = Ray::new(hit.position + self.direction * 1e-4, self.direction);
+                ray = carried_past(&hit, &ray);
                 continue;
             }
             let density = scene.emitters().density(&receiver, hit.instance, hit.primitive);
@@ -2547,7 +2551,7 @@ fn floor_reflection(
     if reflected.dot(normal) <= 0.0 {
         return None;
     }
-    let origin = tequila_core::math::offset_ray_origin(hit.position, normal);
+    let origin = hit.offset(normal);
     // A short reflection is gone above its fade, and most of what a floor
     // mirrors is above it: one intersection says so before a whole path is
     // traced and shaded to be thrown away. The first thing the ray meets is
@@ -2901,8 +2905,11 @@ fn cutout_transmittance(
             if remaining <= 0.0 {
                 return (through, bent);
             }
-            origin = hit.position + ray.direction * 1e-4;
-            along = at + 1e-4;
+            // Just past the surface, not a tenth of a millimetre on: that
+            // stepped over whatever lay closer, and a print on the outside
+            // of a lens cast no shadow on the mask under it.
+            origin = hit.offset(-hit.facing_forward(ray.direction).0);
+            along = at;
             continue;
         }
         let opacity = match scene.opacity_of(hit.material) {
@@ -2942,8 +2949,8 @@ fn cutout_transmittance(
         if remaining <= 0.0 {
             return (through, bent);
         }
-        origin = hit.position + ray.direction * 1e-4;
-        along = at + 1e-4;
+        origin = hit.offset(-hit.facing_forward(ray.direction).0);
+        along = at;
     }
     // Past the bound. Treated as blocked, which errs towards a shadow rather
     // than towards light leaking through a scene nobody meant to build.
@@ -2985,7 +2992,7 @@ fn camera_coverage(intersector: &dyn Intersector, start: Vec3, direction: Vec3, 
             return (1.0 - through, true);
         }
         let (geometric, shading_normal) = hit.facing_forward(direction);
-        let next = tequila_core::math::offset_ray_origin(hit.position, -geometric);
+        let next = hit.offset(-geometric);
         if instance.is_some_and(|i| !i.visible_to_camera) {
             origin = next;
             continue;
@@ -3026,7 +3033,7 @@ fn is_light_proxy(scene: &crate::scene::SceneSnapshot, instance: InstanceId) -> 
 #[inline(never)]
 fn carried_past(hit: &Hit, ray: &Ray) -> Ray {
     let (geometric, _) = hit.facing_forward(ray.direction);
-    Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction)
+    Ray::new(hit.offset(-geometric), ray.direction)
 }
 
 /// How much of the light from `direction` the scene stops before it reaches
@@ -3057,7 +3064,7 @@ fn blocked_towards(
     // the same question the lighting does and takes the same answer: the
     // share that gets through. It used to split at half, so a part more than
     // half open left the floor lit and one less than half open, black.
-    1.0 - shadow_transmittance(intersector, glass, hit.position, normal, target, -direction, blockers).luminance().clamp(0.0, 1.0)
+    1.0 - shadow_transmittance(intersector, glass, hit.offset(normal), normal, target, -direction, blockers).luminance().clamp(0.0, 1.0)
 }
 
 /// Where a flight through a medium ends.
@@ -3256,7 +3263,7 @@ fn medium_transmittance(
                 if remaining <= 0.0 {
                     return through;
                 }
-                origin = hit.position + direction * 1e-4;
+                origin = hit.offset(-hit.facing_forward(direction).0);
             }
             Some(_) => return Spectrum::ZERO,
         }
@@ -3371,7 +3378,7 @@ fn sample_environment_light(
         (visibility, bent) = shadow_transmittance_through(
             intersector,
             config.shadow_glass(),
-            hit.position,
+            hit.offset(leaving),
             leaving,
             target,
             -light.direction,
@@ -3503,7 +3510,7 @@ fn sample_emissive_surfaces(
         (visibility, bent) = shadow_transmittance_through(
             intersector,
             config.shadow_glass(),
-            from.position,
+            offset_ray_origin_at(from.position, leaving, from.magnitude),
             leaving,
             light.position,
             light.normal,
@@ -3654,7 +3661,7 @@ fn sample_analytic_lights(
         visibility = shadow_transmittance(
             intersector,
             config.shadow_glass(),
-            hit.position,
+            hit.offset(leaving),
             leaving,
             target,
             -sample.direction,
@@ -4329,6 +4336,37 @@ mod tests {
         let frosted = Material { specular_roughness: 0.4, ..clear };
         assert_eq!(through(frosted, true), Spectrum::ZERO, "frosted glass let light straight through");
         assert_eq!(through(Material::diffuse(Spectrum::splat(0.5)), true), Spectrum::ZERO, "plastic let light by");
+    }
+
+    /// A shadow ray through clear glass carries on from just past each face,
+    /// not a tenth of a millimetre on: a print 2 µm off the front of a lens
+    /// 0.3 mm thick, near the world's origin as a product's is, shades the
+    /// mask behind the lens.
+    #[test]
+    fn a_print_just_past_clear_glass_still_casts_its_shadow() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        let lit = |printed: bool| {
+            let lens = Material {
+                transmission_color: Spectrum::ONE,
+                geometry_thin_walled: true,
+                ..Material::preset(tequila_materials::material_type::MaterialType::GlassSolid)
+            };
+            let instances = (0..3).map(|i| crate::scene::Instance::new(InstanceId(i), MeshId(0), MaterialId(i.min(1)))).collect();
+            let materials = vec![lens, Material::diffuse(Spectrum::splat(0.1))];
+            let scene = SceneSnapshot::new(Vec::new(), instances, materials, Arc::new(Environment::uniform(Spectrum::ONE)));
+            let mut intersector = AnalyticIntersector::new(scene)
+                .with_plane(Plane::new(vec3(0.0, 0.1, -0.0003), -Vec3::Z, MaterialId(0)))
+                .with_plane(Plane::new(vec3(0.0, 0.1, 0.0), Vec3::Z, MaterialId(0)));
+            if printed {
+                intersector = intersector.with_plane(Plane::new(vec3(0.0, 0.1, 2e-6), Vec3::Z, MaterialId(1)));
+            }
+            // From the mask 4 µm behind the lens, to a lamp in front of it.
+            let (mask, lamp) = (vec3(0.01, 0.1, -0.000304), vec3(0.01, 0.1, 1.0));
+            shadow_transmittance(&intersector, ShadowGlass::Clear, mask, Vec3::Z, lamp, -Vec3::Z, &LightLinks::All)
+        };
+        let clear = lit(false);
+        assert!(clear.g > 0.85, "the lens alone let by {clear:?}");
+        assert_eq!(lit(true), Spectrum::ZERO, "the print on the lens cast no shadow");
     }
 
     /// Black glass the camera sees in a white sky shows the sky's

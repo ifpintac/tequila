@@ -72,7 +72,7 @@ use super::*;
 use crate::light::{Light, LightKind};
 use crate::scene::SceneSnapshot;
 use tequila_core::ids::MaterialId;
-use tequila_core::math::vec2;
+use tequila_core::math::{offset_ray_origin, vec2};
 
 /// Steps of the walk before it is given up.
 const MAX_ITERATIONS: u32 = 64;
@@ -491,7 +491,7 @@ fn project(intersector: &dyn Intersector, from: Vec3, from_normal: Vec3, towards
             return Some(hit);
         }
         let (geometric, _) = hit.facing_forward(direction);
-        ray = Ray { origin: offset_ray_origin(hit.position, -geometric), t_max: ray.t_max - hit.t, ..ray };
+        ray = Ray { origin: hit.offset(-geometric), t_max: ray.t_max - hit.t, ..ray };
         if ray.t_max <= 0.0 {
             return None;
         }
@@ -890,7 +890,7 @@ pub(super) fn solve(
             absorbing[count] = absorbs(&seeded);
         }
         let (geometric, _) = hit.facing_forward(ray.direction);
-        ray = Ray { origin: offset_ray_origin(hit.position, -geometric), t_max: ray.t_max - hit.t, ..ray };
+        ray = Ray { origin: hit.offset(-geometric), t_max: ray.t_max - hit.t, ..ray };
         if ray.t_max <= 0.0 {
             break;
         }

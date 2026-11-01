@@ -22,6 +22,13 @@ pub struct Hit {
     pub t: f32,
     /// World-space hit position.
     pub position: Vec3,
+    /// How large the numbers were that `position` was worked out from: its
+    /// triangle's corners as its part places them and where it places them,
+    /// or a ray's origin and length. The point is only as precise as they
+    /// are, so a ray leaving it starts that much further off the surface not
+    /// to meet it again ([`Hit::offset`]). Zero for a point as precise as its
+    /// own coordinates.
+    pub magnitude: f32,
     /// **Geometric** normal: the true triangle normal, unit length, oriented
     /// as the winding gives it. Used for ray offsetting and for rejecting
     /// light samples on the wrong side.
@@ -41,6 +48,13 @@ pub struct Hit {
 }
 
 impl Hit {
+    /// Where a ray leaving the surface on the side `normal` points to starts:
+    /// just off it, by as much as the point's precision asks.
+    #[inline]
+    pub fn offset(&self, normal: Vec3) -> Vec3 {
+        tequila_core::math::offset_ray_origin_at(self.position, normal, self.magnitude)
+    }
+
     /// True when the ray struck the back face, judged by the geometric normal.
     #[inline]
     pub fn is_backface(&self, direction: Vec3) -> bool {
@@ -113,6 +127,7 @@ mod tests {
         Hit {
             t: 1.0,
             position: Vec3::ZERO,
+            magnitude: 0.0,
             geometric_normal: Vec3::Y,
             shading_normal: vec3(0.1, 0.99, 0.0).normalize(),
             uv: Vec2::ZERO,

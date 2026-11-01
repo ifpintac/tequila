@@ -26,7 +26,7 @@ pub mod units;
 pub mod prelude {
     pub use crate::ids::*;
     pub use crate::math::{
-        offset_ray_origin, safe_acos, safe_sqrt, shading, sqr, vec2, vec3, Aabb, Mat4, Onb, Ray,
+        offset_ray_origin, offset_ray_origin_at, safe_acos, safe_sqrt, shading, sqr, vec2, vec3, Aabb, Mat4, Onb, Ray,
         Transform, Vec2, Vec3,
     };
     pub use crate::sampler::Sampler;

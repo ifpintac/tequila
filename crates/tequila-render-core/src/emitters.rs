@@ -38,6 +38,8 @@ use tequila_materials::material_type::Param;
 #[derive(Clone, Copy, Debug)]
 pub struct Receiver {
     pub position: Vec3,
+    /// The [`crate::intersect::Hit::magnitude`] of the hit it is at.
+    pub magnitude: f32,
     pub normal: Vec3,
     pub two_sided: bool,
 }
@@ -440,7 +442,7 @@ mod tests {
     }
 
     fn below() -> Receiver {
-        Receiver { position: Vec3::ZERO, normal: Vec3::Y, two_sided: false }
+        Receiver { position: Vec3::ZERO, magnitude: 0.0, normal: Vec3::Y, two_sided: false }
     }
 
     /// The probability a light sample gives a triangle is the probability

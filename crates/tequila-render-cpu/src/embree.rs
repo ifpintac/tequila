@@ -405,8 +405,27 @@ impl EmbreeIntersector {
         }
 
         let t = rh.ray.tfar;
-        let position = ray.at(t);
         let [i0, i1, i2] = mesh.triangle(primitive);
+        let (u, v) = (rh.hit.u, rh.hit.v);
+        let w = 1.0 - u - v;
+
+        // The point from the triangle's own corners rather than along the
+        // ray, which leaves it off the surface by a few ULPs of the ray's
+        // length and origin - a camera a metre away - where the step that
+        // clears the surface again (`Hit::offset`) is sized to the
+        // precision of the point itself.
+        let corners = [mesh.positions[i0 as usize], mesh.positions[i1 as usize], mesh.positions[i2 as usize]];
+        let position = instance.transform.point(corners[0] * w + corners[1] * u + corners[2] * v);
+        // And how large the numbers in that were: the corners as the part
+        // places them, and where it places them. Embree meets the next ray
+        // with the triangle in the part's own coordinates, where they are
+        // that large, wherever the point is.
+        let m = &instance.transform.matrix.m;
+        let largest = corners.iter().map(|c| c.abs().max_component()).fold(0.0f32, f32::max);
+        let magnitude = m[..3]
+            .iter()
+            .map(|row| (row[0].abs() + row[1].abs() + row[2].abs()) * largest + row[3].abs())
+            .fold(0.0f32, f32::max);
 
         // The geometric normal is recomputed from the mesh rather than taken
         // from `rh.hit.ng`.
@@ -430,9 +449,6 @@ impl EmbreeIntersector {
             .try_normalize()
             .unwrap_or(Vec3::Y);
 
-        let (u, v) = (rh.hit.u, rh.hit.v);
-        let w = 1.0 - u - v;
-
         let shading_normal = if mesh.normals.is_empty() {
             geometric_normal
         } else {
@@ -455,6 +471,7 @@ impl EmbreeIntersector {
         Some(Hit {
             t,
             position,
+            magnitude,
             geometric_normal,
             shading_normal,
             uv,
@@ -491,6 +508,7 @@ impl EmbreeIntersector {
         Some(Hit {
             t,
             position: ray.at(t),
+            magnitude: ray.origin.abs().max_component().max(t),
             geometric_normal: facing,
             shading_normal: facing,
             uv: Vec2 { x: rh.hit.u, y: rh.hit.v },
@@ -1271,6 +1289,133 @@ mod tests {
             update.as_secs_f64() * 1000.0,
             rebuild.as_secs_f64() / update.as_secs_f64().max(1e-9),
         );
+    }
+
+    /// What lies microns behind a surface a ray passes through is met, not
+    /// stepped over. The palma P8's lens has its logo printed 2 µm behind its
+    /// back face and its mask 4 µm, near the world's origin, and the lens
+    /// showed neither.
+    #[test]
+    fn a_ray_passing_a_surface_meets_one_microns_behind_it() {
+        // Squares 4 cm across facing +Z, 8 to 12 cm up.
+        let square = |z: f32| {
+            Mesh::new(
+                vec![vec3(-0.02, 0.08, z), vec3(0.02, 0.08, z), vec3(0.02, 0.12, z), vec3(-0.02, 0.12, z)],
+                vec![0, 1, 2, 0, 2, 3],
+            )
+        };
+        // At the world's origin, as the lens is, and a hand's length from it.
+        for z in [-0.0003f32, 0.3] {
+            for gap in [2e-6f32, 4e-6] {
+                let scene = scene_with(
+                    vec![square(z), square(z - gap)],
+                    vec![
+                        Instance::new(InstanceId(0), MeshId(0), MaterialId(0)),
+                        Instance::new(InstanceId(1), MeshId(1), MaterialId(0)),
+                    ],
+                );
+                let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
+                for (x, y) in [(0.0, 0.1), (0.013, 0.087), (-0.017, 0.118)] {
+                    // From half a metre off, a little from above.
+                    let ray = Ray::new(vec3(x, y + 0.1, z + 0.5), vec3(0.0, -0.1, -0.5).normalize());
+                    let first = bvh.intersect(&ray).expect("meets the near square");
+                    assert_eq!(first.instance, InstanceId(0));
+                    let (geometric, _) = first.facing_forward(ray.direction);
+                    let past = Ray::new(first.offset(-geometric), ray.direction);
+                    let next = bvh.intersect(&past);
+                    assert_eq!(
+                        next.map(|h| h.instance),
+                        Some(InstanceId(1)),
+                        "z {z}: the square {gap} behind, at ({x}, {y}), was stepped over"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The other side of that: the step off a surface still clears the
+    /// point's own error, so no ray leaving a surface, back the way it came
+    /// or on through it, meets that surface again. Hardest for a point near
+    /// the origin worked out from large numbers - a part modelled far from
+    /// where it stands (`Hit::magnitude`) - and for a ray leaving almost along
+    /// the surface.
+    #[test]
+    fn a_ray_leaving_a_surface_never_meets_it_again() {
+        use tequila_core::math::Onb;
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 40) as f32 / (1u64 << 24) as f32
+        };
+        // How big, where it was modelled, where it stands, and how far from
+        // there the rays are aimed: last, from inside the ball at the world's
+        // origin itself, on parts modelled a metre and a half and thirty
+        // metres away - a scan kept in the coordinates it was surveyed in.
+        let cases = [
+            (0.001, Vec3::ZERO, Vec3::ZERO, 0.9),
+            (0.05, Vec3::ZERO, vec3(0.0, 0.05, 0.0), 0.9),
+            (0.5, vec3(0.0, 1.0, 0.0), vec3(0.0, 0.5, 0.0), 0.9),
+            (0.3, vec3(1.5, 1.2, -0.8), vec3(0.0, 0.1, 0.0), 0.9),
+            (2.0, vec3(30.0, 0.0, -20.0), vec3(30.0, 2.0, -20.0), 0.9),
+            (50.0, Vec3::ZERO, Vec3::ZERO, 0.9),
+            (1.0, vec3(1.0, 1.2, -0.5), Vec3::ZERO, 0.02),
+            (1.0, vec3(20.0, 18.0, -15.0), Vec3::ZERO, 0.02),
+        ];
+        let mut failures = Vec::new();
+        for (size, modelled, placed, aim) in cases {
+            // A ball, and a square through its middle at a slant.
+            let mut ball = tessellated_sphere(48, 24);
+            for p in &mut ball.positions {
+                *p = *p * size + modelled;
+            }
+            let slant = Onb::from_normal(vec3(0.3, 0.8, 0.5).normalize());
+            let corner = |a: f32, b: f32| modelled + (slant.to_world(vec3(a, b, 0.0))) * (1.2 * size);
+            let square = Mesh::new(vec![corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0)], vec![0, 1, 2, 0, 2, 3]);
+            let transform = Transform::translation(placed)
+                * Transform::rotation(vec3(0.2, 1.0, 0.4).normalize(), 0.7)
+                * Transform::translation(-modelled);
+            let scene = scene_with(
+                vec![ball, square],
+                vec![
+                    Instance::new(InstanceId(0), MeshId(0), MaterialId(0)).with_transform(transform),
+                    Instance::new(InstanceId(1), MeshId(1), MaterialId(0)).with_transform(transform),
+                ],
+            );
+            let bvh = EmbreeIntersector::build(&device(), scene).unwrap();
+            let mut hits = 0;
+            for _ in 0..3000 {
+                let on = |random: &mut dyn FnMut() -> f32| {
+                    let z = 2.0 * random() - 1.0;
+                    let phi = std::f32::consts::TAU * random();
+                    let r = (1.0 - z * z).max(0.0).sqrt();
+                    vec3(r * phi.cos(), r * phi.sin(), z)
+                };
+                let from = placed + on(&mut random) * (if aim < 0.5 { 0.5 } else { 3.0 } * size);
+                let towards = placed + on(&mut random) * (aim * size * random());
+                let ray = Ray::new(from, (towards - from).normalize());
+                let Some(hit) = bvh.intersect(&ray) else { continue };
+                hits += 1;
+                let (facing, _) = hit.facing_forward(ray.direction);
+                for side in [1.0f32, -1.0] {
+                    for leaving in [random(), random().powi(4), 1e-3 * random() + 1e-5] {
+                        let phi = std::f32::consts::TAU * random();
+                        let across = (1.0 - leaving * leaving).max(0.0).sqrt();
+                        let normal = facing * side;
+                        let direction = Onb::from_normal(normal).to_world(vec3(across * phi.cos(), across * phi.sin(), leaving));
+                        let away = Ray::new(hit.offset(normal), direction.normalize());
+                        if let Some(again) = bvh.intersect(&away) {
+                            if again.instance == hit.instance && again.primitive == hit.primitive {
+                                failures.push((size, hit.position, side, leaving, again.t));
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(hits > 1000, "size {size}: only {hits} rays met the model");
+        }
+        assert!(failures.is_empty(), "{} rays met the surface they left: {:?}", failures.len(), &failures[..failures.len().min(8)]);
     }
 
     /// A sphere with enough triangles to make its BLAS worth building.

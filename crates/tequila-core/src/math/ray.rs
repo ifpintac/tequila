@@ -118,53 +118,52 @@ impl Aabb {
     }
 }
 
-/// Offset a ray origin off a surface to avoid self-intersection, using the
-/// integer-magnitude method of [Wächter & Binder 2019, *A Fast and Robust
-/// Method for Avoiding Self-Intersection*, Ray Tracing Gems].
+/// Offset a ray origin off a surface to avoid self-intersection: a step along
+/// the geometric normal sized to the precision single floats have at the
+/// point.
 ///
 /// A fixed epsilon cannot work here: `docs/01-RENDERER-CORE.md` §3.1 notes
 /// that product CAD scenes span both ends of the scale range at once (a
 /// millimetre fillet on a two-metre assembly), so the offset has to scale with
-/// the magnitude of the intersection point. This does that by stepping a fixed
-/// number of ULPs along the geometric normal.
+/// the magnitude of the intersection point. The step is 2^-18 of the point's
+/// largest coordinate, 32 to 64 ULPs of it: enough to clear the few ULPs a hit
+/// point computed from its triangle's corners is out by (`EmbreeIntersector`),
+/// and well short of the gaps a model leaves between parts. A point is only
+/// as precise as the numbers it was worked out from, though, and a hit's may
+/// be far larger than its own coordinates - a part modelled a metre from
+/// where it stands - so a hit takes the step for those
+/// ([`offset_ray_origin_at`], `Hit::offset`). The step is never less than it
+/// is at 1/8, 0.48 µm in metres: for a point that is not a hit, which says
+/// nothing of what it was worked out from, that covers parts modelled up to a
+/// metre and a half from where they stand.
+///
+/// It was the integer-magnitude step of [Wächter & Binder 2019, *A Fast and
+/// Robust Method for Avoiding Self-Intersection*, Ray Tracing Gems]: 256 ULPs
+/// of each coordinate, and a fixed 1/65536 for one within 1/32 of zero -
+/// constants for a scene a unit across. In metres, with an imported product
+/// standing at the origin, most of it is within 1/32 of some axis plane, and
+/// the step there was 15 µm: past the logo printed 2 µm behind a handheld's
+/// lens and into the mask 4 µm behind it, so the lens showed the inside of
+/// the mask, near black. A coordinate near zero is computed from terms the
+/// size of the others, so it is out by a few ULPs of the largest coordinate,
+/// not of itself, and the step is sized to that.
 #[inline]
 pub fn offset_ray_origin(p: Vec3, geometric_normal: Vec3) -> Vec3 {
-    const ORIGIN: f32 = 1.0 / 32.0;
-    const FLOAT_SCALE: f32 = 1.0 / 65536.0;
-    const INT_SCALE: f32 = 256.0;
+    offset_ray_origin_at(p, geometric_normal, 0.0)
+}
 
-    let of_i = [
-        (INT_SCALE * geometric_normal.x) as i32,
-        (INT_SCALE * geometric_normal.y) as i32,
-        (INT_SCALE * geometric_normal.z) as i32,
-    ];
-
-    #[inline]
-    fn bump(p: f32, of: i32) -> f32 {
-        f32::from_bits(((p.to_bits() as i32) + if p < 0.0 { -of } else { of }) as u32)
-    }
-
-    let p_i = vec3(bump(p.x, of_i[0]), bump(p.y, of_i[1]), bump(p.z, of_i[2]));
-
-    // Near the origin the integer step is smaller than float precision needs,
-    // so fall back to an absolute offset there.
-    vec3(
-        if p.x.abs() < ORIGIN {
-            p.x + FLOAT_SCALE * geometric_normal.x
-        } else {
-            p_i.x
-        },
-        if p.y.abs() < ORIGIN {
-            p.y + FLOAT_SCALE * geometric_normal.y
-        } else {
-            p_i.y
-        },
-        if p.z.abs() < ORIGIN {
-            p.z + FLOAT_SCALE * geometric_normal.z
-        } else {
-            p_i.z
-        },
-    )
+/// [`offset_ray_origin`] for a point worked out from numbers as large as
+/// `magnitude`: a hit, from its triangle's corners and its part's placement.
+/// A part modelled a metre and a half from where it stands has its points only
+/// to a few ULPs of that, even at the world's origin; and in the part's own
+/// coordinates, where the ray tracer meets the next ray with it, they are that
+/// large.
+#[inline]
+pub fn offset_ray_origin_at(p: Vec3, geometric_normal: Vec3, magnitude: f32) -> Vec3 {
+    const ORIGIN: f32 = 1.0 / 8.0;
+    const SCALE: f32 = 1.0 / 262_144.0;
+    let magnitude = p.x.abs().max(p.y.abs()).max(p.z.abs()).max(magnitude).max(ORIGIN);
+    p + geometric_normal * (magnitude * SCALE)
 }
 
 #[cfg(test)]
@@ -184,6 +183,32 @@ mod tests {
             let rel = (o.y - p.y) / scale.max(1.0);
             assert!(rel < 1e-3, "offset too coarse at scale {scale}: {rel}");
         }
+    }
+
+    #[test]
+    fn on_a_product_in_metres_the_step_is_under_a_micron() {
+        // The palma P8's lens, its back face 0.3 mm behind the world's
+        // origin and 8 to 13 cm up, a logo printed 2 µm behind it; the
+        // floor under the product; and a part a hand's length away.
+        let ulp = |x: f32| f32::from_bits(x.abs().to_bits() + 1) - x.abs();
+        for p in [vec3(0.03, 0.08, -0.0003), vec3(-0.037, 0.134, -0.0003), vec3(0.0, 0.0, 0.0), vec3(0.3, 0.1, 0.3)] {
+            let step = p.z - offset_ray_origin(p, -Vec3::Z).z;
+            let largest = p.x.abs().max(p.y.abs()).max(p.z.abs());
+            assert!(step > 16.0 * ulp(largest), "{p:?}: a step of {step} does not clear the point's precision");
+            assert!(step < 1.5e-6, "{p:?}: a step of {step} passes what lies 2 µm behind");
+        }
+    }
+
+    #[test]
+    fn a_point_worked_out_from_large_numbers_steps_by_them() {
+        // At the world's origin, on a part modelled 3 m from there.
+        let p = vec3(0.01, 0.0, 0.02);
+        let near = offset_ray_origin(p, Vec3::Y).y - p.y;
+        let far = offset_ray_origin_at(p, Vec3::Y, 3.0).y - p.y;
+        assert!(far > 16.0 * f32::EPSILON * 3.0, "a step of {far} does not clear 3 m's precision");
+        assert!(far > 20.0 * near, "{far} against {near}");
+        // And no less than its own coordinates ask for.
+        assert_eq!(offset_ray_origin_at(p, Vec3::Y, 0.0), offset_ray_origin(p, Vec3::Y));
     }
 
     #[test]

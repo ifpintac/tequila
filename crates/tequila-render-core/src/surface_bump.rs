@@ -302,6 +302,7 @@ mod tests {
         let hit = Hit {
             t: 1.0,
             position: vec3(0.5, 0.5, 0.0),
+            magnitude: 0.0,
             geometric_normal: Vec3::Z,
             shading_normal: Vec3::Z,
             uv: vec2(0.5, 0.5),
