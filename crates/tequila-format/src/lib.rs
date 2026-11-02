@@ -2578,7 +2578,21 @@ pub(crate) fn preset_from_name(name: &str) -> Option<LightingPreset> {
 pub fn load(path: &Path) -> Result<Loaded, FormatError> {
     let bytes = std::fs::read(path)
         .map_err(|e| FormatError::Io(format!("{} could not be read: {e}", path.display())))?;
-    read(&bytes)
+    let mut loaded = read(&bytes)?;
+    // A texture's path may be relative to the project (docs/file-format.md
+    // §3.1): it is found beside the file, wherever the file was moved or
+    // shipped, not beside wherever the process happens to be running.
+    if let Some(folder) = path.parent() {
+        let ids: Vec<_> = loaded.document.textures.ids().collect();
+        for id in ids {
+            if let Some(source) = loaded.document.textures.get_mut(id) {
+                if source.path.is_relative() {
+                    source.path = folder.join(&source.path);
+                }
+            }
+        }
+    }
+    Ok(loaded)
 }
 
 pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {

@@ -120,6 +120,8 @@ mkdir -p "$out/assets/samples" "$out/python"
 cp -R assets/library "$out/assets/library"
 cp -R assets/studios "$out/assets/studios"
 cp assets/samples/*.tequila "$out/assets/samples/"
+# A sample with pictures keeps them in a folder beside it ("palma P8.textures").
+cp -R assets/samples/*.textures "$out/assets/samples/"
 cp python/*.py "$out/python/"
 cp -R plugins/examples "$out/plugins"
 cp docs/SCRIPTING.md "$out/SCRIPTING.md"

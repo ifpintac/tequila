@@ -2,7 +2,9 @@
 wide, the product a little right of centre and the dark set to its left for
 the welcome to sit on. The product is moved across by shifting the lens, not
 by turning the camera, so a light behind it in the environment stays behind
-it.
+it - or, for a Cycles older than lens shift, by rendering the frame wider with
+the product in its middle and keeping the part of it that puts the product
+where it should be.
 
     python make_banners.py OUT [samples]
 
@@ -14,48 +16,58 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from make_samples import CLI, REPO  # noqa: E402
-from studio import around, session  # noqa: E402
+from studio import around, crop_png, session  # noqa: E402
 
 WIDTH, HEIGHT = 2160, 600
 SENSOR = 36.0
 
 
-def shot(name, engine, target, azimuth, elevation, focal, height, across):
+def shot(name, engine, target, azimuth, elevation, focal, height, across, crop=False):
     """`height` metres of the set from top to bottom; the product `across`
-    of the way along the frame."""
+    of the way along the frame. With `crop`, the frame is rendered wide with
+    the product in its middle, and cut down to put it `across` the banner."""
+    wide = round(2 * across * WIDTH) if crop else WIDTH
     view = around(azimuth, elevation)
-    distance = height * focal / (SENSOR * HEIGHT / WIDTH)
+    distance = height * focal / (SENSOR * HEIGHT / wide)
     eye = [target[i] + view[i] * distance for i in range(3)]
-    return dict(name=name, engine=engine, at=target, eye=eye, focal=focal, shift=-(across - 0.5))
+    return dict(name=name, engine=engine, at=target, eye=eye, focal=focal, shift=0.0 if crop else -(across - 0.5),
+                wide=wide)
 
 
 SHOTS = [
     shot('Headphones', 'cycles', [0.0, 0.094, 0.0], 30, 6, 58, 0.27, 0.68),
     shot('Perfume bottle', 'tequila', [0.0, 0.054, 0.0], 18, 4, 58, 0.155, 0.70),
+    shot('palma P8', 'cycles', [0.0, 0.0707, -0.0111], -24, 8, 80, 0.2, 0.68, crop=True),
 ]
 
 
 def main():
     out = Path(sys.argv[1]).resolve()
     samples = int(sys.argv[2]) if len(sys.argv) > 2 else 256
+    only = set(sys.argv[3].split(',')) if len(sys.argv) > 3 else None
     out.mkdir(parents=True, exist_ok=True)
     for s in SHOTS:
+        if only and s['name'] not in only:
+            continue
         with session(CLI, s['engine']) as c:
             c.open_project(str(REPO / 'assets' / 'samples' / f"{s['name']}.tequila"), discard=True)
             c.look(frm=s['eye'], at=s['at'], focal_length=s['focal'])
             document = c.context()['document']
             index = document.get('active_camera', 0)
             index = index if isinstance(index, int) else 0
-            camera = dict(document['cameras'][index])
-            camera.update({'type': 'Shift', 'shift_x': s['shift'], 'shift_y': 0.0})
-            c.apply('camera.set', index=index, camera=camera)
+            if s['shift']:
+                camera = dict(document['cameras'][index])
+                camera.update({'type': 'Shift', 'shift_x': s['shift'], 'shift_y': 0.0})
+                c.apply('camera.set', index=index, camera=camera)
             render = c.context()['document']['render']
             render.update({'alpha_mode': 'none', 'depth': '8'})
             c.apply('render.set_settings', render=render)
             path = out / f"{s['name'].lower().replace(' ', '-')}.png"
             if path.exists():
                 path.unlink()
-            result = c.render(str(path), width=WIDTH, height=HEIGHT, samples=samples)
+            result = c.render(str(path), width=s['wide'], height=HEIGHT, samples=samples)
+            if s['wide'] != WIDTH:
+                crop_png(path, 0, WIDTH)
             print(f"{s['name']}: {result['seconds']:.0f} s, {path.stat().st_size / 1e3:.0f} kB", flush=True)
 
 

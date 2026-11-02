@@ -1,17 +1,21 @@
-"""The two sample scenes that ship with Tequila (assets/samples): the
-headphones and the perfume bottle, dressed in the library's materials and
-lit low-key, as the "After dark" stills were. Each is saved as a project
-with its preview inside, and rendered once at full size to look at.
+"""The sample scenes that ship with Tequila (assets/samples): the
+headphones and the perfume bottle, dressed in the library's materials, and
+the palma P8 handheld in its own; all lit low-key, as the "After dark"
+stills were. Each is saved as a project with its preview inside, and
+rendered once at full size to look at.
 
     blender -b --factory-startup --python headphones.py -- MODELS/headphones.glb
     blender -b --factory-startup --python bottle.py -- MODELS/bottle.glb
-    python make_samples.py MODELS OUT [samples]
+    copy models/palma-p8.glb into MODELS
+    python make_samples.py MODELS OUT [samples] [name,name...]
 
 The command-line renderer is TEQUILA_CLI, or this checkout's release build;
-Cycles is where TEQUILA_CYCLES says. The headphones render in Cycles, the
-bottle - glass with a liquid inside - in Tequila's own renderer.
+Cycles is where TEQUILA_CYCLES says. The headphones and the palma render in
+Cycles, the bottle - glass with a liquid inside - in Tequila's own renderer.
 """
+import json
 import os
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -20,7 +24,8 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / 'python'))
 sys.path.insert(0, str(HERE))
-from studio import Studio, around, light, orbit, seamless, session  # noqa: E402
+from studio import Studio, around, lcd, light, orbit, seamless, session  # noqa: E402
+from wear import wear_graph  # noqa: E402
 
 EXE = '.exe' if os.name == 'nt' else ''
 CLI = os.environ.get('TEQUILA_CLI') or str(REPO / 'target' / 'release' / f'tequila{EXE}')
@@ -134,11 +139,94 @@ def bottle(c, s, models):
     return dict(engine='tequila', target=target, eye=eye, focal=58, pins=pins, reflections=0.55, exposure=-0.15)
 
 
+def palma(c, s, models):
+    """The palma P8, a handheld designed for Tequila (models/palma-p8.glb,
+    which comes with its own materials): its clear lime shell made solid,
+    its screen made an LCD, lit low-key with the shell glowing at its edges."""
+    c.import_model(str(models / 'palma-p8.glb'))
+    mats = {m['name']: m for m in c.query('materials')['materials']}
+
+    def set_(name, **values):
+        for k, v in values.items():
+            c.apply('material.set_parameter', material=mats[name]['id'], parameter=k, value=v)
+
+    # The model's shell is thin-walled: seen through its front and its back,
+    # four surfaces tinted it bottle green. Solid, it is tinted by how much
+    # plastic the light crosses, as moulded polycarbonate is, with a breath of
+    # haze.
+    lime = [0.76, 0.96, 0.04]
+    for name, rough in (('TQ_Shell_ClearIce', 0.035), ('TQ_Shell_ClearIce_Inner', 0.02)):
+        set_(name, geometry_thin_walled=False, transmission_weight=1.0, transmission_color=lime,
+             transmission_depth=0.005, transmission_scatter=[0.07, 0.09, 0.02], base_color=lime,
+             specular_ior=1.585, specular_roughness=rough, medium_priority=1.0)
+    # The screen's 80 by 60 pixel art as an LCD shows it: hard squares, and
+    # the dark gaps between them.
+    screen = models / 'palma-p8 screen.png'
+    lcd(mats['TQ_Screen']['textures'][0]['path'], screen)
+    for param in ('base_color', 'emission_color'):
+        c.apply('material.set_texture', material=mats['TQ_Screen']['id'], param=param, path=str(screen),
+                role='color', color_space='srgb')
+    set_('TQ_Screen', emission_luminance=1.6, specular_roughness=0.25)
+    set_('TQ_Graphite', base_color=[0.028, 0.029, 0.033], specular_roughness=0.36)
+    set_('TQ_Graphite_Emboss', base_color=[0.05, 0.052, 0.058], specular_roughness=0.42)
+    # A power LED is a pinprick: as it came, it lit the floor green.
+    set_('TQ_LED_Green', emission_luminance=mats['TQ_LED_Green']['definition']['emission_luminance'] * 0.08)
+    # Very faint handling marks, smudges, prints and dust, on the shell and
+    # the screen's glass: a handheld someone has picked up, not a dirty one.
+    for name, marks in (('TQ_Shell_ClearIce', dict(base=0.035, smudge=0.14, prints=0.2, dust=0.9)),
+                        ('TQ_Lens_Smoke', dict(base=0.02, smudge=0.1, prints=0.28, dust=0.7, print_cells=30.0, smudge_scale=24.0))):
+        # Its values as set above, with the marks as its graph.
+        definition = dict(next(m for m in c.query('materials')['materials'] if m['name'] == name)['definition'])
+        definition['graph'] = wear_graph(**marks)
+        c.apply('material.set_graph', material=mats[name]['id'], definition=definition)
+    c.apply('lighting.set_preset', preset='Product')
+
+    parts = [n for n in c.query('nodes')['nodes'] if n.get('kind') == 'part']
+    target = [(min(p['bounds']['min'][i] for p in parts) + max(p['bounds']['max'][i] for p in parts)) / 2
+              for i in range(3)]
+    eye, view = orbit(target, -24, 8, 0.8)
+    pins = [seamless(view, 1.0, [(0.0, (0.05, 0.055, 0.06)), (0.09, (0.012, 0.013, 0.015)), (1.0, (0.0, 0.0, 0.0))]),
+            light('Rim left', around(-140, 18), (0.08, 1.2), 40.0, softness=0.3),
+            light('Rim right', around(145, 20), (0.08, 1.2), 34.0, softness=0.3, color=(0.85, 0.95, 1.0)),
+            # From behind: the clear shell carries it round and glows.
+            light('Glow', around(180, 10), (0.5, 0.35), 1.5, softness=1.0, color=(0.85, 1.0, 0.6)),
+            light('Key', around(-30, 45), (0.5, 0.4), 2.0, softness=0.8),
+            light('Top', (0.0, 1.0, 0.0), (0.5, 0.4), 1.0, softness=0.9)]
+    return dict(engine='cycles-gpu', target=target, eye=eye, focal=80, pins=pins, reflections=0.2, exposure=0.0,
+                textures='palma P8.textures')
+
+
+def ship_textures(project, folder):
+    """A project saves its textures where they were found. A shipped sample
+    keeps them in a folder beside it, named relative to it, which Tequila
+    resolves against wherever the project is opened from."""
+    target = project.parent / folder
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir()
+    with zipfile.ZipFile(project) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    scene = json.loads(dict((info.filename, data) for info, data in entries)['scene.json'])
+    for texture in scene.get('textures', []):
+        source = Path(texture['path'])
+        shutil.copyfile(source, target / source.name)
+        texture['path'] = f'{folder}/{source.name}'
+    with zipfile.ZipFile(project, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'scene.json':
+                data = (json.dumps(scene, indent=2) + '\n').encode('utf-8')
+            archive.writestr(info, data)
+
+
 def main():
     models, out = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     samples = int(sys.argv[3]) if len(sys.argv) > 3 else 512
+    only = set(sys.argv[4].split(',')) if len(sys.argv) > 4 else None
     out.mkdir(parents=True, exist_ok=True)
-    for name, build, engine in (('Headphones', headphones, 'cycles'), ('Perfume bottle', bottle, 'tequila')):
+    for name, build, engine in (('Headphones', headphones, 'cycles'), ('Perfume bottle', bottle, 'tequila'),
+                                ('palma P8', palma, 'cycles')):
+        if only and name not in only:
+            continue
         with session(CLI, engine) as c:
             s = Studio(c)
             s.clear()
@@ -163,6 +251,8 @@ def main():
         # preview goes in as the application puts one (docs/file-format.md).
         with zipfile.ZipFile(project, 'a', compression=zipfile.ZIP_STORED) as archive:
             archive.writestr('preview.png', preview.read_bytes())
+        if look.get('textures'):
+            ship_textures(project, look['textures'])
         print(f'{name}: {project.stat().st_size / 1e6:.1f} MB', flush=True)
 
 
