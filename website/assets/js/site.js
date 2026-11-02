@@ -188,6 +188,72 @@
     box.classList.add('open');
   });
 
+  // ---------- Feature finder ----------
+
+  // The Learn page's table of every feature: narrowed as you type, and by
+  // level. Without the script the whole table shows.
+  var finder = document.querySelector('[data-finder]');
+  if (finder) {
+    var field = finder.querySelector('input[type="search"]');
+    var chips = finder.querySelectorAll('.chip[data-level]');
+    var rows = finder.querySelectorAll('tbody tr');
+    var groups = finder.querySelectorAll('.finder-group');
+    var count = finder.querySelector('.finder-count');
+    var empty = finder.querySelector('.finder-empty');
+    var level = 'all';
+    rows.forEach(function (row) { row.setAttribute('data-text', row.textContent.toLowerCase()); });
+
+    var apply = function () {
+      var words = (field.value || '').toLowerCase().split(/\s+/).filter(Boolean);
+      var shown = 0;
+      rows.forEach(function (row) {
+        var text = row.getAttribute('data-text');
+        var ok = (level === 'all' || row.getAttribute('data-level') === level) &&
+          words.every(function (w) { return text.indexOf(w) !== -1; });
+        row.hidden = !ok;
+        if (ok) shown++;
+      });
+      groups.forEach(function (group) {
+        group.hidden = !group.querySelector('tbody tr:not([hidden])');
+      });
+      if (count) count.textContent = shown + ' of ' + rows.length + ' features';
+      if (empty) empty.style.display = shown ? 'none' : 'block';
+    };
+
+    field.addEventListener('input', apply);
+    chips.forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        level = chip.getAttribute('data-level');
+        chips.forEach(function (c) { c.setAttribute('aria-pressed', c === chip ? 'true' : 'false'); });
+        apply();
+      });
+    });
+    var asked = /[?&]q=([^&]*)/.exec(location.search);
+    if (asked) field.value = decodeURIComponent(asked[1].replace(/\+/g, ' '));
+    apply();
+  }
+
+  // ---------- Where am I in a long page ----------
+
+  // A lesson page's side list marks the lesson on screen.
+  var sideLinks = document.querySelectorAll('.doc-nav[data-follow] a[href^="#"]');
+  if (sideLinks.length && 'IntersectionObserver' in window) {
+    var byId = {};
+    sideLinks.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+    var watch = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        sideLinks.forEach(function (a) { a.classList.remove('here'); });
+        var link = byId[entry.target.id];
+        if (link) link.classList.add('here');
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    Object.keys(byId).forEach(function (id) {
+      var target = document.getElementById(id);
+      if (target) watch.observe(target);
+    });
+  }
+
   // ---------- Release notes ----------
 
   function escape(text) {

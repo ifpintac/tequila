@@ -358,6 +358,84 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
 .shipped time { color: var(--text-faint); font-size: 14px; }
 .shipped h3 { margin: 4px 0 8px; }
 
+/* ---------- Learn ---------- */
+
+/* The three tracks, each a card with its lessons. */
+.tracks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.track { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 18px; padding: 24px 24px 22px; display: flex; flex-direction: column; }
+.track .level { display: inline-flex; align-items: center; gap: 8px; font: 600 12.5px/1 var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--teal); }
+.track .level .bars { display: inline-flex; gap: 3px; }
+.track .level .bars i { width: 5px; height: 12px; border-radius: 2px; background: var(--line-strong); }
+.track .level .bars i.on { background: var(--teal); }
+.track h3 { font-size: 23px; margin: 14px 0 6px; }
+.track > p { color: var(--text-soft); font-size: 15px; margin: 0 0 16px; }
+.track ol { list-style: none; padding: 0; margin: 0 0 20px; display: grid; gap: 2px; align-content: start; counter-reset: lesson; flex: 1; }
+.track ol a { display: flex; gap: 10px; padding: 7px 8px; border-radius: 8px; color: var(--text-soft); font-size: 15px; line-height: 1.35; }
+.track ol a::before { counter-increment: lesson; content: counter(lesson); flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--bg-card); border: 1px solid var(--line); color: var(--text-faint); }
+.track ol a:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); text-decoration: none; }
+.track .button { align-self: flex-start; }
+
+/* A screenshot with numbered marks over it, and a key to them. */
+.map { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: var(--bg-card); }
+.map img { width: 100%; height: auto; }
+.map .mark { position: absolute; transform: translate(-50%, -50%); width: 28px; height: 28px; border-radius: 50%; background: var(--teal); color: #03130f; font: 700 14px/28px var(--font); text-align: center; box-shadow: 0 0 0 4px rgba(53, 199, 176, 0.28), 0 6px 18px rgba(0, 0, 0, 0.6); }
+.map-key { list-style: none; padding: 0; margin: 22px 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 28px; counter-reset: mark; }
+.map-key li { position: relative; padding-left: 40px; color: var(--text-soft); font-size: 15.5px; }
+.map-key li::before { counter-increment: mark; content: counter(mark); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--teal-glow); color: var(--teal); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.map-key strong { color: var(--text); }
+
+/* Every feature and where it is, with a filter over the top. */
+.finder-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+.finder-bar input { flex: 1 1 280px; min-width: 0; font: 16px var(--font); color: var(--text); background: var(--bg-card); border: 1px solid var(--line-strong); border-radius: 11px; padding: 13px 16px 13px 44px; background-image: none; }
+.finder-bar input:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 3px var(--teal-glow); }
+.finder-search { position: relative; flex: 1 1 280px; min-width: 0; display: flex; }
+.finder-search .icon { position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: var(--text-faint); font-size: 18px; pointer-events: none; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 14px/1 var(--font); color: var(--text-soft); background: var(--bg-card); border: 1px solid var(--line); border-radius: 999px; padding: 9px 13px; cursor: pointer; }
+.chip:hover { color: var(--text); border-color: var(--line-strong); }
+.chip[aria-pressed="true"] { color: #03130f; background: var(--teal); border-color: var(--teal); }
+.finder-count { color: var(--text-faint); font-size: 14px; margin: 0 0 12px; }
+.finder-jump { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: -4px 0 14px; font-size: 14px; }
+.finder-jump a { color: var(--text-soft); }
+.finder-jump a:hover { color: var(--text); }
+.finder-group { scroll-margin-top: 84px; }
+.finder-group { margin-bottom: 26px; }
+.finder-group h3 { font-size: 18px; display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.finder-group h3 .icon { color: var(--teal); }
+.finder-table { width: 100%; border-collapse: collapse; font-size: 14.5px; line-height: 1.5; table-layout: fixed; }
+.finder-table th { text-align: left; color: var(--text-faint); font-weight: 600; font-size: 12.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 0 12px 8px; }
+.finder-table td { padding: 8px 12px; border-top: 1px solid var(--line); vertical-align: top; color: var(--text-soft); overflow-wrap: anywhere; }
+.finder-table td:first-child { color: var(--text); font-weight: 600; width: 24%; }
+.finder-table td.where { width: 38%; }
+.finder-table td.where span { color: var(--text); }
+.finder-table td.lvl { width: 92px; }
+.finder-table th:last-child { width: 92px; }
+.finder-table th:first-child { width: 24%; }
+.finder-table th:nth-child(2) { width: 38%; }
+.lvl-tag { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+.lvl-tag.b { color: #9fe8da; background: rgba(53, 199, 176, 0.14); }
+.lvl-tag.i { color: #f6cf9f; background: rgba(242, 179, 122, 0.14); }
+.lvl-tag.a { color: #c9b8ff; background: rgba(150, 120, 255, 0.16); }
+.finder-empty { color: var(--text-faint); padding: 20px 0; display: none; }
+
+/* Keys. */
+kbd { white-space: nowrap; }
+.keys { width: 100%; border-collapse: collapse; font-size: 15px; }
+.keys td { padding: 9px 12px; border-top: 1px solid var(--line); color: var(--text-soft); vertical-align: top; }
+.keys td:first-child { width: 42%; color: var(--text); }
+.keys tr:first-child td { border-top: 0; }
+
+/* A lesson: what it's for, then the steps. */
+.lesson-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--text-faint); font-size: 14px; margin: -6px 0 18px; }
+.lesson-meta .icon { color: var(--teal); margin-right: 4px; }
+.prose .tip { background: var(--bg-raised); border: 1px solid var(--line); border-left: 3px solid var(--warm); border-radius: var(--radius-small); padding: 14px 18px; margin: 18px 0 24px; }
+.prose .tip p { margin: 0; font-size: 15.5px; }
+.prose .tip strong { color: var(--warm); }
+.prose ol.steps { padding: 0; margin: 18px 0 22px; }
+.next-lesson { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 56px; padding-top: 24px; border-top: 1px solid var(--line); }
+.doc-nav .group { color: var(--text-faint); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; padding: 14px 12px 4px; }
+.doc-nav a.here { color: var(--text); background: rgba(255, 255, 255, 0.05); border-left-color: var(--teal); }
+
 /* ---------- Narrow screens ---------- */
 
 /* Four download cards need about 1060 pixels of row, scrollbar aside. */
@@ -401,8 +479,20 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
   .hero-art::after { background: linear-gradient(90deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 0.35) 100%), linear-gradient(0deg, var(--bg) 0%, rgba(11, 12, 13, 0) 30%); }
 }
 
+@media (max-width: 980px) {
+  .tracks { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 640px) {
   .platforms { grid-template-columns: 1fr; }
+  .map-key { grid-template-columns: minmax(0, 1fr); }
+  .map .mark { width: 22px; height: 22px; font-size: 12px; line-height: 22px; }
+  /* A row of the finder becomes a small card: name, then where, then level. */
+  .finder-table thead { display: none; }
+  .finder-table, .finder-table tbody, .finder-table tr, .finder-table td { display: block; width: auto !important; }
+  .finder-table tr { border-top: 1px solid var(--line); padding: 10px 0; }
+  .finder-table td { border: 0; padding: 2px 4px; }
+  .keys td:first-child { width: 48%; }
 }
 
 @media (max-width: 560px) {
