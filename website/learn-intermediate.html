@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intermediate · Learn Tequila</title>
+<meta name="description" content="Tequila, intermediate: textures and texture packs, labels, your own materials, lighting pins and scene lights, depth of field, grading, Studios, colourways, turntables and output.">
+<meta property="og:title" content="Learn Tequila: intermediate">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="learn.html" aria-current="page">Learn</a>
+      <a href="docs.html">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Discord</a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker"><a href="learn.html">Learn</a> · Intermediate</span>
+    <h1>Shots worth showing.</h1>
+    <p class="lede">You can get a model in and render it. These lessons are about making the picture good: real surfaces, artwork, shaped light, focus and grading, and a set of shots you can come back to. Take them in any order.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="doc-layout">
+      <nav class="doc-nav" aria-label="Lessons" data-follow>
+        <span class="label">Intermediate</span>
+        <a href="#organise">1. Organise a model</a>
+        <a href="#textures">2. Textures and patterns</a>
+        <a href="#labels">3. Labels and artwork</a>
+        <a href="#library">4. Your own library</a>
+        <a href="#pins">5. Shape the light</a>
+        <a href="#lights">6. Lights in the scene</a>
+        <a href="#lens">7. Lens and focus</a>
+        <a href="#grade">8. Develop the picture</a>
+        <a href="#studios">9. Studios</a>
+        <a href="#colourways">10. Colourways</a>
+        <a href="#turntables">11. Turntables</a>
+        <a href="#output">12. Cut-outs and file types</a>
+        <a href="#assistant">13. Ask an AI</a>
+        <span class="group">More</span>
+        <a href="learn-basics.html">Basics</a>
+        <a href="learn-advanced.html">Advanced</a>
+        <a href="learn.html#features">Find a feature</a>
+      </nav>
+      <div class="prose">
+
+        <h2 id="organise">1. Organise and place a model</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe065;</i>Scene tab · tool strip</span></p>
+        <p>A tidy parts list makes everything after it quicker: a group can be dressed, hidden or moved in one go.</p>
+        <ul>
+          <li><strong>Group:</strong> select two or more parts and press <strong>Group</strong> in the Scene tab (<kbd>Ctrl</kbd>+<kbd>G</kbd>). <strong>Ungroup</strong> undoes it.</li>
+          <li><strong>Rename:</strong> double-click a row, or select it and press <kbd>F2</kbd>.</li>
+          <li><strong>Reparent:</strong> drag a row onto a group to put it inside (a box shows), or onto any other row to put it beside that one (a line shows).</li>
+          <li><strong>Lock:</strong> the lock on a row stops that part, and everything in it, being moved, deleted or re-dressed by accident.</li>
+          <li><strong>Search:</strong> the box at the top takes a name, or a field and a value from the model's data, like <code>Material = ABS</code> or <code>AB*</code>. <strong>Select all</strong> selects everything it found.</li>
+          <li><strong>Selection level:</strong> <strong>Select</strong> sets what a click picks: a <strong>Part</strong>, the <strong>Object</strong> it belongs to, every part with the same <strong>Material</strong>, or a <strong>Face</strong>.</li>
+        </ul>
+        <h3>Moving parts</h3>
+        <ol class="steps">
+          <li><strong>Select a part</strong> and press <kbd>W</kbd> (move), <kbd>E</kbd> (rotate) or <kbd>R</kbd> (scale), or use the tool strip at the viewport's left.</li>
+          <li><strong>Drag a handle.</strong> Arrows move along an axis, squares in a plane, rings rotate. The button under the tools switches between <strong>Local axes</strong> and <strong>World axes</strong>.</li>
+          <li><strong>Snap</strong> with the magnet: <strong>Grid snap</strong>, <strong>Angle snap</strong> (15°, on to begin with) or <strong>Vertex snap</strong>, which lands a corner on another part's corner.</li>
+        </ol>
+        <p>For exact numbers, the Scene tab's <strong>Transform</strong> section takes a position you type, with units (<code>2.5in</code>) or a sum (<code>=120/2</code>). <strong>Drop to ground</strong> sets the part on the floor. <strong>Pivot</strong> sets the point it turns about; hold <kbd>Insert</kbd> and click the model to put it exactly there.</p>
+        <p>To check a size, open <strong>Measurements</strong> in the Scene tab, press <strong>Measure</strong> and click two points. It snaps to corners, midpoints, edges and surfaces, and the distances are saved with the project.</p>
+
+        <h2 id="textures">2. Textures, patterns and texture packs</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Material tab</span></p>
+        <p>Any setting on the Material tab can be driven by a picture or a pattern instead of one value: a wood grain in the colour, scratches in the roughness, a weave in the bump.</p>
+        <ol class="steps">
+          <li><strong>Press the picture button</strong> at the right of a setting ("Drive this from an image or a pattern").</li>
+          <li><strong>Choose Image…</strong> for a picture file, or one of the 17 patterns: Noise, Cellular, Scratches, Marble, Wood, Wood (Advanced), Brushed, Noise (Texture), Ridged noise, Granite, Leather, Spots, Camouflage, Contour, Brushed (Radial), Weave, Perforated mesh.</li>
+          <li><strong>Adjust it.</strong> The pattern's own controls appear under the setting. On a colour, <strong>Colour ramp</strong> maps it onto colours you pick, with presets Greyscale, Wood, Marble and Rust. On bump, <strong>Depth</strong> says how far its highest point stands above its lowest, in millimetres.</li>
+          <li><strong>Fit it to the part</strong> in the <strong>Mapping</strong> fold: the <strong>Projection</strong> (UV, Tri-planar, Planar, Cylindrical, Spherical), <strong>Real-world size</strong>, how many <strong>Repeats</strong>, <strong>Offset</strong>, <strong>Rotation</strong> and <strong>Wrap</strong>.</li>
+        </ol>
+        <p>The <strong>x</strong> beside the setting's name takes the picture off and goes back to a plain value.</p>
+        <h3>Texture packs</h3>
+        <p>A PBR texture pack (from ambientCG, Poly Haven or Megascans, say) has several maps of one surface. Tequila turns them into one material in one step:</p>
+        <ol class="steps">
+          <li><strong>Select the parts</strong> it's for.</li>
+          <li><strong>Choose File › Import texture pack › From a folder…</strong> or <strong>From a ZIP or one of its maps…</strong>, or drop the folder or ZIP on the window.</li>
+          <li><strong>Check the size.</strong> One repeat is sized to the part to begin with. <strong>Texture size</strong> on the Material tab changes it.</li>
+        </ol>
+        <div class="tip"><p><strong>Good to know.</strong> A pack follows the model's own UV layout when it has one; CAD parts and parts without a layout get tri-planar mapping, which needs none. For bump, a file whose name ends in <code>_normal</code>, <code>_nrm</code> or <code>_n</code> is read as a normal map; anything else as a height map.</p></div>
+
+        <h2 id="labels">3. Labels and printed artwork</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe301;</i>Material tab › Labels</span></p>
+        <p>A label is artwork printed on a part: a logo, a button legend, a packaging design. Transparent areas let the material show through.</p>
+        <ol class="steps">
+          <li><strong>Select the part</strong>, and in the Material tab's <strong>Labels</strong> press <strong>+ Add label…</strong>. Pictures and video both work; for a video, pick the frame you want and press <strong>Use this frame</strong>.</li>
+          <li><strong>Press + Place</strong> and click the part where the artwork should go. Drag to slide it, <kbd>Ctrl</kbd>+scroll to size it, <kbd>Shift</kbd>+scroll to turn it, and <kbd>Esc</kbd> when you're done.</li>
+          <li><strong>Finish it</strong> in <strong>Placement &amp; finish</strong>.</li>
+        </ol>
+        <ul>
+          <li><strong>Placement:</strong> <strong>On UV map</strong> follows the part's layout, <strong>Project flat</strong> shines it on from one side like a projector, <strong>Wrap around</strong> rolls it round a cylinder such as a bottle. <strong>Fit to part</strong> sizes it to the part.</li>
+          <li><strong>Finish:</strong> <strong>Opacity</strong>, its own <strong>Roughness</strong>, <strong>Ink</strong> (white artwork prints in the ink's colour) and <strong>Foil</strong> for a metallic hot-stamp.</li>
+          <li><strong>Prints on:</strong> a flat projection prints right through the part. Choose <strong>+ side</strong> or <strong>− side</strong> to keep it off the back.</li>
+        </ul>
+        <div class="tip"><p><strong>Tip.</strong> Artwork that says its print resolution (most PNGs and TIFFs from a design app do) arrives at its real printed size on a <strong>Project flat</strong> label.</p></div>
+
+        <h2 id="library">4. Your own material library</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Material tab · Library</span></p>
+        <figure><img src="assets/img/materials-sheet.jpg" alt="A sheet of library materials" loading="lazy" data-zoom><figcaption>Some of the library's materials.</figcaption></figure>
+        <ul>
+          <li><strong>Keep one you tuned:</strong> on the Material tab, <strong>Save to library…</strong>, give it a name and a category, and press <strong>Save</strong>. It's on the library's <strong>Mine</strong> shelf, pictures and patterns included.</li>
+          <li><strong>Make one from scratch:</strong> the <strong>+</strong> in the library (or <strong>File › New library material…</strong>) starts from a <strong>Blank</strong> type, the <strong>Selected part</strong>, a <strong>Texture pack</strong> or a <strong>File</strong>.</li>
+          <li><strong>Change a shipped one:</strong> right-click it › <strong>Duplicate to my library</strong>. The shipped materials can't be changed themselves.</li>
+          <li><strong>Right-click one of your own</strong> for <strong>Edit details…</strong> (name, category, tags), <strong>Update from the selected part</strong>, <strong>Export…</strong> (a <code>.fsmat</code> file to share) and <strong>Delete…</strong>.</li>
+          <li><strong>Bring one in:</strong> <strong>File › Import material file…</strong> takes <code>.fsmat</code> and material files, and KeyShot <code>.kmp</code> materials. Or just drop the file on the window.</li>
+        </ul>
+        <div class="tip"><p><strong>Good to know.</strong> A saved material is a copy. Tuning the part afterwards doesn't change the library's version until you use <strong>Update from the selected part</strong>. Projects keep their own copies too, so deleting a library material never breaks a project.</p></div>
+
+        <h2 id="pins">5. Shape the light with pins</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe17b;</i>Environment tab › Lighting pins</span></p>
+        <p>Pins are lights painted onto the environment: softboxes, strips, pictures and backdrops. They light the product, cast soft shadows and show in its reflections, which is where most of a product photo's look comes from.</p>
+        <ol class="steps">
+          <li><strong>Open Lighting pins</strong> on the Environment tab and press <strong>+ Softbox</strong>. Or start from a setup: <strong>Three-point</strong>, <strong>Overhead softbox</strong> or <strong>Two strips</strong> (these replace the pins you have).</li>
+          <li><strong>Place it.</strong> Drag it on the map at the top of the tab, or set <strong>Around °</strong> and <strong>Height °</strong> (90 is straight overhead).</li>
+          <li><strong>Shape it:</strong> <strong>Brightness</strong>, <strong>Size °</strong>, <strong>Softness</strong> (how it falls off to its edge, like a diffuser), <strong>Turn °</strong>, and <strong>Shape</strong>: Box or Round.</li>
+          <li><strong>Aim the highlight.</strong> Press the pin's <strong>◎ Aim</strong> and click the model where you want its highlight; the pin moves so it lands there. Drag to slide it, <kbd>Esc</kbd> when done.</li>
+        </ol>
+        <ul>
+          <li>The eye on a pin's row hides it from the background without turning it off: it still lights and still reflects.</li>
+          <li><strong>+ Image…</strong> paints a picture into the environment: a window, a photographed softbox.</li>
+          <li><strong>+ Backdrop</strong> adds a gradient behind the product that doesn't change the light at all.</li>
+        </ul>
+        <figure><img src="assets/img/lighting-studio.jpg" alt="A perfume bottle lit by pins, with the lamps reflected in its glass" loading="lazy" data-zoom><figcaption>Lit with pins: their shapes are what you see reflected in the glass.</figcaption></figure>
+        <h3>The floor, and the sun</h3>
+        <ul>
+          <li><strong>Ground</strong> (on the same tab) sets the floor: <strong>Catch shadows</strong>, <strong>Ground reflections</strong> and how they fade, <strong>Floor bounce</strong>, and the floor's size. Turn off <strong>Ground plane</strong> to have no floor at all.</li>
+          <li><strong>Sun &amp; sky</strong> replaces the environment with a physical sky: <strong>Light the scene with a sky</strong>, then <strong>Midday</strong>, <strong>Afternoon</strong>, <strong>Golden hour</strong> or <strong>Overcast</strong>, and the sun's direction and haze. Pins still work on top.</li>
+        </ul>
+
+        <h2 id="lights">6. Lights in the scene</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1c1;</i>Scene tab › Add</span></p>
+        <p>Sometimes a light has to be <em>in</em> the scene: inside a lamp shade, close beside the product, or a spot on one part.</p>
+        <ol class="steps">
+          <li><strong>In the Scene tab, choose Add › Light</strong> and pick <strong>Area light</strong>, <strong>Disc light</strong>, <strong>Point light</strong>, <strong>Spot light</strong> or <strong>Sun</strong>.</li>
+          <li><strong>Move it</strong> with the gizmo, like a part.</li>
+          <li><strong>Set it up on the Material tab.</strong> With a light selected, that's where its settings are: its size or cone, its strength, and its colour or <strong>Colour temperature</strong>.</li>
+        </ol>
+        <div class="tip"><p><strong>Good to know.</strong> A light's strength is a number and a unit: lm, nits, cd or lx. Switching the unit keeps the number you typed rather than converting it.</p></div>
+
+        <h2 id="lens">7. Lens, focus and depth of field</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe068;</i>Camera tab</span></p>
+        <ul>
+          <li><strong>Depth of field:</strong> tick it, then set the <strong>f-number</strong> (smaller means less in focus) and the <strong>Focus distance</strong>. <strong>Keep focus</strong> keeps the camera's target in focus as you orbit. There's no click-to-focus: set the distance, or let Keep focus follow the target. <strong>Aperture</strong> chooses round or bladed out-of-focus highlights.</li>
+          <li><strong>Lens:</strong> <strong>Perspective</strong> as a camera sees, <strong>Orthographic</strong> with no perspective at all (for technical views), <strong>Shift</strong> to keep verticals straight as on an architectural camera, or <strong>Spherical</strong> for 360° pictures.</li>
+          <li><strong>Field of view</strong> and <strong>Sensor width</strong> are the same lens described another way; <strong>Full frame</strong> sets a 36 mm sensor.</li>
+        </ul>
+        <figure><img src="assets/img/dof.jpg" alt="A row of material balls, the nearest sharp and the rest falling out of focus" loading="lazy" data-zoom><figcaption>Depth of field: focus on the front, the rest falls away.</figcaption></figure>
+
+        <h2 id="grade">8. Develop the picture</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Image tab</span></p>
+        <p>The Image tab works on the picture the way you'd develop a photo, and none of it starts the render again: change it as the samples build up.</p>
+        <ul>
+          <li><strong>Basic</strong> has <strong>Exposure</strong>, <strong>Contrast</strong> and <strong>Saturation</strong>.</li>
+          <li><strong>Photographic</strong> adds <strong>Highlights</strong>, <strong>Shadows</strong>, <strong>Whites</strong>, <strong>Blacks</strong>, <strong>Temperature</strong> and <strong>Tint</strong> (<strong>Neutral</strong> resets them), <strong>Vignette</strong>, <strong>Bloom</strong>, <strong>Sharpening</strong> and <strong>Chromatic aberration</strong>.</li>
+          <li><strong>Tone map</strong> decides how bright light is squeezed into the picture: <strong>PBR Neutral</strong> (the default) keeps product colours true; <strong>AgX</strong> and <strong>ACES</strong> are filmic.</li>
+          <li><strong>Denoise</strong> cleans the noise out as it renders. <strong>Reset</strong> puts the grade back.</li>
+        </ul>
+        <figure><img src="assets/img/learn-image.jpg" alt="The Image tab in Photographic mode, with a little vignette and cooler highlights" loading="lazy" data-zoom><figcaption>Photographic: a slight vignette and a touch of warmth taken out.</figcaption></figure>
+
+        <h2 id="studios">9. Studios and studio presets</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe068;</i>Studios tab · Library › Studios</span></p>
+        <p>A <strong>Studio</strong> is a saved shot inside the project: a hero, a side view, a dark version. A <strong>studio preset</strong> is a lighting setup you keep for any product.</p>
+        <h3>Studios in a project</h3>
+        <ol class="steps">
+          <li><strong>Set up a shot</strong>, then on the <strong>Studios</strong> tab (<kbd>U</kbd>) press <strong>+ Studio from the current shot</strong>.</li>
+          <li><strong>Choose what it holds</strong>: <strong>Camera</strong>, <strong>Environment</strong>, <strong>Image</strong>, <strong>Model set</strong>, <strong>Variants</strong>, <strong>Lights</strong>, <strong>Product turn</strong>. What it doesn't hold, it leaves as it is.</li>
+          <li><strong>Switch shots</strong> by clicking a Studio's picture or <strong>▶ Apply</strong>. <strong>Update from the current shot</strong> saves changes into it.</li>
+          <li><strong>Render them all:</strong> with two or more Studios, <strong>Render all N views</strong> queues one render of each.</li>
+        </ol>
+        <figure><img src="assets/img/learn-studios.jpg" alt="The Studios tab with three saved shots of the headphones" loading="lazy" data-zoom><figcaption>Three Studios, each turning the product a little further.</figcaption></figure>
+        <h3>Studio presets</h3>
+        <ul>
+          <li><strong>Save one:</strong> in the library's <strong>Studios</strong>, press <strong>Save current studio…</strong>, give it a name, a family and a size, and save. The viewport becomes its picture.</li>
+          <li><strong>Apply one</strong> to another product: pick it and press <strong>Apply</strong>. Say which way the product faces, and whether to scale the cameras (and lights) to it, keep your own lights or cameras, or leave the product where it is. The whole apply is one undo step.</li>
+          <li><strong>Share one:</strong> <strong>Export…</strong> writes a package that <strong>Install…</strong> reads on another computer.</li>
+        </ul>
+
+        <h2 id="colourways">10. Colourways</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Studios tab › Material variants</span></p>
+        <p>Material variants are several materials for the same parts, one in use at a time: a product in red, blue and black.</p>
+        <ol class="steps">
+          <li><strong>Select the parts</strong> with the material to vary, and in <strong>Material variants</strong> press <strong>+ Variants from selection</strong>.</li>
+          <li><strong>Add the others.</strong> <strong>Duplicate</strong> copies the one in use for you to recolour on the Material tab; <strong>+ Existing material</strong> adds one already in the project.</li>
+          <li><strong>Switch</strong> with the round button beside each. A Studio that holds <strong>Variants</strong> remembers which was on.</li>
+        </ol>
+        <figure><img src="assets/img/app-configurator.jpg" alt="Material variants for a 3D-printed holder: six filament colours" loading="lazy" data-zoom><figcaption>Six filament colours as variants. The Configurator underneath turns them into a picker (see <a href="learn-advanced.html#configurator">Advanced</a>).</figcaption></figure>
+
+        <h2 id="turntables">11. Turntables and spin viewers</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe2e9;</i>Studios tab · File menu</span></p>
+        <ol class="steps">
+          <li><strong>On the Studios tab's Turntable</strong>, set how many frames, how many degrees and the frames per second; <strong>Ease in and out</strong> starts and stops it gently.</li>
+          <li><strong>Press Make turntable.</strong> <strong>Frame N</strong> and <strong>Show</strong> preview any frame.</li>
+          <li><strong>Press Render N frames.</strong> They're saved as numbered pictures, ready to join into a video in any video editor.</li>
+        </ol>
+        <figure><img src="assets/img/turntable.jpg" alt="Six frames of the headphones turning" loading="lazy" data-zoom><figcaption>Six frames of a turntable.</figcaption></figure>
+        <p>Stopped part-way? Render again: frames already done are skipped.</p>
+        <p>A <strong>spin viewer</strong> is a web page where people drag to turn the product. <strong>File › Export spin viewer…</strong> asks for <strong>Frames round</strong>, <strong>Rows of tilt</strong> and the direction, optionally with a <strong>Transparent background</strong>, then renders into a new folder and builds the page when the frames are done.</p>
+
+        <h2 id="output">12. Cut-outs, line drawings and file types</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Render window</span></p>
+        <ul>
+          <li><strong>Transparent background:</strong> <strong>File › Alpha</strong>. <strong>Straight</strong> or <strong>Premultiplied</strong> keep the floor's shadow, ready for compositing. <strong>Silhouette</strong> cuts the product out along its outline with glass kept solid: the catalogue cut-out.</li>
+          <li><strong>File type:</strong> <strong>Format</strong> is PNG, JPEG, TIFF, EXR or PSD, at 8, 16 or 32 bits where the format allows. JPEG has no transparency.</li>
+          <li><strong>File names:</strong> the <strong>+ project</strong>, <strong>+ camera</strong>, <strong>+ view</strong>, <strong>+ date</strong>… buttons add parts to the name, so batches name themselves.</li>
+          <li><strong>Line drawings:</strong> <strong>Render wireframe</strong> draws the model's edges in a second or two, with hidden lines faint, hidden or shown, on a dark background or on <strong>Paper</strong>.</li>
+          <li><strong>The queue:</strong> renders wait their turn along the bottom of the window. Right-click one to hold, move or remove it. <strong>Stop &amp; save</strong> keeps a render that's good enough already.</li>
+          <li><strong>Compare:</strong> right-click a finished render › <strong>Compare with the one on screen</strong>, and drag the split.</li>
+        </ul>
+        <figure><img src="assets/img/wireframe.jpg" alt="The headphones as a line drawing" loading="lazy" data-zoom><figcaption>Render wireframe.</figcaption></figure>
+
+        <h2 id="assistant">13. Ask an AI to do it</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1ba;</i>Toolbar › Assistant</span></p>
+        <p>The <strong>Assistant</strong> panel takes requests in your own words, like "make the strap black velvet and light it like a studio shot", and makes the changes in the scene: materials, textures, lighting, camera. It can make a material from a description when nothing in the library fits.</p>
+        <ol class="steps">
+          <li><strong>Press Assistant</strong> in the toolbar, then <strong>Connect an AI…</strong>.</li>
+          <li><strong>Pick a provider</strong> (OpenAI, Claude, Google Gemini, Mistral and others, or Ollama and LM Studio on your own computer) and give it your key, or choose one of the <strong>AI apps on this computer</strong> and press <strong>Connect</strong>.</li>
+          <li><strong>Ask.</strong> <kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a new line. <strong>Undo request</strong> takes back everything the last request changed.</li>
+        </ol>
+        <figure><img src="assets/img/app-connect.jpg" alt="The Connect an AI window" loading="lazy" data-zoom><figcaption>Connect an AI: the providers, and the AI apps found on this computer.</figcaption></figure>
+
+        <div class="next-lesson">
+          <a class="button button-quiet" href="learn-basics.html"><i class="icon" aria-hidden="true">&#xe063;</i>Basics</a>
+          <a class="button button-primary" href="learn-advanced.html">Next: advanced<i class="icon" aria-hidden="true">&#xe04d;</i></a>
+        </div>
+
+        <div class="discord-note">
+          <p><strong>Made something good?</strong> Share it on the Discord.</p>
+          <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+        <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+          <li><a href="roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="learn.html">Learning hub</a></li>
+          <li><a href="learn.html#features">Find a feature</a></li>
+          <li><a href="docs.html">Docs</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+          <li><a href="https://ko-fi.com/ifpintac">Support on Ko-fi</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced · Learn Tequila</title>
+<meta name="description" content="Tequila, advanced: node graphs, UV layouts, material templates, configurators and web export, render passes and relighting, light transport, ray visibility, CAD assemblies, colour management, network rendering, scripting and plugins.">
+<meta property="og:title" content="Learn Tequila: advanced">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="learn.html" aria-current="page">Learn</a>
+      <a href="docs.html">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Discord</a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker"><a href="learn.html">Learn</a> · Advanced</span>
+    <h1>The whole toolbox.</h1>
+    <p class="lede">For building materials from scratch, laying out artwork, selling a product in every option, compositing, big CAD assemblies and automating the lot. Each lesson stands on its own.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="doc-layout">
+      <nav class="doc-nav" aria-label="Lessons" data-follow>
+        <span class="label">Advanced</span>
+        <a href="#graph">1. Node graphs</a>
+        <a href="#uv">2. UV layouts</a>
+        <a href="#templates">3. Dress by rules</a>
+        <a href="#configurator">4. Configurators</a>
+        <a href="#passes">5. Passes and relighting</a>
+        <a href="#transport">6. Light transport</a>
+        <a href="#visibility">7. Visibility and cutaways</a>
+        <a href="#assemblies">8. CAD assemblies</a>
+        <a href="#colour">9. Colour management</a>
+        <a href="#farm">10. Network rendering</a>
+        <a href="#scripting">11. Scripting</a>
+        <a href="#plugins">12. Plugins</a>
+        <span class="group">More</span>
+        <a href="learn-intermediate.html">Intermediate</a>
+        <a href="learn.html#features">Find a feature</a>
+        <a href="docs.html#guides">Guides</a>
+      </nav>
+      <div class="prose">
+
+        <h2 id="graph">1. Build materials from nodes</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Material tab › Edit graph…</span></p>
+        <p>Every material can also be a node graph: textures, patterns, maths and colour feeding the material's settings. Select a part and press <strong>Edit graph…</strong> on the Material tab. The graph opens in a window of its own, which you can put on a second screen; it reopens where you left it.</p>
+        <figure><img src="assets/img/app-graph.jpg" alt="The material graph window with texture nodes feeding a Surface node" loading="lazy" data-zoom><figcaption>The graph window: the nodes, the Surface node they feed, and a live preview at the right.</figcaption></figure>
+        <ul>
+          <li><strong>The Surface node</strong> is the material. Its inputs are the material's settings; wire anything into them.</li>
+          <li><strong>Add a node</strong> with <kbd>Shift</kbd>+<kbd>A</kbd> or <kbd>Tab</kbd>, right-click › <strong>Add…</strong>, or by dropping a wire on empty canvas (then only nodes that fit the wire are offered). Type to search: "multiply" finds the multiply operation of Math, Vector Math and Mix.</li>
+          <li><strong>The families:</strong> Input, Texture, Pattern (the 17 patterns, plus FDM Layer Lines for 3D prints), Color, Converter, Vector, Surface and Layout.</li>
+          <li><strong>Surface nodes</strong> do more than colour: <strong>Curvature</strong> for worn edges, <strong>Occlusion</strong> for dirt in crevices, <strong>Bubbles</strong> inside glass and liquid, <strong>Fuzz</strong> for grown fibres, and <strong>Shader</strong>, <strong>Mix Shader</strong> and <strong>Add Shader</strong> to layer whole materials.</li>
+          <li><strong>Wires:</strong> drag from a socket; drag off a connected input to pick its wire up; <kbd>Ctrl</kbd>+right-drag cuts wires; drop a node on a wire to put it in between.</li>
+          <li><strong>Look at one node</strong> with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click (or <strong>Solo</strong> in the sidebar): the viewport shows only its output on the model. Click again for its next output; <strong>End solo</strong> stops.</li>
+          <li><strong>Keep it tidy:</strong> <kbd>Ctrl</kbd>+<kbd>J</kbd> wraps nodes in a frame, <kbd>M</kbd> mutes, <kbd>H</kbd> collapses, <strong>Tidy</strong> lays everything out in columns, <kbd>Home</kbd> fits it in view.</li>
+        </ul>
+        <div class="tip"><p><strong>Good to know.</strong> The graph only offers pictures already in the project. To use a new one, put it on a setting with the Material tab's <strong>Image…</strong> first; then any Image node can switch to it. An edit that would make a loop, or join sockets of different kinds, is refused with a note saying why.</p></div>
+
+        <h2 id="uv">2. Lay out UVs</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe301;</i>View › UV editor</span></p>
+        <p>A UV layout is a part's surface laid out flat: it's what textures and labels with <strong>On UV map</strong> follow. Open the editor with <strong>View › UV editor</strong>, <strong>Workspace › UV layout</strong> (the editor beside the Material tab), or a label's <strong>UV editor</strong> button. A part with no layout offers <strong>Unwrap</strong>.</p>
+        <figure><img src="assets/img/app-uv.jpg" alt="The UV editor with a part laid out flat and its tools" loading="lazy" data-zoom><figcaption>The UV editor. Labels move with the islands they sit on.</figcaption></figure>
+        <ul>
+          <li><strong>Tools:</strong> Select (<kbd>V</kbd>), Move (<kbd>W</kbd>), Rotate (<kbd>E</kbd>), Scale (<kbd>R</kbd>), Measure (<kbd>M</kbd>). <kbd>1</kbd>–<kbd>4</kbd> choose what a click picks: labels, islands, edges or vertices.</li>
+          <li><strong>Seams and islands:</strong> <strong>Cut</strong> (<kbd>C</kbd>), <strong>Stitch</strong> (<kbd>S</kbd>), <strong>Pin</strong> (<kbd>P</kbd>), <strong>Re-flatten</strong>, <strong>Pack</strong> (<kbd>Ctrl</kbd>+<kbd>P</kbd>), <strong>Straighten</strong>, <strong>Even size</strong>.</li>
+          <li><strong>Seeing problems:</strong> <strong>Stretch</strong> shows a heat map of distortion; <strong>Checker on the part</strong> puts a checker on the model in the viewport (never in a render).</li>
+          <li><strong>The side panels</strong> go further: Align, Arrange, Texel density, Islands (with pack options and UV sets), Unwrap methods, Shape tools such as Relax, and Symmetry.</li>
+          <li><strong>Export layout</strong> writes a PNG or SVG of the layout to draw artwork over. <strong>?</strong> lists every key.</li>
+        </ul>
+
+        <h2 id="templates">3. Dress a whole assembly by rules</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Material tab › Material templates</span></p>
+        <p>An assembly of five hundred parts shouldn't need five hundred drops. A template is a list of rules, each giving matching parts a material; the first rule that matches a part decides it.</p>
+        <ol class="steps">
+          <li><strong>Put the materials you'll need into the project</strong> first (drop them on any part).</li>
+          <li><strong>Open Material templates</strong> at the bottom of the Material tab and press <strong>+ Template</strong>.</li>
+          <li><strong>Add rules</strong> with <strong>+ Rule</strong>. Each matches by <strong>Part name</strong> or <strong>Material name</strong> (<code>bolt*</code>: <code>*</code> is any run of letters, <code>?</code> any one), by <strong>Colour</strong> within a tolerance, or by a <strong>Metadata</strong> field such as <code>layer = HARDWARE</code>, and then gets a material.</li>
+          <li><strong>Check the preview.</strong> It says how many parts would change and lists each with its material now and after.</li>
+          <li><strong>Press Apply to N parts.</strong> It's one undo step.</li>
+        </ol>
+        <div class="tip"><p><strong>Tip.</strong> Studio presets can carry rules too. Applying one offers <strong>Dress it with the studio's materials</strong>, so a house style lights <em>and</em> dresses a new product.</p></div>
+
+        <h2 id="configurator">4. Configurators, presentations and the web</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe068;</i>Studios tab › Configurator</span></p>
+        <p>A configurator turns colourways, alternative parts and saved shots into the choices a customer makes. You need at least one of: a set of material variants (<a href="learn-intermediate.html#colourways">Colourways</a>), two <strong>Model sets</strong>, or two Studios.</p>
+        <ul>
+          <li><strong>Model sets</strong> are which parts show: a version with the handle and one without. On the Studios tab, select the parts and press <strong>+ Set from selection</strong>; Tick <strong>Always</strong> on a set that should show whichever set is chosen, such as the body every version shares.</li>
+        </ul>
+        <ol class="steps">
+          <li><strong>Press Build a configurator</strong> at the bottom of the Studios tab (or choose <strong>Workspace › Configurator</strong>).</li>
+          <li><strong>Options:</strong> each option is variants, model sets or Studios, shown as <strong>Swatches</strong>, <strong>Buttons</strong> or a <strong>List</strong>. Name the choices and set their swatch colours.</li>
+          <li><strong>Rules:</strong> "when this choice, rule out or require that one". It counts how many combinations remain valid.</li>
+          <li><strong>Layout:</strong> a title, a subtitle, and the picker on the left, right or bottom.</li>
+          <li><strong>Try it:</strong> the live picker. From here, <strong>Present full screen</strong>, <strong>Render all N…</strong> (one picture per valid combination) or <strong>Export for the web…</strong>.</li>
+        </ol>
+        <figure><img src="assets/img/app-present.jpg" alt="Presentation mode: the product full screen with the configurator's picker" loading="lazy" data-zoom><figcaption><strong>Workspace › Present</strong> (<kbd>F5</kbd>): rendered, full screen, with the picker. <kbd>Esc</kbd> leaves.</figcaption></figure>
+        <p><strong>File › Export for the web…</strong> writes a folder with a page that opens in any browser and loads nothing from anywhere: <strong>Live 3D</strong>, <strong>Photos of every combination</strong>, or both. The <a href="features.html#sharing">Features page</a> has a live one to try.</p>
+
+        <h2 id="passes">5. Passes, layers and relighting</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Render window</span></p>
+        <ul>
+          <li><strong>Render passes</strong> (under <strong>File</strong>, for EXR and PSD) write the picture's ingredients as layers: diffuse, reflection, refraction, lighting, depth, normals, position, albedo, masks by object and material, and more. Cycles leaves out caustics, ambient occlusion, shadow and labels.</li>
+          <li><strong>Render layers:</strong> <strong>+ Layer from selection</strong> renders those parts on their own, as an extra picture.</li>
+          <li><strong>Relight:</strong> tick <strong>Keep light groups for relighting</strong>. After the render, a <strong>Relight</strong> section has a strength and tint for each group (each scene light's <strong>Light layer</strong>, the environment, glowing materials) and <strong>Save relit image</strong>. No re-rendering.</li>
+          <li><strong>Region:</strong> <strong>Render part of the image only</strong> re-renders one rectangle, drawn in orange on the frame.</li>
+        </ul>
+        <div class="tip"><p><strong>Good to know.</strong> Render layers and regions always render in Tequila's own renderer, whatever the project is set to.</p></div>
+
+        <h2 id="transport">6. Light transport and caustics</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe17b;</i>Lighting tab</span></p>
+        <p>The <strong>Lighting</strong> tab decides how light travels, which is what you trade against speed.</p>
+        <ul>
+          <li><strong>Performance</strong> drops shadows and bounced light while you set up; <strong>Basic</strong> is direct light and shadows; <strong>Product</strong> (the default) adds bounced light; <strong>Interior</strong> is for spaces lit through openings; <strong>Jewelry</strong> follows light deep through gems and cut glass, with caustics.</li>
+          <li><strong>Transport</strong> sets it all by hand: <strong>Ray bounces</strong>, <strong>Transmission bounces</strong> (counted apart, so glass gets enough without slowing everything), global illumination, shadows, and <strong>Caustics</strong>: Off, Photons, or Manifold (for lamps). Changing any of these switches to Custom.</li>
+          <li>Caustics need solid glass: Glass (Solid), Liquid or Gem. A thin pane passes light straight through.</li>
+        </ul>
+        <figure><img src="assets/img/app-lighting.jpg" alt="The Lighting tab with its quality presets" loading="lazy" data-zoom><figcaption>The Lighting tab. The bars show how fast each preset renders.</figcaption></figure>
+        <p><strong>Which renderer:</strong> new projects render with <strong>Cycles (graphics card)</strong>. Tequila's own renderer also does spectral rendering, so gems and dispersive glass split light into colours; the Render window's <strong>Spectral</strong> setting decides when.</p>
+
+        <h2 id="visibility">7. Ray visibility and cutaways</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe065;</i>Scene tab › Visible to · Add › Cutaway</span></p>
+        <ul>
+          <li><strong>Visible to:</strong> select a part, and choose which rays see it: <strong>Camera</strong>, <strong>Reflections</strong>, <strong>Light it bounces</strong>, <strong>Through glass</strong>, <strong>Casts shadows</strong>. A card the camera can't see but reflections can is a hidden reflector, as in a real studio. <strong>Holdout</strong> cuts a part out of the picture for compositing.</li>
+          <li><strong>Light linking:</strong> select a scene light; <strong>Light linking</strong> and <strong>Shadow linking</strong> choose which parts it lights and which cast its shadow.</li>
+          <li><strong>Cutaways:</strong> <strong>Add › Cutaway</strong> (Plane, Box, Sphere or Cylinder) cuts the model open to show what's inside. Move it with the gizmo; select it and its settings are on the Material tab, including <strong>Cut face</strong>: the part's own material or a flat colour.</li>
+        </ul>
+
+        <h2 id="assemblies">8. Big CAD assemblies</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe065;</i>Scene tab</span></p>
+        <ul>
+          <li><strong>Tessellation:</strong> right-click a CAD model › <strong>Tessellation</strong>: Draft, Medium, High or Ultra, for how finely curved surfaces are divided.</li>
+          <li><strong>Improve model…</strong> re-divides CAD surfaces, subdivides meshes, and re-shades them smooth with an angle above which edges stay sharp.</li>
+          <li><strong>A new version from CAD:</strong> <strong>File › Reload model from file</strong>, or right-click › <strong>Update from another file…</strong>. Materials, labels and names are kept, parts are matched by name, new parts are added, and parts no longer there are hidden. The <strong>Model updated</strong> window lists both and can delete the hidden ones.</li>
+          <li><strong>Metadata:</strong> the <strong>Metadata</strong> section shows each part's fields from the CAD file. Click a field's magnifier to select every part with that value, add your own fields, or <strong>Export CSV</strong> for a parts list.</li>
+          <li><strong>Layers:</strong> CAD files with layers show a <strong>Layers</strong> section to hide or select them.</li>
+        </ul>
+        <div class="tip"><p><strong>Tip.</strong> A part renamed in CAD looks like one part removed and another added. Rename it in Tequila too, or re-dress it, after an update.</p></div>
+
+        <h2 id="colour">9. Colour management</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Image tab › Colour management</span></p>
+        <p>Tequila renders in ACEScg, a wide-gamut space, and the colours you pick are shown as they will render. For a studio pipeline, <strong>Colour management</strong> on the Image tab loads an OCIO config: give it the path to a <code>config.ocio</code> and pick its <strong>Display</strong> and <strong>View</strong>. <strong>Use the built-in transform</strong> goes back to Tequila's own tone maps.</p>
+
+        <h2 id="farm">10. Render on other computers</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Render window › Network rendering</span></p>
+        <ol class="steps">
+          <li><strong>On each other computer,</strong> run <code>tequila-cli --worker --token YOUR-SECRET</code>. It listens on port 7740.</li>
+          <li><strong>In the Render window's Network rendering,</strong> type the same token (eight characters or more) and add each computer's address.</li>
+          <li><strong>Press Render shot</strong>, or <strong>All configurations</strong> for a configurator. Finished renders come back into the list.</li>
+        </ol>
+        <div class="tip"><p><strong>Good to know.</strong> Projects travel unencrypted, so use a network you trust. The token isn't saved; <code>TEQUILA_FARM_TOKEN</code> can supply it. Render nodes write PNG or JPEG.</p></div>
+
+        <h2 id="scripting">11. Scripts, the console and the command line</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe205;</i>Console · Scripting tab · Python · tequila-cli</span></p>
+        <h3>The console</h3>
+        <p>Open it with <strong>Console</strong> in the toolbar or <kbd>`</kbd>. Type <code>help</code> for the commands: select, frame, render, apply, look, show and hide, and more. <kbd>Tab</kbd> completes and the arrows walk the history. <strong>Run script…</strong> runs a file of commands as one undo step, and takes it all back if a line fails.</p>
+        <h3>Python</h3>
+        <pre><code>import tequila
+
+with tequila.open('product.step') as fs:
+    fs.library.apply('Aluminium Anodised Blue', *fs.parts())
+    fs.render('product.png', width=1920, height=1080, samples=256)</code></pre>
+        <p><code>tequila.open()</code> runs Tequila without a window; <code>tequila.connect()</code> drives the one you have open, where every edit a script makes is one step to undo. The <strong>Scripting</strong> tab shows the channel's address and a log of what scripts did.</p>
+        <h3>The command line</h3>
+        <pre><code>tequila-cli -i product.tequila -o product.png -w 1920 -h 1080 -s 256 --engine cycles
+tequila-cli -i product.tequila --all-studios -o "shots {view}.png"
+tequila-cli -i product.tequila --export-web site --photos</code></pre>
+        <p><code>tequila-cli --help</code> lists everything: wireframes, studio presets, every configuration, glTF, USD and spin viewers.</p>
+        <h3>AI apps</h3>
+        <p>The same channel is how AI apps drive Tequila over MCP. <strong>Connect an AI</strong> sets them up; the <strong>Scripting</strong> tab's <strong>Copy instructions for an AI assistant</strong> gives any other one what it needs.</p>
+        <p>The <a href="https://github.com/ifpintac/tequila/blob/main/docs/SCRIPTING.md">scripting guide</a> and the <a href="https://github.com/ifpintac/tequila/blob/main/docs/scripting-api.md">command reference</a> have the rest.</p>
+
+        <h2 id="plugins">12. Plugins</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe205;</i>Plugins menu</span></p>
+        <p>Plugins add commands, panels and material packs. Every plugin starts turned off.</p>
+        <ul>
+          <li><strong>Plugins › Manage plugins…</strong> opens the Plugins window: <strong>Install from a ZIP…</strong>, <strong>Open the folder</strong>, and the switch on each plugin to turn it on. A plugin with code asks before it runs.</li>
+          <li>Plugins with code need Python 3; material packs need nothing.</li>
+          <li>To write one, type a name and press <strong>Make it from the template</strong>, then edit the files it makes. Plugins can react when the selection changes, a project is saved, opened or imported, or a render finishes.</li>
+        </ul>
+        <p>The <a href="https://github.com/ifpintac/tequila/blob/main/docs/plugins.md">plugins guide</a> explains the rest, and the repository's <code>plugins/examples</code> folder has working ones to start from.</p>
+
+        <div class="next-lesson">
+          <a class="button button-quiet" href="learn-intermediate.html"><i class="icon" aria-hidden="true">&#xe063;</i>Intermediate</a>
+          <a class="button button-primary" href="learn.html#features">Find any feature<i class="icon" aria-hidden="true">&#xe04d;</i></a>
+        </div>
+
+        <div class="discord-note">
+          <p><strong>Built something with it?</strong> Show it on the Discord.</p>
+          <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+        <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+          <li><a href="roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="learn.html">Learning hub</a></li>
+          <li><a href="learn.html#features">Find a feature</a></li>
+          <li><a href="docs.html">Docs</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+          <li><a href="https://ko-fi.com/ifpintac">Support on Ko-fi</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>

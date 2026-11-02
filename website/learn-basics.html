@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Basics · Learn Tequila</title>
+<meta name="description" content="Tequila basics: find your way around, bring in a model, move around it, put materials on, light it, frame it, render it and save it.">
+<meta property="og:title" content="Learn Tequila: the basics">
+<meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
+<meta name="theme-color" content="#0b0c0d">
+<link rel="icon" href="assets/img/icon-64.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/icon-256.png">
+<link rel="stylesheet" href="assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="features.html">Features</a>
+      <a href="gallery.html">Gallery</a>
+      <a href="learn.html" aria-current="page">Learn</a>
+      <a href="docs.html">Docs</a>
+      <a href="whats-new.html">What's new</a>
+      <a href="roadmap.html">Roadmap</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="header-end">
+      <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Discord</a>
+      <a class="icon-link" href="https://github.com/ifpintac/tequila" aria-label="GitHub" title="GitHub"><i class="icon" aria-hidden="true">&#xe0e9;</i></a>
+      <a class="button button-primary button-small" href="download.html"><i class="icon" aria-hidden="true">&#xe0b6;</i>Download</a>
+      <button class="menu-button" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false"><i class="icon" aria-hidden="true">&#xe118;</i></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="page-head">
+  <div class="wrap">
+    <span class="kicker"><a href="learn.html">Learn</a> · Basics</span>
+    <h1>Your first renders.</h1>
+    <p class="lede">Ten short lessons, in order. By the end you'll have brought in a model, dressed it, lit it and saved a picture of it. About an hour, at your own pace.</p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="doc-layout">
+      <nav class="doc-nav" aria-label="Lessons" data-follow>
+        <span class="label">Basics</span>
+        <a href="#window">1. Find your way around</a>
+        <a href="#import">2. Bring in a model</a>
+        <a href="#navigate">3. Move around</a>
+        <a href="#select">4. Select parts</a>
+        <a href="#dress">5. Put materials on</a>
+        <a href="#tune">6. Tune a material</a>
+        <a href="#light">7. Light the scene</a>
+        <a href="#frame">8. Frame the shot</a>
+        <a href="#render">9. Render a picture</a>
+        <a href="#save">10. Save your work</a>
+        <span class="group">Next</span>
+        <a href="learn-intermediate.html">Intermediate</a>
+        <a href="learn.html#features">Find a feature</a>
+      </nav>
+      <div class="prose">
+
+        <h2 id="window">1. Find your way around</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe154;</i>The whole window</span></p>
+        <p>Tequila has one main window. The model sits in the <strong>viewport</strong> in the middle. The <strong>material library</strong> opens on the left, and the <strong>Inspector</strong> on the right shows the settings for whichever tab you choose on the rail at the far right.</p>
+        <figure><img src="assets/img/learn-map.jpg" alt="Tequila's window: the library on the left, the viewport, the Material tab and the tab rail on the right" loading="lazy" data-zoom><figcaption>The window, with the library open and the Material tab showing. The <a href="learn.html#map">numbered map</a> names every part of it.</figcaption></figure>
+        <p>The tabs, top to bottom, are where each kind of work happens:</p>
+        <ul>
+          <li><strong>Scene</strong>: the list of parts. Select, hide, group and move them here.</li>
+          <li><strong>Material</strong>: the surface of the selected part.</li>
+          <li><strong>Environment</strong>: the light and the background.</li>
+          <li><strong>Lighting</strong>: the render's quality and how light travels (not where the lights are; that's Environment).</li>
+          <li><strong>Camera</strong>: the lens and focus.</li>
+          <li><strong>Image</strong>: exposure and the look of the picture.</li>
+          <li><strong>Studios</strong>: saved shots, colourways and turntables.</li>
+          <li><strong>Scripting</strong>: for scripts and AI apps.</li>
+        </ul>
+        <p>Clicking the tab you're already on closes the Inspector. <kbd>Space</kbd> shows or hides it, <kbd>M</kbd> the library and <kbd>Tab</kbd> everything but the picture. The <strong>Workspace</strong> menu arranges the panels for a job in one go: <strong>Materials</strong> opens the library beside the Material tab, for example.</p>
+        <div class="tip"><p><strong>Tip.</strong> The first few times Tequila opens, a welcome card at the bottom of the viewport walks through the same steps as these lessons. <strong>Help › Show the welcome card</strong> brings it back.</p></div>
+
+        <h2 id="import">2. Open a sample, or bring in a model</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe246;</i>Start screen · File menu</span></p>
+        <p>The start screen appears when Tequila opens. Its <strong>Samples</strong> are finished scenes to look around in: open one, and it arrives as a new project, so you can change anything without spoiling the original.</p>
+        <figure><img src="assets/img/app-start.jpg" alt="Tequila's welcome card over the headphones sample" loading="lazy" data-zoom><figcaption>The headphones sample, with the welcome card.</figcaption></figure>
+        <p>To bring in your own model:</p>
+        <ol class="steps">
+          <li><strong>Choose File › Import model…</strong> (<kbd>Ctrl</kbd>+<kbd>I</kbd>), press <strong>Import</strong> in the toolbar, or drop the file on the window. Tequila reads STEP, IGES, glTF and GLB, OBJ, STL, USD, IFC, and the model from a KeyShot scene.</li>
+          <li><strong>Wait for it to read.</strong> Big CAD files show their progress in the status bar. The model keeps its parts, names and colours, and the view frames it.</li>
+          <li><strong>Check its size.</strong> A file that doesn't say what its units are asks you once: pick the unit its numbers are in, and each choice shows how big that makes it.</li>
+          <li><strong>Stand it up if it's lying down.</strong> CAD models are often drawn with Z up. In the <strong>Scene</strong> tab, right-click the model and choose <strong>Turn › Upright (drawn Z up)</strong>.</li>
+        </ol>
+        <p>A KeyShot scene (<code>.ksp</code> or <code>.bip</code>) opened with <strong>File › Open project…</strong> becomes a whole new project with its materials, lighting, cameras and look. Imported instead, only its model comes in.</p>
+        <div class="tip"><p><strong>Tip.</strong> When you drop a file, the window says what it's about to do before you let go: import a model, open a project, add a material to your library, or put a texture pack on the selected parts.</p></div>
+
+        <h2 id="navigate">3. Move around the viewport</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe2e9;</i>Viewport</span></p>
+        <ul>
+          <li><strong>Orbit:</strong> drag with the left mouse button.</li>
+          <li><strong>Pan:</strong> drag with the middle button.</li>
+          <li><strong>Zoom:</strong> scroll. <kbd>Alt</kbd>+scroll changes the focal length instead, like a zoom lens.</li>
+          <li><strong>Frame it:</strong> <kbd>F</kbd> fits the selection in view, <kbd>Shift</kbd>+<kbd>F</kbd> everything.</li>
+          <li><strong>Standard views:</strong> click an axis on the legend at the bottom left, or the centre dot for the isometric view. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd> to <kbd>7</kbd> do the same: front, back, left, right, top, bottom, isometric.</li>
+        </ul>
+        <p>The four buttons at the top right of the viewport switch how it's drawn:</p>
+        <ul>
+          <li><strong>Wireframe:</strong> the triangles, for checking a mesh.</li>
+          <li><strong>Solid:</strong> plain grey, the fastest for arranging things.</li>
+          <li><strong>Material Preview:</strong> a quick guess at the materials and light.</li>
+          <li><strong>Rendered:</strong> the real picture, path traced and getting cleaner as you watch. It's exactly what a render will look like.</li>
+        </ul>
+        <p><kbd>Z</kbd> steps through them, and <kbd>D</kbd> jumps to Rendered and back. <kbd>P</kbd> pauses the Rendered view if you want the computer for something else.</p>
+        <figure class="tall"><img src="assets/img/learn-shortcuts.jpg" alt="The Shortcuts window: navigation, view, edit, panels and files" loading="lazy" data-zoom><figcaption><strong>Help › Navigation and shortcuts</strong>, or the <strong>?</strong> at the bottom of the tab rail.</figcaption></figure>
+
+        <h2 id="select">4. Select parts</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe065;</i>Viewport · Scene tab</span></p>
+        <ul>
+          <li><strong>Click a part</strong> to select it. Click empty space, or press <kbd>Esc</kbd>, to select nothing.</li>
+          <li><kbd>Shift</kbd>+click adds a part; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+click takes one away. <kbd>Ctrl</kbd>+<kbd>A</kbd> selects everything.</li>
+          <li><strong>Double-click</strong> selects the part's whole group; double-click again for the group it's in.</li>
+          <li><strong>Right-click</strong> a part for a menu: select its group, select every part with the same material, hide, isolate, delete, and more.</li>
+        </ul>
+        <p>The <strong>Scene</strong> tab lists every part. Click a row to select it, the eye to hide it, the arrow to open a group. Its search box finds parts by name as you type.</p>
+        <figure><img src="assets/img/app-scene.jpg" alt="The Scene tab listing the headphones' parts" loading="lazy" data-zoom><figcaption>The Scene tab: search, Add, Group, the selection level, and the parts.</figcaption></figure>
+        <p>To get parts out of the way: <kbd>Ctrl</kbd>+<kbd>H</kbd> hides the selection, <kbd>/</kbd> isolates it (hides everything else) and <kbd>Alt</kbd>+<kbd>H</kbd> shows everything again.</p>
+        <div class="tip"><p><strong>Tip.</strong> If a model came in as one piece but has separate bits in it, right-click it: <strong>Split into N parts</strong> makes each loose piece a part of its own, so each can have its own material.</p></div>
+
+        <h2 id="dress">5. Put materials on</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Library</span></p>
+        <ol class="steps">
+          <li><strong>Open the library</strong> with <strong>Library</strong> in the toolbar, or <kbd>M</kbd>. Each ball is a real render of the material.</li>
+          <li><strong>Find one.</strong> Type in <strong>Search materials</strong> (every word must match its name, category or tags), or pick from <strong>All categories</strong>: metal, plastic, wood, glass, fabric, leather and more.</li>
+          <li><strong>Drag it onto a part.</strong> Before you let go, the label says what it will dress, and the parts it will change are outlined.</li>
+        </ol>
+        <figure><img src="assets/img/app-library.jpg" alt="The material library beside the viewport" loading="lazy" data-zoom><figcaption>The library. A green dot on a ball means that material is already in the project.</figcaption></figure>
+        <ul>
+          <li>Dropped on a part that's <em>selected</em>, a material dresses the whole selection. Dropped on a group, the whole group.</li>
+          <li>Or select the parts first and <strong>double-click</strong> the ball.</li>
+          <li>The shelves above the balls narrow the list: <strong>Mine</strong> (your own), <strong>Favorites</strong> (click a ball's star), <strong>Recent</strong>, and <strong>In project</strong>.</li>
+        </ul>
+        <div class="tip"><p><strong>Good to know.</strong> Dropping the same material on five parts gives them <em>one</em> shared material, so changing it changes all five. That's usually what you want. When it isn't, see the next lesson.</p></div>
+
+        <h2 id="tune">6. Tune a material</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe1dc;</i>Material tab</span></p>
+        <p>Select a part and open the <strong>Material</strong> tab. At the top is a little live render of the material, its name, and its <strong>Type</strong>: plastic, metal, paint, glass, fabric and so on. Below are the controls that type needs, usually a colour and a roughness to begin with.</p>
+        <figure><img src="assets/img/app-material.jpg" alt="The Material tab for a leather-grain plastic" loading="lazy" data-zoom><figcaption>The Material tab, with the preview ball, the type and its controls.</figcaption></figure>
+        <ol class="steps">
+          <li><strong>Change the colour.</strong> Click the swatch for a colour picker. What it shows is what renders.</li>
+          <li><strong>Change the roughness.</strong> Low is glossy and sharp, high is satin, then matte.</li>
+          <li><strong>Change the type</strong> if the material isn't the right kind of thing at all. A type keeps whatever settings carry over.</li>
+        </ol>
+        <p>The line under the type says how many parts use this material: <strong>Shared by 3 parts</strong>, say. To change just one of them, select it and press <strong>Unlink</strong>: it gets its own copy, and the others stay as they were.</p>
+        <div class="tip"><p><strong>Tip.</strong> In the Rendered view the change shows as you drag. A whole drag is one step to undo.</p></div>
+
+        <h2 id="light">7. Light the scene</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe17b;</i>Environment tab · Library › Studios</span></p>
+        <p>Tequila lights the product with an <strong>environment</strong>: the world around it, which lights it and shows in its reflections. The built-in studio is a good start. The quickest way to something better is a studio preset:</p>
+        <ol class="steps">
+          <li><strong>Open the library</strong> and switch it from <strong>Materials</strong> to <strong>Studios</strong>.</li>
+          <li><strong>Pick a studio</strong> and press <strong>Apply</strong>. It brings its lighting, camera and look, scaled to your product. The one marked <strong>Suggested</strong> suits your product's size best.</li>
+        </ol>
+        <p>Or set the light yourself in the <strong>Environment</strong> tab:</p>
+        <ul>
+          <li><strong>HDRI › Load…</strong> lights the scene with a photographed environment, an <code>.hdr</code> or <code>.exr</code> file. <strong>Use built-in</strong> goes back to the studio.</li>
+          <li><strong>Brightness</strong> makes it all brighter or darker.</li>
+          <li><strong>Transform › Rotation</strong> turns the environment round the product. This is how you move the highlights: turn it until they fall where you want.</li>
+          <li><strong>Background</strong> picks what shows behind the product: the <strong>Environment</strong> itself, a plain <strong>Color</strong>, or a <strong>Backplate</strong> picture.</li>
+        </ul>
+        <figure><img src="assets/img/app-environment.jpg" alt="The Environment tab with its map of the lights" loading="lazy" data-zoom><figcaption>The Environment tab. The map at the top is the whole environment flattened out; the lights on it can be dragged.</figcaption></figure>
+        <div class="tip"><p><strong>Tip.</strong> The map at the top of the tab shows the environment's lights. Drag one to move it, scroll over it to change its size, double-click the sky to add one. The <a href="learn-intermediate.html#pins">pins lesson</a> goes further.</p></div>
+
+        <h2 id="frame">8. Frame the shot</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe068;</i>Camera tab · View menu</span></p>
+        <p>The viewport <em>is</em> the camera: frame the product as you want the picture. The darker border is the <strong>render frame</strong>, the shape your picture will be, with its size beside it.</p>
+        <ol class="steps">
+          <li><strong>Set the shape first.</strong> The frame follows the picture size you choose in the Render window (next lesson), so a square picture shows a square frame.</li>
+          <li><strong>Choose a focal length</strong> in the <strong>Camera</strong> tab. Product shots usually look best with a long lens, 70 to 135 mm: it flattens the product the way catalogue photos do. <kbd>Alt</kbd>+scroll changes it in the viewport.</li>
+          <li><strong>Keep the view.</strong> Orbiting moves the camera you're looking through. When a view is right, press <strong>Save current view as a camera</strong>, and click its name in the list to come back to it.</li>
+        </ol>
+        <figure><img src="assets/img/learn-camera.jpg" alt="The Camera tab: cameras, lens, focal length and depth of field" loading="lazy" data-zoom><figcaption>The Camera tab, with depth of field on.</figcaption></figure>
+
+        <h2 id="render">9. Render a picture</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe0f9;</i>Render button</span></p>
+        <ol class="steps">
+          <li><strong>Press Render</strong>, the green button at the top right (<kbd>Ctrl</kbd>+<kbd>R</kbd>). The Render window opens.</li>
+          <li><strong>Pick a size</strong> under <strong>Image size</strong>: HD 1080p, 4K UHD, Square, Portrait 4:5, Story 9:16, a web banner, A4 at 300 DPI, or your own width and height.</li>
+          <li><strong>Pick the quality</strong> under <strong>Quality</strong>. <strong>Draft</strong> is quick for checking, <strong>Good</strong> is the usual choice, and <strong>High</strong> and <strong>Final</strong> are for pictures that matter. Each takes longer.</li>
+          <li><strong>Check where it saves.</strong> The line at the bottom says the folder and file name; <strong>File</strong> changes them and the format: PNG, JPEG, TIFF, EXR or PSD.</li>
+          <li><strong>Press Render.</strong> The picture appears as it finishes. You can close the window and keep working: renders carry on in the background and wait in a queue.</li>
+        </ol>
+        <figure><img src="assets/img/learn-render.jpg" alt="The Render window: image size, quality, denoise, and the Render button" loading="lazy" data-zoom><figcaption>The Render window. Finished renders line up along the bottom.</figcaption></figure>
+        <div class="tip"><p><strong>Good to know.</strong> A render never overwrites a file. If the name is taken, it adds <code>_2</code>, and the line at the bottom already shows the name it will use.</p></div>
+
+        <h2 id="save">10. Save, and come back later</h2>
+        <p class="lesson-meta"><span><i class="icon" aria-hidden="true">&#xe246;</i>File menu</span></p>
+        <ul>
+          <li><strong>File › Save</strong> (<kbd>Ctrl</kbd>+<kbd>S</kbd>) keeps the whole scene in a <code>.tequila</code> project: the model, materials, labels, light, cameras and render settings, with a picture of the view for the start screen.</li>
+          <li><strong>File › Open recent</strong> and the start screen list your last projects.</li>
+          <li>Tequila also keeps your work safe on its own, every five minutes. If it ever closes unexpectedly, the next launch offers <strong>Recover unsaved work</strong>.</li>
+          <li><strong>Edit › Undo</strong> (<kbd>Ctrl</kbd>+<kbd>Z</kbd>) names the step it will take back. Every click, drag and drop is one step.</li>
+        </ul>
+        <p>That's the basics. You can bring in any model, dress it, light it and render it.</p>
+
+        <div class="next-lesson">
+          <a class="button button-quiet" href="learn.html"><i class="icon" aria-hidden="true">&#xe063;</i>All tracks</a>
+          <a class="button button-primary" href="learn-intermediate.html">Next: intermediate<i class="icon" aria-hidden="true">&#xe04d;</i></a>
+        </div>
+
+        <div class="discord-note">
+          <p><strong>Stuck on a step?</strong> Ask on the Discord.</p>
+          <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+        <p style="margin-top:14px">Free, open-source product rendering for Windows, Mac and Linux.</p>
+        <a class="button button-discord button-small" href="https://discord.gg/Na5T2qgQBX"><i class="icon" aria-hidden="true">&#xe411;</i>Join the Discord</a>
+      </div>
+      <div>
+        <h4>Tequila</h4>
+        <ul>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="gallery.html">Gallery</a></li>
+          <li><a href="download.html">Download</a></li>
+          <li><a href="whats-new.html">What's new</a></li>
+          <li><a href="roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="learn.html">Learning hub</a></li>
+          <li><a href="learn.html#features">Find a feature</a></li>
+          <li><a href="docs.html">Docs</a></li>
+          <li><a href="docs.html#scripting">Scripting and AI apps</a></li>
+          <li><a href="docs.html#faq">Questions</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://discord.gg/Na5T2qgQBX">Discord</a></li>
+          <li><a href="https://github.com/ifpintac/tequila">GitHub</a></li>
+          <li><a href="https://github.com/ifpintac/tequila/issues">Report a problem</a></li>
+          <li><a href="https://ko-fi.com/ifpintac">Support on Ko-fi</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="legal">
+      <p>Tequila is free software under the <a href="https://github.com/ifpintac/tequila/blob/main/LICENSE">Apache License 2.0</a>. It renders with Cycles, by the Blender project, also Apache-2.0.</p>
+      <p>Tequila is an independent project. It isn't affiliated with Luxion ApS, the makers of KeyShot, or with any other company whose products are named here, and it has nothing to do with tequila the drink. <a href="https://github.com/ifpintac/tequila/blob/main/TRADEMARKS.md">Trademarks</a></p>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>
