@@ -284,6 +284,9 @@
   // Pictures for the releases the website has them for, by the section
   // heading they go under. Later releases can carry their own in the notes.
   var ART = {
+    'v2026.11.02.1748': {
+      'A third sample: the palma P8': ['assets/img/palma-front.jpg', 'The palma P8, the third sample scene: clear lime polycarbonate with its boards seen through the shell.']
+    },
     'v2026.11.01.1340': {
       'Wireframe renders': ['assets/img/wireframe.jpg', 'Render wireframe: the headphones as a line drawing, in a second or two.'],
       'Labels and UV layouts': ['assets/img/app-uv.jpg', 'The UV editor, with a part laid out flat and the tools beside it.'],
