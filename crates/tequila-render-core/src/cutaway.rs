@@ -465,6 +465,7 @@ pub fn intersect(scene: &SceneSnapshot, ray: &Ray, raw: impl Fn(&Ray) -> Option<
                     return Some(Hit {
                         t,
                         position: point,
+                        magnitude: ray.origin.abs().max_component().max(t),
                         geometric_normal: normal,
                         shading_normal: normal,
                         uv: Vec2::ZERO,

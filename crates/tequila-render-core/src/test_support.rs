@@ -129,6 +129,7 @@ impl Intersector for AnalyticIntersector {
                 best = Some(Hit {
                     t,
                     position,
+                    magnitude: ray.origin.abs().max_component().max(t),
                     geometric_normal: normal,
                     shading_normal: normal,
                     uv: Vec2::ZERO,
@@ -147,6 +148,7 @@ impl Intersector for AnalyticIntersector {
                 best = Some(Hit {
                     t,
                     position: ray.at(t),
+                    magnitude: ray.origin.abs().max_component().max(t),
                     geometric_normal: plane.normal,
                     shading_normal: plane.normal,
                     uv: Vec2::ZERO,

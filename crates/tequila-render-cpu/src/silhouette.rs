@@ -107,7 +107,7 @@ fn meets_product(intersector: &dyn Intersector, mut ray: Ray) -> bool {
         match scene.instances.get(hit.instance.0 as usize) {
             Some(instance) if !instance.visible_to_camera || instance.shadow_catcher.is_some() => {
                 let (geometric, _) = hit.facing_forward(ray.direction);
-                ray = Ray::new(tequila_core::math::offset_ray_origin(hit.position, -geometric), ray.direction);
+                ray = Ray::new(hit.offset(-geometric), ray.direction);
             }
             _ => return true,
         }

@@ -311,7 +311,7 @@ fn trace_photon(
         let through = |ray: &Ray, crossings: &mut u32| {
             *crossings += 1;
             let (geometric, _) = hit.facing_forward(ray.direction);
-            Ray::new(offset_ray_origin(hit.position, -geometric), ray.direction)
+            Ray::new(hit.offset(-geometric), ray.direction)
         };
 
         // A light's visible stand-in is not there for light.
@@ -499,7 +499,7 @@ fn trace_photon(
             power *= 1.0 / carried;
         }
         ray = Ray {
-            origin: offset_ray_origin(hit.position, if sample.is_transmission { -geometric_normal } else { geometric_normal }),
+            origin: hit.offset(if sample.is_transmission { -geometric_normal } else { geometric_normal }),
             direction: wi,
             t_min: 0.0,
             t_max: f32::INFINITY,

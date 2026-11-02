@@ -1414,6 +1414,7 @@ mod tests {
             let hit = crate::intersect::Hit {
                 t: 1.0,
                 position: world,
+                magnitude: 0.0,
                 geometric_normal: Vec3::Z,
                 shading_normal: Vec3::Z,
                 uv: tequila_core::math::vec2(0.0, 0.0),
@@ -1504,6 +1505,7 @@ mod tests {
             let hit = crate::intersect::Hit {
                 t: 1.0,
                 position: vec3(u, v, 0.0),
+                magnitude: 0.0,
                 geometric_normal: Vec3::Z,
                 shading_normal: Vec3::Z,
                 uv: tequila_core::math::vec2(u, v),
@@ -1551,6 +1553,7 @@ mod tests {
             let hit = crate::intersect::Hit {
                 t: 1.0,
                 position: vec3(0.3, 0.2, 0.0) * scale,
+                magnitude: 0.0,
                 geometric_normal: Vec3::Z,
                 shading_normal: Vec3::Z,
                 uv: tequila_core::math::vec2(0.0, 0.0),
@@ -1607,6 +1610,7 @@ mod tests {
         let hit = |instance: u32, at: Vec3| crate::intersect::Hit {
             t: 1.0,
             position: at,
+            magnitude: 0.0,
             geometric_normal: Vec3::Z,
             shading_normal: Vec3::Z,
             uv: tequila_core::math::vec2(0.0, 0.0),

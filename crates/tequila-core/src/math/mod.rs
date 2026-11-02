@@ -7,7 +7,7 @@ pub mod vec;
 
 pub use mat::{Mat4, Transform};
 pub use onb::{shading, Onb};
-pub use ray::{offset_ray_origin, Aabb, Ray};
+pub use ray::{offset_ray_origin, offset_ray_origin_at, Aabb, Ray};
 pub use vec::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 
 /// Clamp a cosine into `[-1, 1]` before feeding it to `acos`, which returns
