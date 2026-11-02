@@ -69,6 +69,16 @@ jobs:
           cargo run --release -p tequila-cli -- --input tests/fixtures/bracket.obj --width 320 --height 200 --samples 32 --output imported.png
           test -s smoke.png && test -s imported.png
 
+      # The MCP bridge in Python, and the copy of its tool list that
+      # `tequila --mcp` carries (crates/tequila-cli/src/mcp_tools.json).
+      - name: Python bridge tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        working-directory: python
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then py=python; else py=python3; fi
+          "$py" -m unittest -v test_tequila_mcp
+
       - name: Upload the renders
         if: always()
         uses: actions/upload-artifact@v4

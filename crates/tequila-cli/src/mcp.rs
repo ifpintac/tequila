@@ -11,7 +11,9 @@
 //! The same bridge as `python/tequila_mcp.py`, built in, so it needs no
 //! Python: on a work PC that has none, the Claude app could not reach
 //! Tequila at all, and drove the screen with its mouse instead. The tools
-//! are that bridge's (`mcp_tools.json`, written from its `TOOLS`).
+//! are that bridge's (`mcp_tools.json`, written from its `TOOLS` as
+//! `json.dumps(TOOLS, indent=1)`; `python/test_tequila_mcp.py` fails when
+//! the two differ, and says how to write it again).
 //!
 //! `--restricted` is for anything reached from outside this computer: no raw
 //! requests, no importing files, no saving or rendering to a path the caller
