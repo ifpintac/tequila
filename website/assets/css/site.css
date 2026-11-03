@@ -350,6 +350,9 @@ details.faq p { color: var(--text-soft); margin: 12px 0 0; }
 .lane.later .item h3 .icon { color: var(--text-soft); }
 .item p { color: var(--text-soft); font-size: 14.5px; margin: 0; }
 .item strong { color: var(--text); font-weight: 600; }
+/* A roadmap item people asked for. */
+.item .asked { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12.5px; font-weight: 600; color: #a9b0ff; background: rgba(88, 101, 242, 0.14); border: 1px solid rgba(88, 101, 242, 0.35); border-radius: 999px; padding: 4px 10px; }
+.item .asked .icon { font-size: 13px; color: inherit; margin: 0; }
 
 .shipped { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .shipped .card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
