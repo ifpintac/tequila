@@ -16,7 +16,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila<span class="stage" title="Tequila is in beta: ready for real work, still changing quickly">Beta</span></a>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="features.html">Features</a>
       <a href="gallery.html">Gallery</a>
@@ -124,6 +124,7 @@ with tequila.open('product.step') as fs:
         </div>
 
         <h2 id="faq">Questions</h2>
+        <details class="faq"><summary>Is Tequila finished?</summary><p>It's in beta. Every main feature is in and it's ready for real work, client renders included, but it's still changing quickly and has some rough edges. Updates come often, and <strong>Help › Check for updates</strong> installs them. The <a href="roadmap.html#stage">Roadmap</a> says what's left before it's called stable.</p></details>
         <details class="faq"><summary>Is it really free?</summary><p>Yes. Tequila is open source under the Apache License 2.0: free to use for any work, commercial included, with no account and no licence key.</p></details>
         <details class="faq"><summary>Do I need a graphics card?</summary><p>No. With an NVIDIA or AMD card (or a Mac with Apple silicon), Cycles renders on it, which is much faster. Without one, Tequila renders on the processor.</p></details>
         <details class="faq"><summary>Is it a copy of KeyShot?</summary><p>No. Tequila follows the same kind of workflow as commercial product renderers, and it can open KeyShot scenes, but it's written independently from published rendering science. It isn't affiliated with Luxion, the makers of KeyShot.</p></details>
