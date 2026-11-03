@@ -16,7 +16,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila</a>
+    <a class="brand" href="./"><img src="assets/img/icon-64.png" alt="" width="30" height="30">Tequila<span class="stage" title="Tequila is in beta: ready for real work, still changing quickly">Beta</span></a>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="features.html">Features</a>
       <a href="gallery.html">Gallery</a>
@@ -42,7 +42,45 @@
     <span class="kicker">Roadmap</span>
     <h1>Where Tequila is going.</h1>
     <p class="lede">What's being worked on now, what comes next, and what's further out. Plans move as people use Tequila and tell us what they need; what has actually shipped is on <a href="whats-new.html">What's new</a>.</p>
-    <p class="updated">Updated November 2, 2026</p>
+    <p class="updated">Updated November 3, 2026</p>
+  </div>
+</section>
+
+<section class="section-tight" id="stage" style="padding-bottom:0">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Where Tequila is now</span>
+      <h2>In beta.</h2>
+      <p>Ready for real work, and still changing quickly.</p>
+    </div>
+    <div class="stages">
+      <article class="stage-step done">
+        <span class="when">Done</span>
+        <h3>Alpha</h3>
+        <p>The first versions: the renderer, the materials and the app, built up and tried out.</p>
+      </article>
+      <article class="stage-step now">
+        <span class="when">Now</span>
+        <h3>Beta</h3>
+        <p>Every main feature is in, on Windows, Mac and Linux. What that means for you:</p>
+        <ul>
+          <li>Use it for real work, client renders included.</li>
+          <li>Updates come often. <strong>Help › Check for updates</strong> installs them and keeps your materials and settings.</li>
+          <li>Some things are still rough. Windows and Mac warn you when you first open it, and a few rendering bugs are on the list below.</li>
+          <li>Tell us what breaks, on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</li>
+        </ul>
+      </article>
+      <article class="stage-step">
+        <span class="when">Next</span>
+        <h3>Stable</h3>
+        <p>When these are done:</p>
+        <ul>
+          <li>The rendering fixes under <strong>Now</strong> below.</li>
+          <li>Tested on many more computers and graphics cards.</li>
+          <li>A signed Windows installer, so no warning when you open it.</li>
+        </ul>
+      </article>
+    </div>
   </div>
 </section>
 
@@ -55,6 +93,11 @@
           <h2 id="lane-now"><span class="lane-dot" aria-hidden="true"></span>Now</h2>
           <p>The work for the next release.</p>
         </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe5c8;</i>Material previews, ready from the start</h3>
+          <p>The library's 320 materials come with their previews, so nothing has to render the first time you open it, and previews of your own materials keep rendering while Tequila is in the background. Today they render a screenful at a time, and only while the window is in front.</p>
+          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+        </article>
         <article class="item">
           <h3><i class="icon" aria-hidden="true">&#xe2d4;</i>Smooth curves in Tequila's renderer</h3>
           <p>On curved glass and velvet, Tequila's own renderer can show the model's triangles, most of all in close-ups and in a mirror floor's reflection. Cycles draws the same models smooth.</p>
@@ -74,6 +117,16 @@
           <h2 id="lane-next"><span class="lane-dot" aria-hidden="true"></span>Next</h2>
           <p>Planned once the work above ships.</p>
         </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe20c;</i>USDZ export</h3>
+          <p>Export a USDZ, the packaged USD that Apple's devices open, to check a design at full size on Apple Vision Pro, an iPhone or an iPad. Tequila already exports USD (<code>.usda</code>).</p>
+          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+        </article>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe312;</i>More 3D formats</h3>
+          <p>Today Tequila reads STEP, IGES, glTF, OBJ, STL, USD, IFC and KeyShot scenes. Next come open formats such as Rhino's <code>.3dm</code>, FBX (from 3ds Max and Maya), 3MF and PLY. SolidWorks, Fusion, CATIA and other CAD apps keep their own files closed: for those, export STEP. SolidWorks also has a Send to Tequila add-on, in beta.</p>
+          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+        </article>
         <article class="item">
           <h3><i class="icon" aria-hidden="true">&#xe2d7;</i>Glossy reflections, finished</h3>
           <p>A lamp seen in a mirror-smooth surface on every light path, parts that cast no shadow treated the same everywhere, and less noise from weak lamps in scenes with many lights.</p>
@@ -105,6 +158,11 @@
           <h2 id="lane-later"><span class="lane-dot" aria-hidden="true"></span>Later</h2>
           <p>Wanted, but not scheduled yet.</p>
         </header>
+        <article class="item">
+          <h3><i class="icon" aria-hidden="true">&#xe5a3;</i>Substance materials</h3>
+          <p>Open Adobe Substance materials (<code>.sbsar</code> and <code>.sbs</code>) with their settings, not only the pictures they export. It needs Adobe's Substance engine, so it's further out. Until then, export the maps from Substance and bring them in with <strong>File › Import texture pack</strong>.</p>
+          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+        </article>
         <article class="item">
           <h3><i class="icon" aria-hidden="true">&#xe29a;</i>More animation</h3>
           <p>Exploded views, camera fly-throughs, part reveals and motion blur, on top of today's turntables.</p>
