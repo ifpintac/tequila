@@ -629,6 +629,7 @@ fn convert_with(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBu
         material: graph.material().clone(),
         graph: std::mem::replace(&mut graph, MaterialGraph::from_material(Material::default())),
         textures: build.textures,
+        preview_uv_unit: None,
         source: Source::User,
         path: String::new(),
     };

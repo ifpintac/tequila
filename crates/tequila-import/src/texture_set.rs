@@ -662,6 +662,7 @@ pub fn library_entry(
         material: definition.material().clone(),
         graph: definition.graph.clone(),
         textures,
+        preview_uv_unit: None,
         source: tequila_format::library::Source::User,
         path: String::new(),
     })

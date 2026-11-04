@@ -1681,6 +1681,7 @@
     "output": 1
   },
   "name": "Webbing Nylon Black",
+  "preview_uv_unit": 0.025,
   "specular_roughness": 0.5,
   "tags": [
     "webbing",

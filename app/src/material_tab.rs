@@ -148,6 +148,7 @@ impl MaterialTab {
                             samples: 24,
                             shape: tequila_render_cpu::PreviewShape::Sphere,
                             radius: tequila_render_cpu::PREVIEW_RADIUS,
+                            uv_unit: None,
                         };
                         let environment =
                             std::sync::Arc::new(tequila_scene::demo::preview_environment());

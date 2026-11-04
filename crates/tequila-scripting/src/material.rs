@@ -204,6 +204,7 @@ fn preview(request: &MaterialRequest, document: &SceneDocument) -> Result<Value,
         // A real-sized ball: the library's 5 cm one, or the size asked for,
         // since a pattern's scale only reads against an object's.
         radius: request.radius.filter(|r| r.is_finite() && *r > 0.0).unwrap_or(tequila_render_cpu::preview::PREVIEW_RADIUS),
+        uv_unit: None,
     };
     let device = Device::shared()?;
     let thumbnail = render_thumbnail_textured(&device, &graph, Arc::new(textures), preview_environment(), settings)?;

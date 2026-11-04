@@ -69,6 +69,12 @@ pub struct LibraryEntry {
     /// entry's pictures are copies kept beside it in the library, so the
     /// entry does not break when the project it came from moves.
     pub textures: Vec<(TextureId, TextureSource)>,
+    /// For a material read along a strip's own UVs - a lace, a tape, a
+    /// thread - how much of the strip one UV unit is, in metres, so its
+    /// thumbnail shows the braid or the rib at its true size rather than
+    /// stretched round the whole ball. Written as `preview_uv_unit`; most
+    /// entries have none.
+    pub preview_uv_unit: Option<f32>,
     pub source: Source,
     /// The file it was read from, so it can be rewritten or removed. Empty for
     /// an entry that has never been on disk.
@@ -210,6 +216,7 @@ impl LibraryEntry {
             material,
             graph,
             textures: Vec::new(),
+            preview_uv_unit: None,
             source,
             path: String::new(),
         }
@@ -362,6 +369,7 @@ pub fn read_entry(text: &str, name_hint: &str) -> Result<LibraryEntry, FormatErr
         material,
         graph,
         textures,
+        preview_uv_unit: value.get("preview_uv_unit").and_then(|v| v.as_f32()).filter(|v| v.is_finite() && *v > 0.0),
         // Filled in by whoever knows where the file came from.
         source: Source::Standard,
         path: String::new(),
@@ -624,6 +632,9 @@ fn write_entry_in(entry: &LibraryEntry, directory: Option<&Path>) -> String {
                 .map(|t| crate::json::Value::String(t.clone()))
                 .collect::<Vec<crate::json::Value>>(),
         );
+    }
+    if let Some(unit) = entry.preview_uv_unit {
+        object.set("preview_uv_unit", unit);
     }
 
     let defaults = entry.material_type.defaults();
@@ -1344,6 +1355,7 @@ mod writer_tests {
             graph: MaterialGraph::from_material(material.clone()),
             material,
             textures: Vec::new(),
+            preview_uv_unit: None,
             source: Source::User,
             path: String::new(),
         }
@@ -1487,6 +1499,7 @@ mod writer_tests {
             material: MaterialType::Plastic.defaults(),
             graph: MaterialGraph::from_material(MaterialType::Plastic.defaults()),
             textures: Vec::new(),
+            preview_uv_unit: None,
             source: Source::User,
             path: String::new(),
         };
@@ -1498,6 +1511,32 @@ mod writer_tests {
         };
         let keys: Vec<&str> = fields.keys().map(|k| k.as_str()).collect();
         assert_eq!(keys, vec!["category", "name", "type"], "wrote {keys:?}");
+    }
+
+    /// A strip preset's thumbnail size survives a save and a read; an entry
+    /// with none writes none, and a size that is no size is not read as one.
+    #[test]
+    fn a_strips_preview_size_is_kept() {
+        let plain = |unit: Option<f32>| LibraryEntry {
+            name: "Lace".to_string(),
+            category: "Fabric".to_string(),
+            tags: Vec::new(),
+            material_type: MaterialType::RealCloth,
+            material: MaterialType::RealCloth.defaults(),
+            graph: MaterialGraph::from_material(MaterialType::RealCloth.defaults()),
+            textures: Vec::new(),
+            preview_uv_unit: unit,
+            source: Source::User,
+            path: String::new(),
+        };
+        let text = write_entry(&plain(Some(0.02)));
+        assert!(text.contains("preview_uv_unit"), "not written: {text}");
+        assert_eq!(read_entry(&text, "lace").unwrap().preview_uv_unit, Some(0.02));
+        let none = write_entry(&plain(None));
+        assert!(!none.contains("preview_uv_unit"), "written when there is none: {none}");
+        assert_eq!(read_entry(&none, "lace").unwrap().preview_uv_unit, None);
+        let zero = r#"{"name":"Lace","type":"real_cloth","category":"Fabric","preview_uv_unit":0}"#;
+        assert_eq!(read_entry(zero, "lace").unwrap().preview_uv_unit, None);
     }
 
     /// A metal is written by the name of its measured entry, never as raw n

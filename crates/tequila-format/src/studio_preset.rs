@@ -178,6 +178,7 @@ fn entry_of(material: &PresetMaterial) -> LibraryEntry {
         material: material.definition.material().clone(),
         graph: material.definition.graph.clone(),
         textures: material.textures.clone(),
+        preview_uv_unit: None,
         source: Source::User,
         path: String::new(),
     }

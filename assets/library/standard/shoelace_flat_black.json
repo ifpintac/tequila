@@ -1721,6 +1721,7 @@
     "output": 1
   },
   "name": "Shoelace Flat Black",
+  "preview_uv_unit": 0.02,
   "specular_roughness": 0.72,
   "tags": [
     "shoelace",

@@ -262,7 +262,8 @@ fn lace(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> 
     let toned = tint(&mut r, colour, woven.tone);
     r.to(Param::BaseColor, toned);
     r.bump(woven.height, 3e-4);
-    preset(name, "Fabric", tags, MaterialType::RealCloth, r)
+    // Its thumbnail a lace's size: a UV unit, once round it, two centimetres.
+    preset(name, "Fabric", tags, MaterialType::RealCloth, r).previewed_as_strip(0.02)
 }
 
 /// Webbing tape: a dense twill of heavy filament warp running along the
@@ -298,7 +299,8 @@ fn webbing(name: &'static str, tags: &'static [&'static str], colour: Spectrum) 
     let toned = tint(&mut r, colour, woven.tone);
     r.to(Param::BaseColor, toned);
     r.bump(woven.height, 1.2e-4);
-    preset(name, "Fabric", tags, MaterialType::RealCloth, r)
+    // A tape two and a half centimetres wide.
+    preset(name, "Fabric", tags, MaterialType::RealCloth, r).previewed_as_strip(0.025)
 }
 
 /// Bonded nylon thread, as sneakers are stitched with: three plies twisted
@@ -334,5 +336,6 @@ fn thread(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -
     let toned = tint(&mut r, colour, shade);
     r.to(Param::BaseColor, toned);
     r.bump(height, 1e-4);
-    preset(name, "Fabric", tags, MaterialType::RealCloth, r)
+    // A thread under a millimetre thick: three millimetres round.
+    preset(name, "Fabric", tags, MaterialType::RealCloth, r).previewed_as_strip(0.003)
 }

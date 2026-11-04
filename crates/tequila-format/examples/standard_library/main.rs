@@ -56,10 +56,20 @@ pub struct Preset {
     tags: &'static [&'static str],
     ty: MaterialType,
     recipe: Recipe,
+    /// For a preset read along a strip's UVs: how much of the strip one UV
+    /// unit is, in metres, for its thumbnail (`LibraryEntry::preview_uv_unit`).
+    preview_uv_unit: Option<f32>,
 }
 
 pub fn preset(name: &'static str, category: &'static str, tags: &'static [&'static str], ty: MaterialType, recipe: Recipe) -> Preset {
-    Preset { name, category, tags, ty, recipe }
+    Preset { name, category, tags, ty, recipe, preview_uv_unit: None }
+}
+
+impl Preset {
+    /// Previewed as a strip `unit` metres to the UV unit.
+    pub fn previewed_as_strip(self, unit: f32) -> Preset {
+        Preset { preview_uv_unit: Some(unit), ..self }
+    }
 }
 
 /// A type's defaults with some values changed.
@@ -126,6 +136,7 @@ fn main() {
             material,
             graph: p.recipe.graph,
             textures: Vec::new(),
+            preview_uv_unit: p.preview_uv_unit,
             source: Source::Standard,
             path: String::new(),
         };

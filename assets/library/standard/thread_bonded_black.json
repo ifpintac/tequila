@@ -544,6 +544,7 @@
     "output": 1
   },
   "name": "Thread Bonded Black",
+  "preview_uv_unit": 0.003,
   "specular_roughness": 0.5,
   "tags": [
     "thread",
