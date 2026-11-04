@@ -33,6 +33,7 @@ mod paint;
 mod plastic;
 mod plastic_texture;
 mod recipe;
+mod suede;
 mod wood;
 
 use tequila_core::spectrum::Spectrum;
@@ -107,7 +108,7 @@ pub fn orange_peel(r: &mut Recipe, scale: f32, depth: f32) -> Out {
 }
 
 fn main() {
-    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), clear::all(), fdm::all()].into_iter().flatten().collect();
+    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), clear::all(), fdm::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
     let mut written = Vec::new();
