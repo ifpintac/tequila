@@ -365,7 +365,9 @@ pub fn generate(program: &CompiledGraph) -> Option<Generated> {
     let mut outputs = String::new();
     for (param, register) in &program.driven {
         let Some((ty, true)) = known.get(&register.0).copied() else { continue };
-        if sampled.contains(&register.0) {
+        // An image, or an image times its factor: the view's texture path
+        // draws it, where here it would be the image's fallback, flat.
+        if sampled.contains(&register.0) || crate::solid_gpu::image_read(&program, *register).is_some() {
             continue;
         }
         let a = Arg { expr: format!("r{}", register.0), ty };
@@ -830,9 +832,7 @@ mod tests {
             let base = program.driven.iter().find(|(p, _)| *p == Param::BaseColor).map(|(_, r)| *r);
             // A base colour read straight from an image is the view's own
             // texture path's to draw.
-            let from_image = base.is_some_and(|r| {
-                program.instructions.iter().rev().find(|i| i.destination() == r).is_some_and(|i| matches!(i, Instruction::Sample { .. }))
-            });
+            let from_image = base.is_some_and(|r| crate::solid_gpu::image_read(&program, r).is_some());
             match generate(&program) {
                 Some(g) if g.base || base.is_none() || from_image => written += 1,
                 None if base.is_none() || from_image => {}

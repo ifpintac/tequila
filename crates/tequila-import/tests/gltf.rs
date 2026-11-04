@@ -1399,29 +1399,14 @@ fn transformed_gltf(extension: &str) -> String {
     )
 }
 
-/// The mapping node a material's base colour is sampled through.
+/// The mapping node a material's base colour is sampled through, found as
+/// the UV editor finds it: back from the parameter, through the factor the
+/// map is multiplied by.
 fn base_colour_mapping(
     graph: &tequila_materials::graph::MaterialGraph,
 ) -> tequila_texture::projection::Mapping {
-    use tequila_materials::graph::{NodeKind, Socket};
-
-    // Output <- image <- mapping.
-    let image = graph
-        .links()
-        .iter()
-        .find(|l| l.to == graph.output() && l.to_socket == Socket::Param(Param::BaseColor))
-        .map(|l| l.from)
-        .expect("base colour is fed by something");
-    let coords = graph
-        .links()
-        .iter()
-        .find(|l| l.to == image && l.to_socket == Socket::Input(0))
-        .map(|l| l.from)
-        .expect("the image is fed by a mapping");
-    match &graph.node(coords).expect("the node exists").kind {
-        NodeKind::Mapping2d { mapping } => *mapping,
-        other => panic!("base colour is sampled through {other:?}"),
-    }
+    tequila_scene::command::mapping_of(graph, Param::BaseColor)
+        .expect("base colour is sampled through a mapping")
 }
 
 /// `KHR_texture_transform`'s scale and offset reach the mapping node.
@@ -2047,4 +2032,188 @@ fn a_thin_walled_volume_absorbs_nothing() {
         "an absent attenuationDistance is infinite, which is no absorption"
     );
     assert_eq!(endless.transmittance_over(1000.0), Spectrum::ONE);
+}
+
+// --- factors times maps ------------------------------------------------------
+
+/// The grey every map in these tests is: sRGB 188, a little over half once
+/// a colour picture's curve is taken off, and 188/255 read as data.
+const GREY: u8 = 188;
+
+/// `GREY` as a colour picture decodes it, through the sRGB curve.
+fn grey_as_colour() -> f32 {
+    let v = GREY as f32 / 255.0;
+    ((v + 0.055) / 1.055).powf(2.4)
+}
+
+/// A real picture this time, since what is checked is what the renderer
+/// reads out of it: four pixels of `GREY`.
+fn write_grey_png(path: &std::path::Path) {
+    let file = std::fs::File::create(path).expect("the picture");
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 2, 2);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .expect("a header")
+        .write_image_data(&[GREY; 12])
+        .expect("the pixels");
+}
+
+/// `textured_gltf` with its colour map a real grey picture and its material
+/// edited by `edit`, imported and applied. The normal map stays a stand-in
+/// that does not decode, which leaves the surface flat. The model's path
+/// comes back too, for a test that takes the picture away again.
+fn import_grey(name: &str, edit: impl Fn(&str) -> String) -> (SceneDocument, std::path::PathBuf) {
+    let gltf = edit(&textured_gltf("grey.png", "bumps.png"));
+    let path = write_model(name, &gltf, &["bumps.png"]);
+    write_grey_png(&path.with_file_name("grey.png"));
+    let mut document = SceneDocument::new();
+    let (command, _) = tequila_import::import(&document, None, &path, &ImportOptions::default())
+        .expect("imports");
+    CommandBus::new().apply(&mut document, command).expect("applies");
+    (document, path)
+}
+
+/// The imported material as the renderer shades it on the triangle: its
+/// program, run against the textures a snapshot of the document loads.
+fn shaded(document: &SceneDocument) -> tequila_materials::openpbr::Material {
+    use tequila_render_core::shade::{shade, Registers};
+
+    let (scene, _) = tequila_scene::snapshot::snapshot(
+        document,
+        std::sync::Arc::new(tequila_render_core::environment::Environment::uniform(Spectrum::ONE)),
+        &mut Default::default(),
+    );
+    let program = scene
+        .programs
+        .iter()
+        .flatten()
+        .find(|p| !p.driven.is_empty())
+        .expect("a material the file's maps drive");
+    let point = tequila_texture::projection::SurfacePoint {
+        position: Vec3::ZERO,
+        normal: Vec3::Z,
+        uv: tequila_core::math::vec2(0.25, 0.25),
+        footprint: 0.0,
+        scale: 1.0,
+        uv_footprint: None,
+        curvature: 0.0,
+        occlusion: 0.0,
+        vertex_color: Spectrum::ONE,
+        world: Default::default(),
+    };
+    let mut scratch = tequila_materials::openpbr::Material::default();
+    shade(program, &scene.textures, &point, &mut Registers::new(), &mut scratch).clone()
+}
+
+/// A colour, in linear sRGB as the file states colours, against what it says.
+fn assert_colour(got: tequila_core::spectrum::Spectrum, want: [f32; 3], what: &str) {
+    let got = got.to_linear_srgb();
+    for (g, w) in [got.x, got.y, got.z].into_iter().zip(want) {
+        assert!((g - w).abs() < 2e-3, "{what} renders as {got:?}, where the file says {want:?}");
+    }
+}
+
+/// The base colour factor, and the metallic-roughness map at a factor of
+/// its own each, for the tests below.
+fn factored(gltf: &str) -> String {
+    let edited = gltf.replace(
+        r#""baseColorFactor": [0.8, 0.2, 0.2, 1.0]"#,
+        r#""baseColorFactor": [1.0, 0.5, 0.25, 1.0],
+          "metallicFactor": 0.4, "roughnessFactor": 0.5,
+          "metallicRoughnessTexture": { "index": 0 }"#,
+    );
+    assert_ne!(edited, gltf, "the fixture did not take the factors");
+    edited
+}
+
+/// A grey picture under a coloured `baseColorFactor` renders as the two
+/// multiplied, as glTF says (§3.9.2): the factor scales the map, rather than
+/// standing in for it only where there is none. It was the map's fallback
+/// and nothing else, so a tinted picture came in untinted: a sneaker's
+/// collar lining, tongue and insole, exported as light pictures under dark
+/// factors, came in white.
+#[test]
+fn a_textured_material_renders_as_its_factor_times_its_map() {
+    let (document, _) = import_grey("factor-times-map", factored);
+    let grey = grey_as_colour();
+    assert_colour(
+        shaded(&document).base_color,
+        [grey, 0.5 * grey, 0.25 * grey],
+        "a grey map under the factor [1, 0.5, 0.25]",
+    );
+}
+
+/// The other maps glTF scales are multiplied by their factors too: the
+/// metallic-roughness channels, emission, the sheen colour, and the tint the
+/// base colour gives transmissive glass.
+#[test]
+fn every_map_is_multiplied_by_its_factor() {
+    let (document, _) = import_grey("every-factor", |gltf| {
+        let edited = factored(gltf).replace(
+            r#""normalTexture": { "index": 1 }"#,
+            r#""normalTexture": { "index": 1 },
+      "emissiveTexture": { "index": 0 }, "emissiveFactor": [0.2, 0.4, 1.0],
+      "extensions": {
+          "KHR_materials_transmission": { "transmissionFactor": 0.5 },
+          "KHR_materials_sheen": {
+              "sheenColorFactor": [0.6, 0.3, 0.15],
+              "sheenColorTexture": { "index": 0 }
+          }
+      }"#,
+        );
+        assert!(edited.contains("sheenColorTexture"), "the fixture did not take the maps");
+        edited
+    });
+    let (grey, data) = (grey_as_colour(), GREY as f32 / 255.0);
+    let m = shaded(&document);
+
+    assert!(
+        (m.specular_roughness - 0.5 * data).abs() < 2e-3,
+        "roughness is {} under a factor of 0.5, where the map alone reads {data}",
+        m.specular_roughness
+    );
+    assert!(
+        (m.base_metalness - 0.4 * data).abs() < 2e-3,
+        "metalness is {} under a factor of 0.4, where the map alone reads {data}",
+        m.base_metalness
+    );
+    assert_colour(
+        m.emission_color,
+        [0.2 * grey, 0.4 * grey, grey],
+        "the emissive map under [0.2, 0.4, 1]",
+    );
+    assert_colour(
+        m.fuzz_color * m.fuzz_weight,
+        [0.6 * grey, 0.3 * grey, 0.15 * grey],
+        "the sheen map under [0.6, 0.3, 0.15]",
+    );
+    assert_colour(
+        m.transmission_color,
+        [grey, 0.5 * grey, 0.25 * grey],
+        "the glass's tint, the base colour map under [1, 0.5, 0.25]",
+    );
+}
+
+/// A map that fails to load when the scene is built, moved or on a drive
+/// not mounted, leaves the material as the file describes it without one:
+/// the factor. The metallic-roughness channels gave the factor squared,
+/// once as the fallback and again by the multiply.
+#[test]
+fn a_map_that_fails_to_load_leaves_its_factor() {
+    let (document, path) = import_grey("factor-without-map", factored);
+    std::fs::remove_file(path.with_file_name("grey.png")).expect("the picture goes");
+    let m = shaded(&document);
+    assert_colour(m.base_color, [1.0, 0.5, 0.25], "the base colour with its map missing");
+    assert!(
+        (m.specular_roughness - 0.5).abs() < 1e-4,
+        "roughness is {} with its map missing, where the factor is 0.5",
+        m.specular_roughness
+    );
+    assert!(
+        (m.base_metalness - 0.4).abs() < 1e-4,
+        "metalness is {} with its map missing, where the factor is 0.4",
+        m.base_metalness
+    );
 }

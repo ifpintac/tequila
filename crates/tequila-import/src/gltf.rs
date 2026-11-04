@@ -905,7 +905,14 @@ fn linear_srgb(r: f32, g: f32, b: f32) -> tequila_core::spectrum::Spectrum {
 
 /// Wire a glTF material's images into its graph.
 ///
-/// Base colour, normal, the packed metallic-roughness map, and occlusion.
+/// Base colour, normal, the packed metallic-roughness map, occlusion,
+/// emission and sheen colour.
+///
+/// Every one of them except the normal map and occlusion is multiplied by
+/// the factor stated beside it, as the specification says (§3.9): a map
+/// never replaces its factor. Exporters lean on that, writing a tinted
+/// picture as a light texture and a darker factor, and read as a
+/// replacement a sneaker's collar lining, tongue and insole came in white.
 ///
 /// glTF puts occlusion in red, roughness in green and metalness in blue, and a
 /// channel node takes each out separately. Fed whole to any one of them the
@@ -927,7 +934,7 @@ fn attach_maps(
     textures: &mut Vec<crate::raw::RawTexture>,
     warnings: &mut Vec<String>,
 ) {
-    use tequila_materials::graph::{Channel, Value};
+    use tequila_materials::graph::{Channel, Socket, Value};
     use tequila_materials::material_type::Param;
     use tequila_texture::texture::MapRole;
 
@@ -996,20 +1003,50 @@ fn attach_maps(
             warnings,
         );
     }
+    // A direction, not a quantity: nothing multiplies it.
     if let Some((image, mapping)) = texture_reference(root, source.get("normalTexture"), warnings)
     {
-        attach_image(
+        if let Some(node) = image_node(
             root,
             buffers,
             image,
             mapping,
-            Param::Bump,
             MapRole::Normal,
             Value::Float(0.0),
             definition,
             textures,
             warnings,
-        );
+        ) {
+            let graph = &mut definition.graph;
+            let output = graph.output();
+            graph.connect(node, output, Socket::Param(Param::Bump));
+        }
+    }
+    // The sheen's colour picture, times the tint its factor left once its
+    // brightest channel became the weight (`read_material_extensions`):
+    // weight × tint × picture is the factor × picture glTF states. No
+    // weight is a factor of black, which no picture brings back.
+    let sheen = source
+        .get("extensions")
+        .and_then(|e| e.get("KHR_materials_sheen"));
+    if let Some(sheen) = sheen.filter(|_| definition.material().fuzz_weight > 0.0) {
+        if let Some((image, mapping)) =
+            texture_reference(root, sheen.get("sheenColorTexture"), warnings)
+        {
+            let tint = definition.material().fuzz_color;
+            attach_image(
+                root,
+                buffers,
+                image,
+                mapping,
+                Param::FuzzColor,
+                MapRole::Color,
+                Value::Color(tint),
+                definition,
+                textures,
+                warnings,
+            );
+        }
     }
     if let Some((image, mapping)) = texture_reference(
         root,
@@ -1069,7 +1106,7 @@ fn attach_maps(
     }
 }
 
-/// A whole image driving one parameter.
+/// A whole image driving one parameter, times the factor glTF states for it.
 #[allow(clippy::too_many_arguments)]
 fn attach_image(
     root: &json::Value,
@@ -1078,25 +1115,89 @@ fn attach_image(
     mapping: tequila_texture::projection::Mapping,
     param: tequila_materials::material_type::Param,
     role: tequila_texture::texture::MapRole,
-    fallback: tequila_materials::graph::Value,
+    factor: tequila_materials::graph::Value,
     definition: &mut MaterialDefinition,
     textures: &mut Vec<crate::raw::RawTexture>,
     warnings: &mut Vec<String>,
 ) {
-    use tequila_materials::graph::{Node, NodeKind, Socket, TextureId};
+    use tequila_materials::graph::Value;
 
-    let Some(index) = texture_slot(root, buffers, image, role, textures, warnings) else {
+    // White, so a picture that fails to load leaves the factor alone: the
+    // material exactly as the file described it without one.
+    let unit = match factor {
+        Value::Float(_) => Value::Float(1.0),
+        _ => Value::Color(tequila_core::spectrum::Spectrum::ONE),
+    };
+    let Some(node) = image_node(
+        root, buffers, image, mapping, role, unit, definition, textures, warnings,
+    ) else {
         return;
     };
+    drive_scaled(&mut definition.graph, node, factor, param);
+}
+
+/// An image through its mapping: the node that samples it, wired to nothing
+/// yet. `None` when the image could not be brought in.
+#[allow(clippy::too_many_arguments)]
+fn image_node(
+    root: &json::Value,
+    buffers: &[Vec<u8>],
+    image: usize,
+    mapping: tequila_texture::projection::Mapping,
+    role: tequila_texture::texture::MapRole,
+    fallback: tequila_materials::graph::Value,
+    definition: &mut MaterialDefinition,
+    textures: &mut Vec<crate::raw::RawTexture>,
+    warnings: &mut Vec<String>,
+) -> Option<tequila_materials::graph::NodeId> {
+    use tequila_materials::graph::{Node, NodeKind, Socket, TextureId};
+
+    let index = texture_slot(root, buffers, image, role, textures, warnings)?;
     let graph = &mut definition.graph;
     let coords = graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
     let node = graph.add_node(Node::new(NodeKind::ImageTexture {
         texture: TextureId(index as u32),
         fallback,
     }));
-    let output = graph.output();
     graph.connect(coords, node, Socket::Input(0));
-    graph.connect(node, output, Socket::Param(param));
+    Some(node)
+}
+
+/// `from` driving `param`, multiplied by `factor`.
+///
+/// glTF multiplies each map by the factor beside it (§3.9.2), and every
+/// factor defaults to one. One is every model that leaves the factor out, so
+/// the multiply is skipped there rather than leaving a node that does
+/// nothing in every graph anyone opens. `Multiply` is a node every engine
+/// runs: the register machine, and Cycles as a Mix set to multiply.
+fn drive_scaled(
+    graph: &mut tequila_materials::graph::MaterialGraph,
+    from: tequila_materials::graph::NodeId,
+    factor: tequila_materials::graph::Value,
+    param: tequila_materials::material_type::Param,
+) {
+    use tequila_materials::graph::{Node, NodeKind, Socket, Value};
+
+    let output = graph.output();
+    let one = match factor {
+        Value::Float(f) => (f - 1.0).abs() < 1e-6,
+        // As the file states it, so a white factor is recognised whatever
+        // the rendering space makes of it.
+        Value::Color(c) => {
+            let v = c.to_linear_srgb();
+            [v.x, v.y, v.z].iter().all(|c| (c - 1.0).abs() < 1e-4)
+        }
+        _ => false,
+    };
+    if one {
+        graph.connect(from, output, Socket::Param(param));
+        return;
+    }
+    let scale = graph.add_node(Node::new(NodeKind::Constant(factor)));
+    let product = graph.add_node(Node::new(NodeKind::Multiply));
+    graph.connect(from, product, Socket::Input(0));
+    graph.connect(scale, product, Socket::Input(1));
+    graph.connect(product, output, Socket::Param(param));
 }
 
 /// The base colour image's own alpha, driving opacity.
@@ -1131,7 +1232,6 @@ fn attach_alpha(
     warnings: &mut Vec<String>,
 ) {
     use tequila_materials::graph::{Node, NodeKind, Socket, TextureId, Value};
-    use tequila_materials::material_type::Param;
 
     // The colour role, because it is the same file as the base colour and a
     // second entry would decode the picture twice. `sample_alpha` takes the
@@ -1147,25 +1247,21 @@ fn attach_alpha(
         return;
     };
 
+    // Opaque, so a picture that fails to load leaves the factor's alpha
+    // alone; glTF multiplies the two.
     let graph = &mut definition.graph;
     let coords = graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
     let alpha = graph.add_node(Node::new(NodeKind::ImageAlpha {
         texture: TextureId(index as u32),
-        fallback: Value::Float(factor),
+        fallback: Value::Float(1.0),
     }));
-    let output = graph.output();
     graph.connect(coords, alpha, Socket::Input(0));
-
-    if (factor - 1.0).abs() < 1e-6 {
-        graph.connect(alpha, output, Socket::Param(Param::Opacity));
-        return;
-    }
-    // glTF multiplies the factor's alpha by the texture's.
-    let scale = graph.add_node(Node::new(NodeKind::Constant(Value::Float(factor))));
-    let product = graph.add_node(Node::new(NodeKind::Multiply));
-    graph.connect(alpha, product, Socket::Input(0));
-    graph.connect(scale, product, Socket::Input(1));
-    graph.connect(product, output, Socket::Param(Param::Opacity));
+    drive_scaled(
+        graph,
+        alpha,
+        Value::Float(factor),
+        tequila_materials::material_type::Param::Opacity,
+    );
 }
 
 /// glTF's occlusion map: red channel, scaled by `strength`.
@@ -1282,31 +1378,20 @@ fn attach_channel(
         return;
     };
 
-    // The factor is the fallback, so a map that fails to load leaves the
-    // material exactly as the file described it without one.
+    // One is the fallback, so a map that fails to load leaves the factor
+    // alone: the material exactly as the file described it without one. The
+    // factor itself was squared there, once by the fallback and again by the
+    // multiply.
     let graph = &mut definition.graph;
     let coords = graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
     let texture = graph.add_node(Node::new(NodeKind::ImageTexture {
         texture: TextureId(index as u32),
-        fallback: Value::Float(factor),
+        fallback: Value::Float(1.0),
     }));
     let pick = graph.add_node(Node::new(NodeKind::Channel { channel }));
-    let output = graph.output();
     graph.connect(coords, texture, Socket::Input(0));
     graph.connect(texture, pick, Socket::Input(0));
-
-    // A factor of 1 is every model that leaves it out, so the multiply is
-    // skipped there rather than leaving a node that does nothing in every
-    // graph anyone opens.
-    if (factor - 1.0).abs() < 1e-6 {
-        graph.connect(pick, output, Socket::Param(param));
-        return;
-    }
-    let scale = graph.add_node(Node::new(NodeKind::Constant(Value::Float(factor))));
-    let product = graph.add_node(Node::new(NodeKind::Multiply));
-    graph.connect(pick, product, Socket::Input(0));
-    graph.connect(scale, product, Socket::Input(1));
-    graph.connect(product, output, Socket::Param(param));
+    drive_scaled(graph, pick, Value::Float(factor), param);
 }
 
 // --- meshes --------------------------------------------------------------
