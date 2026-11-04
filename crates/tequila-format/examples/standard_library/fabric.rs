@@ -243,6 +243,13 @@ fn tint(r: &mut Recipe, colour: Spectrum, factor: Out) -> Out {
 
 /// One woven cloth, made.
 pub fn woven(c: &Cloth) -> Preset {
+    woven_with(c, |_, height| height)
+}
+
+/// One woven cloth, with `relief` given the weave's height to add to
+/// before it is bumped: a padded tongue's puckers, say. In the weave's own
+/// units, a thread's height its 1.
+pub fn woven_with(c: &Cloth, relief: impl FnOnce(&mut Recipe, Out) -> Out) -> Preset {
     let mut r = Recipe::new(base(MaterialType::RealCloth, |m| {
         m.base_color = c.warp.lerp(c.weft, 0.5);
         m.fuzz_weight = c.fuzz;
@@ -293,18 +300,20 @@ pub fn woven(c: &Cloth) -> Preset {
     };
     let colour = r.mix("multiply", 1.0, yarn, tone);
     r.to(Param::BaseColor, colour);
+    let height = relief(&mut r, height);
     r.bump(height, c.depth);
     preset(c.name, "Fabric", c.tags, MaterialType::RealCloth, r)
 }
 
-struct Woven {
-    height: Out,
-    warp_on_top: Out,
-    tone: Out,
+pub struct Woven {
+    pub height: Out,
+    pub warp_on_top: Out,
+    pub tone: Out,
 }
 
-/// The weave on one plane, (u, v) in metres.
-fn weave(r: &mut Recipe, u: Out, v: Out, c: &Cloth, seed: f32) -> Woven {
+/// The weave on one plane, (u, v) in metres: `c.threads` to the unit. The
+/// warp threads are the columns, constant u, running along v.
+pub fn weave(r: &mut Recipe, u: Out, v: Out, c: &Cloth, seed: f32) -> Woven {
     let uu = r.math("multiply", u, c.threads);
     let vv = r.math("multiply", v, c.threads);
     let iu = r.math("floor", uu, 0.0);

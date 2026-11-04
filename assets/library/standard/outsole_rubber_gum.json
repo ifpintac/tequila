@@ -1,0 +1,278 @@
+{
+  "base_color": [0.18692604, 0.09936519, 0.033410117],
+  "category": "Translucent",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 3,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 5,
+        "socket": "param:subsurface_color",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 8,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {},
+        "type": "texture_coordinate"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 25
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.92
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.05
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.18692604, 0.09936519, 0.033410117]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "multiply",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 14
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.38
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 5000
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000006,
+        "id": 9,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Outsole Rubber Gum",
+  "specular_roughness": 0.45,
+  "subsurface_color": [0.24292588, 0.12621713, 0.03925728],
+  "subsurface_radius": [0.006, 0.003, 0.0012],
+  "tags": [
+    "gum",
+    "rubber",
+    "outsole",
+    "sole",
+    "sneaker",
+    "footwear",
+    "brown",
+    "amber"
+  ],
+  "type": "translucent"
+}
+

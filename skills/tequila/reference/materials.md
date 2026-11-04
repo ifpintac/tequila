@@ -4,20 +4,20 @@ Tequila's materials are OpenPBR. `tequila_query {"what": "api"}` is the authorit
 
 ## Start from the library
 
-323 presets, in these categories (`tequila_query {"what": "library"}` lists every name):
+334 presets, in these categories (`tequila_query {"what": "library"}` lists every name):
 
 | Category | Some of its presets (exact names) |
 |---|---|
 | Metal (90) | Aluminium Brushed, Aluminium Bead Blasted, Aluminium Polished, Aluminium Anodised Black, Aluminium Anodised Space Grey, Stainless Brushed, Stainless Polished, Chrome, Brass Satin, Copper Polished, Gold Polished, Titanium Brushed, Steel Knurled, Gunmetal, Cast Iron |
-| Plastic (59) | ABS Black, ABS White, ABS Red Gloss, ABS Textured, Piano Black, Plastic Matte White, Plastic Satin Black, Soft Touch Black, Rubber Black, Rubber Grip, Silicone Soft Grey, Polycarbonate Clear, Nylon Black, Plastic VDI 30 Black |
+| Plastic (60) | ABS Black, ABS White, ABS Red Gloss, ABS Textured, Piano Black, Plastic Matte White, Plastic Satin Black, Soft Touch Black, Rubber Black, Rubber Grip, Silicone Soft Grey, Polycarbonate Clear, Nylon Black, Plastic VDI 30 Black, Outsole Rubber White |
 | Paint (21) | Automotive Red, Automotive Blue Metallic, Automotive Pearl White, Paint Matte Black, Paint Satin White, Powder Coat Matte Black, Powder Coat White, Enamel Gloss White |
 | Wood (23) | Wood Walnut, Wood European Walnut, Wood Red Oak, Wood White Oak, Wood Smoked Oak, Wood Maple, Wood Cherry, Wood Ash, Wood Teak, Wood Ebony |
-| Fabric (21) | Denim Indigo, Canvas Natural, Linen Natural, Felt Grey, Suede Tan, Velvet Charcoal, Herringbone Wool, Upholstery Charcoal, Boucle Cream |
+| Fabric (30) | Denim Indigo, Canvas Natural, Linen Natural, Felt Grey, Suede Tan, Velvet Charcoal, Herringbone Wool, Upholstery Charcoal, Boucle Cream. Footwear: Nylon Taffeta Grey/Black (tongues), Jersey Lining Grey/White; and, read along the part's UVs (U along the strip, V across or round it, in proportion), Shoelace Flat White/Black, Webbing Nylon Black, Thread Bonded White/Black |
 | Composite (20) | Carbon Fibre, Carbon Fibre 12K Twill, Carbon Fibre Matte, Forged Carbon, Kevlar Twill, Fiberglass Gelcoat White |
 | Stone (21) | Marble Calacatta, Marble Black, Granite Absolute Black, Concrete Polished, Terrazzo, Slate, Travertine |
 | Glass (9) | Glass Clear, Glass Frosted, Glass Reeded, Glass Blue Tint, Acrylic Clear, Acrylic Smoked, Sapphire Crystal |
 | FDM 3D Print (11) | FDM PLA White, Black, Grey, Red, Blue, Yellow; FDM PLA Translucent Natural, Red, Orange, Green, Blue. Real 0.2 mm layer lines, seam and top raster, built along the part's own Z (STL, STEP); for a part drawn Y up (glTF, OBJ) set the FDM Layer Lines node's Build Along Z to 0 |
-| Others | Gem: Diamond, Ruby, Sapphire Blue. Liquid: Water, Coffee Black, Red Wine, Milk Whole. Ceramic: Porcelain, Ceramic Glazed White, Ceramic Matte. Translucent: Wax Candle, Jade, Soap White. Leather: Leather Black, Leather Tan, Leather Cognac, Fine Suede Sand, Roughout Suede Tobacco, Roughout Suede Cream (hairy suede, for boots and sneakers). Light: LED Warm White, LED Cool White, Screen Glow. Other: Cork, Paper Matte |
+| Others | Gem: Diamond, Ruby, Sapphire Blue. Liquid: Water, Coffee Black, Red Wine, Milk Whole. Ceramic: Porcelain, Ceramic Glazed White, Ceramic Matte. Translucent: Wax Candle, Jade, Soap White, Outsole Rubber Gum. Leather: Leather Black, Leather Tan, Leather Cognac, Fine Suede Sand, Roughout Suede Tobacco, Roughout Suede Cream (hairy suede, for boots and sneakers). Light: LED Warm White, LED Cool White, Screen Glow. Other: Cork, Paper Matte |
 
 Apply with `{"op": "library", "action": "apply", "name": "<exact name>", "nodes": [ids]}` through `tequila_request`. Pick by what the part is made of in the real product, then adjust colour or roughness if asked. A preset is far more realistic than a material built from scratch: its grain, brushing, weave or flakes are procedural and sized for real objects.
 
