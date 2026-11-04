@@ -2618,6 +2618,53 @@ mod tests {
         assert!((tequila_share - cycles_share).abs() < 0.05, "through the slab by manifold caustics Tequila kept {tequila_share:.3} of the light, Cycles {cycles_share:.3}");
     }
 
+    /// A glass ball wound inside out - its faces and its normals both
+    /// turned in, as recomputing normals from a reversed winding leaves it,
+    /// with nothing in the mesh to say so - is the same glass ball in both
+    /// renderers: as bright as the ball the right way out, not the air bubble
+    /// it would leave. Tequila's renderer found the inside from the solid;
+    /// Cycles took the faces' word and rendered the bubble. Skipped where
+    /// Cycles is not installed.
+    #[test]
+    fn a_glass_ball_wound_inside_out_is_glass_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let ball = |inverted: bool| {
+            let demo = tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+            let mut meshes = demo.meshes.clone();
+            let mut sphere = (*meshes[0]).clone();
+            if inverted {
+                for t in sphere.indices.chunks_exact_mut(3) {
+                    t.swap(1, 2);
+                }
+                for n in &mut sphere.normals {
+                    *n = -*n;
+                }
+            }
+            meshes[0] = Arc::new(sphere);
+            let mut materials = demo.materials.clone();
+            materials[0] = tequila_materials::openpbr::Material {
+                transmission_color: Spectrum::ONE,
+                transmission_depth: 0.0,
+                ..tequila_materials::material_type::MaterialType::GlassSolid.defaults()
+            };
+            let mut scene = tequila_render_core::scene::SceneSnapshot::new(meshes, demo.instances.clone(), materials, demo.environment.clone())
+                .with_lights(demo.lights.clone());
+            scene.background = demo.background;
+            scene
+        };
+        for engine in [RenderEngine::Tequila, RenderEngine::CyclesCpu] {
+            let right = developed_mean("ball-right-way-out", engine, ball(false), IntegratorConfig::product());
+            let inverted = developed_mean("ball-inside-out", engine, ball(true), IntegratorConfig::product());
+            println!("{}: {right:.2} the right way out, {inverted:.2} inside out", engine.key());
+            assert!((inverted / right - 1.0).abs() < 0.03, "{}: the glass ball inside out is {inverted:.2}, the right way out {right:.2}", engine.key());
+        }
+    }
+
     /// A glass ball on a glossy floor, a softbox behind it: the floor's
     /// reflection of the ball shows the softbox through the ball, as bright
     /// in Tequila's renderer as in Cycles, whose glossy rays see the glass
