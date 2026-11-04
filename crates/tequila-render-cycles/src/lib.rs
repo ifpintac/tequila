@@ -13,6 +13,7 @@
 //! and go through Tequila's own develop step, as its renderer's do).
 
 pub mod ffi;
+pub mod media;
 pub mod translate;
 
 use std::ffi::{c_int, c_void, CString};

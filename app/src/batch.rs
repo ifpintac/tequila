@@ -2593,6 +2593,144 @@ mod tests {
         assert!((cycles / tequila - 1.0).abs() < 0.15, "under clear glass Cycles' image is {cycles:.2}, Tequila's {tequila:.2}");
     }
 
+    /// A closed cylinder about the Y axis, `segments` round, smooth-shaded,
+    /// its faces turned out or, for a cavity, in.
+    fn cylinder(radius: f32, low: f32, high: f32, segments: u32, inward: bool) -> tequila_render_core::scene::Mesh {
+        let (mut positions, mut normals, mut indices) = (Vec::new(), Vec::new(), Vec::new());
+        let flip = if inward { -1.0 } else { 1.0 };
+        let mut quad = |indices: &mut Vec<u32>, a: u32, b: u32, c: u32| {
+            if inward {
+                indices.extend_from_slice(&[a, c, b]);
+            } else {
+                indices.extend_from_slice(&[a, b, c]);
+            }
+        };
+        // The side: a ring at each end.
+        for i in 0..segments {
+            let angle = std::f32::consts::TAU * i as f32 / segments as f32;
+            let (s, c) = angle.sin_cos();
+            for y in [low, high] {
+                positions.push(vec3(radius * c, y, radius * s));
+                normals.push(vec3(c, 0.0, s) * flip);
+            }
+        }
+        for i in 0..segments {
+            let (a, b) = (2 * i, 2 * ((i + 1) % segments));
+            quad(&mut indices, a, a + 1, b + 1);
+            quad(&mut indices, a, b + 1, b);
+        }
+        // The caps: a fan each.
+        for (y, up) in [(low, -1.0f32), (high, 1.0)] {
+            let centre = positions.len() as u32;
+            positions.push(vec3(0.0, y, 0.0));
+            normals.push(vec3(0.0, up * flip, 0.0));
+            for i in 0..segments {
+                let angle = std::f32::consts::TAU * i as f32 / segments as f32;
+                let (s, c) = angle.sin_cos();
+                positions.push(vec3(radius * c, y, radius * s));
+                normals.push(vec3(0.0, up * flip, 0.0));
+            }
+            for i in 0..segments {
+                let (a, b) = (centre + 1 + i, centre + 1 + (i + 1) % segments);
+                if up > 0.0 {
+                    quad(&mut indices, centre, b, a);
+                } else {
+                    quad(&mut indices, centre, a, b);
+                }
+            }
+        }
+        tequila_render_core::scene::Mesh::new(positions, indices).with_normals(normals)
+    }
+
+    /// `scene` through `engine`, from the test job's camera: the developed
+    /// image's mean red, green and blue.
+    fn developed_channels(name: &str, engine: tequila_scene::render::RenderEngine, scene: tequila_render_core::scene::SceneSnapshot) -> [f64; 3] {
+        let directory = scratch(&format!("tequila-media-{name}-{}", engine.key()));
+        let renderer = BatchRenderer::new();
+        let mut render = job(1, &directory, RenderSettings { engine, width: 96, height: 72, max_samples: 128, denoise: false, ..Default::default() });
+        render.scene = Arc::new(scene);
+        render.config = IntegratorConfig::product();
+        renderer.submit(render);
+        match wait_for_finish(&renderer) {
+            BatchEvent::Finished { preview, .. } => {
+                let n = (preview.len() / 4) as f64;
+                let channel = |c: usize| preview.chunks_exact(4).map(|p| f64::from(p[c])).sum::<f64>() / n;
+                [channel(0), channel(1), channel(2)]
+            }
+            BatchEvent::Failed { message, .. } => panic!("{message}"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A round glass vessel, hollow, and an amber liquid in it modelled a
+    /// fraction into its walls and floor, as a filled container is: the
+    /// liquid meets the glass, not the air, in Cycles as in Tequila's
+    /// renderer, so it tints the vessel as deeply in the one as in the
+    /// other. Cycles had no stack of media: the liquid's side met the air
+    /// and the glass's inner wall under it bent light a second time - an
+    /// air gap that was not there, at whose curve light glancing off the
+    /// wall was reflected whole and never reached the liquid - and drinks
+    /// and perfume came out paler. Skipped where Cycles is not installed.
+    #[test]
+    fn a_liquid_in_its_glass_meets_the_glass_in_both_renderers() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        // The vessel: a cylinder, and a cavity in it whose faces turn in.
+        let vessel = {
+            let outer = cylinder(0.75, 0.0, 1.8, 96, false);
+            let inner = cylinder(0.62, 0.1, 1.9, 96, true);
+            let base = outer.positions.len() as u32;
+            let mut positions = outer.positions.clone();
+            positions.extend_from_slice(&inner.positions);
+            let mut normals = outer.normals.clone();
+            normals.extend_from_slice(&inner.normals);
+            let mut indices = outer.indices.clone();
+            indices.extend(inner.indices.iter().map(|i| i + base));
+            tequila_render_core::scene::Mesh::new(positions, indices).with_normals(normals)
+        };
+        // Open at the top - the cavity runs out past the rim - two thirds
+        // full, and a fraction into the wall and the floor.
+        let liquid = cylinder(0.635, 0.085, 1.2, 96, false);
+        let scene = |filled: bool| {
+            let demo = tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+            let mut meshes = demo.meshes.clone();
+            meshes[0] = Arc::new(vessel.clone());
+            let mut materials = demo.materials.clone();
+            materials[0] = tequila_materials::openpbr::Material { transmission_color: Spectrum::ONE, transmission_depth: 0.0, ..MaterialType::GlassSolid.defaults() };
+            let mut instances = demo.instances.clone();
+            if filled {
+                meshes.push(Arc::new(liquid.clone()));
+                materials.push(tequila_materials::openpbr::Material {
+                    transmission_color: Spectrum { r: 0.8, g: 0.45, b: 0.12 },
+                    transmission_depth: 0.6,
+                    ..MaterialType::Liquid.defaults()
+                });
+                instances.push(tequila_render_core::scene::Instance::new(InstanceId(2), MeshId(2), MaterialId(2)));
+            }
+            let mut scene = tequila_render_core::scene::SceneSnapshot::new(meshes, instances, materials, demo.environment.clone()).with_lights(demo.lights.clone());
+            scene.background = demo.background;
+            scene
+        };
+        // How amber the image is: its red over its blue, filled against
+        // empty, which leaves out what the two renderers differ by anyway.
+        let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+            let [r, _, b] = developed_channels("filled", engine, scene(true));
+            let [r0, _, b0] = developed_channels("empty", engine, scene(false));
+            let tint = (r / b) / (r0 / b0);
+            println!("{}: red over blue {:.4} filled, {:.4} empty: tinted {tint:.4}", engine.key(), r / b, r0 / b0);
+            tint
+        });
+        // Measured: 1.4848 in Tequila's renderer, 1.4890 in Cycles; 1.4723
+        // in Cycles as it was, its liquid meeting the air.
+        assert!((tequila / cycles - 1.0).abs() < 0.005, "the liquid tints the vessel {tequila:.4} in Tequila's renderer, {cycles:.4} in Cycles");
+    }
+
     /// With manifold caustics a lamp's light through glass is solved for, by
     /// Tequila's renderer and by Cycles' own manifold next event estimation:
     /// the demo under the slab is lit through it in both, as bright, while
