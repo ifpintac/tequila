@@ -15,15 +15,16 @@
 //! fallback when there is no usable OpenGL.
 //!
 //! Textures: a parameter driven by a texture (or by one channel of one, the
-//! packed roughness/metalness maps glTF writes) is sampled on the GPU with the
-//! same UV transform. Anything more elaborate — procedurals, tri-planar,
-//! chains of nodes — falls back to the material's folded constant, which is
-//! what a solid view is for anyway.
+//! packed roughness/metalness maps glTF writes), either times a constant
+//! (glTF's factor beside its map), is sampled on the GPU with the same UV
+//! transform. Anything more elaborate — procedurals, tri-planar, chains of
+//! nodes — falls back to the material's folded constant, which is what a
+//! solid view is for anyway.
 
 use eframe::glow::{self, HasContext};
 use tequila_core::math::{Mat4, Vec3};
 use tequila_core::spectrum::Spectrum;
-use tequila_materials::graph::{Channel, CompiledGraph, Instruction, NodeKind, Register};
+use tequila_materials::graph::{Channel, CompiledGraph, Instruction, NodeKind, Register, Value};
 use tequila_materials::material_type::Param;
 use tequila_render_core::camera::{Camera, Projection};
 use tequila_render_core::preview;
@@ -111,8 +112,10 @@ impl UvTransform {
 pub enum Source {
     /// The material's folded constant.
     Constant,
-    /// A texture lookup, whole (a colour) or one channel of it (a scalar).
-    Texture { texture: Arc<Texture>, channel: Option<usize>, uv: UvTransform },
+    /// A texture lookup, whole (a colour) or one channel of it (a scalar),
+    /// times `scale`: in the rendering space for a colour, the same number
+    /// three times for a scalar, and ones where nothing multiplies it.
+    Texture { texture: Arc<Texture>, channel: Option<usize>, uv: UvTransform, scale: [f32; 3] },
 }
 
 // Textures compare by identity: two uploads of one file are one texture.
@@ -121,11 +124,57 @@ impl PartialEq for Source {
         match (self, other) {
             (Source::Constant, Source::Constant) => true,
             (
-                Source::Texture { texture: a, channel: ca, uv: ua },
-                Source::Texture { texture: b, channel: cb, uv: ub },
-            ) => Arc::ptr_eq(a, b) && ca == cb && ua == ub,
+                Source::Texture { texture: a, channel: ca, uv: ua, scale: sa },
+                Source::Texture { texture: b, channel: cb, uv: ub, scale: sb },
+            ) => Arc::ptr_eq(a, b) && ca == cb && ua == ub && sa == sb,
             _ => false,
         }
+    }
+}
+
+/// The image lookup a register holds, as the view's texture path draws
+/// one: the lookup itself or one channel of it, either times a constant.
+/// The lookup, the channel (`None` for the whole colour), and the constant
+/// (one where nothing multiplies it).
+///
+/// The constant is glTF's factor beside its map: a tinted colour picture,
+/// a roughness map at half strength. Without it here a tinted map showed
+/// as a flat colour, the procedural path writing the image as its
+/// fallback. Shared with that path (`procedural_gpu::generate`), so a
+/// parameter is drawn by exactly one of the two.
+pub(crate) fn image_read(program: &CompiledGraph, register: Register) -> Option<(&Instruction, Option<usize>, Value)> {
+    let writer = |register: Register| program.instructions.iter().rev().find(|i| i.destination() == register);
+    let (register, factor) = match writer(register) {
+        Some(Instruction::Apply { kind, args, .. }) if matches!(**kind, NodeKind::Multiply) && args.len() == 2 => {
+            let constant = |r: Register| match writer(r) {
+                Some(Instruction::Load { value, .. }) => Some(*value),
+                _ => None,
+            };
+            match (constant(args[0]), constant(args[1])) {
+                (None, Some(value)) => (args[0], value),
+                (Some(value), None) => (args[1], value),
+                _ => return None,
+            }
+        }
+        _ => (register, Value::Float(1.0)),
+    };
+    match writer(register) {
+        Some(sample @ Instruction::Sample { .. }) => Some((sample, None, factor)),
+        Some(Instruction::Apply { kind, args, .. }) if args.len() == 1 => match kind.as_ref() {
+            NodeKind::Channel { channel } => match writer(args[0]) {
+                Some(sample @ Instruction::Sample { .. }) => {
+                    let channel = match channel {
+                        Channel::Red => 0,
+                        Channel::Green => 1,
+                        Channel::Blue => 2,
+                    };
+                    Some((sample, Some(channel), factor))
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -248,32 +297,19 @@ fn source(program: &CompiledGraph, scene: &SceneSnapshot, param: Param, scalar: 
     let Some((_, register)) = program.driven.iter().find(|(p, _)| *p == param) else {
         return Source::Constant;
     };
-    let writer = |register: Register| program.instructions.iter().rev().find(|i| i.destination() == register);
-    let (sample, channel) = match writer(*register) {
-        Some(sample @ Instruction::Sample { .. }) => (sample, None),
-        Some(Instruction::Apply { kind, args, .. }) if args.len() == 1 => match kind.as_ref() {
-            NodeKind::Channel { channel } => match writer(args[0]) {
-                Some(sample @ Instruction::Sample { .. }) => (
-                    sample,
-                    Some(match channel {
-                        Channel::Red => 0,
-                        Channel::Green => 1,
-                        Channel::Blue => 2,
-                    }),
-                ),
-                _ => return Source::Constant,
-            },
-            _ => return Source::Constant,
-        },
-        _ => return Source::Constant,
+    let Some((sample, channel, factor)) = image_read(program, *register) else {
+        return Source::Constant;
     };
     // A scalar driven straight from a colour texture is read by luminance on
     // the CPU; the red channel is the closest single one, and exact for the
     // grey maps that case almost always is.
     let channel = if scalar { Some(channel.unwrap_or(0)) } else { channel };
+    // A scalar's factor as the CPU reads a number, and a colour's in the
+    // rendering space, where the CPU multiplies it.
+    let scale = if scalar { [factor.as_float(); 3] } else { rgb(factor.as_color()) };
     let Instruction::Sample { texture, mapping, .. } = sample else { unreachable!() };
     match (scene.textures.get(*texture), UvTransform::of(mapping)) {
-        (Some(texture), Some(uv)) => Source::Texture { texture: texture.clone(), channel, uv },
+        (Some(texture), Some(uv)) => Source::Texture { texture: texture.clone(), channel, uv, scale },
         _ => Source::Constant,
     }
 }
@@ -331,8 +367,13 @@ impl SolidMaterial {
             base_color_source: sources(Param::BaseColor, false),
             metalness_source: sources(Param::BaseMetalness, true),
             roughness_source: sources(Param::SpecularRoughness, true),
+            // A direction, which nothing scales: a normal map times a
+            // constant is not one the shader knows how to draw.
             normal_source: match scene.bump(tequila_core::ids::MaterialId(index as u32)) {
-                Some(tequila_render_core::surface_bump::BumpSource::NormalMap { .. }) => sources(Param::Bump, false),
+                Some(tequila_render_core::surface_bump::BumpSource::NormalMap { .. }) => match sources(Param::Bump, false) {
+                    source @ Source::Texture { scale, .. } if scale == [1.0; 3] => source,
+                    _ => Source::Constant,
+                },
                 _ => Source::Constant,
             },
             procedural: program.and_then(|p| crate::procedural_gpu::generate(p)).map(Arc::new),
@@ -706,6 +747,10 @@ uniform int u_rough_channel;
 uniform vec4 u_base_uv[2];
 uniform vec4 u_metal_uv[2];
 uniform vec4 u_rough_uv[2];
+// What each map is multiplied by: glTF's factor beside it, one otherwise.
+uniform vec3 u_base_scale;
+uniform float u_metal_scale;
+uniform float u_rough_scale;
 
 uniform int u_outline_pass;
 uniform vec3 u_outline_colour;
@@ -1033,15 +1078,15 @@ void main() {
     vec3 base_colour = u_base;
     if (u_base_texture == 1) {
         vec3 texel = texture(t_base, transform_uv(v_uv, u_base_uv[0], u_base_uv[1])).rgb;
-        base_colour = u_srgb_to_ap1 * texel;
+        base_colour = u_base_scale * (u_srgb_to_ap1 * texel);
     }
     float metalness = u_metalness;
     if (u_metal_channel >= 0) {
-        metalness = channel_of(texture(t_metal, transform_uv(v_uv, u_metal_uv[0], u_metal_uv[1])), u_metal_channel);
+        metalness = u_metal_scale * channel_of(texture(t_metal, transform_uv(v_uv, u_metal_uv[0], u_metal_uv[1])), u_metal_channel);
     }
     float roughness_in = u_roughness;
     if (u_rough_channel >= 0) {
-        roughness_in = channel_of(texture(t_rough, transform_uv(v_uv, u_rough_uv[0], u_rough_uv[1])), u_rough_channel);
+        roughness_in = u_rough_scale * channel_of(texture(t_rough, transform_uv(v_uv, u_rough_uv[0], u_rough_uv[1])), u_rough_channel);
     }
 
 #ifdef FS_BASE
@@ -2190,7 +2235,7 @@ impl Gpu {
         }
         let bind = |unit: u32, source: &Source, flag: &'static str, uv: &'static str, is_channel: bool| {
             match source {
-                Source::Texture { texture, channel, uv: transform } => {
+                Source::Texture { texture, channel, uv: transform, .. } => {
                     let Some(gpu) = self.textures.get(&(Arc::as_ptr(texture) as usize)) else {
                         gl.uniform_1_i32(location(flag).as_ref(), -1);
                         return;
@@ -2217,6 +2262,16 @@ impl Gpu {
         bind(1, &material.metalness_source, "u_metal_channel", "u_metal_uv", true);
         bind(2, &material.roughness_source, "u_rough_channel", "u_rough_uv", true);
         bind(3, &material.normal_source, "u_normal_texture", "u_normal_uv", false);
+        // What each map is multiplied by. Ones where a parameter is not read
+        // from a map, so the last part's factor never reaches the next.
+        let scale_of = |source: &Source| match source {
+            Source::Texture { scale, .. } => *scale,
+            Source::Constant => [1.0; 3],
+        };
+        let base = scale_of(&material.base_color_source);
+        gl.uniform_3_f32(location("u_base_scale").as_ref(), base[0], base[1], base[2]);
+        gl.uniform_1_f32(location("u_metal_scale").as_ref(), scale_of(&material.metalness_source)[0]);
+        gl.uniform_1_f32(location("u_rough_scale").as_ref(), scale_of(&material.roughness_source)[0]);
 
         // The labels, their artwork on units of their own.
         let mut modes = [0i32; 4 * MAX_LABELS];
@@ -3054,5 +3109,68 @@ mod tests {
         assert!(matches!(normal.normal_source, Source::Texture { channel: None, .. }));
         let height = SolidMaterial::of(&scene_with(MapRole::Height, true), 0);
         assert_eq!(height.normal_source, Source::Constant);
+    }
+
+    /// A map times a constant - glTF's factor beside its map, as the
+    /// importer wires it - is drawn from the map with the factor applied,
+    /// not as a flat colour: a tinted base colour picture, and a roughness
+    /// channel at half strength.
+    #[test]
+    fn a_map_times_its_factor_reaches_the_solid_view_with_the_factor() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind as Kind, Socket, TextureId};
+        use tequila_materials::material_type::MaterialType;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::Mapping;
+        use tequila_texture::texture::{MapRole, Texture};
+
+        let image = Image { width: 2, height: 2, channels: 3, data: [0.5, 0.5, 0.5].repeat(4), color_space: ColorSpace::Raw };
+        let mut table = tequila_render_core::shade::TextureTable::new();
+        table.insert(TextureId(0), Arc::new(Texture::from_linear(image, MapRole::Color, Mapping::default())));
+        let tint = Spectrum::from_linear_srgb(tequila_core::math::vec3(0.8, 0.3, 0.1));
+
+        let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+        let output = graph.output();
+        let picture = graph.add_node(Node::new(Kind::ImageTexture { texture: TextureId(0), fallback: Value::Color(Spectrum::ONE) }));
+        let factor = graph.add_node(Node::new(Kind::Constant(Value::Color(tint))));
+        let tinted = graph.add_node(Node::new(Kind::Multiply));
+        graph.connect(picture, tinted, Socket::Input(0));
+        graph.connect(factor, tinted, Socket::Input(1));
+        graph.connect(tinted, output, Socket::Param(Param::BaseColor));
+        let packed = graph.add_node(Node::new(Kind::ImageTexture { texture: TextureId(0), fallback: Value::Float(1.0) }));
+        let green = graph.add_node(Node::new(Kind::Channel { channel: Channel::Green }));
+        let half = graph.add_node(Node::new(Kind::Constant(Value::Float(0.5))));
+        let scaled = graph.add_node(Node::new(Kind::Multiply));
+        graph.connect(packed, green, Socket::Input(0));
+        // The constant first, as a graph drawn by hand may wire it.
+        graph.connect(half, scaled, Socket::Input(0));
+        graph.connect(green, scaled, Socket::Input(1));
+        graph.connect(scaled, output, Socket::Param(Param::SpecularRoughness));
+        let program = graph.compile().unwrap();
+
+        let scene = SceneSnapshot::new(
+            Vec::new(),
+            Vec::new(),
+            vec![tequila_render_core::material::Material::default()],
+            Arc::new(tequila_render_core::environment::Environment::uniform(Spectrum::ONE)),
+        )
+        .with_programs(vec![Some(Arc::new(program.clone()))], Arc::new(table));
+        let material = SolidMaterial::of(&scene, 0);
+        match &material.base_color_source {
+            Source::Texture { channel: None, scale, .. } => {
+                let want = rgb(tint);
+                assert!(scale.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-6), "the tint is {scale:?}, not {want:?}");
+            }
+            other => panic!("the tinted base colour map is drawn as {other:?}"),
+        }
+        assert!(
+            matches!(material.roughness_source, Source::Texture { channel: Some(1), scale: [s, _, _], .. } if (s - 0.5).abs() < 1e-6),
+            "the half-strength roughness channel is drawn as {:?}",
+            material.roughness_source
+        );
+        // And the generated material leaves both to the texture path, rather
+        // than writing the images as their fallbacks.
+        if let Some(generated) = crate::procedural_gpu::generate(&program) {
+            assert!(!generated.base && !generated.rough, "the procedural path took a map over");
+        }
     }
 }
