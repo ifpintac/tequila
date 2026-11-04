@@ -140,17 +140,7 @@ impl DiskCache {
 
     /// A kept thumbnail, if this build made one for `key`.
     pub fn load(&self, key: u64) -> Option<egui::ColorImage> {
-        let file = std::fs::File::open(self.path(key)?).ok()?;
-        let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
-        decoder.set_transformations(png::Transformations::normalize_to_color8());
-        let mut reader = decoder.read_info().ok()?;
-        let mut rgba = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut rgba).ok()?;
-        if info.color_type != png::ColorType::Rgba {
-            return None;
-        }
-        rgba.truncate(info.buffer_size());
-        Some(egui::ColorImage::from_rgba_unmultiplied([info.width as usize, info.height as usize], &rgba))
+        load_png(&self.path(key)?)
     }
 
     /// Keep a developed thumbnail. Best effort: a cache that cannot be
@@ -162,19 +152,93 @@ impl DiskCache {
             return;
         };
         let partial = path.with_extension("partial");
-        let written = (|| -> Option<()> {
-            let file = std::fs::File::create(&partial).ok()?;
-            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            encoder.write_header().ok()?.write_image_data(rgba).ok()
-        })();
-        if written.is_some() {
+        if Self::write_png(&partial, width, height, rgba).is_some() {
             let _ = std::fs::rename(&partial, &path);
         } else {
             let _ = std::fs::remove_file(&partial);
         }
     }
+
+    /// RGBA8 written to `path` as a PNG.
+    pub fn write_png(path: &std::path::Path, width: usize, height: usize, rgba: &[u8]) -> Option<()> {
+        let file = std::fs::File::create(path).ok()?;
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // A thumbnail is a sphere on a soft sweep: smooth gradients, which
+        // a filter chosen row by row and the best compression shrink by a
+        // good part, at a cost too small to see in pictures this size.
+        encoder.set_compression(png::Compression::Best);
+        encoder.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
+        encoder.write_header().ok()?.write_image_data(rgba).ok()
+    }
+}
+
+/// An RGBA picture written as a PNG, read back.
+pub fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut rgba = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut rgba).ok()?;
+    if info.color_type != png::ColorType::Rgba {
+        return None;
+    }
+    rgba.truncate(info.buffer_size());
+    Some(egui::ColorImage::from_rgba_unmultiplied([info.width as usize, info.height as usize], &rgba))
+}
+
+/// How many pixels across the thumbnails the library ships with are: a
+/// tile three across the panel at twice a point's pixels, a Mac's, and
+/// scaled down for any smaller tile; a larger one renders its own.
+pub const SHIPPED_PIXELS: usize = 240;
+
+/// The file a preset's shipped thumbnail is kept in: its own file's name,
+/// and a hash of what is in it, so a preset changed since the thumbnails
+/// were made finds none and renders its own. FNV-1a, which no compiler
+/// or platform changes, over the text with its line endings made one,
+/// since a checkout on Windows writes them two characters long.
+pub fn shipped_name(stem: &str, preset: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in preset.iter().filter(|&&b| b != b'\r') {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{stem}-{hash:016x}.png")
+}
+
+/// `image` made `pixels` across, by averaging the pixels each new one
+/// covers; left as it is if it is no larger.
+pub fn fit(image: egui::ColorImage, pixels: usize) -> egui::ColorImage {
+    let [width, height] = image.size;
+    if width <= pixels || width == 0 || height == 0 {
+        return image;
+    }
+    let out_height = (height * pixels).div_ceil(width).max(1);
+    let (sx, sy) = (width as f32 / pixels as f32, height as f32 / out_height as f32);
+    let mut rgba = Vec::with_capacity(pixels * out_height * 4);
+    for y in 0..out_height {
+        let (y0, y1) = (y as f32 * sy, (y + 1) as f32 * sy);
+        for x in 0..pixels {
+            let (x0, x1) = (x as f32 * sx, (x + 1) as f32 * sx);
+            let mut sum = [0.0f32; 4];
+            let mut weight = 0.0f32;
+            for py in y0.floor() as usize..(y1.ceil() as usize).min(height) {
+                let wy = (y1.min(py as f32 + 1.0) - y0.max(py as f32)).max(0.0);
+                for px in x0.floor() as usize..(x1.ceil() as usize).min(width) {
+                    let w = wy * (x1.min(px as f32 + 1.0) - x0.max(px as f32)).max(0.0);
+                    let c = image.pixels[py * width + px].to_array();
+                    for (s, v) in sum.iter_mut().zip(c) {
+                        *s += w * f32::from(v);
+                    }
+                    weight += w;
+                }
+            }
+            rgba.extend(sum.map(|s| (s / weight.max(1e-6)).round().clamp(0.0, 255.0) as u8));
+        }
+    }
+    egui::ColorImage::from_rgba_premultiplied([pixels, out_height], &rgba)
 }
 
 /// Builds before the cache was kept across them left their thumbnails in a

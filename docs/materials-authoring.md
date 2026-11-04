@@ -190,6 +190,13 @@ To add one:
    system; `cargo test -p tequila-app no_library_thumbnail_is_speckled` and,
    with Cycles installed, `library_presets_render_alike_in_cycles` check its
    preview and that both renderers agree.
+5. Before the release, `cargo test -p tequila-app --release
+   ship_the_library_thumbnails -- --ignored` renders the thumbnails the
+   library ships with (`assets/library/standard/thumbnails/look-N`, 240 px,
+   named by each preset's file and a hash of it). A preset with none, or
+   changed since its was made, still shows - rendered on the user's machine
+   in the background - so a release without them is slower to fill the
+   shelf, not wrong. Run it again whenever `THUMBNAIL_LOOK` is raised.
 
 Presets must not copy a commercial swatch system's names or values (Pantone,
 RAL, Mold-Tech and the like); `assets/library/CREDITS.md` says where values
