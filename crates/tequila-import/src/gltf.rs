@@ -688,7 +688,7 @@ fn read_materials(
                 ..Material::plastic(base, roughness)
             };
             let mut material = material;
-            read_material_extensions(source, &mut material, warnings);
+            read_material_extensions(source, &mut material);
             // glTF tints the light a transmissive surface passes by its base
             // colour, as Blender's principled glass does; §2.2 tints it by
             // the transmission colour, which on a surface with no absorbing
@@ -733,11 +733,7 @@ fn tints_transmission(material: &Material) -> bool {
 /// than not reading it, because the file would look honoured and the render
 /// would not change; `Param::unimplemented` is the list of those, and
 /// `report_unsupported_extensions` is what says so.
-fn read_material_extensions(
-    source: &json::Value,
-    material: &mut Material,
-    warnings: &mut Vec<String>,
-) {
+fn read_material_extensions(source: &json::Value, material: &mut Material) {
     let Some(extensions) = source.get("extensions") else {
         return;
     };
@@ -777,13 +773,6 @@ fn read_material_extensions(
         // is one.
         if extensions.get("KHR_materials_volume").is_none() {
             material.geometry_thin_walled = true;
-        }
-        if ext.get("transmissionTexture").is_some() {
-            warnings.push(
-                "a material varies its transmission with a texture, which this \
-                 importer does not wire yet; the single factor was used"
-                    .into(),
-            );
         }
     }
 
@@ -850,7 +839,8 @@ fn read_material_extensions(
     // thing by strength and by film index; they differ over thickness, which
     // glTF gives as a *range* plus a texture that picks a point in it, where
     // §2.2 has one number. With no texture the specification says the
-    // thickness is the maximum, so that is what arrives.
+    // thickness is the maximum, so that is what arrives; a texture picks its
+    // point in the range per pixel (`attach_extension_maps`).
     if let Some(ext) = extensions.get("KHR_materials_iridescence") {
         material.thin_film_weight = number(ext, "iridescenceFactor")
             .unwrap_or(0.0)
@@ -863,25 +853,6 @@ fn read_material_extensions(
         material.thin_film_thickness = number(ext, "iridescenceThicknessMaximum")
             .unwrap_or(400.0)
             .clamp(0.0, 2000.0);
-
-        if ext.get("iridescenceTexture").is_some() {
-            warnings.push(
-                "a material varies its iridescence strength with a texture, which this importer does not wire yet; the single factor was used"
-                    .into(),
-            );
-        }
-        // Worth its own warning rather than sharing one: a thickness map is
-        // how an exporter paints the *pattern* of an oil film or a tempered
-        // finish, so a model that has one is a model whose iridescence is
-        // meant to vary across the surface. Ignoring it leaves the film
-        // uniform, which looks like a different material rather than like a
-        // detail gone missing.
-        if ext.get("iridescenceThicknessTexture").is_some() {
-            warnings.push(format!(
-                "a material varies its film thickness with a texture, which this importer does not wire yet; the maximum of {:.0} nm was used everywhere",
-                material.thin_film_thickness
-            ));
-        }
     }
 
     if let Some(ext) = extensions.get("KHR_materials_anisotropy") {
@@ -979,6 +950,7 @@ fn attach_maps(
                 image,
                 mapping,
                 definition.material().geometry_opacity,
+                Param::Opacity,
                 definition,
                 textures,
                 warnings,
@@ -1022,32 +994,7 @@ fn attach_maps(
             graph.connect(node, output, Socket::Param(Param::Bump));
         }
     }
-    // The sheen's colour picture, times the tint its factor left once its
-    // brightest channel became the weight (`read_material_extensions`):
-    // weight × tint × picture is the factor × picture glTF states. No
-    // weight is a factor of black, which no picture brings back.
-    let sheen = source
-        .get("extensions")
-        .and_then(|e| e.get("KHR_materials_sheen"));
-    if let Some(sheen) = sheen.filter(|_| definition.material().fuzz_weight > 0.0) {
-        if let Some((image, mapping)) =
-            texture_reference(root, sheen.get("sheenColorTexture"), warnings)
-        {
-            let tint = definition.material().fuzz_color;
-            attach_image(
-                root,
-                buffers,
-                image,
-                mapping,
-                Param::FuzzColor,
-                MapRole::Color,
-                Value::Color(tint),
-                definition,
-                textures,
-                warnings,
-            );
-        }
-    }
+    attach_extension_maps(root, buffers, source, definition, textures, warnings);
     if let Some((image, mapping)) = texture_reference(
         root,
         pbr.and_then(|p| p.get("metallicRoughnessTexture")),
@@ -1104,6 +1051,324 @@ fn attach_maps(
             );
         }
     }
+}
+
+/// The `KHR_materials_*` extensions' own maps, each times its factor.
+///
+/// Each is a factor `read_material_extensions` has already read, varied
+/// across the surface, and glTF multiplies the two as it does the core
+/// maps. A factor of zero is a zero no map can change, so its map is left
+/// out rather than wired to nothing. They were all ignored, and only some
+/// said so: a car paint's masked clear coat came in coated all over, a
+/// fabric's sheen evenly rough.
+///
+/// Two are not wired:
+/// - `clearcoatNormalTexture`: the coat lies on the surface's own normal
+///   here, bumped with it, and has none of its own to take a map. Said, since
+///   a coat with its own orange peel comes in smooth.
+/// - `KHR_materials_volume`'s `thicknessTexture`: a stand-in for how far
+///   light travels inside the part, for renderers that cannot measure it.
+///   This one traces the part's own geometry, so the map has nothing to add.
+fn attach_extension_maps(
+    root: &json::Value,
+    buffers: &[Vec<u8>],
+    source: &json::Value,
+    definition: &mut MaterialDefinition,
+    textures: &mut Vec<crate::raw::RawTexture>,
+    warnings: &mut Vec<String>,
+) {
+    use tequila_materials::graph::{Channel, Value};
+    use tequila_materials::material_type::Param;
+    use tequila_texture::texture::MapRole;
+
+    let Some(extensions) = source.get("extensions") else {
+        return;
+    };
+    let m = definition.material().clone();
+
+    // Transmission in red.
+    if let Some(ext) = extensions
+        .get("KHR_materials_transmission")
+        .filter(|_| m.transmission_weight > 0.0)
+    {
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("transmissionTexture"), warnings)
+        {
+            attach_channel(
+                root, buffers, image, mapping, Channel::Red, Param::TransmissionWeight,
+                m.transmission_weight, definition, textures, warnings,
+            );
+        }
+    }
+
+    // The clear coat's strength in red and its roughness in green: usually
+    // one picture, which `texture_slot` decodes once.
+    if let Some(ext) = extensions
+        .get("KHR_materials_clearcoat")
+        .filter(|_| m.coat_weight > 0.0)
+    {
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("clearcoatTexture"), warnings)
+        {
+            attach_channel(
+                root, buffers, image, mapping, Channel::Red, Param::CoatWeight,
+                m.coat_weight, definition, textures, warnings,
+            );
+        }
+        if m.coat_roughness > 0.0 {
+            if let Some((image, mapping)) =
+                texture_reference(root, ext.get("clearcoatRoughnessTexture"), warnings)
+            {
+                attach_channel(
+                    root, buffers, image, mapping, Channel::Green, Param::CoatRoughness,
+                    m.coat_roughness, definition, textures, warnings,
+                );
+            }
+        }
+        if ext.get("clearcoatNormalTexture").is_some() {
+            warnings.push(
+                "a material gives its clear coat a normal map of its own; the coat \
+                 here lies on the surface's own normal, so it came in smooth"
+                    .into(),
+            );
+        }
+    }
+
+    // Specular strength in alpha and its colour in RGB: usually one picture,
+    // the colour sRGB-encoded and the strength not.
+    if let Some(ext) = extensions.get("KHR_materials_specular") {
+        if m.specular_weight > 0.0 {
+            if let Some((image, mapping)) =
+                texture_reference(root, ext.get("specularTexture"), warnings)
+            {
+                attach_alpha(
+                    root, buffers, image, mapping, m.specular_weight, Param::SpecularWeight,
+                    definition, textures, warnings,
+                );
+            }
+        }
+        if !m.specular_color.is_black() {
+            if let Some((image, mapping)) =
+                texture_reference(root, ext.get("specularColorTexture"), warnings)
+            {
+                attach_image(
+                    root, buffers, image, mapping, Param::SpecularColor, MapRole::Color,
+                    Value::Color(m.specular_color), definition, textures, warnings,
+                );
+            }
+        }
+    }
+
+    // The sheen's colour in RGB and its roughness in alpha, as specular has
+    // them. The colour is times the tint its factor left once its brightest
+    // channel became the weight (`read_material_extensions`): weight × tint
+    // × picture is the factor × picture glTF states. No weight is a factor
+    // of black.
+    if let Some(ext) = extensions
+        .get("KHR_materials_sheen")
+        .filter(|_| m.fuzz_weight > 0.0)
+    {
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("sheenColorTexture"), warnings)
+        {
+            attach_image(
+                root, buffers, image, mapping, Param::FuzzColor, MapRole::Color,
+                Value::Color(m.fuzz_color), definition, textures, warnings,
+            );
+        }
+        if m.fuzz_roughness > 0.0 {
+            if let Some((image, mapping)) =
+                texture_reference(root, ext.get("sheenRoughnessTexture"), warnings)
+            {
+                attach_alpha(
+                    root, buffers, image, mapping, m.fuzz_roughness, Param::FuzzRoughness,
+                    definition, textures, warnings,
+                );
+            }
+        }
+    }
+
+    // The film's strength in red, and its thickness in green as a point
+    // between the extension's minimum and maximum.
+    if let Some(ext) = extensions
+        .get("KHR_materials_iridescence")
+        .filter(|_| m.thin_film_weight > 0.0)
+    {
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("iridescenceTexture"), warnings)
+        {
+            attach_channel(
+                root, buffers, image, mapping, Channel::Red, Param::ThinFilmWeight,
+                m.thin_film_weight, definition, textures, warnings,
+            );
+        }
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("iridescenceThicknessTexture"), warnings)
+        {
+            let minimum = ext
+                .get("iridescenceThicknessMinimum")
+                .and_then(|v| v.as_f32())
+                .unwrap_or(100.0)
+                .clamp(0.0, 2000.0);
+            attach_film_thickness(
+                root, buffers, image, mapping, minimum, m.thin_film_thickness, definition,
+                textures, warnings,
+            );
+        }
+    }
+
+    // Anisotropy's direction in red and green, its strength in blue.
+    if let Some(ext) = extensions
+        .get("KHR_materials_anisotropy")
+        .filter(|_| m.specular_roughness_anisotropy > 0.0)
+    {
+        if let Some((image, mapping)) =
+            texture_reference(root, ext.get("anisotropyTexture"), warnings)
+        {
+            let radians = ext
+                .get("anisotropyRotation")
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0);
+            attach_anisotropy(
+                root, buffers, image, mapping, m.specular_roughness_anisotropy, radians,
+                definition, textures, warnings,
+            );
+        }
+    }
+}
+
+/// glTF's film thickness map (`KHR_materials_iridescence`): green picks a
+/// point between the extension's minimum and maximum, in nanometres.
+#[allow(clippy::too_many_arguments)]
+fn attach_film_thickness(
+    root: &json::Value,
+    buffers: &[Vec<u8>],
+    image: usize,
+    mapping: tequila_texture::projection::Mapping,
+    minimum: f32,
+    maximum: f32,
+    definition: &mut MaterialDefinition,
+    textures: &mut Vec<crate::raw::RawTexture>,
+    warnings: &mut Vec<String>,
+) {
+    use tequila_core::math::vec2;
+    use tequila_materials::graph::{Channel, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+
+    // One, so a map that fails to load leaves the maximum: the thickness
+    // the specification gives a film with no map.
+    let Some(node) = image_node(
+        root,
+        buffers,
+        image,
+        mapping,
+        tequila_texture::texture::MapRole::Data,
+        Value::Float(1.0),
+        definition,
+        textures,
+        warnings,
+    ) else {
+        return;
+    };
+    let graph = &mut definition.graph;
+    let pick = graph.add_node(Node::new(NodeKind::Channel {
+        channel: Channel::Green,
+    }));
+    let range = graph.add_node(Node::new(NodeKind::Remap {
+        from: vec2(0.0, 1.0),
+        to: vec2(minimum, maximum),
+    }));
+    let output = graph.output();
+    graph.connect(node, pick, Socket::Input(0));
+    graph.connect(pick, range, Socket::Input(0));
+    graph.connect(range, output, Socket::Param(Param::ThinFilmThickness));
+}
+
+/// glTF's anisotropy map (`KHR_materials_anisotropy`).
+///
+/// Blue is the strength, times the extension's. Red and green are a
+/// direction in the surface's tangent frame, -1 to 1 as a normal map's are,
+/// turned further by the extension's rotation: the angle of that direction
+/// from the tangent is this renderer's rotation, which runs 0 to 1 over the
+/// half turn after which the lobe repeats.
+#[allow(clippy::too_many_arguments)]
+fn attach_anisotropy(
+    root: &json::Value,
+    buffers: &[Vec<u8>],
+    image: usize,
+    mapping: tequila_texture::projection::Mapping,
+    strength: f32,
+    radians: f32,
+    definition: &mut MaterialDefinition,
+    textures: &mut Vec<crate::raw::RawTexture>,
+    warnings: &mut Vec<String>,
+) {
+    use std::f32::consts::PI;
+    use tequila_materials::graph::{Channel, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_texture::cycles::ops::MathOp;
+
+    // Along the tangent at full strength, so a map that fails to load leaves
+    // the extension's own direction and strength.
+    let along = Value::Color(tequila_core::spectrum::Spectrum {
+        r: 1.0,
+        g: 0.5,
+        b: 1.0,
+    });
+    let Some(node) = image_node(
+        root,
+        buffers,
+        image,
+        mapping,
+        tequila_texture::texture::MapRole::Data,
+        along,
+        definition,
+        textures,
+        warnings,
+    ) else {
+        return;
+    };
+    let graph = &mut definition.graph;
+    let output = graph.output();
+    let math = |op| Node::new(NodeKind::Node(ShaderNode::Math { op, clamp: false }));
+    let channel = |graph: &mut tequila_materials::graph::MaterialGraph, channel| {
+        let pick = graph.add_node(Node::new(NodeKind::Channel { channel }));
+        graph.connect(node, pick, Socket::Input(0));
+        pick
+    };
+
+    let blue = channel(graph, Channel::Blue);
+    drive_scaled(graph, blue, Value::Float(strength), Param::Anisotropy);
+
+    // From 0..1 to -1..1.
+    let signed = |graph: &mut tequila_materials::graph::MaterialGraph, which| {
+        let pick = channel(graph, which);
+        let value = graph.add_node(
+            math(MathOp::MultiplyAdd)
+                .with_literal(Socket::Input(1), Value::Float(2.0))
+                .with_literal(Socket::Input(2), Value::Float(-1.0)),
+        );
+        graph.connect(pick, value, Socket::Input(0));
+        value
+    };
+    let x = signed(graph, Channel::Red);
+    let y = signed(graph, Channel::Green);
+    let angle = graph.add_node(math(MathOp::Arctan2));
+    graph.connect(y, angle, Socket::Input(0));
+    graph.connect(x, angle, Socket::Input(1));
+    // In half turns, the extension's rotation added, and wrapped into 0..1.
+    let turns = graph.add_node(
+        math(MathOp::MultiplyAdd)
+            .with_literal(Socket::Input(1), Value::Float(1.0 / PI))
+            .with_literal(Socket::Input(2), Value::Float(radians / PI)),
+    );
+    graph.connect(angle, turns, Socket::Input(0));
+    let wrapped = graph.add_node(
+        math(MathOp::FlooredModulo).with_literal(Socket::Input(1), Value::Float(1.0)),
+    );
+    graph.connect(turns, wrapped, Socket::Input(0));
+    graph.connect(wrapped, output, Socket::Param(Param::AnisotropyRotation));
 }
 
 /// A whole image driving one parameter, times the factor glTF states for it.
@@ -1220,6 +1485,10 @@ fn drive_scaled(
 ///
 /// The cost of that choice is `alphaCutoff`: a model that sets one other than
 /// the default is asking for a threshold this does not apply, so it says so.
+///
+/// The extensions keep numbers in a colour picture's alpha the same way —
+/// specular strength beside the specular colour, sheen roughness beside the
+/// sheen colour — so `param` says which one this alpha drives.
 #[allow(clippy::too_many_arguments)]
 fn attach_alpha(
     root: &json::Value,
@@ -1227,15 +1496,16 @@ fn attach_alpha(
     image: usize,
     mapping: tequila_texture::projection::Mapping,
     factor: f32,
+    param: tequila_materials::material_type::Param,
     definition: &mut MaterialDefinition,
     textures: &mut Vec<crate::raw::RawTexture>,
     warnings: &mut Vec<String>,
 ) {
     use tequila_materials::graph::{Node, NodeKind, Socket, TextureId, Value};
 
-    // The colour role, because it is the same file as the base colour and a
-    // second entry would decode the picture twice. `sample_alpha` takes the
-    // channel the sRGB decode already left alone.
+    // The colour role, because it is the same file as the colour beside it
+    // and a second entry would decode the picture twice. `sample_alpha`
+    // takes the channel the sRGB decode already left alone.
     let Some(index) = texture_slot(
         root,
         buffers,
@@ -1256,12 +1526,7 @@ fn attach_alpha(
         fallback: Value::Float(1.0),
     }));
     graph.connect(coords, alpha, Socket::Input(0));
-    drive_scaled(
-        graph,
-        alpha,
-        Value::Float(factor),
-        tequila_materials::material_type::Param::Opacity,
-    );
+    drive_scaled(graph, alpha, Value::Float(factor), param);
 }
 
 /// glTF's occlusion map: red channel, scaled by `strength`.

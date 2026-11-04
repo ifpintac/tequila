@@ -3349,7 +3349,13 @@ impl Builder<'_> {
         self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
         self.feed(shader, bsdf, "roughness", value(Param::SpecularRoughness, Value::Float(m.specular_roughness)), false)?;
         self.feed(shader, bsdf, "ior", value(Param::SpecularIor, Value::Float(m.specular_ior)), false)?;
-        self.session.set_float(bsdf, "specular_ior_level", 0.5 * m.specular_weight)?;
+        let level = self.float_op(
+            shader,
+            "multiply",
+            value(Param::SpecularWeight, Value::Float(m.specular_weight)),
+            Slot::Value(Value::Float(0.5)),
+        )?;
+        self.feed(shader, bsdf, "specular_ior_level", level, false)?;
         self.feed(shader, bsdf, "specular_tint", edge, true)?;
         self.feed(shader, bsdf, "transmission_weight", value(Param::TransmissionWeight, Value::Float(m.transmission_weight)), false)?;
         self.feed(shader, bsdf, "subsurface_weight", value(Param::SubsurfaceWeight, Value::Float(m.subsurface_weight)), false)?;
@@ -3492,11 +3498,15 @@ impl Builder<'_> {
         self.feed(shader, bsdf, "roughness", roughness, false)?;
         self.feed(shader, bsdf, "ior", value(Param::SpecularIor, Value::Float(m.specular_ior)), false)?;
         // OpenPBR's specular weight scales F0; Principled's IOR level does the
-        // same with 0.5 as "as the IOR says".
-        if driven.contains_key(&Param::SpecularWeight) {
-            self.out.warn("a textured specular weight is not translated");
-        }
-        self.session.set_float(bsdf, "specular_ior_level", 0.5 * m.specular_weight)?;
+        // same with 0.5 as "as the IOR says" - a map's weight as well as a
+        // constant one.
+        let level = self.float_op(
+            shader,
+            "multiply",
+            value(Param::SpecularWeight, Value::Float(m.specular_weight)),
+            Slot::Value(Value::Float(0.5)),
+        )?;
+        self.feed(shader, bsdf, "specular_ior_level", level, false)?;
         self.feed(shader, bsdf, "specular_tint", edge, true)?;
         let anisotropy = self.cycles_anisotropy(shader, value(Param::Anisotropy, Value::Float(m.specular_roughness_anisotropy)))?;
         self.feed(shader, bsdf, "anisotropic", anisotropy, false)?;
@@ -3535,9 +3545,19 @@ impl Builder<'_> {
         if !thin {
             self.feed(shader, bsdf, "alpha", value(Param::Opacity, Value::Float(m.geometry_opacity)), false)?;
         }
-        if m.thin_film_weight > 0.0 {
-            self.session.set_float(bsdf, "thin_film_thickness", m.thin_film_thickness * m.thin_film_weight)?;
-            self.session.set_float(bsdf, "thin_film_ior", m.thin_film_ior)?;
+        // Cycles' film has no strength of its own: a thinner film is the
+        // nearest it comes, thickness times weight, a map's as well as a
+        // constant's.
+        let film = [Param::ThinFilmWeight, Param::ThinFilmThickness].iter().any(|p| driven.contains_key(p));
+        if m.thin_film_weight > 0.0 || film {
+            let thickness = self.float_op(
+                shader,
+                "multiply",
+                value(Param::ThinFilmThickness, Value::Float(m.thin_film_thickness)),
+                value(Param::ThinFilmWeight, Value::Float(m.thin_film_weight)),
+            )?;
+            self.feed(shader, bsdf, "thin_film_thickness", thickness, false)?;
+            self.feed(shader, bsdf, "thin_film_ior", value(Param::ThinFilmIor, Value::Float(m.thin_film_ior)), false)?;
         }
         if volume {
             self.volume(shader, output, m, driven.contains_key(&Param::TransmissionColor))?;
@@ -3636,7 +3656,19 @@ impl Builder<'_> {
                 && m.specular_roughness_anisotropy == 0.0
                 && !metal
                 && decals.is_empty()
-                && ![Param::TransmissionWeight, Param::CoatWeight, Param::FuzzWeight, Param::SubsurfaceWeight, Param::EmissionLuminance, Param::Opacity, Param::Anisotropy]
+                && ![
+                    Param::TransmissionWeight,
+                    Param::CoatWeight,
+                    Param::FuzzWeight,
+                    Param::SubsurfaceWeight,
+                    Param::EmissionLuminance,
+                    Param::Opacity,
+                    Param::Anisotropy,
+                    // Read as constants by the dispersed glass.
+                    Param::SpecularWeight,
+                    Param::ThinFilmWeight,
+                    Param::ThinFilmThickness,
+                ]
                     .iter()
                     .any(|p| driven.contains_key(p));
             let roughness = value(Param::SpecularRoughness, Value::Float(m.specular_roughness));
