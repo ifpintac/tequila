@@ -1825,39 +1825,6 @@ fn the_material_extensions_reach_their_parameters() {
     assert_eq!(plain.coat_weight, 0.0);
 }
 
-/// A film painted by a texture has to say so.
-///
-/// glTF's thickness map is how an exporter paints the *pattern* of an oil
-/// slick or a tempered finish, so a model carrying one is a model whose
-/// iridescence is meant to vary across the surface. Taking the maximum
-/// everywhere is a reasonable stand-in, and it is also a different material
-/// from the one in the file — which is the sort of difference an importer
-/// has to admit to rather than let someone discover by eye.
-#[test]
-fn an_iridescence_thickness_map_is_reported_rather_than_silently_flattened() {
-    let gltf = textured_gltf("colour.png", "bumps.png").replace(
-        r#""name": "Painted","#,
-        r#""name": "Painted", "extensions": { "KHR_materials_iridescence": {
-            "iridescenceFactor": 1.0,
-            "iridescenceThicknessMaximum": 650,
-            "iridescenceThicknessTexture": { "index": 0 } } },"#,
-    );
-    let path = write_model("iridescence-map", &gltf, &["colour.png", "bumps.png"]);
-    let document = SceneDocument::new();
-    let (_, report) = tequila_import::import(&document, None, &path, &ImportOptions::default())
-        .expect("a map this importer cannot wire must not fail the import");
-
-    let complaint = report
-        .warnings
-        .iter()
-        .find(|w| w.contains("film thickness"))
-        .unwrap_or_else(|| panic!("nothing warned: {:?}", report.warnings));
-    assert!(
-        complaint.contains("650"),
-        "the warning does not say what was used instead: {complaint}"
-    );
-}
-
 /// Emissive strength is the scale the core factor does not carry.
 ///
 /// `emissiveFactor` is a 0..1 colour with no units; `emission_luminance` is in
@@ -2047,16 +2014,20 @@ fn grey_as_colour() -> f32 {
 }
 
 /// A real picture this time, since what is checked is what the renderer
-/// reads out of it: four pixels of `GREY`.
-fn write_grey_png(path: &std::path::Path) {
+/// reads out of it: four pixels of `pixel`, RGB or RGBA by its length.
+fn write_png(path: &std::path::Path, pixel: &[u8]) {
     let file = std::fs::File::create(path).expect("the picture");
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 2, 2);
-    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_color(if pixel.len() == 4 {
+        png::ColorType::Rgba
+    } else {
+        png::ColorType::Rgb
+    });
     encoder.set_depth(png::BitDepth::Eight);
     encoder
         .write_header()
         .expect("a header")
-        .write_image_data(&[GREY; 12])
+        .write_image_data(&pixel.repeat(4))
         .expect("the pixels");
 }
 
@@ -2065,9 +2036,21 @@ fn write_grey_png(path: &std::path::Path) {
 /// that does not decode, which leaves the surface flat. The model's path
 /// comes back too, for a test that takes the picture away again.
 fn import_grey(name: &str, edit: impl Fn(&str) -> String) -> (SceneDocument, std::path::PathBuf) {
-    let gltf = edit(&textured_gltf("grey.png", "bumps.png"));
-    let path = write_model(name, &gltf, &["bumps.png"]);
-    write_grey_png(&path.with_file_name("grey.png"));
+    import_pictures(name, &edit(&textured_gltf("grey.png", "bumps.png")), &[])
+}
+
+/// A model with `grey.png` beside it, and further real pictures by name and
+/// pixel, imported and applied.
+fn import_pictures(
+    name: &str,
+    gltf: &str,
+    pictures: &[(&str, &[u8])],
+) -> (SceneDocument, std::path::PathBuf) {
+    let path = write_model(name, gltf, &["bumps.png"]);
+    write_png(&path.with_file_name("grey.png"), &[GREY; 3]);
+    for (file, pixel) in pictures {
+        write_png(&path.with_file_name(file), pixel);
+    }
     let mut document = SceneDocument::new();
     let (command, _) = tequila_import::import(&document, None, &path, &ImportOptions::default())
         .expect("imports");
@@ -2216,4 +2199,149 @@ fn a_map_that_fails_to_load_leaves_its_factor() {
         "metalness is {} with its map missing, where the factor is 0.4",
         m.base_metalness
     );
+}
+
+// --- the extensions' maps ----------------------------------------------------
+
+/// `textured_gltf` with two more pictures, `grey_alpha.png` (texture 2) and
+/// `direction.png` (texture 3), and `extensions` on its material.
+fn extension_maps_gltf(extensions: &str) -> String {
+    let gltf = textured_gltf("grey.png", "bumps.png");
+    let edited = gltf
+        .replace(
+            r#""name": "Painted","#,
+            &format!(r#""name": "Painted", "extensions": {extensions},"#),
+        )
+        .replace(
+            r#""textures": [{ "source": 0 }, { "source": 1 }]"#,
+            r#""textures": [{ "source": 0 }, { "source": 1 }, { "source": 2 }, { "source": 3 }]"#,
+        )
+        .replace(
+            r#""images": [{ "uri": "grey.png" }, { "uri": "bumps.png" }]"#,
+            r#""images": [{ "uri": "grey.png" }, { "uri": "bumps.png" }, { "uri": "grey_alpha.png" }, { "uri": "direction.png" }]"#,
+        );
+    assert!(
+        edited.contains("direction.png") && edited.contains("\"extensions\""),
+        "the fixture did not take the pictures"
+    );
+    edited
+}
+
+/// A direction a quarter turn from the tangent, red and green from 0 to 1,
+/// with `GREY` for the strength in blue.
+const DIRECTION: [u8; 3] = [128, 255, GREY];
+
+/// Each extension's map is multiplied by the factor beside it, as the core
+/// maps are: transmission, the clear coat's strength and roughness,
+/// specular strength and colour, sheen colour and roughness, the film's
+/// strength and its thickness between the extension's two ends, and
+/// anisotropy's strength and its direction turned by the rotation. They
+/// were all ignored: a masked clear coat coated the whole part, a film
+/// painted thinner and thicker came in one thickness everywhere.
+#[test]
+fn every_extension_map_is_multiplied_by_its_factor() {
+    let gltf = extension_maps_gltf(
+        r#"{
+          "KHR_materials_transmission": { "transmissionFactor": 0.5, "transmissionTexture": { "index": 0 } },
+          "KHR_materials_clearcoat": {
+              "clearcoatFactor": 0.8, "clearcoatTexture": { "index": 0 },
+              "clearcoatRoughnessFactor": 0.6, "clearcoatRoughnessTexture": { "index": 0 } },
+          "KHR_materials_specular": {
+              "specularFactor": 0.7, "specularTexture": { "index": 2 },
+              "specularColorFactor": [1.0, 0.8, 0.6], "specularColorTexture": { "index": 2 } },
+          "KHR_materials_sheen": {
+              "sheenColorFactor": [0.6, 0.3, 0.15], "sheenColorTexture": { "index": 2 },
+              "sheenRoughnessFactor": 0.5, "sheenRoughnessTexture": { "index": 2 } },
+          "KHR_materials_iridescence": {
+              "iridescenceFactor": 0.9, "iridescenceTexture": { "index": 0 },
+              "iridescenceThicknessMinimum": 200, "iridescenceThicknessMaximum": 600,
+              "iridescenceThicknessTexture": { "index": 0 } },
+          "KHR_materials_anisotropy": {
+              "anisotropyStrength": 0.6, "anisotropyRotation": 0.5,
+              "anisotropyTexture": { "index": 3 } }
+        }"#,
+    );
+    let (document, _) = import_pictures(
+        "every-extension-map",
+        &gltf,
+        &[("grey_alpha.png", &[GREY; 4]), ("direction.png", &DIRECTION)],
+    );
+    let (grey, data) = (grey_as_colour(), GREY as f32 / 255.0);
+    let m = shaded(&document);
+
+    let numbers = [
+        ("transmission under 0.5", m.transmission_weight, 0.5 * data),
+        ("clear coat under 0.8", m.coat_weight, 0.8 * data),
+        ("clear coat roughness under 0.6", m.coat_roughness, 0.6 * data),
+        ("specular strength under 0.7", m.specular_weight, 0.7 * data),
+        ("sheen roughness under 0.5", m.fuzz_roughness, 0.5 * data),
+        ("film strength under 0.9", m.thin_film_weight, 0.9 * data),
+        ("film thickness between 200 and 600 nm", m.thin_film_thickness, 200.0 + 400.0 * data),
+        ("anisotropy under 0.6", m.specular_roughness_anisotropy, 0.6 * data),
+    ];
+    for (what, got, want) in numbers {
+        assert!(
+            (got - want).abs() < 2e-3 * want.max(1.0),
+            "{what}: {got}, where the map and factor make {want}"
+        );
+    }
+    assert_colour(
+        m.specular_color,
+        [grey, 0.8 * grey, 0.6 * grey],
+        "the specular colour map under [1, 0.8, 0.6]",
+    );
+    assert_colour(
+        m.fuzz_color * m.fuzz_weight,
+        [0.6 * grey, 0.3 * grey, 0.15 * grey],
+        "the sheen colour map under [0.6, 0.3, 0.15]",
+    );
+
+    // The direction's angle from the tangent, plus the rotation, in the half
+    // turns this renderer's rotation runs in.
+    let [r, g, _] = DIRECTION.map(|c| 2.0 * (c as f32 / 255.0) - 1.0);
+    let want = ((g.atan2(r) + 0.5) / std::f32::consts::PI).rem_euclid(1.0);
+    assert!(
+        (m.specular_rotation - want).abs() < 2e-3,
+        "the anisotropy turns {} of a half turn, where the map and rotation make {want}",
+        m.specular_rotation
+    );
+}
+
+/// The clear coat's own normal map has nowhere to go - the coat lies on the
+/// surface's normal here - and an importer that drops a map says so.
+#[test]
+fn a_clear_coat_normal_map_is_reported() {
+    let gltf = extension_maps_gltf(
+        r#"{ "KHR_materials_clearcoat": {
+              "clearcoatFactor": 1.0, "clearcoatNormalTexture": { "index": 1 } } }"#,
+    );
+    let path = write_model("clearcoat-normal", &gltf, &["grey.png", "bumps.png"]);
+    let (_, report) = tequila_import::import(&SceneDocument::new(), None, &path, &ImportOptions::default())
+        .expect("a map this importer cannot wire must not fail the import");
+    assert!(
+        report.warnings.iter().any(|w| w.contains("clear coat a normal map")),
+        "nothing said the coat's normal map was dropped: {:?}",
+        report.warnings
+    );
+}
+
+/// A factor of zero is a zero no map can change, so its map is not wired:
+/// a clear coat map on a material with no coat drives nothing.
+#[test]
+fn a_map_under_a_zero_factor_is_left_out() {
+    let gltf = extension_maps_gltf(
+        r#"{ "KHR_materials_clearcoat": { "clearcoatTexture": { "index": 0 } } }"#,
+    );
+    let (document, _) = import_pictures(
+        "zero-factor-map",
+        &gltf,
+        &[("grey_alpha.png", &[GREY; 4]), ("direction.png", &DIRECTION)],
+    );
+    let material = document.materials.iter().next().map(|(_, m)| m.clone()).expect("a material");
+    let program = material.graph.compile().expect("compiles");
+    assert!(
+        !program.driven.iter().any(|(param, _)| *param == Param::CoatWeight),
+        "a coat map under a factor of zero still drives the coat"
+    );
+    assert_eq!(material.material().coat_weight, 0.0);
 }
