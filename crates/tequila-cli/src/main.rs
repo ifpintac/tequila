@@ -214,8 +214,9 @@ usage: tequila [options]
                         simple_product | cad_assembly
   -i, --input PATH      a .tequila project, a KeyShot scene (.ksp .bip,
                         rendered with its own camera, lighting and look),
-                        or a model to import (.obj .stl .gltf .glb .step
-                        .igs); omit for the demo scene
+                        or a model to import (.obj .stl .ply .3mf .fbx
+                        .gltf .glb .step .igs .usda .ifc); omit for the
+                        demo scene
   -o, --output PATH     output image, .png or .jpg (default tequila.png);
                         {configuration} in it stands for the choices
   -w, --width N         image width (default: the project's, else 960)
