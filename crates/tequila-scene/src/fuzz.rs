@@ -29,7 +29,9 @@
 //! root and narrowing evenly to the clump's tip, taking most of its shade
 //! too. `comb` lays fibres the
 //! same way as their neighbours, along a smooth field of directions over
-//! the part that holds over a few centimetres and turns between. Both draw
+//! the part that holds over a few centimetres and turns between: a little
+//! for a loose pile, and for fibres gathered into locks far enough that
+//! the locks fan one way and another, as a fur's do. Both draw
 //! from random streams of their own, so fibres asked for without them come
 //! out exactly as they did before either existed.
 //!
@@ -210,7 +212,7 @@ pub fn grow_with(mesh: &RenderMesh, scale: f32, request: &FuzzRequest, growth: G
         curl: request.curl().clamp(0.0, 1.0),
         length,
         comb,
-        field: (comb > 0.0).then(|| CombField::new(request.seed, COMB_PATCH / scale)),
+        field: (comb > 0.0).then(|| CombField::new(request.seed, COMB_PATCH / scale, clump)),
     };
     // The clumps' own fibres, each the one its clump gathers to. Drawn from
     // a stream of their own, so fibres asked for without clumping, or
@@ -557,51 +559,95 @@ impl Shape {
 
 /// Which way the nap lies across a part: a smooth field of directions, a
 /// steady drift with a few long waves over it, so it holds one way over a
-/// patch and turns a little between patches.
+/// patch and turns between patches. How far it turns follows the clumping.
 ///
-/// The drift runs along the part's diagonal. Where it stands straight out
-/// of the surface the waves alone are left, and turn the nap round in
-/// whorls; along the diagonal, that is at a corner of a part modelled along
-/// its axes, never across a face - not a top, whichever way is up, and not
-/// a side.
+/// A loose pile's nap turns only a little. Its drift runs along the part's
+/// diagonal. Where it stands straight out of the surface the waves alone
+/// are left, and turn the nap round in whorls; along the diagonal, that is
+/// at a corner of a part modelled along its axes, never across a face - not
+/// a top, whichever way is up, and not a side. On a suede's short nap a
+/// sharper turn reads as scales.
+///
+/// Locks splay. Gathered into them, the nap drifts a way of its own and the
+/// waves are as strong as the drift, so the locks fan one way over a patch
+/// and another over the next, and whorl where the drift stands out of the
+/// surface: a fur's coat. Between [`LOOSE`] and [`LOCKED`] clumping the two
+/// are mixed; outside it each is exactly itself.
 struct CombField {
-    waves: [(Vec3, f32, Vec3); 4],
+    /// The loose pile's waves, about [`DRIFT`].
+    waves: [Wave; 4],
+    /// The locks' drift and waves, and how much of the nap is theirs.
+    locks: Option<(Vec3, [Wave; 4], f32)>,
 }
 
-/// The drift, a unit vector along the diagonal.
+/// One of the field's waves: which way and how fast it runs, its phase,
+/// and which way and how far it turns the nap.
+type Wave = (Vec3, f32, Vec3);
+
+/// A loose pile's drift, a unit vector along the diagonal.
 const DRIFT: Vec3 = tequila_core::math::vec3(0.577_350_3, 0.577_350_3, 0.577_350_3);
 
-/// How far the waves turn the nap from the drift: a third of it, so a
-/// patch's nap wanders by a few tens of degrees and never doubles back.
+/// How far a loose pile's waves turn its nap from the drift: a third of it,
+/// so a patch's nap wanders by a few tens of degrees and never doubles back.
 const WANDER: f32 = 0.3;
 
+/// Clumping up to which the nap is a loose pile's: a hairy suede's.
+const LOOSE: f32 = 0.4;
+
+/// Clumping from which the nap is all locks: a fur's.
+const LOCKED: f32 = 0.7;
+
 impl CombField {
-    /// Patches `patch` mesh units across.
-    fn new(seed: u32, patch: f32) -> CombField {
-        let mut random = SplitMix(u64::from(seed) ^ 0xc0_4b_f1e1d);
-        let direction = |random: &mut SplitMix| {
-            // Uniform on the sphere.
-            let z = random.unit() * 2.0 - 1.0;
-            let angle = random.unit() * std::f32::consts::TAU;
-            let r = (1.0 - z * z).max(0.0).sqrt();
-            tequila_core::math::vec3(r * angle.cos(), r * angle.sin(), z)
-        };
+    /// Patches `patch` mesh units across, for fibres clumped by `clump`.
+    fn new(seed: u32, patch: f32, clump: f32) -> CombField {
+        // Each from the start of the same stream, so a loose pile combs as it
+        // did before locks were told apart, and locks as they did before.
+        let stream = || SplitMix(u64::from(seed) ^ 0xc0_4b_f1e1d);
         let frequency = std::f32::consts::TAU / patch.max(1e-9);
-        let waves = std::array::from_fn(|_| {
-            let k = direction(&mut random) * frequency;
-            let phase = random.unit() * std::f32::consts::TAU;
-            (k, phase, direction(&mut random) * WANDER)
+        let waves = Self::waves(&mut stream(), frequency, WANDER);
+        let t = ((clump - LOOSE) / (LOCKED - LOOSE)).clamp(0.0, 1.0);
+        let share = t * t * (3.0 - 2.0 * t);
+        let locks = (share > 0.0).then(|| {
+            let mut random = stream();
+            let drift = Self::direction(&mut random) * 1.2;
+            (drift, Self::waves(&mut random, frequency, 1.0), share)
         });
-        CombField { waves }
+        CombField { waves, locks }
+    }
+
+    /// A direction, uniform on the sphere.
+    fn direction(random: &mut SplitMix) -> Vec3 {
+        let z = random.unit() * 2.0 - 1.0;
+        let angle = random.unit() * std::f32::consts::TAU;
+        let r = (1.0 - z * z).max(0.0).sqrt();
+        tequila_core::math::vec3(r * angle.cos(), r * angle.sin(), z)
+    }
+
+    /// Four waves running random ways `frequency` radians a mesh unit, each
+    /// turning the nap a random way by `wander` of a unit drift.
+    fn waves(random: &mut SplitMix, frequency: f32, wander: f32) -> [Wave; 4] {
+        std::array::from_fn(|_| {
+            let k = Self::direction(random) * frequency;
+            let phase = random.unit() * std::f32::consts::TAU;
+            (k, phase, Self::direction(random) * wander)
+        })
     }
 
     /// The way the nap lies at `p`, along the surface; `None` where the
     /// field stands straight out of it.
     fn along(&self, p: Vec3, normal: Vec3) -> Option<Vec3> {
-        let mut f = DRIFT;
-        for (k, phase, amplitude) in &self.waves {
-            f = f + *amplitude * (k.dot(p) + phase).sin();
-        }
+        let field = |drift: Vec3, waves: &[Wave; 4]| {
+            let mut f = drift;
+            for (k, phase, amplitude) in waves {
+                f = f + *amplitude * (k.dot(p) + phase).sin();
+            }
+            f
+        };
+        let f = match &self.locks {
+            None => field(DRIFT, &self.waves),
+            Some((drift, waves, share)) if *share >= 1.0 => field(*drift, waves),
+            Some((drift, waves, share)) => field(DRIFT, &self.waves) * (1.0 - share) + field(*drift, waves) * *share,
+        };
         let flat = f - normal * normal.dot(f);
         (flat.length() > 1e-3 * f.length()).then(|| flat.normalize())
     }
@@ -794,6 +840,56 @@ mod tests {
         let (free, combed) = (agreement(0.0), agreement(1.0));
         assert!(free.abs() < 0.15, "uncombed neighbours agree by {free}");
         assert!(combed > 0.85, "combed neighbours agree by only {combed}");
+    }
+
+    /// A loose pile's nap holds one way across a top several patches wide;
+    /// locks fan one way and another over it.
+    #[test]
+    fn locks_fan_out_where_a_loose_pile_lies_one_way() {
+        // How well the nap over a flat top six patches across agrees with
+        // itself, as the length of its mean direction, over a few seeds.
+        let agreement = |clump: f32| {
+            let mut total = 0.0;
+            for seed in 0..8 {
+                let field = CombField::new(seed, 1.0, clump);
+                let (mut sum, mut n) = (Vec3::ZERO, 0);
+                for i in 0..24 {
+                    for j in 0..24 {
+                        let p = tequila_core::math::vec3(i as f32 * 0.25, 0.0, j as f32 * 0.25);
+                        if let Some(along) = field.along(p, Vec3::Y) {
+                            sum = sum + along;
+                            n += 1;
+                        }
+                    }
+                }
+                total += sum.length() / n.max(1) as f32;
+            }
+            total / 8.0
+        };
+        let (loose, locked) = (agreement(0.3), agreement(0.7));
+        assert!(loose > 0.9, "a loose pile's nap agrees by only {loose}");
+        assert!(locked < loose - 0.2, "locks agree by {locked}, a loose pile by {loose}");
+    }
+
+    /// Up to `LOOSE` clumping the nap is exactly a loose pile's, as it was
+    /// before locks were told apart, so a hairy suede's renders keep; from
+    /// `LOCKED` it is exactly the locks', so a fur's do.
+    #[test]
+    fn a_loose_pile_and_locks_each_keep_their_own_nap() {
+        let nap = |clump: f32| {
+            let field = CombField::new(3, 0.5, clump);
+            (0..64)
+                .map(|i| {
+                    let p = tequila_core::math::vec3(i as f32 * 0.37, (i % 5) as f32 * 0.11, i as f32 * -0.21);
+                    field.along(p, Vec3::Y)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(nap(0.0), nap(LOOSE));
+        assert_eq!(nap(LOCKED), nap(1.0));
+        assert_ne!(nap(LOOSE), nap(LOCKED));
+        assert_ne!(nap(0.55), nap(LOOSE));
+        assert_ne!(nap(0.55), nap(LOCKED));
     }
 
     /// Fibres asked for without clumping or combing grow exactly as they did

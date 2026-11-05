@@ -1469,7 +1469,8 @@ impl Param {
             ),
             Param::FuzzComb => Some(
                 "How far fibres lie the same way as their neighbours, in patches a few centimetres \
-                 across: 0 each its own way, 1 combed. A nap brushed one way.",
+                 across: 0 each its own way, 1 combed. A nap brushed one way; with Fibre Clumping \
+                 past about 0.4, locks that fan one way and another, as a fur's do.",
             ),
             _ => None,
         }
