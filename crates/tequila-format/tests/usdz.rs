@@ -189,7 +189,16 @@ fn plain_materials_are_preview_surfaces() {
             assert!((colour[0] - reflectance.x).abs() < 1e-3 && (colour[2] - reflectance.z).abs() < 1e-3, "{name}: {colour:?}");
         }
         if m.transmission_weight > 0.99 {
-            assert!(float("opacity") < 0.5, "{name} is see-through");
+            // Seen through: the clear glass a faint film, the scent, deep
+            // amber at its own depth, covering more and in its colour.
+            let opacity = float("opacity");
+            assert!(opacity < 0.7, "{name} is see-through: {opacity}");
+            if name == "Glass" {
+                assert!(opacity < 0.3, "the glass is clear: {opacity}");
+            }
+            if name == "Liquid" {
+                assert!(opacity > 0.3 && colour[0] > 2.0 * colour[2], "the scent is amber: {colour:?} at {opacity}");
+            }
         }
     }
 }
