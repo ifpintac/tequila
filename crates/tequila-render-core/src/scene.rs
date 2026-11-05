@@ -438,6 +438,20 @@ pub struct SceneSnapshot {
     panes: PaneCache,
     /// Where the glass that bends light is ([`SceneSnapshot::bending_bounds`]).
     bending: BendingCache,
+    /// Whether a part casts no shadow ([`SceneSnapshot::has_shadowless_parts`]).
+    shadowless: ShadowlessCache,
+}
+
+/// [`SceneSnapshot::has_shadowless_parts`], worked out once a render rather
+/// than once a path walking every instance. A copy starts without it, as
+/// [`EmitterCache`] does.
+#[derive(Debug, Default)]
+struct ShadowlessCache(std::sync::OnceLock<bool>);
+
+impl Clone for ShadowlessCache {
+    fn clone(&self) -> Self {
+        ShadowlessCache::default()
+    }
 }
 
 /// [`SceneSnapshot::bending_bounds`], worked out once. A copy starts
@@ -780,6 +794,7 @@ impl SceneSnapshot {
             dispersive: DispersionCache::default(),
             panes: PaneCache::default(),
             bending: BendingCache::default(),
+            shadowless: ShadowlessCache::default(),
             materials,
         }
     }
@@ -864,6 +879,15 @@ impl SceneSnapshot {
                 None => disperses(material),
             })
         })
+    }
+
+    /// Whether some part casts no shadow, other than a light's stand-in,
+    /// which every path but the camera's passes anyway: what decides whether
+    /// the integrator looks past the part a path stops at for the light its
+    /// shadow rays let by (`integrator::light_past`). Nearly every scene has
+    /// none.
+    pub fn has_shadowless_parts(&self) -> bool {
+        *self.shadowless.0.get_or_init(|| self.instances.iter().any(|i| !i.casts_shadows && !i.light_proxy))
     }
 
     /// Whether a surface of this instance stops a shadow ray. One with its
