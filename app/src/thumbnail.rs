@@ -161,23 +161,33 @@ impl DiskCache {
 
     /// RGBA8 written to `path` as a PNG.
     pub fn write_png(path: &std::path::Path, width: usize, height: usize, rgba: &[u8]) -> Option<()> {
-        let file = std::fs::File::create(path).ok()?;
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        // A thumbnail is a sphere on a soft sweep: smooth gradients, which
-        // a filter chosen row by row and the best compression shrink by a
-        // good part, at a cost too small to see in pictures this size.
-        encoder.set_compression(png::Compression::Best);
-        encoder.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
-        encoder.write_header().ok()?.write_image_data(rgba).ok()
+        std::fs::write(path, encode_png(width, height, rgba)?).ok()
     }
+}
+
+/// RGBA8 as a PNG's bytes.
+pub fn encode_png(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    // A thumbnail is a sphere on a soft sweep: smooth gradients, which a
+    // filter chosen row by row and the best compression shrink by a good
+    // part, at a cost too small to see in pictures this size.
+    encoder.set_compression(png::Compression::Best);
+    encoder.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
+    encoder.write_header().ok()?.write_image_data(rgba).ok()?;
+    Some(bytes)
 }
 
 /// An RGBA picture written as a PNG, read back.
 pub fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decode_png(std::io::BufReader::new(std::fs::File::open(path).ok()?))
+}
+
+/// An RGBA PNG's pixels; `None` for any other kind of PNG, or none.
+pub fn decode_png(bytes: impl std::io::Read) -> Option<egui::ColorImage> {
+    let mut decoder = png::Decoder::new(bytes);
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().ok()?;
     let mut rgba = vec![0; reader.output_buffer_size()];

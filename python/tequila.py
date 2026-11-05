@@ -310,7 +310,8 @@ class Client:
         providers), frame (the render's shape in the viewport) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
-        'meadow'|'rose'."""
+        'meadow'|'rose', studio_drag=[studio, slot] (a Studio held part-way
+        through a drag in the Studios tab, for a screenshot) or False."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

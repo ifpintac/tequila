@@ -337,6 +337,10 @@ pub struct UiChange {
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
+    /// A Studio held in the Studios tab as though being dragged, for a
+    /// screenshot: the Studio, and the slot it would land in (0 above the
+    /// first). `Some(None)` (from `false`) lets it go; nothing moves.
+    pub studio_drag: Option<Option<[usize; 2]>>,
 }
 
 /// The UV editor, as a script asks for it. Absent fields are left alone.
@@ -1193,6 +1197,17 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 Some(v) => Some(Some(v.as_index().ok_or_else(|| {
                     ProtocolError("`graph` must be a material number, or false to close the editor".into())
                 })? as u64)),
+            },
+            studio_drag: match value.get("studio_drag") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(false)) => Some(None),
+                Some(v) => match v.as_array() {
+                    [from, slot] => match (from.as_index(), slot.as_index()) {
+                        (Some(from), Some(slot)) => Some(Some([from, slot])),
+                        _ => return Err(ProtocolError("`studio_drag` is [studio, slot], two numbers, or false".into())),
+                    },
+                    _ => return Err(ProtocolError("`studio_drag` is [studio, slot], two numbers, or false".into())),
+                },
             },
         }),
         "queue" => Operation::Queue(QueueRender {

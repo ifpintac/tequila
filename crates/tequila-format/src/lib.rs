@@ -84,6 +84,14 @@ const SCENE_MEMBER: &str = "scene.json";
 /// Optional: a project without one is no less a project.
 pub const PREVIEW_MEMBER: &str = "preview.png";
 const MANIFEST_MEMBER: &str = "manifest.json";
+/// Where each Studio's picture is kept: `studios/<key>.png`, the key its
+/// [`picture_key`](tequila_scene::studio::Studio::picture_key) in sixteen
+/// hex digits. Optional, as the preview is.
+const STUDIO_PICTURES: &str = "studios/";
+
+fn studio_picture_member(key: u64) -> String {
+    format!("{STUDIO_PICTURES}{key:016x}.png")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormatError {
@@ -299,6 +307,14 @@ fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8
     archive.add(SCENE_MEMBER, write_scene(document, preserved).into_bytes());
     if let Some(picture) = preview.or(preserved.preview.as_deref()) {
         archive.add(PREVIEW_MEMBER, picture.to_vec());
+    }
+    // The pictures of the Studios the project has, and only those: one kept
+    // for a Studio since changed or deleted is not carried in the file.
+    let shown: std::collections::BTreeSet<u64> = document.studios.iter().map(|s| s.picture_key()).collect();
+    for key in shown {
+        if let Some(png) = document.studio_pictures.get(key) {
+            archive.add(studio_picture_member(key), png.to_vec());
+        }
     }
 
     for (key, definition) in document.materials.iter() {
@@ -2693,6 +2709,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
     let mut preserved = Preserved::default();
     read_geometry(&archive, &mut document, &mut preserved)?;
     read_sources(&archive, &mut document);
+    read_studio_pictures(&archive, &mut document);
     read_materials(&archive, &mut document, &mut preserved, &mut notes)?;
     read_tree(&root, &mut document, &mut preserved)?;
     preserved.settings = unknown_settings(&root, &document);
@@ -2782,6 +2799,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
             && !name.starts_with("geometry/")
             && !name.starts_with("materials/")
             && !name.starts_with("sources/")
+            && studio_picture_key(name).is_none()
         {
             preserved
                 .members
@@ -2923,6 +2941,25 @@ fn read_environment(root: &Value) -> EnvironmentSettings {
         }
     }
     settings
+}
+
+/// The Studios' pictures. A member not named as the writer names them is
+/// not one, and is left to be preserved like any other.
+fn read_studio_pictures(archive: &zip::ZipArchive, document: &mut SceneDocument) {
+    for name in archive.names() {
+        if let Some(key) = studio_picture_key(name) {
+            document.studio_pictures.insert(key, std::sync::Arc::new(archive.get(name).unwrap_or_default().to_vec()));
+        }
+    }
+}
+
+/// The key a Studio's picture is kept under, from its member's name.
+fn studio_picture_key(name: &str) -> Option<u64> {
+    let hex = name.strip_prefix(STUDIO_PICTURES)?.strip_suffix(".png")?;
+    if hex.len() != 16 {
+        return None;
+    }
+    u64::from_str_radix(hex, 16).ok()
 }
 
 fn read_sources(archive: &zip::ZipArchive, document: &mut SceneDocument) {

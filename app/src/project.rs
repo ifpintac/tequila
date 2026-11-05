@@ -112,6 +112,8 @@ pub struct Project {
     autosave: Option<PendingAutosave>,
     /// See [`Project::rebuilds`].
     rebuilds: u64,
+    /// See [`Project::scene_edits`].
+    scene_edits: u64,
     /// An auto-save is wanted now, not in five minutes: a big import is in
     /// the document and not in the journal.
     snapshot_soon: bool,
@@ -166,6 +168,7 @@ impl Project {
             last_autosave: std::time::Instant::now(),
             autosave: None,
             rebuilds: 0,
+            scene_edits: 0,
             snapshot_soon: false,
             heavy_triangles: HEAVY_TRIANGLES,
             journal_epoch: 0,
@@ -393,6 +396,31 @@ impl Project {
         self.rebuilds
     }
 
+    /// Counts the edits to what the scene is, but for switching Studios -
+    /// applying one, or a configuration, which applies them: what a Studio's
+    /// picture is out of date after, beyond what the Studio holds and what
+    /// [`Studio::capture`](tequila_scene::studio::Studio::capture) says of
+    /// the scene as it is. Nor does an environment arriving from its
+    /// background build count, or the graph editor's solo, which pictures
+    /// do not show. Undo, redo and opening a project do.
+    pub fn scene_edits(&self) -> u64 {
+        self.scene_edits
+    }
+
+    /// Keep a Studio's picture with the project, to be saved with it. Not
+    /// an edit: nothing goes on the history, and the project is no more
+    /// unsaved than it was. Pictures of Studios since changed are kept for
+    /// a while, for an undo to find, and let go once there are many more
+    /// of them than Studios.
+    pub fn keep_studio_picture(&mut self, key: u64, png: Arc<Vec<u8>>) {
+        let document = &mut self.document;
+        document.studio_pictures.insert(key, png);
+        if document.studio_pictures.len() > 2 * document.studios.len() + 16 {
+            let current: std::collections::HashSet<u64> = document.studios.iter().map(|s| s.picture_key()).collect();
+            document.studio_pictures.retain(|k| current.contains(&k));
+        }
+    }
+
     pub fn mapping(&self) -> &SnapshotMapping {
         &self.mapping
     }
@@ -439,6 +467,8 @@ impl Project {
         // rather than from a copy kept for it: every command used to be
         // copied whole, an imported model's every mesh with it.
         let line = (!heavy && self.session.is_some()).then(|| tequila_format::journal::encode(&command));
+        // See `scene_edits`.
+        let switches_studios = matches!(command, Command::ApplyStudio { .. } | Command::Configure { .. });
         let studio = match &command {
             Command::ApplyStudio { index } => {
                 self.document.studios.get(*index).map(|s| s.filename_suffix.clone().unwrap_or_else(|| s.name.clone()))
@@ -478,6 +508,8 @@ impl Project {
             // Notify the viewport without walking the assembly or recompiling
             // its snapshot: camera state travels separately in RenderRequest.
             self.generation += 1;
+        } else if invalidates_render && switches_studios {
+            self.rebuild();
         } else if invalidates_render {
             self.after_change();
         } else {
@@ -642,7 +674,7 @@ impl Project {
     pub fn set_solo(&mut self, solo: Option<(MaterialKey, tequila_materials::graph::NodeId, u8)>) {
         if self.view.solo != solo {
             self.view.solo = solo;
-            self.after_change();
+            self.rebuild();
         }
     }
 
@@ -689,17 +721,24 @@ impl Project {
     /// still running, so the caller keeps frames coming until it lands.
     pub fn poll_environment(&mut self) -> bool {
         if self.environment.poll() {
-            self.after_change();
+            self.rebuild();
         }
         self.environment.is_pending()
     }
 
-    /// Rebuild everything that depends on the document.
+    /// Rebuild everything that depends on the document, after an edit.
+    fn after_change(&mut self) {
+        self.scene_edits += 1;
+        self.rebuild();
+    }
+
+    /// Rebuild everything that depends on the document, without counting
+    /// an edit for Studios' pictures ([`Project::scene_edits`]).
     ///
     /// Selection is pruned here rather than by each caller: a deleted node
     /// that stays selected makes the next command refer to something that is
     /// not there.
-    fn after_change(&mut self) {
+    fn rebuild(&mut self) {
         self.rebuilds += 1;
         self.selection.prune(&self.document);
         let (scene, mapping) =
@@ -709,13 +748,28 @@ impl Project {
         self.generation += 1;
     }
 
+    /// Whether Studio `index`'s environment is ready to render its picture
+    /// by: the scene's own once it is built, any other once `environment`
+    /// has made it on another thread. Asked before
+    /// [`Project::studio_scene`], so a picture never has the UI thread
+    /// decode a large image.
+    pub fn studio_environment_ready(&mut self, index: usize, environment: &mut EnvironmentCache) -> bool {
+        match self.document.studios.get(index).map(|s| &s.environment) {
+            None => false,
+            Some(Some(settings)) if *settings != self.document.environment => environment.prepare(settings),
+            Some(_) => !self.environment.is_pending(),
+        }
+    }
+
     /// The scene as Studio `index` would show it - its environment, model
     /// set and variants - with its camera, image style and lighting, for its
     /// thumbnail. Built over this project's own converted meshes, and with
-    /// `environment` for its environment, so neither the project's meshes
-    /// nor its environment are made again; the document is copied without
-    /// its geometry, which is lent to the copy while the scene is built.
-    /// `None` for no such Studio.
+    /// the scene's environment when the Studio's is the same and
+    /// `environment` when it is not, so neither the project's meshes nor
+    /// its environment are made again; the document is copied without its
+    /// geometry, which is lent to the copy while the scene is built. As it
+    /// renders, not as the view shows it: the graph editor's solo is left
+    /// out. `None` for no such Studio.
     pub fn studio_scene(
         &mut self,
         index: usize,
@@ -725,8 +779,9 @@ impl Project {
         let mut copy = self.document.clone();
         self.document.geometry = geometry;
         CommandBus::new().apply(&mut copy, Command::ApplyStudio { index }).ok()?;
+        let environment = if copy.environment == self.document.environment { &mut self.environment } else { environment };
         std::mem::swap(&mut copy.geometry, &mut self.document.geometry);
-        let (mut scene, _) = build_scene(&copy, environment, &mut self.meshes, &self.view);
+        let (mut scene, _) = build_scene(&copy, environment, &mut self.meshes, &tequila_scene::snapshot::ViewOverrides::default());
         std::mem::swap(&mut copy.geometry, &mut self.document.geometry);
         scene.background = environment.background(&copy.environment);
         let style = tequila_scene::lighting::developed_style(copy.image_style, &copy.cameras.active().camera);

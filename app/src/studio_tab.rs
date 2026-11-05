@@ -17,6 +17,7 @@ use tequila_scene::Command;
 pub struct StudioTab {
     wizard: crate::configurator_panel::Wizard,
     thumbnails: Thumbnails,
+    reorder: Reorder,
     /// What the configurator asked for this frame - to present, or to
     /// render every combination - drained by the application.
     pub action: Option<crate::configurator_panel::Action>,
@@ -51,7 +52,7 @@ impl StudioTab {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
         let mut camera_moved = false;
         crate::theme::section(ui, "Studios");
-        camera_moved |= studios(ui, project, &mut self.thumbnails);
+        camera_moved |= studios(ui, project, &mut self.thumbnails, &mut self.reorder);
         let views = project.document().studios.len();
         if views > 1
             && ui
@@ -89,6 +90,20 @@ impl StudioTab {
             camera_moved = true;
         }
         camera_moved
+    }
+
+    /// Hold Studio `from` as though it were being dragged to `slot` (0 is
+    /// above the first, the count below the last), for a picture of a drag
+    /// part-way: the drop line and the Studio under the pointer are drawn
+    /// and nothing moves. `None` lets it go.
+    pub fn stage_drag(&mut self, drag: Option<(usize, usize)>) {
+        self.reorder.staged = drag;
+    }
+
+    /// How many Studios show a picture of the scene as it is now, and
+    /// whether one is being rendered.
+    pub fn pictures(&self, project: &Project) -> (usize, bool) {
+        (self.thumbnails.current(project), self.thumbnails.job.is_some())
     }
 }
 
@@ -172,57 +187,187 @@ fn report(project: &mut Project, result: Result<(), tequila_scene::command::Comm
 // ---- Studios --------------------------------------------------------------------
 
 /// Each Studio's picture: the shot it recalls, rendered small on another
-/// thread, one at a time, and kept until the Studio changes or another
-/// project opens (`TEQUILA_SPEC.md` §1.12, "auto thumbnails").
+/// thread, one at a time (`TEQUILA_SPEC.md` §1.12, "auto thumbnails").
+///
+/// A picture is kept under its Studio's
+/// [`picture_key`](Studio::picture_key) - what the Studio holds, not its
+/// name - in the project ([`Project::keep_studio_picture`]), which is saved
+/// with them, so a project opened again shows them at once. A Studio that
+/// changes has another key and is rendered again at once. One whose scene
+/// changed under it - a material edited, another Studio applied that set
+/// what this one leaves alone - keeps its picture until the scene has been
+/// still for a moment, and is rendered again then, so a slider's drag does
+/// not start a render at every step.
 #[derive(Default)]
 struct Thumbnails {
-    shown: std::collections::HashMap<u64, egui::TextureHandle>,
-    /// The thumbnail being rendered, by its key.
-    job: Option<(u64, std::thread::JoinHandle<Option<egui::ColorImage>>)>,
+    /// The pictures shown, by key.
+    shown: std::collections::HashMap<u64, Shown>,
+    /// The picture being rendered.
+    job: Option<Job>,
     /// Ones that would not render, so they are not tried every frame.
     failed: std::collections::HashSet<u64>,
     /// Studios' environments, apart from the scene's.
     environment: tequila_scene::environment::EnvironmentCache,
+    /// The project the pictures are of ([`Project::document_epoch`]);
+    /// `None` before the first look.
+    epoch: Option<u64>,
+    /// What each Studio's picture would be made from now, and since when
+    /// that has been so.
+    wanted: Vec<u64>,
+    still_since: Option<std::time::Instant>,
+}
+
+/// A picture shown: the texture, and what it was made from
+/// ([`made_from`]).
+struct Shown {
+    texture: egui::TextureHandle,
+    made_from: u64,
+}
+
+/// A picture being rendered on another thread.
+struct Job {
+    key: u64,
+    made_from: u64,
+    epoch: u64,
+    /// The Studio's place in the list when it started, for the spinner.
+    index: usize,
+    render: std::thread::JoinHandle<Option<egui::ColorImage>>,
 }
 
 /// A thumbnail's width in pixels; its height follows the render's shape.
 const THUMBNAIL_WIDTH: usize = 192;
 
-impl Thumbnails {
-    /// What a Studio's thumbnail shows: the Studio, in this project.
-    fn key(studio: &Studio, project: &Project) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{studio:?}").hash(&mut hasher);
-        project.document_epoch().hash(&mut hasher);
-        hasher.finish()
-    }
+/// How long the scene stays still before pictures it has left out of date
+/// are rendered again.
+const STILL: std::time::Duration = std::time::Duration::from_millis(800);
 
-    /// Take a finished render, and start the next one missing.
+/// What a Studio's picture is made from besides the Studio: the scene as
+/// it is, for whatever the Studio leaves as it is - camera, environment,
+/// look, model set, the product's turn, the variants and lights it does
+/// not set - every other edit to the scene, and the render's shape. A
+/// picture made from anything else is out of date.
+fn made_from(studio: &Studio, now: &Studio, project: &Project) -> u64 {
+    use std::fmt::Write;
+    use std::hash::{Hash, Hasher};
+    let render = &project.document().render;
+    let mut text = format!("{} {} {}x{}", project.document_epoch(), project.scene_edits(), render.width, render.height);
+    if studio.camera.is_none() {
+        let _ = write!(text, " {:?}", now.camera);
+    }
+    if studio.environment.is_none() {
+        let _ = write!(text, " {:?}", now.environment);
+    }
+    if studio.image_style.is_none() {
+        let _ = write!(text, " {:?}", now.image_style);
+    }
+    if studio.model_set.is_none() {
+        let _ = write!(text, " {:?}", now.model_set);
+    }
+    if studio.product_yaw.is_none() {
+        let _ = write!(text, " {:?}", now.product_yaw);
+    }
+    for (id, active) in &now.variants {
+        if !studio.variants.iter().any(|(set, _)| set == id) {
+            let _ = write!(text, " {id}:{active}");
+        }
+    }
+    for light in &now.lights {
+        if !studio.lights.iter().any(|o| o.target == light.target) {
+            let _ = write!(text, " {light:?}");
+        }
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    studio.picture_key().hash(&mut hasher);
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+impl Thumbnails {
+    /// Take a finished render, show the pictures the project was opened
+    /// with, and start the next render wanted: a Studio with no picture
+    /// first, then, once the scene has been still a moment, one whose
+    /// picture is out of date.
     fn update(&mut self, ctx: &egui::Context, project: &mut Project) {
-        if self.job.as_ref().is_some_and(|(_, job)| job.is_finished()) {
-            if let Some((key, job)) = self.job.take() {
-                match job.join().ok().flatten() {
-                    Some(image) => {
-                        let texture = ctx.load_texture(format!("studio-{key:x}"), image, egui::TextureOptions::LINEAR);
-                        self.shown.insert(key, texture);
-                    }
-                    None => {
-                        self.failed.insert(key);
+        let opened = self.epoch != Some(project.document_epoch());
+        if opened {
+            // Another project: these pictures are of nothing in it. A
+            // render still running is let finish and thrown away.
+            self.epoch = Some(project.document_epoch());
+            self.shown.clear();
+            self.failed.clear();
+            self.wanted.clear();
+        }
+        if self.job.as_ref().is_some_and(|job| job.render.is_finished()) {
+            if let Some(job) = self.job.take() {
+                let image = job.render.join().ok().flatten();
+                if Some(job.epoch) == self.epoch {
+                    match image {
+                        Some(image) => {
+                            let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+                            if let Some(png) = crate::thumbnail::encode_png(image.size[0], image.size[1], &rgba) {
+                                project.keep_studio_picture(job.key, std::sync::Arc::new(png));
+                            }
+                            let texture = ctx.load_texture(format!("studio-{:x}", job.key), image, egui::TextureOptions::LINEAR);
+                            self.shown.insert(job.key, Shown { texture, made_from: job.made_from });
+                        }
+                        None => {
+                            self.failed.insert(job.key);
+                        }
                     }
                 }
             }
         }
+
+        let now = Studio::capture("", project.document());
+        let studios = &project.document().studios;
+        let keys: Vec<u64> = studios.iter().map(Studio::picture_key).collect();
+        let wanted: Vec<u64> = studios.iter().map(|s| made_from(s, &now, project)).collect();
+        if wanted != self.wanted || self.still_since.is_none() {
+            self.wanted = wanted.clone();
+            self.still_since = Some(std::time::Instant::now());
+        }
+        // Kept with the project and not shown yet: shown at once. Opened
+        // with it, it is a picture of the scene as it is; one rendered
+        // before an undo brought its Studio back may not be, and is
+        // rendered again once the scene is still.
+        for (index, &key) in keys.iter().enumerate() {
+            if self.shown.contains_key(&key) {
+                continue;
+            }
+            let image = project.document().studio_pictures.get(key).and_then(|png| crate::thumbnail::decode_png(png.as_slice()));
+            if let Some(image) = image {
+                let texture = ctx.load_texture(format!("studio-{key:x}"), image, egui::TextureOptions::LINEAR);
+                self.shown.insert(key, Shown { texture, made_from: if opened { wanted[index] } else { 0 } });
+            }
+        }
+        // Textures of Studios gone or changed are let go; the project keeps
+        // their pictures a while, for an undo.
+        self.shown.retain(|key, _| keys.contains(key));
         if self.job.is_some() {
             return;
         }
-        let keys: Vec<u64> = project.document().studios.iter().map(|s| Self::key(s, project)).collect();
-        // Thumbnails of Studios gone or changed are let go.
-        self.shown.retain(|key, _| keys.contains(key));
-        let Some((index, &key)) = keys.iter().enumerate().find(|(_, k)| !self.shown.contains_key(k) && !self.failed.contains(k)) else {
-            return;
+
+        let usable = |index: &usize| !self.failed.contains(&keys[*index]);
+        let missing = (0..keys.len()).filter(usable).find(|&i| !self.shown.contains_key(&keys[i]));
+        let stale = (0..keys.len()).filter(usable).find(|&i| self.shown.get(&keys[i]).is_some_and(|s| s.made_from != wanted[i]));
+        let still = self.still_since.map_or(STILL, |t| t.elapsed());
+        let next = match (missing, stale) {
+            (Some(index), _) => index,
+            (None, Some(index)) if still >= STILL => index,
+            (None, Some(_)) => {
+                ctx.request_repaint_after(STILL - still);
+                return;
+            }
+            (None, None) => return,
         };
-        let Some((scene, camera, style, config)) = project.studio_scene(index, &mut self.environment) else {
+        // An environment of the Studio's own is made on another thread
+        // first; the picture waits for it.
+        if !project.studio_environment_ready(next, &mut self.environment) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            return;
+        }
+        let key = keys[next];
+        let Some((scene, camera, style, config)) = project.studio_scene(next, &mut self.environment) else {
             self.failed.insert(key);
             return;
         };
@@ -234,9 +379,19 @@ impl Thumbnails {
             repaint.request_repaint();
             image
         });
-        if let Ok(job) = job {
-            self.job = Some((key, job));
+        if let Ok(render) = job {
+            self.job = Some(Job { key, made_from: wanted[next], epoch: project.document_epoch(), index: next, render });
         }
+    }
+
+    /// How many Studios show a picture made from the scene as it is.
+    fn current(&self, project: &Project) -> usize {
+        let studios = &project.document().studios;
+        studios
+            .iter()
+            .zip(&self.wanted)
+            .filter(|(studio, wanted)| self.shown.get(&studio.picture_key()).is_some_and(|s| s.made_from == **wanted))
+            .count()
     }
 }
 
@@ -287,11 +442,149 @@ fn render_thumbnail(
     })
 }
 
-fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails) -> bool {
+/// A Studio being dragged to another place in the list, by its picture or
+/// its grip: the line where it would land, and the Studio under the
+/// pointer. Let go there, it moves, as one undo step; Escape puts it back.
+/// The Up and Down buttons do the same a place at a time, for a keyboard.
+#[derive(Default)]
+struct Reorder {
+    /// The Studio being dragged.
+    dragging: Option<usize>,
+    /// Each Studio's place on screen this frame, top to bottom.
+    rows: Vec<egui::Rect>,
+    /// A drag held for a screenshot: the Studio, and where it would land.
+    staged: Option<(usize, usize)>,
+}
+
+/// Where a Studio dragged to height `y` lands among `rows`: before the
+/// first row whose middle is below it, 0 above them all and the count
+/// below them all.
+fn drop_slot(rows: &[egui::Rect], y: f32) -> usize {
+    rows.iter().take_while(|row| row.center().y < y).count()
+}
+
+/// `list` with the item at `from` moved to `slot` (counted before the
+/// move), or `None` where that leaves it where it was.
+fn moved<T>(mut list: Vec<T>, from: usize, slot: usize) -> Option<Vec<T>> {
+    if from >= list.len() || slot > list.len() || slot == from || slot == from + 1 {
+        return None;
+    }
+    let item = list.remove(from);
+    list.insert(if slot > from { slot - 1 } else { slot }, item);
+    Some(list)
+}
+
+impl Reorder {
+    /// Start dragging Studio `index` when `response` - its picture or its
+    /// grip - begins a drag.
+    fn grab(&mut self, response: &egui::Response, index: usize) {
+        if response.drag_started_by(egui::PointerButton::Primary) {
+            self.dragging = Some(index);
+        }
+        if response.dragged() || response.hovered() && self.dragging.is_none() {
+            response.ctx.set_cursor_icon(if response.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        }
+    }
+
+    /// Draw the drag under way over the list just laid out - the Studio
+    /// lifted, the line where it would land, the Studio under the pointer -
+    /// and say, when it is let go somewhere new, which Studio moves to
+    /// which slot.
+    fn show(&mut self, ui: &egui::Ui, studios: &[Studio], picture: impl Fn(usize) -> Option<egui::TextureHandle>) -> Option<(usize, usize)> {
+        let count = self.rows.len();
+        if self.dragging.is_some_and(|from| from >= count) {
+            self.dragging = None;
+        }
+        let pointer = ui.ctx().pointer_interact_pos().or_else(|| ui.ctx().pointer_hover_pos());
+        let (from, slot, at) = match (self.dragging, self.staged) {
+            (Some(from), _) => {
+                let at = pointer?;
+                (from, drop_slot(&self.rows, at.y), at)
+            }
+            (None, Some((from, slot))) if from < count && slot <= count => {
+                // Held for a screenshot: the pointer a little inside the
+                // slot, as a person's would be.
+                let y = match slot {
+                    0 => self.rows[0].top() + 12.0,
+                    s if s == count => self.rows[count - 1].bottom() - 12.0,
+                    s => self.rows[s].top() + 4.0,
+                };
+                (from, slot, egui::pos2(self.rows[from].left() + 60.0, y))
+            }
+            _ => return None,
+        };
+        if self.dragging.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.dragging = None;
+            return None;
+        }
+        let p = crate::theme::p();
+        let painter = ui.painter();
+        // The Studio lifted out of its place.
+        painter.rect_filled(self.rows[from].expand2(egui::vec2(3.0, 0.0)), 6.0, p.accent_fill.gamma_multiply(0.6));
+        // Where it would land: a line across the gap, with a dot at each
+        // end, unless that is where it already is.
+        let lands = slot != from && slot != from + 1;
+        if lands {
+            let y = match slot {
+                0 => self.rows[0].top() - 1.0,
+                s if s == count => self.rows[count - 1].bottom() + 3.0,
+                s => (self.rows[s - 1].bottom() + self.rows[s].top()) * 0.5 + 1.0,
+            };
+            let (left, right) = (self.rows[0].left(), self.rows.iter().map(|r| r.right()).fold(self.rows[0].right(), f32::max));
+            painter.line_segment([egui::pos2(left + 4.0, y), egui::pos2(right - 4.0, y)], egui::Stroke::new(2.5_f32, p.accent));
+            painter.circle_filled(egui::pos2(left + 4.0, y), 4.0, p.accent);
+            painter.circle_filled(egui::pos2(right - 4.0, y), 4.0, p.accent);
+        }
+        // The Studio under the pointer: its picture and name, on top of
+        // everything.
+        let layer = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, ui.id().with("studio-drag")));
+        let name = studios.get(from).map_or(String::new(), |s| s.name.clone());
+        let picture = picture(from);
+        let width = 120.0;
+        let image_height = picture.as_ref().map_or(0.0, |t| width * t.size_vec2().y / t.size_vec2().x.max(1.0));
+        let card = egui::Rect::from_min_size(at + egui::vec2(14.0, 6.0), egui::vec2(width + 8.0, image_height + 26.0));
+        layer.add(egui::epaint::Shadow { offset: egui::vec2(0.0, 4.0), blur: 12.0, spread: 0.0, color: egui::Color32::from_black_alpha(60) }.as_shape(card, 7.0));
+        layer.rect(card, 7.0, p.panel, egui::Stroke::new(1.0_f32, p.accent));
+        if let Some(texture) = picture {
+            let image = egui::Rect::from_min_size(card.min + egui::vec2(4.0, 4.0), egui::vec2(width, image_height));
+            layer.image(texture.id(), image, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+        }
+        layer.text(
+            egui::pos2(card.left() + 6.0, card.bottom() - 11.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(crate::theme::BODY - 0.5),
+            p.text,
+        );
+        if self.dragging.is_none() {
+            return None;
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        // Near the top or bottom of the panel, the list scrolls to show
+        // more of itself.
+        let clip = ui.clip_rect();
+        let edge = 28.0;
+        if at.y < clip.top() + edge {
+            ui.scroll_with_delta(egui::vec2(0.0, (clip.top() + edge - at.y).min(edge) * 0.4));
+            ui.ctx().request_repaint();
+        } else if at.y > clip.bottom() - edge {
+            ui.scroll_with_delta(egui::vec2(0.0, -(at.y - (clip.bottom() - edge)).min(edge) * 0.4));
+            ui.ctx().request_repaint();
+        }
+        if ui.input(|i| i.pointer.any_released()) {
+            self.dragging = None;
+            return lands.then_some((from, slot));
+        }
+        None
+    }
+}
+
+fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails, reorder: &mut Reorder) -> bool {
     thumbnails.update(ui.ctx(), project);
     ui.small(
         "A Studio is a saved shot: the camera, the environment, the image style, \
-         the model set and the material variants, recalled in one click.",
+         the model set and the material variants, recalled in one click. Drag \
+         one by its picture to move it in the list.",
     );
     let original = project.document().studios.clone();
     let mut list = original.clone();
@@ -309,25 +602,39 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
     }
 
     let count = list.len();
-    let keys: Vec<u64> = list.iter().map(|s| Thumbnails::key(s, project)).collect();
+    let keys: Vec<u64> = list.iter().map(Studio::picture_key).collect();
+    let rendering = thumbnails.job.as_ref().map(|job| job.index);
+    let now = Studio::capture("", project.document());
+    let mut rows = Vec::with_capacity(count);
     for (index, studio) in list.iter_mut().enumerate() {
-        ui.push_id(("studio", index), |ui| {
+        let row = ui.push_id(("studio", index), |ui| {
             ui.separator();
-            // The shot it recalls: click it to apply it.
+            // The shot it recalls: click it to apply it, drag it to move it.
             let size = egui::vec2(160.0, 90.0);
             match thumbnails.shown.get(&keys[index]) {
-                Some(texture) => {
-                    let shape = texture.size_vec2();
+                Some(shown) => {
+                    let shape = shown.texture.size_vec2();
                     let size = egui::vec2(size.x, (size.x * shape.y / shape.x.max(1.0)).min(size.x));
                     let picture = ui
-                        .add(egui::Image::new(texture).fit_to_exact_size(size).rounding(6.0).sense(egui::Sense::click()))
-                        .on_hover_text("Apply this shot");
+                        .add(egui::Image::new(&shown.texture).fit_to_exact_size(size).rounding(6.0).sense(egui::Sense::click_and_drag()))
+                        .on_hover_text("Click to apply this shot; drag to move it in the list");
+                    reorder.grab(&picture, index);
                     if picture.clicked() {
                         apply = Some(index);
                     }
+                    // Out of date and being rendered again: a small spinner
+                    // in its corner, the old picture shown meanwhile.
+                    // Painted, not laid out, so the row keeps its shape.
+                    if rendering == Some(index) {
+                        let corner = egui::Rect::from_min_size(picture.rect.right_top() + egui::vec2(-20.0, 4.0), egui::vec2(16.0, 16.0));
+                        ui.painter().circle_filled(corner.center(), 10.0, crate::theme::p().panel.gamma_multiply(0.85));
+                        egui::Spinner::new().size(12.0).paint_at(ui, corner);
+                        ui.ctx().request_repaint();
+                    }
                 }
                 None => {
-                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
+                    reorder.grab(&response, index);
                     ui.painter().rect_filled(rect, 6.0, crate::theme::p().control);
                     if !thumbnails.failed.contains(&keys[index]) {
                         ui.put(rect, egui::Spinner::new());
@@ -335,14 +642,21 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
                 }
             }
             ui.horizontal(|ui| {
+                // The grip, to drag it up or down the list.
+                let (grip, response) = ui.allocate_exact_size(egui::vec2(14.0, 20.0), egui::Sense::drag());
+                let lit = response.hovered() || reorder.dragging == Some(index);
+                let p = crate::theme::p();
+                crate::icons::paint(ui.painter(), grip.shrink2(egui::vec2(1.0, 3.0)), crate::icons::Icon::Grip, if lit { p.text } else { p.text_faint });
+                reorder.grab(&response, index);
+                response.on_hover_text("Drag up or down the list");
                 if ui.button("▶ Apply").on_hover_text("Make the scene this shot. One undo step.").clicked() {
                     apply = Some(index);
                 }
                 ui.add(egui::TextEdit::singleline(&mut studio.name).desired_width(120.0));
-                if ui.small_button("Up").on_hover_text("Move up the list").clicked() && index > 0 {
+                if ui.add_enabled(index > 0, egui::Button::new("Up").small()).on_hover_text("Move up the list").clicked() {
                     swap = Some((index, index - 1));
                 }
-                if ui.small_button("Down").on_hover_text("Move down the list").clicked() && index + 1 < count {
+                if ui.add_enabled(index + 1 < count, egui::Button::new("Down").small()).on_hover_text("Move down the list").clicked() {
                     swap = Some((index, index + 1));
                 }
                 if ui.small_button("×").on_hover_text("Delete").clicked() {
@@ -352,7 +666,6 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
             // What it holds. Ticking takes the part from the scene as it is
             // now; unticking leaves that part alone when the Studio is
             // applied.
-            let now = Studio::capture("", project.document());
             ui.horizontal_wrapped(|ui| {
                 ui.label("Holds:");
                 let mut camera = studio.camera.is_some();
@@ -423,12 +736,20 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
                 }
             }
         });
+        rows.push(row.response.rect);
     }
+    reorder.rows = rows;
+    let dropped = reorder.show(ui, &list, |index| thumbnails.shown.get(&keys[index]).map(|s| s.texture.clone()));
     if let Some(index) = remove {
         list.remove(index);
     }
     if let Some((a, b)) = swap {
         list.swap(a, b);
+    }
+    if let Some((from, slot)) = dropped {
+        if let Some(reordered) = moved(list.clone(), from, slot) {
+            list = reordered;
+        }
     }
     if list != original {
         let result = project.apply(Command::SetStudios { studios: list });
@@ -672,4 +993,228 @@ fn duplicate_variant(project: &mut Project, mut list: Vec<MultiMaterial>, index:
     }
     project.end_group();
     report(project, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project_with_studios(count: usize) -> Project {
+        let mut project = Project::with_document(
+            tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2),
+            std::sync::Arc::new(tequila_scene::demo::studio_environment()),
+        );
+        let mut studios = Vec::new();
+        for index in 0..count {
+            let mut studio = Studio::capture(&format!("View {index}"), project.document());
+            // Each from its own side, so each has a picture of its own.
+            studio.product_yaw = Some(index as f32 * 0.7);
+            studios.push(studio);
+        }
+        project.apply(Command::SetStudios { studios }).expect("studios");
+        project
+    }
+
+    fn names(project: &Project) -> Vec<String> {
+        project.document().studios.iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// Where a Studio lands: before the first row whose middle is below the
+    /// pointer; and moving it there, or nowhere when that is its own place.
+    #[test]
+    fn a_dragged_studio_lands_between_the_rows_it_is_dropped_between() {
+        let rows: Vec<egui::Rect> = (0..3).map(|i| egui::Rect::from_min_size(egui::pos2(0.0, i as f32 * 100.0), egui::vec2(200.0, 100.0))).collect();
+        assert_eq!(drop_slot(&rows, -10.0), 0);
+        assert_eq!(drop_slot(&rows, 49.0), 0);
+        assert_eq!(drop_slot(&rows, 51.0), 1);
+        assert_eq!(drop_slot(&rows, 260.0), 3);
+        assert_eq!(moved(vec!['a', 'b', 'c'], 0, 3), Some(vec!['b', 'c', 'a']));
+        assert_eq!(moved(vec!['a', 'b', 'c'], 2, 0), Some(vec!['c', 'a', 'b']));
+        assert_eq!(moved(vec!['a', 'b', 'c'], 0, 2), Some(vec!['b', 'a', 'c']));
+        assert_eq!(moved(vec!['a', 'b', 'c'], 1, 1), None, "dropped where it was");
+        assert_eq!(moved(vec!['a', 'b', 'c'], 1, 2), None, "dropped just below itself");
+        assert_eq!(moved(vec!['a', 'b', 'c'], 3, 0), None, "no such Studio");
+    }
+
+    struct Harness {
+        ctx: egui::Context,
+        tab: StudioTab,
+        project: Project,
+        time: f64,
+    }
+
+    impl Harness {
+        fn new(studios: usize) -> Harness {
+            let mut h = Harness { ctx: egui::Context::default(), tab: StudioTab::default(), project: project_with_studios(studios), time: 0.0 };
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            h
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 2400.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let (tab, project) = (&mut self.tab, &mut self.project);
+            let _ = self.ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| tab.show(ui, project));
+            });
+        }
+
+        fn press(&mut self, at: egui::Pos2, pressed: bool) {
+            self.frame(vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },
+            ]);
+        }
+
+        /// A point on Studio `index`'s picture.
+        fn picture(&self, index: usize) -> egui::Pos2 {
+            self.tab.reorder.rows[index].left_top() + egui::vec2(60.0, 40.0)
+        }
+
+        fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) {
+            self.press(from, true);
+            for step in 1..=10 {
+                self.frame(vec![egui::Event::PointerMoved(from + (to - from) * (step as f32 / 10.0))]);
+            }
+        }
+    }
+
+    /// A Studio dragged by its picture below the last lands there, as one
+    /// undo step; let go where it started, nothing changes; and Escape puts
+    /// it back.
+    #[test]
+    fn a_studio_dragged_by_its_picture_moves_in_the_list_as_one_undo_step() {
+        let mut h = Harness::new(3);
+        assert_eq!(h.tab.reorder.rows.len(), 3);
+        let before = names(&h.project);
+        let depth = h.project.bus().depth();
+
+        let below = egui::pos2(h.picture(0).x, h.tab.reorder.rows[2].bottom() - 4.0);
+        h.drag(h.picture(0), below);
+        assert_eq!(h.tab.reorder.dragging, Some(0), "the picture did not start a drag");
+        assert_eq!(drop_slot(&h.tab.reorder.rows, below.y), 3);
+        assert_eq!(names(&h.project), before, "it moved before it was let go");
+        h.press(below, false);
+        h.frame(Vec::new());
+        assert_eq!(names(&h.project), ["View 1", "View 2", "View 0"]);
+        assert_eq!(h.project.bus().depth(), depth + 1, "the move is one step");
+        h.project.undo();
+        assert_eq!(names(&h.project), before, "one undo puts it back");
+
+        // Let go where it started: nothing.
+        h.frame(Vec::new());
+        let start = h.picture(1);
+        h.drag(start, start + egui::vec2(0.0, 12.0));
+        h.press(start + egui::vec2(0.0, 12.0), false);
+        h.frame(Vec::new());
+        assert_eq!(names(&h.project), before);
+
+        // Escape part-way: nothing.
+        let to = egui::pos2(h.picture(2).x, h.tab.reorder.rows[0].top() + 5.0);
+        h.drag(h.picture(2), to);
+        assert_eq!(h.tab.reorder.dragging, Some(2));
+        h.frame(vec![egui::Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+        assert_eq!(h.tab.reorder.dragging, None, "Escape did not let it go");
+        h.press(to, false);
+        h.frame(Vec::new());
+        assert_eq!(names(&h.project), before, "Escape still moved it");
+    }
+
+    /// A picture out of date keeps its row's shape while it renders again:
+    /// the spinner in its corner is painted over it, not laid out, which
+    /// pulled the row below up over the picture.
+    #[test]
+    fn a_picture_being_rendered_again_keeps_its_row_in_shape() {
+        let mut h = Harness::new(2);
+        let started = std::time::Instant::now();
+        while h.tab.thumbnails.current(&h.project) < 2 {
+            assert!(started.elapsed().as_secs() < 300, "the pictures never came");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            h.frame(Vec::new());
+        }
+        h.frame(Vec::new());
+        let shown: Vec<f32> = h.tab.reorder.rows.iter().map(|r| r.height()).collect();
+        // The tab sees the edit when it next draws, and the scene has been
+        // still from then on.
+        h.project.apply(Command::TurnProduct { yaw: 0.3 }).unwrap();
+        h.frame(Vec::new());
+        std::thread::sleep(STILL);
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        assert!(h.tab.thumbnails.job.as_ref().is_some_and(|job| job.index == 0), "the first picture is not being rendered again");
+        let rendering: Vec<f32> = h.tab.reorder.rows.iter().map(|r| r.height()).collect();
+        assert_eq!(rendering, shown, "a row changed its shape while its picture rendered again");
+    }
+
+    /// Each Studio's picture renders on another thread while the UI keeps
+    /// drawing; it is kept with the project, saved with it and shown at
+    /// once when the project is opened again. A rename keeps it; a change
+    /// to the scene puts it out of date, and it is rendered again once the
+    /// scene has been still a moment. Applying a Studio leaves out of date
+    /// only what that Studio leaves alone - here, nothing.
+    #[test]
+    fn studios_pictures_render_in_the_background_and_are_saved_with_the_project() {
+        let ctx = egui::Context::default();
+        let mut project = project_with_studios(2);
+        let mut thumbnails = Thumbnails::default();
+        let started = std::time::Instant::now();
+        let mut longest = std::time::Duration::ZERO;
+        let mut frames = 0;
+        while thumbnails.current(&project) < 2 {
+            let t = std::time::Instant::now();
+            thumbnails.update(&ctx, &mut project);
+            longest = longest.max(t.elapsed());
+            frames += 1;
+            assert!(started.elapsed().as_secs() < 300, "the pictures never came");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let total = started.elapsed();
+        eprintln!("two Studio pictures in {total:.2?}, {frames} frames, the longest {longest:.2?} on the UI thread");
+        assert!(longest < total / 4, "the UI thread waited on the render: {longest:?} of {total:?}");
+        assert_eq!(project.document().studio_pictures.len(), 2, "the pictures were not kept with the project");
+
+        // Renamed: the same picture, nothing rendered.
+        let mut studios = project.document().studios.clone();
+        studios[0].name = "Hero".into();
+        project.apply(Command::SetStudios { studios }).unwrap();
+        thumbnails.update(&ctx, &mut project);
+        assert_eq!(thumbnails.current(&project), 2, "a rename put the picture out of date");
+        assert!(thumbnails.job.is_none());
+
+        // Applying a Studio that holds everything leaves the other's
+        // picture as it was.
+        project.apply(Command::ApplyStudio { index: 1 }).unwrap();
+        thumbnails.update(&ctx, &mut project);
+        assert_eq!(thumbnails.current(&project), 2, "applying a Studio put a picture out of date");
+
+        // Saved, and opened again: shown at once.
+        let directory = std::env::temp_dir().join(format!("tequila-studio-pictures-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("studios.tequila");
+        project.save(&path).unwrap();
+        let mut reopened = Project::with_document(tequila_scene::SceneDocument::new(), std::sync::Arc::new(tequila_scene::demo::studio_environment()));
+        reopened.open(&path).unwrap();
+        let mut fresh = Thumbnails::default();
+        fresh.update(&ctx, &mut reopened);
+        assert_eq!(fresh.current(&reopened), 2, "the saved pictures were not shown at once");
+        assert!(fresh.job.is_none(), "a saved picture was rendered again");
+        let _ = std::fs::remove_dir_all(&directory);
+
+        // An edit to the scene: out of date, but not rendered again until
+        // the scene has been still a moment.
+        project.apply(Command::TurnProduct { yaw: 0.3 }).unwrap();
+        thumbnails.update(&ctx, &mut project);
+        assert_eq!(thumbnails.current(&project), 0, "the pictures were not put out of date");
+        assert!(thumbnails.job.is_none(), "rendered again at once, not once the scene was still");
+        std::thread::sleep(STILL);
+        thumbnails.update(&ctx, &mut project);
+        assert!(thumbnails.job.is_some(), "never rendered again");
+    }
 }

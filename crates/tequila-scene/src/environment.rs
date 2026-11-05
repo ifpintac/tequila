@@ -200,22 +200,7 @@ impl EnvironmentCache {
         // settings that have since moved on is abandoned — its result arrives
         // into a receiver nobody holds.
         if self.asynchronous && self.base.is_some() {
-            if self.pending.as_ref().map(|p| &p.key) != Some(&key) {
-                let (send, result) = std::sync::mpsc::channel();
-                let job = key.clone();
-                let spawned = std::thread::Builder::new()
-                    .name("tequila-environment".into())
-                    .spawn(move || {
-                        let _ = send.send(build_base(&job));
-                    });
-                if spawned.is_ok() {
-                    self.pending = Some(Pending { key, result });
-                } else {
-                    // No thread to be had: build it here after all.
-                    let (image, studio) = build_base(&key);
-                    self.install(key, image, studio);
-                }
-            }
+            self.start(key);
             return self.base.clone().expect("checked above");
         }
         // Nothing yet, or asked to answer now: build it here.
@@ -223,6 +208,43 @@ impl EnvironmentCache {
         self.pending = None;
         self.install(key, image, studio);
         self.base.clone().expect("just built")
+    }
+
+    /// Build the base for `key` on another thread, unless it is being built
+    /// already.
+    fn start(&mut self, key: BaseKey) {
+        if self.pending.as_ref().map(|p| &p.key) == Some(&key) {
+            return;
+        }
+        let (send, result) = std::sync::mpsc::channel();
+        let job = key.clone();
+        let spawned = std::thread::Builder::new()
+            .name("tequila-environment".into())
+            .spawn(move || {
+                let _ = send.send(build_base(&job));
+            });
+        if spawned.is_ok() {
+            self.pending = Some(Pending { key, result });
+        } else {
+            // No thread to be had: build it here after all.
+            let (image, studio) = build_base(&key);
+            self.install(key, image, studio);
+        }
+    }
+
+    /// Whether the image these settings light by is ready, starting it on
+    /// another thread when it is not: for a caller that would sooner wait a
+    /// few frames than decode a large image on the UI thread - a Studio's
+    /// picture, whose environment is not the scene's. Once this says yes,
+    /// [`EnvironmentCache::environment`] builds over that image at once.
+    pub fn prepare(&mut self, settings: &EnvironmentSettings) -> bool {
+        let key: BaseKey = (settings.image.clone().unwrap_or_default(), settings.contrast, settings.sky);
+        self.poll();
+        if self.base.is_some() && self.base_from.as_ref() == Some(&key) {
+            return true;
+        }
+        self.start(key);
+        false
     }
 
     /// The environment these settings describe.
@@ -770,6 +792,29 @@ mod tests {
             expected.radiance(tequila_core::math::Vec3::Y),
             "the background build differs from the foreground one"
         );
+    }
+
+    /// Asked to prepare, the cache builds the image on another thread even
+    /// the first time, and says so; once it says the image is ready, the
+    /// environment is built over it on the spot, the same as built directly.
+    #[test]
+    fn preparing_builds_even_the_first_image_in_the_background() {
+        let mut cache = EnvironmentCache::new();
+        let settings = EnvironmentSettings {
+            sky: Some(tequila_render_core::sky::Sky { turbidity: 4.0, ..Default::default() }),
+            ..Default::default()
+        };
+        assert!(!cache.prepare(&settings), "nothing was built yet, and it said ready");
+        assert!(cache.base.is_none(), "the image was built on the calling thread");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !cache.prepare(&settings) {
+            assert!(std::time::Instant::now() < deadline, "the image was never prepared");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let prepared = cache.environment(&settings);
+        assert!(!cache.is_pending());
+        let expected = EnvironmentCache::new().environment(&settings);
+        assert_eq!(prepared.radiance(tequila_core::math::Vec3::Y), expected.radiance(tequila_core::math::Vec3::Y));
     }
 
     /// Settings that move on while a build is running abandon it: only the
