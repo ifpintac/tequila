@@ -364,6 +364,18 @@ fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8
             archive.add(format!("sources/{id}.{extension}"), bytes.to_vec());
         }
     }
+    // A Substance material's rendered maps, so the project renders as it
+    // was on a computer without Adobe's tools (§1.2).
+    let mut embedded = std::collections::BTreeSet::new();
+    for (id, source) in document.textures.iter() {
+        if let Some(member) = substance_member(document, id) {
+            if embedded.insert(member.clone()) {
+                if let Ok(bytes) = std::fs::read(&source.path) {
+                    archive.add(member, bytes);
+                }
+            }
+        }
+    }
     // Members from a newer build, last so they cannot displace ours.
     for (name, bytes) in &preserved.members {
         archive.add(name.clone(), bytes.clone());
@@ -504,6 +516,9 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
                         .set("role", journal::role_name(source.role));
                     if let Some(space) = source.color_space {
                         object.set("color_space", journal::color_space_name(space));
+                    }
+                    if let Some(member) = substance_member(document, id) {
+                        object.set("member", member);
                     }
                     object.build()
                 })
@@ -2564,7 +2579,55 @@ pub fn material_to_json(key: MaterialKey, definition: &MaterialDefinition) -> Va
     if let Some(graph) = graph::graph_to_json(&definition.graph) {
         object.set("graph", graph);
     }
+    if let Some(link) = &definition.substance {
+        object.set("substance", substance_to_json(link));
+    }
     object.build()
+}
+
+/// A Substance material's link (`docs/file-format.md` §4.2).
+pub fn substance_to_json(link: &tequila_scene::material::SubstanceLink) -> Value {
+    let strings = |map: &BTreeMap<String, String>| {
+        Value::Object(map.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect())
+    };
+    let mut object = Object::new();
+    object
+        .set("file", link.file.to_string_lossy().to_string())
+        .set("file_hash", link.file_hash.clone())
+        .set("graph", link.graph.clone())
+        .set("values", strings(&link.values))
+        .set(
+            "images",
+            Value::Object(link.images.iter().map(|(k, v)| (k.clone(), Value::String(v.to_string_lossy().to_string()))).collect()),
+        )
+        .set("maps", Value::Object(link.maps.iter().map(|(k, v)| (k.clone(), Value::Number(v.0 as f64))).collect()));
+    object.build()
+}
+
+/// [`substance_to_json`]'s inverse. `None` for anything that is not one.
+pub fn read_substance(value: &Value) -> Option<tequila_scene::material::SubstanceLink> {
+    let text = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let strings = |key: &str| -> BTreeMap<String, String> {
+        match value.get(key) {
+            Some(Value::Object(map)) => map.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect(),
+            _ => BTreeMap::new(),
+        }
+    };
+    let maps = match value.get("maps") {
+        Some(Value::Object(map)) => map
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), tequila_materials::graph::TextureId(v.as_index()? as u32))))
+            .collect(),
+        _ => BTreeMap::new(),
+    };
+    Some(tequila_scene::material::SubstanceLink {
+        file: text("file")?.into(),
+        file_hash: text("file_hash").unwrap_or_default(),
+        graph: text("graph").unwrap_or_default(),
+        values: strings("values"),
+        images: strings("images").into_iter().map(|(k, v)| (k, std::path::PathBuf::from(v))).collect(),
+        maps,
+    })
 }
 
 pub(crate) fn color(s: Spectrum) -> Value {
@@ -2636,9 +2699,15 @@ pub(crate) fn preset_from_name(name: &str) -> Option<LightingPreset> {
 // --- reading -------------------------------------------------------------
 
 pub fn load(path: &Path) -> Result<Loaded, FormatError> {
+    load_into(path, &substance_cache_directory())
+}
+
+/// [`load`], putting Substance materials' maps kept in the project into
+/// `cache` rather than Tequila's own cache.
+pub fn load_into(path: &Path, cache: &Path) -> Result<Loaded, FormatError> {
     let bytes = std::fs::read(path)
         .map_err(|e| FormatError::Io(format!("{} could not be read: {e}", path.display())))?;
-    let mut loaded = read(&bytes)?;
+    let mut loaded = read_into(&bytes, cache)?;
     // A texture's path may be relative to the project (docs/file-format.md
     // §3.1): it is found beside the file, wherever the file was moved or
     // shipped, not beside wherever the process happens to be running.
@@ -2651,11 +2720,90 @@ pub fn load(path: &Path) -> Result<Loaded, FormatError> {
                 }
             }
         }
+        // And a Substance material's file, likewise.
+        let keys: Vec<_> = loaded.document.materials.iter().map(|(key, _)| key).collect();
+        for key in keys {
+            let Some(definition) = loaded.document.materials.get(key) else { continue };
+            if definition.substance.as_ref().is_some_and(|l| l.file.is_relative() && !l.file.as_os_str().is_empty()) {
+                let mut definition = definition.clone();
+                if let Some(link) = definition.substance.as_mut() {
+                    link.file = folder.join(&link.file);
+                }
+                loaded.document.materials.insert_with_key(key, definition);
+            }
+        }
     }
     Ok(loaded)
 }
 
+/// Where a Substance material's rendered maps are filed, one folder per
+/// render (`<settings key>/<output>.png`): among Tequila's caches, or under
+/// `TEQUILA_SUBSTANCE_CACHE` where that is set.
+pub fn substance_cache_directory() -> std::path::PathBuf {
+    match std::env::var_os("TEQUILA_SUBSTANCE_CACHE") {
+        Some(folder) if !folder.is_empty() => std::path::PathBuf::from(folder),
+        _ => library::cache_directory().join("substance"),
+    }
+}
+
+/// Where the archive keeps Substance materials' maps.
+const SUBSTANCE_MEMBERS: &str = "substance/";
+
+/// The archive member texture `id` is kept in, if it is a Substance
+/// material's rendered map whose file is there to keep: `substance/` and the
+/// last two parts of its path, the render's folder and the map's file.
+fn substance_member(document: &SceneDocument, id: tequila_materials::graph::TextureId) -> Option<String> {
+    let is_map = document.materials.iter().any(|(_, d)| d.substance.as_ref().is_some_and(|l| l.maps.values().any(|t| *t == id)));
+    if !is_map {
+        return None;
+    }
+    let path = &document.textures.get(id)?.path;
+    if !path.is_file() {
+        return None;
+    }
+    let safe = |part: &std::ffi::OsStr| {
+        let text = part.to_string_lossy();
+        (!text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) && text != "." && text != "..")
+            .then(|| text.into_owned())
+    };
+    let file = safe(path.file_name()?)?;
+    let folder = safe(path.parent()?.file_name()?)?;
+    Some(format!("{SUBSTANCE_MEMBERS}{folder}/{file}"))
+}
+
+/// Write `member` into `cache` (as `<folder>/<file>`) unless the same bytes
+/// are there already, and say where. A folder made this way is marked as a
+/// finished render (`done.txt`), as the application marks its own: it is the
+/// render of the settings its name stands for.
+fn extract_substance_map(archive: &zip::ZipArchive, member: &str, cache: &Path) -> Option<std::path::PathBuf> {
+    let rest = member.strip_prefix(SUBSTANCE_MEMBERS)?;
+    let (folder, file) = rest.split_once('/')?;
+    let plain = |part: &str| !part.is_empty() && part != "." && part != ".." && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if !plain(folder) || !plain(file) {
+        return None;
+    }
+    let bytes = archive.get(member)?;
+    let directory = cache.join(folder);
+    let path = directory.join(file);
+    let same = std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == bytes);
+    if !same {
+        std::fs::create_dir_all(&directory).ok()?;
+        std::fs::write(&path, bytes).ok()?;
+    }
+    let marker = directory.join("done.txt");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, "from a project\n");
+    }
+    Some(path)
+}
+
 pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
+    read_into(bytes, &substance_cache_directory())
+}
+
+/// [`read`], putting Substance materials' maps kept in the project into
+/// `cache` (`<settings key>/<output>.png`).
+pub fn read_into(bytes: &[u8], cache: &Path) -> Result<Loaded, FormatError> {
     let archive = zip::ZipArchive::read(bytes)?;
     let scene_bytes = archive
         .get(SCENE_MEMBER)
@@ -2744,10 +2892,17 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
                 .and_then(|v| v.as_str())
                 .and_then(journal::role_from_name)
                 .unwrap_or(tequila_texture::texture::MapRole::Color);
+            // A Substance material's map kept in the archive goes back into
+            // the render cache, where the application looks for the render
+            // of those settings, and is read from there.
+            let path = match entry.get("member").and_then(|v| v.as_str()) {
+                Some(member) => extract_substance_map(&archive, member, cache).unwrap_or_else(|| path.into()),
+                None => std::path::PathBuf::from(path),
+            };
             document.textures.insert_with_id(
                 tequila_materials::graph::TextureId(id as u32),
                 tequila_scene::textures::TextureSource {
-                    path: std::path::PathBuf::from(path),
+                    path,
                     role,
                     color_space: entry
                         .get("color_space")
@@ -2810,6 +2965,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
             && !name.starts_with("materials/")
             && !name.starts_with("sources/")
             && studio_picture_key(name).is_none()
+            && !name.starts_with(SUBSTANCE_MEMBERS)
         {
             preserved
                 .members
@@ -3046,7 +3202,7 @@ fn read_material_keeping(value: &Value, name: &str) -> Result<(tequila_scene::ma
     if let Value::Object(map) = value {
         extras.unknown = map
             .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "id" | "name" | "type" | "graph") && !Param::ALL.iter().any(|p| p.key() == key.as_str()))
+            .filter(|(key, _)| !matches!(key.as_str(), "id" | "name" | "type" | "graph" | "substance") && !Param::ALL.iter().any(|p| p.key() == key.as_str()))
             .map(|(key, item)| (key.clone(), item.clone()))
             .collect();
     }
@@ -3129,11 +3285,9 @@ pub(crate) fn read_material(value: &Value, name: &str) -> Result<MaterialDefinit
     }
 
     let graph = graph::read_graph(value.get("graph"), material.sanitized(), name)?;
-    Ok(MaterialDefinition::from_graph(
-        material_name,
-        material_type,
-        graph,
-    ))
+    let mut definition = MaterialDefinition::from_graph(material_name, material_type, graph);
+    definition.substance = value.get("substance").and_then(read_substance).map(Box::new);
+    Ok(definition)
 }
 
 pub(crate) fn read_spectrum(value: &Value) -> Option<Spectrum> {

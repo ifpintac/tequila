@@ -183,6 +183,15 @@ impl MeshCache {
         loaded
     }
 
+    /// Forget what `ids` decoded to, so the next snapshot reads their files
+    /// again: for a texture whose file was replaced under it, as a
+    /// Substance material's are when its maps are rendered again.
+    pub fn forget_textures(&mut self, ids: impl IntoIterator<Item = TextureId>) {
+        for id in ids {
+            self.textures.remove(&id);
+        }
+    }
+
     /// A Volume Map's grid, read once.
     pub(crate) fn volume(
         &mut self,

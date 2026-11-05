@@ -73,6 +73,7 @@ mod studio_shelf;
 mod studio_presets;
 mod configurator_panel;
 mod templates_panel;
+mod substance;
 mod texture_pack;
 mod field;
 mod icons;
@@ -303,6 +304,8 @@ struct TequilaApp {
     project: Project,
     scene_tab: SceneTab,
     material_tab: MaterialTab,
+    /// Substance materials' maps, kept rendered (`substance.rs`).
+    substance: substance::Renders,
     library: LibraryTab,
     /// Plugins: what is installed and on, and the code that is running.
     plugins: plugins::Plugins,
@@ -888,6 +891,8 @@ impl TequilaApp {
             project,
             scene_tab: SceneTab::default(),
             material_tab: MaterialTab::default(),
+            // A test application finds none of the person's tools.
+            substance: if cfg!(test) { substance::Renders::default() } else { substance::Renders::for_this_computer() },
             // Thumbnails have a studio of their own, lit to tell materials
             // apart at ninety pixels rather than to light a product.
             library: LibraryTab::new(std::sync::Arc::new(
@@ -1363,6 +1368,15 @@ impl eframe::App for TequilaApp {
         }
         if self.poll_imports() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        // Substance materials' maps: renders that finished, and renders to
+        // start now that settings have settled.
+        for message in self.substance.poll(&mut self.project) {
+            self.project.status = message.clone();
+            self.toasts.info(message);
+        }
+        if self.substance.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         // Another document: material keys start again at one in each, so
         // the graph editor would carry on editing whichever material of the
@@ -3087,6 +3101,14 @@ impl TequilaApp {
                             self.pick_texture_pack(folder);
                         }
                     });
+                    if ui
+                        .button("Import Substance material...")
+                        .on_hover_text("An Adobe Substance material (.sbsar, or Designer's .sbs) with its settings, on the selected parts")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.pick_substance();
+                    }
                     ui.separator();
                     if ui.button("New library material...").on_hover_text("Make a material for your library: from a type, the selected part, a texture pack or a file").clicked() {
                         ui.close_menu();
@@ -4782,6 +4804,35 @@ impl TequilaApp {
         }
     }
 
+    /// Ask for a Substance material and open it onto the selected parts.
+    fn pick_substance(&mut self) {
+        if let Some(source) = substance::pick() {
+            self.load_substance(&source);
+        }
+    }
+
+    /// A Substance file, as materials: the first on the selected parts, or
+    /// only added to the project when nothing is selected.
+    fn load_substance(&mut self, source: &std::path::Path) {
+        let targets = tequila_scene::apply::parts_of(self.project.document(), self.project.selection.nodes());
+        match substance::open(&mut self.project, &mut self.substance, source, targets, None) {
+            Ok(opened) => {
+                let status = substance::status(&opened);
+                self.toasts.info(status.clone());
+                self.project.status = status;
+                // The Material tab shows its settings.
+                if !opened.assigned.is_empty() {
+                    self.show_project = true;
+                    self.project_tab = ProjectTab::Material;
+                }
+            }
+            Err(error) => {
+                self.toasts.warn(error.clone());
+                self.project.status = error;
+            }
+        }
+    }
+
     /// A texture pack, as materials: the first on the selected parts, or
     /// only added to the project when nothing is selected.
     fn load_texture_pack(&mut self, source: &std::path::Path) {
@@ -4824,6 +4875,13 @@ impl TequilaApp {
                     if parts == 1 { "" } else { "s" }
                 ),
                 texture_pack::Dropped::Material => "Drop to add the material to your library".to_string(),
+                texture_pack::Dropped::Substance if parts == 0 => {
+                    "Drop to add the Substance material to the project\n(select parts first to put it on them)".to_string()
+                }
+                texture_pack::Dropped::Substance => format!(
+                    "Drop to put the Substance material on the {parts} selected part{}",
+                    if parts == 1 { "" } else { "s" }
+                ),
                 texture_pack::Dropped::Unknown => "Tequila does not open this kind of file".to_string(),
             };
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("file-drop")));
@@ -4855,6 +4913,7 @@ impl TequilaApp {
             texture_pack::Dropped::Project | texture_pack::Dropped::Scene => self.handle_file(Action::Open, path),
             texture_pack::Dropped::TexturePack => self.load_texture_pack(&path),
             texture_pack::Dropped::Material => self.import_material_file(&path),
+            texture_pack::Dropped::Substance => self.load_substance(&path),
             texture_pack::Dropped::Unknown => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.toasts.warn(format!("Tequila does not open {name}"));
@@ -5564,7 +5623,13 @@ impl TequilaApp {
                         .label_gizmo
                         .armed()
                         .map(|target| (target.material, target.index));
+                    tab.substance = std::mem::take(&mut self.substance);
                     tab.show(ui, &mut self.project);
+                    self.substance = std::mem::take(&mut tab.substance);
+                    if let Some(status) = tab.take_substance_status() {
+                        self.toasts.info(status.clone());
+                        self.project.status = status;
+                    }
                     if let Some(material) = tab.open_graph.take() {
                         self.graph_editor.open_for(material);
                     }

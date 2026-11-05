@@ -94,8 +94,9 @@ with `--cpu-only` to leave the graphics cards out.
 - **Materials** - a library of 309 procedural materials (plastics, metals,
   glass, paints with flakes, fabrics with real fibres, gems, liquids with
   bubbles, wood, stone...), a node editor, labels and decals, texture packs, KeyShot
-  material packages (.kmp), colourways and variants. Drop a material on a
-  part, on a selection or on a whole group.
+  material packages (.kmp), Adobe Substance materials (.sbsar) with their
+  settings (maps rendered by Adobe's sbsrender when installed), colourways and
+  variants. Drop a material on a part, on a selection or on a whole group.
 - **UV editor and labels** - unwrap a part in a click; cut and stitch seams,
   pin, pack, straighten and relax islands; symmetry, a 2D cursor, snapping,
   rulers, guides and layers; labels placed and sized in millimetres; texel

@@ -46,6 +46,7 @@ pub mod rhino;
 pub mod step;
 pub mod usd;
 pub mod stl;
+pub mod substance;
 pub mod texture_set;
 pub mod three_mf;
 

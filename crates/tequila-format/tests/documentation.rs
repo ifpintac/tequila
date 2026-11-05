@@ -194,7 +194,18 @@ fn textured_material() -> MaterialDefinition {
     graph.connect(mapping, texture, Socket::Input(0));
     graph.connect(texture, output, Socket::Param(Param::SpecularRoughness));
 
-    MaterialDefinition::from_graph("Anodized", MaterialType::Metal, graph)
+    let mut definition = MaterialDefinition::from_graph("Anodized", MaterialType::Metal, graph);
+    // A Substance link too, so the optional `substance` key and its own
+    // table are checked against something.
+    definition.substance = Some(Box::new(tequila_scene::material::SubstanceLink {
+        file: "materials/anodized.sbsar".into(),
+        file_hash: "0123456789abcdef".into(),
+        graph: "pkg://anodized".into(),
+        values: [("$outputsize".to_string(), "10,10".to_string())].into_iter().collect(),
+        images: [("mask".to_string(), std::path::PathBuf::from("maps/mask.png"))].into_iter().collect(),
+        maps: [("roughness".to_string(), TextureId(1))].into_iter().collect(),
+    }));
+    definition
 }
 
 /// Field names from a markdown table, taken from the first column's backticks.
@@ -310,6 +321,11 @@ fn documented_fields_match_the_writer() {
         "a material file",
         &documented_fields("## 4. `materials/<id>.json`"),
         &keys_of(&material),
+    );
+    compare(
+        "a material's `substance`",
+        &documented_fields("### 4.2 The `substance` object"),
+        &keys_of(material.get("substance").expect("the fixture's Substance link")),
     );
 }
 

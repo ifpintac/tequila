@@ -175,6 +175,8 @@ project.tequila
 
 Rationale for splitting materials and geometry out of `scene.json`: a scene with 500 materials stays diffable, and a change to one material produces a one-file diff in git rather than rewriting a monolithic document.
 
+*As built, November 5:* the first embedded textures are a Substance material's rendered maps (`substance/<key>/<output>.png`, `docs/file-format.md` §1 and §4.2), written by `tequila_format::archive` from the textures a material's `substance.maps` names and put back into the render cache on load (`read_into`, `load_into`), so a project with Substance materials opens and renders the same on a computer without Adobe's tools. Every other texture is still a path.
+
 ### 4.2 `scene.json` shape (abbreviated schema)
 
 ```json
@@ -352,6 +354,10 @@ Instancing: honour `UsdGeomPointInstancer` and scene-graph instancing (`instance
 - Checked with Pixar's USD as Blender 5.2 bundles it: `UsdUtils.ComplianceChecker(arkit=True)` - `usdchecker --arkit` - on the exports of the perfume bottle (2.4 MB, 2.0 s from the command line), the headphones (26.6 MB with 32 baked images, 18.6 s) and the palma P8 (11.9 MB, 8 images, 20 instances of 10 prototypes, 5.8 s): no errors, no failed checks, no warnings. Pixar's bounding box of each is its real size standing at the origin (11.3, 19.7 and 14.1 cm tall, from y = 0), and each opens in Blender (Eevee) where the project's camera frames it as Tequila does.
 - The `.usda` export, checked the same way, had two faults now mended: a node's CAD attributes were written as a dictionary-valued attribute, which USD does not have, so Pixar's reader - and Blender - refused every `.usda` of an imported model (they are the prim's `customData` now); and its camera had no clipping range, so USD's default of a metre to a million cut away a product nearer than a metre (`clippingRange` is a millimetre to 100 km now).
 - Not done: Multi-Material variants as variant sets (the one shown is written); a product's animation; meshes over 40,000 triangles without UVs keep only vertex colours, and only their first material's; an instance's baked material is baked once, from the first instance's place (a pattern in world space shows the same on each); RealityKit's own materials (`RealityKit*` schemas) and physics.
+
+### 6.3.1 Adobe Substance materials
+
+*As built, November 5* (`tequila-import/src/substance/`, `docs/02-MATERIAL-SYSTEM.md` §5.6). An `.sbsar` (a 7-Zip archive around an XML description) or an `.sbs` (Designer's XML) is read for its graphs' settings, presets, outputs and pictures in pure Rust, without Adobe's software; it becomes one material per graph, wired from the outputs by the texture-pack code, whose maps Adobe's `sbsrender` renders when it is installed (`bridge.rs`). The tests read synthetic files written from the published format; no file made by Adobe's tools was available.
 
 ### 6.4 Instancing detection
 

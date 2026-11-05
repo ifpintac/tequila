@@ -48,6 +48,25 @@ Right-click a tile:
 - **Material tab → Save to library…** — the same as *Selected part*, from the
   material you are editing.
 
+### Adobe Substance materials
+
+An `.sbsar` (or Designer's `.sbs`) opens as a material with its settings:
+**File → Import Substance material…**, the Library panel's
+**+ → Substance material**, the Material tab's **Substance…**, or drop the
+file on the window. Its inputs — colours, sliders, switches, drop-downs,
+pictures it takes in — its presets, output size and random seed are in the
+Material tab, and every change renders its maps again with Adobe's
+`sbsrender`, which comes with Substance 3D Designer and the Substance 3D
+Automation Toolkit. Tequila finds it in Adobe's default folders, or point it
+at the folder from the Material tab. Without it Tequila still opens the file
+and shows its settings and picture, and says what to install; a project
+saved with Substance materials keeps their maps, so it renders the same on a
+computer without Adobe's tools.
+
+*Save to library* on a Substance material saves it as it looks now — its
+rendered maps copied into the library — as an ordinary material: the library
+does not keep the file's settings. Keep the `.sbsar` to change them.
+
 Your library lives in `%APPDATA%\Tequila\library` on Windows, in
 `~/Library/Application Support/Tequila/library` on a Mac, and in
 `~/.config/Tequila/library` on Linux (`$XDG_CONFIG_HOME` is honoured where

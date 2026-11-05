@@ -65,6 +65,7 @@ the document; what needs the window is refused by name.
 | `material` | yes | yes |
 | `plugin` | yes | - |
 | `studio_preset` | yes | yes |
+| `substance` | yes | yes |
 | `stop` | yes | - |
 | `ui` | yes | - |
 | `new` | yes | yes |
@@ -239,6 +240,17 @@ scale, the rotation and the rest of §5.3's shared controls.
 
 ```json
 { "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
+```
+
+#### `material.set_substance`
+
+A Substance material's file, graph and input values (`docs/02` §5.6), or
+`null` to make it an ordinary material that keeps the maps it has.
+
+`fs.commands.material.set_substance(material=..., substance=...)`
+
+```json
+{ "command": "material.set_substance", "material": 1, "substance": { "file": "materials/bricks.sbsar", "file_hash": "9e3779b97f4a7c15", "graph": "pkg://bricks", "images": {}, "maps": {}, "values": { "$outputsize": "10,10", "brick_color": "0.6,0.25,0.15,1" } } }
 ```
 
 #### `material.set_multi_materials`

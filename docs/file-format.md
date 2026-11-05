@@ -32,8 +32,10 @@ project.tequila
 │   └── mat_00000001.json      one file per material
 ├── geometry/
 │   └── m_00000001.fsmesh      one file per mesh, binary
-└── sources/
-    └── <id>.step              a CAD file kept with the project (.iges for IGES)
+├── sources/
+│   └── <id>.step              a CAD file kept with the project (.iges for IGES)
+└── substance/
+    └── <key>/<output>.png     a Substance material's rendered map (§4.2)
 ```
 
 `preview.png` is a small picture of the project, at most 512 pixels across,
@@ -62,6 +64,14 @@ content and its length (`<hash>-<length>`, hexadecimal), named by the
 `Tessellation` (`Draft`, `Medium`, `High` or `Ultra`) it was divided at. Only
 sources some node still names are written. Files over 64 MB are not kept; their
 models divide again from the file they came from.
+
+A `substance/` member is one of a Substance material's maps (§4.2), as
+Adobe's `sbsrender` rendered it, so the project opens and renders the same on
+a computer without Adobe's tools. `<key>` names the render: a hash of the
+material's file, graph and values (`SubstanceLink::settings_key`), the same
+on every computer. A reader puts the member back into its render cache under
+that name, marks the folder a finished render, and reads the map from there;
+the texture entry that refers to it says so with `member` (§3.1).
 
 Members not listed here are **preserved unchanged** through a load and save (see
 §5). That is how a file written by a newer Tequila survives being opened in an
@@ -372,6 +382,7 @@ sit here.
 | `path` | string | Relative to the project, or absolute. |
 | `role` | string | `color`, `data`, `normal` or `height`. |
 | `color_space?` | string | `srgb`, `linear_srgb` or `raw`, overriding the role's default. |
+| `member?` | string | The archive member holding the file (`substance/<key>/<output>.png`), for a Substance material's map: read from there, into the render cache, rather than from `path`, which is where it was on the computer that saved it. |
 
 **The role is stored, not inferred.** §5.2 assigns colour space by map role
 rather than by file format, and the role cannot be recovered from the file:
@@ -394,6 +405,7 @@ materials diffable.
 | `name` | string | Shown in the library. The single source of the material's name. |
 | `type` | string | Catalog entry, lowercase with underscores: `plastic`, `metal`, `glass_solid`, `area_light` and so on. See below. |
 | `graph?` | object | The material graph, present only when there is more than the surface node. See §4.1. |
+| `substance?` | object | The Adobe Substance file it is made from and the values its inputs were given, for a Substance material. See §4.2. |
 
 Then the OpenPBR parameter block of `docs/02-MATERIAL-SYSTEM.md` §2.2. Each key
 is spelled exactly as the parameter is named there.
@@ -584,6 +596,25 @@ disagree as "the material changed when I reopened it".
 A graph that does not validate — a link to a node that is not there, an unknown
 node kind, a cycle — is refused rather than half-loaded. Opening a file into a
 state the editor cannot display is worse than declining to open it.
+
+### 4.2 The `substance` object
+
+A Substance material (`docs/02-MATERIAL-SYSTEM.md` §5.6) is an ordinary
+material — its graph reads one texture per output, wired as a texture pack's
+maps are — and this object, which says where the maps come from.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `file` | string | The `.sbsar` (or Designer's `.sbs`), relative to the project or absolute. |
+| `file_hash` | string | FNV-1a of the file's content when it was read, so a render of one version is not taken for another's. |
+| `graph` | string | Which of the file's graphs, by package URL: `pkg://bricks`. |
+| `values` | object | The inputs that were set, by identifier, each a string as `sbsrender --set-value` takes it: `"0.5"`, `"1,0,0,1"`, and `"10,10"` for `$outputsize` (powers of two: 1024 pixels). An input not here is at the file's default. |
+| `images` | object | Image inputs given a picture, by identifier: the picture's path. |
+| `maps` | object | Which texture (an id in `textures`, §3.1) holds which output's map, by output identifier. |
+
+The textures are where the maps were when the project was saved, and the
+maps themselves travel with it (§1). A reader that does not understand the
+object still has an ordinary textured material.
 
 ---
 

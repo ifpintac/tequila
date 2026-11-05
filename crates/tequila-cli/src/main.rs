@@ -101,6 +101,8 @@ struct Options {
     /// or `.studio.json`; how the product faces it, and whether it dresses
     /// the product by its rules.
     studio_preset: Option<String>,
+    /// Describe an Adobe Substance file and stop.
+    substance_info: Option<String>,
     front: Option<String>,
     dress: bool,
     export_glb: Option<String>,
@@ -188,6 +190,7 @@ impl Default for Options {
             all_studios: false,
             frames: None,
             studio_preset: None,
+            substance_info: None,
             front: None,
             dress: false,
             export_glb: None,
@@ -305,6 +308,11 @@ From a project's own setup:
                         the Main camera: +z (default), -z, +x or -x
       --dress           with --studio-preset, put its materials on parts
                         by their names
+      --substance-info F describe an Adobe Substance file (.sbsar or .sbs)
+                        as JSON - its graphs, inputs, outputs, presets - and
+                        whether Adobe's sbsrender was found; renders nothing.
+                        A project's Substance materials render here from the
+                        maps saved with it
 
 Exports (with no -o, only these run):
       --export-glb PATH what is shown, as a glTF binary
@@ -430,6 +438,7 @@ fn parse_args() -> Result<Options, String> {
             "--all-studios" => options.all_studios = true,
             "--frames" => options.frames = Some(frame_range(&value()?)?),
             "--studio-preset" => options.studio_preset = Some(value()?),
+            "--substance-info" => options.substance_info = Some(value()?),
             "--front" => options.front = Some(value()?),
             "--dress" => options.dress = true,
             "--export-glb" => options.export_glb = Some(value()?),
@@ -566,6 +575,7 @@ fn main() {
         Some(scene) => benchmark(scene),
         None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
         None if options.self_test => test_this_computer(&options),
+        None if options.substance_info.is_some() => substance_info(options.substance_info.as_deref().unwrap_or_default()),
         None if options.mcp => mcp::run(options.discovery.as_deref(), options.restricted),
         None if options.serve => serve::run(&options),
         None if options.worker => farm::worker(&options),
@@ -594,6 +604,17 @@ fn test_this_computer(options: &Options) -> Result<(), String> {
     if !self_test::run(&settings)? {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// `--substance-info`: a Substance file described, as the scripting
+/// channel's `substance info` describes it.
+fn substance_info(path: &str) -> Result<(), String> {
+    let path = std::path::Path::new(path);
+    let file = tequila_import::substance::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let tools = tequila_import::substance::bridge::find(std::env::var_os("TEQUILA_SUBSTANCE_TOOLS").map(std::path::PathBuf::from).as_deref());
+    let described = tequila_scripting::substance::info(path, &file, &tools);
+    println!("{}", tequila_format::json_write::to_string(&described));
     Ok(())
 }
 

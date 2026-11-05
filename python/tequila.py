@@ -205,6 +205,21 @@ class Client:
             fields['nodes'] = list(nodes)
         return self.request('texture_set', **fields)
 
+    def substance(self, action, **fields):
+        """Adobe Substance materials (.sbsar, or Designer's .sbs).
+
+        `info` describes a file (`path`): its graphs, inputs, outputs and
+        presets. `open` makes it a material on `nodes` or the selection
+        (`graph` picks one of several). `set` changes a material's
+        (`material`, or the selected part's) `values` ({identifier: value}),
+        `output_size` (pixels), `seed`, `preset` or `images`; `reset` puts it
+        back. `status` and `wait` (`timeout`, seconds) say how its maps stand:
+        they are rendered by Adobe's sbsrender, when it is installed. `tools`
+        says where Adobe's tools are, or sets the folder (`path`)."""
+        if 'path' in fields and fields['path'] and action != 'tools':
+            fields['path'] = str(Path(fields['path']).resolve())
+        return self.request('substance', action=action, **fields)
+
     def save(self, path=None):
         return self.request('save', **({'path': str(Path(path).resolve())} if path else {}))
 

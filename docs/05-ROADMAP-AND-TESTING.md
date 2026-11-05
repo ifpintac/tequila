@@ -1366,6 +1366,23 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       axis (the orbit camera has no roll); the Mac with 3DxWare running,
       which keeps the device to itself; more of a SpaceMouse Pro's or
       Enterprise's keys than the two main buttons.
+- [~] Adobe Substance materials (`.sbsar`, `.sbs`) opened with their settings
+      (§02 §5.6). *As built, November 5:* read natively — the 7-Zip archive
+      and its XML description, or Designer's XML — for every graph's inputs
+      (types, widgets, defaults, ranges, drop-downs, groups), the output size
+      and seed, presets, outputs and their usages, and the thumbnail; made
+      into a material wired by the texture-pack code, whose maps Adobe's own
+      `sbsrender` renders in the background when it is installed (found in
+      Adobe's default folders or a folder the person sets), debounced 400 ms,
+      filed by settings so an undo shows at once, and saved into the project
+      so it renders without the tools. Without them the Material tab shows
+      every setting and says what to install. Scripting `substance` (info,
+      open, set, status, wait, tools), `material.set_substance`, `tequila
+      --substance-info`. 25 tests, including the bridge against a separate
+      program taking `sbsrender`'s arguments. **Outstanding:** proof against
+      files and tools from Adobe — none were available here (the samples that
+      would prove it, and where to get them legally, are in the pull
+      request); input visibility conditions, `$pixelsize`, fonts.
 - [ ] AI image operators (restyle/background/upscale) as post-render operations with depth/normal/Cryptomatte conditioning.
 - [ ] Collaborative scene review (the open file format makes this tractable).
 
