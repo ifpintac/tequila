@@ -1020,8 +1020,8 @@ under M10's spectral item).
       journalled command. Checked on four revisions of a real Fusion
       export: v2.4 to v3.1 and v3.1 to V3.4 match every part.
 - [x] USD import **and export** with MaterialX/OpenPBR round-trip, in the
-      text form (`.usda`; binary `.usdc` is refused with the usdcat line
-      that converts it). Export: Xforms, Meshes, the camera, Materials with
+      text form (`.usda`; binary `.usdc` and `.usdz` read since November 5,
+      below). Export: Xforms, Meshes, the camera, Materials with
       both a UsdPreviewSurface and an `ND_open_pbr_surface_surfaceshader`
       carrying every parameter, plus a graph material's whole definition
       when it has no images. Import: Blender-style xformOps, Z up, units,
@@ -1029,6 +1029,16 @@ under M10's spectral item).
       Checked both ways against Blender 5.0's USD (Pixar's library). Not
       followed: references, payloads, variants; Multi-Materials are not
       written as variant sets.
+- [x] USDZ export for AR (November 5; `docs/03` §6.3): File > Export USDZ
+      for AR, `--export-usdz`, `export format=usdz`. A stored ZIP aligned to
+      64 bytes, a binary stage (Tequila's own crate writer, `usdc.rs`) in
+      metres, Y up, standing on the ground at the origin, shared meshes as
+      instanced prototypes, and materials as `UsdPreviewSurface` - baked
+      by the glTF export's bake, now `bake.rs`, into colour, opacity,
+      roughness, metalness, occlusion, emission, coat and normal maps
+      wherever they vary. Passes Pixar's `ComplianceChecker(arkit=True)`.
+      `.usdc` and `.usdz` import too, with a package's pictures and
+      references within the file. Not done: variant sets, animation.
 - [x] IFC import, IFC2x3 and IFC4, through the STEP reader's Part 21
       parser: the spatial structure (project, site, building, storeys) as
       groups and every element with a body as a part; extruded profiles

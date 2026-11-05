@@ -5,3 +5,7 @@
 # SolidWorks macros: VBA text, CRLF as the VBA editor writes and reads it.
 *.bas text eol=crlf
 *.swb text eol=crlf
+
+# Binary USD and USDZ packages: bytes, never line endings.
+*.usdc binary
+*.usdz binary

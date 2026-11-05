@@ -166,7 +166,7 @@ TOOLS = [
                     'description': 'Open the Material Graph editor on this material number; false closes it.'},
           'tab': {'type': 'string', 'enum': ['scene', 'material', 'environment', 'lighting', 'camera', 'image', 'studios', 'scripting']},
           'viewport': {'type': 'string', 'enum': ['wireframe', 'solid', 'material', 'rendered']}}),
-    tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda) or IFC.',
+    tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.',
          {'path': {'type': 'string'}}, ['path']),
     tool('tequila_save', 'Save the project, to its own file or to a new path.',
          {'path': {'type': 'string'}}),

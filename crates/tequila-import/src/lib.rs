@@ -260,7 +260,7 @@ pub fn open_scene(path: &Path, quality: step::Tessellation) -> Result<(SceneDocu
 /// its window takes as a model. KeyShot scenes, which open as scenes of
 /// their own, are [`is_scene_file`]'s.
 pub const MODEL_EXTENSIONS: &[&str] = &[
-    "obj", "stl", "ply", "3mf", "fbx", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "ifc",
+    "obj", "stl", "ply", "3mf", "fbx", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "usdc", "usdz", "ifc",
 ];
 
 /// Whether a file opens as a scene of its own ([`open_scene`]) rather than
@@ -564,7 +564,8 @@ pub fn read_format(
         "3mf" => three_mf::read(bytes, name),
         "fbx" => fbx::read(bytes, name),
         "gltf" | "glb" => gltf::read(bytes, name, sibling),
-        "usda" | "usd" => usd::read(bytes, name),
+        "usda" | "usd" | "usdc" => usd::read(bytes, name),
+        "usdz" => usd::read_package(bytes, name),
         "step" | "stp" => step::read(bytes, name),
         "igs" | "iges" => iges::read(bytes, name),
         "ifc" => ifc::read(bytes, name),

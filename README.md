@@ -116,7 +116,9 @@ with `--cpu-only` to leave the graphics cards out.
   a second or two.
 - **Sharing** - web export (live 3D or pre-rendered:
   [try one](https://ifpintac.github.io/tequila/demo/helmet-holder/)), a spin
-  viewer, and glTF and USD export; a full-screen presentation mode.
+  viewer, glTF and USD export, and USDZ to stand the product in a room at
+  its real size on an iPhone, iPad or Vision Pro; a full-screen
+  presentation mode.
 - **Cutaways**, measurements, model sets and a configurator.
 - **AI apps and automation** - connect Claude, Cursor, VS Code (GitHub
   Copilot), Codex, Gemini CLI, Windsurf or LM Studio in one click, or any

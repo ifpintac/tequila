@@ -227,6 +227,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
                     let text = tequila_format::usd::export(app.project.document());
                     std::fs::write(&path, &text).map(|_| (text.len(), Vec::new(), Vec::new())).map_err(|e| format!("Could not write {}: {e}", path.display()))
                 }
+                "usdz" => app.export_usdz(&path).map(|(bytes, warnings)| (bytes, warnings, Vec::new())),
                 "web" => app.export_web(&path, *live, *photos).map(|(report, jobs)| (report.bytes, report.warnings, jobs)),
                 "spin" => {
                     let defaults = tequila_format::spin::SpinOptions::default();
@@ -242,7 +243,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
                         (0, Vec::new(), jobs)
                     })
                 }
-                other => Err(format!("`{other}` is not an export: glb, web or spin")),
+                other => Err(format!("`{other}` is not an export: glb, usd, usdz, web or spin")),
             };
             match result {
                 Ok((bytes, warnings, jobs)) => {
@@ -485,6 +486,19 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if let Some(about) = change.about {
         app.show_about = about;
+    }
+    if let Some(menu) = &change.menu {
+        let wanted = menu.trim().to_ascii_lowercase();
+        match app.menu_buttons.iter().find(|(name, _)| *name == wanted) {
+            Some((_, rect)) => {
+                app.start_screen.open = false;
+                app.menu_click = Some((rect.center(), false));
+            }
+            None => {
+                let names: Vec<&str> = app.menu_buttons.iter().map(|(name, _)| *name).collect();
+                return Reply::Failed(format!("`{menu}` is not a menu a script can open; try {}", names.join(", ")));
+            }
+        }
     }
     if let Some(help) = change.help {
         app.show_help = help;

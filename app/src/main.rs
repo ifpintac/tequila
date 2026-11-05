@@ -474,6 +474,13 @@ struct TequilaApp {
     interacting: bool,
     show_help: bool,
     show_about: bool,
+    /// The menu bar's menus and where each was drawn last frame, so a
+    /// script can open one (`ui menu=file`).
+    menu_buttons: Vec<(&'static str, egui::Rect)>,
+    /// A click the application gives itself, on a menu a script asked to
+    /// open: where, and whether the press has gone in (the release follows
+    /// a frame later, as a mouse's does).
+    menu_click: Option<(egui::Pos2, bool)>,
     /// The UV editor window: a part's layout, and a label placed on it.
     uv_editor: uv_editor::UvEditor,
     /// What went wrong last time, or in a worker just now, or from Help.
@@ -969,6 +976,8 @@ impl TequilaApp {
             interacting: false,
             show_help: false,
             show_about: false,
+            menu_buttons: Vec::new(),
+            menu_click: None,
             uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
             self_test: self_test::SelfTest::default(),
@@ -1296,6 +1305,22 @@ struct BatchPlan {
 }
 
 impl eframe::App for TequilaApp {
+    /// A script's click on a menu (`menu_click`), as the mouse would give
+    /// it: pressed on one frame, released on the next.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let Some((pos, pressed)) = self.menu_click else { return };
+        let modifiers = egui::Modifiers::default();
+        if pressed {
+            raw_input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers });
+            self.menu_click = None;
+        } else {
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+            raw_input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers });
+            self.menu_click = Some((pos, true));
+        }
+        ctx.request_repaint();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
         struct FrameTimer(std::time::Instant);
@@ -3051,7 +3076,8 @@ impl TequilaApp {
             ui.add_space(12.0);
             egui::menu::bar(ui, |ui| {
                 ui.visuals_mut().widgets.inactive.fg_stroke.color = theme::p().text;
-                ui.menu_button("File", |ui| {
+                self.menu_buttons.clear();
+                let file = ui.menu_button("File", |ui| {
                     if ui.button("Import model...").clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
@@ -3154,6 +3180,21 @@ impl TequilaApp {
                             };
                         }
                     }
+                    if ui.button("Export USDZ for AR (.usdz)...").on_hover_text("What is shown as one file an iPhone, iPad or Vision Pro opens, to see the product at its real size: materials baked to preview surfaces, standing on the ground").clicked() {
+                        ui.close_menu();
+                        let name = format!("{}.usdz", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
+                        if let Some(path) = rfd::FileDialog::new().add_filter("USDZ", &["usdz"]).set_file_name(&name).save_file() {
+                            self.project.status = match self.export_usdz(&path) {
+                                Ok((bytes, warnings)) => format!(
+                                    "Exported {} ({:.1} MB){}",
+                                    path.display(),
+                                    bytes as f64 / 1e6,
+                                    if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
+                                ),
+                                Err(error) => error,
+                            };
+                        }
+                    }
                     if ui.button("Export for the web...").on_hover_text("The configurator as a web page: live 3D, photos of every combination, or both").clicked() {
                         ui.close_menu();
                         self.web_plan = Some(WebPlan { live: true, photos: false });
@@ -3163,6 +3204,7 @@ impl TequilaApp {
                         self.spin_plan = Some(SpinPlan { options: tequila_format::spin::SpinOptions::default(), transparent: false });
                     }
                 });
+                self.menu_buttons.push(("file", file.response.rect));
 
                 ui.menu_button("View", |ui| {
                     if ui
@@ -6031,6 +6073,15 @@ impl TequilaApp {
         let exported = tequila_format::gltf::export(self.project.document(), &options);
         std::fs::write(path, &exported.glb).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
         Ok((exported.glb.len(), exported.warnings))
+    }
+
+    /// What is shown as a USDZ package for AR, named for the file.
+    pub(crate) fn export_usdz(&mut self, path: &std::path::Path) -> Result<(usize, Vec<String>), String> {
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let options = tequila_format::usdz::UsdzOptions { name, ..Default::default() };
+        let exported = tequila_format::usdz::export(self.project.document(), &options);
+        std::fs::write(path, &exported.bytes).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+        Ok((exported.bytes.len(), exported.warnings))
     }
 
     /// The configurator as a web folder, now: the live view and, with

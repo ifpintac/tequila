@@ -144,8 +144,9 @@ class Client:
         return found
 
     def export(self, format, path, **options):
-        """Write the scene out: format 'glb', 'usd', 'web' (a folder; live=,
-        photos=) or 'spin' (a folder; columns=, rows=, tilt=, transparent=)."""
+        """Write the scene out: format 'glb', 'usd', 'usdz' (for AR on an
+        iPhone, iPad or Vision Pro), 'web' (a folder; live=, photos=) or 'spin'
+        (a folder; columns=, rows=, tilt=, transparent=)."""
         return self.request('export', format=format, path=str(Path(path).resolve()), **options)
 
     def uv_layout(self, node, path, *, uv_set=0, size=2048, fill='islands', edges=True, seams=True, note=True,

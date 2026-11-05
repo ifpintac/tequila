@@ -676,6 +676,11 @@ impl Session {
                 let text = tequila_format::usd::export(&self.document);
                 std::fs::write(&written, &text).map(|_| (text.len(), Vec::new())).map_err(|e| format!("Could not write {}: {e}", written.display()))
             }
+            "usdz" => {
+                let name = written.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let exported = tequila_format::usdz::export(&self.document, &tequila_format::usdz::UsdzOptions { name, ..Default::default() });
+                std::fs::write(&written, &exported.bytes).map(|_| (exported.bytes.len(), exported.warnings)).map_err(|e| format!("Could not write {}: {e}", written.display()))
+            }
             "web" => {
                 let folder = written.clone();
                 let images = photos.then(|| tequila_format::web::fresh_images_folder(&folder));
@@ -723,7 +728,7 @@ impl Session {
                 written = folder.join("index.html");
                 result.map(|_| (0, Vec::new()))
             }
-            other => Err(format!("`{other}` is not an export: glb, usd, web or spin")),
+            other => Err(format!("`{other}` is not an export: glb, usd, usdz, web or spin")),
         };
         match result {
             Ok((bytes, warnings)) => {

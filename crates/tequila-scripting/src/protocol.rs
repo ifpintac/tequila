@@ -348,6 +348,9 @@ pub struct UiChange {
     /// Help > Test this computer, open and running: opening it starts the
     /// checks, unless they are running already.
     pub self_test: Option<bool>,
+    /// A menu of the menu bar, open: `file`. What the documentation shows
+    /// a menu with.
+    pub menu: Option<String>,
     /// The start screen, open.
     pub start_screen: Option<bool>,
     /// Help > Check for updates, open. Opening it asks GitHub for the
@@ -1227,6 +1230,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             theme: opt_string(value, "theme")?,
             appearance: opt_bool(value, "appearance")?,
             about: opt_bool(value, "about")?,
+            menu: opt_string(value, "menu")?,
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
             self_test: opt_bool(value, "self_test")?,

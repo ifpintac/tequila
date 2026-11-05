@@ -31,7 +31,7 @@ pub const OPEN_PBR: &str = "ND_open_pbr_surface_surfaceshader";
 
 /// A USD identifier from a name: letters, digits and underscores, not
 /// starting with a digit, unique among `taken`.
-fn identifier(name: &str, taken: &mut BTreeSet<String>) -> String {
+pub(crate) fn identifier(name: &str, taken: &mut BTreeSet<String>) -> String {
     let mut out: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
         out.insert(0, '_');
@@ -130,6 +130,9 @@ pub fn export(document: &SceneDocument) -> String {
     let _ = writeln!(out, "        float horizontalAperture = {}", number(tenths(camera.sensor_width_mm)));
     let _ = writeln!(out, "        float verticalAperture = {}", number(tenths(camera.sensor_width_mm / aspect)));
     let _ = writeln!(out, "        float focusDistance = {}", number(camera.focus_distance));
+    // USD's own default, a metre to a million, cuts away a product nearer
+    // than a metre: from a millimetre, in metres, as Tequila's camera sees.
+    let _ = writeln!(out, "        float2 clippingRange = (0.001, 100000)");
     let _ = writeln!(out, "        matrix4d xformOp:transform = {}", matrix(&camera.camera_to_world));
     let _ = writeln!(out, "        uniform token[] xformOpOrder = [\"xformOp:transform\"]\n    }}");
 
@@ -143,19 +146,38 @@ pub fn export(document: &SceneDocument) -> String {
     out
 }
 
+/// A node's CAD attributes and annotations as the prim's `customData`,
+/// a line of the metadata in its parentheses. (Not an attribute: USD has no
+/// dictionary-valued attributes, and Pixar's reader refuses a file with
+/// one.)
+fn custom_data(n: &tequila_scene::tree::SceneNode, pad: &str) -> Option<String> {
+    if n.metadata.is_empty() {
+        return None;
+    }
+    let fields: Vec<String> = n.metadata.iter().map(|(k, v)| format!("{pad}        string {} = {}", quote(k), quote(v))).collect();
+    Some(format!("{pad}    customData = {{\n{}\n{pad}    }}", fields.join("\n")))
+}
+
 fn node(document: &SceneDocument, id: NodeId, depth: usize, materials: &BTreeMap<MaterialKey, String>, taken: &mut BTreeSet<String>, out: &mut String) {
     let tree = &document.tree;
     let Some(n) = tree.get(id) else { return };
     let pad = "    ".repeat(depth);
     let name = identifier(&n.name, taken);
     let mut children_taken = BTreeSet::new();
+    let custom = custom_data(n, &pad);
     match &n.kind {
-        NodeKind::Group => {
-            let _ = writeln!(out, "\n{pad}def Xform \"{name}\"\n{pad}{{");
-        }
+        NodeKind::Group => match &custom {
+            Some(custom) => {
+                let _ = writeln!(out, "\n{pad}def Xform \"{name}\" (\n{custom}\n{pad})\n{pad}{{");
+            }
+            None => {
+                let _ = writeln!(out, "\n{pad}def Xform \"{name}\"\n{pad}{{");
+            }
+        },
         NodeKind::Part { mesh } => {
             let Some(geometry) = document.geometry.get(*mesh) else { return };
-            let _ = writeln!(out, "\n{pad}def Mesh \"{name}\" (\n{pad}    prepend apiSchemas = [\"MaterialBindingAPI\"]\n{pad})\n{pad}{{");
+            let custom = custom.as_ref().map(|c| format!("{c}\n")).unwrap_or_default();
+            let _ = writeln!(out, "\n{pad}def Mesh \"{name}\" (\n{pad}    prepend apiSchemas = [\"MaterialBindingAPI\"]\n{custom}{pad})\n{pad}{{");
             let inner = format!("{pad}    ");
             let points: Vec<String> = geometry.positions.iter().map(|p| format!("({}, {}, {})", number(p.x), number(p.y), number(p.z))).collect();
             let _ = writeln!(out, "{inner}point3f[] points = [{}]", points.join(", "));
@@ -186,10 +208,6 @@ fn node(document: &SceneDocument, id: NodeId, depth: usize, materials: &BTreeMap
     let _ = writeln!(out, "{inner}uniform token[] xformOpOrder = [\"xformOp:transform\"]");
     if !n.visible {
         let _ = writeln!(out, "{inner}token visibility = \"invisible\"");
-    }
-    if !n.metadata.is_empty() {
-        let fields: Vec<String> = n.metadata.iter().map(|(k, v)| format!("{inner}    string {} = {}", quote(k), quote(v))).collect();
-        let _ = writeln!(out, "{inner}custom dictionary tequila:metadata = {{\n{}\n{inner}}}", fields.join("\n"));
     }
     for &child in &n.children {
         if let Some(c) = tree.get(child) {
