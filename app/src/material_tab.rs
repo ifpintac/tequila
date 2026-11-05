@@ -85,6 +85,11 @@ pub struct MaterialTab {
     /// The library's categories, so a save can file into one that exists.
     /// Set by the app from the browser before the panel draws.
     pub library_categories: Vec<String>,
+    /// The size a library material that is a strip - a lace, a webbing, a
+    /// thread - previews its UVs at, by its name (`preview_uv_unit`): the
+    /// ball here is sized as the library's tile is, so a braid shows at its
+    /// true size rather than stretched round the ball in a few broad bands.
+    pub library_strips: std::collections::HashMap<String, f32>,
     /// A save to the library being filled in: the material, and the name
     /// and category it will be saved under.
     save_draft: Option<(MaterialKey, String, String)>,
@@ -96,6 +101,16 @@ impl MaterialTab {
         self.saved.take()
     }
 
+    /// The size the library previews the material `name` at if it is a
+    /// strip: the library's own, or a copy unlinked from it, which keeps the
+    /// name with " (copy)".
+    fn strip_unit(&self, name: &str) -> Option<f32> {
+        self.library_strips
+            .get(name)
+            .or_else(|| self.library_strips.get(name.strip_suffix(" (copy)")?))
+            .copied()
+    }
+
     /// Render (or reuse) the preview sphere for `material`.
     ///
     /// Render on one background worker and discard stale slider results, so
@@ -105,9 +120,10 @@ impl MaterialTab {
         ui: &mut egui::Ui,
         graph: &tequila_materials::graph::MaterialGraph,
         textures: std::sync::Arc<tequila_render_core::shade::TextureTable>,
+        uv_unit: Option<f32>,
     ) {
         const SIZE: usize = 72;
-        let key = crate::library_tab::graph_key(graph);
+        let key = crate::library_tab::graph_key(graph) ^ uv_unit.map_or(0, |unit| u64::from(unit.to_bits()).rotate_left(29));
         if self
             .preview_job
             .as_ref()
@@ -148,7 +164,7 @@ impl MaterialTab {
                             samples: 24,
                             shape: tequila_render_cpu::PreviewShape::Sphere,
                             radius: tequila_render_cpu::PREVIEW_RADIUS,
-                            uv_unit: None,
+                            uv_unit,
                         };
                         let environment =
                             std::sync::Arc::new(tequila_scene::demo::preview_environment());
@@ -275,7 +291,8 @@ impl MaterialTab {
             // The project's own pictures, so a textured or labelled
             // material previews as itself rather than as its fallbacks.
             let textures = project.scene().textures.clone();
-            self.preview(ui, &definition_graph, textures);
+            let uv_unit = self.strip_unit(&name);
+            self.preview(ui, &definition_graph, textures, uv_unit);
             ui.vertical(|ui| {
                 ui.add_space(2.0);
                 // The name doubles as a picker for every material already in
@@ -1182,6 +1199,17 @@ mod tests {
     use super::*;
     use tequila_scene::demo::{demo_document, DemoMaterial};
     use std::cell::RefCell;
+
+    /// A lace from the library previews here at the size its tile does,
+    /// and so does a copy unlinked from it; anything else as a plain ball.
+    #[test]
+    fn a_strip_previews_at_its_size_linked_or_copied() {
+        let mut tab = MaterialTab::default();
+        tab.library_strips.insert("Shoelace Flat White".into(), 0.02);
+        assert_eq!(tab.strip_unit("Shoelace Flat White"), Some(0.02));
+        assert_eq!(tab.strip_unit("Shoelace Flat White (copy)"), Some(0.02));
+        assert_eq!(tab.strip_unit("ABS White"), None);
+    }
 
     /// A project with a part selected and a material on it.
     fn project() -> Project {
