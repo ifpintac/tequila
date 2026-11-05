@@ -552,10 +552,13 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
         .map_or(Spectrum::ZERO, |c| c.shadow_color);
     builder.session.set_shadow_tint(rgb(tint));
 
+    // What lies outside the clear solids, where it is not the air: a
+    // liquid in its glass (`media`).
+    let media = if builder.session.has_mesh_attributes() { crate::media::attributes(scene) } else { HashMap::new() };
     // Cycles binds shaders to meshes and Tequila binds materials to
     // instances, so a mesh is built once per material it is shown in.
     let mut meshes: HashMap<(usize, usize), Node> = HashMap::new();
-    for instance in &scene.instances {
+    for (instance_index, instance) in scene.instances.iter().enumerate() {
         let Some(mesh) = scene.meshes.get(instance.mesh.index()) else {
             builder.out.objects.push(None);
             continue;
@@ -615,9 +618,16 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
             continue;
         }
         // An occlusion-only floor's shader is its own, and a bouncing one's.
-        let cycles_mesh = match meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2) {
-            Some(m) => *m,
-            None => {
+        let cycles_mesh = match (media.get(&instance_index), meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2)) {
+            // A medium's surfaces meet what this instance is inside of, so
+            // its mesh, and what it carries of that, is its own.
+            (Some(outside), _) => {
+                let m = builder.mesh(&outside.mesh, shader)?;
+                builder.session.mesh_attribute(m, crate::media::MEDIA_ATTRIBUTE, &outside.values)?;
+                m
+            }
+            (None, Some(m)) => *m,
+            (None, None) => {
                 let m = match &mesh.fibres {
                     Some(fibres) => builder.curves(fibres, shader)?,
                     None => builder.mesh(mesh, shader)?,
@@ -1317,6 +1327,47 @@ impl Builder<'_> {
     /// fuzz's, darkened by the fibre's random number as
     /// `tequila_render_core::material::fibre_colour` does - roughness along
     /// and around alike, the index 1.55, no coat and no tilt.
+    /// What lies outside the surface at the shading point, as
+    /// [`crate::media::attributes`] worked it out from the geometry: the
+    /// outside medium's index less one in red, and in green how far the
+    /// surface is no boundary. A mesh without it reads air.
+    fn media(&mut self, shader: Shader) -> Result<Option<Node>, String> {
+        if !self.session.has_mesh_attributes() {
+            return Ok(None);
+        }
+        let attribute = self.session.node(shader, "attribute")?;
+        self.session.set_string(attribute, "attribute", crate::media::MEDIA_ATTRIBUTE)?;
+        let split = self.session.node(shader, "separate_color")?;
+        self.session.connect(shader, attribute, "Color", split, "Color")?;
+        Ok(Some(split))
+    }
+
+    /// A clear solid's index against what is outside it: its own over the
+    /// outside medium's, so a liquid's side bends light as liquid meeting
+    /// glass, where Cycles, with no stack of media, had it meet the air.
+    fn against_outside(&mut self, shader: Shader, ior: Slot) -> Result<Slot, String> {
+        let Some(split) = self.media(shader)? else {
+            return Ok(ior);
+        };
+        let outside = self.float_op(shader, "add", Slot::Link(split, "Red"), num(1.0))?;
+        self.float_op(shader, "divide", ior, outside)
+    }
+
+    /// `surface`, passed straight where it is no boundary: inside a medium
+    /// that wins over it, as a glass's inner wall is under its liquid,
+    /// which Tequila's renderer passes by its stack of media.
+    fn with_media(&mut self, shader: Shader, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
+        let Some(split) = self.media(shader)? else {
+            return Ok(surface);
+        };
+        let pass = self.session.node(shader, "transparent_bsdf")?;
+        let mix = self.session.node(shader, "mix_closure")?;
+        self.session.connect(shader, split, "Green", mix, "Fac")?;
+        self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;
+        self.session.connect(shader, pass, "BSDF", mix, "Closure2")?;
+        Ok((mix, "Closure"))
+    }
+
     fn with_fibres(&mut self, shader: Shader, index: usize, m: &Material, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
         let node = self.scene.programs.get(index).and_then(|p| p.as_deref()).and_then(|p| p.requirements.fuzz);
         if node.is_none() && tequila_materials::graph::FuzzRequest::of_material(m).is_none() {
@@ -3277,7 +3328,8 @@ impl Builder<'_> {
             let colour = self.apply(shader, &NodeKind::Multiply, &[tint, Slot::Value(Value::Color(channel))], 0)?;
             self.feed(shader, glass, "Color", colour, true)?;
             self.feed(shader, glass, "Roughness", roughness, false)?;
-            self.session.set_float(glass, "IOR", ior)?;
+            let index = self.against_outside(shader, num(ior))?;
+            self.feed(shader, glass, "IOR", index, false)?;
             if m.thin_film_weight > 0.0 {
                 self.session.set_float(glass, "Thin Film Thickness", m.thin_film_thickness * m.thin_film_weight)?;
                 self.session.set_float(glass, "Thin Film IOR", m.thin_film_ior)?;
@@ -3506,7 +3558,11 @@ impl Builder<'_> {
         self.feed(shader, bsdf, "metallic", metalness, false)?;
         self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
         self.feed(shader, bsdf, "roughness", roughness, false)?;
-        self.feed(shader, bsdf, "ior", value(Param::SpecularIor, Value::Float(m.specular_ior)), false)?;
+        let ior = value(Param::SpecularIor, Value::Float(m.specular_ior));
+        // A clear solid bends light against what is outside it: a liquid's
+        // side meets its glass, not the air (`media`).
+        let ior = if transmissive { self.against_outside(shader, ior)? } else { ior };
+        self.feed(shader, bsdf, "ior", ior, false)?;
         // OpenPBR's specular weight scales F0; Principled's IOR level does the
         // same with 0.5 as "as the IOR says" - a map's weight as well as a
         // constant one.
@@ -3691,6 +3747,9 @@ impl Builder<'_> {
                 Some(pane) if pane.passes(self.shadow_glass) => self.shadows_through(shader, *pane, surface)?,
                 _ => surface,
             };
+            // Where the surface is inside a medium that wins over it - a
+            // glass's inner wall under its liquid - it is no boundary.
+            let surface = if transmissive { self.with_media(shader, surface)? } else { surface };
             // The fibres last, so a strand stays a strand to shadow rays too.
             let surface = self.with_fibres(shader, index, m, surface)?;
             self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
