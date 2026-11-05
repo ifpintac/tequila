@@ -884,7 +884,10 @@ under M10's spectral item).
       sphere meshes written in archives 50 to 80 by cadmpeg's independent
       writer, whose reader also agrees with the test writer's files. A
       folder of real files runs through `real_files`
-      (`TEQUILA_3DM_SAMPLES`). Not read: curves, annotation, lights,
+      (`TEQUILA_3DM_SAMPLES`): McNeel's 72 (openNURBS example files for
+      Rhino 4 to 8, rhino3dm's test models) all read, nothing they should
+      bring left out, once Rhino's own classes (`TL_Brep` and the rest)
+      read as openNURBS's. Two of rhino3dm's (MIT) are committed fixtures. Not read: curves, annotation, lights,
       linked blocks, embedded bitmaps, mitered extrusion ends, RDK content
       beyond its simulated material.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
