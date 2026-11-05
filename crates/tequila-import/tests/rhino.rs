@@ -852,6 +852,7 @@ fn a_brep_without_meshes_is_divided() {
     let scene = tequila_import::rhino::read(&bytes, "model").unwrap();
     assert_eq!(scene.meshes.len(), 1, "{:?}", scene.warnings);
     let v = volume(&scene, 0);
+    println!("box of planes: volume {v:.4} of 1000, {} triangles", scene.meshes[0].indices.len() / 3);
     assert!((v - 1000.0).abs() < 1e-3, "volume {v}");
     assert_eq!(scene.tessellation.as_deref(), Some("Medium"));
     assert!(scene.warnings.is_empty(), "{:?}", scene.warnings);
@@ -892,6 +893,7 @@ fn a_trimmed_nurbs_face_keeps_its_hole() {
         })
         .sum();
     let expected = 100.0 - std::f64::consts::PI * 2.0 * 2.0;
+    println!("plate with a hole: area {area:.3} of {expected:.3}, {} triangles", m.indices.len() / 3);
     assert!((area - expected).abs() < 0.05 * 4.0 * std::f64::consts::PI, "area {area}, expected {expected}");
     assert!(m.positions.iter().all(|p| ((p.x - 5.0).powi(2) + (p.y - 5.0).powi(2)).sqrt() >= 2.0 - 0.01), "nothing inside the hole");
 }
@@ -913,6 +915,7 @@ fn a_revolved_face_is_round() {
     }
     let v = volume(&scene, 0);
     let exact = 4.0 / 3.0 * std::f64::consts::PI * r * r * r;
+    println!("revolved sphere: volume {v:.3} of {exact:.3}, {} triangles", m.indices.len() / 3);
     assert!(v > 0.0 && (v - exact).abs() < exact * 0.02, "volume {v}, a sphere's {exact}: faces out, closed");
 }
 
@@ -928,6 +931,7 @@ fn a_capped_extrusion_is_a_closed_cylinder() {
     assert_eq!(scene.meshes.len(), 1, "{:?}", scene.warnings);
     let v = volume(&scene, 0);
     let exact = std::f64::consts::PI * r * r * 5.0;
+    println!("capped extrusion: volume {v:.3} of {exact:.3}, {} triangles", scene.meshes[0].indices.len() / 3);
     assert!((v - exact).abs() < exact * 0.02, "volume {v}, the cylinder's {exact}");
 }
 
@@ -1158,6 +1162,7 @@ fn real_files() {
         let bytes = std::fs::read(&path).unwrap();
         let scene = tequila_import::rhino::read(&bytes, "sample").unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let triangles: usize = scene.meshes.iter().map(|m| m.indices.len() / 3).sum();
+        let edges: usize = scene.meshes.iter().map(|m| m.edge_lines.len() / 2).sum();
         let names: Vec<&str> = scene.nodes.iter().map(|n| n.name.as_str()).collect();
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
         for p in scene.meshes.iter().flat_map(|m| m.positions.iter()) {
@@ -1166,7 +1171,7 @@ fn real_files() {
                 hi[k] = hi[k].max(c);
             }
         }
-        println!("{}: {} nodes {names:?}, {} meshes, {triangles} triangles, box {lo:?} to {hi:?} (Rhino's own axes), {} materials, unit {:?}, warnings {:?}", path.display(), scene.nodes.len(), scene.meshes.len(), scene.materials.len(), scene.source_unit, scene.warnings);
+        println!("{}: {} nodes {names:?}, {} meshes, {triangles} triangles, {edges} edge segments, box {lo:?} to {hi:?} (Rhino's own axes), {} materials, unit {:?}, warnings {:?}", path.display(), scene.nodes.len(), scene.meshes.len(), scene.materials.len(), scene.source_unit, scene.warnings);
         let mut document = SceneDocument::new();
         let (command, _) = build(&document, None, scene, &ImportOptions::default(), None).unwrap();
         CommandBus::new().apply(&mut document, command).unwrap();

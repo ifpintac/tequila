@@ -698,9 +698,10 @@ fn build(file: File, name: &str, quality: Tessellation) -> RawScene {
         // Rhino's surface parameter mapping has them.
         b.mesh.uvs.extend(piece.params.iter().map(|q| [((q[0] - domain[0]) / (domain[1] - domain[0])) as f32, ((q[1] - domain[2]) / (domain[3] - domain[2])) as f32]));
         b.mesh.triangles.extend(piece.triangles.iter().map(|t| [t[0] + base, t[1] + base, t[2] + base]));
-        if !matches!(records[record].geometry, Geometry::Brep(_)) {
-            b.edges.extend(piece.edges.iter().copied());
-        }
+        // Each face's boundary, which a B-rep with edge curves of its own
+        // draws from those instead (below), once an edge rather than once
+        // a face.
+        b.edges.extend(piece.edges.iter().copied());
     }
     // The rest: saved meshes, SubD surfaces, B-rep edges.
     let levels = match quality {
@@ -724,9 +725,12 @@ fn build(file: File, name: &str, quality: Tessellation) -> RawScene {
                 }
                 let faces_missing = brep.faces.iter().filter(|f| f.mesh.is_none() && f.surface.is_none()).count();
                 failed += faces_missing;
-                let tolerance = tolerance_for(i);
-                for (curve, from, to) in &brep.edges {
-                    sample(curve, *from, *to, tolerance, &mut b.edges);
+                if !brep.edges.is_empty() {
+                    b.edges.clear();
+                    let tolerance = tolerance_for(i);
+                    for (curve, from, to) in &brep.edges {
+                        sample(curve, *from, *to, tolerance, &mut b.edges);
+                    }
                 }
             }
             Geometry::Extrusion(e) if !e.meshes.is_empty() => {
