@@ -1362,9 +1362,19 @@ impl Builder<'_> {
 
     fn mesh(&mut self, mesh: &tequila_render_core::scene::Mesh, shader: Node) -> Result<Node, String> {
         let positions: Vec<[f32; 3]> = mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect();
-        let normals: Option<Vec<[f32; 3]>> = (mesh.normals.len() == mesh.positions.len())
+        let mut normals: Option<Vec<[f32; 3]>> = (mesh.normals.len() == mesh.positions.len())
             .then(|| mesh.normals.iter().map(|n| [n.x, n.y, n.z]).collect());
-        let triangles = wound_as_shaded(mesh);
+        let mut triangles = wound_as_shaded(mesh);
+        // A solid wound inside out as a whole, its normals with it: turned
+        // the right way out, or its glass is the air bubble it would leave.
+        if inside_out(mesh, &triangles) {
+            for t in &mut triangles {
+                t.swap(1, 2);
+            }
+            for n in normals.iter_mut().flatten() {
+                *n = [-n[0], -n[1], -n[2]];
+            }
+        }
         // Per corner, and with v flipped: Tequila's v runs down the image
         // from its top row, Cycles' up from its bottom one.
         let uvs: Option<Vec<[f32; 2]>> = (mesh.uvs.len() == mesh.positions.len()).then(|| {
@@ -4380,6 +4390,59 @@ fn wound_as_shaded(mesh: &tequila_render_core::scene::Mesh) -> Vec<[i32; 3]> {
         .collect()
 }
 
+/// Whether a closed mesh, as `triangles` wind it, is inside out as a
+/// whole: every face turned in and its normals with it, which is what
+/// recomputing normals from a reversed winding leaves, and what nothing in
+/// the mesh contradicts. Cycles takes such a solid's inside for its outside
+/// and renders its glass as the air bubble it would leave; Tequila's
+/// renderer finds the inside from the solid itself (`inverted_winding`).
+///
+/// By the volume the winding encloses, when the mesh is closed: every edge
+/// shared by two triangles, its vertices welded by position, since a UV
+/// seam or a hard edge stores one corner several times. An open sheet has
+/// no inside, and its volume is an accident of where the origin is, so it
+/// is left alone, however it is wound. A hollow solid - a bottle's walls, a
+/// ball with a cavity - encloses its outside less its inside, so its
+/// cavity, which faces in by right, is never what turns it.
+fn inside_out(mesh: &tequila_render_core::scene::Mesh, triangles: &[[i32; 3]]) -> bool {
+    let bounds = mesh.bounds();
+    let size = bounds.diagonal();
+    let reach = size.length();
+    if !(reach > 0.0) || triangles.is_empty() {
+        return false;
+    }
+    // Welded: a corner by where it is, to a millionth of the mesh's size.
+    let step = reach as f64 * 1e-6;
+    let mut welded = std::collections::HashMap::new();
+    let mut weld = |i: i32| -> Option<u32> {
+        let p = mesh.positions.get(i as usize)?;
+        let key = ((p.x as f64 / step).round() as i64, (p.y as f64 / step).round() as i64, (p.z as f64 / step).round() as i64);
+        let next = welded.len() as u32;
+        Some(*welded.entry(key).or_insert(next))
+    };
+    let mut edges: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    let centre = (bounds.min + bounds.max) * 0.5;
+    let mut volume = 0.0f64;
+    for t in triangles {
+        let (Some(a), Some(b), Some(c)) = (weld(t[0]), weld(t[1]), weld(t[2])) else {
+            continue;
+        };
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            if x != y {
+                *edges.entry((x.min(y), x.max(y))).or_insert(0) += 1;
+            }
+        }
+        let [p, q, r] = [t[0], t[1], t[2]].map(|i| mesh.positions[i as usize] - centre);
+        volume += p.dot(q.cross(r)) as f64;
+    }
+    // Closed, but for a gap or two: a CAD export's sliver.
+    let open = edges.values().filter(|&&uses| uses != 2).count();
+    if edges.is_empty() || open as f64 > 0.01 * edges.len() as f64 {
+        return false;
+    }
+    volume < 0.0 && volume.abs() / 6.0 > 1e-9 * (reach as f64).powi(3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4714,6 +4777,51 @@ mod tests {
         assert_eq!(wound_as_shaded(&creased), vec![[0, 1, 2]]);
         // No normals: the winding is all there is.
         assert_eq!(wound_as_shaded(&Mesh::new(positions, vec![0, 2, 1])), vec![[0, 2, 1]]);
+    }
+
+    /// A closed solid wound inside out, its normals with it, is found so;
+    /// the same solid the right way out is not, nor an open sheet, nor a
+    /// hollow solid whose cavity faces in by right.
+    #[test]
+    fn a_solid_wound_inside_out_is_found_so() {
+        use tequila_core::math::{vec3, Vec3};
+        use tequila_render_core::scene::Mesh;
+        // A cube from -1 to 1, wound outward.
+        let cube = |lo: f32, hi: f32, offset: u32| {
+            let p = |x: f32, y: f32, z: f32| vec3(x, y, z);
+            let positions = vec![p(lo, lo, lo), p(hi, lo, lo), p(hi, hi, lo), p(lo, hi, lo), p(lo, lo, hi), p(hi, lo, hi), p(hi, hi, hi), p(lo, hi, hi)];
+            let faces: [[u32; 4]; 6] = [[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [2, 3, 7, 6], [1, 2, 6, 5], [0, 4, 7, 3]];
+            let mut indices = Vec::new();
+            for [a, b, c, d] in faces {
+                indices.extend_from_slice(&[a + offset, b + offset, c + offset, a + offset, c + offset, d + offset]);
+            }
+            (positions, indices)
+        };
+        let triangles = |m: &Mesh| m.indices.chunks_exact(3).map(|t| [t[0] as i32, t[1] as i32, t[2] as i32]).collect::<Vec<_>>();
+        let (positions, indices) = cube(-1.0, 1.0, 0);
+        let outward = Mesh::new(positions.clone(), indices.clone());
+        assert!(!inside_out(&outward, &triangles(&outward)), "a cube the right way out");
+        let mut reversed = indices.clone();
+        for t in reversed.chunks_exact_mut(3) {
+            t.swap(1, 2);
+        }
+        let normals: Vec<Vec3> = positions.iter().map(|p| -p.normalize()).collect();
+        let inverted = Mesh::new(positions.clone(), reversed).with_normals(normals);
+        assert!(inside_out(&inverted, &wound_as_shaded(&inverted)), "a cube wound inside out");
+        // One face alone: no inside to speak of.
+        let sheet = Mesh::new(positions.clone(), indices[..6].iter().rev().copied().collect());
+        assert!(!inside_out(&sheet, &triangles(&sheet)), "an open sheet");
+        // A hollow cube: the cavity faces in, the solid is the right way out.
+        let (mut hollow_positions, mut hollow_indices) = cube(-1.0, 1.0, 0);
+        let (inner_positions, inner_indices) = cube(-0.5, 0.5, 8);
+        hollow_positions.extend(inner_positions);
+        let mut cavity = inner_indices;
+        for t in cavity.chunks_exact_mut(3) {
+            t.swap(1, 2);
+        }
+        hollow_indices.extend(cavity);
+        let hollow = Mesh::new(hollow_positions, hollow_indices);
+        assert!(!inside_out(&hollow, &triangles(&hollow)), "a hollow cube's cavity turned it");
     }
 
     #[test]
