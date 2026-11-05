@@ -414,6 +414,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         },
     };
 
+    if let Some(Some([from, slot])) = change.studio_drag {
+        let count = app.project.document().studios.len();
+        if from >= count || slot > count {
+            return Reply::Failed(format!("`studio_drag` is [studio, slot]: a Studio from 0 to {}, and a slot from 0 to {count}", count.saturating_sub(1)));
+        }
+    }
+
     let graph = match change.graph {
         Some(Some(key)) => {
             let key = tequila_scene::tree::MaterialKey(key);
@@ -445,6 +452,15 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if reveal {
         app.reveal_configurator();
+    }
+    match change.studio_drag {
+        Some(Some([from, slot])) => {
+            app.studio_tab.stage_drag(Some((from, slot)));
+            app.project_tab = crate::ProjectTab::Studios;
+            app.show_project = true;
+        }
+        Some(None) => app.studio_tab.stage_drag(None),
+        None => {}
     }
     if let Some(show) = change.library {
         app.show_library = show;
@@ -546,6 +562,15 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("help", app.show_help)
         .set("about", app.show_about)
         .set("uv", app.uv_editor.state())
+        .set("studio_pictures", {
+            // How many Studios show a picture of the scene as it is, of how
+            // many, and whether one is being rendered: the Studios tab
+            // makes them while it is shown.
+            let (current, rendering) = app.studio_tab.pictures(&app.project);
+            let mut pictures = Object::new();
+            pictures.set("current", current as f64).set("studios", app.project.document().studios.len() as f64).set("rendering", rendering);
+            pictures.build()
+        })
         .set("recent", Value::Array(app.recent.iter().map(|p| Value::String(p.display().to_string())).collect()))
         .set("mode", app.pending_look.unwrap_or_else(crate::theme::appearance).mode.key())
         .set("theme", app.pending_look.unwrap_or_else(crate::theme::appearance).flavor.key())

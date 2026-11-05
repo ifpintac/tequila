@@ -665,8 +665,50 @@ Alembic deformation import serve neither.
       step. A node in a model set shows only with one of its sets or an
       always-visible one; a node in none always shows. A Studio holds any
       of camera, environment, image style, model set and variant choices,
-      and applies them as one step. *Not yet:* Studio thumbnails and drag
-      reordering (arrows stand in).
+      and applies them as one step. Each Studio shows a picture of its
+      shot (October 20), and is moved by dragging it (November 5, below).
+      *As built, November 5* (`app/src/studio_tab.rs`: `Thumbnails`,
+      `made_from`, `Reorder`; `Studio::picture_key`, `StudioPictures`;
+      `Project::scene_edits`, `EnvironmentCache::prepare`): the pictures,
+      192 pixels across at the render's shape, 24 samples a pixel and
+      denoised, render one at a time on two threads of their own, as they
+      did; what is new is when, and where they are kept. A picture is
+      filed under its Studio's picture key - an FNV-1a hash of what the
+      Studio holds, not its name, so a rename keeps it - in the document,
+      outside undo as the CAD sources are, and saved with the project as
+      `studios/<key>.png` for the Studios it still has (`docs/file-format.md`
+      §1; 16 to 23 KB each for the Headphones sample's five Soft Studio
+      views, all five made in 4.5 s): a project opened again shows them at
+      once and renders none. A
+      changed Studio renders again at once. One whose scene changed under it
+      (any edit but switching Studios, or a change to what it leaves as it
+      is: another Studio's camera, environment, look, model set, turn,
+      variants or lights) keeps its picture, with a spinner in its corner,
+      until the scene has been still for 0.8 s, so a slider's drag starts
+      no render. An environment of the Studio's own is decoded on another
+      thread first, and one the same as the scene's is the scene's, never
+      built again; the graph editor's solo is left out. Drag a Studio by
+      its picture or its grip: the Studio lifts, an accent line with a dot
+      at each end shows where it lands, and its picture follows the
+      pointer; let go, it moves as one undo step (`SetStudios`, saved like
+      any edit); Escape puts it back; near the panel's edge the list
+      scrolls. Up and Down stay, for a keyboard, greyed where they cannot
+      go. Held by `a_studio_dragged_by_its_picture_moves_in_the_list_as_one_undo_step`,
+      `a_dragged_studio_lands_between_the_rows_it_is_dropped_between`,
+      `studios_pictures_render_in_the_background_and_are_saved_with_the_project`
+      (two pictures of the demo in 2.77 s over 496 frames, the longest
+      15 ms on the UI thread), `a_picture_being_rendered_again_keeps_its_row_in_shape`,
+      `studios_survive_a_round_trip` (each Studio finds its
+      picture after a reopen, a deleted one's is not written, a second save
+      is byte-identical), `a_studios_picture_key_is_its_shot_not_its_name`
+      and `preparing_builds_even_the_first_image_in_the_background`. For
+      screenshots, `{"op":"ui","studio_drag":[0,3]}` holds a drag part-way.
+      Not done: a picture rendered while the Studios tab is hidden (they
+      are made while it is shown), a sample-count setting or a large
+      picture for the configurator (`TEQUILA_SPEC.md` §1.12), and a Studio
+      whose environment differs from the scene's still builds that
+      environment's light table on the UI thread once its image is in, as
+      the scene's own does.
 - [x] Render Layers: parts and models assigned to named layers rendered as separable images (M4 built the three alpha modes).
       A layer is its own render of the same shot, to the samples the main
       image reached, with every non-member hidden from the camera and only

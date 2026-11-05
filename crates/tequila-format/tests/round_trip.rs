@@ -663,12 +663,33 @@ fn studios_survive_a_round_trip() {
     document.studios = vec![full, all_sets, untouched];
 
     document.product_turn = tequila_scene::studio::ProductTurn { yaw: -0.942478, pivot: [0.01, -0.02] };
+    // Each Studio's picture, and one of a Studio since deleted.
+    for (index, studio) in document.studios.iter().enumerate() {
+        document.studio_pictures.insert(studio.picture_key(), std::sync::Arc::new(format!("picture {index}").into_bytes()));
+    }
+    document.studio_pictures.insert(0x1234, std::sync::Arc::new(b"gone".to_vec()));
 
-    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    let bytes = write(&document, &Preserved::default());
+    let reopened = read(&bytes).expect("the file we just wrote must read");
     assert_eq!(reopened.document.multi_materials, document.multi_materials);
     assert_eq!(reopened.document.model_sets, document.model_sets);
     assert_eq!(reopened.document.studios, document.studios);
     assert_eq!(reopened.document.product_turn, document.product_turn);
+    // Opened again, each Studio finds its own picture under the key it has
+    // now; the deleted Studio's was not kept.
+    for (index, studio) in reopened.document.studios.iter().enumerate() {
+        let picture = reopened.document.studio_pictures.get(studio.picture_key()).map(|p| p.as_slice());
+        assert_eq!(picture, Some(format!("picture {index}").as_bytes()), "{} lost its picture", studio.name);
+    }
+    assert_eq!(reopened.document.studio_pictures.len(), 3, "a deleted Studio's picture was kept");
+    assert!(reopened.notes.is_empty(), "the pictures were taken for a newer build's: {:?}", reopened.notes);
+    let archive = tequila_format::zip::ZipArchive::read(&bytes).unwrap();
+    let mut members: Vec<&str> = archive.names().iter().map(String::as_str).filter(|n| n.starts_with("studios/")).collect();
+    members.sort();
+    assert_eq!(members.len(), 3);
+    assert!(members.iter().all(|m| m.len() == "studios/".len() + 16 + ".png".len()), "{members:?}");
+    // And saved again, the same bytes.
+    assert_eq!(write(&reopened.document, &reopened.preserved), bytes);
 }
 
 /// The configurator survives a save and a reopen: every kind of option, a

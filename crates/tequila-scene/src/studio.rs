@@ -183,6 +183,61 @@ impl Studio {
             filename_suffix: None,
         }
     }
+
+    /// What the Studio's picture is kept under: everything it holds, and
+    /// not its name or the name its images are given, which a rename
+    /// changes without changing the shot. FNV-1a over its description,
+    /// which no compiler or platform changes, so a project opened again
+    /// finds each Studio's picture where it was saved
+    /// ([`StudioPictures`]).
+    pub fn picture_key(&self) -> u64 {
+        let shot = Studio { name: String::new(), filename_suffix: None, ..self.clone() };
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in format!("{shot:?}").bytes() {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+}
+
+/// Each Studio's picture, a small PNG of the shot it recalls, by its
+/// [`Studio::picture_key`].
+///
+/// A cache rather than an edit, as [`Sources`](crate::document::Sources)
+/// is: the Studios tab renders the pictures and keeps them here, outside
+/// undo, and a project is saved with the pictures of the Studios it still
+/// has, so a project opened again shows them at once. A picture is made
+/// from the scene as it was when it was rendered; one kept for a Studio
+/// that has since changed is under another key and simply not found.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StudioPictures(std::collections::BTreeMap<u64, std::sync::Arc<Vec<u8>>>);
+
+impl StudioPictures {
+    pub fn insert(&mut self, key: u64, png: std::sync::Arc<Vec<u8>>) {
+        self.0.insert(key, png);
+    }
+
+    pub fn get(&self, key: u64) -> Option<&std::sync::Arc<Vec<u8>>> {
+        self.0.get(&key)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u64, &std::sync::Arc<Vec<u8>>)> {
+        self.0.iter().map(|(k, v)| (*k, v))
+    }
+
+    /// Keep only the pictures `keep` says to.
+    pub fn retain(&mut self, mut keep: impl FnMut(u64) -> bool) {
+        self.0.retain(|&k, _| keep(k));
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 /// How the product stands turned: the turn Studios gave it, and the vertical
@@ -374,6 +429,22 @@ mod tests {
             );
         }
         assert_eq!(document.tree.get(card).unwrap().transform, placed, "the studio's card turned with the product");
+    }
+
+    /// A Studio's picture is kept under what it holds: renamed, it keeps
+    /// its picture; given another camera, it needs another.
+    #[test]
+    fn a_studios_picture_key_is_its_shot_not_its_name() {
+        let document = SceneDocument::new();
+        let studio = Studio::capture("Front", &document);
+        let key = studio.picture_key();
+        let renamed = Studio { name: "Hero".into(), filename_suffix: Some("hero".into()), ..studio.clone() };
+        assert_eq!(renamed.picture_key(), key);
+        let mut moved = studio.clone();
+        moved.camera.as_mut().unwrap().target.x += 0.5;
+        assert_ne!(moved.picture_key(), key);
+        let without = Studio { environment: None, ..studio };
+        assert_ne!(without.picture_key(), key);
     }
 
     #[test]

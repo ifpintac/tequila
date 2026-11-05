@@ -355,6 +355,9 @@ pub struct SceneDocument {
     /// CAD files' exact geometry, kept with the project (`docs/03` §6.2's
     /// B-rep retention).
     pub sources: Sources,
+    /// Each Studio's picture, kept with the project; a cache outside undo,
+    /// as `sources` is.
+    pub studio_pictures: crate::studio::StudioPictures,
 }
 
 /// The metadata field on a CAD model's top nodes naming its source in
@@ -465,6 +468,7 @@ impl SceneDocument {
             material_templates: Vec::new(),
             configurator: Default::default(),
             sources: Sources::default(),
+            studio_pictures: Default::default(),
         }
     }
 

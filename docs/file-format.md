@@ -26,6 +26,8 @@ project.tequila
 ├── manifest.json              what is inside, and what wrote it
 ├── scene.json                 the scene: hierarchy, units, environment
 ├── preview.png                a small picture of it, optional
+├── studios/
+│   └── 9f3a61c0d2e4b578.png   each Studio's picture, optional
 ├── materials/
 │   └── mat_00000001.json      one file per material
 ├── geometry/
@@ -40,6 +42,16 @@ screen or a file browser shows it without reading the rest of the archive.
 It is optional: a writer without a picture to give leaves it out, and a
 reader that does not show one ignores it. A writer keeps the one a file was
 opened with when it has no new one.
+
+A `studios/` member is a Studio's picture: a small PNG of the shot the
+Studio recalls, as the Studios tab last rendered it, so a project opened
+again shows its Studios' pictures at once. Its name is the Studio's
+picture key in sixteen hexadecimal digits: an FNV-1a hash of everything the
+Studio holds but its name and its file-name suffix
+(`Studio::picture_key`), so a renamed Studio keeps its picture and a changed
+one has none until it is rendered again. Only the pictures of Studios the
+scene still has are written. Optional, like the preview: a reader that
+does not show them ignores them.
 
 A `sources/` member is a CAD file's own bytes (`.step` or `.iges`, as the file
 was), kept so a model can be divided
