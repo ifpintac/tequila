@@ -489,6 +489,14 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(help) = change.help {
         app.show_help = help;
     }
+    match change.self_test {
+        Some(true) => {
+            app.start_screen.open = false;
+            app.self_test.open_and_start();
+        }
+        Some(false) => app.self_test.close(),
+        None => {}
+    }
     if let Some(open) = change.start_screen {
         app.start_screen.open = open;
     }
@@ -568,6 +576,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
+        .set("self_test", app.self_test.state())
         .set("uv", app.uv_editor.state())
         .set("studio_pictures", {
             // How many Studios show a picture of the scene as it is, of how

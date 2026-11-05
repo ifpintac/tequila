@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 tequila-core.workspace = true
 tequila-materials.workspace = true
+tequila-texture.workspace = true
 tequila-scene.workspace = true
 tequila-format.workspace = true
 tequila-import.workspace = true

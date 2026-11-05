@@ -1,7 +1,8 @@
 name: CI
 
 # Every push and pull request: the tests on Windows and on a Mac with Apple
-# silicon, and a picture rendered without a window. Cycles and the
+# silicon, and a picture rendered without a window; and on an Intel Mac the
+# command-line renderer and the self-test's processor part. Cycles and the
 # OpenCASCADE reader are not built here (the release workflow builds them):
 # their tests skip themselves, and STEP is read by truck.
 
@@ -69,6 +70,17 @@ jobs:
           cargo run --release -p tequila-cli -- --input tests/fixtures/bracket.obj --width 320 --height 200 --samples 32 --output imported.png
           test -s smoke.png && test -s imported.png
 
+      # The check people run on their own computers (`tequila --self-test`,
+      # Help > Test this computer), its processor part: the reference scene
+      # through Tequila's renderer and OIDN, compared with the pictures
+      # shipped in crates/tequila-cli/self-test. Cycles and a graphics card
+      # are not here, so their checks say so and skip. Fails if a check
+      # fails, so the check itself cannot rot.
+      - name: Self-test
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo run --release -p tequila-cli -- --self-test --cpu-only -o self-test
+
       # The MCP bridge in Python, and the copy of its tool list that
       # `tequila --mcp` carries (crates/tequila-cli/src/mcp_tools.json).
       - name: Python bridge tests
@@ -87,4 +99,55 @@ jobs:
           path: |
             smoke.png
             imported.png
+            self-test
+          if-no-files-found: ignore
+
+  # GitHub's Intel Mac, kept until autumn 2027, which the Intel disk image
+  # is built on (release-macos.yml) and nothing tested per commit. Lighter
+  # than the jobs above, which run the whole suite: the command-line
+  # renderer built, the self-test's own tests (the report names no one),
+  # its processor part, and a picture rendered without a window.
+  intel-mac:
+    name: macos-15-intel
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache third-party SDKs
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party
+          key: sdks-${{ runner.os }}-${{ runner.arch }}-embree4.4.1-oidn2.5.1
+
+      - name: Fetch third-party SDKs
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: bash scripts/fetch-third-party.sh
+
+      - name: Self-test's tests
+        run: cargo test --release -p tequila-cli --bin tequila self_test
+
+      - name: Self-test
+        run: cargo run --release -p tequila-cli -- --self-test --cpu-only -o self-test
+
+      - name: Headless render
+        if: ${{ !cancelled() }}
+        run: |
+          cargo run --release -p tequila-cli -- --width 320 --height 200 --samples 32 --output smoke.png
+          test -s smoke.png
+
+      - name: Upload the renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renders-macOS-intel
+          path: |
+            smoke.png
+            self-test
           if-no-files-found: ignore

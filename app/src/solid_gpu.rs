@@ -638,6 +638,45 @@ impl SolidView {
     }
 }
 
+/// Whether the Solid view can be drawn by the graphics card here, for Help >
+/// Test this computer: which card and driver this window's OpenGL is on,
+/// and whether every one of the view's shaders compiles and links there.
+/// "ok: ..." or "failed: ...", as `tequila-cli --self-test --viewport`
+/// takes it. Built and thrown away: the view keeps its own.
+pub fn probe(gl: &glow::Context) -> String {
+    // SAFETY: queries, and programs made and deleted on this context.
+    unsafe {
+        let (vendor, renderer, version) = (gl.get_parameter_string(glow::VENDOR), gl.get_parameter_string(glow::RENDERER), gl.get_parameter_string(glow::VERSION));
+        let maker = vendor.split_whitespace().next().unwrap_or("");
+        let card = if renderer.to_ascii_lowercase().contains(&maker.to_ascii_lowercase()) { renderer.trim().to_string() } else { format!("{} ({})", renderer.trim(), vendor.trim()) };
+        let context = format!("{card} · OpenGL {}", version.trim());
+        let started = std::time::Instant::now();
+        let sources = [
+            (SURFACE_VERTEX, SURFACE_FRAGMENT),
+            (BACKDROP_VERTEX, BACKDROP_FRAGMENT),
+            (LINES_VERTEX, LINES_FRAGMENT),
+            (SHADOW_CASTER_VERTEX, SHADOW_CASTER_FRAGMENT),
+            (SHADOW_BLUR_VERTEX, SHADOW_BLUR_FRAGMENT),
+            (SHADOW_GROUND_VERTEX, SHADOW_GROUND_FRAGMENT),
+        ];
+        let mut failure = None;
+        for (vertex, fragment) in sources {
+            match compile(gl, vertex, fragment) {
+                Ok(program) => gl.delete_program(program),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        restore(gl);
+        match failure {
+            None => format!("ok: {context} · Solid view shaders built in {} ms", started.elapsed().as_millis()),
+            Some(error) => format!("failed: {context} · {}", error.replace(['\n', '\r'], " ")),
+        }
+    }
+}
+
 unsafe fn restore(gl: &glow::Context) {
     gl.disable(glow::DEPTH_TEST);
     gl.disable(glow::CULL_FACE);

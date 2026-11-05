@@ -40,6 +40,7 @@ use std::time::Instant;
 
 mod farm;
 mod mcp;
+mod self_test;
 mod serve;
 
 #[derive(Clone)]
@@ -139,6 +140,16 @@ struct Options {
     line_width: Option<f32>,
     /// Dark lines on white, rather than the viewport's light on dark.
     paper: bool,
+    /// Test this computer (`self_test.rs`), and how.
+    self_test: bool,
+    cpu_only: bool,
+    facts_only: bool,
+    resume: bool,
+    machine: bool,
+    viewport: Option<String>,
+    crashed: Option<String>,
+    /// Render the self-test's references into this folder.
+    self_test_references: Option<String>,
 }
 
 impl Default for Options {
@@ -201,6 +212,14 @@ impl Default for Options {
             hidden_lines: None,
             line_width: None,
             paper: false,
+            self_test: false,
+            cpu_only: false,
+            facts_only: false,
+            resume: false,
+            machine: false,
+            viewport: None,
+            crashed: None,
+            self_test_references: None,
         }
     }
 }
@@ -307,6 +326,21 @@ Scripting:
       --restricted      with --mcp: the open scene only - no importing, no
                         raw requests, no saving or rendering to chosen paths
 
+Testing this computer:
+      --self-test       render a small built-in scene with every engine and
+                        device here - Tequila's renderer, Cycles on the
+                        processor and on each graphics card, both denoisers -
+                        timing each and comparing it with a reference; then
+                        write a short report to paste into the Tequila
+                        Discord, beside the pictures, in -o DIR (default
+                        .tequila/self-test in your home). Sends nothing
+                        anywhere, and names no one. Exits 1 if a check fails
+      --cpu-only        with --self-test: leave the graphics cards out
+      --facts-only      with --self-test: describe the computer, render
+                        nothing
+      --resume          with --self-test and -o: carry on a test that
+                        stopped, past the check it stopped in
+
 Network rendering:
       --worker          be a render node: take renders from dispatchers
                         holding the farm's token, until stopped
@@ -370,6 +404,17 @@ fn parse_args() -> Result<Options, String> {
                 options.paper = true;
                 options.wireframe = true;
             }
+            "--self-test" => options.self_test = true,
+            "--cpu-only" => options.cpu_only = true,
+            "--facts-only" => options.facts_only = true,
+            "--resume" => options.resume = true,
+            // For the application, which runs the test as its own process:
+            // progress as lines, and its viewport's check and a crash it
+            // saw, to report.
+            "--machine" => options.machine = true,
+            "--viewport" => options.viewport = Some(value()?),
+            "--crashed" => options.crashed = Some(value()?),
+            "--self-test-references" => options.self_test_references = Some(value()?),
             "--camera" => options.camera = Some(value()?),
             "--studio" => options.studio = Some(value()?),
             "--model-set" => options.model_set = Some(value()?),
@@ -511,6 +556,8 @@ fn main() {
 
     let outcome = match options.bench {
         Some(scene) => benchmark(scene),
+        None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
+        None if options.self_test => test_this_computer(&options),
         None if options.mcp => mcp::run(options.discovery.as_deref(), options.restricted),
         None if options.serve => serve::run(&options),
         None if options.worker => farm::worker(&options),
@@ -520,6 +567,26 @@ fn main() {
         eprintln!("tequila: {error}");
         std::process::exit(1);
     }
+}
+
+/// `--self-test`: the checks, with the exit code saying whether any failed.
+fn test_this_computer(options: &Options) -> Result<(), String> {
+    if options.resume && !options.output_set {
+        return Err("--resume carries on the test in a folder: give it with -o".into());
+    }
+    let settings = self_test::Settings {
+        folder: if options.output_set { options.output.clone().into() } else { self_test::default_folder() },
+        cpu_only: options.cpu_only,
+        facts_only: options.facts_only,
+        resume: options.resume,
+        machine: options.machine,
+        viewport: options.viewport.clone(),
+        crashed: options.crashed.clone(),
+    };
+    if !self_test::run(&settings)? {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// What to render: a saved project, an imported model, or the demo scene.
