@@ -110,13 +110,18 @@ impl tequila_materials::Bsdf for Scattering {
 }
 
 /// The fibre BSDF for a hit on one of `material`'s fibres: the fuzz's
-/// colour, darkened by the fibre's own share of the colour variation, and
-/// the fuzz's roughness, raised to `roughness_floor` as every lobe is deep
-/// in a path.
+/// colour - the fibre's own, where the material's varies over the part -
+/// darkened by the fibre's own share of the colour variation, and the
+/// fuzz's roughness, the fibre's own likewise, raised to `roughness_floor`
+/// as every lobe is deep in a path.
 pub fn fibre_bsdf(material: &Material, fibre: &crate::scene::FibreHit, roughness_floor: f32) -> tequila_materials::lobes::Fibre {
+    let colour = match fibre.color {
+        Some(own) => varied_fibre_colour(own, material.fuzz_color_variation, fibre.random),
+        None => fibre_colour(material, fibre.random),
+    };
     tequila_materials::lobes::Fibre::new(
-        fibre_colour(material, fibre.random),
-        material.fuzz_roughness.max(roughness_floor),
+        colour,
+        fibre.roughness.unwrap_or(material.fuzz_roughness).max(roughness_floor),
         fibre.offset,
     )
 }
@@ -124,7 +129,13 @@ pub fn fibre_bsdf(material: &Material, fibre: &crate::scene::FibreHit, roughness
 /// The colour of the fibre with random number `random`: what Cycles'
 /// translation computes from the same number at the same fibre.
 pub fn fibre_colour(material: &Material, random: f32) -> tequila_core::spectrum::Spectrum {
-    material.fuzz_color * (1.0 - material.fuzz_color_variation.clamp(0.0, 1.0) * random.clamp(0.0, 1.0))
+    varied_fibre_colour(material.fuzz_color, material.fuzz_color_variation, random)
+}
+
+/// `colour`, darkened by a fibre's random number's share of `variation`:
+/// the variation on top of whatever colour the fibre wears.
+pub fn varied_fibre_colour(colour: tequila_core::spectrum::Spectrum, variation: f32, random: f32) -> tequila_core::spectrum::Spectrum {
+    colour * (1.0 - variation.clamp(0.0, 1.0) * random.clamp(0.0, 1.0))
 }
 
 #[cfg(test)]
@@ -225,11 +236,43 @@ mod tests {
         assert_eq!(fibre_colour(&uniform, 0.9), velvet.fuzz_color);
 
         // Darker fibres send on less of the light.
-        let hit = |random| crate::scene::FibreHit { tangent: Vec3::X, facing: Vec3::Z, offset: 0.1, random };
+        let hit = |random| crate::scene::FibreHit { tangent: Vec3::X, facing: Vec3::Z, offset: 0.1, random, color: None, roughness: None };
         let wo = vec3(0.2, 0.0, 0.98).normalize();
         let light = fibre_bsdf(&velvet, &hit(0.0), 0.0).albedo(wo);
         let dark = fibre_bsdf(&velvet, &hit(1.0), 0.0).albedo(wo);
         assert!(dark.r < light.r, "{dark:?} against {light:?}");
+    }
+
+    /// A fibre with a colour and roughness of its own - taken from a
+    /// texture where it is rooted - is shaded in them rather than the
+    /// material's, the variation darkening its own colour as it would the
+    /// material's, and its roughness still raised to the path's floor.
+    #[test]
+    fn a_fibre_with_its_own_colour_wears_it() {
+        let velvet = Material {
+            fuzz_color: Spectrum { r: 0.8, g: 0.1, b: 0.2 },
+            fuzz_color_variation: 0.5,
+            fuzz_roughness: 0.4,
+            ..Material::default()
+        };
+        let blue = Spectrum { r: 0.05, g: 0.2, b: 0.7 };
+        let own = |random, roughness| crate::scene::FibreHit {
+            tangent: Vec3::X,
+            facing: Vec3::Z,
+            offset: 0.1,
+            random,
+            color: Some(blue),
+            roughness: Some(roughness),
+        };
+        let as_material = |colour: Spectrum, roughness: f32| Material { fuzz_color: colour, fuzz_roughness: roughness, ..velvet.clone() };
+        let wo = vec3(0.2, 0.0, 0.98).normalize();
+        let wi = vec3(-0.3, 0.4, -0.86).normalize();
+        for (random, roughness, floor) in [(0.0, 0.25, 0.0), (0.7, 0.6, 0.0), (0.3, 0.1, 0.5)] {
+            let theirs = fibre_bsdf(&as_material(blue, roughness), &crate::scene::FibreHit { color: None, roughness: None, ..own(random, roughness) }, floor);
+            let mine = fibre_bsdf(&velvet, &own(random, roughness), floor);
+            assert_eq!(mine.eval(wo, wi), theirs.eval(wo, wi), "random {random}, roughness {roughness}, floor {floor}");
+        }
+        assert_eq!(varied_fibre_colour(blue, 0.5, 1.0), blue * 0.5);
     }
 
     #[test]

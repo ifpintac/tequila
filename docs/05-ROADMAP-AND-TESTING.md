@@ -600,9 +600,60 @@ Alembic deformation import serve neither.
       fuzzy specks: inside-out spheres in the part's own material, so a ray
       meeting one leaves the liquid into air with the right refraction and
       total-internal-reflection rim, placed wholly inside the (closed) part
-      without overlapping, seeded and cached. *Open:* fibres take their
-      colour and roughness as constants, so a texture on Sheen Color tints
-      the surface under them and not them.
+      without overlapping, seeded and cached.
+      *Textured fibres and a scene's budget since November 5:* where the
+      graph drives the Sheen Color or Sheen Roughness - a printed texture,
+      a pattern, anything it computes - each fibre takes them from where it
+      is rooted (`fuzz::Paint`): the graph cut down to those two and run at
+      the root as the renderer runs it on the surface there (UV, position,
+      normal, vertex colour, curvature, occlusion, the part's place, seen
+      square on), so a picture's colour reaches the rendering space through
+      the surface's own lookup. The fibres carry the values
+      (`Fibres::colors`, `Fibres::roughness`, empty for a constant sheen);
+      Tequila's renderer reads them at the hit, and Cycles gets them as a
+      per-curve attribute, `tq_fibre_own` (the colour, and the roughness in
+      its fourth number), through the shim's new `fsc_curves_attribute`,
+      which Principled Hair reads - the colour variation darkening either
+      on top. A library from before it warns and renders them in the
+      sheen's constant. Held by `fibres_take_the_sheen_where_they_are_rooted`
+      (a graph of object coordinates: every fibre's colour is its root),
+      `textured_fibres_have_the_surfaces_colour` (a picture's colour to
+      1e-6 of the surface's own lookup), `a_patterned_sheen_colours_the_fibres`
+      (through the snapshot; a move keeps them, a pattern edit grows them
+      again), `a_fibre_with_its_own_colour_wears_it`, and
+      `fibres_render_alike_in_both_renderers`, which now also renders the
+      felt ball with a checker on its Sheen Color: the same squares
+      stand on the same blocks in both (their hue correlated 0.994,
+      spreading 18.7 where the plain felt's spreads 5.5), at the same level
+      to 2% and each channel's share of the light to 0.02.
+      The 250,000 a part was the triangle budget of the first fibres -
+      150,000 tubes of 18 triangles - raised a little when they became
+      curves; neither memory nor Embree (2^32 segments a mesh) set it, and
+      a large part came out sparse: a 64 x 60 cm sofa cushion asking 400 a
+      square centimetre got one in eighteen. It is now a budget of 6 million
+      a scene, all its parts together (`fuzz::BUDGET`), shared by what each
+      asks (`fuzz::shares`); past it every part keeps the same share, its
+      fibres widened by as much, as Cook et al.'s stochastic simplification
+      keeps the area. They grow in parallel batches that draw the same
+      random numbers as one after another (each fibre draws nine; a million
+      in about 120 ms), so fibres under the old cap are the same fibres:
+      a felt cushion of 203,000 constant fibres, and the same cushion bare,
+      render byte for byte as before in both renderers. Measured on the
+      sofa cushion, 4.4 million fibres against 250,000: a whole render's
+      process at its height held 1.8 GB against 0.57 in Tequila's renderer
+      and 4.2 GB against 0.83 in Cycles on the processor - about 310 and
+      820 bytes a fibre, the fur rug's 3.1 million the same - and a 720 x
+      450 render of 64 samples took 81 to 86 s against 54 to 61 in
+      Tequila's renderer and 131 to 219 s against 51 to 67 in Cycles
+      (interleaved, on a machine busy with other builds: a guide only).
+      Growing them took 214 ms and Embree's BVH 1.9 s (250,000: 19 and
+      70 ms), the fibres holding 84 bytes each and Embree's copy and BVH
+      231 more (`measure_a_sofa_cushions_fibres`, run alone).
+      *Open:* fibres are thinned by the budget alone, not by what the
+      camera can resolve, which would mean growing them again as it moves;
+      a graph's view-dependent inputs (Layer Weight, Fresnel, the Light
+      Path) are read at a fibre's root as seen square on; and Cycles needs
+      the release's rebuilt library for the colours.
 - [ ] ~~Animation nodes (Color Fade, Curve Fade)~~ — deferred with M5.
 - [x] HDRI Editor: light/image/gradient pins, sun & sky (Hosek-Wilkie), export to EXR, async CDF rebuild.
       *Hosek–Wilkie since September 26:* the authors' 1.4a reference code

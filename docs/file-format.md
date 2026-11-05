@@ -441,7 +441,7 @@ is spelled exactly as the parameter is named there.
 | `fuzz_weight` | number | Sheen strength. |
 | `fuzz_color` | number[3] | Sheen colour. |
 | `fuzz_roughness` | number | 0 to 1. |
-| `fuzz_density` | number | Fibres to the square centimetre grown out of the surface when the scene is built (§4.4's geometric Fuzz), 0 to 5000; 0, the default, grows none. They wear `fuzz_color` and `fuzz_roughness`, and are capped at 250,000 a part. A graph's Fuzz node, where there is one, wins over these settings. |
+| `fuzz_density` | number | Fibres to the square centimetre grown out of the surface when the scene is built (§4.4's geometric Fuzz), 0 to 5000; 0, the default, grows none. They wear `fuzz_color` and `fuzz_roughness` - each fibre the value where it is rooted, where the graph drives either - and a scene grows at most 6 million, all its parts together. A graph's Fuzz node, where there is one, wins over these settings. |
 | `fuzz_length` | number | A fibre's length in metres (default 0.002). |
 | `fuzz_thickness` | number | A fibre's width at its root in metres (default 0.00004); it tapers to a fifth at the tip. |
 | `fuzz_lean` | number | How far fibres lean from standing straight up, 0 to 1 (default 0.35). |

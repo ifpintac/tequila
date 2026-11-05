@@ -141,10 +141,15 @@ pub struct MeshCache {
     /// the renderer sees the same mesh from one build to the next and a
     /// move stays a transform update.
     bubble_mesh: Option<Arc<RenderMesh>>,
-    /// Each part's fibres, by its mesh, scale and Fuzz request, holding the
-    /// mesh as `occluded` does: fur is expensive to grow, so a part that
-    /// only moved keeps its own.
+    /// Each part's fibres, by its mesh, scale and Fuzz request, its share
+    /// of the scene's budget and what they take from a sheen that varies,
+    /// holding the mesh as `occluded` does: fur is expensive to grow, so a
+    /// part that only moved keeps its own.
     fuzz: BTreeMap<u64, (Arc<RenderMesh>, Option<Arc<RenderMesh>>)>,
+    /// The area of each mesh fibres grow on, in its own units, holding the
+    /// mesh: what a part asks of the scene's budget of fibres, found before
+    /// any are grown.
+    fuzz_areas: BTreeMap<usize, (Arc<RenderMesh>, f64)>,
     /// The ground quad and the extent it was built for.
     ///
     /// Cached for the same reason every other mesh is: the backend decides
@@ -584,7 +589,7 @@ pub fn snapshot_with(
     occlude_instances(&mut meshes, &mut instances, &programs, cache);
     let densities = density_fields(&meshes, &instances, &programs, &textures);
     add_bubbles(&mut meshes, &mut instances, &programs, cache);
-    add_fuzz(&mut meshes, &mut instances, &materials, &programs, &mut mapping, cache);
+    add_fuzz(&mut meshes, &mut instances, &materials, &programs, &textures, &mut mapping, cache);
 
     // The ground goes in last, so its instance id is past every node's and
     // the mapping from instance to node stays a plain index. It has no node —
@@ -846,19 +851,27 @@ fn add_bubbles(
 /// so picking a fibre picks the part and a render layer that shows the part
 /// shows its fur. They are seen, cast shadows and are held out as the part
 /// is.
+///
+/// Every part's fibres are counted first, so the scene's budget is shared
+/// out by what each asks; and where a part's material has a sheen that
+/// varies, its fibres take their colour and roughness from the surface
+/// where they are rooted, its textures read from `textures`.
 fn add_fuzz(
     meshes: &mut Vec<Arc<RenderMesh>>,
     instances: &mut Vec<Instance>,
     materials: &[Material],
     programs: &[Option<Arc<CompiledGraph>>],
+    textures: &TextureTable,
     mapping: &mut SnapshotMapping,
     cache: &mut MeshCache,
 ) {
     use std::hash::{Hash, Hasher};
-    let mut kept = BTreeMap::new();
-    let parts = instances.len();
-    for index in 0..parts {
-        let part = instances[index].clone();
+    // What each part asks: its request, its mesh and scale, and how many
+    // fibres that is over its area.
+    let mut asking = Vec::new();
+    let mut areas = BTreeMap::new();
+    for index in 0..instances.len() {
+        let part = &instances[index];
         if part.shadow_catcher.is_some() || part.light_proxy {
             continue;
         }
@@ -874,14 +887,37 @@ fn add_fuzz(
         };
         let mesh = meshes[part.mesh.index()].clone();
         let scale = 1.0 / part.transform.inv_length_scale();
+        let address = Arc::as_ptr(&mesh) as usize;
+        let area = match cache.fuzz_areas.get(&address) {
+            Some((source, area)) if Arc::ptr_eq(source, &mesh) => *area,
+            _ => crate::fuzz::area(&mesh),
+        };
+        areas.insert(address, (mesh.clone(), area));
+        let wanted = crate::fuzz::wanted(crate::fuzz::scene_area(area, scale), &request);
+        asking.push((index, request, mesh, scale, wanted));
+    }
+    cache.fuzz_areas = areas;
+    let shares = crate::fuzz::shares(&asking.iter().map(|(.., wanted)| *wanted).collect::<Vec<_>>());
+
+    let mut kept = BTreeMap::new();
+    for ((index, request, mesh, scale, _), count) in asking.into_iter().zip(shares) {
+        let part = instances[index].clone();
+        let program = programs.get(part.material.index()).and_then(|p| p.as_ref());
+        let paint = program.and_then(|p| crate::fuzz::Paint::of(p, textures, part.transform, index));
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (Arc::as_ptr(&mesh) as usize).hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
         request.hash(&mut hasher);
+        count.hash(&mut hasher);
+        paint.as_ref().map(|p| p.fingerprint()).hash(&mut hasher);
         let key = hasher.finish();
-        let grown = match cache.fuzz.get(&key) {
+        // Another part alike may have grown them already in this build.
+        let grown = match kept.get(&key).or_else(|| cache.fuzz.get(&key)) {
             Some((source, grown)) if Arc::ptr_eq(source, &mesh) => grown.clone(),
-            _ => crate::fuzz::grow(&mesh, scale, &request).map(Arc::new),
+            _ => {
+                let growth = crate::fuzz::Growth { count: Some(count), paint: paint.as_ref() };
+                crate::fuzz::grow_with(&mesh, scale, &request, growth).map(Arc::new)
+            }
         };
         if let Some(fur) = &grown {
             meshes.push(fur.clone());

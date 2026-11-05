@@ -110,3 +110,97 @@ fn white_fur_on_a_white_ball_loses_no_light() {
     assert!((face - 1.0).abs() < 0.03, "a white furred ball reads {face:.4} over its face: light is lost in the fur");
     assert!((outline - 1.0).abs() < 0.03, "a white furred ball reads {outline:.4} at its outline");
 }
+
+/// What the process holds privately, in bytes - its commit, which is what a
+/// part's fur costs the machine - now, and at the most it has held.
+#[cfg(windows)]
+fn private_bytes() -> (usize, usize) {
+    // PROCESS_MEMORY_COUNTERS_EX, field for field; most are not read.
+    #[repr(C)]
+    #[derive(Default)]
+    #[allow(dead_code)]
+    struct Counters {
+        cb: u32,
+        page_faults: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        quota_peak_paged_pool: usize,
+        quota_paged_pool: usize,
+        quota_peak_non_paged_pool: usize,
+        quota_non_paged_pool: usize,
+        pagefile: usize,
+        peak_pagefile: usize,
+        private: usize,
+    }
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn K32GetProcessMemoryInfo(process: *mut std::ffi::c_void, counters: *mut Counters, size: u32) -> i32;
+    }
+    let mut counters = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Counters::default() };
+    // SAFETY: the counters are sized as the call is told, and the pseudo
+    // handle needs no closing.
+    unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
+    (counters.private, counters.peak_pagefile)
+}
+
+#[cfg(not(windows))]
+fn private_bytes() -> (usize, usize) {
+    (0, 0)
+}
+
+/// What a sofa's seat cushion of velvet costs Tequila's renderer: 1.1 m²
+/// at 400 fibres a square centimetre, 4.4 million as asked against the old
+/// cap's 250,000 - the time to grow them and to build Embree's BVH over
+/// them, what the fibres hold, and what the process holds more for them.
+/// Run alone, `--ignored --test-threads=1`, so nothing else moves the
+/// process's memory.
+#[test]
+#[ignore = "a measurement, not an assertion"]
+fn measure_a_sofa_cushions_fibres() {
+    use tequila_scene::fuzz::{grow_with, Growth};
+    // A ball of 1.1 m² - a seat cushion's area - modelled at a metre and
+    // scaled to its size.
+    let ball = tequila_scene::demo::uv_sphere(1.0, 128, 64);
+    let scale = (1.1 / (4.0 * std::f32::consts::PI)).sqrt();
+    let velvet = FuzzRequest {
+        length_bits: 0.003f32.to_bits(),
+        density_bits: 400f32.to_bits(),
+        thickness_bits: 0.00002f32.to_bits(),
+        lean_bits: 0.35f32.to_bits(),
+        curl_bits: 0.3f32.to_bits(),
+        clump_bits: 0f32.to_bits(),
+        comb_bits: 0f32.to_bits(),
+        seed: 1,
+    };
+    let device = Device::shared().expect("an Embree device");
+    for count in [250_000usize, 4_400_000] {
+        let (before, _) = private_bytes();
+        let start = std::time::Instant::now();
+        let fur = grow_with(&ball, scale, &velvet, Growth { count: Some(count), paint: None }).expect("fibres");
+        let grown = start.elapsed();
+        let held = fur.fibres.as_ref().map_or(0, |f| f.bytes());
+        let (after_growing, _) = private_bytes();
+        let scene = SceneSnapshot::new(
+            vec![Arc::new(fur)],
+            vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))],
+            vec![Material::default()],
+            Arc::new(Environment::uniform(Spectrum::ONE)),
+        );
+        let start = std::time::Instant::now();
+        let bvh = EmbreeIntersector::build(&device, scene).expect("builds");
+        let built = start.elapsed();
+        let (after_building, peak) = private_bytes();
+        println!(
+            "{count} fibres: grown in {:.0} ms, {:.0} bytes a fibre held ({:.0} MB, process +{:.0} MB); BVH built in {:.0} ms, process +{:.0} MB more ({:.0} bytes a fibre), at most +{:.0} MB while building",
+            grown.as_secs_f64() * 1000.0,
+            held as f64 / count as f64,
+            held as f64 / 1e6,
+            after_growing.saturating_sub(before) as f64 / 1e6,
+            built.as_secs_f64() * 1000.0,
+            after_building.saturating_sub(after_growing) as f64 / 1e6,
+            after_building.saturating_sub(after_growing) as f64 / count as f64,
+            peak.saturating_sub(after_growing) as f64 / 1e6,
+        );
+        drop(bvh);
+    }
+}

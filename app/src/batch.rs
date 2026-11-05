@@ -4877,6 +4877,11 @@ mod tests {
     /// Fibres are finer than these pixels, so the picture is compared in
     /// blocks of 8 by 8 rather than pixel by pixel, which their noise would
     /// decide.
+    ///
+    /// And with a checker on the Sheen Color, each fibre takes the colour
+    /// where it is rooted - Tequila's renderer from the fibres' own colours,
+    /// Cycles from the attribute they carry - so the same orange and teal
+    /// squares stand in the fur in both.
     /// Skipped where Cycles is not installed, or is a library from before
     /// fibres.
     #[test]
@@ -4893,8 +4898,14 @@ mod tests {
             return;
         }
         const SCALE: f32 = 0.025;
-        let render = |density: f32| {
-            both_engines_scaled(&format!("fibres-{density}"), SCALE, |scene| {
+        // Felt, its fibres orange - or, chequered, orange and teal by a
+        // checker on the Sheen Color, squares a centimetre and two thirds
+        // across, about four over the ball.
+        let render = |density: f32, chequered: bool| {
+            both_engines_scaled(&format!("fibres-{density}-{}", if chequered { "chequered" } else { "plain" }), SCALE, |scene| {
+                use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+                use tequila_materials::material_type::Param;
+                use tequila_materials::nodes::ShaderNode;
                 let mut felt = MaterialType::Velvet.defaults();
                 felt.base_color = spectrum(0.02, 0.03, 0.08);
                 felt.fuzz_weight = 0.0;
@@ -4908,16 +4919,37 @@ mod tests {
                 felt.fuzz_color_variation = 0.3;
                 scene.environment = Arc::new(tequila_scene::demo::preview_environment());
                 scene.materials[0] = felt.clone();
+                let textures = tequila_render_core::shade::TextureTable::new();
+                let program = chequered.then(|| {
+                    let mut graph = MaterialGraph::from_material(felt.clone());
+                    let mut checker = Node::new(NodeKind::Node(ShaderNode::from_key("checker_texture").expect("a node")));
+                    checker.literals.insert(Socket::Input(1), Value::Color(spectrum(0.8, 0.35, 0.05)));
+                    checker.literals.insert(Socket::Input(2), Value::Color(spectrum(0.04, 0.45, 0.4)));
+                    checker.literals.insert(Socket::Input(3), Value::Float(60.0));
+                    let checker = graph.add_node(checker);
+                    let output = graph.output();
+                    graph.connect(checker, output, Socket::Param(Param::FuzzColor));
+                    Arc::new(graph.compile().expect("compiles"))
+                });
                 // Grown as the snapshot grows them, at the scale the ball is
-                // about to be given.
+                // about to be given, each fibre taking the checker's colour
+                // where it is rooted.
                 if let Some(request) = tequila_materials::graph::FuzzRequest::of_material(&felt) {
                     let ball = scene.instances[0].clone();
-                    let fur = tequila_scene::fuzz::grow(&scene.meshes[ball.mesh.index()], SCALE, &request).expect("fibres");
+                    let placed = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(SCALE, SCALE, SCALE))).expect("invertible") * ball.transform;
+                    let paint = program.as_ref().and_then(|p| tequila_scene::fuzz::Paint::of(p, &textures, placed, 0));
+                    let growth = tequila_scene::fuzz::Growth { count: None, paint: paint.as_ref() };
+                    let fur = tequila_scene::fuzz::grow_with(&scene.meshes[ball.mesh.index()], SCALE, &request, growth).expect("fibres");
+                    assert_eq!(fur.fibres.as_ref().unwrap().colors.is_empty(), !chequered);
                     scene.meshes.push(Arc::new(fur));
                     let mesh = tequila_core::ids::MeshId(scene.meshes.len() as u32 - 1);
                     scene.instances.push(
                         tequila_render_core::scene::Instance::new(tequila_core::ids::InstanceId(1), mesh, ball.material).with_transform(ball.transform),
                     );
+                }
+                if let Some(program) = program {
+                    let plain = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2));
+                    *scene = plain.with_programs(vec![Some(program)], Arc::new(textures));
                 }
             })
         };
@@ -4945,8 +4977,9 @@ mod tests {
             sum.map(|s| s / n)
         };
         // The ball's face in blocks of 8 by 8 pixels, each block's
-        // brightness: where it is lit and where it is in shade.
-        let blocks = |image: &[u8]| {
+        // brightness - where it is lit and where it is in shade - or, by
+        // `weights`, any mix of its channels.
+        let blocks_by = |image: &[u8], weights: [f64; 3]| {
             let mut out = Vec::new();
             for by in 0..9 {
                 for bx in 0..12 {
@@ -4957,7 +4990,7 @@ mod tests {
                     for y in by * 8..by * 8 + 8 {
                         for x in bx * 8..bx * 8 + 8 {
                             let p = &image[(y * 96 + x) * 4..];
-                            sum += f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
+                            sum += weights[0] * f64::from(p[0]) + weights[1] * f64::from(p[1]) + weights[2] * f64::from(p[2]);
                         }
                     }
                     out.push(sum / 64.0);
@@ -4965,6 +4998,7 @@ mod tests {
             }
             out
         };
+        let blocks = |image: &[u8]| blocks_by(image, [1.0, 1.0, 1.0]);
         let correlation = |a: &[f64], b: &[f64]| {
             let ((ma, _), (mb, _)) = (mean_and_spread(a), mean_and_spread(b));
             let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
@@ -4975,8 +5009,8 @@ mod tests {
             }
             cov / (va.sqrt() * vb.sqrt()).max(1e-9)
         };
-        let [bare_tequila, bare_cycles] = render(0.0);
-        let [tequila, cycles] = render(800.0);
+        let [bare_tequila, bare_cycles] = render(0.0, false);
+        let [tequila, cycles] = render(800.0, false);
         let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
         let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
         let (blocks_a, blocks_b) = (blocks(&tequila), blocks(&cycles));
@@ -5014,6 +5048,52 @@ mod tests {
         let warm_ring = |c: [f64; 3]| c[0] - c[2];
         if (warm_ring(ring_b) / warm_ring(ring_a).max(1.0) - 1.0).abs() > 0.08 {
             wrong.push(format!("the fuzz past the outline: {ring_a:.1?} in Tequila, {ring_b:.1?} in Cycles"));
+        }
+
+        // Chequered fibres, each the checker's colour where it is rooted,
+        // in both: the same level and colour overall, and the same squares
+        // in the same places - orange against teal, block by block, red
+        // less green - where the plain felt's blocks hardly change in hue.
+        // Skipped for a library from before fibres took colours of their
+        // own, which renders them all in the sheen's constant colour.
+        if tequila_render_cycles::has_curve_attributes() {
+            let hue = |image: &[u8]| blocks_by(image, [1.0, -1.0, 0.0]);
+            let plain_spread = mean_and_spread(&hue(&tequila)).1.max(mean_and_spread(&hue(&cycles)).1);
+            let [tequila, cycles] = render(800.0, true);
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (ca, cb) = (channel_means(&tequila), channel_means(&cycles));
+            let (hue_a, hue_b) = (hue(&tequila), hue(&cycles));
+            let r = correlation(&hue_a, &hue_b);
+            let ((_, spread_a), (_, spread_b)) = (mean_and_spread(&hue_a), mean_and_spread(&hue_b));
+            eprintln!(
+                "chequered fibres: hue in {} blocks correlated {r:.3}, spread {spread_a:.1} and {spread_b:.1} (plain {plain_spread:.1}); Tequila {ma:.1} {ca:.1?}, Cycles {mb:.1} {cb:.1?}",
+                hue_a.len()
+            );
+            if (mb / ma.max(1.0) - 1.0).abs() > 0.06 {
+                wrong.push(format!("chequered brightness: Tequila {ma:.1}, Cycles {mb:.1}"));
+            }
+            // The colour as each channel's share of the light: the teal
+            // half has next to no red, and a ratio to so dim a channel is
+            // a ratio of noise.
+            let share = |c: [f64; 3]| {
+                let sum = (c[0] + c[1] + c[2]).max(1.0);
+                c.map(|v| v / sum)
+            };
+            let (share_a, share_b) = (share(ca), share(cb));
+            for (c, name) in [(0, "red"), (1, "green"), (2, "blue")] {
+                if (share_a[c] - share_b[c]).abs() > 0.03 {
+                    wrong.push(format!("chequered colour: {name} {:.3} of the light in Tequila, {:.3} in Cycles", share_a[c], share_b[c]));
+                }
+            }
+            if r < 0.9 {
+                wrong.push(format!("the checker's squares: hue across the ball correlates {r:.3}"));
+            }
+            if spread_a.min(spread_b) < 3.0 * plain_spread.max(1.0) {
+                wrong.push(format!("no checker in the fibres: hue spreads {spread_a:.1} and {spread_b:.1} across the ball, plain {plain_spread:.1}"));
+            }
+        } else {
+            eprintln!("chequered fibres skipped: this Cycles library predates fibres' own colours");
         }
         assert!(wrong.is_empty(), "fibres render differently in Cycles:\n{}", wrong.join("\n"));
     }

@@ -465,6 +465,19 @@ fn rows(m: &Mat4) -> [f32; 12] {
     ]
 }
 
+/// The attribute a fibre's own colour (red, green, blue) and roughness
+/// (the fourth) go to Cycles as.
+const FIBRE_ATTRIBUTE: &str = "tq_fibre_own";
+
+/// Whether a material's fibres take their colour, and their roughness, from
+/// the surface where each is rooted: where its graph drives the Sheen Color,
+/// or the Sheen Roughness - the rule `tequila_scene::fuzz::Paint` grows
+/// them by.
+fn fibres_take(program: Option<&CompiledGraph>) -> (bool, bool) {
+    let drives = |param: Param| program.is_some_and(|p| p.driven.iter().any(|(q, _)| *q == param));
+    (drives(Param::FuzzColor), drives(Param::FuzzRoughness))
+}
+
 /// A colour as Cycles takes it: as it is, since Cycles works in Tequila's
 /// rendering space, ACEScg (the shim sets its OpenColorIO config).
 fn rgb(s: Spectrum) -> [f32; 3] {
@@ -629,7 +642,7 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
             (None, Some(m)) => *m,
             (None, None) => {
                 let m = match &mesh.fibres {
-                    Some(fibres) => builder.curves(fibres, shader)?,
+                    Some(fibres) => builder.curves(fibres, shader, material)?,
                     None => builder.mesh(mesh, shader)?,
                 };
                 meshes.insert(key, m);
@@ -1315,10 +1328,32 @@ impl Builder<'_> {
     }
 
     /// A part's fibres as Cycles hair: the same points and radii, and each
-    /// fibre's random number, which its colour is darkened by.
-    fn curves(&mut self, fibres: &tequila_render_core::scene::Fibres, shader: Node) -> Result<Node, String> {
+    /// fibre's random number, which its colour is darkened by. Where
+    /// material `index`'s sheen varies over the part, each fibre's own
+    /// colour and roughness go too, as the attribute its shader reads
+    /// (`Builder::with_fibres`): in the rendering space, which is Cycles'
+    /// too, and which attributes keep as they are given.
+    fn curves(&mut self, fibres: &tequila_render_core::scene::Fibres, shader: Node, index: usize) -> Result<Node, String> {
         let keys: Vec<[f32; 3]> = fibres.points.iter().map(|p| [p.x, p.y, p.z]).collect();
-        self.session.curves(tequila_render_core::scene::Fibres::POINTS, &keys, &fibres.radii, &fibres.random, shader)
+        let hair = self.session.curves(tequila_render_core::scene::Fibres::POINTS, &keys, &fibres.radii, &fibres.random, shader)?;
+        let program = self.scene.programs.get(index).and_then(|p| p.as_deref());
+        let (colour, roughness) = fibres_take(program);
+        if (colour || roughness) && self.session.has_curve_attributes() {
+            // Fibres grown without their own - by a caller that did not
+            // paint them - read the material's, as Tequila's renderer
+            // gives them.
+            let Some(m) = program.map(|p| &p.constants).or_else(|| self.scene.materials.get(index)) else {
+                return Ok(hair);
+            };
+            let own: Vec<[f32; 4]> = (0..fibres.count())
+                .map(|i| {
+                    let c = fibres.color(i).unwrap_or(m.fuzz_color);
+                    [c.r, c.g, c.b, fibres.roughness(i).unwrap_or(m.fuzz_roughness)]
+                })
+                .collect();
+            self.session.curves_attribute(hair, FIBRE_ATTRIBUTE, &own)?;
+        }
+        Ok(hair)
     }
 
     /// `surface`, unless the material grows fibres: then on a fibre (Hair
@@ -1368,25 +1403,63 @@ impl Builder<'_> {
         Ok((mix, "Closure"))
     }
 
+    /// Where the material's sheen varies over a part - a texture on its
+    /// Sheen Color or Roughness - each fibre's own, from the surface where
+    /// it is rooted, carried as an attribute of the fibre ([`Builder::curves`]):
+    /// Principled Hair takes its colour from it, darkened by the variation
+    /// on top, and its roughness from the attribute's fourth number.
     fn with_fibres(&mut self, shader: Shader, index: usize, m: &Material, surface: (Node, &'static str)) -> Result<(Node, &'static str), String> {
-        let node = self.scene.programs.get(index).and_then(|p| p.as_deref()).and_then(|p| p.requirements.fuzz);
+        let program = self.scene.programs.get(index).and_then(|p| p.as_deref());
+        let node = program.and_then(|p| p.requirements.fuzz);
         if node.is_none() && tequila_materials::graph::FuzzRequest::of_material(m).is_none() {
             return Ok(surface);
         }
+        let (mut own_colour, mut own_roughness) = fibres_take(program);
+        if (own_colour || own_roughness) && !self.session.has_curve_attributes() {
+            self.out.warn("this Cycles library predates fibres' own colours: fibres on a textured sheen take its constant colour");
+            (own_colour, own_roughness) = (false, false);
+        }
         let random = self.session.node(shader, "attribute")?;
         self.session.set_string(random, "attribute", "tq_fibre_random")?;
-        let colour = self.session.node(shader, "mix_color")?;
-        self.session.set_string(colour, "blend_type", "mix")?;
-        self.session.connect(shader, random, "Fac", colour, "Factor")?;
         let variation = m.fuzz_color_variation.clamp(0.0, 1.0);
-        self.session.set_float3(colour, "A", rgb(m.fuzz_color))?;
-        self.session.set_float3(colour, "B", rgb(m.fuzz_color * (1.0 - variation)))?;
+        let own = if own_colour || own_roughness {
+            let own = self.session.node(shader, "attribute")?;
+            self.session.set_string(own, "attribute", FIBRE_ATTRIBUTE)?;
+            Some(own)
+        } else {
+            None
+        };
+        let colour = match own.filter(|_| own_colour) {
+            // The fibre's own colour, times one less its random number's
+            // share of the variation.
+            Some(own) if variation > 0.0 => {
+                let darker = self.float_op3(shader, "multiply_add", Slot::Link(random, "Fac"), num(-variation), num(1.0))?;
+                self.vector_op(shader, "scale", (own, "Color"), None, Some(darker))?
+            }
+            Some(own) => (own, "Color"),
+            None => {
+                let colour = self.session.node(shader, "mix_color")?;
+                self.session.set_string(colour, "blend_type", "mix")?;
+                self.session.connect(shader, random, "Fac", colour, "Factor")?;
+                self.session.set_float3(colour, "A", rgb(m.fuzz_color))?;
+                self.session.set_float3(colour, "B", rgb(m.fuzz_color * (1.0 - variation)))?;
+                (colour, "Result")
+            }
+        };
         let hair = self.session.node(shader, "principled_hair_bsdf")?;
         self.session.set_string(hair, "model", "Chiang")?;
         self.session.set_string(hair, "parametrization", "Direct coloring")?;
-        self.session.connect(shader, colour, "Result", hair, "Color")?;
-        self.session.set_float(hair, "Roughness", m.fuzz_roughness)?;
-        self.session.set_float(hair, "Radial Roughness", m.fuzz_roughness)?;
+        self.session.connect(shader, colour.0, colour.1, hair, "Color")?;
+        match own.filter(|_| own_roughness) {
+            Some(own) => {
+                self.session.connect(shader, own, "Alpha", hair, "Roughness")?;
+                self.session.connect(shader, own, "Alpha", hair, "Radial Roughness")?;
+            }
+            None => {
+                self.session.set_float(hair, "Roughness", m.fuzz_roughness)?;
+                self.session.set_float(hair, "Radial Roughness", m.fuzz_roughness)?;
+            }
+        }
         self.session.set_float(hair, "Coat", 0.0)?;
         self.session.set_float(hair, "IOR", tequila_materials::lobes::fibre::FIBRE_IOR)?;
         self.session.set_float(hair, "Offset", 0.0)?;
