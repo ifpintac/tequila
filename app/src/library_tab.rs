@@ -12,21 +12,26 @@
 //! tracing sixty spheres the moment a window opens is a visible stall, and a
 //! browser that hitches when you scroll is worse than one with plain swatches.
 //!
-//! A single background job renders previews; the UI only uploads completed
-//! images. Only tiles on screen, and the next screenful, are rendered, top
-//! first, and they are cached by content hash — in memory, and on disk for
-//! every later launch, so the library is rendered once rather than on every
-//! start or every update. Pending tiles show a neutral placeholder.
+//! The library's own presets ship with their thumbnails, rendered with the
+//! release (`thumbnails/look-N` beside them), so opening the shelf for the
+//! first time renders nothing: three hundred spheres path traced on the
+//! user's machine, the best part of an hour of a core, was the first
+//! session's shelf going grey a screenful at a time.
+//!
+//! Anything else - the user's own materials, a plugin's, a preset changed
+//! since its thumbnail was made - is rendered by one worker in the
+//! background (`previews`), the tiles on screen first, then the rest of the
+//! shelf, whether or not the window is drawing. The UI only uploads finished
+//! pictures. Every preview is cached by content hash, in memory and on disk
+//! for every later launch. Pending tiles show a neutral placeholder.
 
 use eframe::egui;
 use tequila_format::library::{self, LibraryEntry};
 use tequila_materials::openpbr::Material;
 use tequila_render_core::environment::Environment;
-use tequila_render_cpu::{render_thumbnail_textured, Device, PreviewSettings};
+use tequila_render_cpu::{Device, PreviewSettings};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-
-type PreviewJob = std::thread::JoinHandle<Option<(u64, egui::ColorImage)>>;
 
 /// How long a frame may spend reading kept thumbnails from disk before it
 /// leaves the rest for the next, so opening the library never hitches.
@@ -149,9 +154,23 @@ pub struct LibraryTab {
     /// How many pixels across a tile is drawn, so how many its preview is
     /// rendered at ([`tile_pixels`]).
     tile_pixels: usize,
-    /// Names still waiting for a preview, in the order they were first seen.
+    /// The tiles on screen still waiting for a preview, last first.
     queued: Vec<usize>,
-    preview_job: Option<PreviewJob>,
+    /// The worker that makes previews, in the background.
+    previews: crate::previews::Previews,
+    /// Where the library's shipped thumbnails are for this look, if it has
+    /// any; none in a test that renders its own.
+    shipped: Option<std::path::PathBuf>,
+    /// Each entry's shipped thumbnail, when it has one made from it as it is.
+    shipped_files: Vec<Option<std::path::PathBuf>>,
+    /// Counted up whenever the entries are read again.
+    generation: u64,
+    /// What the worker was last given: the keys of the tiles on screen, and
+    /// the generation and tile size the rest of the shelf was queued for.
+    sent: (Vec<u64>, Option<(u64, usize)>),
+    /// Whether the rest of the shelf is made in the background too. Off in
+    /// the tests, which would otherwise path trace the whole library.
+    background: bool,
     device: Option<Arc<Device>>,
     environment: Arc<Environment>,
     /// Thumbnails kept from earlier launches.
@@ -209,7 +228,7 @@ impl LibraryTab {
         entries.extend(mine);
         problems.append(&mut mine_problems);
         entries.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
-        LibraryTab {
+        let mut tab = LibraryTab {
             keys: entries.iter().map(entry_key).collect(),
             entries,
             problems,
@@ -222,7 +241,12 @@ impl LibraryTab {
             thumbnails: HashMap::new(),
             tile_pixels: 96,
             queued: Vec::new(),
-            preview_job: None,
+            previews: Default::default(),
+            shipped: shipped_folder(),
+            shipped_files: Vec::new(),
+            generation: 0,
+            sent: (Vec::new(), None),
+            background: true,
             device: Device::shared().ok(),
             environment,
             disk,
@@ -234,6 +258,53 @@ impl LibraryTab {
             plugin_folders: Vec::new(),
             section: Section::Materials,
             studios: Default::default(),
+        };
+        tab.find_shipped();
+        tab
+    }
+
+    /// Which entries have a thumbnail shipped with the library that was made
+    /// from them as they are now.
+    fn find_shipped(&mut self) {
+        let folder = self.shipped.clone();
+        self.shipped_files = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let folder = folder.as_ref()?;
+                if entry.source != library::Source::Standard {
+                    return None;
+                }
+                let path = std::path::Path::new(&entry.path);
+                let preset = std::fs::read(path).ok()?;
+                let file = folder.join(crate::thumbnail::shipped_name(path.file_stem()?.to_str()?, &preset));
+                file.is_file().then_some(file)
+            })
+            .collect();
+    }
+
+    /// Entry `index`'s shipped thumbnail, `pixels` across, if it has one at
+    /// least that large.
+    fn shipped_image(&self, index: usize, pixels: usize) -> Option<egui::ColorImage> {
+        if pixels > crate::thumbnail::SHIPPED_PIXELS {
+            return None;
+        }
+        let file = self.shipped_files.get(index)?.as_ref()?;
+        crate::thumbnail::load_png(file).map(|image| crate::thumbnail::fit(image, pixels))
+    }
+
+    /// What the worker needs to make entry `index`'s preview with `settings`.
+    fn job(&self, index: usize, settings: PreviewSettings) -> crate::previews::Job {
+        let entry = &self.entries[index];
+        crate::previews::Job {
+            key: self.keys[index],
+            disk_key: crate::thumbnail::sized_key(self.keys[index], settings.size),
+            graph: entry.graph.clone(),
+            pictures: entry.textures.clone(),
+            // A strip's braid or rib at its true size, not stretched round
+            // the ball.
+            settings: PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings },
+            shipped: self.shipped_files.get(index).cloned().flatten(),
         }
     }
 
@@ -313,6 +384,8 @@ impl LibraryTab {
         self.entries = entries;
         self.problems = problems;
         self.queued.clear();
+        self.generation += 1;
+        self.find_shipped();
         self.watched = (std::time::Instant::now(), folder_signature(&user_library_path()));
     }
 
@@ -713,87 +786,75 @@ impl LibraryTab {
 
     /// Upload finished previews and start at most one background job.
     fn render_queued(&mut self, ctx: &egui::Context) {
-        if let Some(job) = &self.preview_job {
-            if !job.is_finished() {
-                return;
+        // What the worker has made since the last frame.
+        for (key, pixels, image) in self.previews.made() {
+            if self.thumbnails.get(&key).is_some_and(|texture| texture.size()[0] >= pixels) {
+                continue;
             }
-            if let Some(Ok(Some((key, image)))) = self.preview_job.take().map(|job| job.join()) {
-                let handle = ctx.load_texture(
-                    format!("preview_{key:x}"),
-                    image,
-                    egui::TextureOptions::LINEAR,
-                );
-                self.thumbnails.insert(key, handle);
-            }
+            let handle = ctx.load_texture(format!("preview_{key:x}"), image, egui::TextureOptions::LINEAR);
+            self.thumbnails.insert(key, handle);
         }
         let Some(device) = self.device.clone() else {
             return;
         };
+        self.previews.start(device, self.environment.clone(), self.disk.clone(), ctx.clone());
         let pixels = self.tile_pixels;
         let settings = tile_settings(pixels);
         let started = std::time::Instant::now();
         // Tiles read from disk are drawn the next frame, so ask for one.
         let mut loaded = false;
 
+        // The tiles on screen, top first: shipped with the library or kept
+        // from an earlier launch, read now while the frame has time; the
+        // rest for the worker, before anything else.
+        let mut first = Vec::new();
         while let Some(index) = self.queued.pop() {
-            let (Some(entry), Some(&key)) = (self.entries.get(index), self.keys.get(index)) else {
+            let Some(&key) = self.keys.get(index) else {
                 continue;
             };
             if self.sharp(key) {
                 continue;
             }
-            // Kept from an earlier launch: a file read, not a render.
-            if let Some(image) = self.disk.load(crate::thumbnail::sized_key(key, pixels)) {
-                let handle = ctx.load_texture(format!("preview_{key:x}"), image, egui::TextureOptions::LINEAR);
-                self.thumbnails.insert(key, handle);
-                loaded = true;
-                if started.elapsed() > DISK_BUDGET {
-                    break;
+            if started.elapsed() < DISK_BUDGET {
+                let image = self.shipped_image(index, pixels).or_else(|| self.disk.load(crate::thumbnail::sized_key(key, pixels)));
+                if let Some(image) = image {
+                    let handle = ctx.load_texture(format!("preview_{key:x}"), image, egui::TextureOptions::LINEAR);
+                    self.thumbnails.insert(key, handle);
+                    loaded = true;
+                    continue;
                 }
-                continue;
             }
-            // A strip's braid or rib at its true size, not stretched round
-            // the ball.
-            let settings = PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings };
-            let graph = entry.graph.clone();
-            let pictures = entry.textures.clone();
-            let environment = self.environment.clone();
-            let disk = self.disk.clone();
-            let repaint = ctx.clone();
-            self.preview_job = std::thread::Builder::new()
-                .name("tequila-thumbnail".into())
-                .spawn(move || {
-                    // Thumbnail parallelism must not consume the viewport's
-                    // global worker pool. Reuse one dedicated CPU worker, at
-                    // the ordinary priority: in Windows' background mode it
-                    // was starved whenever anything kept the processor busy -
-                    // a viewport rendering on the processor kept the shelf
-                    // grey until it settled.
-                    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-                    let pool = POOL.get_or_init(|| rayon::ThreadPoolBuilder::new()
-                        .num_threads(1).thread_name(|_| "tequila-preview-cpu".into())
-                        .build().ok()).as_ref()?;
-                    let textures = picture_table(&pictures);
-                    let Ok(thumbnail) = pool.install(|| {
-                        render_thumbnail_textured(&device, &graph, textures, environment, settings)
-                    }) else {
-                        repaint.request_repaint();
-                        return None;
-                    };
-
-                    let rgba = crate::thumbnail::develop_rgba(&thumbnail);
-                    disk.store(crate::thumbnail::sized_key(key, pixels), thumbnail.width, thumbnail.height, &rgba);
-                    let image = egui::ColorImage::from_rgba_unmultiplied([thumbnail.width, thumbnail.height], &rgba);
-                    repaint.request_repaint();
-                    Some((key, image))
-                })
-                .ok();
-            break;
+            first.push(index);
+        }
+        let keys: Vec<u64> = first.iter().map(|&index| self.keys[index]).collect();
+        if keys != self.sent.0 {
+            self.previews.set_first(first.iter().map(|&index| self.job(index, settings)).collect());
+            self.sent.0 = keys;
+        }
+        // The rest of the shelf behind them, in its order, once for these
+        // entries at this size: every tile with nothing to show yet that has
+        // no thumbnail shipped for it, so the whole shelf is ready before
+        // anyone scrolls to it.
+        if self.background && self.sent.1 != Some((self.generation, pixels)) {
+            let rest = (0..self.entries.len())
+                .filter(|&index| !self.sharp(self.keys[index]))
+                .filter(|&index| self.shipped_files.get(index).is_none_or(|f| f.is_none()) || pixels > crate::thumbnail::SHIPPED_PIXELS)
+                .map(|index| self.job(index, settings))
+                .collect();
+            self.previews.set_rest(rest);
+            self.sent.1 = Some((self.generation, pixels));
         }
         if loaded {
             ctx.request_repaint();
         }
     }
+}
+
+/// Where the thumbnails shipped with the library are for this look, if it
+/// has any.
+fn shipped_folder() -> Option<std::path::PathBuf> {
+    let folder = standard_library_path().join("thumbnails").join(format!("look-{}", crate::thumbnail::THUMBNAIL_LOOK));
+    folder.is_dir().then_some(folder)
 }
 
 /// The entries to preview: those on screen and as many again below them, so
@@ -1058,6 +1119,25 @@ pub(crate) fn standard_library_path() -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tequila_render_cpu::render_thumbnail_textured;
+
+    /// Frames, with entry `index` on screen as the shelf would have it each
+    /// frame, until the worker has nothing left and `key` has a preview, or
+    /// the deadline passes: a guard against a worker that never finishes,
+    /// not a measure of speed, since beside the rest of the suite it shares
+    /// the processor with hundreds of tests.
+    fn settle(tab: &mut LibraryTab, context: &egui::Context, index: usize, key: u64) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        loop {
+            tab.queued.push(index);
+            tab.render_queued(context);
+            if tab.previews.idle() && tab.thumbnails.contains_key(&key) {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "preview worker timed out");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     /// Every preset in the standard library on one sheet, rendered as the
     /// thumbnails are but larger and cleaner, for judging the library as a
@@ -1139,22 +1219,13 @@ mod tests {
         let expected = graph_key(&tab.entries[0].graph);
         tab.queued.push(0);
         tab.render_queued(&context);
-        assert!(tab.preview_job.is_some(), "preview should run on a worker");
+        assert!(!tab.previews.idle(), "preview should run on a worker");
         tab.entries.reverse();
         tab.keys.reverse();
         tab.queued.clear();
-        // Generous: the preview shares the thread pool with every render
-        // test in this binary, and timed out at 30 s under that load while
-        // what this checks is which key it lands under, not how fast.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        while !tab.preview_job.as_ref().unwrap().is_finished() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "preview worker timed out"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        tab.render_queued(&context);
+        // Entry 0 is now the last: the one asked for is still on screen.
+        let last = tab.entries.len() - 1;
+        settle(&mut tab, &context, last, expected);
         assert_eq!(tab.thumbnails.get(&expected).unwrap().size(), [96, 96]);
     }
 
@@ -1261,11 +1332,146 @@ mod tests {
         tab_keeping_in(&scratch_cache("tab"))
     }
 
+    /// The shelf, its previews kept in `folder`, rendering what is on screen
+    /// and nothing else: no thumbnails shipped, and nothing made behind the
+    /// screen, or every test would path trace the whole library.
     fn tab_keeping_in(folder: &std::path::Path) -> LibraryTab {
-        LibraryTab::with_cache(
+        let mut tab = LibraryTab::with_cache(
             Arc::new(tequila_scene::demo::preview_environment()),
             Arc::new(crate::thumbnail::DiskCache::in_folder(folder, "this-build")),
-        )
+        );
+        tab.shipped = None;
+        tab.find_shipped();
+        tab.background = false;
+        tab
+    }
+
+    /// A preset's shipped thumbnail is shown at once, scaled to its tile,
+    /// with nothing rendered; one shipped for the preset as it was before a
+    /// change is not, and the preset renders its own.
+    #[test]
+    fn a_shipped_thumbnail_is_shown_without_rendering() {
+        let context = egui::Context::default();
+        let mut tab = tab();
+        let folder = scratch_cache("shipped");
+        std::fs::create_dir_all(&folder).unwrap();
+        let entry = tab.entries[0].clone();
+        let path = std::path::Path::new(&entry.path);
+        let preset = std::fs::read(path).unwrap();
+        let file = folder.join(crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), &preset));
+        let side = crate::thumbnail::SHIPPED_PIXELS;
+        let rgba: Vec<u8> = (0..side * side).flat_map(|_| [200, 100, 50, 255]).collect();
+        crate::thumbnail::DiskCache::write_png(&file, side, side, &rgba).expect("writable");
+        tab.shipped = Some(folder.clone());
+        tab.find_shipped();
+        assert!(tab.shipped_files[0].is_some(), "the shipped thumbnail was not found");
+        tab.tile_pixels = 144;
+        tab.queued.push(0);
+        tab.render_queued(&context);
+        let key = tab.keys[0];
+        assert_eq!(tab.thumbnails.get(&key).expect("shown at once").size(), [144, 144]);
+        assert_eq!(tab.previews.waiting(), (0, 0), "a shipped thumbnail was rendered");
+        // Made from another preset: not this one's.
+        let other = crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), b"{ something else }");
+        assert_ne!(file.file_name().unwrap().to_str().unwrap(), other);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// With nothing on screen waiting, the rest of the shelf is queued for
+    /// the worker, in the shelf's order - all of it but what is shipped -
+    /// so it is made whether or not anyone scrolls to it, or the window is
+    /// in front.
+    #[test]
+    fn the_rest_of_the_shelf_is_made_in_the_background() {
+        let context = egui::Context::default();
+        let mut tab = tab();
+        tab.background = true;
+        // Entry 1 has a thumbnail shipped; the rest none.
+        tab.shipped_files = vec![None; tab.entries.len()];
+        tab.shipped_files[1] = Some(std::path::PathBuf::from("shipped.png"));
+        tab.render_queued(&context);
+        let (first, rest) = tab.previews.waiting();
+        assert_eq!(first, 0, "nothing on screen was asked for");
+        // The worker may have taken one already.
+        let expected = tab.entries.len() - 1;
+        assert!(rest + 1 >= expected && rest <= expected, "{rest} of the shelf's {} queued behind the screen", tab.entries.len());
+        // Queued once: another frame leaves the queue as it is.
+        let before = tab.previews.waiting().1;
+        tab.render_queued(&context);
+        assert!(tab.previews.waiting().1 <= before, "the rest was queued again");
+    }
+
+    /// The shipped thumbnails written again with what `write_png` now does,
+    /// without rendering them again: `cargo test -p tequila-app --release
+    /// recompress_the_shipped_thumbnails -- --ignored`.
+    #[test]
+    #[ignore]
+    fn recompress_the_shipped_thumbnails() {
+        let folder = shipped_folder().expect("thumbnails shipped");
+        let (mut before, mut after) = (0u64, 0u64);
+        for file in std::fs::read_dir(&folder).unwrap().flatten() {
+            let path = file.path();
+            before += file.metadata().unwrap().len();
+            // Fitted too: a clear material renders at twice the size, for
+            // its edges, and is shown at the tile's.
+            let image = crate::thumbnail::fit(crate::thumbnail::load_png(&path).expect("readable"), crate::thumbnail::SHIPPED_PIXELS);
+            let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+            crate::thumbnail::DiskCache::write_png(&path, image.size[0], image.size[1], &rgba).expect("writable");
+            after += std::fs::metadata(&path).unwrap().len();
+        }
+        println!("{before} bytes before, {after} after");
+    }
+
+    /// Shrunk to its tile, a picture keeps its colour and its shape.
+    #[test]
+    fn a_picture_fits_its_tile() {
+        let big = egui::ColorImage::new([240, 240], egui::Color32::from_rgb(200, 100, 50));
+        let small = crate::thumbnail::fit(big, 144);
+        assert_eq!(small.size, [144, 144]);
+        assert!(small.pixels.iter().all(|p| p.to_array() == [200, 100, 50, 255]), "the colour changed");
+        let already = egui::ColorImage::new([96, 96], egui::Color32::WHITE);
+        assert_eq!(crate::thumbnail::fit(already, 144).size, [96, 96], "a smaller picture was enlarged");
+        // A file's name is the same on Windows, whose checkout writes two
+        // characters for a line's end, as anywhere else.
+        assert_eq!(crate::thumbnail::shipped_name("abs", b"{\r\n  \"a\": 1\r\n}"), crate::thumbnail::shipped_name("abs", b"{\n  \"a\": 1\n}"));
+    }
+
+    /// The thumbnails the library ships with, rendered as the shelf renders
+    /// a tile, at [`crate::thumbnail::SHIPPED_PIXELS`]: `cargo test -p
+    /// tequila-app --release ship_the_library_thumbnails -- --ignored`
+    /// before a release whose presets, renderer or preview changed. Writes
+    /// `thumbnails/look-N` beside the standard library, emptied first.
+    #[test]
+    #[ignore]
+    fn ship_the_library_thumbnails() {
+        use rayon::prelude::*;
+        let folder = standard_library_path().join("thumbnails").join(format!("look-{}", crate::thumbnail::THUMBNAIL_LOOK));
+        let _ = std::fs::remove_dir_all(standard_library_path().join("thumbnails"));
+        std::fs::create_dir_all(&folder).expect("writable");
+        let (entries, errors) = library::read_directory(&standard_library_path());
+        assert!(errors.is_empty(), "{errors:?}");
+        let device = Device::shared().expect("embree");
+        let environment = Arc::new(tequila_scene::demo::preview_environment());
+        let settings = tile_settings(crate::thumbnail::SHIPPED_PIXELS);
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        entries.par_iter().for_each(|entry| {
+            let path = std::path::Path::new(&entry.path);
+            let preset = std::fs::read(path).expect("readable");
+            let name = crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), &preset);
+            let settings = PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings };
+            let thumbnail = render_thumbnail_textured(&device, &entry.graph, picture_table(&entry.textures), environment.clone(), settings).expect("renders");
+            // A clear material renders at twice the size, for its edges, and
+            // is kept at the tile's.
+            let developed = egui::ColorImage::from_rgba_unmultiplied([thumbnail.width, thumbnail.height], &crate::thumbnail::develop_rgba(&thumbnail));
+            let image = crate::thumbnail::fit(developed, crate::thumbnail::SHIPPED_PIXELS);
+            let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+            crate::thumbnail::DiskCache::write_png(&folder.join(name), image.size[0], image.size[1], &rgba).expect("writable");
+            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n % 25 == 0 {
+                println!("{n} of {}", entries.len());
+            }
+        });
+        println!("wrote {} thumbnails to {}", entries.len(), folder.display());
     }
 
     /// A folder of its own for each test, emptied first.
@@ -1287,22 +1493,14 @@ mod tests {
         let key = graph_key(&first.entries[0].graph);
         first.queued.push(0);
         first.render_queued(&context);
-        // A guard against a worker that never finishes, not a measure of
-        // speed: alone it takes seconds, and beside the rest of the suite,
-        // sharing the processor with hundreds of tests, over a minute.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        while !first.preview_job.as_ref().expect("the first launch renders it").is_finished() {
-            assert!(std::time::Instant::now() < deadline, "preview worker timed out");
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        first.render_queued(&context);
+        settle(&mut first, &context, 0, key);
         assert!(first.thumbnails.contains_key(&key));
         drop(first);
 
         let mut next = tab_keeping_in(&folder);
         next.queued.push(0);
         next.render_queued(&context);
-        assert!(next.preview_job.is_none(), "the next launch rendered the thumbnail again");
+        assert_eq!(next.previews.waiting(), (0, 0), "the next launch rendered the thumbnail again");
         assert_eq!(
             next.thumbnails.get(&key).expect("the next launch shows it at once").size(),
             [96, 96]
@@ -1339,18 +1537,19 @@ mod tests {
         tab.thumbnails.insert(key, small);
         tab.queued.push(0);
         tab.render_queued(&context);
-        assert!(tab.preview_job.is_none(), "a tile of 96 pixels was rendered again");
+        assert_eq!(tab.previews.waiting(), (0, 0), "a tile of 96 pixels was rendered again");
 
         tab.tile_pixels = 144;
         tab.queued.push(0);
         tab.render_queued(&context);
         assert_eq!(tab.thumbnails.get(&key).unwrap().size(), [96, 96], "the smaller one is shown meanwhile");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-        while !tab.preview_job.as_ref().expect("a larger tile renders its preview again").is_finished() {
-            assert!(std::time::Instant::now() < deadline, "preview worker timed out");
+        while tab.thumbnails.get(&key).unwrap().size()[0] < 144 {
+            assert!(std::time::Instant::now() < deadline, "a larger tile did not render its preview again");
+            tab.queued.push(0);
+            tab.render_queued(&context);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        tab.render_queued(&context);
         assert_eq!(tab.thumbnails.get(&key).unwrap().size(), [144, 144]);
         let _ = std::fs::remove_dir_all(&folder);
     }

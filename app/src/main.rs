@@ -36,6 +36,7 @@ mod grid;
 mod image_tab;
 mod library_actions;
 mod plugins;
+mod previews;
 mod plugins_ui;
 mod library_dialogs;
 mod library_tab;

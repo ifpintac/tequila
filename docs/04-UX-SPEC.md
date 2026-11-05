@@ -381,7 +381,7 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - **Categories**: Materials, Environments, Backplates, Textures, Colours, Models. Tree of folders plus flat tag filtering.
 - **Sources**: bundled Standard Library (read-only), user library (writable, path configurable), project-local (materials in the open document), and optional shared network folders.
 - **Search**: fuzzy over name, tags, and category; instant filtering.
-- **Thumbnails**: rendered by the actual renderer on a standard preview scene (sphere/cloth/shaderball selectable), generated lazily on first display, cached on disk keyed by content hash, regenerated when the material changes. Size slider.
+- **Thumbnails**: rendered by the actual renderer on a standard preview scene (sphere/cloth/shaderball selectable), generated lazily on first display, cached on disk keyed by content hash, regenerated when the material changes. Size slider. *As built:* the standard library ships its thumbnails, rendered with the release (`thumbnails/look-N` beside the presets), so the shelf is full the first time it opens; anything else is rendered by one background worker, the tiles on screen first and then the rest of the shelf, whether or not the window is drawing.
 - **Favorites**, **recently used**, and **used in this project** as virtual folders.
 - Right-click: Apply to Selection · Rename · Duplicate · Edit in Material Graph · Show in File Browser · Delete · Export.
 
