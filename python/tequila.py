@@ -311,7 +311,10 @@ class Client:
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
         'meadow'|'rose', studio_drag=[studio, slot] (a Studio held part-way
-        through a drag in the Studios tab, for a screenshot) or False."""
+        through a drag in the Studios tab, for a screenshot) or False,
+        preferences (bool), spacemouse={'reports': [[id,
+        byte, ...]], 'seconds': n} (made-up 3D mouse input, read as a
+        device's HID reports)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

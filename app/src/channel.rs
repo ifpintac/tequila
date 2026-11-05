@@ -521,6 +521,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
     }
+    if let Some(open) = change.preferences {
+        app.start_screen.open &= !open;
+        app.spacemouse.preferences_open = open;
+    }
+    if let Some(input) = &change.spacemouse {
+        app.spacemouse.inject(&input.reports, input.seconds);
+    }
     if change.mode.is_some() || change.theme.is_some() {
         let mut look = app.pending_look.unwrap_or_else(crate::theme::appearance);
         if let Some(mode) = &change.mode {
@@ -570,6 +577,17 @@ fn ui_state(app: &TequilaApp) -> Value {
             let mut pictures = Object::new();
             pictures.set("current", current as f64).set("studios", app.project.document().studios.len() as f64).set("rendering", rendering);
             pictures.build()
+        })
+        .set("preferences", app.spacemouse.preferences_open)
+        .set("spacemouse", {
+            // The 3D mouse: the device read, if any, and the six axes as
+            // the view takes them now, smoothed.
+            let mut mouse = Object::new();
+            mouse
+                .set("enabled", app.spacemouse.settings.enabled)
+                .set("device", app.spacemouse.device().map_or(Value::Null, Value::String))
+                .set("axes", app.spacemouse.axes().iter().map(|v| Value::Number(*v as f64)).collect::<Vec<_>>());
+            mouse.build()
         })
         .set("recent", Value::Array(app.recent.iter().map(|p| Value::String(p.display().to_string())).collect()))
         .set("mode", app.pending_look.unwrap_or_else(crate::theme::appearance).mode.key())

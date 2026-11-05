@@ -1274,6 +1274,42 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       groups for relighting" and the Render window's Relight section,
       which rebalances and tints each group live and saves `…_relit`
       (see M6's light layer isolation).
+- [x] 3D mouse navigation: a 3Dconnexion SpaceMouse turns, pans and
+      zooms the view, the way CAD applications do (`docs/04` §6.1.1).
+      *As built, November 5* (`app/src/spacemouse/`: `report`, `spnav`,
+      `hid`, `navigate`), **untested on a device**. The reader:
+      - Windows and macOS read the device's own HID reports through
+        `hidapi` (MIT; on Windows its pure-Rust backend), on a thread of
+        its own.
+      - Linux, and a Mac where it runs, read spacenavd's socket, protocol 0.
+      - 3Dconnexion's SDK and its Mac framework are not used.
+      - Reports 1 and 2 (translation, rotation), report 1 of twelve bytes
+        (all six axes) and report 3 (buttons) are decoded for the devices
+        under 0x256F, and for the named SpaceMouse family under 0x046D.
+
+      The six axes go through a dead zone, a gentle curve, per-axis invert
+      and an optional dominant axis, then a 50 ms smoothing that moves the
+      orbit camera by its exact mean over each frame:
+      - turning about the selection's or the model's centre, without a jump;
+      - panning by the height the view frames there;
+      - zooming by a share of the distance.
+
+      The horizon stays level. The left button steps to the next Studio and
+      the right fits the view. The settings are under Edit > Preferences.
+      `{"op":"ui","spacemouse":{...}}` feeds made-up reports through the
+      same decoder, for scripts and tests. Held by 18 tests in `spacemouse`
+      and `synthetic_3d_mouse_input_parses`:
+      the decoding of every report shape and of spacenavd's packets, which
+      devices are read, the dead zone, inverts and dominant axis, the
+      direction of every move, the same motion at 30 and 144 frames a
+      second ending within 2% of each other, panning that scales with the
+      distance, a turn about an off-centre pivot that keeps the pivot in
+      place and returns, sensitivity, a lost report stopping on its own,
+      the settings file, and reports driving the camera from end to end,
+      one gesture one undo step. Not done: testing on hardware; the roll
+      axis (the orbit camera has no roll); the Mac with 3DxWare running,
+      which keeps the device to itself; more of a SpaceMouse Pro's or
+      Enterprise's keys than the two main buttons.
 - [ ] AI image operators (restyle/background/upscale) as post-render operations with depth/normal/Cryptomatte conditioning.
 - [ ] Collaborative scene review (the open file format makes this tractable).
 

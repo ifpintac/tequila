@@ -62,6 +62,7 @@ mod recent;
 mod render_frame;
 mod render_window;
 mod scene_tab;
+mod spacemouse;
 mod procedural_gpu;
 mod solid_gpu;
 mod start_screen;
@@ -449,6 +450,10 @@ struct TequilaApp {
     measure: measure_tool::MeasureTool,
     studio_tab: studio_tab::StudioTab,
     templates_panel: templates_panel::TemplatesPanel,
+    /// A 3D mouse, and its preferences (`spacemouse`).
+    spacemouse: spacemouse::SpaceMouse,
+    /// The Studio a 3D mouse's button stepped to last.
+    spacemouse_studio: Option<usize>,
 
     environment_tab: environment_tab::EnvironmentTab,
     camera_tab: camera_tab::CameraTab,
@@ -759,6 +764,39 @@ fn read_build_note(text: &str) -> Option<(String, String)> {
 /// document — importable, selectable, saveable — so the first frame
 /// exercises the same path everything else does. A crashed session that was
 /// never saved is recovered onto it too, since its journal starts from it.
+/// What Frame selection (or Frame all, or with nothing selected) frames:
+/// the selected parts' bounds in the world, or everything shown.
+fn framing_bounds(project: &Project, everything: bool) -> tequila_core::math::Aabb {
+    use tequila_core::math::Aabb;
+    let document = project.document();
+    if everything || project.selection.is_empty() {
+        return tequila_scene::snapshot::visible_bounds(document);
+    }
+    let mut bounds = Aabb::EMPTY;
+    for node in project.selection.nodes() {
+        for id in document.tree.descendants_and_self(node) {
+            let Some(part) = document.tree.get(id) else {
+                continue;
+            };
+            let tequila_scene::tree::NodeKind::Part { mesh } = part.kind else {
+                continue;
+            };
+            if let Some(source) = document.geometry.get(mesh) {
+                bounds.extend(&source.bounds().transformed(&document.tree.world_transform(id)));
+            }
+        }
+    }
+    bounds
+}
+
+/// What a 3D mouse turns the view about: the selection's centre, or the
+/// model's when nothing is selected; `None` for an empty scene, which
+/// turns about the view's own centre.
+fn navigation_pivot(project: &Project) -> Option<Vec3> {
+    let bounds = framing_bounds(project, false);
+    (!bounds.is_empty()).then(|| bounds.center())
+}
+
 fn starter_document() -> tequila_scene::SceneDocument {
     tequila_scene::demo::demo_document_sized(tequila_scene::demo::DemoMaterial::Plastic, 0.18, tequila_scene::demo::STARTER_RADIUS)
 }
@@ -793,6 +831,7 @@ impl TequilaApp {
         app.recent = recent::read(&recent_file);
         app.recent_file = Some(recent_file);
         app.updates = update::Updates::with_preferences(update::Preferences::load());
+        app.spacemouse = spacemouse::SpaceMouse::load();
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -908,6 +947,8 @@ impl TequilaApp {
             measure: measure_tool::MeasureTool::default(),
             studio_tab: studio_tab::StudioTab::default(),
             templates_panel: templates_panel::TemplatesPanel::default(),
+            spacemouse: spacemouse::SpaceMouse::default(),
+            spacemouse_studio: None,
             environment_tab: Default::default(),
             camera_tab: Default::default(),
             image_tab: Default::default(),
@@ -1550,6 +1591,9 @@ impl eframe::App for TequilaApp {
         if self.show_about {
             self.about_window(ctx);
         }
+        // A 3D mouse is read from the first frame, and set up here.
+        self.spacemouse.start(ctx);
+        self.spacemouse.preferences(ctx);
         // A label's UV editor button, from the Labels tab.
         let request = ctx.data_mut(|d| {
             let id = egui::Id::new(uv_editor::OPEN);
@@ -1893,6 +1937,24 @@ impl TequilaApp {
                     self.camera.zoom(scroll / orbit::POINTS_PER_NOTCH);
                 }
                 moved = true;
+            }
+        }
+
+        // ---- A 3D mouse (`spacemouse`) ---------------------------------
+        //
+        // Whatever the pointer is doing: the other hand turns, pans and
+        // zooms. A motion that comes to rest is one step to undo, as a drag
+        // is.
+        if !dropping {
+            let dt = ui.input(|i| i.stable_dt);
+            let project = &self.project;
+            let step = self.spacemouse.frame(ui.ctx(), &mut self.camera, dt, aspect, || navigation_pivot(project));
+            moved |= step.moved;
+            if step.ended {
+                self.project.end_interaction();
+            }
+            if let Some(action) = step.action {
+                moved |= self.spacemouse_button(action);
             }
         }
 
@@ -2436,31 +2498,7 @@ impl TequilaApp {
 
     /// §6.1's Frame selection / Frame all.
     fn frame(&mut self, everything: bool) {
-        use tequila_core::math::Aabb;
-        let document = self.project.document();
-        let bounds = if everything || self.project.selection.is_empty() {
-            tequila_scene::snapshot::visible_bounds(document)
-        } else {
-            let mut bounds = Aabb::EMPTY;
-            for node in self.project.selection.nodes() {
-                for id in document.tree.descendants_and_self(node) {
-                    let Some(part) = document.tree.get(id) else {
-                        continue;
-                    };
-                    let tequila_scene::tree::NodeKind::Part { mesh } = part.kind else {
-                        continue;
-                    };
-                    if let Some(source) = document.geometry.get(mesh) {
-                        bounds.extend(
-                            &source
-                                .bounds()
-                                .transformed(&document.tree.world_transform(id)),
-                        );
-                    }
-                }
-            }
-            bounds
-        };
+        let bounds = framing_bounds(&self.project, everything);
         if bounds.is_empty() {
             self.toasts.warn("Nothing to frame");
             return;
@@ -2473,6 +2511,50 @@ impl TequilaApp {
         // a default three-quarter view would undo the shot they had set up.
         self.camera.frame_at(framed.target, framed.distance);
         self.submit();
+    }
+
+    /// A 3D mouse's button: fit the view, or step through the Studios -
+    /// through the saved cameras when there are none. True when the view
+    /// moved.
+    fn spacemouse_button(&mut self, action: spacemouse::navigate::ButtonAction) -> bool {
+        use spacemouse::navigate::ButtonAction;
+        let step = match action {
+            ButtonAction::Nothing => return false,
+            ButtonAction::FitView => {
+                self.frame(false);
+                return true;
+            }
+            ButtonAction::NextStudio => 1,
+            ButtonAction::PreviousStudio => -1,
+        };
+        let document = self.project.document();
+        let studios = document.studios.len();
+        if studios > 0 {
+            let index = match self.spacemouse_studio.filter(|&i| i < studios) {
+                Some(last) => (last as isize + step).rem_euclid(studios as isize) as usize,
+                None if step > 0 => 0,
+                None => studios - 1,
+            };
+            if self.project.apply(Command::ApplyStudio { index }).is_ok() {
+                self.spacemouse_studio = Some(index);
+                self.project.status = format!("Applied {}", self.project.document().studios[index].name);
+                self.camera.adopt(self.project.camera());
+                return true;
+            }
+            return false;
+        }
+        let cameras = document.cameras.len();
+        if cameras > 1 {
+            let index = (document.cameras.active_index() as isize + step).rem_euclid(cameras as isize) as usize;
+            if self.project.apply(Command::SelectCamera { index }).is_ok() {
+                self.camera.adopt(self.project.camera());
+                self.project.status = format!("Camera: {}", self.project.camera().name);
+                return true;
+            }
+        } else {
+            self.toasts.info("No Studios or other cameras to step through");
+        }
+        false
     }
 
     /// §6.2's `E` / `C` / `B` background bindings.
@@ -3152,6 +3234,11 @@ impl TequilaApp {
                         .clicked()
                     {
                         self.redo();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("Preferences…").on_hover_text("The 3D mouse: speed, dead zone, axes and buttons").clicked() {
+                        self.spacemouse.preferences_open = true;
                         ui.close_menu();
                     }
                 });
