@@ -878,11 +878,15 @@ under M10's spectral item).
       colours by layer/object/material/parent, hidden objects; Z up turned
       to Y up; units and tolerance; kept for Re-Tessellate. *Unproven:*
       no Rhino here, so meshes, materials, extrusions, SubD and blocks are
-      tested against a test writer of the same reading of openNURBS; a box
-      written by McNeel's rhino3dm (Rhino 7 archive, an open-source
-      project's fixture) reads by hand. Not read: curves, annotation,
-      lights, linked blocks, embedded bitmaps, mitered extrusion ends, RDK
-      content beyond its simulated material.
+      tested against a test writer of the same reading of openNURBS
+      (`tests/rhino.rs`, 14 tests); read by hand, a box written by
+      McNeel's rhino3dm (archive 70, an open-source project's fixture) and
+      sphere meshes written in archives 50 to 80 by cadmpeg's independent
+      writer, whose reader also agrees with the test writer's files. A
+      folder of real files runs through `real_files`
+      (`TEQUILA_3DM_SAMPLES`). Not read: curves, annotation, lights,
+      linked blocks, embedded bitmaps, mitered extrusion ends, RDK content
+      beyond its simulated material.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
       opened as a project of their own (File > Open, a drop, the start
       screen, `tequila -i`) or imported into one (File > Import, the
