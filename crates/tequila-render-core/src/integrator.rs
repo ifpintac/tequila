@@ -4631,6 +4631,52 @@ mod tests {
     /// sphere is instance 0 and the floor instance 1, as the analytic
     /// intersector numbers them. A triangle that nothing intersects gives the
     /// scene its size, so a shadow ray towards the sky has a finite end.
+    /// A floor seen in a mirror, or through clear glass, has behind it the
+    /// sky the mirror shows above the horizon - not the backdrop the camera
+    /// sees directly. Here the backdrop (the camera's image) is twice as
+    /// bright as the light: a mirror ball's reflection down onto the floor
+    /// used to come back with the backdrop's brightness and its reflection up
+    /// into the sky with the light's, and through a glass ball that drew a
+    /// hard band where the view crossed the horizon.
+    #[test]
+    fn the_floor_in_a_mirror_shows_the_sky_the_mirror_shows() {
+        let mut environment = Environment::uniform(Spectrum::splat(0.5));
+        environment.set_camera_image(Some(Arc::new(tequila_texture::Image::constant(16, 8, Vec3::splat(1.0)))));
+        let floor = ShadowCatcher { shadows: false, ..ShadowCatcher::default() };
+        let size = crate::scene::Mesh::new(vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)], vec![0, 1, 2]);
+        let instances = vec![
+            crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
+            crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))
+                .with_shadow_catcher(floor),
+        ];
+        let mirror = Material::metal(metals::ALUMINIUM, 0.0);
+        let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![mirror], Arc::new(environment));
+        let centre = vec3(0.0, 1.0, 0.0);
+        let intersector = AnalyticIntersector::new(scene)
+            .with_sphere(Sphere::new(centre, 0.5, tequila_core::ids::MaterialId(0)))
+            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+
+        // Two camera rays meeting the ball at the same angle, 25 degrees
+        // above and below its middle: the same Fresnel, one reflection up
+        // into the sky and one down onto the floor.
+        let eye = vec3(0.0, 1.0, 5.0);
+        let seen = |tilt: f32| {
+            let normal = vec3(0.0, tilt.sin(), tilt.cos());
+            let ray = Ray::new(eye, (centre + normal * 0.5 - eye).normalize());
+            let mut sampler = Sampler::new(1, 1, 0, 0);
+            let result = trace_path(&intersector, &IntegratorConfig::product(), ray, Vec2::ZERO, &mut sampler);
+            assert_eq!(result.object_id, 0, "the camera ray missed the ball");
+            result.radiance.luminance()
+        };
+        let (sky, floor) = (seen(25f32.to_radians()), seen(-25f32.to_radians()));
+        assert!(sky > 0.2, "the ball reflects too little of the sky to compare ({sky:.3})");
+        assert!(
+            (floor / sky - 1.0).abs() < 0.02,
+            "the floor in the mirror came back {floor:.3} against the sky's {sky:.3}: it showed the backdrop \
+             the camera sees rather than what the mirror sees beyond it"
+        );
+    }
+
     fn catcher_scene(
         environment: Environment,
         lights: Vec<crate::light::Light>,
@@ -4803,51 +4849,5 @@ mod tests {
         assert!(intersector.scene().has_cutouts());
         let (caught, _) = caught_at_origin(&intersector);
         assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
-    }
-
-    /// A floor seen in a mirror, or through clear glass, has behind it the
-    /// sky the mirror shows above the horizon - not the backdrop the camera
-    /// sees directly. Here the backdrop (the camera's image) is twice as
-    /// bright as the light: a mirror ball's reflection down onto the floor
-    /// used to come back with the backdrop's brightness and its reflection up
-    /// into the sky with the light's, and through a glass ball that drew a
-    /// hard band where the view crossed the horizon.
-    #[test]
-    fn the_floor_in_a_mirror_shows_the_sky_the_mirror_shows() {
-        let mut environment = Environment::uniform(Spectrum::splat(0.5));
-        environment.set_camera_image(Some(Arc::new(tequila_texture::Image::constant(16, 8, Vec3::splat(1.0)))));
-        let floor = ShadowCatcher { shadows: false, ..ShadowCatcher::default() };
-        let size = crate::scene::Mesh::new(vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)], vec![0, 1, 2]);
-        let instances = vec![
-            crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
-            crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))
-                .with_shadow_catcher(floor),
-        ];
-        let mirror = Material::metal(metals::ALUMINIUM, 0.0);
-        let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![mirror], Arc::new(environment));
-        let centre = vec3(0.0, 1.0, 0.0);
-        let intersector = AnalyticIntersector::new(scene)
-            .with_sphere(Sphere::new(centre, 0.5, tequila_core::ids::MaterialId(0)))
-            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
-
-        // Two camera rays meeting the ball at the same angle, 25 degrees
-        // above and below its middle: the same Fresnel, one reflection up
-        // into the sky and one down onto the floor.
-        let eye = vec3(0.0, 1.0, 5.0);
-        let seen = |tilt: f32| {
-            let normal = vec3(0.0, tilt.sin(), tilt.cos());
-            let ray = Ray::new(eye, (centre + normal * 0.5 - eye).normalize());
-            let mut sampler = Sampler::new(1, 1, 0, 0);
-            let result = trace_path(&intersector, &IntegratorConfig::product(), ray, Vec2::ZERO, &mut sampler);
-            assert_eq!(result.object_id, 0, "the camera ray missed the ball");
-            result.radiance.luminance()
-        };
-        let (sky, floor) = (seen(25f32.to_radians()), seen(-25f32.to_radians()));
-        assert!(sky > 0.2, "the ball reflects too little of the sky to compare ({sky:.3})");
-        assert!(
-            (floor / sky - 1.0).abs() < 0.02,
-            "the floor in the mirror came back {floor:.3} against the sky's {sky:.3}: it showed the backdrop \
-             the camera sees rather than what the mirror sees beyond it"
-        );
     }
 }
