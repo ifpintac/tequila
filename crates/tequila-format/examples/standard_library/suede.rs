@@ -12,7 +12,7 @@
 //! when it is clearly sharp; a gentler threshold traces a coarse mesh's edge
 //! loops across a panel. Neither grows real fibres: grown, a hairy nap
 //! reads as fur on a shoe, and a calf suede's, a few tenths of a millimetre,
-//! is drawn better by the sheen than by fibres capped at 250,000 a part.
+//! is drawn better by the sheen than by as many fibres as a scene affords.
 
 use crate::recipe::Out;
 use crate::{base, preset, srgb, Preset, Recipe};

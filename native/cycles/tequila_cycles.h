@@ -159,6 +159,12 @@ FSC_API FscNode fsc_curves(FscSession *session,
                            const float *radii,
                            const float *random,
                            FscNode shader);
+/* Four numbers a curve, `rgba`, as the curve attribute `name` on fibres
+ * fsc_curves made: what an Attribute node of that name reads on a fibre,
+ * the same all along it - a fibre's own colour and roughness, taken from
+ * the surface where it is rooted. Returns 0 if `curves` is not fibres or
+ * the count is not theirs. */
+FSC_API int fsc_curves_attribute(FscSession *session, FscNode curves, const char *name, int curve_count, const float *rgba);
 FSC_API FscNode fsc_object(FscSession *session,
                            FscNode mesh,
                            const float *matrix12,

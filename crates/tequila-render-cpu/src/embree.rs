@@ -900,7 +900,7 @@ mod tests {
     fn one_fibre() -> Mesh {
         use tequila_render_core::scene::Fibres;
         let points: Vec<Vec3> = (0..Fibres::POINTS).map(|i| vec3(0.0, i as f32 / (Fibres::POINTS - 1) as f32, 0.0)).collect();
-        Mesh::of_fibres(Fibres { radii: vec![0.05; points.len()], points, random: vec![0.25] })
+        Mesh::of_fibres(Fibres { radii: vec![0.05; points.len()], points, random: vec![0.25], ..Fibres::default() })
     }
 
     /// A fibre is met where it stands, facing the ray, and the hit says how
@@ -965,10 +965,10 @@ mod tests {
         assert_eq!(across.instance, InstanceId(1));
     }
 
-    /// A part's whole budget of fibres - a quarter of a million, a million
-    /// segments - builds in a fraction of a second, which is what lets the
-    /// interactive view keep them: it builds its BVH again at every edit
-    /// that is not a move.
+    /// A quarter of a million fibres - a million segments, what a part
+    /// grew at most before the scene's budget - build in a fraction of a
+    /// second, which is what lets the interactive view keep them: it builds
+    /// its BVH again at every edit that is not a move.
     #[test]
     fn a_parts_whole_budget_of_fibres_builds_quickly() {
         use tequila_render_core::scene::Fibres;

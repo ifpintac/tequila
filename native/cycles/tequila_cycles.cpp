@@ -1048,6 +1048,27 @@ FscNode fsc_curves(FscSession *s,
   return hair;
 }
 
+int fsc_curves_attribute(FscSession *s, FscNode node, const char *name, int curve_count, const float *rgba)
+{
+  const EditLock lock(s);
+  Node *geometry = static_cast<Node *>(node);
+  if (geometry == nullptr || geometry->type != Hair::get_node_type() || rgba == nullptr || name == nullptr) {
+    fail("a curve attribute is for fibres made by fsc_curves");
+    return 0;
+  }
+  Hair *hair = static_cast<Hair *>(node);
+  if (curve_count != int(hair->num_curves())) {
+    fail("a curve attribute does not match the fibres' curves");
+    return 0;
+  }
+  Attribute *attr = hair->attributes.add(ustring(name), TypeRGBA, ATTR_ELEMENT_CURVE);
+  float4 *value = attr->data_float4();
+  for (int c = 0; c < curve_count; c++) {
+    value[c] = make_float4(rgba[4 * c], rgba[4 * c + 1], rgba[4 * c + 2], rgba[4 * c + 3]);
+  }
+  return 1;
+}
+
 FscNode fsc_object(FscSession *s, FscNode mesh, const float *m, unsigned visibility,
                    int shadow_catcher)
 {
