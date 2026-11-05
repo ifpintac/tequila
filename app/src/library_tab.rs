@@ -301,7 +301,9 @@ impl LibraryTab {
             disk_key: crate::thumbnail::sized_key(self.keys[index], settings.size),
             graph: entry.graph.clone(),
             pictures: entry.textures.clone(),
-            settings,
+            // A strip's braid or rib at its true size, not stretched round
+            // the ball.
+            settings: PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings },
             shipped: self.shipped_files.get(index).cloned().flatten(),
         }
     }
@@ -1065,7 +1067,8 @@ pub(crate) fn picture_table(
 /// tells a picture saved over in place from the one it replaced.
 pub fn entry_key(entry: &LibraryEntry) -> u64 {
     use std::hash::{Hash, Hasher};
-    let key = graph_key(&entry.graph);
+    // A strip previewed at another size is another picture.
+    let key = graph_key(&entry.graph) ^ entry.preview_uv_unit.map_or(0, |unit| u64::from(unit.to_bits()).rotate_left(17) | 1);
     if entry.textures.is_empty() {
         return key;
     }
@@ -1161,7 +1164,7 @@ mod tests {
         let tiles: Vec<Vec<u8>> = entries
             .par_iter()
             .map(|entry| {
-                let settings = PreviewSettings { size: px, samples, ..PreviewSettings::default() };
+                let settings = PreviewSettings { size: px, samples, uv_unit: entry.preview_uv_unit, ..PreviewSettings::default() };
                 let thumbnail = render_thumbnail_textured(&device, &entry.graph, picture_table(&entry.textures), environment.clone(), settings).expect("renders");
                 // TEQUILA_SHEET_RAW: as rendered, without the denoiser.
                 let rgba: Vec<u8> = if std::env::var_os("TEQUILA_SHEET_RAW").is_some() {
@@ -1455,6 +1458,7 @@ mod tests {
             let path = std::path::Path::new(&entry.path);
             let preset = std::fs::read(path).expect("readable");
             let name = crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), &preset);
+            let settings = PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings };
             let thumbnail = render_thumbnail_textured(&device, &entry.graph, picture_table(&entry.textures), environment.clone(), settings).expect("renders");
             // A clear material renders at twice the size, for its edges, and
             // is kept at the tile's.

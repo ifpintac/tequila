@@ -99,6 +99,12 @@ pub struct PreviewSettings {
     /// five-centimetre ball by default, or a part's own size to see a
     /// material as it will look on that part.
     pub radius: f32,
+    /// How much of the subject one UV unit is, in metres, for a material
+    /// read along a strip's own UVs - a lace's braid, a tape's rib - which
+    /// on the sphere's latitude and longitude would be one braid stretched
+    /// round the whole ball. `None`, the default, keeps those: a picture
+    /// mapped by UV covers the sphere once.
+    pub uv_unit: Option<f32>,
 }
 
 impl Default for PreviewSettings {
@@ -112,6 +118,7 @@ impl Default for PreviewSettings {
             samples: 48,
             shape: PreviewShape::Sphere,
             radius: PREVIEW_RADIUS,
+            uv_unit: None,
         }
     }
 }
@@ -154,7 +161,7 @@ pub fn render_thumbnail_textured(
 ) -> Result<Thumbnail, String> {
     let material = graph.material();
     let radius = if settings.radius.is_finite() && settings.radius > 0.0 { settings.radius } else { PREVIEW_RADIUS };
-    let mut scene = preview_scene(material, settings.shape, environment, radius);
+    let mut scene = preview_scene(material, settings.shape, environment, radius, settings.uv_unit);
     if graph.len() > 1 || !graph.decals.is_empty() {
         if let Ok(program) = graph.compile() {
             // A Volume Map, fitted to the sphere as the render fits it to a
@@ -249,9 +256,10 @@ fn preview_scene(
     shape: PreviewShape,
     environment: Arc<Environment>,
     radius: f32,
+    uv_unit: Option<f32>,
 ) -> SceneSnapshot {
     let subject = Arc::new(match shape {
-        PreviewShape::Sphere => sphere(radius, 96, 48),
+        PreviewShape::Sphere => sphere(radius, 96, 48, uv_unit),
         PreviewShape::Slab => slab(1.3 * radius, 0.45 * radius, radius),
     });
     let sweep = Arc::new(ground(20.0 * radius));
@@ -287,7 +295,13 @@ fn preview_scene(
     )
 }
 
-fn sphere(radius: f32, segments: usize, rings: usize) -> Mesh {
+/// `uv_unit`, when given, scales the UVs so that one unit is that many
+/// metres of the ball, round it and down it alike.
+fn sphere(radius: f32, segments: usize, rings: usize, uv_unit: Option<f32>) -> Mesh {
+    let (across, down) = match uv_unit {
+        Some(unit) if unit.is_finite() && unit > 0.0 => (std::f32::consts::TAU * radius / unit, std::f32::consts::PI * radius / unit),
+        _ => (1.0, 1.0),
+    };
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -307,7 +321,7 @@ fn sphere(radius: f32, segments: usize, rings: usize) -> Mesh {
             positions.push(n * radius);
             normals.push(n);
             // Latitude and longitude, for a pattern mapped by UV.
-            uvs.push(tequila_core::math::vec2(u, v));
+            uvs.push(tequila_core::math::vec2(u * across, v * down));
         }
     }
     for ring in 0..rings {
@@ -376,6 +390,30 @@ fn ground(half: f32) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A strip's thumbnail is at its true size: with a UV unit, the ball's
+    /// UVs run that many metres to the unit, round it and down it alike;
+    /// without one, once round and once down, as a picture is mapped.
+    #[test]
+    fn a_uv_unit_sizes_the_balls_uvs() {
+        let span = |mesh: &Mesh| {
+            let (mut u, mut v) = (0.0f32, 0.0f32);
+            for t in &mesh.uvs {
+                u = u.max(t.x);
+                v = v.max(t.y);
+            }
+            (u, v)
+        };
+        let (u, v) = span(&sphere(PREVIEW_RADIUS, 96, 48, None));
+        assert!((u - 1.0).abs() < 1e-5 && (v - 1.0).abs() < 1e-5, "unscaled UVs span {u} by {v}");
+        let unit = 0.02;
+        let (u, v) = span(&sphere(PREVIEW_RADIUS, 96, 48, Some(unit)));
+        let round = std::f32::consts::TAU * PREVIEW_RADIUS / unit;
+        let down = std::f32::consts::PI * PREVIEW_RADIUS / unit;
+        assert!((u - round).abs() < 1e-3 && (v - down).abs() < 1e-3, "{u} by {v}, not {round} by {down}");
+        let (u, _) = span(&sphere(PREVIEW_RADIUS, 96, 48, Some(0.0)));
+        assert!((u - 1.0).abs() < 1e-5, "a zero unit scaled the UVs");
+    }
     use tequila_materials::material_type::MaterialType;
 
     fn studio() -> Arc<Environment> {
@@ -396,6 +434,7 @@ mod tests {
                 samples: 24,
                 radius: PREVIEW_RADIUS,
                     shape: PreviewShape::Sphere,
+                uv_unit: None,
             },
         )
         .expect("the preview scene always builds")
@@ -533,6 +572,7 @@ mod tests {
                     samples: 8,
                     radius: PREVIEW_RADIUS,
                     shape: PreviewShape::Sphere,
+                    uv_unit: None,
                 },
             )
             .expect("builds");
@@ -555,7 +595,7 @@ mod tests {
             let mut gold = MaterialType::Metal.defaults();
             gold.metal_ior = tequila_materials::fresnel::metals::ALL[2].1;
             gold.specular_roughness = roughness;
-            let settings = PreviewSettings { size: 48, samples: 64, radius: PREVIEW_RADIUS, shape: PreviewShape::Sphere };
+            let settings = PreviewSettings { size: 48, samples: 64, radius: PREVIEW_RADIUS, shape: PreviewShape::Sphere, uv_unit: None };
             render_thumbnail(&device(), &gold, studio(), settings).expect("builds")
         };
         // The lower half of the ball, where it reflects the floor.
@@ -587,6 +627,7 @@ mod tests {
                     samples: 16,
                     shape,
                     radius: PREVIEW_RADIUS,
+                    uv_unit: None,
                 },
             )
             .expect("builds");

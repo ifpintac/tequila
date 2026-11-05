@@ -23,6 +23,7 @@ mod concrete;
 mod fabric;
 mod fdm;
 mod finish;
+mod footwear;
 mod granite;
 mod marble;
 mod metal;
@@ -33,6 +34,7 @@ mod paint;
 mod plastic;
 mod plastic_texture;
 mod recipe;
+mod suede;
 mod wood;
 
 use tequila_core::spectrum::Spectrum;
@@ -54,10 +56,20 @@ pub struct Preset {
     tags: &'static [&'static str],
     ty: MaterialType,
     recipe: Recipe,
+    /// For a preset read along a strip's UVs: how much of the strip one UV
+    /// unit is, in metres, for its thumbnail (`LibraryEntry::preview_uv_unit`).
+    preview_uv_unit: Option<f32>,
 }
 
 pub fn preset(name: &'static str, category: &'static str, tags: &'static [&'static str], ty: MaterialType, recipe: Recipe) -> Preset {
-    Preset { name, category, tags, ty, recipe }
+    Preset { name, category, tags, ty, recipe, preview_uv_unit: None }
+}
+
+impl Preset {
+    /// Previewed as a strip `unit` metres to the UV unit.
+    pub fn previewed_as_strip(self, unit: f32) -> Preset {
+        Preset { preview_uv_unit: Some(unit), ..self }
+    }
 }
 
 /// A type's defaults with some values changed.
@@ -107,7 +119,7 @@ pub fn orange_peel(r: &mut Recipe, scale: f32, depth: f32) -> Out {
 }
 
 fn main() {
-    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), clear::all(), fdm::all()].into_iter().flatten().collect();
+    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), footwear::all(), clear::all(), fdm::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
     let mut written = Vec::new();
@@ -124,6 +136,7 @@ fn main() {
             material,
             graph: p.recipe.graph,
             textures: Vec::new(),
+            preview_uv_unit: p.preview_uv_unit,
             source: Source::Standard,
             path: String::new(),
         };

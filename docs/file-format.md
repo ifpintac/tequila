@@ -447,6 +447,8 @@ is spelled exactly as the parameter is named there.
 | `fuzz_lean` | number | How far fibres lean from standing straight up, 0 to 1 (default 0.35). |
 | `fuzz_curl` | number | How much each fibre bends along its length, 0 to 1 (default 0.3). |
 | `fuzz_color_variation` | number | How much darker than `fuzz_color` a fibre may be, 0 to 1 (default 0.2). |
+| `fuzz_clump` | number | How far fibres growing side by side gather into clumps, tip to tip, 0 (each on its own, the default) to 1 (every clump ending in a point); a clump is about half as wide as the fibres are long, and its fibres share most of its shade. |
+| `fuzz_comb` | number | How far fibres lie the same way as their neighbours, 0 (each its own way, the default) to 1 (combed), in patches about 4 cm across. |
 | `thin_film_weight` | number | Strength of the interference film. |
 | `thin_film_thickness` | number | Nanometres. |
 | `thin_film_ior` | number | Index of refraction of the film. |

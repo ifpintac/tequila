@@ -82,6 +82,8 @@ pub enum Param {
     FuzzLean,
     FuzzCurl,
     FuzzColorVariation,
+    FuzzClump,
+    FuzzComb,
     ThinFilmWeight,
     ThinFilmThickness,
     ThinFilmIor,
@@ -166,6 +168,8 @@ impl Param {
             Param::FuzzLean => "Fibre Lean",
             Param::FuzzCurl => "Fibre Curl",
             Param::FuzzColorVariation => "Fibre Color Variation",
+            Param::FuzzClump => "Fibre Clumping",
+            Param::FuzzComb => "Fibre Combing",
             Param::ThinFilmWeight => "Thin Film",
             Param::ThinFilmThickness => "Thickness (nm)",
             Param::ThinFilmIor => "Film IOR",
@@ -190,7 +194,7 @@ impl Param {
     }
 
     /// Every parameter, for the types that expose all of them.
-    pub const ALL: [Param; 59] = [
+    pub const ALL: [Param; 61] = [
         Param::BaseWeight,
         Param::BaseColor,
         Param::BaseMetalness,
@@ -230,6 +234,8 @@ impl Param {
         Param::FuzzLean,
         Param::FuzzCurl,
         Param::FuzzColorVariation,
+        Param::FuzzClump,
+        Param::FuzzComb,
         Param::ThinFilmWeight,
         Param::ThinFilmThickness,
         Param::ThinFilmIor,
@@ -796,6 +802,8 @@ impl MaterialType {
                 Param::FuzzLean,
                 Param::FuzzCurl,
                 Param::FuzzColorVariation,
+                Param::FuzzClump,
+                Param::FuzzComb,
             ] {
                 if !params.contains(&param) {
                     params.push(param);
@@ -1054,6 +1062,8 @@ impl Param {
             Param::FuzzLean => "fuzz_lean",
             Param::FuzzCurl => "fuzz_curl",
             Param::FuzzColorVariation => "fuzz_color_variation",
+            Param::FuzzClump => "fuzz_clump",
+            Param::FuzzComb => "fuzz_comb",
             Param::ThinFilmWeight => "thin_film_weight",
             Param::ThinFilmThickness => "thin_film_thickness",
             Param::ThinFilmIor => "thin_film_ior",
@@ -1118,6 +1128,8 @@ impl Param {
             "fuzz_lean" => Param::FuzzLean,
             "fuzz_curl" => Param::FuzzCurl,
             "fuzz_color_variation" => Param::FuzzColorVariation,
+            "fuzz_clump" => Param::FuzzClump,
+            "fuzz_comb" => Param::FuzzComb,
             "thin_film_weight" => Param::ThinFilmWeight,
             "thin_film_thickness" => Param::ThinFilmThickness,
             "thin_film_ior" => Param::ThinFilmIor,
@@ -1186,6 +1198,8 @@ impl Param {
             Param::FuzzLean => Some(ParamValue::Scalar(material.fuzz_lean)),
             Param::FuzzCurl => Some(ParamValue::Scalar(material.fuzz_curl)),
             Param::FuzzColorVariation => Some(ParamValue::Scalar(material.fuzz_color_variation)),
+            Param::FuzzClump => Some(ParamValue::Scalar(material.fuzz_clump)),
+            Param::FuzzComb => Some(ParamValue::Scalar(material.fuzz_comb)),
             Param::ThinFilmWeight => Some(ParamValue::Scalar(material.thin_film_weight)),
             Param::ThinFilmThickness => Some(ParamValue::Scalar(material.thin_film_thickness)),
             Param::ThinFilmIor => Some(ParamValue::Scalar(material.thin_film_ior)),
@@ -1253,6 +1267,8 @@ impl Param {
             (Param::FuzzLean, ParamValue::Scalar(value)) => material.fuzz_lean = value,
             (Param::FuzzCurl, ParamValue::Scalar(value)) => material.fuzz_curl = value,
             (Param::FuzzColorVariation, ParamValue::Scalar(value)) => material.fuzz_color_variation = value,
+            (Param::FuzzClump, ParamValue::Scalar(value)) => material.fuzz_clump = value,
+            (Param::FuzzComb, ParamValue::Scalar(value)) => material.fuzz_comb = value,
             (Param::ThinFilmWeight, ParamValue::Scalar(value)) => material.thin_film_weight = value,
             (Param::ThinFilmThickness, ParamValue::Scalar(value)) => material.thin_film_thickness = value,
             (Param::ThinFilmIor, ParamValue::Scalar(value)) => material.thin_film_ior = value,
@@ -1352,7 +1368,9 @@ impl Param {
             | Param::FuzzThickness
             | Param::FuzzLean
             | Param::FuzzCurl
-            | Param::FuzzColorVariation => ParamUi::Scalar,
+            | Param::FuzzColorVariation
+            | Param::FuzzClump
+            | Param::FuzzComb => ParamUi::Scalar,
             Param::ThinFilmWeight => ParamUi::Scalar,
             Param::ThinFilmThickness => ParamUi::Scalar,
             Param::ThinFilmIor => ParamUi::Scalar,
@@ -1413,6 +1431,8 @@ impl Param {
                 | Param::FuzzLean
                 | Param::FuzzCurl
                 | Param::FuzzColorVariation
+                | Param::FuzzClump
+                | Param::FuzzComb
         )
     }
 
@@ -1441,6 +1461,14 @@ impl Param {
             Param::FuzzLean => Some("How far the fibres lean over, 0 standing straight up."),
             Param::FuzzCurl => Some("How much each fibre bends along its length."),
             Param::FuzzColorVariation => Some("How much darker than the Sheen Color a fibre may be, each its own way."),
+            Param::FuzzClump => Some(
+                "How far fibres growing side by side gather into clumps, tip to tip: 0 each on its own, \
+                 1 every clump ending in a point. The matted locks of a hairy suede or a sheepskin.",
+            ),
+            Param::FuzzComb => Some(
+                "How far fibres lie the same way as their neighbours, in patches a few centimetres \
+                 across: 0 each its own way, 1 combed. A nap brushed one way.",
+            ),
             _ => None,
         }
     }
@@ -1493,7 +1521,7 @@ impl Param {
             Param::FuzzLength => Some(ParamRange { low: 0.00005, high: 0.05, logarithmic: true }),
             // Two microns, a microfibre's, to a millimetre, a bristle's.
             Param::FuzzThickness => Some(ParamRange { low: 0.000002, high: 0.001, logarithmic: true }),
-            Param::FuzzLean | Param::FuzzCurl | Param::FuzzColorVariation => {
+            Param::FuzzLean | Param::FuzzCurl | Param::FuzzColorVariation | Param::FuzzClump | Param::FuzzComb => {
                 Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false })
             }
             Param::ThinFilmWeight => Some(ParamRange { low: 0.0, high: 1.0, logarithmic: false }),
@@ -1776,6 +1804,8 @@ mod tests {
             fuzz_lean: 0.41,
             fuzz_curl: 0.62,
             fuzz_color_variation: 0.33,
+            fuzz_clump: 0.36,
+            fuzz_comb: 0.58,
             thin_film_weight: 0.39,
             thin_film_thickness: 517.0,
             thin_film_ior: 1.39,
@@ -2453,6 +2483,16 @@ mod exposed_parameters_do_something {
             "how much each fibre's colour differs from the next: read at a \
              fibre, from its own random number, which no surface has. Covered \
              by tequila-render-core's `a_fibre_is_shaded_by_its_own_colour`.",
+        ),
+        (
+            Param::FuzzClump,
+            "how far the grown fibres gather into clumps. Covered by \
+             tequila-scene's `fibres_gather_into_clumps_as_asked`.",
+        ),
+        (
+            Param::FuzzComb,
+            "how far the grown fibres lie the same way. Covered by \
+             tequila-scene's `combed_fibres_lie_the_same_way`.",
         ),
         (
             Param::EdgeRadius,

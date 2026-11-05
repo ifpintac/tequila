@@ -1494,6 +1494,11 @@ pub struct FuzzRequest {
     pub thickness_bits: u32,
     pub lean_bits: u32,
     pub curl_bits: u32,
+    /// How far neighbouring fibres gather into clumps, and lie the same
+    /// way: the material's Fibre Clumping and Fibre Combing. A Fuzz node has
+    /// neither, and leaves both at 0, each fibre its own.
+    pub clump_bits: u32,
+    pub comb_bits: u32,
     pub seed: u32,
 }
 
@@ -1507,6 +1512,8 @@ impl FuzzRequest {
             thickness_bits: (material.fuzz_thickness * 0.5).to_bits(),
             lean_bits: material.fuzz_lean.to_bits(),
             curl_bits: material.fuzz_curl.to_bits(),
+            clump_bits: material.fuzz_clump.to_bits(),
+            comb_bits: material.fuzz_comb.to_bits(),
             seed: 0,
         })
     }
@@ -1525,6 +1532,12 @@ impl FuzzRequest {
     }
     pub fn curl(&self) -> f32 {
         f32::from_bits(self.curl_bits)
+    }
+    pub fn clump(&self) -> f32 {
+        f32::from_bits(self.clump_bits)
+    }
+    pub fn comb(&self) -> f32 {
+        f32::from_bits(self.comb_bits)
     }
 }
 
@@ -1705,6 +1718,8 @@ impl MaterialGraph {
                     thickness_bits: thickness.to_bits(),
                     lean_bits: lean.to_bits(),
                     curl_bits: curl.to_bits(),
+                    clump_bits: 0f32.to_bits(),
+                    comb_bits: 0f32.to_bits(),
                     seed: *seed,
                 });
                 continue;

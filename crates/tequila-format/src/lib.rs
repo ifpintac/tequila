@@ -3360,7 +3360,7 @@ mod forward_compatibility_tests {
         let key = document.materials.iter().next().unwrap().0;
         save(&path, &document, &Preserved::default()).unwrap();
         let material_member = format!("materials/{}.json", material_id(key));
-        let fibre_keys = [Param::FuzzDensity, Param::FuzzLength, Param::FuzzThickness, Param::FuzzLean, Param::FuzzCurl, Param::FuzzColorVariation];
+        let fibre_keys = [Param::FuzzDensity, Param::FuzzLength, Param::FuzzThickness, Param::FuzzLean, Param::FuzzCurl, Param::FuzzColorVariation, Param::FuzzClump, Param::FuzzComb];
         rewrite(&path, &|name, mut value| {
             if name == material_member {
                 if let Value::Object(map) = &mut value {
@@ -3375,8 +3375,9 @@ mod forward_compatibility_tests {
         let material = loaded.document.materials.get(key).unwrap().material();
         assert_eq!(material.fuzz_density, 0.0, "fibres nobody asked for");
         assert_eq!(material.fuzz_length, tequila_materials::openpbr::Material::default().fuzz_length);
+        assert_eq!((material.fuzz_clump, material.fuzz_comb), (0.0, 0.0), "clumps nobody asked for");
 
-        let values = [7.5f32, 0.0035, 0.00003, 0.45, 0.65, 0.15];
+        let values = [7.5f32, 0.0035, 0.00003, 0.45, 0.65, 0.15, 0.7, 0.8];
         let mut definition = document.materials.get(key).unwrap().clone();
         for (param, value) in fibre_keys.iter().zip(values) {
             assert!(param.write(definition.material_mut(), ParamValue::Scalar(value)));
