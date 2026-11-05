@@ -399,10 +399,12 @@ pub fn snapshot_with(
                             let mesh_id = MeshId(meshes.len() as u32);
                             meshes.push(mesh);
                             let material_id = MaterialId(materials.len() as u32);
-                            materials.push(Material::emissive(
-                                area.radiance,
-                                area.radiance.luminance().max(0.0),
-                            ));
+                            // Its colour at a luminance of one, times its
+                            // luminance: the lamp's radiance. The radiance
+                            // itself as the colour glowed at its square.
+                            let luminance = area.radiance.luminance().max(0.0);
+                            let colour = if luminance > 0.0 { area.radiance * (1.0 / luminance) } else { area.radiance };
+                            materials.push(Material::emissive(colour, luminance));
                             programs.push(None);
                             instances.push(
                                 Instance::new(
@@ -1554,6 +1556,15 @@ mod tests {
         let (scene, mapping) = snapshot(&document, environment(), &mut MeshCache::new());
         assert_eq!(scene.instances.len(), 3, "the light's stand-in and two parts");
         assert!(scene.instances[0].light_proxy, "the light comes first");
+        // And it glows at the lamp's radiance, not at its square.
+        let tequila_render_core::light::LightKind::Area(area) = &scene.lights.lights()[0].kind else { panic!("an area light") };
+        let glow = scene.material(scene.instances[0].material).emission();
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4 * b.abs().max(1.0);
+        assert!(
+            close(glow.r, area.radiance.r) && close(glow.g, area.radiance.g) && close(glow.b, area.radiance.b),
+            "the stand-in glows at {glow:?}, the lamp at {:?}",
+            area.radiance
+        );
         assert_eq!(mapping.node_of(InstanceId(0)), None, "a light's stand-in is no part");
         for (i, id) in ids.iter().enumerate() {
             let instance = mapping.instance_of(*id).expect("each part has an instance");

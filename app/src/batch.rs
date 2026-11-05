@@ -2833,6 +2833,114 @@ mod tests {
         }
     }
 
+    /// `lamp` at a tenth of its radiance: a softbox whose reflection in a
+    /// glossy floor stays short of white, so that what it loses shows.
+    fn dimmed(lamp: &tequila_render_core::light::Light) -> tequila_render_core::light::Light {
+        use tequila_render_core::light::LightKind;
+        let mut lamp = lamp.clone();
+        if let LightKind::Area(area) = &mut lamp.kind {
+            area.radiance = area.radiance * 0.1;
+        }
+        lamp
+    }
+
+    /// A mirror-smooth floor shows a softbox the camera does not see, and
+    /// the sun, in both renderers alike. Tequila's renderer showed a lamp
+    /// in a mirror only by its stand-in, which a lamp hidden from the camera
+    /// has none of, and the sun never; Cycles' glossy rays meet both.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_mirror_shows_a_hidden_softbox_and_the_sun_in_both_renderers() {
+        use tequila_render_core::light::{DistantLight, Light, LightKind, LightSet, Visibility};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = scratch("tequila-lamp-in-a-mirror");
+        let size = (320, 210);
+        let (mut scene, camera) = softbox_over_a_glossy_floor(0.0, false);
+        let softbox = dimmed(&scene.lights.lights()[0]);
+        let softbox = Light { visibility: Visibility::HIDDEN, ..softbox };
+        scene = scene.with_lights(Arc::new(LightSet::new(vec![softbox])));
+        let hidden = (scene, camera);
+        // The sun where the floor mirrors the softbox's middle.
+        let mirrored = film_box(&hidden, vec3(0.0, -0.1, -0.5), (40, 10), size);
+        let (mut sunlit, camera) = softbox_over_a_glossy_floor(0.0, false);
+        let image = vec3(0.0, -0.1, -0.5);
+        let eye = vec3(0.0, 0.06, 0.45);
+        let on_floor = eye + (image - eye) * (eye.y / (eye.y - image.y));
+        let towards = (vec3(0.0, 0.1, -0.5) - on_floor).normalize();
+        let sun = Light::new(LightKind::Distant(DistantLight { direction: -towards, irradiance: tequila_core::spectrum::Spectrum::splat(0.03), half_angle: 6f32.to_radians() }));
+        sunlit = sunlit.with_lights(Arc::new(LightSet::new(vec![sun])));
+        let sunlit = (sunlit, camera);
+        let sun_box = film_box(&sunlit, image, (8, 6), size);
+        for (name, scene, area) in [("hidden-softbox", &hidden, mirrored), ("sun", &sunlit, sun_box)] {
+            let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+                let image = picture_into(&folder, &format!("{name}-{}", engine.key()), scene, engine, IntegratorConfig::product(), None, 32, size);
+                box_mean(&image, size.0, area)
+            });
+            println!("{name} in the mirror: {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+            assert!(cycles > 40.0, "{name}: Cycles' mirror shows little of it: {cycles:.1}");
+            assert!((tequila / cycles - 1.0).abs() < 0.1, "{name}: the mirror shows it at {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+        }
+    }
+
+    /// A glossy floor mirrors a softbox behind a black plate that casts no
+    /// shadow as it mirrors it with the plate away, in both renderers: their
+    /// shadow rays pass the plate, and now so do the bounces weighed against
+    /// them - in Tequila's renderer on every road, and in Cycles by shadow
+    /// linking, every lamp's blockers leaving the plate out, which its
+    /// dedicated light passes. The bounces stopped at the plate in both, and
+    /// the lamp's share MIS left them was lost. Skipped where Cycles is not
+    /// installed.
+    #[test]
+    fn a_glossy_floor_mirrors_a_softbox_past_a_part_that_casts_no_shadow_in_both_renderers() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::scene::{Instance, Mesh};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = scratch("tequila-softbox-past-a-shadowless-plate");
+        let size = (320, 210);
+        let with_plate = |plate: bool| {
+            let (scene, camera) = softbox_over_a_glossy_floor(0.1, false);
+            let scene = scene.clone().with_lights(Arc::new(tequila_render_core::light::LightSet::new(vec![dimmed(&scene.lights.lights()[0])])));
+            if !plate {
+                return (scene, camera);
+            }
+            // In front of the softbox, between it and the floor that
+            // mirrors it, facing the camera.
+            let corners = vec![vec3(-0.25, 0.0, -0.4), vec3(0.25, 0.0, -0.4), vec3(0.25, 0.3, -0.4), vec3(-0.25, 0.3, -0.4)];
+            let mut meshes = scene.meshes.clone();
+            meshes.push(Arc::new(Mesh::new(corners, vec![0, 1, 2, 0, 2, 3]).with_normals(vec![Vec3::Z; 4])));
+            let mut materials = scene.materials.clone();
+            materials.push(tequila_materials::openpbr::Material::diffuse(Spectrum::ZERO));
+            let mut part = Instance::new(InstanceId(1), MeshId(1), MaterialId(1));
+            part.casts_shadows = false;
+            let mut instances = scene.instances.clone();
+            instances.push(part);
+            let mut plated = tequila_render_core::scene::SceneSnapshot::new(meshes, instances, materials, scene.environment.clone()).with_lights(scene.lights.clone());
+            plated.background = scene.background;
+            (plated, camera)
+        };
+        let open = with_plate(false);
+        let mirrored = film_box(&open, vec3(0.0, -0.1, -0.5), (40, 10), size);
+        for engine in [RenderEngine::Tequila, RenderEngine::CyclesCpu] {
+            let [bare, behind] = [false, true].map(|plate| {
+                let scene = with_plate(plate);
+                let image = picture_into(&folder, &format!("plate-{plate}-{}", engine.key()), &scene, engine, IntegratorConfig::product(), None, 64, size);
+                box_mean(&image, size.0, mirrored)
+            });
+            println!("{}: the softbox in the floor {bare:.1}, behind a plate casting no shadow {behind:.1}", engine.key());
+            assert!(bare > 40.0, "{}: the floor shows little of the softbox: {bare:.1}", engine.key());
+            assert!((behind / bare - 1.0).abs() < 0.08, "{}: behind a plate casting no shadow the floor shows the softbox at {behind:.1}, without it {bare:.1}", engine.key());
+        }
+    }
+
     /// A thin-walled shell passes light straight through, in Cycles as in
     /// Tequila's renderer, so a clear one casts a faint shadow where a
     /// solid sphere casts a full one. Cycles' principled glass is always a

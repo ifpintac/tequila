@@ -961,7 +961,20 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
   are noisier there than in Cycles. Off, neither lets a diffuse bounce see
   it.
 - **The sun** is a light with no geometry in Tequila's renderer, as every
-  lamp is: a mirror does not show it, where Cycles' does.
+  lamp is. *Since November 5* a mirror shows it, and every mirror-smooth
+  surface on every path shows the area lamps, as Cycles' do (§01 §5.1).
+  The camera does not see a sun with a disc straight on, nor through
+  glass, where Cycles' escaping camera rays can; and through glass
+  Tequila's renderer shows a lamp by its Camera visibility, where Cycles'
+  transmission rays see every lamp.
+- **The sky behind a part that casts no shadow.** Both pass such a part
+  for every lamp on every ray (Cycles by shadow linking, since November 5);
+  only Tequila's renderer also passes it for the sky's share of a bounce,
+  which Cycles' bounces lose behind it.
+- **A lamp that casts no shadow** is met by Tequila's bounces past what
+  is in their way, as its light samples pass it; Cycles' bounces stop
+  there, and lose its share by MIS behind a part, which shows little but
+  off a glossy surface.
 
 - [~] Shading layer ported to Slang (or the chosen shared-source mechanism), compiling to both targets (§01 §10.1).
       *Superseded:* one set of algorithms (Cycles') in both engines; no

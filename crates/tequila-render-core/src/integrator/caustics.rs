@@ -150,7 +150,9 @@ pub fn plan(intersector: &dyn Intersector) -> Option<CausticPlan> {
         shares.push(environment);
     }
     for (index, light) in scene.lights.lights().iter().enumerate() {
-        if !light.enabled || !light.visibility.lights_anything() {
+        // A lamp that casts no shadow lets its light by everything, as its
+        // shadow rays pass it all: nothing focuses it (`trace_photon`).
+        if !light.enabled || !light.visibility.lights_anything() || !light.visibility.shadow {
             continue;
         }
         let mut flux = 0.0f32;
@@ -228,6 +230,10 @@ pub fn trace_photons(
         let mut sampler = Sampler::new(index % 4096, 1_000_000 + index / 4096, pass, seed ^ 0x9e37_79b9);
         let (source, share) = plan.choose(sampler.next_unstructured());
         let emitted = total as f32 * share;
+        let lamp = match source {
+            Source::Environment => None,
+            Source::Light(light) => scene.lights.lights().get(light),
+        };
         let (ray, power) = match source {
             Source::Environment => {
                 let Some(sample) = scene.environment.sample_from(plan.centre, sampler.next_unstructured2()) else {
@@ -279,17 +285,26 @@ pub fn trace_photons(
             }
         };
         if power.is_finite() && !power.is_black() {
-            trace_photon(intersector, config, ray, power, &mut sampler, out);
+            trace_photon(intersector, config, ray, power, lamp, &mut sampler, out);
         }
     }
 }
 
 /// Follow one photon through mirror-smooth surfaces to where it lands.
+///
+/// From `lamp`, or the environment for `None`. On its way from there it
+/// passes what that light's shadow rays pass - a part that casts no shadow,
+/// one the lamp's shadows are linked away from - as the light it is passes
+/// it: a glass that casts no shadow focuses none of the light it lets by,
+/// which the light samples beyond it already count, so its caustic was that
+/// light twice. And it lands only on what the lamp lights (light linking),
+/// as manifold caustics do.
 fn trace_photon(
     intersector: &dyn Intersector,
     config: &IntegratorConfig,
     mut ray: Ray,
     mut power: Spectrum,
+    lamp: Option<&crate::light::Light>,
     sampler: &mut Sampler,
     out: &mut Vec<Photon>,
 ) {
@@ -314,14 +329,19 @@ fn trace_photon(
             Ray::new(hit.offset(-geometric), ray.direction)
         };
 
-        // A light's visible stand-in is not there for light.
-        if instance.light_proxy {
+        // A light's visible stand-in is not there for light, and on its way
+        // from the light the photon passes what casts none of its shadow.
+        let open = smooth_events == 0
+            && (!instance.casts_shadows || lamp.is_some_and(|lamp| !lamp.shadow_links.lights(hit.instance.0)));
+        if instance.light_proxy || open {
             if crossings >= MAX_CUTOUT_CROSSINGS {
                 return;
             }
             ray = through(&ray, &mut crossings);
             continue;
         }
+        // Where it lands, if the lamp lights that.
+        let lit = lamp.is_none_or(|lamp| lamp.links.lights(hit.instance.0));
 
         // What absorbs on the way: coloured glass, a liquid.
         if let Some(volume) = media.top(None).and_then(|m| m.volume.as_ref()) {
@@ -339,7 +359,7 @@ fn trace_photon(
         // alone, the light a glass focuses on it too (Cycles does not show
         // such a floor at all). The photon stops there either way.
         if instance.shadow_catcher.is_some() && !config.ground_illumination {
-            if smooth_events > 0 && instance.shadow_catcher.is_some_and(|c| c.shadows) {
+            if smooth_events > 0 && lit && instance.shadow_catcher.is_some_and(|c| c.shadows) {
                 out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
             }
             return;
@@ -348,7 +368,7 @@ fn trace_photon(
         // A fibre focuses nothing, whatever it is made of: the photon lands
         // on it, as on any rough surface.
         if scene.fibre_at(&hit, ray.direction).is_some() {
-            if smooth_events > 0 {
+            if smooth_events > 0 && lit {
                 out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
             }
             return;
@@ -450,7 +470,7 @@ fn trace_photon(
         // a focusing surface sent it; light that comes straight from the
         // source is the path tracer's.
         if !caustic_surface(material, &bsdf) {
-            if smooth_events > 0 {
+            if smooth_events > 0 && lit {
                 out.push(Photon { position: hit.position, normal: geometric_normal, from: -ray.direction, power });
             }
             return;

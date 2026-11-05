@@ -4154,11 +4154,33 @@ impl Builder<'_> {
 
     /// One of [`Self::link_lights`]' two halves: the lights' `links`, or
     /// with `shadows` their `shadow_links`.
+    ///
+    /// A part that casts no shadow is, with `shadows`, in no lamp's blocker
+    /// sets too, beside being invisible to shadow rays: a lamp with shadow
+    /// links is one Cycles' bounces meet past what does not block it, by its
+    /// dedicated light, as a shadow ray passes that. Invisible to shadow rays
+    /// alone, such a part stopped the glossy and diffuse rays that would have
+    /// met the lamp behind it, and the lamp's share by MIS they were left was
+    /// lost: a glossy floor mirrored a softbox behind it at a fraction of its
+    /// brightness, where Tequila's renderer passes it on every road. The sky
+    /// has no dedicated light, and its share behind such a part is still lost
+    /// in Cycles.
     fn link_sets(&mut self, made: &[(usize, Node)], shadows: bool) -> Result<(), String> {
         let scene = self.scene;
         let lights = scene.lights.lights();
-        let links = |light: usize| if shadows { &lights[light].shadow_links } else { &lights[light].links };
-        let linked: Vec<usize> = (0..lights.len()).filter(|&i| !links(i).is_all()).take(64).collect();
+        let shadowless = shadows && scene.has_shadowless_parts();
+        let casts = |instance: u32| scene.instances.get(instance as usize).is_none_or(|i| i.casts_shadows);
+        let links = |light: usize, instance: u32| {
+            if shadows {
+                lights[light].shadow_links.lights(instance) && (!shadowless || casts(instance))
+            } else {
+                lights[light].links.lights(instance)
+            }
+        };
+        let linked: Vec<usize> = (0..lights.len())
+            .filter(|&i| shadowless || !(if shadows { &lights[i].shadow_links } else { &lights[i].links }).is_all())
+            .take(64)
+            .collect();
         if linked.is_empty() {
             return Ok(());
         }
@@ -4178,7 +4200,7 @@ impl Builder<'_> {
             let Some(object) = *object else { continue };
             let mut pattern = 0u64;
             for (bit, &light) in linked.iter().enumerate() {
-                if links(light).lights(instance as u32) {
+                if links(light, instance as u32) {
                     pattern |= 1 << bit;
                 }
             }

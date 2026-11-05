@@ -993,7 +993,11 @@ fn cone_cosine(normal: Vec3, axis: Vec3, sine: f32) -> f32 {
 ///
 /// §5.3: "For scenes below ~8 lights, use a simple power-weighted alias table —
 /// it's cheaper and the BVH's benefit is nil. Choose the strategy at scene-build
-/// time based on light count and log which was chosen."
+/// time based on light count and log which was chosen." The benefit is not nil
+/// where some lamp is weak beside the others: chosen by power, a small accent
+/// lamp lighting its own corner was sampled one time in forty there, where it
+/// was nearly all the light. So a set with a lamp that weak takes the
+/// hierarchy too, however few lamps it has ([`LightSet::new`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SelectionStrategy {
     /// Power-weighted alias table. Constant time, ignores position.
@@ -1007,6 +1011,11 @@ pub enum SelectionStrategy {
 /// Above this many lights, position starts to matter more than the cost of
 /// accounting for it.
 pub const HIERARCHY_THRESHOLD: usize = 8;
+
+/// A lamp chosen by power this many times less often than it would be by
+/// count is weak beside the others, and a set with one takes the hierarchy:
+/// where it lights a corner of its own, a table by power starves it.
+pub const WEAK_LAMP: f32 = 4.0;
 
 /// The lights of a scene, prepared for sampling.
 #[derive(Clone, Debug, Default)]
@@ -1023,15 +1032,22 @@ pub struct LightSet {
     /// Light indices, reordered by the build so each node owns a contiguous
     /// range of them.
     order: Vec<u32>,
+    /// The leaf that holds each light, by its index, for the probability of
+    /// choosing it from a point ([`LightSet::selection_pdf_at`]).
+    leaves: Vec<u32>,
 }
 
 impl LightSet {
     pub fn new(lights: Vec<Light>) -> LightSet {
         let count = lights.len();
-        // The hierarchy weighs lights by where they are, which a sun is not:
-        // with one in the scene, the table by power.
-        let distant = lights.iter().any(|l| matches!(l.kind, LightKind::Distant(_)));
-        let strategy = if count > HIERARCHY_THRESHOLD && !distant {
+        // A lamp that lights anything, chosen by power a quarter as often as
+        // by count or less: weak beside the rest, and starved by the table
+        // wherever it is the light.
+        let powers: Vec<f32> = lights.iter().map(|l| l.power()).collect();
+        let total: f32 = powers.iter().sum();
+        let lit = powers.iter().filter(|&&p| p > 0.0).count();
+        let weak = lit >= 2 && powers.iter().any(|&p| p > 0.0 && p * WEAK_LAMP * (lit as f32) < total);
+        let strategy = if count > HIERARCHY_THRESHOLD || weak {
             SelectionStrategy::Hierarchy
         } else {
             SelectionStrategy::Alias
@@ -1058,10 +1074,10 @@ impl LightSet {
             vec![if count == 0 { 0.0 } else { 1.0 / count as f32 }; count]
         };
 
-        let (nodes, order) = if strategy == SelectionStrategy::Hierarchy {
+        let (nodes, order, leaves) = if strategy == SelectionStrategy::Hierarchy {
             build_hierarchy(&lights, &powers)
         } else {
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         };
 
         LightSet {
@@ -1072,6 +1088,7 @@ impl LightSet {
             strategy,
             nodes,
             order,
+            leaves,
         }
     }
 
@@ -1129,11 +1146,16 @@ impl LightSet {
     ///
     /// This is the entry point the integrator uses, and the reason the strategy
     /// can change at eight lights without the integrator knowing. Below the
-    /// threshold it is [`LightSet::select`] — position adds nothing when there
-    /// are three lights and they are all worth sampling. Above it, §5.3's
-    /// hierarchy, where a light on the far side of a building is not chosen a
-    /// hundredth of the time merely because it is bright.
-    pub fn select_at(&self, point: Vec3, normal: Vec3, u: f32) -> Option<(LightId, f32)> {
+    /// threshold, with no lamp much weaker than the rest, it is
+    /// [`LightSet::select`] — position adds nothing when there are three
+    /// lights and they are all worth sampling. Otherwise §5.3's hierarchy,
+    /// where a light on the far side of a building is not chosen a hundredth
+    /// of the time merely because it is bright, and a weak lamp beside the
+    /// point is not passed over merely because it is weak.
+    ///
+    /// `normal` is the surface's, facing the side the path is on; a surface
+    /// that lets light through (`two_sided`) is lit from both sides.
+    pub fn select_at(&self, point: Vec3, normal: Vec3, two_sided: bool, u: f32) -> Option<(LightId, f32)> {
         if self.strategy == SelectionStrategy::Alias || self.nodes.is_empty() {
             return self.select(u);
         }
@@ -1153,21 +1175,7 @@ impl LightSet {
                 return Some((LightId(light), probability));
             };
 
-            let importance_left = self.nodes[left as usize].importance(point, normal);
-            let importance_right = self.nodes[right as usize].importance(point, normal);
-            let total = importance_left + importance_right;
-
-            // Neither child can light this point — every light in the subtree is
-            // behind the surface or outside its emission cone. Falling back to a
-            // coin flip rather than giving up keeps the estimator unbiased in the
-            // corner where the importance heuristic underestimates; giving up
-            // would lose real light.
-            let p_left = if total > 0.0 {
-                importance_left / total
-            } else {
-                0.5
-            };
-
+            let p_left = self.left_share((left, right), point, normal, two_sided);
             if u < p_left {
                 // Rescaled so the same variate keeps choosing all the way down,
                 // rather than each level needing its own dimension — which would
@@ -1192,10 +1200,46 @@ impl LightSet {
         }
     }
 
+    /// The share of a choice from `point` the left child of a node gets: its
+    /// importance's share (`LightNode::importance`). Where neither child can
+    /// light the point by the heuristic's reckoning, a coin flip rather than
+    /// giving up, which keeps the estimator unbiased in the corner where the
+    /// importance heuristic underestimates; giving up would lose real light.
+    fn left_share(&self, (left, right): (u32, u32), point: Vec3, normal: Vec3, two_sided: bool) -> f32 {
+        let importance_left = self.nodes[left as usize].importance(point, normal, two_sided);
+        let importance_right = self.nodes[right as usize].importance(point, normal, two_sided);
+        let total = importance_left + importance_right;
+        if total > 0.0 && total.is_finite() {
+            importance_left / total
+        } else {
+            0.5
+        }
+    }
+
     /// The probability that [`LightSet::select`] would have chosen this light,
-    /// for MIS.
+    /// whatever the point: by power.
     pub fn selection_pdf(&self, id: LightId) -> f32 {
         self.probabilities.get(id.0 as usize).copied().unwrap_or(0.0)
+    }
+
+    /// The probability that [`LightSet::select_at`] chooses this light from
+    /// `point`, for MIS: what a light sample there divided by, which a bounce
+    /// meeting the same lamp is weighed against. The walk down to its leaf,
+    /// step by step from the leaf up, each step the share its side got.
+    pub fn selection_pdf_at(&self, point: Vec3, normal: Vec3, two_sided: bool, id: LightId) -> f32 {
+        if self.strategy == SelectionStrategy::Alias || self.nodes.is_empty() {
+            return self.selection_pdf(id);
+        }
+        let Some(&leaf) = self.leaves.get(id.0 as usize) else { return 0.0 };
+        let mut probability = 1.0f32;
+        let mut node = leaf;
+        while let Some(parent) = self.nodes.get(self.nodes[node as usize].parent as usize) {
+            let Some(children) = parent.children else { break };
+            let left = self.left_share(children, point, normal, two_sided);
+            probability *= if children.0 == node { left } else { 1.0 - left };
+            node = self.nodes[node as usize].parent;
+        }
+        probability
     }
 }
 
@@ -1211,15 +1255,21 @@ impl LightSet {
 /// separates this from a plain power-weighted table — a spot light pointing
 /// away from the shading point contributes nothing however bright it is, and a
 /// heuristic that only knew power would keep choosing it.
+///
+/// The suns are a subtree of their own beside the rest (`distant`): nowhere
+/// in particular, they are weighed by how they face the point alone.
 #[derive(Clone, Copy, Debug)]
 struct LightNode {
+    /// Everything that emits in this subtree: a panel's whole extent, a
+    /// sphere light's whole sphere, not just where each one's centre is.
     bounds: Aabb,
     /// Average emission direction of the subtree.
     axis: Vec3,
     /// Half-angle the emission directions spread over. `pi` means every
     /// direction, which is how an isotropic point light is represented — its
     /// axis is then meaningless, and saying so here is what keeps the cone
-    /// term from ever cutting it down.
+    /// term from ever cutting it down. For suns, how far the directions
+    /// their light comes from spread, discs included.
     theta_o: f32,
     /// How far past `theta_o` a light still falls off before reaching zero.
     /// At most `pi/2`, because the term it feeds is a cosine and a wider
@@ -1227,80 +1277,131 @@ struct LightNode {
     /// a *negative* weight, makes one child's share exceed one, and stops the
     /// traversal probabilities being a distribution at all.
     theta_e: f32,
+    /// The lights' power; for suns, pi times their illuminance, which is
+    /// what a lamp's power over its distance squared makes on a surface
+    /// facing it.
     power: f32,
     /// Index into the reordered light list. Meaningful only for a leaf.
     first: u32,
     children: Option<(u32, u32)>,
+    /// The node above, `u32::MAX` at the root.
+    parent: u32,
+    /// Suns: lights with no place, only a direction.
+    distant: bool,
 }
 
 impl LightNode {
     /// How much this subtree is worth sampling from `point`.
     ///
-    /// The shape is §5.3's: power over distance squared, cut down by how far
-    /// the shading point sits outside the subtree's emission cone and by how
-    /// obliquely it sees the subtree. The distance is clamped to the node's own
-    /// radius, without which a point *inside* a cluster divides by nearly zero
-    /// and the traversal commits to whichever child it happens to stand in.
-    fn importance(&self, point: Vec3, normal: Vec3) -> f32 {
+    /// The shape is §5.3's, as Cycles' light tree has it: power over distance
+    /// squared, times the cosine of the smallest angle between the surface's
+    /// normal and any way to the subtree's bounds, times that of the smallest
+    /// angle any member's emission makes with the way to the point. The
+    /// distance is the bounds' centre's, kept to at least half their radius,
+    /// without which a point *inside* a cluster divides by nearly zero and the
+    /// traversal commits to whichever child it happens to stand in; a point
+    /// inside the bounds sees them every way. The bounds take in each lamp's
+    /// whole extent. The old measure kept the distance to the whole radius,
+    /// took the bounds of the lights' centres alone, and took a point inside
+    /// them to see them over a quarter turn only.
+    ///
+    /// Cycles also weighs in a lower bound, the share the subtree would have
+    /// at worst. Measured over the studio of a softbox and a ring of accent
+    /// lamps (`a_weak_lamp_is_chosen_where_it_is_the_light`), half of it made
+    /// the variance of a light sample of the twelve-accent studio's unshadowed
+    /// light five times what the upper bound alone gives in the accents'
+    /// patches, and eight times on the floor round them: the lower bound of a
+    /// cluster the point stands in is nothing, however near its lamps.
+    fn importance(&self, point: Vec3, normal: Vec3, two_sided: bool) -> f32 {
         if self.power <= 0.0 {
             return 0.0;
         }
-        let centre = self.bounds.center();
-        let radius = (self.bounds.diagonal().length() * 0.5).max(1e-4);
-        let offset = centre - point;
-        let distance = offset.length();
-        let direction = if distance > 1e-6 {
-            offset / distance
+        // The way to the subtree, how far, and the half-angle its bounds
+        // subtend about that way.
+        let (direction, distance_squared, theta_u) = if self.distant {
+            (-self.axis, 1.0, self.theta_o)
         } else {
-            normal
+            let centre = self.bounds.center();
+            let half = self.bounds.diagonal().length() * 0.5;
+            let offset = centre - point;
+            let distance = offset.length();
+            let direction = if distance > 1e-6 { offset / distance } else { normal };
+            // The cone of the sphere round the bounds; within it, every way.
+            // Measured to the box's corners instead, the choice was no
+            // better and each step cost eight more directions.
+            let theta_u = if distance > half { (half / distance).clamp(0.0, 1.0).asin() } else { std::f32::consts::PI };
+            let distance = distance.max(0.5 * half).max(1e-4);
+            (direction, distance * distance, theta_u)
         };
-        let distance_squared = (distance * distance).max(radius * radius);
 
-        // Half-angle the node's bounds subtend from here. Everything below is
-        // widened by it, so a large cluster is not judged as if it were a point.
-        let theta_u = if distance > radius {
-            (radius / distance).clamp(-1.0, 1.0).asin()
-        } else {
-            std::f32::consts::FRAC_PI_2
-        };
-
-        // How far the shading point is outside the emission cone.
-        let cos_theta = (-direction).dot(self.axis).clamp(-1.0, 1.0);
-        let theta = cos_theta.acos();
-        let theta_prime = (theta - self.theta_o - theta_u).max(0.0);
-        if theta_prime >= self.theta_e {
-            return 0.0;
+        // How the surface faces it: the least it can be turned from the
+        // subtree, over every way to its bounds. A light below the horizon
+        // contributes nothing, which is the single biggest saving the
+        // heuristic makes in a scene lit from one side.
+        let mut cos_incident = direction.dot(normal).clamp(-1.0, 1.0);
+        if two_sided {
+            cos_incident = cos_incident.abs();
         }
-
-        // And how obliquely the surface sees it. A light below the horizon
-        // contributes nothing, which is the single biggest saving the heuristic
-        // makes in a scene lit from one side.
-        let cos_incident = direction.dot(normal).clamp(-1.0, 1.0);
         let theta_incident = (cos_incident.acos() - theta_u).max(0.0);
         if theta_incident >= std::f32::consts::FRAC_PI_2 {
             return 0.0;
         }
 
-        self.power * theta_prime.cos() * theta_incident.cos() / distance_squared
+        // And how its lights face the point: past their cone by at least
+        // the angle the bounds leave. Suns face every point alike.
+        let outgoing = if self.distant {
+            1.0
+        } else {
+            let theta = (-direction).dot(self.axis).clamp(-1.0, 1.0).acos();
+            let outside = (theta - self.theta_o - theta_u).max(0.0);
+            if outside >= self.theta_e {
+                return 0.0;
+            }
+            outside.cos()
+        };
+        self.power * theta_incident.cos() * outgoing / distance_squared
     }
 }
 
-/// Build the hierarchy, returning the nodes and the light order they index.
+/// Build the hierarchy, returning the nodes, the light order they index, and
+/// each light's leaf.
 ///
 /// A median split on the widest axis rather than a surface-area heuristic: the
 /// tree is built once per scene edit over a handful of lights, and the SAH's
 /// advantage is a traversal cost this structure does not pay — every descent
-/// visits exactly one child.
-fn build_hierarchy(lights: &[Light], powers: &[f32]) -> (Vec<LightNode>, Vec<u32>) {
+/// visits exactly one child. The suns go in a subtree of their own beside the
+/// rest.
+fn build_hierarchy(lights: &[Light], powers: &[f32]) -> (Vec<LightNode>, Vec<u32>, Vec<u32>) {
     if lights.is_empty() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
-    let mut order: Vec<u32> = (0..lights.len() as u32).collect();
-    let mut nodes = Vec::with_capacity(lights.len() * 2);
-    split(lights, powers, &mut order, &mut nodes, 0, lights.len());
-    (nodes, order)
+    let is_distant = |i: &u32| matches!(lights[*i as usize].kind, LightKind::Distant(_));
+    let mut order: Vec<u32> = (0..lights.len() as u32).filter(|i| !is_distant(i)).collect();
+    let local = order.len();
+    order.extend((0..lights.len() as u32).filter(is_distant));
+    let mut nodes = Vec::with_capacity(lights.len() * 2 + 1);
+    let (distant, total) = (lights.len() - local, lights.len());
+    if local > 0 && distant > 0 {
+        // A root over the two, whose own bounds no one asks for.
+        let mut root = cover(lights, powers, &order, false);
+        root.parent = u32::MAX;
+        nodes.push(root);
+        let left = split(lights, powers, &mut order, &mut nodes, 0, local, 0, false);
+        let right = split(lights, powers, &mut order, &mut nodes, local, distant, 0, true);
+        nodes[0].children = Some((left, right));
+    } else {
+        split(lights, powers, &mut order, &mut nodes, 0, total, u32::MAX, local == 0);
+    }
+    let mut leaves = vec![u32::MAX; lights.len()];
+    for (index, node) in nodes.iter().enumerate() {
+        if node.children.is_none() {
+            leaves[order[node.first as usize] as usize] = index as u32;
+        }
+    }
+    (nodes, order, leaves)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn split(
     lights: &[Light],
     powers: &[f32],
@@ -1308,18 +1409,26 @@ fn split(
     nodes: &mut Vec<LightNode>,
     first: usize,
     count: usize,
+    parent: u32,
+    distant: bool,
 ) -> u32 {
     let index = nodes.len() as u32;
-    let mut node = cover(lights, powers, &order[first..first + count]);
+    let mut node = cover(lights, powers, &order[first..first + count], distant);
     node.first = first as u32;
+    node.parent = parent;
     nodes.push(node);
 
     if count <= 1 {
         return index;
     }
 
-    // Split on the widest axis of the cluster's bounds, at its median.
-    let diagonal = node.bounds.diagonal();
+    // Split on the widest axis of where the lights' middles are, at its
+    // median; suns by the way their light comes.
+    let mut centres = Aabb::EMPTY;
+    for id in &order[first..first + count] {
+        centres.extend_point(if distant { light_axis(&lights[*id as usize]) } else { light_bounds(&lights[*id as usize]).center() });
+    }
+    let diagonal = centres.diagonal();
     let axis = if diagonal.x >= diagonal.y && diagonal.x >= diagonal.z {
         0
     } else if diagonal.y >= diagonal.z {
@@ -1328,7 +1437,8 @@ fn split(
         2
     };
     let key = |id: &u32| -> f32 {
-        let p = light_position(&lights[*id as usize]);
+        let light = &lights[*id as usize];
+        let p = if distant { light_axis(light) } else { light_bounds(light).center() };
         match axis {
             0 => p.x,
             1 => p.y,
@@ -1339,28 +1449,34 @@ fn split(
     slice.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
 
     let middle = count / 2;
-    let left = split(lights, powers, order, nodes, first, middle);
-    let right = split(lights, powers, order, nodes, first + middle, count - middle);
+    let left = split(lights, powers, order, nodes, first, middle, index, distant);
+    let right = split(lights, powers, order, nodes, first + middle, count - middle, index, distant);
     nodes[index as usize].children = Some((left, right));
     index
 }
 
 /// The node covering a set of lights: their bounds, their combined emission
 /// cone, and their total power.
-fn cover(lights: &[Light], powers: &[f32], ids: &[u32]) -> LightNode {
+fn cover(lights: &[Light], powers: &[f32], ids: &[u32], distant: bool) -> LightNode {
     let mut bounds = Aabb::EMPTY;
     let mut axis_sum = Vec3::ZERO;
     let mut power = 0.0;
     let mut theta_e: f32 = 0.0;
     for id in ids {
         let light = &lights[*id as usize];
-        let position = light_position(light);
-        bounds.extend_point(position);
+        if !distant {
+            bounds.extend(&light_bounds(light));
+        }
         // Weighted by power, so a dim light pointing elsewhere does not drag
         // a bright cluster's axis away from where the light actually goes.
         let weight = powers[*id as usize].max(1e-6);
         axis_sum = axis_sum + light_axis(light) * weight;
-        power += powers[*id as usize];
+        power += match &light.kind {
+            // pi times the illuminance, as a lamp's power over its distance
+            // squared is pi times what it makes on a surface facing it.
+            LightKind::Distant(sun) if light.power() > 0.0 => PI * sun.irradiance.luminance().max(0.0),
+            _ => powers[*id as usize],
+        };
         theta_e = theta_e.max(light_theta_e(light));
     }
     let axis = axis_sum.try_normalize().unwrap_or(Vec3::Y);
@@ -1385,18 +1501,32 @@ fn cover(lights: &[Light], powers: &[f32], ids: &[u32]) -> LightNode {
         power,
         first: 0,
         children: None,
+        parent: u32::MAX,
+        distant,
     }
 }
 
-fn light_position(light: &Light) -> Vec3 {
+/// Where a light emits from: a panel's whole extent, a sphere light's
+/// sphere, a point.
+fn light_bounds(light: &Light) -> Aabb {
+    let mut bounds = Aabb::EMPTY;
     match &light.kind {
-        LightKind::Area(area) => area.position,
-        LightKind::Point(point) => point.position,
-        LightKind::Spot(spot) => spot.position,
-        LightKind::Ies(ies) => ies.position,
-        // Never in a hierarchy (`LightSet::new`).
-        LightKind::Distant(_) => Vec3::ZERO,
+        LightKind::Area(area) => {
+            for (u, v) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                bounds.extend_point(area.position + area.half_u * u + area.half_v * v);
+            }
+        }
+        LightKind::Point(point) => {
+            let r = Vec3 { x: point.radius, y: point.radius, z: point.radius };
+            bounds.extend_point(point.position - r);
+            bounds.extend_point(point.position + r);
+        }
+        LightKind::Spot(spot) => bounds.extend_point(spot.position),
+        LightKind::Ies(ies) => bounds.extend_point(ies.position),
+        // In a subtree of their own, which has no bounds.
+        LightKind::Distant(_) => {}
     }
+    bounds
 }
 
 /// The direction a light emits along.
@@ -1432,7 +1562,8 @@ fn light_spread(light: &Light) -> f32 {
         // table is not a cone. Claiming a spread of zero would let the
         // hierarchy cull a downlight from directly beneath it.
         LightKind::Ies(_) => std::f32::consts::PI,
-        LightKind::Distant(_) => 0.0,
+        // Its disc: the ways its light comes from.
+        LightKind::Distant(sun) => sun.half_angle.max(0.0),
     }
 }
 
@@ -1570,7 +1701,7 @@ mod tests {
             let mut reported = vec![0.0f32; set.len()];
             for i in 0..SWEEP {
                 let u = (i as f32 + 0.5) / SWEEP as f32;
-                if let Some((id, p)) = set.select_at(point, Vec3::Y, u) {
+                if let Some((id, p)) = set.select_at(point, Vec3::Y, false, u) {
                     counts[id.0 as usize] += 1;
                     if !seen[id.0 as usize] {
                         seen[id.0 as usize] = true;
@@ -1615,7 +1746,7 @@ mod tests {
         let mut far = 0.0f32;
         for i in 0..20000 {
             let u = (i as f32 + 0.5) / 20000.0;
-            let Some((id, p)) = set.select_at(point, Vec3::Y, u) else {
+            let Some((id, p)) = set.select_at(point, Vec3::Y, false, u) else {
                 continue;
             };
             let x = match &set.get(id).unwrap().kind {
@@ -1661,7 +1792,7 @@ mod tests {
         let mut upward: f32 = 0.0;
         for i in 0..20000 {
             let u = (i as f32 + 0.5) / 20000.0;
-            let Some((id, p)) = set.select_at(Vec3::ZERO, Vec3::Y, u) else {
+            let Some((id, p)) = set.select_at(Vec3::ZERO, Vec3::Y, false, u) else {
                 continue;
             };
             if id.0 == 4 {
@@ -1690,7 +1821,7 @@ mod tests {
         let mut chosen = 0;
         for i in 0..1000 {
             let u = (i as f32 + 0.5) / 1000.0;
-            if let Some((_, p)) = set.select_at(point, -Vec3::Y, u) {
+            if let Some((_, p)) = set.select_at(point, -Vec3::Y, false, u) {
                 assert!(p > 0.0);
                 chosen += 1;
             }
@@ -2055,5 +2186,125 @@ mod tests {
         assert!(light.power() > 0.0, "a hidden light should still be chosen");
         assert!(!light.visibility.camera);
         assert!(light.visibility.lights_anything());
+    }
+
+    /// A big softbox over a product and a ring of `accents` small lamps, each
+    /// a fortieth of its power, low round the back, aimed down at a patch of
+    /// floor of its own; and the patch under each.
+    fn softbox_and_accents(accents: usize) -> (Vec<Light>, Vec<Vec3>) {
+        let lamp = |at: Vec3, facing: Vec3, half: f32, radiance: f32| {
+            let facing = facing.normalize();
+            let across = if facing.y.abs() < 0.9 { Vec3::Y.cross(facing).normalize() } else { Vec3::X.cross(facing).normalize() };
+            let up = facing.cross(across).normalize();
+            let (half_u, half_v) = if across.cross(up).dot(facing) > 0.0 { (across * half, up * half) } else { (up * half, across * half) };
+            Light::new(LightKind::Area(AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: PI }))
+        };
+        let mut lights = vec![lamp(vec3(0.0, 2.8, 1.2), vec3(0.0, -1.0, -0.4), 0.8, 6.0)];
+        let mut patches = Vec::new();
+        for i in 0..accents {
+            let angle = PI * (0.1 + 0.8 * i as f32 / (accents.max(2) - 1) as f32);
+            let out = vec3(angle.cos(), 0.0, -angle.sin().abs() * 0.6 + 0.3);
+            let at = out * 2.0 + vec3(0.0, 0.3, 0.0);
+            let patch = out * 2.4;
+            lights.push(lamp(at, patch - at, 0.04, 60.0));
+            patches.push(patch);
+        }
+        (lights, patches)
+    }
+
+    /// The share of the light at `point`, facing up, that each light gives:
+    /// what a light sample of it brings, averaged over many.
+    fn shares_of_the_light(lights: &[Light], point: Vec3) -> Vec<f32> {
+        let brought: Vec<f32> = lights
+            .iter()
+            .map(|light| {
+                let mut sum = 0.0;
+                for i in 0..4096 {
+                    let u = vec2((i % 64) as f32 / 64.0 + 0.5 / 64.0, (i / 64) as f32 / 64.0 + 0.5 / 64.0);
+                    if let Some(s) = light.sample(point, u) {
+                        sum += s.radiance.luminance() * s.direction.dot(Vec3::Y).max(0.0) / if s.is_delta { 1.0 } else { s.pdf };
+                    }
+                }
+                sum / 4096.0
+            })
+            .collect();
+        let total: f32 = brought.iter().sum();
+        brought.iter().map(|b| b / total).collect()
+    }
+
+    /// A weak lamp is chosen where it is the light. In the patch an accent
+    /// lamp lights, it gives half the light there or so, a fiftieth of the
+    /// softbox's power though it has: chosen by power, as a set of seven
+    /// lamps was, it was taken one sample in fifty, and a light sample's
+    /// variance there was some twenty times the square of the light. Now
+    /// each set takes the hierarchy, whose measure finds the lamp near.
+    #[test]
+    fn a_weak_lamp_is_chosen_where_it_is_the_light() {
+        for accents in [6usize, 12] {
+            let (lights, patches) = softbox_and_accents(accents);
+            let set = LightSet::new(lights.clone());
+            assert_eq!(set.strategy(), SelectionStrategy::Hierarchy, "{accents} accents: the weak lamps left the set on the table");
+            // The variance of one light sample of the unshadowed light, over
+            // its square: the sum over the lights of each one's share
+            // squared over its chance, less one.
+            let (mut tree, mut table, mut worst) = (0.0f32, 0.0f32, f32::INFINITY);
+            for (i, patch) in patches.iter().enumerate() {
+                let shares = shares_of_the_light(&lights, *patch);
+                let chance = |id: usize| set.selection_pdf_at(*patch, Vec3::Y, false, LightId(id as u32));
+                tree += shares.iter().enumerate().map(|(id, s)| s * s / chance(id).max(1e-9)).sum::<f32>() - 1.0;
+                table += shares.iter().enumerate().map(|(id, s)| s * s / set.selection_pdf(LightId(id as u32))).sum::<f32>() - 1.0;
+                worst = worst.min(chance(i + 1) / shares[i + 1]);
+                println!("  accent {i}: {:.3} of the light in its patch; chosen there {:.3}, by power {:.3}", shares[i + 1], chance(i + 1), set.selection_pdf(LightId(i as u32 + 1)));
+            }
+            let (tree, table) = (tree / patches.len() as f32, table / patches.len() as f32);
+            println!("{accents} accents: relative variance in the patches {tree:.3} by the tree, {table:.3} by power; each accent chosen at least {worst:.2} as often as its share");
+            assert!(table > 5.0, "{accents} accents: by power the patches were not starved: {table:.3}");
+            assert!(tree < 0.5, "{accents} accents: a light sample's relative variance in the accents' patches is {tree:.3}");
+            assert!(worst > 0.35, "{accents} accents: an accent lamp is chosen in its own patch only {worst:.2} as often as its share of the light");
+        }
+    }
+
+    /// What [`LightSet::selection_pdf_at`] says of a light is what
+    /// [`LightSet::select_at`] reports choosing it, and how often it does:
+    /// the integrator divides a light sample by the one, and weighs a bounce
+    /// meeting a lamp against the other. Through a tree with a sun in it.
+    #[test]
+    fn the_probability_of_choosing_a_light_from_a_point_is_how_often_it_is() {
+        let (mut lights, patches) = softbox_and_accents(6);
+        lights.push(Light::new(LightKind::Distant(DistantLight { direction: vec3(0.3, -1.0, -0.2).normalize(), irradiance: Spectrum::splat(2.0), half_angle: 0.01 })));
+        let set = LightSet::new(lights);
+        assert_eq!(set.strategy(), SelectionStrategy::Hierarchy);
+        for (point, normal, two_sided) in [(patches[2], Vec3::Y, false), (vec3(0.0, 0.5, 0.0), vec3(0.0, 0.0, 1.0), true), (vec3(0.5, 1.0, 0.2), -Vec3::Y, false)] {
+            const SWEEP: usize = 40000;
+            let mut counts = vec![0usize; set.len()];
+            let mut total = 0.0;
+            for i in 0..SWEEP {
+                let u = (i as f32 + 0.5) / SWEEP as f32;
+                let (id, p) = set.select_at(point, normal, two_sided, u).expect("a light");
+                counts[id.0 as usize] += 1;
+                let at = set.selection_pdf_at(point, normal, two_sided, id);
+                assert!((p - at).abs() < 1e-5 * p.max(1.0), "select_at reported {p} for light {}, selection_pdf_at {at}", id.0);
+            }
+            for (id, count) in counts.iter().enumerate() {
+                let claimed = set.selection_pdf_at(point, normal, two_sided, LightId(id as u32));
+                total += claimed;
+                let frequency = *count as f32 / SWEEP as f32;
+                assert!((frequency - claimed).abs() < 2e-3, "light {id} from {point:?} is chosen {frequency} of the time, and claims {claimed}");
+            }
+            assert!((total - 1.0).abs() < 1e-4, "the probabilities from {point:?} sum to {total}");
+        }
+    }
+
+    /// Lamps of about the same power keep the table, as they always did,
+    /// however few: a weak one among them is what the hierarchy is for.
+    #[test]
+    fn only_a_weak_lamp_sends_a_few_lamps_to_the_hierarchy() {
+        let panel = |radiance: f32| Light::new(LightKind::Area(AreaLight { radiance: Spectrum::splat(radiance), ..softbox() }));
+        assert_eq!(LightSet::new(vec![panel(10.0), panel(10.0), panel(6.0)]).strategy(), SelectionStrategy::Alias);
+        assert_eq!(LightSet::new(vec![panel(10.0), panel(1.0)]).strategy(), SelectionStrategy::Hierarchy);
+        // A lamp that lights nothing is no weak lamp.
+        let mut dark = panel(10.0);
+        dark.enabled = false;
+        assert_eq!(LightSet::new(vec![panel(10.0), dark]).strategy(), SelectionStrategy::Alias);
     }
 }
