@@ -374,36 +374,154 @@ pub fn widest_view(centres: &[Vec3], axes: &PartAxes) -> View {
     }
 }
 
-/// Islands laid out as they sit on the part, seen from `view`: each moved,
-/// not turned or scaled, so its middle is where its middle on the part is
-/// seen, at the layout's own scale (`density`, layout units to a metre of
-/// the part); then pushed apart, as little as they must, until no two
-/// boxes overlap or come closer than `gap`; the whole kept where the box
-/// round them was.
-pub fn as_on_part(layout: &UvLayout, mesh: &Mesh, islands: &[u32], view: View, axes: &PartAxes, density: f32, gap: f32) -> Plan {
+/// How islands are laid out as they sit on the part.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AsOnPart {
+    pub view: View,
+    /// Each island turned to read as the view sees it: what runs across the
+    /// view running across the layout, what runs down it down.
+    pub turn: bool,
+    /// Each island scaled to the layout's scale, so it is as large beside
+    /// the others as it is on the part.
+    pub true_size: bool,
+    /// The least gap between two islands' boxes, in layout units.
+    pub gap: f32,
+}
+
+impl Default for AsOnPart {
+    fn default() -> Self {
+        AsOnPart { view: View::Front, turn: true, true_size: true, gap: 0.005 }
+    }
+}
+
+/// The directions on the part, in its own space, that run across a view
+/// and down it.
+pub fn view_axes(view: View, axes: &PartAxes) -> (Vec3, Vec3) {
+    let [x, y, z] = axes.0;
+    match view {
+        View::Front | View::Auto => (x, -y),
+        View::Side => (-z, -y),
+        View::Top => (x, z),
+    }
+}
+
+/// The turn, u toward v, that makes an island read as a view sees it: what
+/// runs across the view (`across`, on the part) running across the layout,
+/// and what runs down it (`down`) down - the best turn for both at once,
+/// each by how strongly the island lays it out. An island the view sees
+/// from behind reads the other way round, so it is turned to read as seen
+/// through the part, up still up.
+pub fn turn_as_seen(layout: &UvLayout, mesh: &Mesh, island: u32, across: Vec3, down: Vec3) -> f32 {
+    let (dx, _) = super::arrange::direction_on_layout(layout, mesh, island, across);
+    let (dy, _) = super::arrange::direction_on_layout(layout, mesh, island, down);
+    // The rotation e^{iθ} taking dx to a length along u and dy to one along
+    // v, by least squares: θ is the angle of Σ target · conj(found).
+    let handed = dx.x * dy.y - dx.y * dy.x;
+    let along = if handed < 0.0 { -dx.length() } else { dx.length() };
+    let tall = dy.length();
+    let (re, im) = (along * dx.x + tall * dy.y, -along * dx.y + tall * dy.x);
+    if re.hypot(im) <= f32::MIN_POSITIVE {
+        return 0.0;
+    }
+    im.atan2(re)
+}
+
+/// An island's middle on the layout as its middle on the part maps there:
+/// its triangles' middles weighed by their area on the part.
+fn middle_on_layout(layout: &UvLayout, mesh: &Mesh, island: u32) -> Vec2 {
+    let (mut sum, mut total) = (Vec2::ZERO, 0.0f32);
+    for &t in &layout.islands[island as usize].triangles {
+        let [a, b, c] = mesh.triangle(t as usize).map(|v| mesh.positions[v as usize]);
+        let area = super::flatten::surface_area(a, b, c);
+        let [p, q, r] = layout.triangle_uv(t);
+        sum += (p + q + r) * (area / 3.0);
+        total += area;
+    }
+    if total > 0.0 { sum / total } else { layout.islands[island as usize].centroid }
+}
+
+/// Islands laid out as they sit on the part, seen from the view `options`
+/// names: each turned to read as seen and scaled to the layout's own scale
+/// (`density`, layout units to a metre of the part) where it asks, and
+/// moved so its middle is where its middle on the part is seen; then
+/// pushed apart until no two boxes overlap or come closer than the gap,
+/// and drawn back toward where they are seen as far as they go
+/// (`pushed_apart`); the whole kept where the box round them was.
+pub fn as_on_part(layout: &UvLayout, mesh: &Mesh, islands: &[u32], axes: &PartAxes, density: f32, options: &AsOnPart) -> Plan {
     let mut plan = Plan::default();
     let Some((low, high)) = box_of(layout, islands) else { return plan };
     let centres = centres_on_part(layout, mesh, islands);
-    let view = if view == View::Auto { widest_view(&centres, axes) } else { view };
-    let half: Vec<Vec2> = islands.iter().map(|&i| (layout.islands[i as usize].max - layout.islands[i as usize].min) * 0.5 + Vec2::splat(gap * 0.5)).collect();
-    let mut at: Vec<Vec2> = centres.iter().map(|p| seen(view, axes, *p) * density).collect();
-    let n = islands.len();
+    let view = if options.view == View::Auto { widest_view(&centres, axes) } else { options.view };
+    let (across, down) = view_axes(view, axes);
+    let gap = options.gap.max(0.0);
+    // Each island turned and scaled about its middle, the box that makes,
+    // and where its middle is seen.
+    let mut maps = Vec::with_capacity(islands.len());
+    let mut half = Vec::with_capacity(islands.len());
+    let mut offset = Vec::with_capacity(islands.len());
+    let mut ideal = Vec::with_capacity(islands.len());
+    for (k, &i) in islands.iter().enumerate() {
+        let middle = middle_on_layout(layout, mesh, i);
+        let turn = if options.turn { turn_as_seen(layout, mesh, i, across, down) } else { 0.0 };
+        let scale = match (options.true_size, super::arrange::linear_density(layout, &[i])) {
+            (true, Some(own)) if own > 0.0 => density / own,
+            _ => 1.0,
+        };
+        let map = UvAffine::rotation(turn).then(&UvAffine::uniform(scale)).about(middle);
+        let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+        for &v in &layout.islands[i as usize].uv_vertices {
+            let p = map.apply(layout.uv_vertices[v as usize].uv);
+            lo = lo.min(p);
+            hi = hi.max(p);
+        }
+        maps.push((map, middle));
+        half.push((hi - lo) * 0.5 + Vec2::splat(gap * 0.5));
+        offset.push((lo + hi) * 0.5 - middle);
+        ideal.push(seen(view, axes, centres[k]) * density + ((lo + hi) * 0.5 - middle));
+    }
+    let at = pushed_apart(&ideal, &half);
+    // Kept where the box round them was.
+    let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+    for (p, h) in at.iter().zip(&half) {
+        lo = lo.min(*p - *h);
+        hi = hi.max(*p + *h);
+    }
+    let shift = (low + high) * 0.5 - (lo + hi) * 0.5;
+    for (k, &i) in islands.iter().enumerate() {
+        let (map, middle) = maps[k];
+        plan.push(i, map.then(&UvAffine::translation(at[k] + shift - offset[k] - middle)));
+    }
+    plan.moving()
+}
+
+/// Boxes pushed apart from the places `ideal` gives them, each overlapping
+/// pair by half the overlap each the shorter way until none overlap; then
+/// each drawn back toward its place as far as it goes without coming into
+/// another's box, since pushing pairs apart in turn moves some further than
+/// they need.
+fn pushed_apart(ideal: &[Vec2], half: &[Vec2]) -> Vec<Vec2> {
+    let n = ideal.len();
+    let overlap = |at: &[Vec2], a: usize, b: usize| {
+        let d = at[b] - at[a];
+        half[a] + half[b] - vec2(d.x.abs(), d.y.abs())
+    };
+    let mut at = ideal.to_vec();
     // Apart, each overlapping pair by half the overlap each, the shorter
     // way, until none overlap.
-    for _ in 0..500 {
+    for _ in 0..2000 {
         let mut moved = false;
         for a in 0..n {
             for b in a + 1..n {
-                let d = at[b] - at[a];
-                let overlap = half[a] + half[b] - vec2(d.x.abs(), d.y.abs());
-                if overlap.x <= 1e-7 || overlap.y <= 1e-7 {
+                let o = overlap(&at, a, b);
+                if o.x <= 1e-7 || o.y <= 1e-7 {
                     continue;
                 }
                 moved = true;
-                let push = if overlap.x < overlap.y {
-                    vec2(if d.x > 0.0 || (d.x == 0.0 && a < b) { overlap.x } else { -overlap.x }, 0.0)
+                let d = at[b] - at[a];
+                let push = if o.x < o.y {
+                    vec2(if d.x > 0.0 || (d.x == 0.0 && a < b) { o.x } else { -o.x }, 0.0)
                 } else {
-                    vec2(0.0, if d.y > 0.0 || (d.y == 0.0 && a < b) { overlap.y } else { -overlap.y })
+                    vec2(0.0, if d.y > 0.0 || (d.y == 0.0 && a < b) { o.y } else { -o.y })
                 } * 0.5;
                 at[a] -= push * 1.0001;
                 at[b] += push * 1.0001;
@@ -413,17 +531,42 @@ pub fn as_on_part(layout: &UvLayout, mesh: &Mesh, islands: &[u32], view: View, a
             break;
         }
     }
-    // Kept where the box round them was.
-    let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
-    for (p, h) in at.iter().zip(&half) {
-        lo = lo.min(*p - *h);
-        hi = hi.max(*p + *h);
+    // Back toward where each is seen, as far as it goes without coming
+    // into another's box: pushing pairs apart in turn moves some further
+    // than they need.
+    let clear = |at: &[Vec2], k: usize| (0..n).all(|j| j == k || { let o = overlap(at, k, j); o.x <= 1e-7 || o.y <= 1e-7 });
+    // Fewer, coarser steps for very many islands.
+    let (rounds, steps) = if n > 200 { (6, 8) } else { (24, 20) };
+    for _ in 0..rounds {
+        let mut closer = false;
+        for k in 0..n {
+            let from = at[k];
+            let to = ideal[k];
+            if (to - from).length() <= 1e-7 {
+                continue;
+            }
+            // The furthest step along the way that keeps it clear.
+            let (mut lo, mut hi) = (0.0f32, 1.0f32);
+            at[k] = to;
+            if !clear(&at, k) {
+                for _ in 0..steps {
+                    let mid = 0.5 * (lo + hi);
+                    at[k] = from + (to - from) * mid;
+                    if clear(&at, k) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                at[k] = from + (to - from) * lo;
+            }
+            closer |= (at[k] - from).length() > 1e-6;
+        }
+        if !closer {
+            break;
+        }
     }
-    let shift = (low + high) * 0.5 - (lo + hi) * 0.5;
-    for (k, &i) in islands.iter().enumerate() {
-        plan.push(i, UvAffine::translation(at[k] + shift - layout.islands[i as usize].centre));
-    }
-    plan.moving()
+    at
 }
 
 #[cfg(test)]
@@ -543,7 +686,7 @@ mod tests {
         let (mesh, layout) = boxed();
         let all: Vec<u32> = (0..6).collect();
         let density = crate::uv::arrange::linear_density(&layout, &all).unwrap();
-        let plan = as_on_part(&layout, &mesh, &all, View::Front, &PartAxes::default(), density, 0.01);
+        let plan = as_on_part(&layout, &mesh, &all, &PartAxes::default(), density, &AsOnPart { view: View::Front, gap: 0.01, ..Default::default() });
         let after = moved(&mesh, &plan);
         for a in 0..6 {
             for b in a + 1..6 {
@@ -559,6 +702,51 @@ mod tests {
         assert!(after.islands[top].centre.y < after.islands[bottom].centre.y, "the top above");
         assert_eq!(widest_view(&[vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.1), vec3(0.0, 1.0, 0.0)], &PartAxes::default()), View::Front);
         assert_eq!(widest_view(&[vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 1.0), vec3(0.1, 0.0, 1.0)], &PartAxes::default()), View::Side);
+    }
+
+    /// A box's sides laid out each turned and sized its own way, as a
+    /// careless layout leaves them: laid out as on the part, each comes out
+    /// at the layout's own scale, and the sides the front sees read as it
+    /// sees them - the front upright, the top and bottom across as the
+    /// front runs - none overlapping; with neither asked, each only moves.
+    #[test]
+    fn as_on_the_part_gives_each_island_its_real_size_and_turn() {
+        let (mesh, layout) = boxed();
+        let all: Vec<u32> = (0..6).collect();
+        let messy = Plan {
+            islands: all.clone(),
+            maps: all.iter().map(|&i| UvAffine::rotation(0.4 + i as f32 * 0.9).then(&UvAffine::uniform(0.6 + 0.15 * i as f32)).about(layout.islands[i as usize].centre)).collect(),
+        };
+        let mesh = place_islands(&mesh, 0, &messy.islands, &messy.maps).unwrap();
+        let layout = UvLayout::new(&mesh, 0).unwrap();
+        let density = crate::uv::arrange::linear_density(&layout, &all).unwrap();
+        let plan = as_on_part(&layout, &mesh, &all, &PartAxes::default(), density, &AsOnPart::default());
+        let after = moved(&mesh, &plan);
+        let (across, down) = view_axes(View::Front, &PartAxes::default());
+        for (i, island) in after.islands.iter().enumerate() {
+            let size = (island.uv_area / (density * density * island.surface_area)).sqrt();
+            assert!((size - 1.0).abs() < 1e-3, "island {i} at {size} of the layout's scale");
+            let (_, sx) = crate::uv::arrange::direction_on_layout(&after, &mesh, i as u32, across);
+            let (_, sy) = crate::uv::arrange::direction_on_layout(&after, &mesh, i as u32, down);
+            // By what it lays out of the view's across and down: the left
+            // and right sides only the down, the top and bottom the across.
+            if sx > 0.5 || sy > 0.5 {
+                let left = turn_as_seen(&after, &mesh, i as u32, across, down).to_degrees();
+                assert!(left.abs() < 0.05, "island {i} still {left}° off reading as seen");
+            }
+        }
+        for a in 0..6 {
+            for b in a + 1..6 {
+                let (p, q) = (&after.islands[a], &after.islands[b]);
+                assert!(p.max.x <= q.min.x + 1e-4 || q.max.x <= p.min.x + 1e-4 || p.max.y <= q.min.y + 1e-4 || q.max.y <= p.min.y + 1e-4, "islands {a} and {b} overlap");
+            }
+        }
+        // Only moved, as it was before it turned and sized them.
+        let plain = as_on_part(&layout, &mesh, &all, &PartAxes::default(), density, &AsOnPart { turn: false, true_size: false, ..Default::default() });
+        let only_moved = moved(&mesh, &plain);
+        for (a, b) in layout.islands.iter().zip(&only_moved.islands) {
+            assert!((a.uv_area - b.uv_area).abs() < a.uv_area * 1e-4 && ((a.max - a.min) - (b.max - b.min)).length() < 1e-5, "moved, not turned or scaled");
+        }
     }
 
     use tequila_core::math::vec3;

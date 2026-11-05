@@ -211,6 +211,10 @@ pub struct Arrange {
     pub similar: f32,
     pub in_place: bool,
     pub view: View,
+    /// As on the part turns each island to read as seen, and scales it to
+    /// the layout's own scale.
+    pub turn_as_seen: bool,
+    pub true_size: bool,
     /// Bumped at each shuffle: the next order drawn.
     pub seed: u64,
     pub copied: Option<(String, IslandShape)>,
@@ -247,6 +251,8 @@ impl Default for Arrange {
             similar: 0.05,
             in_place: false,
             view: View::Front,
+            turn_as_seen: true,
+            true_size: true,
             seed: 1,
             copied: None,
             pending: Vec::new(),
@@ -488,12 +494,28 @@ impl UvEditor {
                 } else {
                     islands.iter().flat_map(|&i| uv.islands[i as usize].edges.clone()).map(|e| e as u32).collect()
                 };
-                let places = vertices::square_edges(uv, mesh, &edges, self.arrange.tolerance.to_radians());
+                let (places, report) = vertices::square_edges_reported(uv, mesh, &edges, self.arrange.tolerance.to_radians());
                 if places.is_empty() {
                     self.say(&format!("No edges within {:.0}° of square to line up", self.arrange.tolerance), false);
                     return;
                 }
-                let done = format!("Lined up the edges within {:.0}° of square, moving {}", self.arrange.tolerance, plural(places.vertices.len(), "vertex", "vertices"));
+                let found = report.across.len() + report.down.len();
+                let mut done = format!("Lined up {} within {:.0}° of square, moving {}", plural(found - report.left.len(), "edge", "edges"), self.arrange.tolerance, plural(places.vertices.len() - report.carried, "vertex", "vertices"));
+                if report.carried > 0 {
+                    done.push_str(&format!(" and carrying {} along", plural(report.carried, "vertex", "vertices")));
+                }
+                if !report.left.is_empty() {
+                    let clashing = report.left.iter().filter(|e| report.clashing.contains(e)).count();
+                    let folding = report.left.len() - clashing;
+                    let mut why = Vec::new();
+                    if clashing > 0 {
+                        why.push(format!("{clashing} would put two vertices on one place or flatten a face"));
+                    }
+                    if folding > 0 {
+                        why.push(format!("{folding} would fold the layout"));
+                    }
+                    done.push_str(&format!("; {} left as {}: {}", plural(report.left.len(), "edge", "edges"), if report.left.len() == 1 { "it was" } else { "they were" }, why.join(", ")));
+                }
                 self.put(edits, part, layout, places, tool.verb(), done);
             }
             Tool::Upright => {
@@ -650,7 +672,8 @@ impl UvEditor {
                     return refuse(self, "the islands have no area");
                 };
                 let gap = self.pack.margin_uv(layout.density()).unwrap_or(0.004);
-                let plan = sort::as_on_part(uv, mesh, &islands, self.arrange.view, &axes_of(project, part), density, gap);
+                let options = sort::AsOnPart { view: self.arrange.view, turn: self.arrange.turn_as_seen, true_size: self.arrange.true_size, gap };
+                let plan = sort::as_on_part(uv, mesh, &islands, &axes_of(project, part), density, &options);
                 if plan.is_empty() {
                     self.say("The islands are laid out as on the part already", false);
                     return;
@@ -762,6 +785,13 @@ impl UvEditor {
                 }
             });
             self.arrange.view = view;
+            let arrange = &mut self.arrange;
+            options(ui, "uv-as-on-part-options", "As on the part options", None, &mut |ui| {
+                ui.add(crate::field::Checkbox::new(&mut arrange.turn_as_seen, "Turn each to read as seen"))
+                    .on_hover_text("Each island turned so what runs across the view runs across the layout and what runs down it down; one seen from behind reads as seen through the part");
+                ui.add(crate::field::Checkbox::new(&mut arrange.true_size, "At the layout's scale"))
+                    .on_hover_text("Each island scaled to the layout's own scale, so it is as large beside the others as it is on the part");
+            });
         });
 
         crate::theme::section(ui, "Size");
@@ -1188,6 +1218,12 @@ impl UvEditor {
                 Some("auto") => settings.view = View::Auto,
                 Some(other) => return Err(format!("`{other}` is not a view: front, side, top or auto")),
             }
+            if let Some(turn) = flag(options, "turn") {
+                settings.turn_as_seen = turn;
+            }
+            if let Some(true_size) = flag(options, "true_size") {
+                settings.true_size = true_size;
+            }
         }
         if let Some(Some(degrees)) = change.square_edges {
             settings.tolerance = degrees.clamp(1.0, 44.0);
@@ -1214,6 +1250,13 @@ impl UvEditor {
                 }
                 if let Some(pattern) = text(options, "pattern") {
                     checker.pattern = super::checker::Pattern::from_key(&pattern).ok_or_else(|| format!("`{pattern}` is not a pattern: plain, letters or numbers"))?;
+                }
+                // The UV set it is drawn through: a set's number, from 0, or
+                // "shown" to follow the editor's.
+                match options.get("set") {
+                    None => {}
+                    Some(Value::String(s)) if s == "shown" => checker.set = None,
+                    Some(v) => checker.set = Some(v.as_index().ok_or("the checker's `set` is a UV set's number, from 0, or \"shown\"")?),
                 }
             }
         }
@@ -1266,8 +1309,9 @@ impl UvEditor {
         };
         let behind = match change.behind.as_deref() {
             None => None,
-            Some("none") => Some(None),
-            Some(key) => Some(Some(tequila_materials::material_type::Param::ALL.iter().copied().find(|p| p.key() == key).ok_or_else(|| format!("`{key}` is not a parameter"))?)),
+            Some("none") => Some((None, false)),
+            Some("checker") => Some((None, true)),
+            Some(key) => Some((Some(tequila_materials::material_type::Param::ALL.iter().copied().find(|p| p.key() == key).ok_or_else(|| format!("`{key}` is not a parameter"))?), false)),
         };
         let node = self.shown_part();
         if change.cursor.is_some() && node.is_none() {
@@ -1286,8 +1330,8 @@ impl UvEditor {
         if let Some(target) = align_to {
             self.align_to = target;
         }
-        if let Some(behind) = behind {
-            self.display.behind = behind;
+        if let Some((behind, checker)) = behind {
+            (self.display.behind, self.display.checker_behind) = (behind, checker);
         }
         if let Some(pivot) = pivot {
             self.cursors.pivot = pivot;
@@ -1370,10 +1414,21 @@ impl UvEditor {
             .set("pivot", if self.cursors.pivot { "cursor" } else { "frame" })
             .set("align_to", self.align_to.key())
             .set("exposure", self.prefs.background_exposure)
-            .set("behind", self.display.behind.map(|p| Value::String(p.key().to_string())).unwrap_or(Value::Null))
+            .set("behind", match self.display.behind {
+                Some(p) => Value::String(p.key().to_string()),
+                None if self.display.checker_behind => Value::String("checker".into()),
+                None => Value::Null,
+            })
             .set("copied", self.arrange.copied.as_ref().map(|(name, _)| Value::String(name.clone())).unwrap_or(Value::Null));
         let mut checker = tequila_format::json_write::Object::new();
-        checker.set("on", self.checker.on).set("squares", self.checker.squares as usize).set("pattern", self.checker.pattern.key());
+        checker
+            .set("on", self.checker.on)
+            .set("squares", self.checker.squares as usize)
+            .set("pattern", self.checker.pattern.key())
+            .set("set", match self.checker.set {
+                Some(set) => Value::Number(set as f64),
+                None => Value::String("shown".into()),
+            });
         out.set("checker", checker.build());
         let mut padding = tequila_format::json_write::Object::new();
         padding.set("on", self.prefs.padding).set("texture", self.prefs.padding_texture as usize).set("px", self.prefs.padding_px);

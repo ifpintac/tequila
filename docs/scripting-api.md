@@ -103,7 +103,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-72 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+73 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -698,6 +698,19 @@ upright), as one step.
 
 ```json
 { "command": "uv.place_islands", "islands": [0, 2], "maps": [ [1, 0, 0.1, 0, 1, 0], [0, -1, 1, 1, 0, 0] ], "node": 2, "set": 0 }
+```
+
+#### `uv.set_pins`
+
+The pinned vertices of a part's UV set `set`, the whole list at once, each
+by its mesh vertex (`crate::uv::pins`): held where they are when an island
+is laid out flat again, relaxed or reshaped round them. Saved with the part;
+nothing that renders changes.
+
+`fs.commands.uv.set_pins(node=..., set=..., vertices=...)`
+
+```json
+{ "command": "uv.set_pins", "node": 2, "set": 0, "vertices": [3, 7] }
 ```
 
 ### lighting

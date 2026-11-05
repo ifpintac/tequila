@@ -410,7 +410,9 @@ impl UvEditor {
 
     fn shape_tool(&mut self, tool: Tool, part: &Part, layout: &Layout, mesh: &tequila_scene::Mesh, edits: &mut Edits) {
         let (node, set) = (part.node, layout.uv.set);
-        let pins: Vec<u32> = self.pins.get(&(node, set)).map(|p| p.iter().copied().collect()).unwrap_or_default();
+        let pins: Vec<u32> = part.pins.get(&set).cloned().unwrap_or_default();
+        // Pins to put down in the same step, as Rectangle's border.
+        let mut pin_after: Option<Vec<u32>> = None;
         let s = self.shape.settings;
         let refuse = |editor: &mut UvEditor, why: String| editor.say(&format!("Could not {}: {why}", tool.verb()), true);
         let (moves, done) = match tool {
@@ -472,7 +474,7 @@ impl UvEditor {
                 Ok((moves, report)) => {
                     let mut done = if report.rectangles == 1 { "Laid the border out as a rectangle".to_string() } else { format!("Laid {} borders out as rectangles", report.rectangles) };
                     if s.pin_border {
-                        self.pins.entry((node, set)).or_default().extend(report.border.iter().copied());
+                        pin_after = Some(pins.iter().chain(&report.border).copied().collect());
                         done.push_str(&format!(", {} pinned", plural(report.border.len(), "vertex", "vertices")));
                     }
                     (moves, done)
@@ -602,7 +604,13 @@ impl UvEditor {
             Tool::SelectSide => return self.select_side(layout, mesh),
             Tool::SelectMirror => return self.select_mirror(layout, mesh),
         };
-        self.reshape(part, layout, moves, tool, done, edits);
+        if self.reshape(part, layout, moves, tool, done, edits) {
+            if let Some(mut vertices) = pin_after {
+                vertices.sort_unstable();
+                vertices.dedup();
+                edits.layout.push(LayoutEdit { command: Command::SetUvPins { node, set, vertices }, verb: "pin the border", done: String::new(), carry: true });
+            }
+        }
     }
 
     /// A tool's moves sent as one `uv.set_positions`; false where nothing

@@ -35,6 +35,7 @@ CATALOG = (
     'uv.move_set',
     'uv.set_positions',
     'uv.place_islands',
+    'uv.set_pins',
     'scene.rename',
     'scene.set_transform',
     'scene.set_visibility',
@@ -473,6 +474,13 @@ class UvCommands(_Commands):
         { "command": "uv.place_islands", "islands": [0, 2], "maps": [ [1, 0, 0.1, 0, 1, 0], [0, -1, 1, 1, 0, 0] ], "node": 2, "set": 0 }
         """
         return self._apply('uv.place_islands', {'islands': islands, 'maps': maps, 'node': node, 'set': set})
+
+    def set_pins(self, *, node=_UNSET, set=_UNSET, vertices=_UNSET):
+        r"""`uv.set_pins`: The pinned vertices of a part's UV set `set`, the whole list at once, each by its mesh vertex (`crate::uv::pins`): held where they are when an island is laid out flat again, relaxed or reshaped round them. Saved with the part; nothing that renders changes.
+
+        { "command": "uv.set_pins", "node": 2, "set": 0, "vertices": [3, 7] }
+        """
+        return self._apply('uv.set_pins', {'node': node, 'set': set, 'vertices': vertices})
 
 
 class LightingCommands(_Commands):

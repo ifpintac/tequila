@@ -264,8 +264,10 @@ impl UvEditor {
                 self.command(edits, Command::StitchUvs { node, set, edges }, action, done);
             }
             Action::Pin | Action::Unpin => {
+                // The whole list for the set, as it is to be: one step to
+                // undo, saved with the part.
                 let vertices = editing::mesh_vertices(&self.selection);
-                let pins = self.pins.entry((node, set)).or_default();
+                let mut pins: std::collections::BTreeSet<u32> = part.pins.get(&set).into_iter().flatten().copied().collect();
                 for v in &vertices {
                     if action == Action::Pin {
                         pins.insert(*v);
@@ -275,11 +277,12 @@ impl UvEditor {
                 }
                 let total = pins.len();
                 let what = plural(vertices.len(), "vertex", "vertices");
-                self.say(&if action == Action::Pin { format!("Pinned {what} · {total} in all") } else { format!("Unpinned {what} · {total} left") }, false);
+                let done = if action == Action::Pin { format!("Pinned {what} · {total} in all") } else { format!("Unpinned {what} · {total} left") };
+                self.command(edits, Command::SetUvPins { node, set, vertices: pins.into_iter().collect() }, action, done);
             }
             Action::Reflatten => {
                 let islands = self.islands_or_all(layout);
-                let pins: Vec<u32> = self.pins_on(node, set, layout, &islands);
+                let pins: Vec<u32> = self.pins_on(part, set, layout, &islands);
                 let done = format!("Laid {} out flat again{}{}", plural(islands.len(), "island", "islands"), if pins.is_empty() { String::new() } else { format!(", {} held", plural(pins.len(), "pin", "pins")) }, if self.repack { ", and packed" } else { "" });
                 self.command(edits, Command::ReflattenUvs { node, set, islands, pins, repack: self.repack }, action, done);
             }
@@ -353,8 +356,8 @@ impl UvEditor {
     }
 
     /// The pins on some islands.
-    fn pins_on(&self, node: tequila_scene::NodeId, set: usize, layout: &Layout, islands: &[u32]) -> Vec<u32> {
-        self.pins.get(&(node, set)).map(|pins| pins.iter().copied().filter(|&v| layout.uv.island_of_vertex(v).is_some_and(|i| islands.contains(&i))).collect()).unwrap_or_default()
+    fn pins_on(&self, part: &Part, set: usize, layout: &Layout, islands: &[u32]) -> Vec<u32> {
+        part.pins.get(&set).map(|pins| pins.iter().copied().filter(|&v| layout.uv.island_of_vertex(v).is_some_and(|i| islands.contains(&i))).collect()).unwrap_or_default()
     }
 
     /// The layout's selection moved by `map`, as one `uv.transform`.
@@ -460,10 +463,9 @@ impl UvEditor {
         ui.horizontal_wrapped(|ui| {
             button(ui, self, Action::Pin, &mut act);
             button(ui, self, Action::Unpin, &mut act);
-            let count = self.pins.get(&(part.node, set)).map_or(0, |p| p.len());
+            let count = part.pins.get(&set).map_or(0, |p| p.len());
             if ui.add_enabled(count > 0, egui::Button::new("Clear")).on_hover_text("Unpin every vertex of this layout").clicked() {
-                self.pins.remove(&(part.node, set));
-                self.say("Cleared the pins", false);
+                edits.layout.push(super::LayoutEdit { command: Command::SetUvPins { node: part.node, set, vertices: Vec::new() }, verb: "clear the pins", done: "Cleared the pins".into(), carry: true });
             }
             ui.label(egui::RichText::new(if count == 1 { "1 pin".to_string() } else { format!("{count} pins") }).size(12.0).color(p.text_dim));
         });

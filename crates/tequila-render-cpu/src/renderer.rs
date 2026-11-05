@@ -304,6 +304,19 @@ pub fn preview_pass(
     context: &RenderContext,
     samples_per_pixel: u32,
 ) {
+    preview_pass_checked(intersector, framebuffer, context, samples_per_pixel, None)
+}
+
+/// [`preview_pass`], with the UV editor's checker drawn on the parts it is
+/// on (`tequila_render_core::preview::PreviewChecker`): the viewport's
+/// Solid only, never a render.
+pub fn preview_pass_checked(
+    intersector: &dyn Intersector,
+    framebuffer: &mut Framebuffer,
+    context: &RenderContext,
+    samples_per_pixel: u32,
+    checker: Option<&preview::PreviewChecker>,
+) {
     let (width, height) = (framebuffer.width, framebuffer.height);
     if width == 0 || height == 0 {
         return;
@@ -349,12 +362,13 @@ pub fn preview_pass(
                         y: (y as f32 + jitter.y) / height as f32,
                     };
                     let ray = context.camera.pick_ray(film, aspect);
-                    let sample = preview::shade_ray_with(
+                    let sample = preview::shade_ray_checked(
                         intersector,
                         ray,
                         film,
                         &rig,
                         Some(&programs),
+                        checker,
                         &mut registers,
                         &mut scratch,
                     );

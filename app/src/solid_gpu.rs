@@ -403,8 +403,8 @@ pub struct Frame {
 }
 
 /// A pattern drawn on some parts in place of their base colour, through
-/// their first UV set (`crate::uv_editor::checker`): nothing in the scene,
-/// the material or the render, only in the GPU's picture.
+/// one of their UV sets (`crate::uv_editor::checker`): nothing in the
+/// scene, the material or the render, only in the viewport's picture.
 #[derive(Clone, Debug)]
 pub struct CheckerFrame {
     /// Instance ids to draw it on.
@@ -414,6 +414,10 @@ pub struct CheckerFrame {
     pub image: Arc<(usize, Vec<u8>)>,
     /// What the picture is, to know when to send it again.
     pub key: u64,
+    /// The UV set it is drawn through, a place for each vertex of the
+    /// parts' mesh, where it is not the first (the one the scene's meshes
+    /// carry); and what that set is, to know when to send it again.
+    pub uvs: Option<(u64, Arc<Vec<tequila_core::math::Vec2>>)>,
 }
 
 /// What the GPU view draws, as Blender's viewport shading offers it.
@@ -561,6 +565,10 @@ struct Gpu {
     uniforms: std::cell::RefCell<HashMap<(glow::Program, &'static str), Option<glow::UniformLocation>>>,
     /// The UV editor's checker as sent, and what it was sent for.
     checker: Option<(u64, glow::Texture)>,
+    /// The checked part's mesh with the checker's UV set beside its own,
+    /// by the scene's mesh and the set sent: drawn in place of the mesh for
+    /// the checked parts.
+    checker_mesh: Option<((usize, u64), GpuMesh)>,
 }
 
 /// The GPU Solid view. Cheap to clone into a paint callback.
@@ -573,10 +581,14 @@ pub struct SolidView {
 
 impl SolidView {
     pub fn new(has_gl: bool) -> SolidView {
+        // `TEQUILA_SOLID_ON_CPU` set draws Solid on the processor, as a
+        // machine without OpenGL does: to see that path on one with it.
+        let on_cpu = std::env::var_os("TEQUILA_SOLID_ON_CPU").is_some();
+        let error = if !has_gl { Some("no OpenGL context".to_string()) } else if on_cpu { Some("TEQUILA_SOLID_ON_CPU is set".to_string()) } else { None };
         SolidView {
             gpu: Arc::new(Mutex::new(Gpu::default())),
-            failed: Arc::new(AtomicBool::new(!has_gl)),
-            error: Arc::new(Mutex::new(if has_gl { None } else { Some("no OpenGL context".into()) })),
+            failed: Arc::new(AtomicBool::new(error.is_some())),
+            error: Arc::new(Mutex::new(error)),
         }
     }
 
@@ -640,6 +652,9 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
 layout(location = 3) in vec4 a_tangent;
+// The UV set the UV editor's checker reads, where it is not the first.
+layout(location = 4) in vec2 a_checker_uv;
+uniform int u_checker_uv;
 uniform mat4 u_model;
 uniform mat3 u_normal_matrix;
 uniform mat4 u_view_projection;
@@ -648,6 +663,7 @@ uniform vec2 u_viewport;
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
+out vec2 v_checker_uv;
 out vec4 v_tangent;
 out vec3 v_object;
 out vec3 v_object_normal;
@@ -658,6 +674,7 @@ void main() {
     v_object_normal = a_normal;
     v_normal = normalize(u_normal_matrix * a_normal);
     v_uv = a_uv;
+    v_checker_uv = u_checker_uv == 1 ? a_checker_uv : a_uv;
     // A direction along the surface: it moves with the model matrix, not
     // the normal matrix. Zero when the mesh has no tangents.
     v_tangent = vec4(mat3(u_model) * a_tangent.xyz, a_tangent.w);
@@ -680,6 +697,7 @@ const SURFACE_FRAGMENT: &str = r#"
 in vec3 v_world;
 in vec3 v_normal;
 in vec2 v_uv;
+in vec2 v_checker_uv;
 in vec4 v_tangent;
 in vec3 v_object;
 in vec3 v_object_normal;
@@ -1109,7 +1127,7 @@ void main() {
     if (u_label_count > 6) lay_label(t_label6, 6, base_colour, metalness, roughness_in, transmission_in);
     if (u_label_count > 7) lay_label(t_label7, 7, base_colour, metalness, roughness_in, transmission_in);
     if (u_checker == 1) {
-        base_colour = u_srgb_to_ap1 * texture(t_checker, v_uv).rgb;
+        base_colour = u_srgb_to_ap1 * texture(t_checker, v_checker_uv).rgb;
         metalness = 0.0;
         roughness_in = 0.6;
         transmission_in = 0.0;
@@ -1498,11 +1516,13 @@ impl Gpu {
         let aspect = width as f32 / height as f32;
 
         self.sync_scene(gl, &frame.scene)?;
-        // The UV editor's checker's picture, sent when it is another.
+        // The UV editor's checker's picture, sent when it is another, and
+        // the UV set it reads where that is not the first.
         let checker_texture = match &frame.checker {
             Some(checker) => self.checker_texture(gl, checker)?,
             None => None,
         };
+        self.sync_checker_mesh(gl, &frame)?;
         if frame.mode == GpuMode::MaterialPreview {
             self.sync_environment(gl, &frame.scene)?;
             if !self.shadow_failed {
@@ -1691,6 +1711,7 @@ impl Gpu {
             gl.uniform_1_i32(gl.get_uniform_location(program, "u_outline_pass").as_ref(), 0);
             gl.uniform_1_f32(gl.get_uniform_location(program, "u_outline").as_ref(), 0.0);
             gl.uniform_1_i32(gl.get_uniform_location(program, "u_checker").as_ref(), 0);
+            gl.uniform_1_i32(gl.get_uniform_location(program, "u_checker_uv").as_ref(), 0);
             gl.uniform_1_i32(gl.get_uniform_location(program, "t_checker").as_ref(), 6);
         };
         let program = programs.surface;
@@ -1699,8 +1720,41 @@ impl Gpu {
 
         let selected: std::collections::HashSet<u32> = frame.selected.iter().copied().collect();
         let drawable = |i: &&tequila_render_core::scene::Instance| i.visible_to_camera && i.shadow_catcher.is_none();
+        // The UV editor's checker, on the unit the backdrop's picture was
+        // on, which is drawn by now.
+        let checked: std::collections::HashSet<u32> = frame.checker.as_ref().map(|c| c.instances.iter().copied().collect()).unwrap_or_default();
+        let checked = if checker_texture.is_some() { checked } else { Default::default() };
+        if let Some(texture) = checker_texture.filter(|_| !checked.is_empty()) {
+            gl.active_texture(glow::TEXTURE6);
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.active_texture(glow::TEXTURE0);
+        }
+        // A checked part drawn with its checker: through the set sent beside
+        // its mesh, or its first.
+        let draw_checked = |program: glow::Program, instance: &tequila_render_core::scene::Instance| {
+            gl.uniform_1_i32(self.uniform(gl, program, "u_checker").as_ref(), 1);
+            match self.checker_gpu_mesh(instance, &scene) {
+                Some(mesh) => {
+                    gl.uniform_1_i32(self.uniform(gl, program, "u_checker_uv").as_ref(), 1);
+                    self.draw_mesh(gl, program, instance, mesh);
+                    gl.uniform_1_i32(self.uniform(gl, program, "u_checker_uv").as_ref(), 0);
+                }
+                None => self.draw_instance(gl, program, instance, &scene),
+            }
+            gl.uniform_1_i32(self.uniform(gl, program, "u_checker").as_ref(), 0);
+        };
 
         if frame.mode == GpuMode::Wireframe {
+            // A checked part drawn whole, shaded as Solid shades it, so its
+            // checker shows under the lines.
+            if !checked.is_empty() {
+                gl.uniform_1_i32(location("u_mode").as_ref(), 0);
+                for instance in scene.instances.iter().filter(drawable).filter(|i| checked.contains(&i.id.0)) {
+                    self.set_material(gl, program, instance.material.index());
+                    draw_checked(program, instance);
+                }
+                gl.uniform_1_i32(location("u_mode").as_ref(), mode_code);
+            }
             // The faces into the depth buffer only, so the edges in front of
             // them can be told from the edges behind.
             gl.color_mask(false, false, false, false);
@@ -1750,14 +1804,6 @@ impl Gpu {
         gl.uniform_1_f32(location("u_outline").as_ref(), 0.0);
         let mut current = program;
         let mut configured = vec![program];
-        // The UV editor's checker, on the unit the backdrop's picture was
-        // on, which is drawn by now.
-        let checked: std::collections::HashSet<u32> = frame.checker.as_ref().map(|c| c.instances.iter().copied().collect()).unwrap_or_default();
-        if let (Some(texture), false) = (checker_texture, checked.is_empty()) {
-            gl.active_texture(glow::TEXTURE6);
-            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
-            gl.active_texture(glow::TEXTURE0);
-        }
         // Parts light passes through are drawn after everything else, over
         // what is behind them: a clear housing showed only the environment
         // where the parts inside it are. A checked part is not see-through.
@@ -1786,13 +1832,10 @@ impl Gpu {
             if current != program {
                 self.set_object(gl, current, instance, &scene);
             }
-            let check = checked.contains(&instance.id.0);
-            if check {
-                gl.uniform_1_i32(self.uniform(gl, current, "u_checker").as_ref(), 1);
-            }
-            self.draw_instance(gl, current, instance, &scene);
-            if check {
-                gl.uniform_1_i32(self.uniform(gl, current, "u_checker").as_ref(), 0);
+            if checked.contains(&instance.id.0) {
+                draw_checked(current, instance);
+            } else {
+                self.draw_instance(gl, current, instance, &scene);
             }
         }
         if !through.is_empty() {
@@ -1973,6 +2016,49 @@ impl Gpu {
     unsafe fn draw_instance(&self, gl: &glow::Context, program: glow::Program, instance: &tequila_render_core::scene::Instance, scene: &SceneSnapshot) {
         let mesh = &scene.meshes[instance.mesh.index()];
         let Some(gpu) = self.meshes.get(&(Arc::as_ptr(mesh) as usize)) else { return };
+        self.draw_mesh(gl, program, instance, gpu);
+    }
+
+    /// The checked part's mesh with the checker's UV set beside its own,
+    /// where one was sent for this instance's mesh.
+    fn checker_gpu_mesh(&self, instance: &tequila_render_core::scene::Instance, scene: &SceneSnapshot) -> Option<&GpuMesh> {
+        let ((mesh, _), gpu) = self.checker_mesh.as_ref()?;
+        (*mesh == Arc::as_ptr(&scene.meshes[instance.mesh.index()]) as usize).then_some(gpu)
+    }
+
+    /// Send the checked part's mesh again with the checker's UV set beside
+    /// its own, when that is another set or another mesh; let it go when
+    /// the checker reads the first set, or is off.
+    unsafe fn sync_checker_mesh(&mut self, gl: &glow::Context, frame: &Frame) -> Result<(), String> {
+        let wanted = frame.checker.as_ref().and_then(|checker| {
+            let (key, uvs) = checker.uvs.as_ref()?;
+            let instance = frame.scene.instances.iter().find(|i| checker.instances.contains(&i.id.0))?;
+            let mesh = &frame.scene.meshes[instance.mesh.index()];
+            (uvs.len() == mesh.positions.len()).then(|| ((Arc::as_ptr(mesh) as usize, *key), mesh.clone(), uvs.clone()))
+        });
+        if self.checker_mesh.as_ref().map(|(k, _)| *k) == wanted.as_ref().map(|(k, _, _)| *k) {
+            return Ok(());
+        }
+        if let Some((_, old)) = self.checker_mesh.take() {
+            delete_mesh(gl, old);
+        }
+        if let Some((key, mesh, uvs)) = wanted {
+            let gpu = upload_mesh(gl, &mesh)?;
+            gl.bind_vertex_array(Some(gpu.vao));
+            let buffer = gl.create_buffer()?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes_of(&checker_uv_data(&mesh, &uvs)), glow::STATIC_DRAW);
+            gl.enable_vertex_attrib_array(4);
+            gl.vertex_attrib_pointer_f32(4, 2, glow::FLOAT, false, 8, 0);
+            gl.bind_vertex_array(None);
+            let mut gpu = gpu;
+            gpu.buffers.push(buffer);
+            self.checker_mesh = Some((key, gpu));
+        }
+        Ok(())
+    }
+
+    unsafe fn draw_mesh(&self, gl: &glow::Context, program: glow::Program, instance: &tequila_render_core::scene::Instance, gpu: &GpuMesh) {
         let model = instance.transform.matrix;
         let inverse = instance.transform.inverse;
         // The normal matrix is the inverse transpose; `inverse` is already
@@ -2313,12 +2399,7 @@ impl Gpu {
         let stale: Vec<usize> = self.meshes.keys().copied().filter(|k| !live_meshes.contains(k)).collect();
         for key in stale {
             if let Some(mesh) = self.meshes.remove(&key) {
-                gl.delete_vertex_array(mesh.vao);
-                gl.delete_vertex_array(mesh.edge_vao);
-                gl.delete_vertex_array(mesh.model_vao);
-                for buffer in mesh.buffers {
-                    gl.delete_buffer(buffer);
-                }
+                delete_mesh(gl, mesh);
             }
         }
 
@@ -2422,6 +2503,27 @@ fn vertex_data(mesh: &Mesh) -> (Vec<f32>, Option<Vec<u32>>) {
             }
         }
         (data, None)
+    }
+}
+
+/// A UV set's places laid out as [`vertex_data`] lays the mesh's vertices
+/// out: one a vertex where the mesh is drawn by its indices, one a corner
+/// where it is drawn faceted.
+fn checker_uv_data(mesh: &Mesh, uvs: &[tequila_core::math::Vec2]) -> Vec<f32> {
+    let at = |i: usize| uvs.get(i).map_or([0.0, 0.0], |p| [p.x, p.y]);
+    if mesh.normals.len() == mesh.positions.len() {
+        (0..mesh.positions.len()).flat_map(at).collect()
+    } else {
+        mesh.indices.iter().flat_map(|&i| at(i as usize)).collect()
+    }
+}
+
+unsafe fn delete_mesh(gl: &glow::Context, mesh: GpuMesh) {
+    gl.delete_vertex_array(mesh.vao);
+    gl.delete_vertex_array(mesh.edge_vao);
+    gl.delete_vertex_array(mesh.model_vao);
+    for buffer in mesh.buffers {
+        gl.delete_buffer(buffer);
     }
 }
 

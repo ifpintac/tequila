@@ -51,6 +51,7 @@ fn document_with_everything() -> SceneDocument {
     part.rays = tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() };
     part.layers = vec!["Outer".into()];
     part.uv_guides = vec![tequila_scene::guides::UvGuide::new(tequila_scene::guides::GuideAxis::U, 0.5)];
+    part.uv_pins = tequila_scene::uv::UvPins::from([(0, vec![1, 2])]);
 
     bus.apply(
         &mut document,

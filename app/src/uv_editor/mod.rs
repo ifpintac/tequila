@@ -74,7 +74,7 @@ mod view;
 use crate::icons::{self, Icon};
 use crate::project::Project;
 use selection::{Item, Mode};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use tequila_core::math::{vec2, Vec2};
 use tequila_materials::decal::Decal;
 use tequila_materials::graph::TextureId;
@@ -197,13 +197,12 @@ pub struct UvEditor {
     /// A change of the layout's selection typed or dragged into the
     /// Transform panel, shown until the field is let go.
     panel_preview: Option<UvAffine>,
-    /// Vertices held still when an island is laid out flat again, by part
-    /// and UV set, each by its mesh vertex: kept while the editor is open.
-    pins: HashMap<(NodeId, usize), BTreeSet<u32>>,
     /// The UV set shown when no selected label or texture says which.
     set_choice: usize,
     /// The set shown this frame.
     shown_set: usize,
+    /// Its pins this frame, for a script's query.
+    shown_pins: Vec<u32>,
     /// The re-flatten's Pack after.
     repack: bool,
     pack: actions::PackSettings,
@@ -229,6 +228,10 @@ pub struct UvEditor {
     /// picture as last drawn.
     checker: checker::Checker,
     checker_picture: Option<((u32, checker::Pattern), std::sync::Arc<(usize, Vec<u8>)>)>,
+    /// The places of the UV set the checker reads, where it is not the
+    /// first, and the checker as the processor's Solid takes it.
+    checker_places: Option<checker::SetPlaces>,
+    cpu_checker: Option<(u64, std::sync::Arc<tequila_render_core::preview::PreviewChecker>)>,
     display: display::Display,
     /// The Select menu, asked open or shut by a script.
     select_open: Option<bool>,
@@ -281,9 +284,9 @@ impl Default for UvEditor {
             density: None,
             saved_at: f64::NEG_INFINITY,
             panel_preview: None,
-            pins: HashMap::new(),
             set_choice: 0,
             shown_set: 0,
+            shown_pins: Vec::new(),
             repack: false,
             pack: actions::PackSettings::default(),
             pack_open: None,
@@ -297,6 +300,8 @@ impl Default for UvEditor {
             texel: density::Texel::default(),
             checker: checker::Checker::default(),
             checker_picture: None,
+            checker_places: None,
+            cpu_checker: None,
             display: display::Display::default(),
             select_open: None,
             shape: shape_tools::State::default(),
@@ -313,6 +318,9 @@ pub(super) struct Part {
     pub labels: Vec<Decal>,
     pub textures: Vec<textures::Layer>,
     pub guides: Vec<UvGuide>,
+    /// Its pins, set by set, each by its mesh vertex: saved with the part
+    /// and put down or taken up through `uv.set_pins`.
+    pub pins: tequila_scene::uv::UvPins,
     /// How many UV sets its mesh has.
     pub sets: usize,
     /// Its faces picked in the viewport, at Face level.
@@ -410,12 +418,13 @@ impl UvEditor {
         self.island = None;
         self.measure = None;
         self.typing = None;
-        self.pins.clear();
         self.distortion = None;
         self.panel_preview = None;
         self.hint = link::Hint::default();
         self.cursors.forget();
         self.forget_display();
+        self.checker_places = None;
+        self.cpu_checker = None;
         self.arrange.pending.clear();
         self.texel = density::Texel::default();
     }
@@ -459,7 +468,7 @@ impl UvEditor {
             .unwrap_or_default();
         let sets = document.geometry.get(mesh).map_or(0, |m| m.uv_sets.len());
         let faces = if project.selection.level() == tequila_scene::selection::SelectionLevel::Face { project.selection.faces(node).collect() } else { Vec::new() };
-        Some(Part { node, name: scene_node.name.clone(), mesh, material, labels, textures, guides: scene_node.uv_guides.clone(), sets, faces })
+        Some(Part { node, name: scene_node.name.clone(), mesh, material, labels, textures, guides: scene_node.uv_guides.clone(), pins: scene_node.uv_pins.clone(), sets, faces })
     }
 
     /// The UV set to show: the first selected label's or texture's, or the
@@ -867,7 +876,7 @@ impl UvEditor {
                 self.prefs.stretch = if self.prefs.stretch.is_some() { None } else { Some(Measure::Area) };
             }
             let checker = icons::button(ui, Icon::Checker, self.checker.on, 30.0, egui::Sense::click());
-            if icons::tip(checker, "Checker on the part", "Draw the part in the viewport with a checker through its first UV set, to see how the layout lies on it: in Solid and Material Preview, never in a render. Its squares and pattern are in View options", "").clicked() {
+            if icons::tip(checker, "Checker on the part", "Draw the part in the viewport with a checker through the UV set shown here, to see how the layout lies on it: in every view but Rendered, never in a render. Its squares, pattern and set are in View options", "").clicked() {
                 self.checker.on = !self.checker.on;
             }
             ui.add_space(4.0);
@@ -1047,7 +1056,7 @@ impl UvEditor {
                 }
                 _ => {
                     let vertices = self.selection.vertices();
-                    let pinned = self.pins.get(&(part.node, layout.uv.set)).map_or(0, |pins| vertices.iter().filter(|v| pins.contains(v)).count());
+                    let pinned = part.pins.get(&layout.uv.set).map_or(0, |pins| vertices.iter().filter(|v| pins.contains(v)).count());
                     format!("{} selected, {pinned} pinned{size}", plural(vertices.len(), "vertex", "vertices"))
                 }
             };
@@ -1622,8 +1631,8 @@ impl UvEditor {
                 .set("edges", Value::Array(self.selection.edges().into_iter().map(|[a, b]| Value::Array(vec![Value::Number(a as f64), Value::Number(b as f64)])).collect()))
                 .set("vertices", numbers(self.selection.vertices()));
         }
-        if let Some(node) = self.hint.node {
-            out.set("pins", numbers(self.pins.get(&(node, self.shown_set)).map(|p| p.iter().copied().collect()).unwrap_or_default()));
+        if self.hint.node.is_some() {
+            out.set("pins", numbers(self.shown_pins.clone()));
         }
         if let Some(param) = self.selection.texture() {
             out.set("texture", param.key());
@@ -1712,6 +1721,7 @@ pub fn show(ctx: &egui::Context, editor: &mut UvEditor, project: &mut Project) {
     // selected is found again by the numbers edits keep.
     let set = editor.uv_set(&part);
     editor.shown_set = set;
+    editor.shown_pins = part.pins.get(&set).cloned().unwrap_or_default();
     if editor.layout.as_ref().map(|(key, s, _)| (*key, *s)) != Some((part.mesh, set)) {
         let fresh = project.document().geometry.get(part.mesh).and_then(|mesh| layout::Layout::of(mesh, set));
         let same = editor.framed_for == Some((part.node, set));
@@ -1731,11 +1741,6 @@ pub fn show(ctx: &egui::Context, editor: &mut UvEditor, project: &mut Project) {
         editor.framed_for = Some((part.node, set));
         editor.layout = fresh.map(|l| (part.mesh, set, l));
         editor.gesture = editor.gesture.take().filter(|g| !matches!(g, tools::Gesture::Layout { .. }));
-    }
-    // The pins on vertices that are gone - an undone cut - let go.
-    if let Some(pins) = editor.pins.get_mut(&(part.node, set)) {
-        let vertices = editor.layout.as_ref().map_or(0, |(_, _, l)| l.vertex_uv.len());
-        pins.retain(|&v| (v as usize) < vertices);
     }
     // The stretch, while the heatmap or a selection of islands wants it.
     if editor.prefs.stretch.is_some() || editor.selection.is_layout() {
@@ -1990,7 +1995,7 @@ impl UvEditor {
                     refused = Some(format!("Could not {}: {error}", edit.verb));
                     break;
                 }
-                if !done.contains(&edit.done) {
+                if !edit.done.is_empty() && !done.contains(&edit.done) {
                     done.push(edit.done);
                 }
             }

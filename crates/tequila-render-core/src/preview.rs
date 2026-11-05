@@ -200,6 +200,73 @@ pub fn shade_ray(
     shade_ray_with(intersector, ray, film, rig, None, registers, scratch)
 }
 
+/// A pattern drawn on some parts in place of their colour, through one of
+/// their UV sets: the UV editor's checker, which shows how a layout lies on
+/// the part. For looking only - never in a render, which does not read it -
+/// and so not part of the scene: the viewport hands it to the Solid pass.
+#[derive(Clone, Debug)]
+pub struct PreviewChecker {
+    /// The instances it is drawn on.
+    pub instances: Vec<u32>,
+    /// Its picture's side, in texels.
+    pub side: usize,
+    /// Its texels, in the rendering space, the top row first: row 0 is
+    /// v = 0, as a texture's.
+    pub texels: Vec<Spectrum>,
+    /// The UV set it is drawn through, a place for each vertex of the
+    /// instances' mesh, where that is not the set the scene's meshes carry.
+    pub uvs: Option<std::sync::Arc<Vec<Vec2>>>,
+}
+
+impl PreviewChecker {
+    /// The checker from a picture of sRGB bytes, four a texel.
+    pub fn from_srgb(instances: Vec<u32>, side: usize, bytes: &[u8], uvs: Option<std::sync::Arc<Vec<Vec2>>>) -> PreviewChecker {
+        let decode = |c: u8| {
+            let c = c as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        let texels = bytes
+            .chunks_exact(4)
+            .take(side * side)
+            .map(|p| Spectrum::from_linear_srgb(vec3(decode(p[0]), decode(p[1]), decode(p[2]))))
+            .collect();
+        PreviewChecker { instances, side, texels, uvs }
+    }
+
+    /// Its colour where a ray met the scene, if that is on a part it is
+    /// drawn on: the texel under the hit's place on the layout, repeating
+    /// past the layout's square.
+    pub fn colour_at(&self, scene: &crate::scene::SceneSnapshot, hit: &crate::intersect::Hit) -> Option<Spectrum> {
+        if self.side == 0 || self.texels.len() < self.side * self.side || !self.instances.contains(&hit.instance.0) {
+            return None;
+        }
+        let uv = match &self.uvs {
+            None => hit.uv,
+            Some(uvs) => {
+                // Where on its triangle the hit is, by its weights on the
+                // corners, carried to the set's places there.
+                let instance = scene.instance(hit.instance);
+                let mesh = scene.mesh(instance.mesh);
+                let first = hit.primitive as usize * 3;
+                let corners = mesh.indices.get(first..first + 3)?;
+                let [a, b, c] = [corners[0], corners[1], corners[2]].map(|v| mesh.positions.get(v as usize).copied().unwrap_or(Vec3::ZERO));
+                let p = instance.transform.inv_point(hit.position);
+                let (v0, v1, v2) = (b - a, c - a, p - a);
+                let (d00, d01, d11, d20, d21) = (v0.dot(v0), v0.dot(v1), v1.dot(v1), v2.dot(v0), v2.dot(v1));
+                let d = d00 * d11 - d01 * d01;
+                let (wb, wc) = if d.abs() > f32::MIN_POSITIVE { ((d11 * d20 - d01 * d21) / d, (d00 * d21 - d01 * d20) / d) } else { (0.0, 0.0) };
+                let place = |v: u32| uvs.get(v as usize).copied().unwrap_or(Vec2::ZERO);
+                let (pa, pb, pc) = (place(corners[0]), place(corners[1]), place(corners[2]));
+                Vec2 { x: pa.x * (1.0 - wb - wc) + pb.x * wb + pc.x * wc, y: pa.y * (1.0 - wb - wc) + pb.y * wb + pc.y * wc }
+            }
+        };
+        let side = self.side as f32;
+        let x = ((uv.x - uv.x.floor()) * side) as usize;
+        let y = ((uv.y - uv.y.floor()) * side) as usize;
+        Some(self.texels[y.min(self.side - 1) * self.side + x.min(self.side - 1)])
+    }
+}
+
 /// [`shade_ray`], running `programs` in place of the scene's full ones.
 pub fn shade_ray_with(
     intersector: &dyn Intersector,
@@ -207,6 +274,22 @@ pub fn shade_ray_with(
     film: Vec2,
     rig: &Rig,
     programs: Option<&SolidPrograms>,
+    registers: &mut shade::Registers,
+    scratch: &mut Material,
+) -> PreviewSample {
+    shade_ray_checked(intersector, ray, film, rig, programs, None, registers, scratch)
+}
+
+/// [`shade_ray_with`], with the UV editor's checker drawn on the parts it
+/// is on, in place of their colour, and not see-through.
+#[allow(clippy::too_many_arguments)]
+pub fn shade_ray_checked(
+    intersector: &dyn Intersector,
+    ray: Ray,
+    film: Vec2,
+    rig: &Rig,
+    programs: Option<&SolidPrograms>,
+    checker: Option<&PreviewChecker>,
     registers: &mut shade::Registers,
     scratch: &mut Material,
 ) -> PreviewSample {
@@ -240,7 +323,11 @@ pub fn shade_ray_with(
     };
 
     let view = -ray.direction;
-    let base = material.solid_color() * material.base_weight.clamp(0.0, 1.0);
+    let checked = checker.and_then(|c| c.colour_at(scene, &hit));
+    let base = match checked {
+        Some(colour) => colour,
+        None => material.solid_color() * material.base_weight.clamp(0.0, 1.0),
+    };
 
     // --- form -------------------------------------------------------------
     //
@@ -291,7 +378,7 @@ pub fn shade_ray_with(
     // steps; what is needed here is to see which part is the glass one and
     // what is behind it.
     // A cloudy volume sends light back as well, lit as the surface is.
-    let transmission = material.transmission_weight.clamp(0.0, 1.0);
+    let transmission = if checked.is_some() { 0.0 } else { material.transmission_weight.clamp(0.0, 1.0) };
     if transmission > 0.0 {
         let behind = backdrop(film) * material.see_through_tint();
         let cloud = material.preview_cloud() * lighting;
