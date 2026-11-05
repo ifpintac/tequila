@@ -318,7 +318,7 @@ impl<'a> Reader<'a> {
     /// `ReadObject`: the class wrapper, its UUID, its data and its user data.
     pub fn object(&mut self) -> R<Object<'a>> {
         let mut wrapper = self.chunk_of(TCODE_OPENNURBS_CLASS, "an object")?.body;
-        let class = wrapper.chunk_of(TCODE_OPENNURBS_CLASS_UUID, "an object's class")?.body.uuid()?;
+        let class = canonical(wrapper.chunk_of(TCODE_OPENNURBS_CLASS_UUID, "an object's class")?.body.uuid()?);
         if class == NIL {
             return Ok(Object { class, data: wrapper.empty(), userdata: Vec::new() });
         }
@@ -382,6 +382,39 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The class an object is read as. Rhino saves its own subclasses of a few
+/// openNURBS classes (`TL_Brep`, `TL_NurbsCurve` and the rest), and older
+/// files name retired classes, all with the same data as the openNURBS
+/// class: the table openNURBS itself keeps in `ON_ClassId::ClassId`
+/// (opennurbs_object.cpp), so a file Rhino wrote reads as one openNURBS
+/// wrote.
+fn canonical(class: Uuid) -> Uuid {
+    const NURBS_CURVE: Uuid = uuid("4ED7D4DD-E947-11d3-BFE5-0010830122F0");
+    const NURBS_SURFACE: Uuid = uuid("4ED7D4DE-E947-11d3-BFE5-0010830122F0");
+    const POLY_CURVE: Uuid = uuid("4ED7D4E0-E947-11d3-BFE5-0010830122F0");
+    const BREP: Uuid = uuid("60B5DBC5-E660-11d3-BFE4-0010830122F0");
+    const REV_SURFACE: Uuid = uuid("A16220D3-163B-11d4-8000-0010830122F0");
+    const SUM_SURFACE: Uuid = uuid("C4CD5359-446D-4690-9FF5-29059732472B");
+    const ALIASES: [(Uuid, Uuid); 10] = [
+        // TL_NurbsCurve, and an old NURBS curve.
+        (uuid("5EAF1119-0B51-11d4-BFFE-0010830122F0"), NURBS_CURVE),
+        (uuid("76A709D5-1550-11d4-8000-0010830122F0"), NURBS_CURVE),
+        // TL_NurbsSurface, and an old NURBS surface.
+        (uuid("4760C817-0BE3-11d4-BFFE-0010830122F0"), NURBS_SURFACE),
+        (uuid("FA4FD4B5-1613-11d4-8000-0010830122F0"), NURBS_SURFACE),
+        // An old polycurve.
+        (uuid("EF638317-154B-11d4-8000-0010830122F0"), POLY_CURVE),
+        // An old trimmed surface, an old B-rep, and TL_Brep.
+        (uuid("0705FDEF-3E2A-11d4-800E-0010830122F0"), BREP),
+        (uuid("2D4CFEDB-3E2A-11d4-800E-0010830122F0"), BREP),
+        (uuid("F06FC243-A32A-4608-9DD8-A7D2C4CE2A36"), BREP),
+        // TL_RevSurface and TL_SumSurface.
+        (uuid("0A8401B6-4D34-4b99-8615-1B4E723DC4E5"), REV_SURFACE),
+        (uuid("665F6331-2A66-4cce-81D0-B5EEBD9B5417"), SUM_SURFACE),
+    ];
+    ALIASES.iter().find(|(alias, _)| *alias == class).map_or(class, |(_, to)| *to)
+}
+
 /// `ON_Plane`'s origin and its axes in the plane.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Plane {
@@ -427,6 +460,14 @@ mod tests {
         let disk = [0x13, 0x98, 0x80, 0x95, 0x85, 0xe9, 0xd3, 0x11, 0xbf, 0xe5, 0x00, 0x10, 0x83, 0x01, 0x22, 0xf0];
         let mut r = Reader::new(&disk, 0, 70);
         assert_eq!(r.uuid().unwrap(), uuid("95809813-E985-11d3-BFE5-0010830122F0"));
+    }
+
+    #[test]
+    fn rhinos_own_classes_read_as_opennurbs_ones() {
+        assert_eq!(canonical(uuid("F06FC243-A32A-4608-9DD8-A7D2C4CE2A36")), uuid("60B5DBC5-E660-11d3-BFE4-0010830122F0"), "TL_Brep");
+        assert_eq!(canonical(uuid("5EAF1119-0B51-11d4-BFFE-0010830122F0")), uuid("4ED7D4DD-E947-11d3-BFE5-0010830122F0"), "TL_NurbsCurve");
+        let mesh = uuid("4ED7D4E4-E947-11d3-BFE5-0010830122F0");
+        assert_eq!(canonical(mesh), mesh);
     }
 
     #[test]

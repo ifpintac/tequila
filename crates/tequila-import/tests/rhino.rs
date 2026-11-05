@@ -1147,23 +1147,15 @@ fn a_divided_3dm_is_kept_and_divides_again() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// Real files, by hand: every `.3dm` in `TEQUILA_3DM_SAMPLES` reads into a
-/// valid document with something in it.
+/// Two files from McNeel's rhino3dm (`tests/data/rhino3dm`, MIT): a mesh
+/// Rhino 8 saved, and a SubD with creases openNURBS 8 wrote. The numbers
+/// are this reader's; what they hold it to is that a file Rhino wrote
+/// reads whole, in its unit, with nothing left out.
 #[test]
-#[ignore = "needs TEQUILA_3DM_SAMPLES: a folder of real .3dm files"]
-fn real_files() {
-    let folder = std::env::var("TEQUILA_3DM_SAMPLES").expect("TEQUILA_3DM_SAMPLES names a folder of .3dm files");
-    let mut read = 0;
-    for entry in std::fs::read_dir(&folder).unwrap() {
-        let path = entry.unwrap().path();
-        if !path.extension().is_some_and(|e| e.eq_ignore_ascii_case("3dm")) {
-            continue;
-        }
-        let bytes = std::fs::read(&path).unwrap();
-        let scene = tequila_import::rhino::read(&bytes, "sample").unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let triangles: usize = scene.meshes.iter().map(|m| m.indices.len() / 3).sum();
-        let edges: usize = scene.meshes.iter().map(|m| m.edge_lines.len() / 2).sum();
-        let names: Vec<&str> = scene.nodes.iter().map(|n| n.name.as_str()).collect();
+fn mcneel_files_read() {
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/rhino3dm");
+    let read = |name: &str| tequila_import::rhino::read(&std::fs::read(folder.join(name)).unwrap(), name).unwrap();
+    let extent = |scene: &RawScene| {
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
         for p in scene.meshes.iter().flat_map(|m| m.positions.iter()) {
             for (k, c) in [p.x, p.y, p.z].into_iter().enumerate() {
@@ -1171,13 +1163,93 @@ fn real_files() {
                 hi[k] = hi[k].max(c);
             }
         }
-        println!("{}: {} nodes {names:?}, {} meshes, {triangles} triangles, {edges} edge segments, box {lo:?} to {hi:?} (Rhino's own axes), {} materials, unit {:?}, warnings {:?}", path.display(), scene.nodes.len(), scene.meshes.len(), scene.materials.len(), scene.source_unit, scene.warnings);
-        let mut document = SceneDocument::new();
-        let (command, _) = build(&document, None, scene, &ImportOptions::default(), None).unwrap();
-        CommandBus::new().apply(&mut document, command).unwrap();
-        document.validate().unwrap();
-        assert!(triangles > 0, "{}: nothing to render", path.display());
-        read += 1;
+        (lo, hi)
+    };
+
+    let mesh = read("mesh.3dm");
+    assert!(mesh.warnings.is_empty(), "{:?}", mesh.warnings);
+    assert_eq!(mesh.source_unit, Some(tequila_core::units::LengthUnit::Millimetre));
+    assert_eq!(mesh.meshes.len(), 1);
+    assert_eq!(mesh.meshes[0].indices.len() / 3, 276);
+    let (lo, hi) = extent(&mesh);
+    for k in 0..3 {
+        assert!((lo[k] + 25.126).abs() < 1e-3 && (hi[k] - 25.126).abs() < 1e-3, "{lo:?} to {hi:?}");
     }
-    assert!(read > 0, "no .3dm files in {folder}");
+
+    let subd = read("subd_creases.3dm");
+    assert!(subd.warnings.is_empty(), "{:?}", subd.warnings);
+    assert_eq!(subd.meshes.len(), 1);
+    assert_eq!(subd.meshes[0].indices.len() / 3, 768, "six cage faces, three rounds");
+    let (lo, hi) = extent(&subd);
+    // Inside its 10 mm cage, and down to it where the creases hold it.
+    assert!(lo.iter().all(|c| c.abs() < 1e-4) && hi.iter().all(|c| *c < 10.0 && *c > 9.0), "{lo:?} to {hi:?}");
+}
+
+/// Real files, by hand: every `.3dm` in `TEQUILA_3DM_SAMPLES` reads into a
+/// valid document, and says what it left out. A file of only curves,
+/// points, annotation or lights renders nothing and passes; one whose
+/// records, faces or pieces the reader could not read fails. Each file's
+/// result is printed (`--nocapture`), and the failures listed at the end.
+#[test]
+#[ignore = "needs TEQUILA_3DM_SAMPLES: a folder of real .3dm files"]
+fn real_files() {
+    let folder = std::env::var("TEQUILA_3DM_SAMPLES").expect("TEQUILA_3DM_SAMPLES names a folder of .3dm files");
+    let mut paths: Vec<_> = std::fs::read_dir(&folder).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("3dm"))).collect();
+    paths.sort();
+    assert!(!paths.is_empty(), "no .3dm files in {folder}");
+    let mut failed = Vec::new();
+    for path in &paths {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let bytes = std::fs::read(path).unwrap();
+        let started = std::time::Instant::now();
+        let scene = match tequila_import::rhino::read(&bytes, "sample") {
+            Ok(scene) => scene,
+            Err(e) => {
+                println!("FAIL {file}: {e}");
+                failed.push(file);
+                continue;
+            }
+        };
+        let seconds = started.elapsed().as_secs_f32();
+        let triangles: usize = scene.meshes.iter().map(|m| m.indices.len() / 3).sum();
+        let edges: usize = scene.meshes.iter().map(|m| m.edge_lines.len() / 2).sum();
+        let parts = scene.nodes.iter().filter(|n| n.mesh.is_some()).count();
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for p in scene.meshes.iter().flat_map(|m| m.positions.iter()) {
+            for (k, c) in [p.x, p.y, p.z].into_iter().enumerate() {
+                lo[k] = lo[k].min(c);
+                hi[k] = hi[k].max(c);
+            }
+        }
+        // What the reader should have read and did not, as against what
+        // it leaves out on purpose.
+        let shortfall = scene.warnings.iter().any(|w| {
+            w.contains("could not be read") || w.contains("could not be divided") || w.contains("pieces Tequila does not read") || w.contains("objects of class") || w.contains("ends early")
+        });
+        let summary = format!(
+            "{file}: {parts} parts, {} meshes, {triangles} triangles, {edges} edge segments, {} materials, box {lo:?} to {hi:?} (Rhino's axes, file units), unit {:?}, {seconds:.2} s, warnings {:?}",
+            scene.meshes.len(),
+            scene.materials.len(),
+            scene.source_unit,
+            scene.warnings
+        );
+        let mut document = SceneDocument::new();
+        let built = build(&document, None, scene, &ImportOptions::default(), None).map_err(|e| e.to_string()).and_then(|(command, _)| {
+            CommandBus::new().apply(&mut document, command).map_err(|e| e.to_string())?;
+            document.validate().map_err(|e| e.to_string())
+        });
+        match built {
+            Ok(()) if !shortfall => println!("PASS {summary}"),
+            Ok(()) => {
+                println!("FAIL {summary}");
+                failed.push(file);
+            }
+            Err(e) => {
+                println!("FAIL {summary}; the document: {e}");
+                failed.push(file);
+            }
+        }
+    }
+    println!("{} of {} files pass", paths.len() - failed.len(), paths.len());
+    assert!(failed.is_empty(), "{} files fail: {failed:?}", failed.len());
 }

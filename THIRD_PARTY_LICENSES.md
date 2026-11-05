@@ -156,6 +156,12 @@ POSSIBILITY OF SUCH DAMAGE.
 | Cycles' Principled Hair, Chiang model (`bsdf_principled_hair_chiang.h`, and `bsdf_principled_hair_sigma_from_reflectance` in `bsdf_util.h`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Bitterli, Tappan & Burley's fibre model - its lobes, sampling, roughness mapping and colour-to-absorption fit - ported (`tequila-materials/src/lobes/fibre.rs`), so §4.4's fibres shade alike in both engines |
 | Cycles' manifold next event estimation (`src/kernel/integrator/mnee.h`, Copyright 2011-2022 Blender Foundation) | Cycles 5.0.0 | Apache-2.0 | Hanika, Droske & Fascione's specular manifold walk - the constraint derivatives, their block tridiagonal solve, the Newton walk and the transfer matrix - ported, with the changes listed at its head, to find lamps' light through glass (`tequila-render-core/src/integrator/manifold.rs`) |
 
+Test data, in the repository and not in any package:
+
+| Component | Version | Licence | Used for |
+|---|---|---|---|
+| [rhino3dm](https://github.com/mcneel/rhino3dm)'s test models `mesh.3dm` and `subd_creases.3dm` | commit 2bfb1db | MIT | Rhino-written fixtures for the 3dm reader (`tequila-import/tests/data/rhino3dm`, with their licence beside them) |
+
 The Hosek-Wilkie model's evaluation is ported from, and its fitted data is
 reproduced unchanged from, the authors' reference implementation, under this
 licence:

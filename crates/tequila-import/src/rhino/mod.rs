@@ -541,19 +541,38 @@ fn kind_of(class: Uuid) -> String {
     if curves.contains(&class) {
         return "curves".into();
     }
-    const KINDS: [(Uuid, &str); 12] = [
+    // The classes of what a file draws and Tequila does not render, current
+    // and retired, as openNURBS names them.
+    const KINDS: [(Uuid, &str); 29] = [
         (uuid("C3101A1D-F157-11d3-BFE7-0010830122F0"), "points"),
         (uuid("2488F347-F8FA-11d3-BFEC-0010830122F0"), "point clouds"),
         (uuid("4ED7D4E5-E947-11d3-BFE5-0010830122F0"), "point grids"),
-        (uuid("57376349-62A9-4a16-B411-A46BA0C0A5DD"), "text"),
-        (uuid("ABAF5873-4145-41be-B5EA-FBBDA25D24A4"), "leaders"),
-        (uuid("5DE6B20C-6CD5-4E99-9F1C-42E9CA1DA5F7"), "linear dimensions"),
-        (uuid("841BC40B-A971-4a8e-94E5-BBA26D67348E"), "angular dimensions"),
-        (uuid("2D5F8C54-3566-4924-BCF7-DF9C1C6235D1"), "radial dimensions"),
-        (uuid("8A7C4E5C-1CDE-4F40-8A11-C6CF26A9A7D9"), "ordinate dimensions"),
-        (uuid("0559733B-5332-49d1-A936-0532AC76ADE5"), "hatches"),
-        (uuid("C8C66EFA-B3CB-4e00-9440-2AD66203379E"), "text dots"),
-        (uuid("1D2C8F2B-8E59-4bd9-9A0D-0F5F8B3E3F0C"), "details"),
+        (uuid("57376349-62A9-4A16-B411-A46BCD544790"), "text"),
+        (uuid("46F75541-F46B-48BE-AA7E-B353BBE068A7"), "text"),
+        (uuid("5DE6B210-486B-11d4-8014-0010830122F0"), "text"),
+        (uuid("945BF594-6FF9-4F5C-BFC0-B3AF528F29D2"), "leaders"),
+        (uuid("14922B7A-5B65-4F11-8345-D415A9637129"), "leaders"),
+        (uuid("5DE6B211-486B-11d4-8014-0010830122F0"), "leaders"),
+        (uuid("E550882B-F44D-4154-A1EF-6E50CBBBF543"), "dimensions"),
+        (uuid("BD57F33B-A1B2-46E9-9C6E-AF09D30FFDDE"), "dimensions"),
+        (uuid("5DE6B20D-486B-11d4-8014-0010830122F0"), "dimensions"),
+        (uuid("D417786B-F6CD-4F12-9E1F-063F414DBEB6"), "dimensions"),
+        (uuid("841BC40B-A971-4A8E-94E5-BBA26D67348E"), "dimensions"),
+        (uuid("5DE6B20F-486B-11d4-8014-0010830122F0"), "dimensions"),
+        (uuid("FC749C2F-4C00-41FD-9840-26D94F047AD3"), "dimensions"),
+        (uuid("B2B683FC-7964-4E96-B1F9-9B356A76B08B"), "dimensions"),
+        (uuid("5DE6B20E-486B-11d4-8014-0010830122F0"), "dimensions"),
+        (uuid("03124828-4C9B-4D28-9A82-664DDDE7A14F"), "dimensions"),
+        (uuid("C8288D69-5BD8-4F50-9BAF-525A0086B0C3"), "dimensions"),
+        (uuid("D46767BA-7E8F-4D9D-9A92-66050219A5B9"), "centre marks"),
+        (uuid("ABAF5873-4145-11d4-800F-0010830122F0"), "annotation"),
+        (uuid("8BD94E1A-59E1-11d4-8018-0010830122F0"), "annotation"),
+        (uuid("74198302-CDF4-4F95-9609-6D684F22AB37"), "text dots"),
+        (uuid("8BD94E19-59E1-11d4-8018-0010830122F0"), "text dots"),
+        (uuid("0559733B-5332-49D1-A936-0532AC76ADE5"), "hatches"),
+        (uuid("C8C66EFA-B3CB-4E00-9440-2AD66203379E"), "details"),
+        (uuid("06936AFB-3D3C-41AC-BF70-C9319FA480A1"), "cages"),
+        (uuid("D379E6D8-7C31-4407-A913-E3B7040D034A"), "morph controls"),
     ];
     match KINDS.iter().find(|(c, _)| *c == class) {
         Some((_, n)) => n.to_string(),
