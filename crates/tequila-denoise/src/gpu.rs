@@ -61,6 +61,8 @@ unsafe impl Send for State {}
 pub struct GpuDenoiser {
     device: Arc<RawDevice>,
     state: Mutex<State>,
+    /// The kind of device it is on: "Metal", "CUDA" or "HIP".
+    kind: &'static str,
 }
 
 // SAFETY: the device is used through the filters, which the mutex serializes.
@@ -91,7 +93,7 @@ impl GpuDenoiser {
             &[(sys::OIDN_DEVICE_TYPE_CUDA, "CUDA"), (sys::OIDN_DEVICE_TYPE_HIP, "HIP")]
         };
         // SAFETY: enumerators OIDN defines; the call cannot fail unsafely.
-        let Some(device) = kinds.iter().map(|(kind, _)| unsafe { sys::oidnNewDevice(*kind) }).find(|d| !d.is_null()) else {
+        let Some((device, kind)) = kinds.iter().map(|(kind, name)| (unsafe { sys::oidnNewDevice(*kind) }, *name)).find(|(d, _)| !d.is_null()) else {
             let names: Vec<&str> = kinds.iter().map(|(_, name)| *name).collect();
             return Err(format!("no {} denoising device", names.join(" or ")));
         };
@@ -110,7 +112,12 @@ impl GpuDenoiser {
             }
         };
         check_error(device.0)?;
-        Ok(Arc::new(GpuDenoiser { device, state: Mutex::new(state) }))
+        Ok(Arc::new(GpuDenoiser { device, state: Mutex::new(state), kind }))
+    }
+
+    /// The kind of device it denoises on: "Metal", "CUDA" or "HIP".
+    pub fn kind(&self) -> &'static str {
+        self.kind
     }
 
     /// Denoise one frame. The same contract as

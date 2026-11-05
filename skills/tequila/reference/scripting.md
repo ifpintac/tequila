@@ -21,7 +21,7 @@ Everything the tools do is a request on Tequila's scripting channel. For what no
 | `{"op": "queue", ...}` | a background render: `name`, `width`, `height`, `samples`, `folder`, `filename`, `denoise`, `camera`, `engine` (`tequila`, `cycles-cpu`, `cycles-gpu`), `configurations: true` (every configurator combination), `network: true` (the render nodes) |
 | `{"op": "stop"}` | stop the running background render |
 | `{"op": "screenshot", "path": ..., "viewport": true}` | |
-| `{"op": "export", "format": "glb" / "usd" / "web" / "spin", "path": ...}` | `scene.md` |
+| `{"op": "export", "format": "glb" / "usd" / "usdz" / "web" / "spin", "path": ...}` | `scene.md` |
 | `{"op": "ui", ...}` | panels, viewport shading, Inspector tab, `graph` (open the Material Graph on a material), `mode` / `theme` |
 | `{"op": "save", "path": ...}` | the project |
 | `{"op": "open", "path": ..., "discard": true}`, `{"op": "new"}` | open another project, or start a new one - refused over unsaved work unless `save` or `discard` says what to do with it; ask the person first |

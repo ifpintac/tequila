@@ -19,6 +19,7 @@
 //! quietly delete the newer build's work on the user's next save, which is the
 //! worst failure this format can have.
 
+mod bake;
 pub mod exr;
 pub mod fsmesh;
 pub mod hdri;
@@ -29,6 +30,8 @@ pub mod livelink;
 pub mod psd;
 pub mod spin;
 pub mod usd;
+pub mod usdc;
+pub mod usdz;
 pub mod web;
 pub mod queue;
 pub mod examples;
@@ -84,6 +87,14 @@ const SCENE_MEMBER: &str = "scene.json";
 /// Optional: a project without one is no less a project.
 pub const PREVIEW_MEMBER: &str = "preview.png";
 const MANIFEST_MEMBER: &str = "manifest.json";
+/// Where each Studio's picture is kept: `studios/<key>.png`, the key its
+/// [`picture_key`](tequila_scene::studio::Studio::picture_key) in sixteen
+/// hex digits. Optional, as the preview is.
+const STUDIO_PICTURES: &str = "studios/";
+
+fn studio_picture_member(key: u64) -> String {
+    format!("{STUDIO_PICTURES}{key:016x}.png")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FormatError {
@@ -300,6 +311,14 @@ fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8
     if let Some(picture) = preview.or(preserved.preview.as_deref()) {
         archive.add(PREVIEW_MEMBER, picture.to_vec());
     }
+    // The pictures of the Studios the project has, and only those: one kept
+    // for a Studio since changed or deleted is not carried in the file.
+    let shown: std::collections::BTreeSet<u64> = document.studios.iter().map(|s| s.picture_key()).collect();
+    for key in shown {
+        if let Some(png) = document.studio_pictures.get(key) {
+            archive.add(studio_picture_member(key), png.to_vec());
+        }
+    }
 
     for (key, definition) in document.materials.iter() {
         let mut value = material_to_json(key, definition);
@@ -333,9 +352,28 @@ fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8
         .collect();
     for (id, bytes) in document.sources.iter() {
         if referenced.contains(id.as_str()) {
-            // Named for what it is: a STEP file begins by saying so.
-            let extension = if bytes.trim_ascii_start().starts_with(b"ISO-10303-21") { "step" } else { "iges" };
+            // Named for what it is: a STEP file begins by saying so, and
+            // so does a Rhino file.
+            let extension = if bytes.trim_ascii_start().starts_with(b"ISO-10303-21") {
+                "step"
+            } else if bytes.starts_with(b"3D Geometry File Format ") {
+                "3dm"
+            } else {
+                "iges"
+            };
             archive.add(format!("sources/{id}.{extension}"), bytes.to_vec());
+        }
+    }
+    // A Substance material's rendered maps, so the project renders as it
+    // was on a computer without Adobe's tools (§1.2).
+    let mut embedded = std::collections::BTreeSet::new();
+    for (id, source) in document.textures.iter() {
+        if let Some(member) = substance_member(document, id) {
+            if embedded.insert(member.clone()) {
+                if let Ok(bytes) = std::fs::read(&source.path) {
+                    archive.add(member, bytes);
+                }
+            }
         }
     }
     // Members from a newer build, last so they cannot displace ours.
@@ -479,6 +517,9 @@ fn write_scene(document: &SceneDocument, preserved: &Preserved) -> String {
                     if let Some(space) = source.color_space {
                         object.set("color_space", journal::color_space_name(space));
                     }
+                    if let Some(member) = substance_member(document, id) {
+                        object.set("member", member);
+                    }
                     object.build()
                 })
                 .collect::<Vec<_>>(),
@@ -614,6 +655,9 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if !node.uv_guides.is_empty() {
         object.set("uv_guides", uv_guides_to_json(&node.uv_guides));
     }
+    if !node.uv_pins.is_empty() {
+        object.set("uv_pins", uv_pins_to_json(&node.uv_pins));
+    }
 
     let Value::Object(known) = object.build() else {
         unreachable!()
@@ -663,6 +707,37 @@ pub(crate) fn read_uv_guides(value: Option<&Value>) -> Result<Vec<tequila_scene:
             })
         })
         .collect()
+}
+
+/// A part's UV pins, as the project and the journal write them: one object
+/// for each UV set that has any, its number and its pinned mesh vertices,
+/// `{"set": 0, "vertices": [3, 17]}`.
+pub(crate) fn uv_pins_to_json(pins: &tequila_scene::uv::UvPins) -> Value {
+    Value::Array(
+        pins.iter()
+            .map(|(set, vertices)| {
+                let mut entry = Object::new();
+                entry.set("set", *set).set("vertices", Value::Array(vertices.iter().map(|&v| Value::from(v as usize)).collect()));
+                entry.build()
+            })
+            .collect(),
+    )
+}
+
+/// A part's UV pins back; absent, none. An entry that is not a set and a
+/// list of vertex numbers is refused rather than dropped.
+pub(crate) fn read_uv_pins(value: Option<&Value>) -> Result<tequila_scene::uv::UvPins, FormatError> {
+    let Some(value) = value else { return Ok(Default::default()) };
+    let refused = || FormatError::Invalid("`uv_pins` is a list of a UV set and its pinned vertices, such as [{\"set\": 0, \"vertices\": [3, 17]}]".into());
+    let Value::Array(entries) = value else { return Err(refused()) };
+    let mut pins = tequila_scene::uv::UvPins::new();
+    for entry in entries {
+        let set = entry.get("set").and_then(|v| v.as_index()).ok_or_else(refused)?;
+        let Some(Value::Array(vertices)) = entry.get("vertices") else { return Err(refused()) };
+        let vertices = vertices.iter().map(|v| v.as_index().and_then(|v| u32::try_from(v).ok())).collect::<Option<Vec<u32>>>().ok_or_else(refused)?;
+        pins.entry(set).or_default().extend(vertices);
+    }
+    Ok(tequila_scene::uv::pins::tidy(pins))
 }
 
 /// A node's CAD layers, as the project and the journal write them: their
@@ -2504,7 +2579,55 @@ pub fn material_to_json(key: MaterialKey, definition: &MaterialDefinition) -> Va
     if let Some(graph) = graph::graph_to_json(&definition.graph) {
         object.set("graph", graph);
     }
+    if let Some(link) = &definition.substance {
+        object.set("substance", substance_to_json(link));
+    }
     object.build()
+}
+
+/// A Substance material's link (`docs/file-format.md` §4.2).
+pub fn substance_to_json(link: &tequila_scene::material::SubstanceLink) -> Value {
+    let strings = |map: &BTreeMap<String, String>| {
+        Value::Object(map.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect())
+    };
+    let mut object = Object::new();
+    object
+        .set("file", link.file.to_string_lossy().to_string())
+        .set("file_hash", link.file_hash.clone())
+        .set("graph", link.graph.clone())
+        .set("values", strings(&link.values))
+        .set(
+            "images",
+            Value::Object(link.images.iter().map(|(k, v)| (k.clone(), Value::String(v.to_string_lossy().to_string()))).collect()),
+        )
+        .set("maps", Value::Object(link.maps.iter().map(|(k, v)| (k.clone(), Value::Number(v.0 as f64))).collect()));
+    object.build()
+}
+
+/// [`substance_to_json`]'s inverse. `None` for anything that is not one.
+pub fn read_substance(value: &Value) -> Option<tequila_scene::material::SubstanceLink> {
+    let text = |key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    let strings = |key: &str| -> BTreeMap<String, String> {
+        match value.get(key) {
+            Some(Value::Object(map)) => map.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect(),
+            _ => BTreeMap::new(),
+        }
+    };
+    let maps = match value.get("maps") {
+        Some(Value::Object(map)) => map
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), tequila_materials::graph::TextureId(v.as_index()? as u32))))
+            .collect(),
+        _ => BTreeMap::new(),
+    };
+    Some(tequila_scene::material::SubstanceLink {
+        file: text("file")?.into(),
+        file_hash: text("file_hash").unwrap_or_default(),
+        graph: text("graph").unwrap_or_default(),
+        values: strings("values"),
+        images: strings("images").into_iter().map(|(k, v)| (k, std::path::PathBuf::from(v))).collect(),
+        maps,
+    })
 }
 
 pub(crate) fn color(s: Spectrum) -> Value {
@@ -2576,9 +2699,15 @@ pub(crate) fn preset_from_name(name: &str) -> Option<LightingPreset> {
 // --- reading -------------------------------------------------------------
 
 pub fn load(path: &Path) -> Result<Loaded, FormatError> {
+    load_into(path, &substance_cache_directory())
+}
+
+/// [`load`], putting Substance materials' maps kept in the project into
+/// `cache` rather than Tequila's own cache.
+pub fn load_into(path: &Path, cache: &Path) -> Result<Loaded, FormatError> {
     let bytes = std::fs::read(path)
         .map_err(|e| FormatError::Io(format!("{} could not be read: {e}", path.display())))?;
-    let mut loaded = read(&bytes)?;
+    let mut loaded = read_into(&bytes, cache)?;
     // A texture's path may be relative to the project (docs/file-format.md
     // §3.1): it is found beside the file, wherever the file was moved or
     // shipped, not beside wherever the process happens to be running.
@@ -2591,11 +2720,90 @@ pub fn load(path: &Path) -> Result<Loaded, FormatError> {
                 }
             }
         }
+        // And a Substance material's file, likewise.
+        let keys: Vec<_> = loaded.document.materials.iter().map(|(key, _)| key).collect();
+        for key in keys {
+            let Some(definition) = loaded.document.materials.get(key) else { continue };
+            if definition.substance.as_ref().is_some_and(|l| l.file.is_relative() && !l.file.as_os_str().is_empty()) {
+                let mut definition = definition.clone();
+                if let Some(link) = definition.substance.as_mut() {
+                    link.file = folder.join(&link.file);
+                }
+                loaded.document.materials.insert_with_key(key, definition);
+            }
+        }
     }
     Ok(loaded)
 }
 
+/// Where a Substance material's rendered maps are filed, one folder per
+/// render (`<settings key>/<output>.png`): among Tequila's caches, or under
+/// `TEQUILA_SUBSTANCE_CACHE` where that is set.
+pub fn substance_cache_directory() -> std::path::PathBuf {
+    match std::env::var_os("TEQUILA_SUBSTANCE_CACHE") {
+        Some(folder) if !folder.is_empty() => std::path::PathBuf::from(folder),
+        _ => library::cache_directory().join("substance"),
+    }
+}
+
+/// Where the archive keeps Substance materials' maps.
+const SUBSTANCE_MEMBERS: &str = "substance/";
+
+/// The archive member texture `id` is kept in, if it is a Substance
+/// material's rendered map whose file is there to keep: `substance/` and the
+/// last two parts of its path, the render's folder and the map's file.
+fn substance_member(document: &SceneDocument, id: tequila_materials::graph::TextureId) -> Option<String> {
+    let is_map = document.materials.iter().any(|(_, d)| d.substance.as_ref().is_some_and(|l| l.maps.values().any(|t| *t == id)));
+    if !is_map {
+        return None;
+    }
+    let path = &document.textures.get(id)?.path;
+    if !path.is_file() {
+        return None;
+    }
+    let safe = |part: &std::ffi::OsStr| {
+        let text = part.to_string_lossy();
+        (!text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) && text != "." && text != "..")
+            .then(|| text.into_owned())
+    };
+    let file = safe(path.file_name()?)?;
+    let folder = safe(path.parent()?.file_name()?)?;
+    Some(format!("{SUBSTANCE_MEMBERS}{folder}/{file}"))
+}
+
+/// Write `member` into `cache` (as `<folder>/<file>`) unless the same bytes
+/// are there already, and say where. A folder made this way is marked as a
+/// finished render (`done.txt`), as the application marks its own: it is the
+/// render of the settings its name stands for.
+fn extract_substance_map(archive: &zip::ZipArchive, member: &str, cache: &Path) -> Option<std::path::PathBuf> {
+    let rest = member.strip_prefix(SUBSTANCE_MEMBERS)?;
+    let (folder, file) = rest.split_once('/')?;
+    let plain = |part: &str| !part.is_empty() && part != "." && part != ".." && part.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    if !plain(folder) || !plain(file) {
+        return None;
+    }
+    let bytes = archive.get(member)?;
+    let directory = cache.join(folder);
+    let path = directory.join(file);
+    let same = std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == bytes);
+    if !same {
+        std::fs::create_dir_all(&directory).ok()?;
+        std::fs::write(&path, bytes).ok()?;
+    }
+    let marker = directory.join("done.txt");
+    if !marker.exists() {
+        let _ = std::fs::write(&marker, "from a project\n");
+    }
+    Some(path)
+}
+
 pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
+    read_into(bytes, &substance_cache_directory())
+}
+
+/// [`read`], putting Substance materials' maps kept in the project into
+/// `cache` (`<settings key>/<output>.png`).
+pub fn read_into(bytes: &[u8], cache: &Path) -> Result<Loaded, FormatError> {
     let archive = zip::ZipArchive::read(bytes)?;
     let scene_bytes = archive
         .get(SCENE_MEMBER)
@@ -2659,6 +2867,7 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
     let mut preserved = Preserved::default();
     read_geometry(&archive, &mut document, &mut preserved)?;
     read_sources(&archive, &mut document);
+    read_studio_pictures(&archive, &mut document);
     read_materials(&archive, &mut document, &mut preserved, &mut notes)?;
     read_tree(&root, &mut document, &mut preserved)?;
     preserved.settings = unknown_settings(&root, &document);
@@ -2683,10 +2892,17 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
                 .and_then(|v| v.as_str())
                 .and_then(journal::role_from_name)
                 .unwrap_or(tequila_texture::texture::MapRole::Color);
+            // A Substance material's map kept in the archive goes back into
+            // the render cache, where the application looks for the render
+            // of those settings, and is read from there.
+            let path = match entry.get("member").and_then(|v| v.as_str()) {
+                Some(member) => extract_substance_map(&archive, member, cache).unwrap_or_else(|| path.into()),
+                None => std::path::PathBuf::from(path),
+            };
             document.textures.insert_with_id(
                 tequila_materials::graph::TextureId(id as u32),
                 tequila_scene::textures::TextureSource {
-                    path: std::path::PathBuf::from(path),
+                    path,
                     role,
                     color_space: entry
                         .get("color_space")
@@ -2748,6 +2964,8 @@ pub fn read(bytes: &[u8]) -> Result<Loaded, FormatError> {
             && !name.starts_with("geometry/")
             && !name.starts_with("materials/")
             && !name.starts_with("sources/")
+            && studio_picture_key(name).is_none()
+            && !name.starts_with(SUBSTANCE_MEMBERS)
         {
             preserved
                 .members
@@ -2891,9 +3109,28 @@ fn read_environment(root: &Value) -> EnvironmentSettings {
     settings
 }
 
+/// The Studios' pictures. A member not named as the writer names them is
+/// not one, and is left to be preserved like any other.
+fn read_studio_pictures(archive: &zip::ZipArchive, document: &mut SceneDocument) {
+    for name in archive.names() {
+        if let Some(key) = studio_picture_key(name) {
+            document.studio_pictures.insert(key, std::sync::Arc::new(archive.get(name).unwrap_or_default().to_vec()));
+        }
+    }
+}
+
+/// The key a Studio's picture is kept under, from its member's name.
+fn studio_picture_key(name: &str) -> Option<u64> {
+    let hex = name.strip_prefix(STUDIO_PICTURES)?.strip_suffix(".png")?;
+    if hex.len() != 16 {
+        return None;
+    }
+    u64::from_str_radix(hex, 16).ok()
+}
+
 fn read_sources(archive: &zip::ZipArchive, document: &mut SceneDocument) {
     for name in archive.names() {
-        let Some(id) = name.strip_prefix("sources/").and_then(|n| n.strip_suffix(".step").or_else(|| n.strip_suffix(".iges"))) else { continue };
+        let Some(id) = name.strip_prefix("sources/").and_then(|n| n.strip_suffix(".step").or_else(|| n.strip_suffix(".iges")).or_else(|| n.strip_suffix(".3dm"))) else { continue };
         document.sources.insert(id.to_string(), std::sync::Arc::new(archive.get(name).unwrap_or_default().to_vec()));
     }
 }
@@ -2965,7 +3202,7 @@ fn read_material_keeping(value: &Value, name: &str) -> Result<(tequila_scene::ma
     if let Value::Object(map) = value {
         extras.unknown = map
             .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "id" | "name" | "type" | "graph") && !Param::ALL.iter().any(|p| p.key() == key.as_str()))
+            .filter(|(key, _)| !matches!(key.as_str(), "id" | "name" | "type" | "graph" | "substance") && !Param::ALL.iter().any(|p| p.key() == key.as_str()))
             .map(|(key, item)| (key.clone(), item.clone()))
             .collect();
     }
@@ -3048,11 +3285,9 @@ pub(crate) fn read_material(value: &Value, name: &str) -> Result<MaterialDefinit
     }
 
     let graph = graph::read_graph(value.get("graph"), material.sanitized(), name)?;
-    Ok(MaterialDefinition::from_graph(
-        material_name,
-        material_type,
-        graph,
-    ))
+    let mut definition = MaterialDefinition::from_graph(material_name, material_type, graph);
+    definition.substance = value.get("substance").and_then(read_substance).map(Box::new);
+    Ok(definition)
 }
 
 pub(crate) fn read_spectrum(value: &Value) -> Option<Spectrum> {
@@ -3091,7 +3326,7 @@ fn read_tree(
 ) -> Result<(), FormatError> {
     // Every field `node_to_json` writes, or a project opened in the build
     // that wrote it reports itself as from a newer one.
-    const KNOWN_NODE_FIELDS: [&str; 16] = [
+    const KNOWN_NODE_FIELDS: [&str; 17] = [
         "id",
         "name",
         "kind",
@@ -3110,6 +3345,7 @@ fn read_tree(
         "metadata",
         "layers",
         "uv_guides",
+        "uv_pins",
     ];
 
     let nodes = root
@@ -3214,6 +3450,8 @@ fn read_tree(
         }
         node.layers = read_layers(value.get("layers"));
         node.uv_guides = read_uv_guides(value.get("uv_guides"))
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
+        node.uv_pins = read_uv_pins(value.get("uv_pins"))
             .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         // A project saved before layers had a field of their own kept them
         // in a metadata field, `Layer`, joined with commas: moved across, so

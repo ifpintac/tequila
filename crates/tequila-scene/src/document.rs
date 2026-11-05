@@ -355,6 +355,9 @@ pub struct SceneDocument {
     /// CAD files' exact geometry, kept with the project (`docs/03` §6.2's
     /// B-rep retention).
     pub sources: Sources,
+    /// Each Studio's picture, kept with the project; a cache outside undo,
+    /// as `sources` is.
+    pub studio_pictures: crate::studio::StudioPictures,
 }
 
 /// The metadata field on a CAD model's top nodes naming its source in
@@ -465,6 +468,7 @@ impl SceneDocument {
             material_templates: Vec::new(),
             configurator: Default::default(),
             sources: Sources::default(),
+            studio_pictures: Default::default(),
         }
     }
 
@@ -699,6 +703,8 @@ impl SceneDocument {
                 format!("{id} layers: {:?} vs {:?}", a.layers, b.layers)
             } else if a.uv_guides != b.uv_guides {
                 format!("{id} UV guides: {:?} vs {:?}", a.uv_guides, b.uv_guides)
+            } else if a.uv_pins != b.uv_pins {
+                format!("{id} UV pins: {:?} vs {:?}", a.uv_pins, b.uv_pins)
             } else if a.children != b.children {
                 format!("{id} children: {:?} vs {:?}", a.children, b.children)
             } else if a.parent != b.parent {

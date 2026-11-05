@@ -180,7 +180,7 @@ Double-click Tequila.exe. No terminal or Rust installation is needed.
 Keep the executable, DLLs, assets and licenses together in this folder.
 To move the app, copy the entire folder. Extract the ZIP before launching.
 
-Import: Ctrl+I (STEP, IGES, glTF, GLB, OBJ, STL, USD, IFC)
+Import: Ctrl+I (STEP, IGES, glTF, GLB, FBX, OBJ, STL, 3MF, PLY, USD, IFC)
 New / open / save project: Ctrl+N / Ctrl+O / Ctrl+S (File > Open recent)
 Pause / resume viewport: P
 Frame selection: F; frame everything: Shift+F

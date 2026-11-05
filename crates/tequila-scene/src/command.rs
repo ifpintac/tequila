@@ -254,6 +254,17 @@ pub enum Command {
     /// of `islands`: what arranging them comes down to (spread, sorted,
     /// sized alike, fitted, swapped, turned upright), as one step.
     PlaceUvIslands { node: NodeId, set: usize, islands: Vec<u32>, maps: Vec<crate::uv::UvAffine> },
+    /// `uv.set_pins` — the pinned vertices of a part's UV set `set`, the
+    /// whole list at once, each by its mesh vertex (`crate::uv::pins`):
+    /// held where they are when an island is laid out flat again, relaxed
+    /// or reshaped round them. Saved with the part; nothing that renders
+    /// changes.
+    ///
+    /// The list rather than one pin, as guides are edited: pinning and
+    /// unpinning are both edits to it. The layout's own edits carry the
+    /// pins along - a set copied takes its pins, a vertex numbered anew
+    /// keeps its pin - and undo puts them back.
+    SetUvPins { node: NodeId, set: usize, vertices: Vec<u32> },
     /// `scene.set_visibility`
     ///
     /// A flag per node rather than one flag for all, so that "Isolate" — show
@@ -361,6 +372,19 @@ pub enum Command {
     SetGraph {
         material: MaterialKey,
         graph: Box<tequila_materials::graph::MaterialGraph>,
+    },
+    /// `material.set_substance` — a Substance material's file, graph and
+    /// input values (`docs/02` §5.6), or `null` to make it an ordinary
+    /// material that keeps the maps it has.
+    ///
+    /// Nothing the renderer sees changes with it: the maps are rendered
+    /// from the new values afterwards, outside the document, and the
+    /// application points the material's textures at them when they are
+    /// ready. So undoing it brings back the old values, and the maps that
+    /// were rendered from them, without a render.
+    SetSubstance {
+        material: MaterialKey,
+        substance: Option<Box<crate::material::SubstanceLink>>,
     },
     /// `material.set_type` — a material's type (plastic, metal, glass,
     /// velvet, ...), keeping what carries over.
@@ -1137,6 +1161,7 @@ impl Command {
             Command::MoveUvSet { .. } => "uv.move_set",
             Command::SetUvPositions { .. } => "uv.set_positions",
             Command::PlaceUvIslands { .. } => "uv.place_islands",
+            Command::SetUvPins { .. } => "uv.set_pins",
             Command::Rename { .. } => "scene.rename",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
@@ -1162,6 +1187,7 @@ impl Command {
             Command::SetTextureMapping { .. } => "material.set_mapping",
             Command::RenameMaterial { .. } => "material.rename",
             Command::SetGraph { .. } => "material.set_graph",
+            Command::SetSubstance { .. } => "material.set_substance",
             Command::SetLightingPreset { .. } => "lighting.set_preset",
             Command::SetLightingConfig { .. } => "lighting.set_custom",
             Command::SetEnvironmentParameter { .. } => "environment.set_parameter",
@@ -1195,7 +1221,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 72] = [
+    pub const CATALOG: [&'static str; 74] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1217,6 +1243,7 @@ impl Command {
         "uv.move_set",
         "uv.set_positions",
         "uv.place_islands",
+        "uv.set_pins",
         "scene.rename",
         "scene.set_transform",
         "scene.set_visibility",
@@ -1240,6 +1267,7 @@ impl Command {
         "material.set_procedural",
         "material.set_gradient",
         "material.set_mapping",
+        "material.set_substance",
         "lighting.set_preset",
         "lighting.set_custom",
         "environment.set_parameter",
@@ -1355,10 +1383,14 @@ impl Command {
             | Command::SetMetadata { .. }
             // Lines over the UV editor's canvas, never in the picture.
             | Command::SetUvGuides { .. }
+            | Command::SetUvPins { .. }
             | Command::AddCamera { .. }
             | Command::RemoveCamera { .. }
             | Command::RenameCamera { .. }
             | Command::RenameMaterial { .. }
+            // The values a Substance material's maps are rendered from: the
+            // maps come later, and the textures with them.
+            | Command::SetSubstance { .. }
             // An annotation over the image, never in it.
             | Command::SetMeasurements { .. }
             | Command::SetStudios { .. }
@@ -1393,6 +1425,8 @@ impl Command {
             // the interaction barrier ends the run, so two separate edits
             // still undo separately.
             (Command::SetGraph { material: a, .. }, Command::SetGraph { material: b, .. }) => a == b,
+            // A Substance slider's drag, one per frame, as a literal's.
+            (Command::SetSubstance { material: a, .. }, Command::SetSubstance { material: b, .. }) => a == b,
             (
                 Command::SetMaterialParameter {
                     material: a,
@@ -1453,8 +1487,9 @@ enum Undo {
         meshes: Vec<MeshKey>,
     },
     /// A part given an unwrapped mesh: the mesh it had, kept in the store,
-    /// and the one it was given.
-    Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey },
+    /// and the one it was given; and its pins as they were, where the
+    /// unwrap carried them to new numbers.
+    Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey, pins: Option<crate::uv::UvPins> },
     /// A part given a mesh with its UV layout edited, as `Unwrapped`; and
     /// the materials whose mappings followed its sets, as they were.
     UvEdited {
@@ -1462,6 +1497,9 @@ enum Undo {
         previous: MeshKey,
         edited: MeshKey,
         materials: Vec<(MaterialKey, Box<MaterialDefinition>)>,
+        /// The part's pins as they were, where the edit carried them
+        /// somewhere else.
+        pins: Option<crate::uv::UvPins>,
     },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
@@ -1490,6 +1528,8 @@ enum Undo {
     },
     Metadata(NodeId, String, Option<String>),
     UvGuides(NodeId, Vec<crate::guides::UvGuide>),
+    /// A part's pins, all of them, as they were.
+    UvPins(NodeId, crate::uv::UvPins),
     /// Boxed for the same reason as `Ungrouped`: it holds the cameras, the
     /// environment and every top node's transform.
     Units(SceneUnits, Box<crate::units::Rescaled>),
@@ -2410,13 +2450,19 @@ fn execute(
                 return Err(CommandError::InconsistentHistory("the part has no surface to unwrap"));
             }
             let (unwrapped, _) = crate::uv::unwrap(geometry, options);
+            // The pins go to the same corners, numbered anew; a new first
+            // set moves the others up one.
+            let in_place = options.in_place;
+            let pins = crate::uv::pins::carried(&source.uv_pins, geometry, &unwrapped, |set| vec![if in_place.is_some() { set } else { set + 1 }]);
             let key = match &reissue.split {
                 Some((children, meshes)) if children.is_empty() && meshes.len() == 1 => meshes[0],
                 _ => reserve_keys(document, 1, 0, 0).0[0],
             };
             document.geometry.insert_with_key(key, unwrapped);
-            document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: key };
-            Ok(Undo::Unwrapped { node: *node, previous, unwrapped: key })
+            let target = document.tree.get_mut(*node)?;
+            target.kind = NodeKind::Part { mesh: key };
+            let pins = (pins != target.uv_pins).then(|| std::mem::replace(&mut target.uv_pins, pins));
+            Ok(Undo::Unwrapped { node: *node, previous, unwrapped: key, pins })
         }
 
         Command::CutUvs { node, set, edges, reflatten } => {
@@ -2466,6 +2512,26 @@ fn execute(
         }
         Command::PlaceUvIslands { node, set, islands, maps } => {
             edit_part_uvs(document, *node, &reissue, None, |mesh| crate::uv::place_islands(mesh, *set, islands, maps))
+        }
+        Command::SetUvPins { node, set, vertices } => {
+            check_unlocked(document, *node)?;
+            let target = document.tree.get(*node).ok_or(CommandError::InconsistentHistory("no such node"))?;
+            let NodeKind::Part { mesh } = target.kind else {
+                return Err(CommandError::InvalidValue("pins go on a part's UV layout, and this is not a part"));
+            };
+            let geometry = document.geometry.get(mesh).ok_or(CommandError::NoSuchMesh(mesh))?;
+            if *set >= geometry.uv_sets.len() {
+                return Err(CommandError::Uv(crate::uv::UvError::NoSuchSet(*set)));
+            }
+            if vertices.iter().any(|&v| v as usize >= geometry.vertex_count()) {
+                return Err(CommandError::InvalidValue("a pin is a vertex of the part, and the part has no such vertex"));
+            }
+            let mut pins = target.uv_pins.clone();
+            pins.insert(*set, vertices.clone());
+            let pins = crate::uv::pins::tidy(pins);
+            let target = document.tree.get_mut(*node)?;
+            let previous = std::mem::replace(&mut target.uv_pins, pins);
+            Ok(Undo::UvPins(*node, previous))
         }
 
         Command::SplitIntoParts { node } => {
@@ -2971,6 +3037,16 @@ fn execute(
             Ok(Undo::MaterialType(*material, Box::new(previous)))
         }
 
+        Command::SetSubstance { material, substance } => {
+            let definition = document
+                .materials
+                .get_mut(*material)
+                .ok_or(CommandError::NoSuchMaterial(*material))?;
+            let previous = definition.clone();
+            definition.substance = substance.clone();
+            Ok(Undo::MaterialType(*material, Box::new(previous)))
+        }
+
         Command::RenameMaterial { material, name } => {
             let definition = document
                 .materials
@@ -3345,7 +3421,10 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             revert(document, added)
         }
 
-        Undo::Unwrapped { node, previous, unwrapped } => {
+        Undo::Unwrapped { node, previous, unwrapped, pins } => {
+            if let Some(pins) = pins {
+                document.tree.get_mut(*node)?.uv_pins = pins.clone();
+            }
             // The mesh it had was never removed: the part points at it again
             // and the unwrapped one goes, unless something else took it.
             document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: *previous };
@@ -3356,8 +3435,11 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
-        Undo::UvEdited { node, previous, edited, materials } => {
+        Undo::UvEdited { node, previous, edited, materials, pins } => {
             document.tree.get_mut(*node)?.kind = NodeKind::Part { mesh: *previous };
+            if let Some(pins) = pins {
+                document.tree.get_mut(*node)?.uv_pins = pins.clone();
+            }
             let still_used = document.tree.iter().any(|n| matches!(n.kind, NodeKind::Part { mesh } if mesh == *edited));
             if !still_used {
                 document.geometry.retain_keys(&|key| key != *edited);
@@ -3488,6 +3570,10 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::UvPins(node, pins) => {
+            document.tree.get_mut(*node)?.uv_pins = pins.clone();
+            Ok(())
+        }
         Undo::UvGuides(node, guides) => {
             document.tree.get_mut(*node)?.uv_guides = guides.clone();
             Ok(())
@@ -3703,6 +3789,11 @@ fn edit_part_uvs(
     };
     let geometry = document.geometry.get(previous).ok_or(CommandError::NoSuchMesh(previous))?;
     let edited = edit(geometry).map_err(CommandError::Uv)?;
+    // The pins to the same corners of the edited mesh, and with their sets.
+    let pins = match change {
+        Some(change) => crate::uv::pins::carried(&source.uv_pins, geometry, &edited, crate::uv::pins::through_change(change)),
+        None => crate::uv::pins::carried(&source.uv_pins, geometry, &edited, |set| vec![set]),
+    };
     let renumbered = match change {
         Some(change) => crate::uv::sets::renumbered_materials(document, node, change).map_err(CommandError::Uv)?,
         None => Vec::new(),
@@ -3712,14 +3803,16 @@ fn edit_part_uvs(
         _ => reserve_keys(document, 1, 0, 0).0[0],
     };
     document.geometry.insert_with_key(key, edited);
-    document.tree.get_mut(node)?.kind = NodeKind::Part { mesh: key };
+    let target = document.tree.get_mut(node)?;
+    target.kind = NodeKind::Part { mesh: key };
+    let pins = (pins != target.uv_pins).then(|| std::mem::replace(&mut target.uv_pins, pins));
     let mut materials = Vec::with_capacity(renumbered.len());
     for (material, definition) in renumbered {
         if let Some(slot) = document.materials.get_mut(material) {
             materials.push((material, Box::new(std::mem::replace(slot, definition))));
         }
     }
-    Ok(Undo::UvEdited { node, previous, edited: key, materials })
+    Ok(Undo::UvEdited { node, previous, edited: key, materials, pins })
 }
 
 fn check_unlocked(document: &SceneDocument, node: NodeId) -> Result<(), CommandError> {

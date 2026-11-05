@@ -41,7 +41,7 @@ That puts node 5 1 cm up (+Y is up) from where an identity transform has it. For
 
 ## Importing and updating models
 
-- `tequila_import {"path": "C:/models/kettle.step"}` (full connection): STEP and IGES (CAD, divided into parts with their colours), glTF/GLB, OBJ, STL, USD (`.usda`), IFC. Not FBX.
+- `tequila_import {"path": "C:/models/kettle.step"}` (full connection): STEP and IGES (CAD, divided into parts with their colours), Rhino `.3dm` (layers, materials, blocks; Z up turned to Y up), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (`.usda`), IFC.
 - **The file changed:** `{"op": "reimport", "node": 3}` updates the model it belongs to, part by part, keeping materials and edits; the answer says what was added and removed.
 - **Smoother or lighter CAD:** `{"op": "reimport", "node": 3, "tessellation": "high"}` - `draft`, `medium`, `high`, `ultra` - divides it again from the CAD data kept with the project.
 - **A texture pack** (folder or ZIP of PBR maps) onto parts: `{"op": "texture_set", "path": "C:/packs/Wood049", "nodes": [3]}`.
@@ -111,4 +111,4 @@ These are lists the whole project shares: read the current one from the context'
 
 ## Exporting
 
-`{"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}` (what is shown, as glTF binary), `"format": "usd"` (`.usda`), `"format": "web"` (above), `"format": "spin"` (a 360° spin viewer: `columns` 36, `rows` 1, `tilt` 15, `transparent`). Only when the user asks, to a path they gave or agreed.
+`{"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}` (what is shown, as glTF binary), `"format": "usd"` (`.usda`), `"format": "usdz"` (one file an iPhone, iPad or Vision Pro opens in AR, at the product's real size), `"format": "web"` (above), `"format": "spin"` (a 360° spin viewer: `columns` 36, `rows` 1, `tilt` 15, `transparent`). Only when the user asks, to a path they gave or agreed.

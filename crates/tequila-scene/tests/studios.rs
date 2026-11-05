@@ -301,6 +301,68 @@ fn a_materials_fibre_settings_grow_fibres() {
     assert!(!fur_instance.visible_to_camera && !fur_instance.casts_shadows && fur_instance.holdout);
 }
 
+/// A pattern on the Sheen Color colours the fibres too, not only the
+/// surface under them: each fibre of a part whose graph drives it carries a
+/// colour of its own, the pattern's where it is rooted, where a constant
+/// sheen's fibres carry none. A part that only moves keeps its fibres,
+/// colours and all, as the pattern belongs to the part; an edit to the
+/// pattern grows them again.
+#[test]
+fn a_patterned_sheen_colours_the_fibres() {
+    use tequila_core::math::{vec3, Transform};
+    use tequila_materials::graph::{Node, NodeKind as GraphKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_scene::command::MaterialParameter;
+
+    let (mut document, mut bus, part, material) = demo();
+    let mut cache = MeshCache::default();
+    bus.apply(&mut document, Command::SetMaterialParameter { material, parameter: MaterialParameter::scalar(Param::FuzzDensity, 0.5) }).unwrap();
+    bus.apply(&mut document, Command::SetMaterialParameter { material, parameter: MaterialParameter::scalar(Param::FuzzLength, 0.05) }).unwrap();
+    let fur = |document: &SceneDocument, cache: &mut MeshCache| {
+        let (scene, mapping) = snapshot(document, Arc::new(Environment::uniform(Spectrum::ONE)), cache);
+        let instance = scene.instances.iter().find(|i| mapping.is_grown(i.id)).expect("fibres").clone();
+        scene.meshes[instance.mesh.index()].clone()
+    };
+    let plain = fur(&document, &mut cache);
+    assert!(plain.fibres.as_ref().unwrap().colors.is_empty(), "a constant sheen's fibres carry colours");
+
+    let (orange, teal) = (Spectrum { r: 0.8, g: 0.3, b: 0.05 }, Spectrum { r: 0.05, g: 0.45, b: 0.4 });
+    let plain_graph = document.materials.get(material).unwrap().graph.clone();
+    let checker = |scale: f32| {
+        let mut graph = plain_graph.clone();
+        let mut node = Node::new(GraphKind::Node(ShaderNode::from_key("checker_texture").expect("a node")));
+        node.literals.insert(Socket::Input(1), Value::Color(orange));
+        node.literals.insert(Socket::Input(2), Value::Color(teal));
+        node.literals.insert(Socket::Input(3), Value::Float(scale));
+        let node = graph.add_node(node);
+        let output = graph.output();
+        graph.connect(node, output, Socket::Param(Param::FuzzColor));
+        graph
+    };
+    bus.apply(&mut document, Command::SetGraph { material, graph: Box::new(checker(4.0)) }).unwrap();
+    let chequered = fur(&document, &mut cache);
+    let fibres = chequered.fibres.as_ref().unwrap();
+    assert_eq!(fibres.colors.len(), fibres.count());
+    assert!(fibres.roughness.is_empty(), "a constant roughness kept for every fibre");
+    let near = |a: Spectrum, b: Spectrum| (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs() < 1e-3;
+    let oranges = fibres.colors.iter().filter(|c| near(**c, orange)).count();
+    let teals = fibres.colors.iter().filter(|c| near(**c, teal)).count();
+    assert!(oranges + teals > fibres.count() * 9 / 10, "{oranges} orange and {teals} teal of {}", fibres.count());
+    assert!(oranges > fibres.count() / 4 && teals > fibres.count() / 4, "{oranges} orange and {teals} teal of {}", fibres.count());
+    // The same fibres as the constant sheen's, coloured.
+    assert_eq!(fibres.points, plain.fibres.as_ref().unwrap().points);
+
+    bus.apply(&mut document, Command::set_transform(part, Transform::translation(vec3(0.3, 0.0, 0.0)))).unwrap();
+    let moved = fur(&document, &mut cache);
+    assert!(Arc::ptr_eq(&moved, &chequered), "a move grew the fibres again");
+
+    bus.apply(&mut document, Command::SetGraph { material, graph: Box::new(checker(9.0)) }).unwrap();
+    let finer = fur(&document, &mut cache);
+    assert!(!Arc::ptr_eq(&finer, &chequered), "a finer pattern kept the old colours");
+    assert_ne!(finer.fibres.as_ref().unwrap().colors, fibres.colors);
+}
+
 /// A Bubbles node fills a part with bubbles: wholly inside it, touching
 /// none of the others, in the part's own material, and in the same places
 /// every time the scene is built.

@@ -225,6 +225,7 @@ impl Session {
                 self.export(format, path, *live, *photos, (*columns, *rows, *tilt), *transparent)
             }
             Operation::StudioPreset(request) => self.studio_preset(request),
+            Operation::Substance(request) => substance(request),
             Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
@@ -676,6 +677,11 @@ impl Session {
                 let text = tequila_format::usd::export(&self.document);
                 std::fs::write(&written, &text).map(|_| (text.len(), Vec::new())).map_err(|e| format!("Could not write {}: {e}", written.display()))
             }
+            "usdz" => {
+                let name = written.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let exported = tequila_format::usdz::export(&self.document, &tequila_format::usdz::UsdzOptions { name, ..Default::default() });
+                std::fs::write(&written, &exported.bytes).map(|_| (exported.bytes.len(), exported.warnings)).map_err(|e| format!("Could not write {}: {e}", written.display()))
+            }
             "web" => {
                 let folder = written.clone();
                 let images = photos.then(|| tequila_format::web::fresh_images_folder(&folder));
@@ -723,7 +729,7 @@ impl Session {
                 written = folder.join("index.html");
                 result.map(|_| (0, Vec::new()))
             }
-            other => Err(format!("`{other}` is not an export: glb, usd, web or spin")),
+            other => Err(format!("`{other}` is not an export: glb, usd, usdz, web or spin")),
         };
         match result {
             Ok((bytes, warnings)) => {
@@ -1028,5 +1034,25 @@ mod tests {
         assert!(!operations.contains(&"screenshot") && operations.contains(&"render"));
         let ping = value(&mut s, r#"{"op":"ping"}"#);
         assert_eq!(ping.get("headless").and_then(Value::as_bool), Some(true));
+    }
+}
+
+/// `substance` without a window: a file described, and the tools found.
+/// Opening one as a material and rendering its maps is the application's.
+fn substance(request: &Value) -> Reply {
+    use tequila_import::substance::bridge;
+    let found = bridge::find(std::env::var_os("TEQUILA_SUBSTANCE_TOOLS").map(PathBuf::from).as_deref());
+    match request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "info" => {
+            let Some(path) = request.get("path").and_then(|p| p.as_str()) else {
+                return Reply::Failed("`info` needs the file's \"path\"".into());
+            };
+            match tequila_import::substance::read(std::path::Path::new(path)) {
+                Ok(file) => Reply::Value(tequila_scripting::substance::info(std::path::Path::new(path), &file, &found)),
+                Err(error) => Reply::Failed(format!("{path}: {error}")),
+            }
+        }
+        "tools" => Reply::Value(tequila_scripting::substance::tools(&found)),
+        other => Reply::Failed(format!("`substance {other}` needs the application: a headless session answers info and tools")),
     }
 }

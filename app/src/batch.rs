@@ -2833,6 +2833,114 @@ mod tests {
         }
     }
 
+    /// `lamp` at a tenth of its radiance: a softbox whose reflection in a
+    /// glossy floor stays short of white, so that what it loses shows.
+    fn dimmed(lamp: &tequila_render_core::light::Light) -> tequila_render_core::light::Light {
+        use tequila_render_core::light::LightKind;
+        let mut lamp = lamp.clone();
+        if let LightKind::Area(area) = &mut lamp.kind {
+            area.radiance = area.radiance * 0.1;
+        }
+        lamp
+    }
+
+    /// A mirror-smooth floor shows a softbox the camera does not see, and
+    /// the sun, in both renderers alike. Tequila's renderer showed a lamp
+    /// in a mirror only by its stand-in, which a lamp hidden from the camera
+    /// has none of, and the sun never; Cycles' glossy rays meet both.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_mirror_shows_a_hidden_softbox_and_the_sun_in_both_renderers() {
+        use tequila_render_core::light::{DistantLight, Light, LightKind, LightSet, Visibility};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = scratch("tequila-lamp-in-a-mirror");
+        let size = (320, 210);
+        let (mut scene, camera) = softbox_over_a_glossy_floor(0.0, false);
+        let softbox = dimmed(&scene.lights.lights()[0]);
+        let softbox = Light { visibility: Visibility::HIDDEN, ..softbox };
+        scene = scene.with_lights(Arc::new(LightSet::new(vec![softbox])));
+        let hidden = (scene, camera);
+        // The sun where the floor mirrors the softbox's middle.
+        let mirrored = film_box(&hidden, vec3(0.0, -0.1, -0.5), (40, 10), size);
+        let (mut sunlit, camera) = softbox_over_a_glossy_floor(0.0, false);
+        let image = vec3(0.0, -0.1, -0.5);
+        let eye = vec3(0.0, 0.06, 0.45);
+        let on_floor = eye + (image - eye) * (eye.y / (eye.y - image.y));
+        let towards = (vec3(0.0, 0.1, -0.5) - on_floor).normalize();
+        let sun = Light::new(LightKind::Distant(DistantLight { direction: -towards, irradiance: tequila_core::spectrum::Spectrum::splat(0.03), half_angle: 6f32.to_radians() }));
+        sunlit = sunlit.with_lights(Arc::new(LightSet::new(vec![sun])));
+        let sunlit = (sunlit, camera);
+        let sun_box = film_box(&sunlit, image, (8, 6), size);
+        for (name, scene, area) in [("hidden-softbox", &hidden, mirrored), ("sun", &sunlit, sun_box)] {
+            let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+                let image = picture_into(&folder, &format!("{name}-{}", engine.key()), scene, engine, IntegratorConfig::product(), None, 32, size);
+                box_mean(&image, size.0, area)
+            });
+            println!("{name} in the mirror: {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+            assert!(cycles > 40.0, "{name}: Cycles' mirror shows little of it: {cycles:.1}");
+            assert!((tequila / cycles - 1.0).abs() < 0.1, "{name}: the mirror shows it at {tequila:.1} in Tequila's renderer, {cycles:.1} in Cycles");
+        }
+    }
+
+    /// A glossy floor mirrors a softbox behind a black plate that casts no
+    /// shadow as it mirrors it with the plate away, in both renderers: their
+    /// shadow rays pass the plate, and now so do the bounces weighed against
+    /// them - in Tequila's renderer on every road, and in Cycles by shadow
+    /// linking, every lamp's blockers leaving the plate out, which its
+    /// dedicated light passes. The bounces stopped at the plate in both, and
+    /// the lamp's share MIS left them was lost. Skipped where Cycles is not
+    /// installed.
+    #[test]
+    fn a_glossy_floor_mirrors_a_softbox_past_a_part_that_casts_no_shadow_in_both_renderers() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::scene::{Instance, Mesh};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let folder = scratch("tequila-softbox-past-a-shadowless-plate");
+        let size = (320, 210);
+        let with_plate = |plate: bool| {
+            let (scene, camera) = softbox_over_a_glossy_floor(0.1, false);
+            let scene = scene.clone().with_lights(Arc::new(tequila_render_core::light::LightSet::new(vec![dimmed(&scene.lights.lights()[0])])));
+            if !plate {
+                return (scene, camera);
+            }
+            // In front of the softbox, between it and the floor that
+            // mirrors it, facing the camera.
+            let corners = vec![vec3(-0.25, 0.0, -0.4), vec3(0.25, 0.0, -0.4), vec3(0.25, 0.3, -0.4), vec3(-0.25, 0.3, -0.4)];
+            let mut meshes = scene.meshes.clone();
+            meshes.push(Arc::new(Mesh::new(corners, vec![0, 1, 2, 0, 2, 3]).with_normals(vec![Vec3::Z; 4])));
+            let mut materials = scene.materials.clone();
+            materials.push(tequila_materials::openpbr::Material::diffuse(Spectrum::ZERO));
+            let mut part = Instance::new(InstanceId(1), MeshId(1), MaterialId(1));
+            part.casts_shadows = false;
+            let mut instances = scene.instances.clone();
+            instances.push(part);
+            let mut plated = tequila_render_core::scene::SceneSnapshot::new(meshes, instances, materials, scene.environment.clone()).with_lights(scene.lights.clone());
+            plated.background = scene.background;
+            (plated, camera)
+        };
+        let open = with_plate(false);
+        let mirrored = film_box(&open, vec3(0.0, -0.1, -0.5), (40, 10), size);
+        for engine in [RenderEngine::Tequila, RenderEngine::CyclesCpu] {
+            let [bare, behind] = [false, true].map(|plate| {
+                let scene = with_plate(plate);
+                let image = picture_into(&folder, &format!("plate-{plate}-{}", engine.key()), &scene, engine, IntegratorConfig::product(), None, 64, size);
+                box_mean(&image, size.0, mirrored)
+            });
+            println!("{}: the softbox in the floor {bare:.1}, behind a plate casting no shadow {behind:.1}", engine.key());
+            assert!(bare > 40.0, "{}: the floor shows little of the softbox: {bare:.1}", engine.key());
+            assert!((behind / bare - 1.0).abs() < 0.08, "{}: behind a plate casting no shadow the floor shows the softbox at {behind:.1}, without it {bare:.1}", engine.key());
+        }
+    }
+
     /// A thin-walled shell passes light straight through, in Cycles as in
     /// Tequila's renderer, so a clear one casts a faint shadow where a
     /// solid sphere casts a full one. Cycles' principled glass is always a
@@ -4769,6 +4877,11 @@ mod tests {
     /// Fibres are finer than these pixels, so the picture is compared in
     /// blocks of 8 by 8 rather than pixel by pixel, which their noise would
     /// decide.
+    ///
+    /// And with a checker on the Sheen Color, each fibre takes the colour
+    /// where it is rooted - Tequila's renderer from the fibres' own colours,
+    /// Cycles from the attribute they carry - so the same orange and teal
+    /// squares stand in the fur in both.
     /// Skipped where Cycles is not installed, or is a library from before
     /// fibres.
     #[test]
@@ -4785,8 +4898,14 @@ mod tests {
             return;
         }
         const SCALE: f32 = 0.025;
-        let render = |density: f32| {
-            both_engines_scaled(&format!("fibres-{density}"), SCALE, |scene| {
+        // Felt, its fibres orange - or, chequered, orange and teal by a
+        // checker on the Sheen Color, squares a centimetre and two thirds
+        // across, about four over the ball.
+        let render = |density: f32, chequered: bool| {
+            both_engines_scaled(&format!("fibres-{density}-{}", if chequered { "chequered" } else { "plain" }), SCALE, |scene| {
+                use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+                use tequila_materials::material_type::Param;
+                use tequila_materials::nodes::ShaderNode;
                 let mut felt = MaterialType::Velvet.defaults();
                 felt.base_color = spectrum(0.02, 0.03, 0.08);
                 felt.fuzz_weight = 0.0;
@@ -4800,16 +4919,37 @@ mod tests {
                 felt.fuzz_color_variation = 0.3;
                 scene.environment = Arc::new(tequila_scene::demo::preview_environment());
                 scene.materials[0] = felt.clone();
+                let textures = tequila_render_core::shade::TextureTable::new();
+                let program = chequered.then(|| {
+                    let mut graph = MaterialGraph::from_material(felt.clone());
+                    let mut checker = Node::new(NodeKind::Node(ShaderNode::from_key("checker_texture").expect("a node")));
+                    checker.literals.insert(Socket::Input(1), Value::Color(spectrum(0.8, 0.35, 0.05)));
+                    checker.literals.insert(Socket::Input(2), Value::Color(spectrum(0.04, 0.45, 0.4)));
+                    checker.literals.insert(Socket::Input(3), Value::Float(60.0));
+                    let checker = graph.add_node(checker);
+                    let output = graph.output();
+                    graph.connect(checker, output, Socket::Param(Param::FuzzColor));
+                    Arc::new(graph.compile().expect("compiles"))
+                });
                 // Grown as the snapshot grows them, at the scale the ball is
-                // about to be given.
+                // about to be given, each fibre taking the checker's colour
+                // where it is rooted.
                 if let Some(request) = tequila_materials::graph::FuzzRequest::of_material(&felt) {
                     let ball = scene.instances[0].clone();
-                    let fur = tequila_scene::fuzz::grow(&scene.meshes[ball.mesh.index()], SCALE, &request).expect("fibres");
+                    let placed = tequila_core::math::Transform::from_matrix(tequila_core::math::Mat4::scale(vec3(SCALE, SCALE, SCALE))).expect("invertible") * ball.transform;
+                    let paint = program.as_ref().and_then(|p| tequila_scene::fuzz::Paint::of(p, &textures, placed, 0));
+                    let growth = tequila_scene::fuzz::Growth { count: None, paint: paint.as_ref() };
+                    let fur = tequila_scene::fuzz::grow_with(&scene.meshes[ball.mesh.index()], SCALE, &request, growth).expect("fibres");
+                    assert_eq!(fur.fibres.as_ref().unwrap().colors.is_empty(), !chequered);
                     scene.meshes.push(Arc::new(fur));
                     let mesh = tequila_core::ids::MeshId(scene.meshes.len() as u32 - 1);
                     scene.instances.push(
                         tequila_render_core::scene::Instance::new(tequila_core::ids::InstanceId(1), mesh, ball.material).with_transform(ball.transform),
                     );
+                }
+                if let Some(program) = program {
+                    let plain = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2));
+                    *scene = plain.with_programs(vec![Some(program)], Arc::new(textures));
                 }
             })
         };
@@ -4837,8 +4977,9 @@ mod tests {
             sum.map(|s| s / n)
         };
         // The ball's face in blocks of 8 by 8 pixels, each block's
-        // brightness: where it is lit and where it is in shade.
-        let blocks = |image: &[u8]| {
+        // brightness - where it is lit and where it is in shade - or, by
+        // `weights`, any mix of its channels.
+        let blocks_by = |image: &[u8], weights: [f64; 3]| {
             let mut out = Vec::new();
             for by in 0..9 {
                 for bx in 0..12 {
@@ -4849,7 +4990,7 @@ mod tests {
                     for y in by * 8..by * 8 + 8 {
                         for x in bx * 8..bx * 8 + 8 {
                             let p = &image[(y * 96 + x) * 4..];
-                            sum += f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2]);
+                            sum += weights[0] * f64::from(p[0]) + weights[1] * f64::from(p[1]) + weights[2] * f64::from(p[2]);
                         }
                     }
                     out.push(sum / 64.0);
@@ -4857,6 +4998,7 @@ mod tests {
             }
             out
         };
+        let blocks = |image: &[u8]| blocks_by(image, [1.0, 1.0, 1.0]);
         let correlation = |a: &[f64], b: &[f64]| {
             let ((ma, _), (mb, _)) = (mean_and_spread(a), mean_and_spread(b));
             let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
@@ -4867,8 +5009,8 @@ mod tests {
             }
             cov / (va.sqrt() * vb.sqrt()).max(1e-9)
         };
-        let [bare_tequila, bare_cycles] = render(0.0);
-        let [tequila, cycles] = render(800.0);
+        let [bare_tequila, bare_cycles] = render(0.0, false);
+        let [tequila, cycles] = render(800.0, false);
         let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
         let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
         let (blocks_a, blocks_b) = (blocks(&tequila), blocks(&cycles));
@@ -4906,6 +5048,52 @@ mod tests {
         let warm_ring = |c: [f64; 3]| c[0] - c[2];
         if (warm_ring(ring_b) / warm_ring(ring_a).max(1.0) - 1.0).abs() > 0.08 {
             wrong.push(format!("the fuzz past the outline: {ring_a:.1?} in Tequila, {ring_b:.1?} in Cycles"));
+        }
+
+        // Chequered fibres, each the checker's colour where it is rooted,
+        // in both: the same level and colour overall, and the same squares
+        // in the same places - orange against teal, block by block, red
+        // less green - where the plain felt's blocks hardly change in hue.
+        // Skipped for a library from before fibres took colours of their
+        // own, which renders them all in the sheen's constant colour.
+        if tequila_render_cycles::has_curve_attributes() {
+            let hue = |image: &[u8]| blocks_by(image, [1.0, -1.0, 0.0]);
+            let plain_spread = mean_and_spread(&hue(&tequila)).1.max(mean_and_spread(&hue(&cycles)).1);
+            let [tequila, cycles] = render(800.0, true);
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, _), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (ca, cb) = (channel_means(&tequila), channel_means(&cycles));
+            let (hue_a, hue_b) = (hue(&tequila), hue(&cycles));
+            let r = correlation(&hue_a, &hue_b);
+            let ((_, spread_a), (_, spread_b)) = (mean_and_spread(&hue_a), mean_and_spread(&hue_b));
+            eprintln!(
+                "chequered fibres: hue in {} blocks correlated {r:.3}, spread {spread_a:.1} and {spread_b:.1} (plain {plain_spread:.1}); Tequila {ma:.1} {ca:.1?}, Cycles {mb:.1} {cb:.1?}",
+                hue_a.len()
+            );
+            if (mb / ma.max(1.0) - 1.0).abs() > 0.06 {
+                wrong.push(format!("chequered brightness: Tequila {ma:.1}, Cycles {mb:.1}"));
+            }
+            // The colour as each channel's share of the light: the teal
+            // half has next to no red, and a ratio to so dim a channel is
+            // a ratio of noise.
+            let share = |c: [f64; 3]| {
+                let sum = (c[0] + c[1] + c[2]).max(1.0);
+                c.map(|v| v / sum)
+            };
+            let (share_a, share_b) = (share(ca), share(cb));
+            for (c, name) in [(0, "red"), (1, "green"), (2, "blue")] {
+                if (share_a[c] - share_b[c]).abs() > 0.03 {
+                    wrong.push(format!("chequered colour: {name} {:.3} of the light in Tequila, {:.3} in Cycles", share_a[c], share_b[c]));
+                }
+            }
+            if r < 0.9 {
+                wrong.push(format!("the checker's squares: hue across the ball correlates {r:.3}"));
+            }
+            if spread_a.min(spread_b) < 3.0 * plain_spread.max(1.0) {
+                wrong.push(format!("no checker in the fibres: hue spreads {spread_a:.1} and {spread_b:.1} across the ball, plain {plain_spread:.1}"));
+            }
+        } else {
+            eprintln!("chequered fibres skipped: this Cycles library predates fibres' own colours");
         }
         assert!(wrong.is_empty(), "fibres render differently in Cycles:\n{}", wrong.join("\n"));
     }

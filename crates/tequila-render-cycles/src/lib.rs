@@ -46,6 +46,13 @@ pub fn has_curves() -> bool {
     ffi::api().is_ok_and(|api| api.fsc_curves.is_some())
 }
 
+/// Whether the installed library gives fibres colours of their own, taken
+/// from a textured sheen where each is rooted: one from before fibres took
+/// them renders them in the sheen's constant colour.
+pub fn has_curve_attributes() -> bool {
+    ffi::api().is_ok_and(|api| api.fsc_curves_attribute.is_some())
+}
+
 /// The devices Cycles can render on, as (type, description, id).
 pub fn devices() -> Result<Vec<(String, String, String)>, String> {
     let api = ffi::api()?;
@@ -458,6 +465,19 @@ impl Session {
             )
         };
         self.node_or_error(node)
+    }
+
+    /// Whether this library takes attributes of fibres' own
+    /// (`Session::curves_attribute`).
+    pub fn has_curve_attributes(&self) -> bool {
+        self.api.fsc_curves_attribute.is_some()
+    }
+
+    /// Four numbers a fibre, on fibres `curves` made, as the attribute
+    /// `name`.
+    pub fn curves_attribute(&mut self, curves: Node, name: &str, rgba: &[[f32; 4]]) -> Result<(), String> {
+        let Some(send) = self.api.fsc_curves_attribute else { return Err("this Cycles library predates fibres' own colours".into()) };
+        self.check(unsafe { send(self.raw, curves.0, c(name).as_ptr(), rgba.len() as c_int, rgba.as_ptr().cast()) })
     }
 
     /// Whether this library keeps passes beside a final render's image.

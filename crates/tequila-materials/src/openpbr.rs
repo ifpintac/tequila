@@ -151,7 +151,8 @@ pub struct Material {
     pub fuzz_clump: f32,
     /// How far fibres lie the same way as their neighbours, 0 (each its own
     /// way) to 1 (combed, in patches a few centimetres across): a nap
-    /// brushed one way.
+    /// brushed one way. Clumped past 0.4, the nap turns further between
+    /// patches, and from 0.7 the locks fan one way and another as a fur's do.
     pub fuzz_comb: f32,
 
     // --- thin film -------------------------------------------------------

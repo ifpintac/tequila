@@ -7,28 +7,30 @@
 //! instancing must come last so it compares finished meshes — so the order is
 //! part of the specification rather than an implementation detail.
 //!
-//! # Deviation from §6.1: no Assimp, and no FBX
+//! # Deviation from §6.1: no Assimp
 //!
-//! §6.1 names Assimp and lists eight formats. OBJ, STL and glTF/GLB are
-//! implemented directly, for the same reason the HDR and EXR readers in
-//! `tequila-texture` are written out: the library crates carry no
-//! third-party Rust dependencies, and adding a C++ build dependency to reach
-//! three formats that are each a few hundred lines is a poor trade.
+//! §6.1 names Assimp and lists eight formats. OBJ, STL, PLY, 3MF and
+//! glTF/GLB are implemented directly, for the same reason the HDR and EXR
+//! readers in `tequila-texture` are written out: each is a few hundred lines,
+//! and a C++ build dependency to reach them is a poor trade.
 //!
-//! **FBX is out of scope.** It is Autodesk's proprietary format: undocumented,
-//! with no published specification, and reachable only through their own SDK
-//! or through a reverse-engineered reader. §0.2's ground rules already put
-//! the equivalent CAD formats out of scope for exactly this reason, and FBX
-//! belongs with them. Every tool that writes FBX also writes glTF, OBJ or USD,
-//! so the cost to a user is one export menu rather than a lost model — and the
-//! importer says so by name rather than failing as though the file were
-//! corrupt.
+//! **FBX is read through ufbx** (`fbx`). It was once out of scope: Autodesk's
+//! format has no published specification, and the choice looked like their
+//! SDK or a reverse-engineered reader. ufbx is the open one - a single C
+//! file, MIT or public domain, that reads binary and ASCII FBX and does the
+//! undocumented transform rules right - so FBX came onto the roadmap
+//! (`docs/05` M1 note 2, November 5) and the refusal by name went. There is
+//! still no Autodesk SDK anywhere in the build.
 //!
-//! PLY, 3DS, Collada and 3MF are M8's business, alongside the CAD kernels.
+//! 3DS and Collada remain M8's business, alongside the CAD kernels.
+//!
+//! Rhino's `.3dm` is read by [`rhino`], Tequila's own reader of the
+//! openNURBS archive, whose format McNeel publishes as open source.
 
 pub mod axf;
 mod bip;
 pub mod bip_scene;
+pub mod fbx;
 pub mod gltf;
 pub mod hdf5;
 pub mod ifc;
@@ -38,11 +40,15 @@ pub mod obj;
 mod occt;
 mod part21;
 mod planar;
+pub mod ply;
 pub mod raw;
+pub mod rhino;
 pub mod step;
 pub mod usd;
 pub mod stl;
+pub mod substance;
 pub mod texture_set;
+pub mod three_mf;
 
 use tequila_core::math::{Mat4, Transform, Vec3};
 use tequila_core::units::LengthUnit;
@@ -250,6 +256,14 @@ pub fn open_scene(path: &Path, quality: step::Tessellation) -> Result<(SceneDocu
     Ok((document, report))
 }
 
+/// The extensions of the model files [`read_file`] imports, lower case:
+/// what the application's Import dialog offers and what dropping a file on
+/// its window takes as a model. KeyShot scenes, which open as scenes of
+/// their own, are [`is_scene_file`]'s.
+pub const MODEL_EXTENSIONS: &[&str] = &[
+    "obj", "stl", "ply", "3mf", "fbx", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "usdc", "usdz", "ifc",
+];
+
 /// Whether a file opens as a scene of its own ([`open_scene`]) rather than
 /// as a project: a KeyShot scene, by its extension.
 pub fn is_scene_file(path: &Path) -> bool {
@@ -327,6 +341,8 @@ pub fn read_cad(bytes: &[u8], name: &str, path: Option<std::path::PathBuf>, qual
         bip_scene::read_package(bytes, name, quality)?
     } else if iges::looks_like(bytes) {
         iges::read_with(bytes, name, quality)?
+    } else if rhino::looks_like(bytes) {
+        rhino::read_with(bytes, name, quality)?
     } else {
         step::read_with(bytes, name, quality)?
     };
@@ -367,10 +383,17 @@ pub fn read_file_with(path: &Path, quality: step::Tessellation) -> Result<ReadMo
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let cad = matches!(extension.as_str(), "step" | "stp" | "igs" | "iges");
+    let mut cad = matches!(extension.as_str(), "step" | "stp" | "igs" | "iges");
     let scene = match extension.as_str() {
         "step" | "stp" => step::read_with(&bytes, &name, quality)?,
         "igs" | "iges" => iges::read_with(&bytes, &name, quality)?,
+        // Kept to divide again only when something in it was divided: a
+        // file of saved meshes has nothing a quality would change.
+        "3dm" => {
+            let scene = rhino::read_with(&bytes, &name, quality)?;
+            cad = scene.tessellation.is_some();
+            scene
+        }
         // A scene's pictures stay where they are beside it; a package's
         // are written out beside the package, as a glTF's are.
         "bip" => bip_scene::read(&bytes, &name, bip_scene::Pictures::Folder(path.parent()), quality)?,
@@ -538,22 +561,18 @@ pub fn read_format(
     match extension {
         "obj" => obj::read(bytes, name, sibling),
         "stl" => stl::read(bytes, name),
+        "ply" => ply::read(bytes, name),
+        "3mf" => three_mf::read(bytes, name),
+        "fbx" => fbx::read(bytes, name),
         "gltf" | "glb" => gltf::read(bytes, name, sibling),
-        "usda" | "usd" => usd::read(bytes, name),
+        "usda" | "usd" | "usdc" => usd::read(bytes, name),
+        "usdz" => usd::read_package(bytes, name),
         "step" | "stp" => step::read(bytes, name),
         "igs" | "iges" => iges::read(bytes, name),
         "ifc" => ifc::read(bytes, name),
+        "3dm" => rhino::read(bytes, name),
         "bip" => bip_scene::read(bytes, name, bip_scene::Pictures::Sibling(sibling), step::Tessellation::default()),
         "ksp" => bip_scene::read_package(bytes, name, step::Tessellation::default()),
-        // Named explicitly so the message can say what to do. Falling
-        // through to `UnknownFormat` would suggest a typo rather than a
-        // deliberate decision.
-        "fbx" => Err(ImportError::Unsupported(
-            "FBX is Autodesk's proprietary format and Tequila does not read it. \
-             Export the same model as glTF, OBJ or USD instead — every tool that \
-             writes FBX writes at least one of those."
-                .into(),
-        )),
         other => Err(ImportError::UnknownFormat(format!(".{other}"))),
     }
 }
@@ -868,6 +887,18 @@ fn finish_build(
                 Some(origin) => origin.directory.join(&relative),
                 None => std::path::PathBuf::from(&relative),
             };
+            // Where else the file named it: an FBX's absolute path, for a
+            // model moved away from its pictures on the machine that made it.
+            if !path.exists() {
+                if let Some(other) = raw.elsewhere.as_deref().map(|p| match origin {
+                    Some(origin) => origin.directory.join(p),
+                    None => std::path::PathBuf::from(p),
+                }) {
+                    if other.exists() {
+                        path = other;
+                    }
+                }
+            }
             // A map named by where it was on the author's machine
             // (`C:\Users\artist\tex\wood.jpg`), or in a folder that did not
             // come with the model, is usually sent beside the model.
@@ -927,10 +958,11 @@ type Processed = (Vec<Mesh>, Vec<usize>, Vec<Vec3>);
 
 /// The §6.1 pipeline, steps 1-6.
 ///
-/// Step 1, triangulation, happens in the readers: OBJ fans its polygons and
-/// the other two formats are triangles already, so nothing arrives here
-/// untriangulated. Step 7, unit conversion, is [`resolve_units`]; step 8,
-/// material mapping, belongs to each reader because it is format-specific.
+/// Step 1, triangulation, happens in the readers: OBJ fans its polygons, PLY
+/// fans or clips its own, ufbx divides an FBX's, and the other formats are
+/// triangles already, so nothing arrives here untriangulated. Step 7, unit
+/// conversion, is [`resolve_units`]; step 8, material mapping, belongs to
+/// each reader because it is format-specific.
 fn process(
     scene: &RawScene,
     options: &ImportOptions,
@@ -1035,7 +1067,7 @@ fn centroid(mesh: &Mesh) -> Vec3 {
 /// each node's translation. Conjugating every local transform by the same
 /// uniform scale scales the world transforms the same way and leaves their
 /// rotations alone.
-fn rescale(scene: &mut RawScene, ratio: f64) {
+pub(crate) fn rescale(scene: &mut RawScene, ratio: f64) {
     if !ratio.is_finite() || ratio <= 0.0 || (ratio - 1.0).abs() < 1e-9 {
         return;
     }
@@ -1414,19 +1446,20 @@ f 4 5 6
         assert!(matches!(error, ImportError::UnknownFormat(_)));
         assert!(error.to_string().contains("sldprt"));
 
-        // FBX is recognized but not implemented, which is a different message.
-        // FBX is recognized and deliberately refused, which is a different
-        // thing to tell the user than "unknown file type" — and the message
-        // has to say what to export instead, or the refusal is just a wall.
+        // FBX used to be refused by name. It is read now, so an empty file
+        // is a broken FBX, not a format turned away.
         let error = read_format(b"", "fbx", "x", &|_| None).unwrap_err();
-        assert!(matches!(error, ImportError::Unsupported(_)));
-        let message = error.to_string();
-        assert!(message.contains("proprietary"), "{message}");
-        for alternative in ["glTF", "OBJ", "USD"] {
-            assert!(
-                message.contains(alternative),
-                "the refusal does not mention {alternative}: {message}"
-            );
+        assert!(matches!(error, ImportError::Malformed(_)), "{error}");
+        assert!(!error.to_string().contains("proprietary"), "{error}");
+    }
+
+    /// Every extension the application offers as a model is one a reader
+    /// takes: the Import dialog's list and the readers cannot drift apart.
+    #[test]
+    fn every_model_extension_offered_has_a_reader() {
+        for extension in MODEL_EXTENSIONS {
+            let result = read_format(b"", extension, "x", &|_| None);
+            assert!(!matches!(result, Err(ImportError::UnknownFormat(_))), ".{extension} has no reader");
         }
     }
 

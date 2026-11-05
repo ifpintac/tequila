@@ -363,13 +363,14 @@ fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
         no_folds(&sorted, "sort");
         picture(&sorted, &format!("{tag}-2-sorted"), Fill::Islands);
         let density = arrange::linear_density(&layout, &all).unwrap();
-        let plan = sort::as_on_part(&layout, &mesh, &all, sort::View::Auto, &sort::PartAxes::default(), density, 0.005);
+        let plan = sort::as_on_part(&layout, &mesh, &all, &sort::PartAxes::default(), density, &sort::AsOnPart { view: sort::View::Auto, ..Default::default() });
         let seen = place_islands(&mesh, 0, &plan.islands, &plan.maps).unwrap();
         no_folds(&seen, "as on the part");
         picture(&seen, &format!("{tag}-3-as-on-the-part"), Fill::Islands);
         let seen_layout = UvLayout::new(&seen, 0).unwrap();
         for (a, b) in layout.islands.iter().zip(&seen_layout.islands) {
-            assert!((a.uv_area - b.uv_area).abs() <= a.uv_area * 1e-3 + 1e-9, "{name}: moved, not scaled");
+            let ratio = b.uv_area / (density * density * a.surface_area);
+            assert!((ratio - 1.0).abs() <= 2e-3, "{name}: each island at the layout's own scale, {ratio}");
         }
         // Spread, sized alike, fitted, shuffled, squared.
         for plan in [
@@ -401,4 +402,140 @@ fn the_headphones_repeated_pieces_stack_and_arrange_cleanly() {
     let theirs = similar::IslandShape::of(&rl, &right, island);
     let (vertices, places) = similar::laid_over(&copied, &theirs, &m, theirs.centre() - copied.centre());
     no_folds(&set_positions_from_lists(&right, 0, &vertices, &places).unwrap(), "pasted");
+}
+
+/// How far Line up edges leaves the edges it found from exactly across or
+/// down: how many are not exact, and the worst one's angle off, in degrees.
+fn line_up_left(mesh: &Mesh, report: &vertices::SquareReport, places: &vertices::Places) -> (usize, f32) {
+    let layout = UvLayout::new(mesh, 0).unwrap();
+    let out = if places.is_empty() { mesh.clone() } else { set_positions_from_lists(mesh, 0, &places.vertices, &places.uv).expect("no fold") };
+    let after = UvLayout::new(&out, 0).unwrap();
+    let (mut left, mut worst) = (0usize, 0.0f32);
+    for (&e, across) in report.across.iter().map(|e| (e, true)).chain(report.down.iter().map(|e| (e, false))) {
+        let [a, b] = layout.edges[e as usize].ends;
+        let d = after.uv_vertices[b as usize].uv - after.uv_vertices[a as usize].uv;
+        let off = if across { d.y.abs().atan2(d.x.abs()) } else { d.x.abs().atan2(d.y.abs()) }.to_degrees();
+        if off > 1e-3 {
+            left += 1;
+        }
+        worst = worst.max(off);
+    }
+    (left, worst)
+}
+
+/// How As on the part's islands come out against what it promises, seen
+/// from the front: the worst island's size off the layout's own scale (as
+/// a factor), the turn the islands facing the view still need to read as
+/// seen (mean and worst, degrees), how far the middles are from where the
+/// part puts them (mean, in island sizes), and boxes that overlap.
+fn as_on_part_off(mesh: &Mesh, plan: &Plan, density: f32) -> (f32, f32, f32, f32, usize) {
+    let layout = UvLayout::new(mesh, 0).unwrap();
+    let out = place_islands(mesh, 0, &plan.islands, &plan.maps).unwrap();
+    let after = UvLayout::new(&out, 0).unwrap();
+    let all: Vec<u32> = (0..after.islands.len() as u32).collect();
+    let mut size_off = 1.0f32;
+    // An island with no area on the part, a fold of the tessellation, has
+    // no size to keep.
+    for island in after.islands.iter().filter(|i| i.surface_area > 0.0 && i.uv_area > 0.0) {
+        let ratio = (island.uv_area / (density * density * island.surface_area)).sqrt();
+        size_off = size_off.max(ratio.max(1.0 / ratio));
+    }
+    let (across, down) = (tequila_core::math::Vec3::X, -tequila_core::math::Vec3::Y);
+    let (mut turns, mut worst) = (Vec::new(), 0.0f32);
+    for &i in &all {
+        let (_, sx) = arrange::direction_on_layout(&after, &out, i, across);
+        let (_, sy) = arrange::direction_on_layout(&after, &out, i, down);
+        if sx > 0.7 && sy > 0.7 {
+            let turn = sort::turn_as_seen(&after, &out, i, across, down).to_degrees().abs();
+            turns.push(turn);
+            worst = worst.max(turn);
+        }
+    }
+    let mean_turn = turns.iter().sum::<f32>() / turns.len().max(1) as f32;
+    // Each middle against where the front view puts it, the whole's shift
+    // taken out.
+    let centres = sort::centres_on_part(&layout, mesh, &all);
+    let middles: Vec<Vec2> = all
+        .iter()
+        .map(|&i| {
+            let (mut sum, mut total) = (Vec2::ZERO, 0.0f32);
+            for &t in &after.islands[i as usize].triangles {
+                let [a, b, c] = out.triangle(t as usize).map(|v| out.positions[v as usize]);
+                let area = (b - a).cross(c - a).length() * 0.5;
+                let [p, q, r] = after.triangle_uv(t);
+                sum += (p + q + r) * (area / 3.0);
+                total += area;
+            }
+            sum / total.max(1e-30)
+        })
+        .collect();
+    let ideal: Vec<Vec2> = centres.iter().map(|p| vec2(p.x, -p.y) * density).collect();
+    let n = all.len() as f32;
+    let shift = middles.iter().zip(&ideal).fold(Vec2::ZERO, |s, (m, i)| s + (*m - *i)) / n;
+    let size = after.islands.iter().map(|i| i.uv_area.sqrt()).sum::<f32>() / n;
+    let placed = middles.iter().zip(&ideal).map(|(m, i)| (*m - *i - shift).length()).sum::<f32>() / n / size.max(1e-12);
+    let mut overlaps = 0;
+    for a in 0..after.islands.len() {
+        for b in a + 1..after.islands.len() {
+            let (p, q) = (&after.islands[a], &after.islands[b]);
+            let apart = p.max.x <= q.min.x + 1e-5 || q.max.x <= p.min.x + 1e-5 || p.max.y <= q.min.y + 1e-5 || q.max.y <= p.min.y + 1e-5;
+            overlaps += (!apart) as usize;
+        }
+    }
+    (size_off, mean_turn, worst, placed, overlaps)
+}
+
+/// Line up edges and As on the part keep their promises on real parts, by
+/// the numbers. Line up edges leaves fewer of the edges it finds crooked
+/// than it did before November 5 - the bar is what it left then on each
+/// part, measured with the old code - and every edge it does not report as
+/// left is exactly across or down. As on the part gives every island the
+/// layout's own scale and the turn the front view sees it at, overlapping
+/// none. With `--nocapture` it prints the numbers.
+#[test]
+fn line_up_and_as_on_the_part_keep_their_promises() {
+    let headphones = sample("Headphones.tequila");
+    let bottle = sample("Perfume bottle.tequila");
+    let mut meshes: Vec<(String, Mesh)> = ["Knuckle L", "Shell R", "Pad", "Marks L"].iter().map(|n| (n.to_string(), laid_out(&headphones, n))).collect();
+    for (name, mesh) in parts(&bottle).into_iter().take(3) {
+        let mesh = if mesh.uv_sets.is_empty() { unwrap(&mesh, &UnwrapOptions::default()).0 } else { mesh };
+        meshes.push((name, mesh));
+    }
+    for (name, mesh) in parts(&headphones).into_iter().take(3) {
+        meshes.push((format!("{name} (unwrapped)"), unwrap(&mesh, &UnwrapOptions::default()).0));
+    }
+    // What the old code left crooked of the edges it found, part by part.
+    let before = [
+        ("Knuckle L", 596),
+        ("Shell R", 831),
+        ("Pad", 1867),
+        ("Marks L", 0),
+        ("Liquid", 8549),
+        ("Glass", 3369),
+        ("Collar", 651),
+        ("Cushion L (unwrapped)", 1673),
+        ("Cushion R (unwrapped)", 3611),
+        ("Stitching (unwrapped)", 1344),
+    ];
+    for (name, mesh) in &meshes {
+        let layout = UvLayout::new(mesh, 0).unwrap();
+        let edges: Vec<u32> = (0..layout.edges.len() as u32).collect();
+        let (places, report) = vertices::square_edges_reported(&layout, mesh, &edges, 15f32.to_radians());
+        let (left, worst) = line_up_left(mesh, &report, &places);
+        let found = report.across.len() + report.down.len();
+        let clashing = report.left.iter().filter(|e| report.clashing.contains(e)).count();
+        eprintln!("LINEUP {name}: {found} found, {left} left ({clashing} clashing), worst {worst:.2}°, {} carried", report.carried);
+        assert!(left <= report.left.len(), "{name}: every edge it does not report left is exact");
+        if let Some((_, bar)) = before.iter().find(|(n, _)| n == name) {
+            assert!(left <= *bar, "{name}: {left} left, where the old code left {bar}");
+        }
+        let all: Vec<u32> = (0..layout.islands.len() as u32).collect();
+        let density = arrange::linear_density(&layout, &all).unwrap();
+        let plan = sort::as_on_part(&layout, mesh, &all, &sort::PartAxes::default(), density, &sort::AsOnPart::default());
+        let (size, turn, worst, placed, overlaps) = as_on_part_off(mesh, &plan, density);
+        eprintln!("ASONPART {name} ({} islands): size x{size:.4}, turn {turn:.3}° (worst {worst:.3}°), placed {placed:.2}, {overlaps} overlaps", all.len());
+        assert!(size <= 1.002, "{name}: an island at x{size} of the layout's scale");
+        assert!(turn <= 0.05 && worst <= 0.1, "{name}: islands still {turn}° (worst {worst}°) off reading as seen");
+        assert_eq!(overlaps, 0, "{name}: boxes overlap");
+    }
 }

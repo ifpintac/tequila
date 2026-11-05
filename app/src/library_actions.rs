@@ -44,6 +44,7 @@ impl crate::TequilaApp {
             }
             LibraryAction::BeganDrag(entry) => self.dragging = Some(entry),
             LibraryAction::ImportTexturePack(folder) => self.pick_texture_pack(folder),
+            LibraryAction::ImportSubstance => self.pick_substance(),
             LibraryAction::Studio(asked) => self.studio_action(asked),
             LibraryAction::Create(new) => {
                 let (name, apply) = (new.name.clone(), new.apply);

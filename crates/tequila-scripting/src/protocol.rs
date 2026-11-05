@@ -148,6 +148,11 @@ pub enum Operation {
     /// `install` or `export` a package, `delete` one, or `render_all`
     /// views. Carried as sent; the application reads its fields.
     StudioPreset(Value),
+    /// `substance`: Adobe Substance materials (`docs/02` §5.6) - `info` on a
+    /// file, `open` one as materials, `set` a material's values, `status`
+    /// of its maps, `wait` for them, `tools` to say where Adobe's are.
+    /// Carried as sent; the application reads its fields.
+    Substance(Value),
     /// The material library: putting presets on parts, and adding to the
     /// user's own - what a script or a plugin does with materials beyond
     /// the document. See [`LibraryRequest`].
@@ -258,9 +263,35 @@ pub struct LibraryRequest {
 /// The `studio_preset` operation's actions.
 pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", "install", "export", "render_all"];
 
+/// What the `substance` operation does.
+pub const SUBSTANCE_ACTIONS: &[&str] = &["info", "open", "set", "status", "wait", "tools"];
+
 /// A `studio_preset.apply` naming an installed preset by `id` rather than
 /// carrying it: the preset read in, so the command is whole - what the
 /// journal records, and what replays.
+/// `{"reports": [[1, 0, 0, ...], ...], "seconds": 1}`: each report a list
+/// of bytes, 0 to 255.
+fn spacemouse_input(value: &Value) -> Result<SpaceMouseInput, ProtocolError> {
+    let bad = || ProtocolError("`spacemouse` is {\"reports\": [[id, byte, ...], ...], \"seconds\": n}, each byte 0 to 255".into());
+    let mut reports = Vec::new();
+    for report in value.get("reports").map(|r| r.as_array()).unwrap_or(&[]) {
+        let mut bytes = Vec::new();
+        for byte in report.as_array() {
+            let b = byte.as_index().filter(|b| *b < 256).ok_or_else(bad)?;
+            bytes.push(b as u8);
+        }
+        if bytes.is_empty() || bytes.len() > 64 {
+            return Err(bad());
+        }
+        reports.push(bytes);
+    }
+    let seconds = match value.get("seconds") {
+        None => 0.0,
+        Some(v) => v.as_f32().filter(|s| s.is_finite() && *s >= 0.0).ok_or_else(bad)?,
+    };
+    Ok(SpaceMouseInput { reports, seconds })
+}
+
 fn with_preset(command: Value) -> Result<Value, ProtocolError> {
     if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
         return Ok(command);
@@ -322,6 +353,12 @@ pub struct UiChange {
     pub appearance: Option<bool>,
     /// Help > About Tequila, open.
     pub about: Option<bool>,
+    /// Help > Test this computer, open and running: opening it starts the
+    /// checks, unless they are running already.
+    pub self_test: Option<bool>,
+    /// A menu of the menu bar, open: `file`. What the documentation shows
+    /// a menu with.
+    pub menu: Option<String>,
     /// The start screen, open.
     pub start_screen: Option<bool>,
     /// Help > Check for updates, open. Opening it asks GitHub for the
@@ -337,6 +374,25 @@ pub struct UiChange {
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
+    /// A Studio held in the Studios tab as though being dragged, for a
+    /// screenshot: the Studio, and the slot it would land in (0 above the
+    /// first). `Some(None)` (from `false`) lets it go; nothing moves.
+    pub studio_drag: Option<Option<[usize; 2]>>,
+    /// The Preferences window (the 3D mouse's settings), open.
+    pub preferences: Option<bool>,
+    /// A 3D mouse's input, made up: reports as a device would send them.
+    pub spacemouse: Option<SpaceMouseInput>,
+}
+
+/// Synthetic 3D mouse input, for scripts and tests without a device: HID
+/// input reports, each its report id and then its bytes (report 1, six
+/// signed 16-bit little-endian numbers for translation or twelve for all
+/// six axes; report 2, rotation; report 3, a button mask), read as a
+/// device's are. The motion they end on is held for `seconds`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpaceMouseInput {
+    pub reports: Vec<Vec<u8>>,
+    pub seconds: f32,
 }
 
 /// The UV editor, as a script asks for it. Absent fields are left alone.
@@ -950,6 +1006,16 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
             Operation::StudioPreset(value.clone())
         }
+        "substance" => {
+            let action = string(value, "action")?.to_ascii_lowercase();
+            if !SUBSTANCE_ACTIONS.contains(&action.as_str()) {
+                return Err(ProtocolError(format!(
+                    "`{action}` is not a substance action; the actions are {}",
+                    SUBSTANCE_ACTIONS.join(", ")
+                )));
+            }
+            Operation::Substance(value.clone())
+        }
         "library" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !LIBRARY_ACTIONS.contains(&action.as_str()) {
@@ -1182,8 +1248,10 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             theme: opt_string(value, "theme")?,
             appearance: opt_bool(value, "appearance")?,
             about: opt_bool(value, "about")?,
+            menu: opt_string(value, "menu")?,
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
+            self_test: opt_bool(value, "self_test")?,
             connect: opt_bool(value, "connect")?,
             uv_editor: opt_bool(value, "uv_editor")?,
             uv: value.get("uv").map(uv_editor_change).transpose()?,
@@ -1194,6 +1262,19 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                     ProtocolError("`graph` must be a material number, or false to close the editor".into())
                 })? as u64)),
             },
+            studio_drag: match value.get("studio_drag") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(false)) => Some(None),
+                Some(v) => match v.as_array() {
+                    [from, slot] => match (from.as_index(), slot.as_index()) {
+                        (Some(from), Some(slot)) => Some(Some([from, slot])),
+                        _ => return Err(ProtocolError("`studio_drag` is [studio, slot], two numbers, or false".into())),
+                    },
+                    _ => return Err(ProtocolError("`studio_drag` is [studio, slot], two numbers, or false".into())),
+                },
+            },
+            preferences: opt_bool(value, "preferences")?,
+            spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1286,6 +1367,10 @@ impl Operation {
             Operation::StudioPreset(request) => match request.get("preset").and_then(|i| i.as_str()) {
                 Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+            },
+            Operation::Substance(request) => match request.get("path").and_then(|p| p.as_str()) {
+                Some(path) => format!("substance {} {path}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+                None => format!("substance {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
             },
             Operation::Export { format, path, .. } => format!("export {format} to {path}"),
             Operation::Queue(job) => match &job.name {
@@ -1571,6 +1656,18 @@ mod tests {
         assert!(matches!(open.operation, Operation::Project { action: ProjectAction::Open(ref path), save: true, discard: false } if path == "C:/work/kettle.tequila"));
         assert!(parse_request(r#"{"id":3,"op":"open"}"#).is_err(), "an open with nothing to open");
         assert!(matches!(parse_request(r#"{"id":4,"op":"ui","about":true}"#).unwrap().operation, Operation::Ui(UiChange { about: Some(true), .. })));
+    }
+
+    /// A 3D mouse's input, made up: its reports as bytes, and how long the
+    /// motion is held; a byte past 255 or an empty report is refused.
+    #[test]
+    fn synthetic_3d_mouse_input_parses() {
+        let request = parse_request(r#"{"id":5,"op":"ui","preferences":true,"spacemouse":{"reports":[[1,0,0,0,0,0,0,0,0,0,0,94,1],[3,2]],"seconds":0.5}}"#).unwrap();
+        let Operation::Ui(UiChange { preferences: Some(true), spacemouse: Some(input), .. }) = request.operation else { panic!("a ui change") };
+        assert_eq!(input.reports, vec![vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 94, 1], vec![3, 2]]);
+        assert_eq!(input.seconds, 0.5);
+        assert!(parse_request(r#"{"id":6,"op":"ui","spacemouse":{"reports":[[1,300]]}}"#).is_err());
+        assert!(parse_request(r#"{"id":7,"op":"ui","spacemouse":{"reports":[[]]}}"#).is_err());
     }
 
     #[test]

@@ -93,12 +93,22 @@ pub struct MaterialTab {
     /// A save to the library being filled in: the material, and the name
     /// and category it will be saved under.
     save_draft: Option<(MaterialKey, String, String)>,
+    /// Substance materials' renders, lent by the app while the panel draws
+    /// (`crate::substance`).
+    pub substance: crate::substance::Renders,
+    /// What opening a Substance file from here said, for the status line.
+    substance_status: Option<String>,
 }
 
 impl MaterialTab {
     /// What the last save to the library said, taken once.
     pub fn take_saved(&mut self) -> Option<String> {
         self.saved.take()
+    }
+
+    /// What opening a Substance file from the panel said, taken once.
+    pub fn take_substance_status(&mut self) -> Option<String> {
+        self.substance_status.take()
     }
 
     /// The size the library previews the material `name` at if it is a
@@ -278,6 +288,8 @@ impl MaterialTab {
         let mut save_to_library: Option<(String, String)> = None;
         // A downloaded PBR pack, picked as a folder or as a ZIP / map file.
         let mut pending_set: Option<bool> = None;
+        // An Adobe Substance file, for the parts using this material.
+        let mut pending_substance = false;
         // Another of the project's materials, for the selected parts.
         let mut pending_material: Option<tequila_scene::tree::MaterialKey> = None;
 
@@ -382,6 +394,16 @@ impl MaterialTab {
                     "Make a material from a downloaded PBR pack (a folder or a ZIP) \
                      and put it on every part using this one",
                 );
+                if ui
+                    .button("Substance…")
+                    .on_hover_text(
+                        "Make a material from an Adobe Substance file (.sbsar or .sbs), \
+                         with its settings, and put it on every part using this one",
+                    )
+                    .clicked()
+                {
+                    pending_substance = true;
+                }
                 });
             });
         }));
@@ -409,6 +431,14 @@ impl MaterialTab {
                     Err(error) => error.to_string(),
                 },
             );
+        }
+        // A Substance material's own settings, first: they are what makes it.
+        if project.document().materials.get(key).is_some_and(|d| d.substance.is_some()) {
+            let asked = crate::substance::panel(ui, project, &mut self.substance, key);
+            if asked.command.is_some() {
+                command = asked.command;
+            }
+            commit |= asked.commit;
         }
         ui.add_space(6.0);
         crate::theme::section(ui, "Material");
@@ -801,6 +831,24 @@ impl MaterialTab {
                     Err(error) => error,
                 });
             }
+        }
+        if pending_substance {
+            if let Some(source) = crate::substance::pick() {
+                let mut users = project.document().tree.users_of_material(key);
+                if users.is_empty() {
+                    users = vec![node];
+                }
+                self.substance_status = Some(match crate::substance::open(project, &mut self.substance, &source, users, None) {
+                    Ok(opened) => crate::substance::status(&opened),
+                    Err(error) => error,
+                });
+            }
+        }
+        // A dialog the Substance panel asked for: a picture for an input, the
+        // tools' folder, a file that moved.
+        if let Some(asked) = self.substance.answer(project) {
+            command = Some(asked);
+            commit = true;
         }
         if let Some(material) = pending_material {
             // On the parts: a selected group's own material is never drawn.

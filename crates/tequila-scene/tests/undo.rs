@@ -547,6 +547,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::MoveUvSet { .. }
         | Command::SetUvPositions { .. }
         | Command::PlaceUvIslands { .. }
+        | Command::SetUvPins { .. }
         | Command::Rename { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }
@@ -572,6 +573,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetTextureMapping { .. }
         | Command::RenameMaterial { .. }
         | Command::SetGraph { .. }
+        | Command::SetSubstance { .. }
         | Command::SetLightingPreset { .. }
         | Command::SetLightingConfig { .. }
         | Command::SetEnvironmentParameter { .. }
@@ -644,6 +646,7 @@ fn the_catalog_lists_every_command_exactly_once() {
         Command::MoveUvSet { node: NodeId(1), from: 0, to: 1 },
         Command::SetUvPositions { node: NodeId(1), set: 0, vertices: vec![0], uv: vec![[0.5, 0.5]] },
         Command::PlaceUvIslands { node: NodeId(1), set: 0, islands: vec![0], maps: vec![tequila_scene::uv::UvAffine::IDENTITY] },
+        Command::SetUvPins { node: NodeId(1), set: 0, vertices: vec![0] },
         Command::Reimport {
             payload: Box::new(tequila_scene::reimport::ReimportPayload {
                 added: tequila_scene::command::ImportPayload {
@@ -704,6 +707,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             material: MaterialKey(1),
             graph: Box::new(tequila_materials::graph::MaterialGraph::from_material(Default::default())),
         },
+        Command::SetSubstance { material: MaterialKey(1), substance: None },
         Command::SetLightingPreset {
             preset: LightingPreset::Product,
         },

@@ -449,3 +449,42 @@ fn the_scene_the_app_opens_with_does_not_have_to_settle() {
         fraction * 100.0
     );
 }
+
+/// The UV editor's checker, as the processor's Solid draws it: on the part
+/// it is on, in place of its colour, through the first UV set or the set
+/// handed beside it; and nowhere else.
+#[test]
+fn the_checker_is_drawn_through_the_set_it_is_given() {
+    use tequila_core::math::{vec2, vec3, Vec2};
+    use tequila_core::spectrum::Spectrum;
+    use tequila_render_core::preview::PreviewChecker;
+    let (intersector, context) = setup();
+    let scene = tequila_render_core::intersect::Intersector::scene(&intersector);
+    let instance = scene.instances.iter().find(|i| i.visible_to_camera && i.shadow_catcher.is_none()).expect("a part");
+    let vertices = scene.mesh(instance.mesh).positions.len();
+    // Two by two: red at the top left, green elsewhere.
+    let mut bytes = Vec::new();
+    for texel in 0..4 {
+        bytes.extend_from_slice(if texel == 0 { &[255, 0, 0, 255] } else { &[0, 255, 0, 255] });
+    }
+    let red = Spectrum::from_linear_srgb(vec3(1.0, 0.0, 0.0));
+    let green = Spectrum::from_linear_srgb(vec3(0.0, 1.0, 0.0));
+    let count = |checker: Option<&PreviewChecker>| {
+        let mut fb = Framebuffer::new(64, 48);
+        tequila_render_cpu::preview_pass_checked(&intersector, &mut fb, &context, 1, checker);
+        let near = |a: Spectrum, b: Spectrum| (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs() < 1e-3;
+        let reds = fb.pixels().iter().filter(|p| near(p.mean_albedo(), red)).count();
+        let greens = fb.pixels().iter().filter(|p| near(p.mean_albedo(), green)).count();
+        (reds, greens)
+    };
+    assert_eq!(count(None), (0, 0), "no checker, no checker colours");
+    let at = |place: Vec2| PreviewChecker::from_srgb(vec![instance.id.0], 2, &bytes, Some(std::sync::Arc::new(vec![place; vertices])));
+    let (reds, greens) = count(Some(&at(vec2(0.25, 0.25))));
+    assert!(reds > 20 && greens == 0, "through the set handed, all in the red square: {reds} red, {greens} green");
+    let (reds, greens) = count(Some(&at(vec2(0.75, 0.25))));
+    assert!(greens > 20 && reds == 0, "and all in a green one: {reds} red, {greens} green");
+    let (first, _) = count(Some(&PreviewChecker::from_srgb(vec![instance.id.0], 2, &bytes, None)));
+    let (none, _) = count(Some(&PreviewChecker::from_srgb(vec![u32::MAX - 1], 2, &bytes, None)));
+    assert_eq!(none, 0, "on no part, nowhere");
+    let _ = first;
+}

@@ -663,12 +663,33 @@ fn studios_survive_a_round_trip() {
     document.studios = vec![full, all_sets, untouched];
 
     document.product_turn = tequila_scene::studio::ProductTurn { yaw: -0.942478, pivot: [0.01, -0.02] };
+    // Each Studio's picture, and one of a Studio since deleted.
+    for (index, studio) in document.studios.iter().enumerate() {
+        document.studio_pictures.insert(studio.picture_key(), std::sync::Arc::new(format!("picture {index}").into_bytes()));
+    }
+    document.studio_pictures.insert(0x1234, std::sync::Arc::new(b"gone".to_vec()));
 
-    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    let bytes = write(&document, &Preserved::default());
+    let reopened = read(&bytes).expect("the file we just wrote must read");
     assert_eq!(reopened.document.multi_materials, document.multi_materials);
     assert_eq!(reopened.document.model_sets, document.model_sets);
     assert_eq!(reopened.document.studios, document.studios);
     assert_eq!(reopened.document.product_turn, document.product_turn);
+    // Opened again, each Studio finds its own picture under the key it has
+    // now; the deleted Studio's was not kept.
+    for (index, studio) in reopened.document.studios.iter().enumerate() {
+        let picture = reopened.document.studio_pictures.get(studio.picture_key()).map(|p| p.as_slice());
+        assert_eq!(picture, Some(format!("picture {index}").as_bytes()), "{} lost its picture", studio.name);
+    }
+    assert_eq!(reopened.document.studio_pictures.len(), 3, "a deleted Studio's picture was kept");
+    assert!(reopened.notes.is_empty(), "the pictures were taken for a newer build's: {:?}", reopened.notes);
+    let archive = tequila_format::zip::ZipArchive::read(&bytes).unwrap();
+    let mut members: Vec<&str> = archive.names().iter().map(String::as_str).filter(|n| n.starts_with("studios/")).collect();
+    members.sort();
+    assert_eq!(members.len(), 3);
+    assert!(members.iter().all(|m| m.len() == "studios/".len() + 16 + ".png".len()), "{members:?}");
+    // And saved again, the same bytes.
+    assert_eq!(write(&reopened.document, &reopened.preserved), bytes);
 }
 
 /// The configurator survives a save and a reopen: every kind of option, a
@@ -1201,9 +1222,21 @@ fn kept_cad_sources_survive_a_round_trip_while_named() {
     let second = document.tree.roots()[1];
     bus.apply(&mut document, tequila_scene::Command::SetMetadata { node: second, key: BREP.into(), value: Some(iges_id.clone()) }).unwrap();
 
-    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    // A Rhino file, kept as one.
+    let rhino = b"3D Geometry File Format       70 and the rest".to_vec();
+    let rhino_id = Sources::id_of(&rhino);
+    document.sources.insert(rhino_id.clone(), std::sync::Arc::new(rhino.clone()));
+    bus.apply(&mut document, tequila_scene::Command::AddGroup { parent: None, name: "Rhino".into() }).unwrap();
+    let third = document.tree.roots()[2];
+    bus.apply(&mut document, tequila_scene::Command::SetMetadata { node: third, key: BREP.into(), value: Some(rhino_id.clone()) }).unwrap();
+    let written = write(&document, &Preserved::default());
+    let members = tequila_format::zip::ZipArchive::read(&written).unwrap();
+    assert!(members.names().iter().any(|n| *n == format!("sources/{rhino_id}.3dm")), "named for what it is");
+
+    let reopened = read(&written).expect("the file we just wrote must read");
     assert_eq!(reopened.document.sources.get(&named_id).map(|b| b.as_slice()), Some(named.as_slice()));
     assert_eq!(reopened.document.sources.get(&iges_id).map(|b| b.as_slice()), Some(iges.as_slice()));
+    assert_eq!(reopened.document.sources.get(&rhino_id).map(|b| b.as_slice()), Some(rhino.as_slice()));
     assert!(reopened.document.sources.get(&orphan_id).is_none(), "a source no model names was kept");
     assert!(reopened.preserved.is_empty(), "the source came back as an unknown member");
 }
@@ -1350,6 +1383,74 @@ fn uv_guides_survive_a_round_trip() {
     }
     let error = read(&out.finish()).err().expect("an unknown axis is refused");
     assert!(error.to_string().contains("UV guide"), "{error}");
+}
+
+/// A part's UV pins survive a save and a reopen, set by set, through the
+/// command that puts them down; the second save is the first's bytes, and
+/// a part without pins writes none. The layout's own edits carry them -
+/// a set copied takes its pins, a set deleted takes them away, an unwrap
+/// numbers the vertices anew and the pins go with them - and undo puts
+/// each back.
+#[test]
+fn uv_pins_survive_a_round_trip_and_follow_their_sets() {
+    use tequila_scene::command::{reserve_keys, ImportPayload};
+    use tequila_scene::tree::{NodeKind, SceneNode};
+    use tequila_scene::uv::UvPins;
+    let mut document = SceneDocument::new();
+    let mut mesh = tequila_scene::Mesh::new(vec![vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0), vec3(0.0, 1.0, 0.0)], vec![0, 1, 2, 0, 2, 3]);
+    let square = vec![tequila_core::math::vec2(0.0, 1.0), tequila_core::math::vec2(1.0, 1.0), tequila_core::math::vec2(1.0, 0.0), tequila_core::math::vec2(0.0, 0.0)];
+    mesh.uv_sets = vec![square.clone(), square.iter().map(|p| *p * 0.5).collect()];
+    let (meshes, _, ids) = reserve_keys(&document, 1, 0, 1);
+    let node = SceneNode::new(ids[0], "Panel", NodeKind::Part { mesh: meshes[0] });
+    let payload = ImportPayload { meshes: vec![(meshes[0], mesh)], textures: Vec::new(), materials: Vec::new(), nodes: vec![node], roots: vec![ids[0]] };
+    let mut bus = CommandBus::new();
+    bus.apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+    let panel = ids[0];
+    let before = write(&document, &Preserved::default());
+    bus.apply(&mut document, Command::SetUvPins { node: panel, set: 1, vertices: vec![2, 0, 2] }).unwrap();
+    bus.apply(&mut document, Command::SetUvPins { node: panel, set: 0, vertices: vec![3] }).unwrap();
+    assert!(bus.apply(&mut document, Command::SetUvPins { node: panel, set: 2, vertices: vec![0] }).is_err(), "no third set");
+    assert!(bus.apply(&mut document, Command::SetUvPins { node: panel, set: 0, vertices: vec![9] }).is_err(), "no such vertex");
+    let pins = |document: &SceneDocument| document.tree.get(panel).unwrap().uv_pins.clone();
+    assert_eq!(pins(&document), UvPins::from([(0, vec![3]), (1, vec![0, 2])]), "in order, once each");
+
+    let first = write(&document, &Preserved::default());
+    let reopened = read(&first).expect("the file we just wrote must read");
+    assert_eq!(pins(&reopened.document), pins(&document));
+    assert_eq!(reopened.document.difference_from(&document), None);
+    assert!(reopened.preserved.is_empty() && reopened.notes.is_empty(), "{:?}", reopened.notes);
+    assert!(write(&reopened.document, &reopened.preserved) == first, "the second save differs");
+    let text = String::from_utf8_lossy(tequila_format::zip::ZipArchive::read(&first).unwrap().get("scene.json").unwrap()).into_owned();
+    assert!(text.contains("\"uv_pins\""), "{text}");
+
+    // Undone, the part has none, and the file is as it was.
+    let pinned = pins(&document);
+    bus.undo(&mut document).unwrap();
+    bus.undo(&mut document).unwrap();
+    assert!(pins(&document).is_empty());
+    assert!(write(&document, &Preserved::default()) == before, "with the pins undone, the file is as it was");
+    bus.apply(&mut document, Command::SetUvPins { node: panel, set: 1, vertices: vec![0, 2] }).unwrap();
+    bus.apply(&mut document, Command::SetUvPins { node: panel, set: 0, vertices: vec![3] }).unwrap();
+    assert_eq!(pins(&document), pinned);
+
+    // The sets' edits carry the pins, and undo puts them back.
+    bus.apply(&mut document, Command::CopyUvSet { node: panel, from: 1, to: 0 }).unwrap();
+    assert_eq!(pins(&document), UvPins::from([(0, vec![0, 2]), (1, vec![3]), (2, vec![0, 2])]));
+    bus.undo(&mut document).unwrap();
+    assert_eq!(pins(&document), pinned);
+    bus.apply(&mut document, Command::DeleteUvSet { node: panel, set: 1 }).unwrap();
+    assert_eq!(pins(&document), UvPins::from([(0, vec![3])]));
+    bus.undo(&mut document).unwrap();
+    assert_eq!(pins(&document), pinned);
+    bus.apply(&mut document, Command::UnwrapUvs { node: panel, options: Default::default() }).unwrap();
+    let unwrapped = pins(&document);
+    assert_eq!(unwrapped.keys().copied().collect::<Vec<_>>(), vec![1, 2], "the sets it had moved up one, their pins with them");
+    let mesh = document.geometry.get(document.tree.get(panel).unwrap().mesh().unwrap()).unwrap();
+    for &v in &unwrapped[&1] {
+        assert_eq!(mesh.uv_sets[1][v as usize], square[3], "the pin sits where it sat");
+    }
+    bus.undo(&mut document).unwrap();
+    assert_eq!(pins(&document), pinned);
 }
 
 /// A texture saved with a path relative to the project is found beside the

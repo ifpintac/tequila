@@ -3,13 +3,19 @@
 //! stretch where it stretches, and with a pattern that reads one way round,
 //! islands turned or mirrored on it.
 //!
-//! It is for looking only. It is not saved, not rendered and not in the
-//! material: the editor hands it to the viewport's GPU shading each frame
-//! (`crate::solid_gpu::CheckerFrame`), which draws the part with it in place
-//! of its base colour. So it shows in Solid and Material Preview, which the
-//! graphics card draws, and not in Rendered, which is the path tracer's
-//! picture of the scene as it will render. It follows the part's first UV
-//! set, which is the one the GPU shading reads.
+//! It is for looking only. It is not saved, not rendered, not in the
+//! material and not in the history: the editor hands it to the viewport
+//! each frame - to the graphics card's shading
+//! (`crate::solid_gpu::CheckerFrame`), or, where the processor draws Solid,
+//! to its Solid pass (`tequila_render_core::preview::PreviewChecker`) -
+//! which draws the part with it in place of its base colour. So it shows
+//! in Wireframe, Solid and Material Preview, by whichever draws them, and
+//! not in Rendered, which is the path tracer's picture of the scene as it
+//! will render. The editor's canvas can show it behind the layout too.
+//!
+//! It follows the UV set the editor shows, or one picked: the scene's
+//! meshes carry only their first set, so for another the editor hands the
+//! viewport that set's places beside the checker.
 //!
 //! The patterns are drawn here, cell by cell: plain squares; squares with
 //! an F in each, which reads backwards where an island is mirrored and
@@ -56,11 +62,14 @@ pub struct Checker {
     /// Squares across the layout's square.
     pub squares: u32,
     pub pattern: Pattern,
+    /// The UV set it is drawn through: the one the editor shows, or this
+    /// one.
+    pub set: Option<usize>,
 }
 
 impl Default for Checker {
     fn default() -> Self {
-        Checker { on: false, squares: 8, pattern: Pattern::Letters }
+        Checker { on: false, squares: 8, pattern: Pattern::Letters, set: None }
     }
 }
 
@@ -192,26 +201,90 @@ fn hsl(h: f32, s: f32, l: f32) -> [u8; 3] {
     [((r + m) * 255.0) as u8, ((g + m) * 255.0) as u8, ((b + m) * 255.0) as u8]
 }
 
+/// The UV set's places, beside the checker, where it is not the first:
+/// what they are for, a key for them, and the places.
+pub type SetPlaces = ((tequila_scene::MeshKey, usize), u64, Arc<Vec<tequila_core::math::Vec2>>);
+
+/// A hash of something, as a key to know when it changes.
+fn key_of(value: impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 impl UvEditor {
-    /// What the viewport draws the checker on this frame, while it is on
-    /// and the editor shows a part: that part's instance in the scene.
-    pub fn checker_frame(&mut self, project: &Project) -> Option<crate::solid_gpu::CheckerFrame> {
-        if !self.open || !self.checker.on {
-            return None;
-        }
-        let node = self.shown_part()?;
-        let instance = project.mapping().instance_of(node)?;
+    /// The UV set the checker is drawn through on a part with `sets`.
+    pub(super) fn checker_set(&self, sets: usize) -> usize {
+        self.checker.set.unwrap_or(self.shown_set).min(sets.saturating_sub(1))
+    }
+
+    /// The checker's picture, drawn again when its squares or pattern
+    /// change.
+    pub(super) fn checker_image(&mut self) -> Arc<(usize, Vec<u8>)> {
         let key = (self.checker.squares, self.checker.pattern);
-        let image = match &self.checker_picture {
+        match &self.checker_picture {
             Some((k, image)) if *k == key => image.clone(),
             _ => {
                 let image = Arc::new(picture(self.checker.squares, self.checker.pattern));
                 self.checker_picture = Some((key, image.clone()));
                 image
             }
+        }
+    }
+
+    /// The part the checker is on this frame, its instance in the scene,
+    /// and the places of the set it is drawn through where that is not the
+    /// first: none while it is off or the editor shows no part.
+    fn checked(&mut self, project: &Project) -> Option<(u32, Option<(u64, Arc<Vec<tequila_core::math::Vec2>>)>)> {
+        if !self.open || !self.checker.on {
+            return None;
+        }
+        let node = self.shown_part()?;
+        let instance = project.mapping().instance_of(node)?;
+        let document = project.document();
+        let mesh_key = document.tree.get(node)?.mesh()?;
+        let mesh = document.geometry.get(mesh_key)?;
+        let set = self.checker_set(mesh.uv_sets.len());
+        let places = match mesh.uv_sets.get(set) {
+            Some(uvs) if set > 0 && uvs.len() == mesh.positions.len() => match &self.checker_places {
+                Some((k, key, places)) if *k == (mesh_key, set) => Some((*key, places.clone())),
+                _ => {
+                    let key = key_of((mesh_key, set));
+                    let places = Arc::new(uvs.clone());
+                    self.checker_places = Some(((mesh_key, set), key, places.clone()));
+                    Some((key, places))
+                }
+            },
+            _ => None,
         };
+        Some((instance.0, places))
+    }
+
+    /// What the graphics card draws the checker on this frame, while it is
+    /// on and the editor shows a part: that part's instance in the scene,
+    /// through the set chosen.
+    pub fn checker_frame(&mut self, project: &Project) -> Option<crate::solid_gpu::CheckerFrame> {
+        let (instance, uvs) = self.checked(project)?;
+        let image = self.checker_image();
         let key = self.checker.squares as u64 * 4 + self.checker.pattern as u64;
-        Some(crate::solid_gpu::CheckerFrame { instances: vec![instance.0], image, key })
+        Some(crate::solid_gpu::CheckerFrame { instances: vec![instance], image, key, uvs })
+    }
+
+    /// The same for the processor's Solid, and what it is: made again only
+    /// when the picture, the part or the set changes.
+    pub fn cpu_checker(&mut self, project: &Project) -> Option<(u64, Arc<tequila_render_core::preview::PreviewChecker>)> {
+        let (instance, uvs) = self.checked(project)?;
+        let key = key_of((instance, self.checker.squares, self.checker.pattern as u8, uvs.as_ref().map(|u| u.0)));
+        if let Some((k, checker)) = &self.cpu_checker {
+            if *k == key {
+                return Some((key, checker.clone()));
+            }
+        }
+        let image = self.checker_image();
+        let checker = Arc::new(tequila_render_core::preview::PreviewChecker::from_srgb(vec![instance], image.0, &image.1, uvs.map(|u| u.1)));
+        self.cpu_checker = Some((key, checker.clone()));
+        Some((key, checker))
     }
 }
 

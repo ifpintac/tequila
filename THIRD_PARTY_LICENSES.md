@@ -121,7 +121,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | `bcdec_rs` | MIT | Block-compressed (BC1 to BC7) DDS textures |
 | `jxl-oxide`, `jxl-bitstream`, `jxl-coding`, `jxl-color`, `jxl-frame`, `jxl-grid`, `jxl-image`, `jxl-jbr`, `jxl-modular`, `jxl-oxide-common`, `jxl-render`, `jxl-threadpool`, `jxl-vardct` | MIT OR Apache-2.0 | JPEG XL textures |
 | `brotli-decompressor`, `alloc-no-stdlib`, `alloc-stdlib`, `tracing`, `tracing-core` | BSD-3-Clause OR MIT (alloc-*: BSD-3-Clause; tracing: MIT) | `jxl-oxide`'s own dependencies |
-| `resvg`, `usvg`, `svgtypes`, `simplecss`, `roxmltree`, `kurbo`, `data-url`, `imagesize`, `xmlwriter`, `euclid`, `siphasher`, `pico-args` | MIT OR Apache-2.0 (imagesize, xmlwriter, pico-args: MIT) | SVG artwork, rasterized (`tequila-texture`) |
+| `resvg`, `usvg`, `svgtypes`, `simplecss`, `roxmltree`, `kurbo`, `data-url`, `imagesize`, `xmlwriter`, `euclid`, `siphasher`, `pico-args` | MIT OR Apache-2.0 (imagesize, xmlwriter, pico-args: MIT) | SVG artwork, rasterized (`tequila-texture`); `roxmltree` also reads 3MF models (`tequila-import`) |
 | `tiny-skia`, `tiny-skia-path`, `arrayref` | BSD-3-Clause (arrayref: BSD-2-Clause) | resvg's rasterizer |
 | `fontdb`, `fontconfig-parser`, `rustybuzz`, `ttf-parser`, `unicode-bidi`, `unicode-bidi-mirroring`, `unicode-ccc`, `unicode-properties`, `unicode-script`, `unicode-vo`, `core_maths`, `memmap2` | MIT OR Apache-2.0 (fontdb, fontconfig-parser, rustybuzz, core_maths: MIT) | The system's fonts, for text in SVG artwork |
 | `zune-jpeg`, `zune-core`, `rgb`, `strict-num`, `float-cmp` | MIT OR Apache-2.0 OR Zlib (rgb, strict-num, float-cmp: MIT) | Pictures embedded in SVG artwork, and resvg's own dependencies |
@@ -130,6 +130,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | `rustls-pki-types`, `zeroize` | MIT OR Apache-2.0 | TLS certificate types; wiping key material |
 | `rustls-webpki`, `untrusted` | ISC | Certificate verification |
 | `ring` | Apache-2.0 AND ISC | Cryptography for TLS |
+| `hidapi` (Windows and macOS builds) | MIT; on a Mac it builds the HIDAPI C library, used under its BSD-style licence (it offers GPL-3.0, BSD or its original licence) | Reading a 3D mouse's HID reports (`app/src/spacemouse`) |
 | `subtle` | BSD-3-Clause | Constant-time comparisons for TLS |
 | `webpki-roots` | CDLA-Permissive-2.0 | Mozilla's root certificates |
 | `vdb-rs` (vendored in `vendor/vdb-rs` with one fix, see its `TEQUILA-PATCH.md`) | MIT | Reading OpenVDB volumes for Volume Maps (`tequila-texture`) |
@@ -138,6 +139,10 @@ POSSIBILITY OF SUCH DAMAGE.
 | `truck-stepio` (vendored in `vendor/truck-stepio` with one fix, see its `TEQUILA-PATCH.md`), `truck-base`, `truck-geometry`, `truck-geotrait`, `truck-topology`, `truck-modeling`, `truck-polymesh`, `truck-meshalgo`, `truck-derivers` | Apache-2.0 | STEP import: B-rep conversion and tessellation (`tequila-import`) |
 | `ruststep`, `ruststep-derive` | Apache-2.0 | Parsing STEP exchange files |
 | `spade`, `robust` | MIT OR Apache-2.0 | Constrained Delaunay triangulation of STEP faces |
+| `ufbx` | MIT OR Unlicense; builds [ufbx](https://github.com/ufbx/ufbx) 0.23 (one C file, MIT OR Unlicense) from source with `cc` | FBX import (`tequila-import`) |
+| `sevenz-rust2`, `lzma-rust2` | Apache-2.0 | Reading Adobe Substance `.sbsar` files, which are 7-Zip archives (`tequila-import`) |
+| `bit-set`, `bit-vec`, `filetime`, `filetime_creation`, `nt-time`, `time`, `time-core`, `time-macros`, `deranged`, `num-conv`, `powerfmt` | MIT OR Apache-2.0 | `sevenz-rust2`'s own dependencies |
+| `roxmltree`, `base64` | MIT OR Apache-2.0 | Reading a Substance file's XML description and an `.sbs` file's icon (also listed above, for SVG and HTTPS) |
 | `cgmath`, `approx`, `matext4cgmath` | Apache-2.0 | truck's linear algebra |
 | `nom`, `derive_more`, `derive-new`, `convert_case`, `winnow`, `branches` | MIT | STEP parsing and derives |
 | `Inflector` | BSD-2-Clause | Name conversion in `ruststep-derive` (build time) |
@@ -155,6 +160,12 @@ POSSIBILITY OF SUCH DAMAGE.
 | Cycles' random-walk coefficients (`subsurface_random_walk_remap` and the radius scale of `bssrdf_setup_radius`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Kutz & Burley's albedo fit with anisotropy, ported (`walk_coefficients` in `tequila-materials/src/openpbr.rs`), so subsurface shades alike in both engines |
 | Cycles' Principled Hair, Chiang model (`bsdf_principled_hair_chiang.h`, and `bsdf_principled_hair_sigma_from_reflectance` in `bsdf_util.h`) | Cycles 5.0.0 | Apache-2.0 | Chiang, Bitterli, Tappan & Burley's fibre model - its lobes, sampling, roughness mapping and colour-to-absorption fit - ported (`tequila-materials/src/lobes/fibre.rs`), so §4.4's fibres shade alike in both engines |
 | Cycles' manifold next event estimation (`src/kernel/integrator/mnee.h`, Copyright 2011-2022 Blender Foundation) | Cycles 5.0.0 | Apache-2.0 | Hanika, Droske & Fascione's specular manifold walk - the constraint derivatives, their block tridiagonal solve, the Newton walk and the transfer matrix - ported, with the changes listed at its head, to find lamps' light through glass (`tequila-render-core/src/integrator/manifold.rs`) |
+
+Test data, in the repository and not in any package:
+
+| Component | Version | Licence | Used for |
+|---|---|---|---|
+| [rhino3dm](https://github.com/mcneel/rhino3dm)'s test models `mesh.3dm` and `subd_creases.3dm` | commit 2bfb1db | MIT | Rhino-written fixtures for the 3dm reader (`tequila-import/tests/data/rhino3dm`, with their licence beside them) |
 
 The Hosek-Wilkie model's evaluation is ported from, and its fitted data is
 reproduced unchanged from, the authors' reference implementation, under this

@@ -1,6 +1,6 @@
 [package]
 name = "tequila-import"
-description = "Geometry import: OBJ, STL, glTF/GLB, STEP, and the post-process pipeline"
+description = "Geometry import: OBJ, STL, PLY, 3MF, FBX, glTF/GLB, STEP, and the post-process pipeline"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -31,7 +31,26 @@ truck-meshalgo = { version = "0.4", default-features = false, features = ["tesse
 # IFC profiles and faces with holes: constrained Delaunay, as truck uses.
 spade = "2"
 truck-topology = "0.6"
+# 3MF: the model inside the package is XML. roxmltree already comes with
+# usvg (tequila-texture's SVG reader), so this adds no crate. MIT OR
+# Apache-2.0. Adobe Substance materials read it too: an .sbs is that XML on
+# its own, and an .sbsar is a 7-Zip archive around it.
+roxmltree = "0.20"
+# FBX: ufbx, the open-source FBX reader in one C file, through its Rust
+# bindings. MIT OR Unlicense; built with `cc`, as the bindings ship it.
+ufbx = "0.11"
+# Substance's .sbsar archives: pure Rust, Apache-2.0 (sevenz-rust2), and
+# base64 (MIT/Apache-2.0) for an .sbs file's icon. The encoder is what
+# writes the synthetic archives the tests read.
+sevenz-rust2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 # Tests build B-spline surfaces of their own (step.rs, face_alone_tests).
 truck-geometry = "0.5"
+
+# The Substance bridge against a separate program: the test is its own
+# main, and acts as Adobe's tools when started with their arguments.
+[[test]]
+name = "substance_bridge"
+harness = false

@@ -62,6 +62,8 @@ mod recent;
 mod render_frame;
 mod render_window;
 mod scene_tab;
+mod self_test;
+mod spacemouse;
 mod procedural_gpu;
 mod solid_gpu;
 mod start_screen;
@@ -71,6 +73,7 @@ mod studio_shelf;
 mod studio_presets;
 mod configurator_panel;
 mod templates_panel;
+mod substance;
 mod texture_pack;
 mod field;
 mod icons;
@@ -301,6 +304,8 @@ struct TequilaApp {
     project: Project,
     scene_tab: SceneTab,
     material_tab: MaterialTab,
+    /// Substance materials' maps, kept rendered (`substance.rs`).
+    substance: substance::Renders,
     library: LibraryTab,
     /// Plugins: what is installed and on, and the code that is running.
     plugins: plugins::Plugins,
@@ -406,11 +411,13 @@ struct TequilaApp {
     solid: solid_gpu::SolidView,
     /// What `solid` was last told about, so a GPU failure resubmits once.
     gpu_solid_submitted: bool,
+    /// The UV editor's checker as last handed to the processor's Solid.
+    cpu_checker_submitted: Option<u64>,
     /// Instance ids to ring, shared by both Solid paths.
     outlined: Vec<u32>,
     /// Which of the faces the UV editor lights the camera sees, and what
     /// for: the part, the faces and the view.
-    uv_link_seen: Option<(UvLinkKey, Vec<bool>)>,
+    uv_link_seen: Option<(u64, uv_editor::link::Sight)>,
     assistant: assistant::Assistant,
     /// Set by a scripted `quit` that has already settled unsaved work, so the
     /// close goes through without asking a question nobody is there to answer.
@@ -447,6 +454,10 @@ struct TequilaApp {
     measure: measure_tool::MeasureTool,
     studio_tab: studio_tab::StudioTab,
     templates_panel: templates_panel::TemplatesPanel,
+    /// A 3D mouse, and its preferences (`spacemouse`).
+    spacemouse: spacemouse::SpaceMouse,
+    /// The Studio a 3D mouse's button stepped to last.
+    spacemouse_studio: Option<usize>,
 
     environment_tab: environment_tab::EnvironmentTab,
     camera_tab: camera_tab::CameraTab,
@@ -466,10 +477,19 @@ struct TequilaApp {
     interacting: bool,
     show_help: bool,
     show_about: bool,
+    /// The menu bar's menus and where each was drawn last frame, so a
+    /// script can open one (`ui menu=file`).
+    menu_buttons: Vec<(&'static str, egui::Rect)>,
+    /// A click the application gives itself, on a menu a script asked to
+    /// open: where, and whether the press has gone in (the release follows
+    /// a frame later, as a mouse's does).
+    menu_click: Option<(egui::Pos2, bool)>,
     /// The UV editor window: a part's layout, and a label placed on it.
     uv_editor: uv_editor::UvEditor,
     /// What went wrong last time, or in a worker just now, or from Help.
     crash_window: crash::CrashWindow,
+    /// Help > Test this computer.
+    self_test: self_test::SelfTest,
     /// The status line last noted for a crash report.
     noted_status: String,
     show_hud: bool,
@@ -588,6 +608,12 @@ fn unit_label(unit: tequila_core::units::LengthUnit) -> &'static str {
     }
 }
 
+/// What the Import dialog's Models filter offers: every model format the
+/// importer reads, and KeyShot scenes, which an import brings in too.
+fn importable() -> Vec<&'static str> {
+    tequila_import::MODEL_EXTENSIONS.iter().copied().chain(["ksp", "bip"]).collect()
+}
+
 /// The notice when the viewport could not use Cycles: what happened, what
 /// it does instead, and what usually fixes it, with Cycles' own words last.
 fn fallback_notice(why: &str) -> String {
@@ -627,7 +653,6 @@ enum Action {
 /// Where the journal and auto-save snapshots live (§4.5).
 /// What the UV editor's lit faces were found seen or hidden for: the part,
 /// the scene's rebuild, the faces, and the eye.
-type UvLinkKey = (Option<tequila_scene::tree::NodeId>, u64, usize, u32, [u32; 3]);
 
 fn journal_directory() -> std::path::PathBuf {
     // Disposable QA sessions must not rewrite the user's persisted queue.
@@ -758,6 +783,39 @@ fn read_build_note(text: &str) -> Option<(String, String)> {
 /// document — importable, selectable, saveable — so the first frame
 /// exercises the same path everything else does. A crashed session that was
 /// never saved is recovered onto it too, since its journal starts from it.
+/// What Frame selection (or Frame all, or with nothing selected) frames:
+/// the selected parts' bounds in the world, or everything shown.
+fn framing_bounds(project: &Project, everything: bool) -> tequila_core::math::Aabb {
+    use tequila_core::math::Aabb;
+    let document = project.document();
+    if everything || project.selection.is_empty() {
+        return tequila_scene::snapshot::visible_bounds(document);
+    }
+    let mut bounds = Aabb::EMPTY;
+    for node in project.selection.nodes() {
+        for id in document.tree.descendants_and_self(node) {
+            let Some(part) = document.tree.get(id) else {
+                continue;
+            };
+            let tequila_scene::tree::NodeKind::Part { mesh } = part.kind else {
+                continue;
+            };
+            if let Some(source) = document.geometry.get(mesh) {
+                bounds.extend(&source.bounds().transformed(&document.tree.world_transform(id)));
+            }
+        }
+    }
+    bounds
+}
+
+/// What a 3D mouse turns the view about: the selection's centre, or the
+/// model's when nothing is selected; `None` for an empty scene, which
+/// turns about the view's own centre.
+fn navigation_pivot(project: &Project) -> Option<Vec3> {
+    let bounds = framing_bounds(project, false);
+    (!bounds.is_empty()).then(|| bounds.center())
+}
+
 fn starter_document() -> tequila_scene::SceneDocument {
     tequila_scene::demo::demo_document_sized(tequila_scene::demo::DemoMaterial::Plastic, 0.18, tequila_scene::demo::STARTER_RADIUS)
 }
@@ -792,6 +850,7 @@ impl TequilaApp {
         app.recent = recent::read(&recent_file);
         app.recent_file = Some(recent_file);
         app.updates = update::Updates::with_preferences(update::Preferences::load());
+        app.spacemouse = spacemouse::SpaceMouse::load();
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -832,6 +891,8 @@ impl TequilaApp {
             project,
             scene_tab: SceneTab::default(),
             material_tab: MaterialTab::default(),
+            // A test application finds none of the person's tools.
+            substance: if cfg!(test) { substance::Renders::default() } else { substance::Renders::for_this_computer() },
             // Thumbnails have a studio of their own, lit to tell materials
             // apart at ninety pixels rather than to light a product.
             library: LibraryTab::new(std::sync::Arc::new(
@@ -886,6 +947,7 @@ impl TequilaApp {
             graph_editor: graph_editor::GraphEditor::default(),
             solid: solid_gpu::SolidView::new(false),
             gpu_solid_submitted: false,
+            cpu_checker_submitted: None,
             outlined: Vec::new(),
             uv_link_seen: None,
             assistant: assistant::Assistant::default(),
@@ -906,6 +968,8 @@ impl TequilaApp {
             measure: measure_tool::MeasureTool::default(),
             studio_tab: studio_tab::StudioTab::default(),
             templates_panel: templates_panel::TemplatesPanel::default(),
+            spacemouse: spacemouse::SpaceMouse::default(),
+            spacemouse_studio: None,
             environment_tab: Default::default(),
             camera_tab: Default::default(),
             image_tab: Default::default(),
@@ -917,8 +981,11 @@ impl TequilaApp {
             interacting: false,
             show_help: false,
             show_about: false,
+            menu_buttons: Vec::new(),
+            menu_click: None,
             uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
+            self_test: self_test::SelfTest::default(),
             noted_status: String::new(),
             show_hud: false,
             viewport_paused: false,
@@ -1062,6 +1129,10 @@ impl TequilaApp {
         }
         let (width, height) = render_pixels(self.viewport_size, self.render_scale);
         let settings = self.project.render_settings().clone();
+        // The UV editor's checker, where the processor draws Solid: the
+        // graphics card's Solid is handed it as it draws.
+        let checker = self.cpu_checker();
+        self.cpu_checker_submitted = checker.as_ref().map(|c| c.0);
         self.orchestrator.submit(RenderRequest {
             camera: self.camera.camera,
             width,
@@ -1084,8 +1155,19 @@ impl TequilaApp {
             shading: self.shading,
             engine: settings.engine,
             pixels_per_point: self.render_scale,
+            checker,
         });
         self.gpu_solid_submitted = self.gpu_solid();
+    }
+
+    /// The UV editor's checker for the processor's Solid: only while the
+    /// processor draws it, and not in a presentation.
+    fn cpu_checker(&mut self) -> Option<(u64, Arc<tequila_render_core::preview::PreviewChecker>)> {
+        if self.shading == orchestrator::Shading::Fast && !self.gpu_solid() && self.presenting.is_none() {
+            self.uv_editor.cpu_checker(&self.project)
+        } else {
+            None
+        }
     }
 
     /// Show `mode` in the viewport.
@@ -1228,6 +1310,22 @@ struct BatchPlan {
 }
 
 impl eframe::App for TequilaApp {
+    /// A script's click on a menu (`menu_click`), as the mouse would give
+    /// it: pressed on one frame, released on the next.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let Some((pos, pressed)) = self.menu_click else { return };
+        let modifiers = egui::Modifiers::default();
+        if pressed {
+            raw_input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers });
+            self.menu_click = None;
+        } else {
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+            raw_input.events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers });
+            self.menu_click = Some((pos, true));
+        }
+        ctx.request_repaint();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
         struct FrameTimer(std::time::Instant);
@@ -1270,6 +1368,15 @@ impl eframe::App for TequilaApp {
         }
         if self.poll_imports() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        // Substance materials' maps: renders that finished, and renders to
+        // start now that settings have settled.
+        for message in self.substance.poll(&mut self.project) {
+            self.project.status = message.clone();
+            self.toasts.info(message);
+        }
+        if self.substance.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         // Another document: material keys start again at one in each, so
         // the graph editor would carry on editing whichever material of the
@@ -1533,6 +1640,9 @@ impl eframe::App for TequilaApp {
         if self.show_about {
             self.about_window(ctx);
         }
+        // A 3D mouse is read from the first frame, and set up here.
+        self.spacemouse.start(ctx);
+        self.spacemouse.preferences(ctx);
         // A label's UV editor button, from the Labels tab.
         let request = ctx.data_mut(|d| {
             let id = egui::Id::new(uv_editor::OPEN);
@@ -1564,6 +1674,7 @@ impl eframe::App for TequilaApp {
         if self.recoverable.is_empty() {
             self.crash_window.ui(ctx);
         }
+        self.self_test.ui(ctx);
         self.update_report_window(ctx);
         self.model_units_window(ctx);
         self.improve_model_window(ctx);
@@ -1634,6 +1745,11 @@ impl eframe::App for TequilaApp {
             }
             self.submit();
         }
+        // The UV editor's checker turned on, off or changed, where the
+        // processor draws Solid.
+        if self.cpu_checker().map(|c| c.0) != self.cpu_checker_submitted {
+            self.submit();
+        }
 
         // And the display pipeline, which the built-in transform is part of —
         // so choosing a different tone map goes through here too rather than
@@ -1664,7 +1780,11 @@ impl eframe::App for TequilaApp {
         // until something is edited, and repainting it sixty times a second
         // burns a core to display a static picture — in the one mode a person
         // chose *because* the machine was busy.
+        // And while Help > Test this computer runs, which times the
+        // processor and the graphics cards: the viewport's render would be
+        // racing it for both.
         let suspended = self.viewport_paused
+            || self.self_test.running()
             || (self.batch.is_running() && self.shading != orchestrator::Shading::Fast)
             || ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         self.orchestrator.set_paused(suspended);
@@ -1874,6 +1994,24 @@ impl TequilaApp {
             }
         }
 
+        // ---- A 3D mouse (`spacemouse`) ---------------------------------
+        //
+        // Whatever the pointer is doing: the other hand turns, pans and
+        // zooms. A motion that comes to rest is one step to undo, as a drag
+        // is.
+        if !dropping {
+            let dt = ui.input(|i| i.stable_dt);
+            let project = &self.project;
+            let step = self.spacemouse.frame(ui.ctx(), &mut self.camera, dt, aspect, || navigation_pivot(project));
+            moved |= step.moved;
+            if step.ended {
+                self.project.end_interaction();
+            }
+            if let Some(action) = step.action {
+                moved |= self.spacemouse_button(action);
+            }
+        }
+
         // Standard views on Ctrl+Alt+1..7.
         if modifiers.command && modifiers.alt {
             let digits = [
@@ -2008,18 +2146,22 @@ impl TequilaApp {
             self.gizmo.draw(ui, rect, &self.camera.camera);
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
-            // What the UV editor points at, lit on the part; what another
-            // part hides found again only when that or the view changes.
+            // What the UV editor points at, lit on the part; what the part
+            // itself or another part hides found again only when that or
+            // the view changes.
             if let Some(hint) = self.uv_editor.viewport_hint() {
-                let eye = self.camera.camera.position();
-                let key: UvLinkKey = (hint.node, self.project.rebuilds(), hint.triangles.len(), hint.triangles.first().copied().unwrap_or(u32::MAX), [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
-                if self.uv_link_seen.as_ref().map(|(k, _)| k) != Some(&key) {
-                    let (orchestrator, mapping) = (&self.orchestrator, self.project.mapping());
-                    let seen = uv_editor::link::seen(&self.project, &self.camera.camera, hint, |ray| orchestrator.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
-                    self.uv_link_seen = Some((key, seen));
+                let key = hint.sight_key(self.project.rebuilds(), &self.camera.camera, rect);
+                if self.uv_link_seen.as_ref().map(|(k, _)| *k) != Some(key) {
+                    let (picker, mapping) = (self.orchestrator.picker(), self.project.mapping());
+                    let sight = uv_editor::link::sight(&self.project, &self.camera.camera, rect, hint, |ray| picker.as_ref()?.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
+                    // Not kept until there is geometry to look through.
+                    if picker.is_some() {
+                        self.uv_link_seen = Some((key, sight.clone()));
+                    }
+                    uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, &sight);
+                } else if let Some((_, sight)) = &self.uv_link_seen {
+                    uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, sight);
                 }
-                let seen = self.uv_link_seen.as_ref().map(|(_, s)| s.as_slice()).unwrap_or(&[]);
-                uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, seen);
             }
         }
 
@@ -2410,31 +2552,7 @@ impl TequilaApp {
 
     /// §6.1's Frame selection / Frame all.
     fn frame(&mut self, everything: bool) {
-        use tequila_core::math::Aabb;
-        let document = self.project.document();
-        let bounds = if everything || self.project.selection.is_empty() {
-            tequila_scene::snapshot::visible_bounds(document)
-        } else {
-            let mut bounds = Aabb::EMPTY;
-            for node in self.project.selection.nodes() {
-                for id in document.tree.descendants_and_self(node) {
-                    let Some(part) = document.tree.get(id) else {
-                        continue;
-                    };
-                    let tequila_scene::tree::NodeKind::Part { mesh } = part.kind else {
-                        continue;
-                    };
-                    if let Some(source) = document.geometry.get(mesh) {
-                        bounds.extend(
-                            &source
-                                .bounds()
-                                .transformed(&document.tree.world_transform(id)),
-                        );
-                    }
-                }
-            }
-            bounds
-        };
+        let bounds = framing_bounds(&self.project, everything);
         if bounds.is_empty() {
             self.toasts.warn("Nothing to frame");
             return;
@@ -2447,6 +2565,50 @@ impl TequilaApp {
         // a default three-quarter view would undo the shot they had set up.
         self.camera.frame_at(framed.target, framed.distance);
         self.submit();
+    }
+
+    /// A 3D mouse's button: fit the view, or step through the Studios -
+    /// through the saved cameras when there are none. True when the view
+    /// moved.
+    fn spacemouse_button(&mut self, action: spacemouse::navigate::ButtonAction) -> bool {
+        use spacemouse::navigate::ButtonAction;
+        let step = match action {
+            ButtonAction::Nothing => return false,
+            ButtonAction::FitView => {
+                self.frame(false);
+                return true;
+            }
+            ButtonAction::NextStudio => 1,
+            ButtonAction::PreviousStudio => -1,
+        };
+        let document = self.project.document();
+        let studios = document.studios.len();
+        if studios > 0 {
+            let index = match self.spacemouse_studio.filter(|&i| i < studios) {
+                Some(last) => (last as isize + step).rem_euclid(studios as isize) as usize,
+                None if step > 0 => 0,
+                None => studios - 1,
+            };
+            if self.project.apply(Command::ApplyStudio { index }).is_ok() {
+                self.spacemouse_studio = Some(index);
+                self.project.status = format!("Applied {}", self.project.document().studios[index].name);
+                self.camera.adopt(self.project.camera());
+                return true;
+            }
+            return false;
+        }
+        let cameras = document.cameras.len();
+        if cameras > 1 {
+            let index = (document.cameras.active_index() as isize + step).rem_euclid(cameras as isize) as usize;
+            if self.project.apply(Command::SelectCamera { index }).is_ok() {
+                self.camera.adopt(self.project.camera());
+                self.project.status = format!("Camera: {}", self.project.camera().name);
+                return true;
+            }
+        } else {
+            self.toasts.info("No Studios or other cameras to step through");
+        }
+        false
     }
 
     /// §6.2's `E` / `C` / `B` background bindings.
@@ -2928,7 +3090,8 @@ impl TequilaApp {
             ui.add_space(12.0);
             egui::menu::bar(ui, |ui| {
                 ui.visuals_mut().widgets.inactive.fg_stroke.color = theme::p().text;
-                ui.menu_button("File", |ui| {
+                self.menu_buttons.clear();
+                let file = ui.menu_button("File", |ui| {
                     if ui.button("Import model...").clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
@@ -2938,6 +3101,14 @@ impl TequilaApp {
                             self.pick_texture_pack(folder);
                         }
                     });
+                    if ui
+                        .button("Import Substance material...")
+                        .on_hover_text("An Adobe Substance material (.sbsar, or Designer's .sbs) with its settings, on the selected parts")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.pick_substance();
+                    }
                     ui.separator();
                     if ui.button("New library material...").on_hover_text("Make a material for your library: from a type, the selected part, a texture pack or a file").clicked() {
                         ui.close_menu();
@@ -3031,6 +3202,21 @@ impl TequilaApp {
                             };
                         }
                     }
+                    if ui.button("Export USDZ for AR (.usdz)...").on_hover_text("What is shown as one file an iPhone, iPad or Vision Pro opens, to see the product at its real size: materials baked to preview surfaces, standing on the ground").clicked() {
+                        ui.close_menu();
+                        let name = format!("{}.usdz", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
+                        if let Some(path) = rfd::FileDialog::new().add_filter("USDZ", &["usdz"]).set_file_name(&name).save_file() {
+                            self.project.status = match self.export_usdz(&path) {
+                                Ok((bytes, warnings)) => format!(
+                                    "Exported {} ({:.1} MB){}",
+                                    path.display(),
+                                    bytes as f64 / 1e6,
+                                    if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
+                                ),
+                                Err(error) => error,
+                            };
+                        }
+                    }
                     if ui.button("Export for the web...").on_hover_text("The configurator as a web page: live 3D, photos of every combination, or both").clicked() {
                         ui.close_menu();
                         self.web_plan = Some(WebPlan { live: true, photos: false });
@@ -3040,6 +3226,7 @@ impl TequilaApp {
                         self.spin_plan = Some(SpinPlan { options: tequila_format::spin::SpinOptions::default(), transparent: false });
                     }
                 });
+                self.menu_buttons.push(("file", file.response.rect));
 
                 ui.menu_button("View", |ui| {
                     if ui
@@ -3128,6 +3315,11 @@ impl TequilaApp {
                         self.redo();
                         ui.close_menu();
                     }
+                    ui.separator();
+                    if ui.button("Preferences…").on_hover_text("The 3D mouse: speed, dead zone, axes and buttons").clicked() {
+                        self.spacemouse.preferences_open = true;
+                        ui.close_menu();
+                    }
                 });
 
                 ui.menu_button("Workspace", |ui| {
@@ -3212,6 +3404,14 @@ impl TequilaApp {
                         self.crash_window.browse();
                         ui.close_menu();
                     }
+                    if ui
+                        .button("Test this computer...")
+                        .on_hover_text("A few minutes of checks of the processor, the graphics cards, the denoisers and the viewport, with a report to share on Discord")
+                        .clicked()
+                    {
+                        self.self_test.open = true;
+                        ui.close_menu();
+                    }
                     let label = self.updates.menu_label();
                     if ui.button(label).on_hover_text("Whether there is a newer Tequila, and installing it").clicked() {
                         self.updates.open_window();
@@ -3229,7 +3429,7 @@ impl TequilaApp {
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.render_button(ui);
-                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, glTF, OBJ, STL, USD and IFC", "Ctrl + I")
+                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, FBX, OBJ, STL, 3MF, PLY, USD and IFC", "Ctrl + I")
                         .clicked()
                     {
                         self.ask_for_file(Action::Import);
@@ -4573,7 +4773,8 @@ impl TequilaApp {
         let chosen = match action {
             Action::Import => dialog
                 .set_title("Import model")
-                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"])
+                .add_filter("Models", &importable())
+                .add_filter("Rhino model", &["3dm"])
                 .add_filter("KeyShot scene", &["ksp", "bip"])
                 .add_filter("All files", &["*"])
                 .pick_file(),
@@ -4600,6 +4801,35 @@ impl TequilaApp {
     fn pick_texture_pack(&mut self, folder: bool) {
         if let Some(source) = texture_pack::pick(folder) {
             self.load_texture_pack(&source);
+        }
+    }
+
+    /// Ask for a Substance material and open it onto the selected parts.
+    fn pick_substance(&mut self) {
+        if let Some(source) = substance::pick() {
+            self.load_substance(&source);
+        }
+    }
+
+    /// A Substance file, as materials: the first on the selected parts, or
+    /// only added to the project when nothing is selected.
+    fn load_substance(&mut self, source: &std::path::Path) {
+        let targets = tequila_scene::apply::parts_of(self.project.document(), self.project.selection.nodes());
+        match substance::open(&mut self.project, &mut self.substance, source, targets, None) {
+            Ok(opened) => {
+                let status = substance::status(&opened);
+                self.toasts.info(status.clone());
+                self.project.status = status;
+                // The Material tab shows its settings.
+                if !opened.assigned.is_empty() {
+                    self.show_project = true;
+                    self.project_tab = ProjectTab::Material;
+                }
+            }
+            Err(error) => {
+                self.toasts.warn(error.clone());
+                self.project.status = error;
+            }
         }
     }
 
@@ -4645,6 +4875,13 @@ impl TequilaApp {
                     if parts == 1 { "" } else { "s" }
                 ),
                 texture_pack::Dropped::Material => "Drop to add the material to your library".to_string(),
+                texture_pack::Dropped::Substance if parts == 0 => {
+                    "Drop to add the Substance material to the project\n(select parts first to put it on them)".to_string()
+                }
+                texture_pack::Dropped::Substance => format!(
+                    "Drop to put the Substance material on the {parts} selected part{}",
+                    if parts == 1 { "" } else { "s" }
+                ),
                 texture_pack::Dropped::Unknown => "Tequila does not open this kind of file".to_string(),
             };
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("file-drop")));
@@ -4676,6 +4913,7 @@ impl TequilaApp {
             texture_pack::Dropped::Project | texture_pack::Dropped::Scene => self.handle_file(Action::Open, path),
             texture_pack::Dropped::TexturePack => self.load_texture_pack(&path),
             texture_pack::Dropped::Material => self.import_material_file(&path),
+            texture_pack::Dropped::Substance => self.load_substance(&path),
             texture_pack::Dropped::Unknown => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.toasts.warn(format!("Tequila does not open {name}"));
@@ -4969,7 +5207,7 @@ impl TequilaApp {
             (_, recorded) => {
                 let mut dialog = rfd::FileDialog::new()
                     .set_title("Update model from")
-                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"]);
+                    .add_filter("Models", &importable());
                 if let Some(folder) = recorded.as_ref().and_then(|p| p.parent()) {
                     dialog = dialog.set_directory(folder);
                 }
@@ -5385,7 +5623,13 @@ impl TequilaApp {
                         .label_gizmo
                         .armed()
                         .map(|target| (target.material, target.index));
+                    tab.substance = std::mem::take(&mut self.substance);
                     tab.show(ui, &mut self.project);
+                    self.substance = std::mem::take(&mut tab.substance);
+                    if let Some(status) = tab.take_substance_status() {
+                        self.toasts.info(status.clone());
+                        self.project.status = status;
+                    }
                     if let Some(material) = tab.open_graph.take() {
                         self.graph_editor.open_for(material);
                     }
@@ -5894,6 +6138,15 @@ impl TequilaApp {
         let exported = tequila_format::gltf::export(self.project.document(), &options);
         std::fs::write(path, &exported.glb).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
         Ok((exported.glb.len(), exported.warnings))
+    }
+
+    /// What is shown as a USDZ package for AR, named for the file.
+    pub(crate) fn export_usdz(&mut self, path: &std::path::Path) -> Result<(usize, Vec<String>), String> {
+        let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let options = tequila_format::usdz::UsdzOptions { name, ..Default::default() };
+        let exported = tequila_format::usdz::export(self.project.document(), &options);
+        std::fs::write(path, &exported.bytes).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+        Ok((exported.bytes.len(), exported.warnings))
     }
 
     /// The configurator as a web folder, now: the live view and, with
@@ -6455,6 +6708,37 @@ mod undo_tests {
         app.redo();
         app.sync_viewport_camera();
         assert_eq!(*app.project.camera(), after);
+    }
+
+    /// UV pins, put down in the UV editor, are a step to undo like any other
+    /// edit, and are saved with the project and there when it is opened
+    /// again.
+    #[test]
+    fn uv_pins_undo_and_are_saved_with_the_project() {
+        let mut app = TequilaApp::for_tests();
+        let document = app.project.document();
+        let node = document
+            .tree
+            .iter()
+            .find(|n| n.mesh().and_then(|m| document.geometry.get(m)).is_some_and(|m| !m.uv_sets.is_empty() && m.vertex_count() > 3))
+            .map(|n| n.id)
+            .expect("a laid-out part in the demo scene");
+        app.project.end_interaction();
+        app.project.apply(Command::SetUvPins { node, set: 0, vertices: vec![3, 1] }).unwrap();
+        app.project.end_interaction();
+        let pins = |app: &TequilaApp| app.project.document().tree.get(node).unwrap().uv_pins.clone();
+        assert_eq!(pins(&app), tequila_scene::uv::UvPins::from([(0, vec![1, 3])]));
+        app.undo();
+        assert!(pins(&app).is_empty(), "undone, no pins");
+        app.redo();
+        assert_eq!(pins(&app)[&0], vec![1, 3], "redone, pinned again");
+
+        let path = std::env::temp_dir().join(format!("tequila-uv-pins-{}.tequila", std::process::id()));
+        app.project.save(&path).unwrap();
+        let mut reopened = Project::with_document(tequila_scene::SceneDocument::new(), Arc::new(tequila_scene::demo::studio_environment()));
+        reopened.open(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(reopened.document().tree.get(node).unwrap().uv_pins[&0], vec![1, 3], "the pins came back with the project");
     }
 
     /// Help > About lays out, with or without a BUILD.txt beside the program.

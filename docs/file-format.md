@@ -26,12 +26,16 @@ project.tequila
 ├── manifest.json              what is inside, and what wrote it
 ├── scene.json                 the scene: hierarchy, units, environment
 ├── preview.png                a small picture of it, optional
+├── studios/
+│   └── 9f3a61c0d2e4b578.png   each Studio's picture, optional
 ├── materials/
 │   └── mat_00000001.json      one file per material
 ├── geometry/
 │   └── m_00000001.fsmesh      one file per mesh, binary
-└── sources/
-    └── <id>.step              a CAD file kept with the project (.iges for IGES)
+├── sources/
+│   └── <id>.step              a CAD file kept with the project (.iges for IGES)
+└── substance/
+    └── <key>/<output>.png     a Substance material's rendered map (§4.2)
 ```
 
 `preview.png` is a small picture of the project, at most 512 pixels across,
@@ -40,6 +44,16 @@ screen or a file browser shows it without reading the rest of the archive.
 It is optional: a writer without a picture to give leaves it out, and a
 reader that does not show one ignores it. A writer keeps the one a file was
 opened with when it has no new one.
+
+A `studios/` member is a Studio's picture: a small PNG of the shot the
+Studio recalls, as the Studios tab last rendered it, so a project opened
+again shows its Studios' pictures at once. Its name is the Studio's
+picture key in sixteen hexadecimal digits: an FNV-1a hash of everything the
+Studio holds but its name and its file-name suffix
+(`Studio::picture_key`), so a renamed Studio keeps its picture and a changed
+one has none until it is rendered again. Only the pictures of Studios the
+scene still has are written. Optional, like the preview: a reader that
+does not show them ignores them.
 
 A `sources/` member is a CAD file's own bytes (`.step` or `.iges`, as the file
 was), kept so a model can be divided
@@ -50,6 +64,14 @@ content and its length (`<hash>-<length>`, hexadecimal), named by the
 `Tessellation` (`Draft`, `Medium`, `High` or `Ultra`) it was divided at. Only
 sources some node still names are written. Files over 64 MB are not kept; their
 models divide again from the file they came from.
+
+A `substance/` member is one of a Substance material's maps (§4.2), as
+Adobe's `sbsrender` rendered it, so the project opens and renders the same on
+a computer without Adobe's tools. `<key>` names the render: a hash of the
+material's file, graph and values (`SubstanceLink::settings_key`), the same
+on every computer. A reader puts the member back into its render cache under
+that name, marks the folder a finished render, and reads the map from there;
+the texture entry that refers to it says so with `member` (§3.1).
 
 Members not listed here are **preserved unchanged** through a load and save (see
 §5). That is how a file written by a newer Tequila survives being opened in an
@@ -308,6 +330,7 @@ Each is a light, a picture or a gradient painted onto the environment sphere.
 | `path_key` | string? | The source file's stable identifier for this node, so a re-import can match it and keep its material. |
 | `pivot` | number[3]? | A custom pivot in this node's local space, if one has been set. Absent means the gizmo uses a derived pivot. Stored because §04 §5 requires pivots to persist — they are what an animation track rotates about. |
 | `uv_guides` | object[]? | A part's guides on its UV layout, laid down in the UV editor and snapped to there, in the order they were added. Each is one key, the axis it marks a place along, with that place in layout units (0 to 1 across the unit square): `{"u": 0.25}` is a line down the layout a quarter of the way across, `{"v": 0.5}` one across it halfway down (`v` runs down the layout, as an image's rows do). Absent means none; written only on a part that has some. They change nothing that renders. |
+| `uv_pins` | object[]? | A part's pins on its UV layouts, put down in the UV editor: one object for each UV set that has any, `{"set": 0, "vertices": [3, 17]}`, the set's number from 0 and its pinned mesh vertices in order. A pin is held where it is when an island is laid out flat again, relaxed or reshaped round it. Absent means none; written only on a part that has some. They change nothing that renders. |
 
 Parent and child links must agree: if A lists B as a child, B must name A as its
 parent. A loader that finds otherwise rejects the file rather than guessing.
@@ -359,6 +382,7 @@ sit here.
 | `path` | string | Relative to the project, or absolute. |
 | `role` | string | `color`, `data`, `normal` or `height`. |
 | `color_space?` | string | `srgb`, `linear_srgb` or `raw`, overriding the role's default. |
+| `member?` | string | The archive member holding the file (`substance/<key>/<output>.png`), for a Substance material's map: read from there, into the render cache, rather than from `path`, which is where it was on the computer that saved it. |
 
 **The role is stored, not inferred.** §5.2 assigns colour space by map role
 rather than by file format, and the role cannot be recovered from the file:
@@ -381,6 +405,7 @@ materials diffable.
 | `name` | string | Shown in the library. The single source of the material's name. |
 | `type` | string | Catalog entry, lowercase with underscores: `plastic`, `metal`, `glass_solid`, `area_light` and so on. See below. |
 | `graph?` | object | The material graph, present only when there is more than the surface node. See §4.1. |
+| `substance?` | object | The Adobe Substance file it is made from and the values its inputs were given, for a Substance material. See §4.2. |
 
 Then the OpenPBR parameter block of `docs/02-MATERIAL-SYSTEM.md` §2.2. Each key
 is spelled exactly as the parameter is named there.
@@ -441,14 +466,14 @@ is spelled exactly as the parameter is named there.
 | `fuzz_weight` | number | Sheen strength. |
 | `fuzz_color` | number[3] | Sheen colour. |
 | `fuzz_roughness` | number | 0 to 1. |
-| `fuzz_density` | number | Fibres to the square centimetre grown out of the surface when the scene is built (§4.4's geometric Fuzz), 0 to 5000; 0, the default, grows none. They wear `fuzz_color` and `fuzz_roughness`, and are capped at 250,000 a part. A graph's Fuzz node, where there is one, wins over these settings. |
+| `fuzz_density` | number | Fibres to the square centimetre grown out of the surface when the scene is built (§4.4's geometric Fuzz), 0 to 5000; 0, the default, grows none. They wear `fuzz_color` and `fuzz_roughness` - each fibre the value where it is rooted, where the graph drives either - and a scene grows at most 6 million, all its parts together. A graph's Fuzz node, where there is one, wins over these settings. |
 | `fuzz_length` | number | A fibre's length in metres (default 0.002). |
 | `fuzz_thickness` | number | A fibre's width at its root in metres (default 0.00004); it tapers to a fifth at the tip. |
 | `fuzz_lean` | number | How far fibres lean from standing straight up, 0 to 1 (default 0.35). |
 | `fuzz_curl` | number | How much each fibre bends along its length, 0 to 1 (default 0.3). |
 | `fuzz_color_variation` | number | How much darker than `fuzz_color` a fibre may be, 0 to 1 (default 0.2). |
 | `fuzz_clump` | number | How far fibres growing side by side gather into clumps, tip to tip, 0 (each on its own, the default) to 1 (every clump ending in a point); a clump is about half as wide as the fibres are long, and its fibres share most of its shade. |
-| `fuzz_comb` | number | How far fibres lie the same way as their neighbours, 0 (each its own way, the default) to 1 (combed), in patches about 4 cm across. |
+| `fuzz_comb` | number | How far fibres lie the same way as their neighbours, 0 (each its own way, the default) to 1 (combed), in patches about 4 cm across. The nap turns a little between patches; with `fuzz_clump` past 0.4 it turns further, and from 0.7 the clumps fan one way and another, as a fur's locks do. |
 | `thin_film_weight` | number | Strength of the interference film. |
 | `thin_film_thickness` | number | Nanometres. |
 | `thin_film_ior` | number | Index of refraction of the film. |
@@ -571,6 +596,25 @@ disagree as "the material changed when I reopened it".
 A graph that does not validate — a link to a node that is not there, an unknown
 node kind, a cycle — is refused rather than half-loaded. Opening a file into a
 state the editor cannot display is worse than declining to open it.
+
+### 4.2 The `substance` object
+
+A Substance material (`docs/02-MATERIAL-SYSTEM.md` §5.6) is an ordinary
+material — its graph reads one texture per output, wired as a texture pack's
+maps are — and this object, which says where the maps come from.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `file` | string | The `.sbsar` (or Designer's `.sbs`), relative to the project or absolute. |
+| `file_hash` | string | FNV-1a of the file's content when it was read, so a render of one version is not taken for another's. |
+| `graph` | string | Which of the file's graphs, by package URL: `pkg://bricks`. |
+| `values` | object | The inputs that were set, by identifier, each a string as `sbsrender --set-value` takes it: `"0.5"`, `"1,0,0,1"`, and `"10,10"` for `$outputsize` (powers of two: 1024 pixels). An input not here is at the file's default. |
+| `images` | object | Image inputs given a picture, by identifier: the picture's path. |
+| `maps` | object | Which texture (an id in `textures`, §3.1) holds which output's map, by output identifier. |
+
+The textures are where the maps were when the project was saved, and the
+maps themselves travel with it (§1). A reader that does not understand the
+object still has an ordinary textured material.
 
 ---
 

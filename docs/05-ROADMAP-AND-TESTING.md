@@ -106,7 +106,7 @@ that does not assume the thing it is testing.
 ### M1 — Scene, document, and I/O foundation
 - [x] `SceneDocument`, `SceneTree`, `GeometryStore` with instancing (§03 §2).
 - [x] Command bus, undo/redo, dirty classification, command journal (§04 §8).
-- [x] Import: OBJ, STL, glTF/GLB with the full post-process pipeline (§03 §6.1). **FBX is out of scope** — see note 2.
+- [x] Import: OBJ, STL, glTF/GLB with the full post-process pipeline (§03 §6.1). PLY, 3MF and FBX joined them on November 5 — see note 2, which records why FBX, once out of scope, is in.
 - [x] Instancing detection by content hash.
 - [x] Scene units with both conversion modes (§03 §3).
 - [x] `.tequila` container: write, read, schema validation, version migration hook (§03 §4).
@@ -136,23 +136,34 @@ Recorded per §2. Six deviations, all deliberate:
    exit criterion is written against. Strict `==` remains correct for the
    save/reopen round trip, where the counters are in the file.
 
-2. **No Assimp, and FBX is out of scope.** §03 §6.1 names Assimp and eight
-   formats. OBJ, STL and glTF/GLB are implemented directly, for the same
-   reason the HDR and EXR readers are (M0 note 2): the library crates carry no
-   third-party Rust dependencies, and a C++ build dependency to reach three
-   formats of a few hundred lines each is a poor trade.
+2. **No Assimp.** §03 §6.1 names Assimp and eight formats. OBJ, STL and
+   glTF/GLB are implemented directly, for the same reason the HDR and EXR
+   readers are (M0 note 2): a C++ build dependency to reach formats of a few
+   hundred lines each is a poor trade. PLY and 3MF followed the same way on
+   November 5 (`tequila-import/src/ply.rs`, `three_mf.rs`).
 
-   **FBX is a separate decision, and the answer is no.** It is Autodesk's
-   proprietary format — undocumented, with no published specification, and
-   reachable only through their own SDK or a reverse-engineered reader.
-   §0.2 already puts the equivalent proprietary CAD formats out of scope
-   for exactly this reason, and FBX belongs with them. The cost to a user is
-   small: every tool that writes FBX also writes glTF, OBJ or USD, so this is
-   one export menu rather than a lost model. The importer refuses it by name
-   and says which formats to use instead, rather than failing as though the
-   file were corrupt.
+   **FBX was a separate decision, first no, now yes.** The first answer was
+   that FBX is Autodesk's proprietary format — undocumented, with no
+   published specification — and so reachable only through their own SDK or
+   a reverse-engineered reader, which put it beside the proprietary CAD
+   formats §0.2 rules out; the importer refused it by name and said which
+   formats to use instead.
 
-   PLY, 3DS, Collada and 3MF remain M8's business alongside the CAD kernels.
+   *Reversed, November 5.* The owner put FBX on the roadmap, and the
+   objection no longer holds: ufbx (github.com/ufbx/ufbx) is an open-source
+   FBX reader, one C file under MIT or the Unlicense, maintained and tested
+   against a large corpus of real files, that reads binary and ASCII FBX
+   from 6.1 to 7.7 and gets the undocumented parts right — pivots, pre- and
+   post-rotation, Maya's segment scale compensation, geometric transforms,
+   the axis system and the unit scale. Tequila reads FBX through its Rust
+   bindings (the `ufbx` crate, MIT OR Unlicense, built with `cc`); there is
+   still no Autodesk SDK anywhere in the build or the package, and §0.2's
+   rule about proprietary CAD kernels is unchanged. The refusal is gone; an
+   FBX that ufbx cannot read is reported as a malformed file, with ufbx's
+   own reason. What is read and what is left out is §03 §6.1's as-built
+   note.
+
+   3DS and Collada remain M8's business alongside the CAD kernels.
 
 3. **Instancing hashes topology, not positions.** §03 §6.4 says to hash
    `(positions, indices)` after translating to the centroid. That cannot work
@@ -529,6 +540,81 @@ Alembic deformation import serve neither.
       carries the nodes, Tidy refits each round what it held. Solo shows one
       node's output on the model, unlit, as a view override — never saved,
       never undone, cleared when the editor closes.
+- [x] UV editor (§04 §7.1), shipped in three stages in v2026.11.01.1340.
+      *November 5, the leftovers.* **Pins** are kept on the part
+      (`SceneNode::uv_pins`, `uv/pins.rs`), set by set, and written into
+      the project as `uv_pins`. A new command, `uv.set_pins` (catalog 74
+      with Substance's `material.set_substance`), puts them down and takes them up, so Pin, Unpin, Clear and Rectangle's
+      border pins are each a step to undo. The layout's own edits carry the
+      pins by the corners they sat at: a set copied takes its pins with it,
+      a set deleted loses them, and an unwrap or a new set (both number the
+      vertices anew) keeps them in place. `Undo::UvEdited` and
+      `Undo::Unwrapped` hold the pins as they were. Held by the `uv::pins`
+      tests, `uv_pins_survive_a_round_trip_and_follow_their_sets`,
+      `pins_hold_through_a_reflatten` and
+      `uv_pins_undo_and_are_saved_with_the_project`.
+
+      **Lines on the part** (`uv_editor/link.rs`). The viewport now also
+      draws the layout's seams, the selection and the pins. Each line is
+      cut into pieces of at most 8 points, and each piece and each vertex
+      is checked by a ray through the geometry the viewport picks against.
+      A line whose faces on the part all face away from the camera is
+      hidden outright, because its rays only graze the outline. Otherwise a
+      line or vertex is hidden where the part's own surface is in front of
+      it, and drawn faintly where another part is. The result is cached
+      until the hint, the geometry, the camera or the viewport's size
+      changes, and costs at most 24,000 rays. It works the same over the
+      graphics card's views, the processor's Solid and Rendered
+      (`lines_behind_the_part_are_hidden_and_behind_another_faint`).
+
+      **Line up edges** (`vertices::square_edges_reported`). Edges are now
+      taken nearest-to-square first, and only an edge that would put two
+      vertices on one place, or a face's three corners on one line, is
+      left. Before, the whole run it was in was dropped. If moving just the
+      runs' own vertices would turn a face over, the island's other
+      vertices are carried along (`shape::carried`). A run is left only if
+      even that folds. A picked path that runs within the tolerance from
+      end to end is lined up whole. On ten sample parts it found 95,090 edges near square. It now lines up 81.3% of them exactly, against 76.3% before: 17,786 are left, against 22,491. Of those left, 1,274 would put two vertices on one place or flatten a face. The headphones' stitching gains most: 1,344 left before, 290 now, every one of them a clash. On
+      the can (`sheet-3-lineup`), a picked border used to come out as a
+      30.6 mm staircase and is now one straight line. The editor says what
+      it left and why.
+
+      **As on the part** (`sort::as_on_part`, `AsOnPart`). Each island is
+      turned to read as the view sees it. `turn_as_seen` finds the
+      least-squares turn that takes the view's across and down to u and v,
+      and reads an island seen from behind as if through the part. Each
+      island is also scaled to the layout's own scale. On ten sample parts,
+      the turn the islands still needed to read as seen fell from a mean of
+      26–106° per part to 0.00° (worst 0.04°), and every island is within
+      ×1.0005 of the layout's scale. The pairwise push apart is now followed
+      by drawing each island back toward where it is seen, as far as it
+      goes, with 0 overlaps. The middles end 0.7–4.1 island sizes from where
+      the part puts them (0.5–4.6 before), measured on boxes that are now
+      the islands' true sizes and turns. A greedy "nearest free spot,
+      largest first" placement was tried and measured worse (up to 10.3).
+      The turn and the scaling can each be switched off. Held by
+      `as_on_the_part_gives_each_island_its_real_size_and_turn` and
+      `line_up_and_as_on_the_part_keep_their_promises`.
+
+      **The checker** follows the UV set the editor shows, or a set picked
+      (`Checker::set`). For a set other than the first, its places go to
+      the viewport beside the checker: a second vertex buffer at attribute
+      4 on the graphics card (`sync_checker_mesh`), and weights at the hit
+      on the processor (`PreviewChecker`, `preview_pass_checked`). The
+      checker now also draws in Wireframe and in the processor's Solid, and
+      Behind the layout can show it on the canvas. It is still never in
+      Rendered or a render, never saved and never in the history
+      (`the_checker_follows_the_uv_set_shown`,
+      `the_checker_is_drawn_through_the_set_it_is_given`). Setting
+      `TEQUILA_SOLID_ON_CPU` draws Solid on the processor, so that path can
+      be checked on a machine that has OpenGL.
+
+      *Left:* pins on a part that is re-imported or split keep their
+      numbers and are only filtered when used. While the checker shows a
+      set other than the first, the part's own maps in Material Preview
+      still read the first set (the checker replaces only the colour). On a
+      CAD part's fans and slivers, most of what Line up edges still leaves
+      would fold even with the island carried along.
 - [x] All remaining procedural texture nodes with the algorithms in §02 §6.
       *Done:* Wood (Advanced) — uneven years, earlywood/latewood, ray
       flecks, knots, planks; Occlusion — per vertex, against the part
@@ -600,9 +686,60 @@ Alembic deformation import serve neither.
       fuzzy specks: inside-out spheres in the part's own material, so a ray
       meeting one leaves the liquid into air with the right refraction and
       total-internal-reflection rim, placed wholly inside the (closed) part
-      without overlapping, seeded and cached. *Open:* fibres take their
-      colour and roughness as constants, so a texture on Sheen Color tints
-      the surface under them and not them.
+      without overlapping, seeded and cached.
+      *Textured fibres and a scene's budget since November 5:* where the
+      graph drives the Sheen Color or Sheen Roughness - a printed texture,
+      a pattern, anything it computes - each fibre takes them from where it
+      is rooted (`fuzz::Paint`): the graph cut down to those two and run at
+      the root as the renderer runs it on the surface there (UV, position,
+      normal, vertex colour, curvature, occlusion, the part's place, seen
+      square on), so a picture's colour reaches the rendering space through
+      the surface's own lookup. The fibres carry the values
+      (`Fibres::colors`, `Fibres::roughness`, empty for a constant sheen);
+      Tequila's renderer reads them at the hit, and Cycles gets them as a
+      per-curve attribute, `tq_fibre_own` (the colour, and the roughness in
+      its fourth number), through the shim's new `fsc_curves_attribute`,
+      which Principled Hair reads - the colour variation darkening either
+      on top. A library from before it warns and renders them in the
+      sheen's constant. Held by `fibres_take_the_sheen_where_they_are_rooted`
+      (a graph of object coordinates: every fibre's colour is its root),
+      `textured_fibres_have_the_surfaces_colour` (a picture's colour to
+      1e-6 of the surface's own lookup), `a_patterned_sheen_colours_the_fibres`
+      (through the snapshot; a move keeps them, a pattern edit grows them
+      again), `a_fibre_with_its_own_colour_wears_it`, and
+      `fibres_render_alike_in_both_renderers`, which now also renders the
+      felt ball with a checker on its Sheen Color: the same squares
+      stand on the same blocks in both (their hue correlated 0.994,
+      spreading 18.7 where the plain felt's spreads 5.5), at the same level
+      to 2% and each channel's share of the light to 0.02.
+      The 250,000 a part was the triangle budget of the first fibres -
+      150,000 tubes of 18 triangles - raised a little when they became
+      curves; neither memory nor Embree (2^32 segments a mesh) set it, and
+      a large part came out sparse: a 64 x 60 cm sofa cushion asking 400 a
+      square centimetre got one in eighteen. It is now a budget of 6 million
+      a scene, all its parts together (`fuzz::BUDGET`), shared by what each
+      asks (`fuzz::shares`); past it every part keeps the same share, its
+      fibres widened by as much, as Cook et al.'s stochastic simplification
+      keeps the area. They grow in parallel batches that draw the same
+      random numbers as one after another (each fibre draws nine; a million
+      in about 120 ms), so fibres under the old cap are the same fibres:
+      a felt cushion of 203,000 constant fibres, and the same cushion bare,
+      render byte for byte as before in both renderers. Measured on the
+      sofa cushion, 4.4 million fibres against 250,000: a whole render's
+      process at its height held 1.8 GB against 0.57 in Tequila's renderer
+      and 4.2 GB against 0.83 in Cycles on the processor - about 310 and
+      820 bytes a fibre, the fur rug's 3.1 million the same - and a 720 x
+      450 render of 64 samples took 81 to 86 s against 54 to 61 in
+      Tequila's renderer and 131 to 219 s against 51 to 67 in Cycles
+      (interleaved, on a machine busy with other builds: a guide only).
+      Growing them took 214 ms and Embree's BVH 1.9 s (250,000: 19 and
+      70 ms), the fibres holding 84 bytes each and Embree's copy and BVH
+      231 more (`measure_a_sofa_cushions_fibres`, run alone).
+      *Open:* fibres are thinned by the budget alone, not by what the
+      camera can resolve, which would mean growing them again as it moves;
+      a graph's view-dependent inputs (Layer Weight, Fresnel, the Light
+      Path) are read at a fibre's root as seen square on; and Cycles needs
+      the release's rebuilt library for the colours.
 - [ ] ~~Animation nodes (Color Fade, Curve Fade)~~ — deferred with M5.
 - [x] HDRI Editor: light/image/gradient pins, sun & sky (Hosek-Wilkie), export to EXR, async CDF rebuild.
       *Hosek–Wilkie since September 26:* the authors' 1.4a reference code
@@ -665,8 +802,50 @@ Alembic deformation import serve neither.
       step. A node in a model set shows only with one of its sets or an
       always-visible one; a node in none always shows. A Studio holds any
       of camera, environment, image style, model set and variant choices,
-      and applies them as one step. *Not yet:* Studio thumbnails and drag
-      reordering (arrows stand in).
+      and applies them as one step. Each Studio shows a picture of its
+      shot (October 20), and is moved by dragging it (November 5, below).
+      *As built, November 5* (`app/src/studio_tab.rs`: `Thumbnails`,
+      `made_from`, `Reorder`; `Studio::picture_key`, `StudioPictures`;
+      `Project::scene_edits`, `EnvironmentCache::prepare`): the pictures,
+      192 pixels across at the render's shape, 24 samples a pixel and
+      denoised, render one at a time on two threads of their own, as they
+      did; what is new is when, and where they are kept. A picture is
+      filed under its Studio's picture key - an FNV-1a hash of what the
+      Studio holds, not its name, so a rename keeps it - in the document,
+      outside undo as the CAD sources are, and saved with the project as
+      `studios/<key>.png` for the Studios it still has (`docs/file-format.md`
+      §1; 16 to 23 KB each for the Headphones sample's five Soft Studio
+      views, all five made in 4.5 s): a project opened again shows them at
+      once and renders none. A
+      changed Studio renders again at once. One whose scene changed under it
+      (any edit but switching Studios, or a change to what it leaves as it
+      is: another Studio's camera, environment, look, model set, turn,
+      variants or lights) keeps its picture, with a spinner in its corner,
+      until the scene has been still for 0.8 s, so a slider's drag starts
+      no render. An environment of the Studio's own is decoded on another
+      thread first, and one the same as the scene's is the scene's, never
+      built again; the graph editor's solo is left out. Drag a Studio by
+      its picture or its grip: the Studio lifts, an accent line with a dot
+      at each end shows where it lands, and its picture follows the
+      pointer; let go, it moves as one undo step (`SetStudios`, saved like
+      any edit); Escape puts it back; near the panel's edge the list
+      scrolls. Up and Down stay, for a keyboard, greyed where they cannot
+      go. Held by `a_studio_dragged_by_its_picture_moves_in_the_list_as_one_undo_step`,
+      `a_dragged_studio_lands_between_the_rows_it_is_dropped_between`,
+      `studios_pictures_render_in_the_background_and_are_saved_with_the_project`
+      (two pictures of the demo in 2.77 s over 496 frames, the longest
+      15 ms on the UI thread), `a_picture_being_rendered_again_keeps_its_row_in_shape`,
+      `studios_survive_a_round_trip` (each Studio finds its
+      picture after a reopen, a deleted one's is not written, a second save
+      is byte-identical), `a_studios_picture_key_is_its_shot_not_its_name`
+      and `preparing_builds_even_the_first_image_in_the_background`. For
+      screenshots, `{"op":"ui","studio_drag":[0,3]}` holds a drag part-way.
+      Not done: a picture rendered while the Studios tab is hidden (they
+      are made while it is shown), a sample-count setting or a large
+      picture for the configurator (`TEQUILA_SPEC.md` §1.12), and a Studio
+      whose environment differs from the scene's still builds that
+      environment's light table on the UI thread once its image is in, as
+      the scene's own does.
 - [x] Render Layers: parts and models assigned to named layers rendered as separable images (M4 built the three alpha modes).
       A layer is its own render of the same shot, to the samples the main
       image reached, with every non-member hidden from the camera and only
@@ -841,8 +1020,8 @@ under M10's spectral item).
       journalled command. Checked on four revisions of a real Fusion
       export: v2.4 to v3.1 and v3.1 to V3.4 match every part.
 - [x] USD import **and export** with MaterialX/OpenPBR round-trip, in the
-      text form (`.usda`; binary `.usdc` is refused with the usdcat line
-      that converts it). Export: Xforms, Meshes, the camera, Materials with
+      text form (`.usda`; binary `.usdc` and `.usdz` read since November 5,
+      below). Export: Xforms, Meshes, the camera, Materials with
       both a UsdPreviewSurface and an `ND_open_pbr_surface_surfaceshader`
       carrying every parameter, plus a graph material's whole definition
       when it has no images. Import: Blender-style xformOps, Z up, units,
@@ -850,6 +1029,16 @@ under M10's spectral item).
       Checked both ways against Blender 5.0's USD (Pixar's library). Not
       followed: references, payloads, variants; Multi-Materials are not
       written as variant sets.
+- [x] USDZ export for AR (November 5; `docs/03` §6.3): File > Export USDZ
+      for AR, `--export-usdz`, `export format=usdz`. A stored ZIP aligned to
+      64 bytes, a binary stage (Tequila's own crate writer, `usdc.rs`) in
+      metres, Y up, standing on the ground at the origin, shared meshes as
+      instanced prototypes, and materials as `UsdPreviewSurface` - baked
+      by the glTF export's bake, now `bake.rs`, into colour, opacity,
+      roughness, metalness, occlusion, emission, coat and normal maps
+      wherever they vary. Passes Pixar's `ComplianceChecker(arkit=True)`.
+      `.usdc` and `.usdz` import too, with a package's pictures and
+      references within the file. Not done: variant sets, animation.
 - [x] IFC import, IFC2x3 and IFC4, through the STEP reader's Part 21
       parser: the spatial structure (project, site, building, storeys) as
       groups and every element with a body as a part; extruded profiles
@@ -863,6 +1052,33 @@ under M10's spectral item).
       property sets become searchable metadata; units, Z up and far-off
       georeferenced coordinates are handled. Not read: swept disks,
       revolved solids, NURBS (`IfcAdvancedBrep`) - listed in a warning.
+- [x] Rhino `.3dm` import, Rhino 5 to 8 (2026-11-05; `docs/03` §6.2,
+      `tequila-import/src/rhino/`): Tequila's own pure-Rust reader of the
+      openNURBS archive, from McNeel's published source, no new
+      dependency. File > Import and Update from, a drop, the CLI and the
+      scripting `import` all take it. Layers (full names, colours, on/off
+      down the tree) as the scene tree and as CAD layers; materials (basic
+      and Rhino 7 PBR) as OpenPBR with their maps; meshes (compressed
+      arrays, normals, UVs, vertex colours, double vertices); B-reps from
+      their saved render meshes or divided face by face (NURBS, plane,
+      revolved and sum surfaces, trims of NURBS, lines, polylines, arcs,
+      polycurves) by the IGES divider; extrusions; SubD by Catmull-Clark of
+      its cage; blocks meshed once and placed, nested too; names, display
+      colours by layer/object/material/parent, hidden objects; Z up turned
+      to Y up; units and tolerance; kept for Re-Tessellate. *Unproven:*
+      no Rhino here, so meshes, materials, extrusions, SubD and blocks are
+      tested against a test writer of the same reading of openNURBS
+      (`tests/rhino.rs`, 14 tests); read by hand, a box written by
+      McNeel's rhino3dm (archive 70, an open-source project's fixture) and
+      sphere meshes written in archives 50 to 80 by cadmpeg's independent
+      writer, whose reader also agrees with the test writer's files. A
+      folder of real files runs through `real_files`
+      (`TEQUILA_3DM_SAMPLES`): McNeel's 72 (openNURBS example files for
+      Rhino 4 to 8, rhino3dm's test models) all read, nothing they should
+      bring left out, once Rhino's own classes (`TL_Brep` and the rest)
+      read as openNURBS's. Two of rhino3dm's (MIT) are committed fixtures. Not read: curves, annotation, lights,
+      linked blocks, embedded bitmaps, mitered extrusion ends, RDK content
+      beyond its simulated material.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
       opened as a project of their own (File > Open, a drop, the start
       screen, `tequila -i`) or imported into one (File > Import, the
@@ -961,7 +1177,20 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
   are noisier there than in Cycles. Off, neither lets a diffuse bounce see
   it.
 - **The sun** is a light with no geometry in Tequila's renderer, as every
-  lamp is: a mirror does not show it, where Cycles' does.
+  lamp is. *Since November 5* a mirror shows it, and every mirror-smooth
+  surface on every path shows the area lamps, as Cycles' do (§01 §5.1).
+  The camera does not see a sun with a disc straight on, nor through
+  glass, where Cycles' escaping camera rays can; and through glass
+  Tequila's renderer shows a lamp by its Camera visibility, where Cycles'
+  transmission rays see every lamp.
+- **The sky behind a part that casts no shadow.** Both pass such a part
+  for every lamp on every ray (Cycles by shadow linking, since November 5);
+  only Tequila's renderer also passes it for the sky's share of a bounce,
+  which Cycles' bounces lose behind it.
+- **A lamp that casts no shadow** is met by Tequila's bounces past what
+  is in their way, as its light samples pass it; Cycles' bounces stop
+  there, and lose its share by MIS behind a part, which shows little but
+  off a glossy surface.
 
 - [~] Shading layer ported to Slang (or the chosen shared-source mechanism), compiling to both targets (§01 §10.1).
       *Superseded:* one set of algorithms (Cycles') in both engines; no
@@ -974,6 +1203,10 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       takes OIDN's HIP device on an AMD card. *Done 2026-10-30, untested on
       an AMD card here* (an RTX 2060 machine). HIP RT, AMD's hardware ray
       tracing, is left off: it needs AMD's HIP RT library beside Cycles.
+      *November 5:* owners of AMD cards can now test it - Help > Test this
+      computer renders the self-test's scene with Cycles on HIP and with
+      OIDN's HIP device, compares both with the references and reports what
+      happened, a crash included (§3.11).
 - [~] Texture streaming with LRU device residency; graceful CPU fallback on VRAM exhaustion.
       Cycles' texture handling; a render with no usable card falls back to
       Cycles on the processor (`batch::engine_for`).
@@ -987,6 +1220,10 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       enabled. `TEQUILA_CYCLES_ONE_DEVICE` keeps it to the first, for a card
       that misbehaves. *Done 2026-10-30; one card here, so the multi-device
       path is Cycles' own, unexercised by this build's tests.*
+      *November 5:* the self-test renders on each card alone and then on
+      every card of the kind together, and reports both, so a machine with
+      several cards shows whether the multi-device agrees and how much
+      faster it is (§3.11). Still unexercised here.
 
 **Exit criterion:** GPU backend produces images matching CPU within tolerance on the parity suite, at ≥ 8× CPU throughput on the benchmark scene.
 
@@ -1093,6 +1330,59 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       groups for relighting" and the Render window's Relight section,
       which rebalances and tints each group live and saves `…_relit`
       (see M6's light layer isolation).
+- [x] 3D mouse navigation: a 3Dconnexion SpaceMouse turns, pans and
+      zooms the view, the way CAD applications do (`docs/04` §6.1.1).
+      *As built, November 5* (`app/src/spacemouse/`: `report`, `spnav`,
+      `hid`, `navigate`), **untested on a device**. The reader:
+      - Windows and macOS read the device's own HID reports through
+        `hidapi` (MIT; on Windows its pure-Rust backend), on a thread of
+        its own.
+      - Linux, and a Mac where it runs, read spacenavd's socket, protocol 0.
+      - 3Dconnexion's SDK and its Mac framework are not used.
+      - Reports 1 and 2 (translation, rotation), report 1 of twelve bytes
+        (all six axes) and report 3 (buttons) are decoded for the devices
+        under 0x256F, and for the named SpaceMouse family under 0x046D.
+
+      The six axes go through a dead zone, a gentle curve, per-axis invert
+      and an optional dominant axis, then a 50 ms smoothing that moves the
+      orbit camera by its exact mean over each frame:
+      - turning about the selection's or the model's centre, without a jump;
+      - panning by the height the view frames there;
+      - zooming by a share of the distance.
+
+      The horizon stays level. The left button steps to the next Studio and
+      the right fits the view. The settings are under Edit > Preferences.
+      `{"op":"ui","spacemouse":{...}}` feeds made-up reports through the
+      same decoder, for scripts and tests. Held by 18 tests in `spacemouse`
+      and `synthetic_3d_mouse_input_parses`:
+      the decoding of every report shape and of spacenavd's packets, which
+      devices are read, the dead zone, inverts and dominant axis, the
+      direction of every move, the same motion at 30 and 144 frames a
+      second ending within 2% of each other, panning that scales with the
+      distance, a turn about an off-centre pivot that keeps the pivot in
+      place and returns, sensitivity, a lost report stopping on its own,
+      the settings file, and reports driving the camera from end to end,
+      one gesture one undo step. Not done: testing on hardware; the roll
+      axis (the orbit camera has no roll); the Mac with 3DxWare running,
+      which keeps the device to itself; more of a SpaceMouse Pro's or
+      Enterprise's keys than the two main buttons.
+- [~] Adobe Substance materials (`.sbsar`, `.sbs`) opened with their settings
+      (§02 §5.6). *As built, November 5:* read natively — the 7-Zip archive
+      and its XML description, or Designer's XML — for every graph's inputs
+      (types, widgets, defaults, ranges, drop-downs, groups), the output size
+      and seed, presets, outputs and their usages, and the thumbnail; made
+      into a material wired by the texture-pack code, whose maps Adobe's own
+      `sbsrender` renders in the background when it is installed (found in
+      Adobe's default folders or a folder the person sets), debounced 400 ms,
+      filed by settings so an undo shows at once, and saved into the project
+      so it renders without the tools. Without them the Material tab shows
+      every setting and says what to install. Scripting `substance` (info,
+      open, set, status, wait, tools), `material.set_substance`, `tequila
+      --substance-info`. 25 tests, including the bridge against a separate
+      program taking `sbsrender`'s arguments. **Outstanding:** proof against
+      files and tools from Adobe — none were available here (the samples that
+      would prove it, and where to get them legally, are in the pull
+      request); input visibility conditions, `$pixelsize`, fonts.
 - [ ] AI image operators (restyle/background/upscale) as post-render operations with depth/normal/Cryptomatte conditioning.
 - [ ] Collaborative scene review (the open file format makes this tractable).
 
@@ -1171,6 +1461,26 @@ Render a scene through the interactive viewport path at N samples and through th
 
 For each supported format, import a reference file and assert: expected node count and hierarchy, expected triangle count, correct units, correct instancing detection, and material parameter round-trip for glTF/USD (where OpenPBR round-trip should be near-exact).
 
+### 3.11 Machines we don't have: the self-test
+
+Tequila is made on one Windows PC with one NVIDIA card (an RTX 2060), and CI runs on GitHub's Windows and Mac machines, which have no graphics card Cycles can use. AMD cards, several cards at once, Intel and Apple-silicon Macs and Linux are tested by the people who have them, so the check they run has to be quick, safe to run and to share, and useful to read.
+
+*As built, November 5* (`crates/tequila-cli/src/self_test.rs`, `self_test/system.rs`, `self_test/scene.rs`; `app/src/self_test.rs`): **Help > Test this computer**, or `tequila-cli --self-test`.
+
+- **The scene** (`scene.rs`), 256 x 160, built in code rather than read from disk so it is the same in every version: a clear glass ball, a gold ball (roughness 0.18), a cube wearing a 64 x 64 checker picture with a blue bar along one edge (a texture sent to the card and sampled there; upside down shows), a felt ball growing about 3,600 fibres (hair curves, which Cycles traces with kernels of their own) and a softbox lamp under a dim uniform sky, on a diffuse floor. Product lighting with adaptive sampling off, so every check takes the same samples and the times compare.
+- **The checks**, in order: Tequila's renderer on the processor (64 samples); OIDN on the processor; Cycles on the processor; Cycles on each kind of card Cycles lists (OptiX, CUDA, HIP, Metal, oneAPI) - one check for a kind with one card, and with several, each card alone (by its device id) and then all of that kind together (by the kind: Cycles' multi-device, as the GPU engine renders); OIDN on the card (CUDA, HIP or Metal); the viewport. `--cpu-only` leaves the cards out. Before a Cycles render one sample is rendered and timed with opening the session, as **first use**: that is where a card loads or compiles its kernels (minutes on a Mac the first time), which would otherwise drown the render time.
+- **Pass or fail** is by distance from a reference picture shipped in the binary (`crates/tequila-cli/self-test/tequila.png` and `cycles.png`, made by `tequila --self-test-references DIR` at 4096 samples): the RMS difference of the sRGB channels in percent of full scale, after averaging 4 x 4 squares for the engines (which takes most of 64 samples' noise out and leaves a missing texture, black glass or a wrong exposure as large as it was), and pixel for pixel for the denoisers, which work on an 8-sample render of the same scene and are held to Tequila's reference. Limits: 1% for an engine; 2% for a denoiser, whose result must also be at most 0.6 times as far as its noisy input was - one that passed its input through would otherwise pass. A failure leaves a difference picture, four times as bright, beside the render.
+- **The viewport** is OpenGL, through egui's glow backend, not wgpu: nothing in the application draws through wgpu (`tequila-render-gpu` is still empty). So the check is what the viewport needs: the window's context with its renderer, vendor and version, and whether every one of the GPU Solid view's six shader programs compiles and links there (`solid_gpu::probe`), run in a paint callback of the test's own window so it does not depend on the view mode. The application hands the result to the test as `--viewport`; from the command line it is a skip.
+- **The facts** (`system.rs`): the OS and its version (on Windows the release and update revision from the registry, on a Mac its version file, on Linux `/etc/os-release` and the kernel), the processor and its cores (Apple silicon's performance and efficiency cores apart), the memory, and each graphics card with its maker, own memory and driver version - DXGI's adapters on Windows (present ones only, the Basic Render Driver left out; the user-mode driver's version from `CheckInterfaceSupport`, NVIDIA's own numbering worked out of it, AMD's Adrenalin release from the driver's registry entry), `system_profiler`'s cards on a Mac (their fields only: it also lists the screens, with serial numbers), the DRM devices and `nvidia-smi` on Linux - and Cycles' device list.
+- **Nothing personal.** No source read holds a user or computer name, a path, a serial number or an address, and every free-form message (Cycles' errors name the folders it searched) goes through `scrub`, which replaces paths (keeping a library's own file name, which says what was missing) and then any user, computer, domain or home-folder name. `the_report_names_no_one` builds a report from this machine's facts with messages poisoned with the home folder, the user and computer names and the executable's path, and checks that none of them, the temporary or working folder, nor the address this computer reaches the internet from (found by pointing a UDP socket at a documentation address, which sends nothing) is in it; `tests/self_test.rs` runs the binary and checks its `report.md` the same way. Nothing is sent anywhere: the report is shown, copied when asked and kept with the pictures in `.tequila/self-test/<date time>` in the home folder.
+- **The report** is Markdown for Discord, one message long (the test holds it under 1900 characters): a heading with the build, the tally and the time taken, then a code block with the facts and a row per check (result, time, error against its limit, and a line under it for first use and why), and the Discord invite as the README and the website give it (`DISCORD`, the same as `start_screen::DISCORD`).
+- **Crashes.** From the application the test runs as a process of its own (`--machine`: progress as `@total`, `@step`, `@progress`, `@result` and `@done` lines; `cancel` on standard input, or standard input closing, stops it). It writes `started <check>` before each check and the outcome after it to `results.tsv` in its folder. When the process ends without `@done` the application starts it again with `--resume`, up to four times, telling it how the last one ended (`--crashed "exit code 0xc0000005: ..."`); the check that was started and never finished is reported as **CRASH** with that, and the run goes on past it. A crash while listing Cycles' devices leaves Cycles out of the next start. Cancel lets the test write what it has (20 s, then it is ended) and shows the partial report.
+- **CI** runs `--self-test --cpu-only` on Windows and Apple-silicon macOS after the test suite, and on GitHub's Intel Mac (`macos-15-intel`) in a lighter job of its own - the self-test's unit tests, the check and a headless render - since the Intel disk image is built there and nothing was tested there per commit. A failing check fails the job.
+
+Measured here (Ryzen 7 2700X, 8 cores and 16 threads; RTX 2060 6 GB, driver 610.88; release build, from the command line): the whole check in 8.1 s. Tequila's renderer 1.3 s for its 64 samples, 0.29% from its reference; Cycles on the processor 0.93 s, 0.24%; on OptiX 0.12 s, 0.24%, first use 2.3 s (3.8 s with an empty OptiX cache); on CUDA 0.15 s, 0.24%; OIDN on the processor 0.24 s and on CUDA 0.01 s, both 1.04% from the converged picture where their 8-sample input was 2.62%. The numbers repeat to the digit from run to run, both engines being deterministic at a fixed seed; another machine's processor rounds differently and draws different noise of the same size. The two engines' references are 1.42% apart, which is why each engine has its own, and why an engine's limit is 1%: a device that rendered what the other engine renders would fail. The references took 98 s (Tequila) and 71 s (Cycles) at 4096 samples. In the application 7 to 10 s (it pauses its own viewport render while the test runs); with five other builds compiling on the same processor, OIDN's first use on the processor took 12 to 18 s, where Tequila's render took only half as long again - OIDN's threads wait on each other, and an overloaded processor shows there first. Ending the test's process from outside part way, as a driver crash would end it (during the CUDA check, and in another run the OptiX one), had the application start it again: the report gave that check as CRASH with the exit code, kept the checks before it and ran the ones after. Closing the window part way stopped the test within a second, and the report listed the one check done and six stopped.
+
+*Left:* no AMD card, second card, Mac or Linux machine has run it yet - that is what it is for. Linux is not in CI (its release workflow builds and smoke-tests it). The references are per engine, not per device: a device whose picture differs only by its own noise passes and one whose kernels compute something else (a texture lookup, hair, glass) fails, but a systematic difference under 1% on one vendor's cards would pass; the error is in the report, so it shows. And the references are golden images (§3.4): a change to either engine that moves the scene's picture past the limit fails CI's self-test until they are made again with `tequila --self-test-references DIR` and copied in, in a commit that says why.
+
 ---
 
 ## 4. Performance testing
@@ -1211,6 +1521,7 @@ Reproduced from §01 §15 — these are the numbers CI asserts:
 ## 5. Release engineering
 
 - **Platforms:** Windows 10+, macOS 12+ (Apple Silicon and Intel), Linux (glibc 2.31+). CI builds all three per commit.
+  *As built, November 5:* CI tests Windows and Apple-silicon macOS per commit (the whole suite, a headless render and the self-test's processor part), and builds the command-line renderer on an Intel Mac and runs the self-test there; Linux is built and smoke-tested by its release workflow only. Machines CI cannot have are tested by their owners with the self-test (§3.11).
 - **Packaging:** MSI/NSIS, signed and notarized `.dmg`, AppImage + Flatpak. Bundle Python and the runtime dependencies; the user should never install anything separately.
 - **Versioning:** semver on the application; independent semver on the `.tequila` format; the format version is recorded in every file.
 - **Nightlies** from `main`; stable releases from release branches.

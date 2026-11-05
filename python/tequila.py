@@ -144,8 +144,9 @@ class Client:
         return found
 
     def export(self, format, path, **options):
-        """Write the scene out: format 'glb', 'usd', 'web' (a folder; live=,
-        photos=) or 'spin' (a folder; columns=, rows=, tilt=, transparent=)."""
+        """Write the scene out: format 'glb', 'usd', 'usdz' (for AR on an
+        iPhone, iPad or Vision Pro), 'web' (a folder; live=, photos=) or 'spin'
+        (a folder; columns=, rows=, tilt=, transparent=)."""
         return self.request('export', format=format, path=str(Path(path).resolve()), **options)
 
     def uv_layout(self, node, path, *, uv_set=0, size=2048, fill='islands', edges=True, seams=True, note=True,
@@ -203,6 +204,21 @@ class Client:
         if nodes is not None:
             fields['nodes'] = list(nodes)
         return self.request('texture_set', **fields)
+
+    def substance(self, action, **fields):
+        """Adobe Substance materials (.sbsar, or Designer's .sbs).
+
+        `info` describes a file (`path`): its graphs, inputs, outputs and
+        presets. `open` makes it a material on `nodes` or the selection
+        (`graph` picks one of several). `set` changes a material's
+        (`material`, or the selected part's) `values` ({identifier: value}),
+        `output_size` (pixels), `seed`, `preset` or `images`; `reset` puts it
+        back. `status` and `wait` (`timeout`, seconds) say how its maps stand:
+        they are rendered by Adobe's sbsrender, when it is installed. `tools`
+        says where Adobe's tools are, or sets the folder (`path`)."""
+        if 'path' in fields and fields['path'] and action != 'tools':
+            fields['path'] = str(Path(fields['path']).resolve())
+        return self.request('substance', action=action, **fields)
 
     def save(self, path=None):
         return self.request('save', **({'path': str(Path(path).resolve())} if path else {}))
@@ -307,10 +323,15 @@ class Client:
         """Open or close panels: render_window, console, inspector, library,
         full_viewport, help, start_screen, updates (Help > Check for
         updates, which asks GitHub), connect (Connect an AI: AI apps and
-        providers), frame (the render's shape in the viewport) (bools), tab='material', graph=<material> or
+        providers), frame (the render's shape in the viewport), self_test
+        (Help > Test this computer, started) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
-        'meadow'|'rose'."""
+        'meadow'|'rose', studio_drag=[studio, slot] (a Studio held part-way
+        through a drag in the Studios tab, for a screenshot) or False,
+        preferences (bool), spacemouse={'reports': [[id,
+        byte, ...]], 'seconds': n} (made-up 3D mouse input, read as a
+        device's HID reports)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

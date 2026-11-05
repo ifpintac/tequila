@@ -1021,9 +1021,9 @@ fn materials(file: &File, pictures: &Pictures, scratch: &Path, scene: &mut RawSc
                         let raw = if in_scratch {
                             let bytes = std::fs::read(&source.path).map_err(|e| ImportError::Io(format!("{}: {e}", source.path.display())))?;
                             let uri = source.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| "texture".into());
-                            RawTexture { uri, role: source.role, embedded: Some(std::sync::Arc::new(bytes)) }
+                            RawTexture { uri, role: source.role, embedded: Some(std::sync::Arc::new(bytes)), elsewhere: None }
                         } else {
-                            RawTexture { uri: source.path.display().to_string(), role: source.role, embedded: None }
+                            RawTexture { uri: source.path.display().to_string(), role: source.role, embedded: None, elsewhere: None }
                         };
                         let at = match scene.textures.iter().position(|t| t.same_image(&raw)) {
                             Some(at) => at,

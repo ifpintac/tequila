@@ -145,6 +145,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
         Operation::StudioPreset(request) => studio_preset(app, request),
+        Operation::Substance(request) => substance(app, request),
         Operation::Material(request) => material(app, request),
         Operation::Plugin(request) => plugin(app, request),
         Operation::Project { action, save: saving, discard } => project(app, action, *saving, *discard),
@@ -227,6 +228,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
                     let text = tequila_format::usd::export(app.project.document());
                     std::fs::write(&path, &text).map(|_| (text.len(), Vec::new(), Vec::new())).map_err(|e| format!("Could not write {}: {e}", path.display()))
                 }
+                "usdz" => app.export_usdz(&path).map(|(bytes, warnings)| (bytes, warnings, Vec::new())),
                 "web" => app.export_web(&path, *live, *photos).map(|(report, jobs)| (report.bytes, report.warnings, jobs)),
                 "spin" => {
                     let defaults = tequila_format::spin::SpinOptions::default();
@@ -242,7 +244,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
                         (0, Vec::new(), jobs)
                     })
                 }
-                other => Err(format!("`{other}` is not an export: glb, web or spin")),
+                other => Err(format!("`{other}` is not an export: glb, usd, usdz, web or spin")),
             };
             match result {
                 Ok((bytes, warnings, jobs)) => {
@@ -414,6 +416,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         },
     };
 
+    if let Some(Some([from, slot])) = change.studio_drag {
+        let count = app.project.document().studios.len();
+        if from >= count || slot > count {
+            return Reply::Failed(format!("`studio_drag` is [studio, slot]: a Studio from 0 to {}, and a slot from 0 to {count}", count.saturating_sub(1)));
+        }
+    }
+
     let graph = match change.graph {
         Some(Some(key)) => {
             let key = tequila_scene::tree::MaterialKey(key);
@@ -446,6 +455,15 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if reveal {
         app.reveal_configurator();
     }
+    match change.studio_drag {
+        Some(Some([from, slot])) => {
+            app.studio_tab.stage_drag(Some((from, slot)));
+            app.project_tab = crate::ProjectTab::Studios;
+            app.show_project = true;
+        }
+        Some(None) => app.studio_tab.stage_drag(None),
+        None => {}
+    }
     if let Some(show) = change.library {
         app.show_library = show;
     }
@@ -470,8 +488,29 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(about) = change.about {
         app.show_about = about;
     }
+    if let Some(menu) = &change.menu {
+        let wanted = menu.trim().to_ascii_lowercase();
+        match app.menu_buttons.iter().find(|(name, _)| *name == wanted) {
+            Some((_, rect)) => {
+                app.start_screen.open = false;
+                app.menu_click = Some((rect.center(), false));
+            }
+            None => {
+                let names: Vec<&str> = app.menu_buttons.iter().map(|(name, _)| *name).collect();
+                return Reply::Failed(format!("`{menu}` is not a menu a script can open; try {}", names.join(", ")));
+            }
+        }
+    }
     if let Some(help) = change.help {
         app.show_help = help;
+    }
+    match change.self_test {
+        Some(true) => {
+            app.start_screen.open = false;
+            app.self_test.open_and_start();
+        }
+        Some(false) => app.self_test.close(),
+        None => {}
     }
     if let Some(open) = change.start_screen {
         app.start_screen.open = open;
@@ -504,6 +543,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if let Some(open) = change.appearance {
         app.open_look = Some(open);
+    }
+    if let Some(open) = change.preferences {
+        app.start_screen.open &= !open;
+        app.spacemouse.preferences_open = open;
+    }
+    if let Some(input) = &change.spacemouse {
+        app.spacemouse.inject(&input.reports, input.seconds);
     }
     if change.mode.is_some() || change.theme.is_some() {
         let mut look = app.pending_look.unwrap_or_else(crate::theme::appearance);
@@ -545,7 +591,28 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
+        .set("self_test", app.self_test.state())
         .set("uv", app.uv_editor.state())
+        .set("studio_pictures", {
+            // How many Studios show a picture of the scene as it is, of how
+            // many, and whether one is being rendered: the Studios tab
+            // makes them while it is shown.
+            let (current, rendering) = app.studio_tab.pictures(&app.project);
+            let mut pictures = Object::new();
+            pictures.set("current", current as f64).set("studios", app.project.document().studios.len() as f64).set("rendering", rendering);
+            pictures.build()
+        })
+        .set("preferences", app.spacemouse.preferences_open)
+        .set("spacemouse", {
+            // The 3D mouse: the device read, if any, and the six axes as
+            // the view takes them now, smoothed.
+            let mut mouse = Object::new();
+            mouse
+                .set("enabled", app.spacemouse.settings.enabled)
+                .set("device", app.spacemouse.device().map_or(Value::Null, Value::String))
+                .set("axes", app.spacemouse.axes().iter().map(|v| Value::Number(*v as f64)).collect::<Vec<_>>());
+            mouse.build()
+        })
         .set("recent", Value::Array(app.recent.iter().map(|p| Value::String(p.display().to_string())).collect()))
         .set("mode", app.pending_look.unwrap_or_else(crate::theme::appearance).mode.key())
         .set("theme", app.pending_look.unwrap_or_else(crate::theme::appearance).flavor.key())
@@ -1284,6 +1351,217 @@ fn carry_out(app: &mut TequilaApp, outcome: tequila_scripting::document::Library
             Reply::Value(value)
         }
         LibraryOutcome::Done(value) => Reply::Value(value),
+    }
+}
+
+/// `substance`: Adobe Substance materials (`docs/02` §5.6), through the same
+/// routes as the File menu and the Material tab (`crate::substance`).
+fn substance(app: &mut TequilaApp, request: &Value) -> Reply {
+    use tequila_scripting::substance as shared;
+    let action = request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase();
+    let path = || request.get("path").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+    // The material a request is about: named, or the selected part's.
+    let material = |app: &TequilaApp| -> Result<tequila_scene::tree::MaterialKey, String> {
+        let key = match request.get("material").and_then(|v| v.as_index()) {
+            Some(id) => tequila_scene::tree::MaterialKey(id as u64),
+            None => app
+                .project
+                .selection
+                .active()
+                .and_then(|n| app.project.document().tree.get(n))
+                .and_then(|n| n.material)
+                .ok_or("name the Substance material as \"material\", or select a part that has one")?,
+        };
+        match app.project.document().materials.get(key) {
+            Some(d) if d.substance.is_some() => Ok(key),
+            Some(d) => Err(format!("`{}` is not a Substance material", d.name)),
+            None => Err(format!("there is no material {}", key.0)),
+        }
+    };
+    let state_of = |app: &TequilaApp, key: tequila_scene::tree::MaterialKey| -> Value {
+        let definition = app.project.document().materials.get(key);
+        let link = definition.and_then(|d| d.substance.as_deref());
+        let (state, detail) = match app.substance.state(key) {
+            Some(crate::substance::State::Rendered) => ("rendered", None),
+            Some(crate::substance::State::Waiting) => ("waiting", None),
+            Some(crate::substance::State::Rendering) => ("rendering", None),
+            Some(crate::substance::State::Failed(e)) => ("failed", Some(e.clone())),
+            Some(crate::substance::State::NoTools) => ("no_tools", Some(tequila_import::substance::bridge::INSTALL_HINT.to_string())),
+            Some(crate::substance::State::Missing) => ("missing", None),
+            Some(crate::substance::State::Unreadable(e)) => ("unreadable", Some(e.clone())),
+            Some(crate::substance::State::Shared(owner)) => ("shared", Some(format!("shares its maps with `{owner}`; give it maps of its own in the Material tab"))),
+            None => ("unknown", None),
+        };
+        let mut out = Object::new();
+        out.set("material", key.0 as f64)
+            .set("name", definition.map(|d| d.name.clone()).unwrap_or_default())
+            .set("state", state)
+            .set_some("detail", detail);
+        if let Some(link) = link {
+            out.set("substance", tequila_format::substance_to_json(link));
+            let maps: Vec<Value> = link
+                .maps
+                .iter()
+                .filter_map(|(output, texture)| {
+                    let source = app.project.document().textures.get(*texture)?;
+                    let mut map = Object::new();
+                    map.set("output", output.clone()).set("file", source.path.display().to_string()).set("exists", source.path.is_file());
+                    Some(map.build())
+                })
+                .collect();
+            out.set("maps", Value::Array(maps));
+        }
+        out.build()
+    };
+    match action.as_str() {
+        "info" => {
+            let Some(file) = path() else { return Reply::Failed("`info` needs the file's \"path\"".into()) };
+            match app.substance.describe(&file) {
+                Ok(described) => Reply::Value(shared::info(&file, &described, &app.substance.tools)),
+                Err(error) => Reply::Failed(error),
+            }
+        }
+        "tools" => {
+            if let Some(given) = request.get("path") {
+                let folder = given.as_str().filter(|s| !s.is_empty()).map(std::path::PathBuf::from);
+                if let Err(error) = app.substance.set_tools_folder(folder) {
+                    return Reply::Failed(error);
+                }
+            } else {
+                app.substance.find_tools();
+            }
+            Reply::Value(shared::tools(&app.substance.tools))
+        }
+        "open" => {
+            let Some(file) = path() else { return Reply::Failed("`open` needs the file's \"path\"".into()) };
+            let named: Vec<NodeId> = match request.get("nodes") {
+                Some(Value::Array(ids)) => ids.iter().filter_map(|v| v.as_index()).map(|i| NodeId(i as u64)).collect(),
+                _ => app.project.selection.nodes().collect(),
+            };
+            let targets = match named.iter().find(|n| app.project.document().tree.get(**n).is_none()) {
+                Some(_) => named,
+                None => tequila_scene::apply::parts_of(app.project.document(), named),
+            };
+            let graph = request.get("graph").and_then(|v| v.as_str()).map(str::to_string);
+            let mut renders = std::mem::take(&mut app.substance);
+            let opened = crate::substance::open(&mut app.project, &mut renders, &file, targets, graph.as_deref());
+            app.substance = renders;
+            match opened {
+                Ok(opened) => {
+                    let mut out = Object::new();
+                    out.set(
+                        "materials",
+                        Value::Array(
+                            opened
+                                .materials
+                                .iter()
+                                .map(|(key, name)| {
+                                    let mut entry = Object::new();
+                                    entry.set("id", key.0 as f64).set("name", name.clone());
+                                    entry.build()
+                                })
+                                .collect(),
+                        ),
+                    )
+                    .set("assigned_to", opened.assigned.len() as f64)
+                    .set("maps", Value::Array(opened.maps.iter().map(|m| Value::String(m.to_string())).collect()))
+                    .set("can_render", opened.can_render)
+                    .set("status", crate::substance::status(&opened));
+                    app.project.status = crate::substance::status(&opened);
+                    Reply::Value(out.build())
+                }
+                Err(error) => Reply::Failed(error),
+            }
+        }
+        "set" => {
+            let key = match material(app) {
+                Ok(key) => key,
+                Err(e) => return Reply::Failed(e),
+            };
+            let mut link = app.project.document().materials.get(key).and_then(|d| d.substance.as_deref()).cloned().expect("checked above");
+            let described = match app.substance.describe(&link.file) {
+                Ok(described) => described,
+                Err(error) => return Reply::Failed(format!("its settings cannot be read, so they cannot be checked: {error}")),
+            };
+            let Some(graph) = described.graph(Some(&link.graph)).cloned() else {
+                return Reply::Failed(format!("{} has no graph {}", link.file.display(), link.graph));
+            };
+            if request.get("reset").and_then(|v| v.as_bool()).unwrap_or(false) {
+                link.values = crate::substance::starting_values(&graph);
+                link.images.clear();
+            }
+            if let Some(label) = request.get("preset").and_then(|v| v.as_str()) {
+                let Some(preset) = graph.presets.iter().find(|p| p.label.eq_ignore_ascii_case(label)) else {
+                    let known: Vec<&str> = graph.presets.iter().map(|p| p.label.as_str()).collect();
+                    return Reply::Failed(format!("there is no preset `{label}`; the presets are {}", known.join(", ")));
+                };
+                link.values.extend(preset.values_for(&graph));
+            }
+            match shared::values(request, &graph) {
+                Ok(values) => link.values.extend(values),
+                Err(e) => return Reply::Failed(e),
+            }
+            if let Some(pixels) = request.get("output_size").and_then(|v| v.as_f64()) {
+                match shared::output_size(pixels) {
+                    Ok(size) => {
+                        link.values.insert("$outputsize".into(), size);
+                    }
+                    Err(e) => return Reply::Failed(e),
+                }
+            }
+            if let Some(seed) = request.get("seed").and_then(|v| v.as_f64()) {
+                link.values.insert("$randomseed".into(), format!("{}", seed.round() as i64));
+            }
+            if let Some(Value::Object(images)) = request.get("images") {
+                for (id, file) in images {
+                    match file.as_str().filter(|s| !s.is_empty()) {
+                        Some(file) => {
+                            link.images.insert(id.clone(), std::path::PathBuf::from(file));
+                        }
+                        None => {
+                            link.images.remove(id);
+                        }
+                    }
+                }
+            }
+            if let Err(error) = app.project.apply(tequila_scene::Command::SetSubstance { material: key, substance: Some(Box::new(link)) }) {
+                return Reply::Failed(error.to_string());
+            }
+            app.project.end_interaction();
+            let mut renders = std::mem::take(&mut app.substance);
+            renders.poll(&mut app.project);
+            app.substance = renders;
+            Reply::Value(state_of(app, key))
+        }
+        "status" => match request.get("material") {
+            Some(_) => match material(app) {
+                Ok(key) => Reply::Value(state_of(app, key)),
+                Err(e) => Reply::Failed(e),
+            },
+            None => {
+                let keys: Vec<_> = app.project.document().materials.iter().filter(|(_, d)| d.substance.is_some()).map(|(k, _)| k).collect();
+                let mut out = Object::new();
+                out.set("materials", Value::Array(keys.into_iter().map(|k| state_of(app, k)).collect()))
+                    .set("tools", shared::tools(&app.substance.tools));
+                Reply::Value(out.build())
+            }
+        },
+        "wait" => {
+            // Blocks the window while it waits, as `render` does: for a script
+            // that wants its maps before it renders.
+            let limit = request.get("timeout").and_then(|v| v.as_f64()).unwrap_or(120.0).clamp(0.0, 600.0);
+            let mut renders = std::mem::take(&mut app.substance);
+            let said = renders.wait(&mut app.project, std::time::Duration::from_secs_f64(limit));
+            let busy = renders.busy();
+            app.substance = renders;
+            let keys: Vec<_> = app.project.document().materials.iter().filter(|(_, d)| d.substance.is_some()).map(|(k, _)| k).collect();
+            let mut out = Object::new();
+            out.set("finished", !busy)
+                .set("said", Value::Array(said.into_iter().map(Value::String).collect()))
+                .set("materials", Value::Array(keys.into_iter().map(|k| state_of(app, k)).collect()));
+            Reply::Value(out.build())
+        }
+        other => Reply::Failed(format!("`{other}` is not a substance action")),
     }
 }
 

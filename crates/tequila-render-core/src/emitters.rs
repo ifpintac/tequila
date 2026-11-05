@@ -226,6 +226,13 @@ impl Emitters {
         self.nodes.is_empty()
     }
 
+    /// What a light sample finds a glowing part of `instance` gives off,
+    /// in nits, opacity included: black for a part that is not one of
+    /// these lights.
+    pub fn radiance(&self, instance: InstanceId) -> Spectrum {
+        self.radiance.get(instance.index()).copied().unwrap_or(Spectrum::ZERO)
+    }
+
     /// The share of a light sample from `at` that the left child of a node
     /// gets, between its two children.
     fn left_share(&self, (left, right): (u32, u32), at: &Receiver) -> f32 {

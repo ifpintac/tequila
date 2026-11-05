@@ -344,6 +344,49 @@ fn the_checker_changes_nothing_in_the_document_or_its_history() {
     assert!(editor.checker_frame(&project).is_none());
 }
 
+/// The checker follows the UV set the editor shows: on the first, the
+/// viewport draws it through the set its meshes carry; on a second, it is
+/// handed that set's places, to the graphics card and the processor alike;
+/// a set picked holds whatever the editor shows. Nothing of it reaches the
+/// document or the history.
+#[test]
+fn the_checker_follows_the_uv_set_shown() {
+    let (mut project, node, _) = part_with(boxed());
+    let ctx = egui::Context::default();
+    let mut editor = editor_on(&mut project, node, &ctx);
+    project.apply(tequila_scene::Command::AddUvSet { node }).unwrap();
+    project.end_interaction();
+    let before = project.document().clone();
+    let steps = project.undo_step();
+    let on = tequila_format::json::parse(br#"{"squares": 8}"#).unwrap();
+    ask(&mut editor, &mut project, &ctx, arrange(UvArrange { checker: Some(on), ..Default::default() }));
+    let frame = editor.checker_frame(&project).expect("on");
+    assert!(frame.uvs.is_none(), "the first set, which the scene's meshes carry");
+    assert!(editor.cpu_checker(&project).is_some_and(|(_, c)| c.uvs.is_none()));
+
+    ask(&mut editor, &mut project, &ctx, UvEditorChange { set: Some(1), ..Default::default() });
+    let mesh = mesh_of(&project, node);
+    let frame = editor.checker_frame(&project).expect("on");
+    let (_, places) = frame.uvs.expect("the second set handed beside it");
+    assert_eq!(*places, mesh.uv_sets[1]);
+    let (key, checker) = editor.cpu_checker(&project).expect("on");
+    assert_eq!(checker.uvs.as_deref(), Some(&mesh.uv_sets[1]));
+    assert_eq!(editor.cpu_checker(&project).map(|(k, _)| k), Some(key), "made once, kept while nothing changes");
+
+    // Picked: the first set, whichever the editor shows.
+    let first = tequila_format::json::parse(br#"{"set": 0}"#).unwrap();
+    ask(&mut editor, &mut project, &ctx, arrange(UvArrange { checker: Some(first), ..Default::default() }));
+    assert!(editor.checker_frame(&project).expect("on").uvs.is_none());
+    assert_eq!(editor.state().get("checker").and_then(|c| c.get("set")).and_then(|s| s.as_index()), Some(0));
+    let shown = tequila_format::json::parse(br#"{"set": "shown"}"#).unwrap();
+    ask(&mut editor, &mut project, &ctx, arrange(UvArrange { checker: Some(shown), behind: Some("checker".into()), ..Default::default() }));
+    assert!(editor.checker_frame(&project).expect("on").uvs.is_some(), "following the editor again");
+    frames(&mut editor, &mut project, &ctx, 3);
+    assert_eq!(editor.state().get("behind").and_then(|b| b.as_str().map(str::to_string)), Some("checker".to_string()), "behind the layout too");
+    assert!(project.document().describes_the_same_scene_as(&before), "nothing in the document");
+    assert_eq!(project.undo_step(), steps, "nothing in the history");
+}
+
 /// Islands closer than the padding are counted, and Use for Pack gives
 /// Pack the same margin.
 #[test]

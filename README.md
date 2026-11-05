@@ -53,6 +53,28 @@ Questions, bugs, ideas and renders: join the
 Tequila is free, with no account, no licence key and no ads. If it saves you
 time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
 
+## Testing Tequila on your computer
+
+Tequila is made on a Windows PC with one NVIDIA card, and tested on GitHub's
+Windows and Mac machines. If yours is something else - an AMD graphics card,
+several cards, an Intel or Apple-silicon Mac, Linux - you can help:
+
+1. Choose **Help > Test this computer** and wait a minute or two (longer
+   the first time a graphics card is used, while it prepares). It renders a
+   small scene with every engine and graphics card it finds, times each and
+   checks the picture against a reference, then tries the denoisers and the
+   viewport.
+2. Click **Copy the report** and paste it into the
+   [Tequila Discord](https://discord.gg/Na5T2qgQBX).
+
+Tequila sends nothing anywhere itself, and the report names no one: no user
+or computer name, no file paths, serial numbers or network addresses - just
+the system, processor, memory, graphics cards and drivers, and how each check
+went. The report and the pictures are also kept in `.tequila/self-test` in
+your home folder. From a terminal it is `tequila-cli --self-test` (beside
+Tequila once installed; `Tequila.app/Contents/MacOS/tequila-cli` on a Mac),
+with `--cpu-only` to leave the graphics cards out.
+
 ## What it does
 
 <p>
@@ -61,9 +83,10 @@ time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
   <img src="website/assets/img/app-uv.jpg" width="32%" alt="Tequila's UV editor">
 </p>
 
-- **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
-  OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
-  colours and units, and a CAD file's attributes and layers (shown and
+- **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, Rhino
+  (`.3dm`, with its layers, materials and blocks), glTF/GLB, FBX,
+  OBJ (with ZBrush polypaint), STL, 3MF, PLY, USD and IFC, with assemblies,
+  names, colours and units, and a CAD file's attributes and layers (shown and
   hidden as groups); very large models; re-tessellate and re-import that
   keep your work. Send models from Blender (live), SolidWorks and ZBrush
   ([integrations](integrations)). Open KeyShot scenes (`.ksp`, `.bip`) with
@@ -71,8 +94,9 @@ time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
 - **Materials** - a library of 309 procedural materials (plastics, metals,
   glass, paints with flakes, fabrics with real fibres, gems, liquids with
   bubbles, wood, stone...), a node editor, labels and decals, texture packs, KeyShot
-  material packages (.kmp), colourways and variants. Drop a material on a
-  part, on a selection or on a whole group.
+  material packages (.kmp), Adobe Substance materials (.sbsar) with their
+  settings (maps rendered by Adobe's sbsrender when installed), colourways and
+  variants. Drop a material on a part, on a selection or on a whole group.
 - **UV editor and labels** - unwrap a part in a click; cut and stitch seams,
   pin, pack, straighten and relax islands; symmetry, a 2D cursor, snapping,
   rulers, guides and layers; labels placed and sized in millimetres; texel
@@ -93,7 +117,9 @@ time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
   a second or two.
 - **Sharing** - web export (live 3D or pre-rendered:
   [try one](https://ifpintac.github.io/tequila/demo/helmet-holder/)), a spin
-  viewer, and glTF and USD export; a full-screen presentation mode.
+  viewer, glTF and USD export, and USDZ to stand the product in a room at
+  its real size on an iPhone, iPad or Vision Pro; a full-screen
+  presentation mode.
 - **Cutaways**, measurements, model sets and a configurator.
 - **AI apps and automation** - connect Claude, Cursor, VS Code (GitHub
   Copilot), Codex, Gemini CLI, Windsurf or LM Studio in one click, or any

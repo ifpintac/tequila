@@ -369,7 +369,7 @@ fn action_cards(ui: &mut egui::Ui) -> Option<Choice> {
         let cards = [
             (theme::Hue::Blue, icons::Icon::FilePlus, "New project", "An empty studio, ready for a model", theme::keys("Ctrl+N"), Choice::New),
             (theme::Hue::Amber, icons::Icon::FolderOpen, "Open project...", "A .tequila project of yours", theme::keys("Ctrl+O"), Choice::Open),
-            (theme::Hue::Green, icons::Icon::Import, "Import model...", "STEP, IGES, OBJ, glTF, STL, USD", String::new(), Choice::Import),
+            (theme::Hue::Green, icons::Icon::Import, "Import model...", "STEP, IGES, Rhino, glTF, FBX, OBJ, STL, 3MF, PLY, USD", String::new(), Choice::Import),
         ];
         for (hue, icon, title, hint, keys, chosen) in cards {
             if action_card(ui, width, hue, icon, title, hint, &keys).clicked() {

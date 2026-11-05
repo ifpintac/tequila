@@ -259,7 +259,7 @@ These depend on diffusion-model infrastructure orthogonal to the renderer. Note 
 
 ## 1.18 File format support
 
-**Native CAD** (out of scope, §0.2 rule 5): 3ds Max `.max` · ALIAS `.wire` · AutoCAD `.dwg`/`.dxf` · CATIA `.cgr`/`.catpart`/`.catproduct`/`.catdrawing` · Cinema 4D `.c4d` · Creo `.prt`/`.asm` · Creo View `.pvz`/`.pvs`/`.edz`/`.ed`/`.c3di`/`.ol` · Inventor `.ipt`/`.iam` · Maya `.ma`/`.mb` · NX `.prt` · Onshape · Pro/ENGINEER · Revit `.rvt` · Rhinoceros `.3dm` · SketchUp `.skp` · Solid Edge `.par`/`.asm`/`.psm` · SOLIDWORKS `.sldprt`/`.sldasm`.
+**Native CAD** (out of scope, §0.2 rule 5): 3ds Max `.max` · ALIAS `.wire` · AutoCAD `.dwg`/`.dxf` · CATIA `.cgr`/`.catpart`/`.catproduct`/`.catdrawing` · Cinema 4D `.c4d` · Creo `.prt`/`.asm` · Creo View `.pvz`/`.pvs`/`.edz`/`.ed`/`.c3di`/`.ol` · Inventor `.ipt`/`.iam` · Maya `.ma`/`.mb` · NX `.prt` · Onshape · Pro/ENGINEER · Revit `.rvt` · Rhinoceros `.3dm` (read since 2026-11-05 all the same: its openNURBS format is published as open source, `docs/03` §6.2) · SketchUp `.skp` · Solid Edge `.par`/`.asm`/`.psm` · SOLIDWORKS `.sldprt`/`.sldasm`.
 
 **Open exchange (in scope):** STEP `.stp`/`.step` · IGES `.igs`/`.iges` · ACIS `.sat`* · JT `.jt`* · Parasolid `.x_t`* · **IFC** (BIM, 2026.1). *(\*ACIS/JT/Parasolid require additional kernels; STEP and IGES via OCCT are the priority.)*
 
@@ -289,7 +289,7 @@ Units and scale · colour management · hotkey editor (Simple Hotkeys, Mouse Act
 | Colour management | **OpenColorIO v2** with the ACES studio config | Industry standard; correct by construction. |
 | Image I/O | **OpenImageIO** | EXR/TIFF/PNG/JPEG/PSD read-write, plus its texture cache and MIP pipeline (which you want anyway — see `02-MATERIAL-SYSTEM §5`). |
 | CAD kernel | **Open CASCADE Technology (OCCT)**, LGPL-2.1 | The only mature open BREP/NURBS kernel that reads STEP/IGES and re-tessellates at arbitrary tolerance. Isolate behind `tequila-import` to keep LGPL obligations contained. |
-| Mesh import | **Assimp** (BSD-3) + **OpenUSD** (Apache-2.0) | Covers OBJ/FBX/3DS/Collada/3MF/STL/glTF and the USD family. |
+| Mesh import | **Assimp** (BSD-3) + **OpenUSD** (Apache-2.0) | Covers OBJ/FBX/3DS/Collada/3MF/STL/glTF and the USD family. *As built:* readers of Tequila's own for OBJ, STL, PLY, 3MF, glTF and USD text, and **ufbx** (MIT OR Unlicense) for FBX (`docs/03` §6.1). |
 | Physics | **Rapier** (Rust) or **Bullet/Jolt** (C++) | Rigid bodies + joint constraints for §1.10. |
 | UI | **egui** (immediate-mode, wgpu-backed) | Same language as the core, no FFI UI boundary, viewport-embeddable, `egui_node_graph` as a starting point for the Material Graph. Alternative: Qt (C++) if the team prefers retained-mode and native platform integration. |
 | Scripting | A `tequila` Python module over the scripting protocol | Exposes the command bus as a `tequila` module, generated from the catalog; also the harness for automated integration tests. Out of process rather than PyO3-embedded: any Python 3.10+, nothing to build against one, and `tequila --serve` gives scripts the bus without a window. |
@@ -454,7 +454,7 @@ Track implementation against this. Section references point to where the "how" i
 - [x] Scene units, both conversion modes (§3)
 - [x] `.tequila` container + JSON schema + round-trip tests (§4) — published at [`docs/file-format.md`](file-format.md), which a test checks against the writer
 - [ ] Environment container `.fsenv` (§5)
-- [~] Mesh import with normals/smoothing/unit handling (§6.1). OBJ, STL, glTF/GLB done; FBX out of scope as a proprietary Autodesk format, the rest at M8 (`docs/05` M1 note 2)
+- [~] Mesh import with normals/smoothing/unit handling (§6.1). OBJ, STL, PLY, 3MF, glTF/GLB and FBX done (FBX through the open-source ufbx reader since November 5, no Autodesk SDK: `docs/05` M1 note 2); 3DS and Collada at M8
 - [~] BREP import (OCCT) with retained exact geometry and Re-Tessellate (§6.2): retained geometry, Re-Tessellate and B-rep edges done for STEP through truck and for IGES through Tequila's own reader; OCCT (XDE metadata and layers) not
 - [x] USD import/export (§6.3): `.usda`, OpenPBR round trip through MaterialX
 - [x] IFC import (§1.18 open exchange): structure, bodies with openings cut, styles, property sets as metadata

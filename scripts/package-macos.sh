@@ -223,6 +223,7 @@ cat > "$contents/Info.plist" <<PLIST
                 <string>obj</string><string>stl</string><string>gltf</string><string>glb</string>
                 <string>step</string><string>stp</string><string>igs</string><string>iges</string>
                 <string>usd</string><string>usda</string><string>ifc</string>
+                <string>fbx</string><string>3mf</string><string>ply</string>
             </array>
         </dict>
         <dict>
@@ -267,7 +268,7 @@ If the Mac says Apple could not verify Tequila (a copy that was not
 notarized): click Done, open System Settings > Privacy & Security, scroll
 to the bottom and click Open Anyway next to Tequila. Once is enough.
 
-Import: Cmd+I (STEP, IGES, glTF, GLB, OBJ, STL, USD, IFC)
+Import: Cmd+I (STEP, IGES, glTF, GLB, FBX, OBJ, STL, 3MF, PLY, USD, IFC)
 New / open / save project: Cmd+N / Cmd+O / Cmd+S (File > Open recent)
 Orbit: click and drag. Pan: two-finger swipe. Zoom: pinch.
 Shift + swipe orbits too; a mouse pans with its middle button and zooms

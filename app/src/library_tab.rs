@@ -118,6 +118,8 @@ pub enum LibraryAction {
     /// Make materials from a downloaded texture pack: `true` to pick a
     /// folder, `false` a ZIP or one of its maps.
     ImportTexturePack(bool),
+    /// Make a material from an Adobe Substance file, with its settings.
+    ImportSubstance,
     /// Something asked of the Studios section.
     Studio(crate::studio_shelf::StudioAction),
 }
@@ -499,6 +501,14 @@ impl LibraryTab {
                 crate::theme::section(ui, "Import texture pack");
                 if let Some(folder) = crate::texture_pack::menu(ui) {
                     action = Some(LibraryAction::ImportTexturePack(folder));
+                    ui.memory_mut(|m| m.close_popup());
+                }
+                crate::theme::section(ui, "Substance material");
+                if crate::icons::labelled(ui, crate::icons::Icon::Package, "From an .sbsar or .sbs file…", false)
+                    .on_hover_text("An Adobe Substance material with its settings, put on the selected parts. Its maps are rendered by Adobe's sbsrender when it is installed.")
+                    .clicked()
+                {
+                    action = Some(LibraryAction::ImportSubstance);
                     ui.memory_mut(|m| m.close_popup());
                 }
             });

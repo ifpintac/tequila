@@ -672,8 +672,8 @@ struct Lamp<'a> {
 /// the dimensions next event estimation draws them on: the same lamp and
 /// point its own sample took, which is no matter - the two count different
 /// paths - and keeps a caustic as well stratified as a shadow is.
-fn lamp<'a>(scene: &'a SceneSnapshot, at: Vec3, normal: Vec3, receiver: InstanceId, sampler: &mut Sampler) -> Option<Lamp<'a>> {
-    let (id, chosen) = scene.lights.select_at(at, normal, sampler.light_select())?;
+fn lamp<'a>(scene: &'a SceneSnapshot, at: Vec3, normal: Vec3, two_sided: bool, receiver: InstanceId, sampler: &mut Sampler) -> Option<Lamp<'a>> {
+    let (id, chosen) = scene.lights.select_at(at, normal, two_sided, sampler.light_select())?;
     let light = scene.lights.get(id)?;
     let u = sampler.light_sample();
     // A lamp that casts no shadow passes glass already, unbent, and one kept
@@ -807,6 +807,7 @@ pub(super) fn solve(
     config: &IntegratorConfig,
     at: &Hit,
     normal: Vec3,
+    two_sided: bool,
     media: &MediumStack,
     bounce: u32,
     transmission_bounces: u32,
@@ -816,7 +817,7 @@ pub(super) fn solve(
     if !config.shadows || scene.lights.is_empty() || !scene.has_panes() {
         return None;
     }
-    let lamp = lamp(scene, at.position, normal, at.instance, sampler)?;
+    let lamp = lamp(scene, at.position, normal, two_sided, at.instance, sampler)?;
     let light = lamp.light;
     let unit = scene.bounds().bounding_radius().max(1e-3);
 
@@ -1035,7 +1036,7 @@ pub(super) fn sample_caustic(
 ) -> (Lit, crate::lpe::LightGroup, usize) {
     // Off the surface only, as Cycles has it: light reaching a surface
     // through its own far side is a transmission's, which this leaves be.
-    let Some(caustic) = solve(intersector, config, hit, geometric_normal, media, bounce, transmission_bounces, sampler) else {
+    let Some(caustic) = solve(intersector, config, hit, geometric_normal, bsdf.flags().contains(BsdfFlags::TRANSMISSION), media, bounce, transmission_bounces, sampler) else {
         return (Lit::default(), 0, 0);
     };
     let wi = onb.to_local(caustic.direction);
@@ -1064,7 +1065,7 @@ pub(super) fn on_catcher(
     bounce: u32,
     sampler: &mut Sampler,
 ) -> Spectrum {
-    let Some(caustic) = solve(intersector, config, hit, normal, media, bounce, 0, sampler) else {
+    let Some(caustic) = solve(intersector, config, hit, normal, false, media, bounce, 0, sampler) else {
         return Spectrum::ZERO;
     };
     // A lamp kept off the diffuse lights none of a matte floor.

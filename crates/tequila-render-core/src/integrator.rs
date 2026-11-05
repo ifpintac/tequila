@@ -840,6 +840,10 @@ fn trace<C: PathColour>(
     // roulette "makes glass unnecessarily noisy".
     let mut eta_scale = 1.0f32;
     let mut roughness_floor = 0.0f32;
+    // The smallest density any bounce so far left by, a diffuse one's or a
+    // rough reflection's, for blurring what is sharper past it
+    // (`filtered_roughness`).
+    let mut least_pdf = f32::INFINITY;
     let mut guides_captured = false;
     // Past the surface where this path read the caustic photons, and through
     // mirror-smooth surfaces only since (`smooth_since` of them): the light
@@ -881,6 +885,37 @@ fn trace<C: PathColour>(
     // And whether one of them lights nothing diffusely (`SeenFrom::glossy`).
     let lamps_for_reflections = meets_lamps
         && scene.lights.lights().iter().any(|light| light.can_be_met() && light.visibility.specular && !light.visibility.diffuse);
+    // Whether there is a lamp to show in a mirror-smooth surface, or to the
+    // camera through glass, which the path then meets itself (`SeenFrom`):
+    // a lamp's stand-in shows only where the camera sees it straight on.
+    // Without the lamps lighting the scene, a stand-in shows as it always
+    // did, wherever the camera sees along.
+    let lamps_in_mirrors = config.direct_lighting
+        && scene.lights.lights().iter().any(|light| light.can_be_met() && (light.visibility.specular || light.visibility.camera));
+    // The reflection split off the first glass the camera sees is a
+    // reflection from its start, and shows the lamps as one.
+    if config.reflected && lamps_in_mirrors {
+        seen_from = Some(SeenFrom {
+            position: ray.origin,
+            magnitude: ray.origin.abs().max_component(),
+            normal: ray.direction,
+            two_sided: false,
+            direction: ray.direction,
+            instance: None,
+            camera: false,
+            sees_glass: false,
+            density: f32::INFINITY,
+            glossy: Spectrum::ONE,
+            receiver: None,
+            met: false,
+        });
+    }
+    // Whether some light passes a part its shadow rays pass where the path
+    // stops at that part (`lamps_past`, `light_past`): a part that casts no
+    // shadow, a lamp whose shadows leave some parts out, or that casts none.
+    let passes_parts = config.shadows
+        && (scene.has_shadowless_parts()
+            || scene.lights.lights().iter().any(|light| light.can_be_met() && (!light.visibility.shadow || !light.shadow_links.is_all())));
     // Whether the surface the path last scattered off took a manifold sample
     // (`manifold`), and the path has gone on through glass that bends light
     // alone since. A lamp's light along the way it is going is that
@@ -900,12 +935,14 @@ fn trace<C: PathColour>(
         // light sample, which found them alone before: a mirror-like floor
         // showed a softbox in specks where its narrow lobe met the sample's
         // point on it. Off a mirror-smooth lobe, which no light sample stands
-        // in for, only past glass it sees, as before; met straight on, a lamp
-        // in a mirror-smooth coat is light no bounce of this path's could
-        // otherwise find, the caustics path tracing finds by chance. Not on
-        // a path the camera sees along, where a lamp shows by its stand-in
-        // or not at all.
-        if let Some(from) = seen_from.filter(|from| !specular_chain && (from.met || from.density.is_finite())) {
+        // in for, whole, on every path: in a mirror seen in a mirror, in a
+        // mirror a diffuse bounce meets, the sun in a chrome part. On a path
+        // the camera sees along, past the first surface, the lamp itself
+        // shows, as the camera sees it through glass and as a reflection in
+        // a mirror; its stand-in only where the camera sees it straight on.
+        // Past what the lamp's shadow rays pass, the lamp is met where the
+        // path stops (`lamps_past`).
+        if let Some(from) = seen_from {
             // A lamp's stand-in is where the lamp is, and is passed: met at
             // it, the lamp is met.
             let reach = match &hit {
@@ -913,8 +950,10 @@ fn trace<C: PathColour>(
                 Some(h) => h.t,
                 None => f32::INFINITY,
             };
+            // Reached through mirror-smooth surfaces past the photons: theirs.
+            let photons = read_caustics && smooth_since > 0;
             for (index, light) in scene.lights.lights().iter().enumerate() {
-                if !met_by_bounces(light, from.instance) {
+                if photons || !from.meets(light) {
                     continue;
                 }
                 let Some((emitted, t)) = light.met_along(ray.origin, ray.direction) else {
@@ -923,18 +962,7 @@ fn trace<C: PathColour>(
                 if t >= reach && !(t.is_infinite() && reach.is_infinite()) {
                     continue;
                 }
-                // What the light sample had for it along the way the bounce
-                // left, chosen as the sample chooses lamps, by power. Not past
-                // glass it saw, the way it left is the way it met the lamp,
-                // which nothing on it stopped.
-                let straight = light.density_along(from.position, from.direction)
-                    * scene.lights.selection_pdf(tequila_core::ids::LightId(index as u32));
-                let weight = if from.met {
-                    let along = light.met_along(from.position, from.direction).map_or(f32::INFINITY, |(_, t)| t);
-                    from.weight(intersector, straight, along)
-                } else {
-                    mis_power(from.density, straight)
-                };
+                let weight = from.weight_of_lamp(intersector, index, light);
                 let lobes = if light.visibility.diffuse { Spectrum::ONE } else { from.glossy };
                 let contribution = throughput * colour.reflectance(lobes) * colour.unbounded(emitted) * weight;
                 radiance += contribution;
@@ -1172,6 +1200,7 @@ fn trace<C: PathColour>(
                 // Sampled exactly, so the density is the phase function's
                 // value.
                 lit_phase_pdf = henyey_greenstein(ray.direction.dot(next), walk.anisotropy);
+                least_pdf = least_pdf.min(lit_phase_pdf);
                 ray = Ray::new(at, next);
                 // The sky this reaches straight out of a lit medium is
                 // weighted against the direct sample above; anything else it
@@ -1187,11 +1216,20 @@ fn trace<C: PathColour>(
             }
         }
 
+        // Whether a light's stand-in shows here: where the camera sees it
+        // straight on. Past the first surface the camera sees, through glass
+        // and in mirrors, the lamp itself shows (`SeenFrom`), and the
+        // stand-in is passed as by every other path.
+        let stand_in_shows = specular_chain && (!lamps_in_mirrors || (bounce == 0 && !config.reflected));
+        // The density with which a lit medium's last event sent the path
+        // here, if it did: what the sky past a part that casts no shadow is
+        // weighed by (`light_past`).
+        let from_medium = lit_from_medium.filter(|m| *m != hit.instance).map(|_| lit_phase_pdf);
         // Anything but the lit medium's own surface is a new event, which
         // the direct sample did not see past. A light's stand-in, passed
         // below, it did see past: it casts no shadow.
         if lit_from_medium.is_some_and(|m| m != hit.instance)
-            && (specular_chain || !is_light_proxy(scene, hit.instance))
+            && (stand_in_shows || !is_light_proxy(scene, hit.instance))
         {
             lit_from_medium = None;
         }
@@ -1405,13 +1443,17 @@ fn trace<C: PathColour>(
             }
         }
 
-        // A light's stand-in is there to be seen, and only on a path the
-        // camera can see along. Any other path passes it, as photons and
-        // shadow rays do: it does not light the scene — the analytic light it
-        // stands for already does — and ending the path on it instead blotted
-        // out the sky behind it for every bounce, a shadow by another name.
-        // Cycles' lights, which it stands in for there, block nothing either.
-        if !specular_chain && is_light_proxy(scene, hit.instance) {
+        // A light's stand-in is there to be seen, and only where the camera
+        // sees it straight on (`stand_in_shows`). Any other path passes it,
+        // as photons and shadow rays do: it does not light the scene — the
+        // analytic light it stands for already does — and ending the path on
+        // it instead blotted out the sky behind it for every bounce, a shadow
+        // by another name. Cycles' lights, which it stands in for there,
+        // block nothing either. Through glass and in a mirror the lamp is met
+        // itself, its shape and its brightness along that way: the stand-in,
+        // a square glowing evenly, showed a disc lamp as a square and a
+        // softbox behind a grid as bright from the side as head on.
+        if !stand_in_shows && is_light_proxy(scene, hit.instance) {
             if crossings >= MAX_CUTOUT_CROSSINGS {
                 break;
             }
@@ -1596,6 +1638,47 @@ fn trace<C: PathColour>(
             }
         }
 
+        // ---- Light past a part its shadow rays pass --------------------
+        //
+        // The path stops here, at a part that lets some light by to a shadow
+        // ray: one that casts no shadow, or none of some lamp's. The light
+        // samples at the surface the path left counted what lies past it, so
+        // the bounce weighed against them has to as well (`lamps_past`,
+        // `light_past`). Not where the path goes on past the part itself -
+        // through a cutout's hole, above, or straight through glass it
+        // passes - when it meets that light further on.
+        if passes_parts {
+            let passed_pane = scene
+                .pane(hit.material)
+                .filter(|_| !media.walking_in(hit.instance) && fibre.is_none())
+                .is_some_and(|pane| pane.passes(through_glass) || (through_glass == ShadowGlass::Unbent && !scene.casts_shadows(hit.instance)));
+            if !passed_pane {
+                if let Some(from) = &seen_from {
+                    let glass = if from.sees_glass { through_glass } else { config.shadow_glass() };
+                    if !(read_caustics && smooth_since > 0) {
+                        lamps_past(intersector, &hit, &ray, from, glass, |lobes, light, layer| {
+                            let contribution = throughput * colour.reflectance(lobes) * colour.unbounded(light);
+                            radiance += contribution;
+                            aovs.contribute(colour.rgb(contribution), layer);
+                        });
+                    }
+                }
+                // The sky and the glowing parts, which a bounce weighed against
+                // a light sample meets as geometry: past what casts no shadow.
+                let pdf = from_medium.or((!specular_chain && prev_pdf_solid_angle.is_finite()).then_some(prev_pdf_solid_angle));
+                if let (Some(pdf), false, true) = (pdf, seen_from.is_some_and(|from| from.met), config.direct_lighting) {
+                    if !scene.casts_shadows(hit.instance) {
+                        let receiver = emitters_from.filter(|_| from_medium.is_none());
+                        let (sky, glow) = light_past(intersector, &hit, &ray, through_glass, (pdf, pass_pdf), receiver, !(read_caustics && smooth_since > 0));
+                        let (sky, glow) = (throughput * colour.unbounded(sky), throughput * colour.unbounded(glow));
+                        radiance += sky + glow;
+                        aovs.contribute(colour.rgb(sky), crate::lpe::ENVIRONMENT);
+                        aovs.contribute(colour.rgb(glow), crate::lpe::EMISSIVE);
+                    }
+                }
+            }
+        }
+
         // ---- Emissive surface ------------------------------------------
         //
         // A light proxy emits only towards the camera, which is the only path
@@ -1770,7 +1853,7 @@ fn trace<C: PathColour>(
             prev_pdf_solid_angle = prev_pdf_solid_angle.min(pass_pdf);
         }
         // Glass met as glass by a seeing bounce (`SeenFrom`).
-        let seeing = meets_glass && seen_from.is_some() && pane.is_some() && !passing;
+        let seeing = meets_glass && seen_from.is_some_and(|from| from.sees_glass) && pane.is_some() && !passing;
         // Glass that bends light, met on the way on from a manifold sample.
         let bent = after_manifold && !exiting_walk && fibre.is_none() && scene.pane(hit.material).is_some_and(|pane| pane.bends());
         // Past the photons, glass stays glass: roughened by the floor it
@@ -1783,15 +1866,29 @@ fn trace<C: PathColour>(
         // sampling them alone, through a lobe the floor makes 0.09 rough,
         // found them in specks or not at all.
         let floor = if read_caustics || passing || seeing { 0.0 } else { roughness_floor };
-        let bsdf = if let Some(fibre) = &fibre {
-            Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
-        } else if exiting_walk {
-            Scattering::Surface(walk_exit().bsdf(floor))
-        } else if from_inside {
-            Scattering::Surface(material.bsdf_from_inside(floor))
-        } else {
-            Scattering::Surface(material.bsdf(floor))
+        let scattering = |floor: f32| {
+            if let Some(fibre) = &fibre {
+                Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
+            } else if exiting_walk {
+                Scattering::Surface(walk_exit().bsdf(floor))
+            } else if from_inside {
+                Scattering::Surface(material.bsdf_from_inside(floor))
+            } else {
+                Scattering::Surface(material.bsdf(floor))
+            }
         };
+        let bsdf = scattering(floor);
+        // And past a diffuse or rough bounce, where lamps are met in mirrors,
+        // a mirror-smooth surface is blurred as Cycles' Filter Glossy blurs
+        // it (`filtered_roughness`). Only one with a mirror-smooth lobe, so
+        // a glossy surface the bounce meets is as it always was.
+        // A regularization as §3.5's floor is, off with it.
+        let blur = if lamps_in_mirrors && config.regularization_roughness > 0.0 && !(read_caustics || passing || seeing) {
+            filtered_roughness(least_pdf)
+        } else {
+            0.0
+        };
+        let bsdf = if blur > floor && bsdf.flags().contains(BsdfFlags::DELTA) { scattering(blur) } else { bsdf };
         let smooth_here = caustic_map.is_some() && caustics::caustic_surface(material, &bsdf);
 
         if !guides_captured && !bsdf.flags().is_pure_delta() {
@@ -2156,6 +2253,9 @@ fn trace<C: PathColour>(
                 None => false,
             };
         if !onward {
+            if !sample.is_delta {
+                least_pdf = least_pdf.min(sample.pdf);
+            }
             prev_pdf_solid_angle = if sample.is_delta {
                 f32::INFINITY
             } else {
@@ -2174,8 +2274,11 @@ fn trace<C: PathColour>(
                 position: hit.position,
                 magnitude: hit.magnitude,
                 normal: geometric_normal,
+                two_sided: bsdf.flags().contains(BsdfFlags::TRANSMISSION),
                 direction: wi_world,
-                instance: hit.instance,
+                instance: Some(hit.instance),
+                camera: false,
+                sees_glass: true,
                 density: if sample.is_delta { f32::INFINITY } else { seen_density(sample.wi) },
                 glossy: if lamps_for_reflections && !sample.is_delta {
                     let glossy = bsdf.eval_selective(wo, sample.wi, false, true);
@@ -2190,8 +2293,36 @@ fn trace<C: PathColour>(
         } else if sample.is_delta && !samples_lights && (seeing || passing) {
             // On through mirror-smooth glass.
             seen_from.map(|from| SeenFrom { met: from.met || (seeing && pane.is_some_and(|pane| pane.bends())), ..from })
-        } else {
+        } else if !(sample.is_delta && lamps_in_mirrors) {
             None
+        } else {
+            // A mirror's view, which no light sample stands in for, and the
+            // camera's through glass: the lamps they meet are theirs whole.
+            let view = |instance: Option<InstanceId>, camera: bool| SeenFrom {
+                position: hit.position,
+                magnitude: hit.magnitude,
+                normal: geometric_normal,
+                two_sided: false,
+                direction: wi_world,
+                instance,
+                camera,
+                sees_glass: false,
+                density: f32::INFINITY,
+                glossy: Spectrum::ONE,
+                receiver: None,
+                met: false,
+            };
+            match seen_from {
+                // Off a mirror-smooth reflection - a mirror, chrome, the face
+                // of a glass - which shows the lamps this surface's light
+                // links let light it.
+                _ if !sample.is_transmission => Some(view(Some(hit.instance), false)),
+                // On through smooth glass, a mirror's view or the camera's.
+                Some(from) if !from.sees_glass => Some(from),
+                // The camera's view through its first glass.
+                None if specular_chain => Some(view(None, true)),
+                _ => None,
+            }
         };
         through_glass = if onward {
             through_glass
@@ -2322,8 +2453,31 @@ fn seeing_share(roughness: f32) -> f32 {
     1.0 - t * t * (3.0 - 2.0 * t)
 }
 
+/// The roughness a surface is kept to past a bounce that left by a density
+/// of `least_pdf` at most, as Cycles' Filter Glossy of 1 has it: none past
+/// a reflection sharp enough to be denser than 1 per steradian, and past a
+/// diffuse bounce's at most 1/pi about 0.64 (Cycles' blur, sqrt(1 - pdf) / 2,
+/// is an alpha; this is the roughness whose square it is).
+///
+/// A lamp met in a mirror a diffuse bounce reaches is a caustic, found only
+/// where the bounce happens to turn into the mirror towards the lamp: a
+/// small softbox, and the sun most of all, made the floor round a chrome
+/// part a field of specks. Blurred, the mirror samples the lamps itself and
+/// shares them with its bounces, and the light it throws is smooth, as it is
+/// in Cycles. Only a surface with a mirror-smooth lobe, and only in a scene
+/// with a lamp to meet in mirrors, so every other renders as before; with
+/// photons the caustic the camera's first diffuse surface reads is theirs,
+/// and stays sharp.
+fn filtered_roughness(least_pdf: f32) -> f32 {
+    if !(least_pdf < 1.0) {
+        return 0.0;
+    }
+    (0.5 * (1.0 - least_pdf.max(0.0)).sqrt()).sqrt()
+}
+
 /// The surface a seeing bounce left (`seeing_share`), while the path goes on
-/// from it straight, or through mirror-smooth glass, alone.
+/// from it straight, or through mirror-smooth glass, alone; or a mirror's
+/// view, or the camera's through glass, which meet the lamps too.
 #[derive(Clone, Copy, Debug)]
 struct SeenFrom {
     position: Vec3,
@@ -2331,9 +2485,26 @@ struct SeenFrom {
     magnitude: f32,
     /// Its geometric normal, on the side the bounce left by.
     normal: Vec3,
+    /// Whether the surface lets light through, so the light sample there
+    /// chose lamps on both sides of it (`LightSet::select_at`).
+    two_sided: bool,
     /// The way the bounce left.
     direction: Vec3,
-    instance: InstanceId,
+    /// The surface that reflects what the path meets, whose light links
+    /// say which lamps it shows; `None` for the camera's view through
+    /// glass, and for the reflection split off the first glass the camera
+    /// sees, which starts a path of its own.
+    instance: Option<InstanceId>,
+    /// Whether the path is the camera's view through glass alone, which
+    /// shows a lamp as the camera sees it - by its own visibility, and
+    /// only a lamp a stand-in would show - rather than as a reflection.
+    camera: bool,
+    /// Whether it sees glass that bends light as glass (`seeing_share`):
+    /// a bounce off a surface that sampled the lights, whose light samples
+    /// share with it what lies past such glass. A mirror's view, or the
+    /// camera's, shares nothing with any light sample, and meets glass as
+    /// any path does.
+    sees_glass: bool,
     /// The density the lobes that see give `direction`; infinite off a
     /// mirror-smooth lobe, which no light sample stands in for.
     density: f32,
@@ -2418,18 +2589,52 @@ impl SeenFrom {
 
 /// Whether a seeing bounce off `instance` looks for `light`, and the light
 /// samples there share it with such bounces (`left_to_bounces`): a light a
-/// ray can meet (a panel, a sun with a disc), which lights `instance`, shows
-/// in reflections, and casts shadows, from every part: a bounce is stopped
-/// by what is in its way, where a shadow ray linked to some parts only, or
-/// cast by none, passes the rest. The rest are their light samples' alone,
-/// as before; a point, a spot and an IES light have nothing to meet, and a
-/// point's reflection is a point, which only a light sample can find.
+/// ray can meet (a panel, a sun with a disc), which lights `instance` and
+/// shows in reflections. The bounce passes what the light's shadow rays
+/// pass (`lamps_past`): a part that casts no shadow, one its shadows are
+/// linked away from, everything for a lamp that casts none. A point, a spot
+/// and an IES light have nothing to meet, and a point's reflection is a
+/// point, which only a light sample can find.
 fn met_by_bounces(light: &crate::light::Light, instance: InstanceId) -> bool {
-    light.can_be_met()
-        && light.visibility.specular
-        && light.visibility.shadow
-        && light.shadow_links.is_all()
-        && light.links.lights(instance.0)
+    light.can_be_met() && light.visibility.specular && light.links.lights(instance.0)
+}
+
+impl SeenFrom {
+    /// Whether this view meets `light`: as the bounce or the mirror it
+    /// is ([`met_by_bounces`]), or as the camera sees a lamp through glass
+    /// - one it sees at all, and a panel, which is what a stand-in shows; a
+    /// sun the camera does not see straight on, and does not through glass.
+    fn meets(&self, light: &crate::light::Light) -> bool {
+        if self.camera {
+            return light.can_be_met() && light.visibility.camera && matches!(light.kind, crate::light::LightKind::Area(_));
+        }
+        match self.instance {
+            Some(instance) => met_by_bounces(light, instance),
+            None => light.can_be_met() && light.visibility.specular,
+        }
+    }
+
+    /// The weight of `light`, met along the way: whole off a mirror-smooth
+    /// lobe or for the camera, which no light sample stands in for; else
+    /// shared with the light sample at the surface the bounce left, as the
+    /// sample chose lamps, by power (`left_to_bounces`).
+    fn weight_of_lamp(&self, intersector: &dyn Intersector, index: usize, light: &crate::light::Light) -> f32 {
+        if self.density.is_infinite() {
+            return 1.0;
+        }
+        // What the light sample had for it along the way the bounce left.
+        // Not past glass it saw, the way it left is the way it met the
+        // lamp, which nothing on it stopped.
+        let scene = intersector.scene();
+        let chosen = scene.lights.selection_pdf_at(self.position, self.normal, self.two_sided, tequila_core::ids::LightId(index as u32));
+        let straight = light.density_along(self.position, self.direction) * chosen;
+        if self.met {
+            let along = light.met_along(self.position, self.direction).map_or(f32::INFINITY, |(_, t)| t);
+            self.weight(intersector, straight, along)
+        } else {
+            mis_power(self.density, straight)
+        }
+    }
 }
 
 /// What a path sees past the scene along `ray`: where it escapes, and behind
@@ -2618,7 +2823,7 @@ fn floor_reflection(
     let mut near = 1.0;
     match catcher.reflection_fade {
         Some(fade) if catcher.reflection_fade_by_distance => {
-            near = occlusion_at(intersector, hit, normal, fade, sampler);
+            near = nearness_at(intersector, hit, normal, fade, sampler);
             if near <= 0.0 {
                 return None;
             }
@@ -2826,6 +3031,46 @@ fn occlusion_at(
     // Glass stays solid here: occlusion is the darkening of what is close,
     // whatever it is made of.
     blocked_towards(intersector, ShadowGlass::Solid, hit, normal, direction, radius.max(1e-3), &LightLinks::All)
+}
+
+/// How much the parts standing on a reflecting floor close in on it within
+/// `radius` at `hit`, as ambient occlusion measures it: what fades the
+/// floor's reflection by distance. A part that casts no shadow stands there
+/// as much as one that does, and the floor mirrors it; measured as a shadow,
+/// [`occlusion_at`], it was not near at all, and the floor left it out of
+/// its reflection. In a scene where every part casts shadows the two are
+/// the same.
+fn nearness_at(intersector: &dyn Intersector, hit: &Hit, normal: Vec3, radius: f32, sampler: &mut Sampler) -> f32 {
+    let scene = intersector.scene();
+    if !scene.has_shadowless_parts() {
+        return occlusion_at(intersector, hit, normal, radius, sampler);
+    }
+    let onb = Onb::from_normal(normal);
+    let direction = onb.to_world(tequila_core::sampling::sample_cosine_hemisphere(sampler.light_sample()));
+    let mut ray = Ray::new(hit.offset(normal), direction);
+    ray.t_max = radius.max(1e-3);
+    let mut through = 1.0f32;
+    for _ in 0..MAX_CUTOUT_CROSSINGS {
+        let Some(next) = intersector.intersect(&ray) else {
+            break;
+        };
+        // A light's stand-in and the floor itself are no part on it.
+        let passed = scene.instances.get(next.instance.0 as usize).is_some_and(|i| i.light_proxy || i.shadow_catcher.is_some());
+        if !passed {
+            // A cutout by its opacity; one a graph drives as if solid.
+            through *= 1.0 - scene.opacity_of(next.material).unwrap_or(1.0).clamp(0.0, 1.0);
+            if through < 1e-3 {
+                return 1.0;
+            }
+        }
+        let left = ray.t_max - next.t;
+        if left <= 0.0 {
+            break;
+        }
+        ray = Ray::new(next.offset(-next.facing_forward(direction).0), direction);
+        ray.t_max = left;
+    }
+    1.0 - through
 }
 
 /// How much of a shadow ray survives the surfaces between its ends.
@@ -3120,6 +3365,199 @@ fn blocked_towards(
     // share that gets through. It used to split at half, so a part more than
     // half open left the floor lit and one less than half open, black.
     1.0 - shadow_transmittance(intersector, glass, hit.offset(normal), normal, target, -direction, blockers).luminance().clamp(0.0, 1.0)
+}
+
+/// What a shadow ray finds along `direction` past `hit`, which it passes,
+/// within `reach` of it: how much light gets by every surface it lets light
+/// by - a part that casts none of this light's shadow (`blockers`), clear
+/// glass `glass` takes in, a cutout's holes - and the first surface that
+/// stops it, if any, or that `target` names, where it stops too. Black
+/// where something stops it short of a target. And whether it passed glass
+/// that bends light ([`crate::scene::Pane::bends`]).
+#[inline(never)]
+fn walk_past(
+    intersector: &dyn Intersector,
+    glass: ShadowGlass,
+    hit: &Hit,
+    direction: Vec3,
+    reach: f32,
+    blockers: &LightLinks,
+    target: impl Fn(&Hit) -> bool,
+) -> (Spectrum, Option<Hit>, bool) {
+    let scene = intersector.scene();
+    let glass = if scene.has_panes() { glass } else { ShadowGlass::Solid };
+    let mut origin = hit.offset(-hit.facing_forward(direction).0);
+    let mut remaining = reach;
+    let mut through = Spectrum::ONE;
+    let mut bent = false;
+    // As in `cutout_transmittance`: how far along this segment starts, and
+    // the glass with a volume the walk is inside, and where it went in.
+    let mut along = 0.0f32;
+    let mut inside: Option<(InstanceId, f32)> = None;
+    let mut scratch: Option<(shade::Registers, crate::material::Material)> = None;
+    for _ in 0..MAX_CUTOUT_CROSSINGS {
+        let mut segment = Ray::new(origin, direction);
+        segment.t_max = remaining;
+        let Some(next) = intersector.intersect(&segment) else {
+            return (through, None, bent);
+        };
+        if target(&next) {
+            return (through, Some(next), bent);
+        }
+        let open = !scene.casts_shadows(next.instance) || !blockers.lights(next.instance.0);
+        let at = along + next.t;
+        if let Some(pane) = scene.pane(next.material).filter(|pane| pane.passes(glass) && !open) {
+            through *= pane.crossing(direction.dot(next.geometric_normal));
+            bent |= pane.bends();
+            if pane.has_volume() {
+                match inside {
+                    None => inside = Some((next.instance, at)),
+                    Some((instance, since)) if instance == next.instance => {
+                        through *= pane.inside(at - since);
+                        inside = None;
+                    }
+                    Some(_) => {}
+                }
+            }
+        } else if !open {
+            let opacity = match scene.opacity_of(next.material) {
+                Some(constant) => constant,
+                None => {
+                    let (registers, material) = scratch.get_or_insert_with(|| (shade::Registers::new(), crate::material::Material::default()));
+                    let (_, shading_normal) = next.facing_forward(direction);
+                    let mut point = scene.shading_point_along(&next, shading_normal, crate::settings::DEFAULT_PIXEL_SPREAD, direction);
+                    point.world.ray = tequila_texture::projection::RayKind::Shadow;
+                    let program = scene.program(next.material).expect("a varying opacity comes from a program");
+                    shade::shade(program, &scene.textures, &point, registers, material).geometry_opacity
+                }
+            };
+            if opacity >= 0.999 {
+                return (Spectrum::ZERO, Some(next), bent);
+            }
+            through *= 1.0 - opacity.clamp(0.0, 1.0);
+        }
+        if through.max_component() < 1e-3 {
+            return (Spectrum::ZERO, Some(next), bent);
+        }
+        remaining -= next.t.max(1e-6);
+        if remaining <= 0.0 {
+            return (through, None, bent);
+        }
+        origin = next.offset(-next.facing_forward(direction).0);
+        along = at;
+    }
+    (Spectrum::ZERO, None, bent)
+}
+
+/// The lamps `from` meets past `hit`, where the path stops at a part their
+/// shadow rays pass - one that casts no shadow, one a lamp's shadows are
+/// linked away from, any part for a lamp that casts none - as the light
+/// sample at the surface the path left counted them: each lamp's light past
+/// the part, through what its shadow rays let by, weighed as a bounce weighs
+/// it (`SeenFrom::weight_of_lamp`). `add` takes each one's lobes (as
+/// `SeenFrom::glossy`), its light, and its layer.
+///
+/// Off a glossy reflection this is MIS against that light sample, which a
+/// bounce stopped at the part had broken: a glossy floor showed a softbox
+/// behind a shadowless part at a tenth of its brightness. Off a mirror, or
+/// for the camera through glass, which share nothing with a light sample,
+/// it is the same rule: a lamp's light passes what its shadow rays pass, on
+/// every path, so a mirror shows what a nearly smooth floor does, and as the
+/// photons a lamp sends do (`caustics::trace_photon`).
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn lamps_past(
+    intersector: &dyn Intersector,
+    hit: &Hit,
+    ray: &Ray,
+    from: &SeenFrom,
+    glass: ShadowGlass,
+    mut add: impl FnMut(Spectrum, Spectrum, crate::lpe::LightGroup),
+) {
+    let scene = intersector.scene();
+    let shadowless = !scene.casts_shadows(hit.instance);
+    for (index, light) in scene.lights.lights().iter().enumerate() {
+        if !from.meets(light) {
+            continue;
+        }
+        if !(shadowless || !light.visibility.shadow || !light.shadow_links.lights(hit.instance.0)) {
+            continue;
+        }
+        let Some((emitted, t)) = light.met_along(ray.origin, ray.direction) else {
+            continue;
+        };
+        // In front of the part, the path met it on its way here.
+        if t < hit.t {
+            continue;
+        }
+        let through = if light.visibility.shadow {
+            let reach = if t.is_finite() { (t - hit.t) * (1.0 - 1e-3) } else { f32::INFINITY };
+            walk_past(intersector, glass, hit, ray.direction, reach, &light.shadow_links, |_| false).0
+        } else {
+            Spectrum::ONE
+        };
+        if through.is_black() {
+            continue;
+        }
+        let weight = from.weight_of_lamp(intersector, index, light);
+        let lobes = if light.visibility.diffuse { Spectrum::ONE } else { from.glossy };
+        add(lobes, emitted * through * weight, light.layer.min(crate::lpe::LAST_LAYER));
+    }
+}
+
+/// The sky and the glowing parts past `hit`, a part that casts no shadow
+/// where the path stops, which the light samples at the surface it left
+/// counted, their shadow rays passing the part: what a bounce weighed
+/// against those samples would have met there, weighed as it would be, by
+/// the density it left by, or past glass that bends light by the density
+/// of the lobes that pass such glass (`pdf`, as the path's `pass_pdf`).
+/// Before the bounce stopped at the part and
+/// the share of the light MIS left it was lost, and a diffuse floor under a
+/// part that casts no shadow was nearly as dark as under one that does.
+///
+/// Returned before the path's throughput: the sky's, and the glowing
+/// parts'.
+#[cold]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn light_past(
+    intersector: &dyn Intersector,
+    hit: &Hit,
+    ray: &Ray,
+    glass: ShadowGlass,
+    (pdf, pass_pdf): (f32, f32),
+    receiver: Option<crate::emitters::Receiver>,
+    sky: bool,
+) -> (Spectrum, Spectrum) {
+    let scene = intersector.scene();
+    let emitters = scene.emitters();
+    let glows = |next: &Hit| receiver.is_some() && !emitters.radiance(next.instance).is_black();
+    let (through, stop, bent) = walk_past(intersector, glass, hit, ray.direction, f32::INFINITY, &LightLinks::All, glows);
+    if through.is_black() {
+        return (Spectrum::ZERO, Spectrum::ZERO);
+    }
+    let pdf = if bent { pdf.min(pass_pdf) } else { pdf };
+    match (stop, receiver) {
+        (None, _) if sky => {
+            let emitted = scene.environment.radiance_from(ray.origin, ray.direction);
+            let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
+            (emitted * through * mis_power(pdf, pdf_light), Spectrum::ZERO)
+        }
+        (Some(next), Some(from)) if glows(&next) && !next.is_backface(ray.direction) => {
+            let density = emitters.density(&from, next.instance, next.primitive);
+            if !(density > 0.0) {
+                return (Spectrum::ZERO, Spectrum::ZERO);
+            }
+            let pdf_light = tequila_core::sampling::area_to_solid_angle_pdf(
+                density,
+                (next.position - from.position).length_squared(),
+                ray.direction.dot(next.geometric_normal),
+            );
+            (Spectrum::ZERO, emitters.radiance(next.instance) * through * mis_power(pdf, pdf_light))
+        }
+        _ => (Spectrum::ZERO, Spectrum::ZERO),
+    }
 }
 
 /// Where a flight through a medium ends.
@@ -3618,7 +4056,7 @@ fn sample_analytic_lights(
     let Some((id, p_select)) =
         scene
             .lights
-            .select_at(hit.position, geometric_normal, sampler.light_select())
+            .select_at(hit.position, geometric_normal, bsdf.flags().contains(BsdfFlags::TRANSMISSION), sampler.light_select())
     else {
         return (Lit::default(), 0);
     };
@@ -3725,13 +4163,16 @@ fn sample_analytic_lights(
         if visibility.is_black() {
             return (Lit::default(), 0);
         }
-        if let Some(seen) = seen.filter(|_| !sample.is_delta && met_by_bounces(light, hit.instance)) {
-            // The sample's own density is the lamp's along that way
-            // (`Light::density_along` must agree with `Light::sample`).
-            let (passing, _, seen_pdf) = left_to_bounces(pdf_bsdf, seen(wi));
-            let density = sample.pdf * scene.lights.selection_pdf(id);
-            share = passing + (1.0 - passing) * mis_power(density, seen_pdf);
-        }
+    }
+    // Shared whether it casts shadows or not: the bounces meet a lamp past
+    // what its shadow rays pass (`lamps_past`), everything for one that
+    // casts none.
+    if let Some(seen) = seen.filter(|_| config.shadows && !sample.is_delta && met_by_bounces(light, hit.instance)) {
+        // The sample's own density is the lamp's along that way
+        // (`Light::density_along` must agree with `Light::sample`).
+        let (passing, _, seen_pdf) = left_to_bounces(pdf_bsdf, seen(wi));
+        let density = sample.pdf * p_select;
+        share = passing + (1.0 - passing) * mis_power(density, seen_pdf);
     }
     out.direct_visible += throughput * unshadowed * visibility;
 
@@ -4957,5 +5398,297 @@ mod tests {
             }
         }
         assert!(worst > -1e-3, "a reflection fell {worst} short of its promise");
+    }
+
+    // ---- Lamps in mirrors, and parts that cast no shadow ------------------
+
+    /// What `samples` paths along `ray` bring back on average, and how much
+    /// one path's differs from that: its noise.
+    fn seen_along(intersector: &AnalyticIntersector, config: &IntegratorConfig, ray: Ray, samples: u32) -> (f32, f32) {
+        let (mut sum, mut squares) = (0.0f64, 0.0f64);
+        for i in 0..samples {
+            let mut sampler = Sampler::new(3, 5, i, 17);
+            let seen = trace_path(intersector, config, ray, Vec2::ZERO, &mut sampler).radiance.g as f64;
+            sum += seen;
+            squares += seen * seen;
+        }
+        let mean = sum / samples as f64;
+        let deviation = (squares / samples as f64 - mean * mean).max(0.0).sqrt();
+        (mean as f32, deviation as f32)
+    }
+
+    /// A metal that mirrors all of the light at every angle.
+    fn perfect_mirror() -> Material {
+        let mut mirror = Material::metal(metals::ALUMINIUM, 0.0);
+        mirror.metal_ior = ComplexIor { n: Spectrum::splat(1.0), k: Spectrum::splat(1e6) };
+        mirror
+    }
+
+    /// A square lamp of `radiance`, `half` across, at `at`, facing `facing`.
+    fn panel_lamp(at: Vec3, facing: Vec3, half: f32, radiance: f32) -> crate::light::AreaLight {
+        let across = if facing.y.abs() < 0.9 { Vec3::Y.cross(facing).normalize() } else { Vec3::X.cross(facing).normalize() };
+        let up = facing.cross(across).normalize();
+        // Wound so that it faces `facing`.
+        let (half_u, half_v) = if across.cross(up).dot(facing) > 0.0 { (across * half, up * half) } else { (up * half, across * half) };
+        crate::light::AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI }
+    }
+
+    fn with_lamps(scene: SceneSnapshot, lamps: Vec<crate::light::Light>) -> SceneSnapshot {
+        scene.with_lights(Arc::new(crate::light::LightSet::new(lamps)))
+    }
+
+    /// The camera, which looks at the floor's origin.
+    const EYE: Vec3 = Vec3 { x: 0.0, y: 1.0, z: 2.0 };
+
+    /// The way the floor's origin mirrors the camera.
+    fn mirrored_from_origin() -> Vec3 {
+        vec3(0.0, 1.0, -2.0).normalize()
+    }
+
+    /// A mirror-smooth floor shows a lamp the camera does not see, as a
+    /// reflection: all of its radiance where the reflected ray meets it.
+    /// Off a mirror-smooth lobe no light sample can find it, and until now
+    /// no bounce could either - a lamp showed in a mirror only by its
+    /// stand-in, which only a lamp the camera sees has, so a softbox kept out
+    /// of the picture for the reflections was missing from a chrome part.
+    #[test]
+    fn a_mirror_shows_a_lamp_the_camera_does_not_see() {
+        use crate::light::{Light, LightKind, Visibility};
+        let mirrored = mirrored_from_origin();
+        let lamp = Light::new(LightKind::Area(panel_lamp(mirrored * 2.5, -mirrored, 0.3, 10.0))).with_visibility(Visibility::HIDDEN);
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![perfect_mirror()], Arc::new(Environment::uniform(Spectrum::ZERO)));
+        let intersector = AnalyticIntersector::new(with_lamps(scene, vec![lamp])).with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+        let ray = Ray::new(EYE, (-EYE).normalize());
+        let (seen, _) = seen_along(&intersector, &IntegratorConfig::product(), ray, 4);
+        println!("the lamp in the mirror: {seen:.4} (its radiance 10)");
+        assert!((seen - 10.0).abs() < 0.05, "a mirror shows a lamp of radiance 10 at {seen:.4}");
+    }
+
+    /// A lamp in a mirror seen in another mirror: the floor mirrors a mirror
+    /// wall, which mirrors the lamp.
+    #[test]
+    fn a_mirror_seen_in_a_mirror_shows_the_lamp() {
+        use crate::light::{Light, LightKind};
+        let mirrored = mirrored_from_origin();
+        // The wall 1.5 behind the floor's origin; the floor's reflection
+        // meets it here and turns back up towards the lamp.
+        let on_wall = mirrored * (1.5 / -mirrored.z);
+        let back = vec3(mirrored.x, mirrored.y, -mirrored.z);
+        let lamp = Light::new(LightKind::Area(panel_lamp(on_wall + back * 2.0, -back, 0.3, 10.0)));
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![perfect_mirror()], Arc::new(Environment::uniform(Spectrum::ZERO)));
+        let intersector = AnalyticIntersector::new(with_lamps(scene, vec![lamp]))
+            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)))
+            .with_plane(Plane::new(vec3(0.0, 0.0, -1.5), Vec3::Z, tequila_core::ids::MaterialId(0)));
+        let ray = Ray::new(EYE, (-EYE).normalize());
+        let (seen, _) = seen_along(&intersector, &IntegratorConfig::product(), ray, 4);
+        println!("the lamp in a mirror in a mirror: {seen:.4} (its radiance 10)");
+        assert!((seen - 10.0).abs() < 0.05, "a mirror in a mirror shows a lamp of radiance 10 at {seen:.4}");
+    }
+
+    /// The sun, with a disc, in a chrome floor: the disc's radiance, its
+    /// illuminance over the cone it spans.
+    #[test]
+    fn a_chrome_floor_shows_the_sun() {
+        use crate::light::{DistantLight, Light, LightKind};
+        let mirrored = mirrored_from_origin();
+        let half_angle = 3f32.to_radians();
+        let sun = Light::new(LightKind::Distant(DistantLight { direction: -mirrored, irradiance: Spectrum::splat(5.0), half_angle }));
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![perfect_mirror()], Arc::new(Environment::uniform(Spectrum::ZERO)));
+        let intersector = AnalyticIntersector::new(with_lamps(scene, vec![sun])).with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+        let ray = Ray::new(EYE, (-EYE).normalize());
+        let (seen, _) = seen_along(&intersector, &IntegratorConfig::product(), ray, 4);
+        let disc = 5.0 / (std::f32::consts::PI * half_angle.sin() * half_angle.sin());
+        println!("the sun in chrome: {seen:.2} (the disc's radiance {disc:.2})");
+        assert!((seen / disc - 1.0).abs() < 1e-3, "chrome shows the sun at {seen:.2}, its disc being {disc:.2}");
+    }
+
+    /// A diffuse floor lit by a lamp's reflection in a mirror wall, as by the
+    /// lamp's image behind the wall: the light a mirror throws, which no
+    /// light sample finds and only a bounce off the floor into the mirror
+    /// can. A lamp has no geometry, and that bounce never met it, so a lamp
+    /// beside a mirror lit the floor as if the mirror were not there. Met
+    /// exactly, with path regularization off, it is the image's light; with
+    /// it on, as by default, the mirror past the floor's bounce is blurred
+    /// (`filtered_roughness`), the light it throws spread a little wider and
+    /// far smoother.
+    #[test]
+    fn a_floor_is_lit_by_a_lamp_in_a_mirror() {
+        use crate::light::{Light, LightKind};
+        // The floor point, between the lamp and the wall; the lamp 1.5 up,
+        // facing the wall, which mirrors it 2 behind itself.
+        let point = vec3(0.0, 0.0, -0.5);
+        let lamp = panel_lamp(vec3(0.0, 1.5, 0.0), -Vec3::Z, 0.5, 4.0);
+        let image = panel_lamp(vec3(0.0, 1.5, -2.0), Vec3::Z, 0.5, 4.0);
+        let exact = IntegratorConfig { max_bounces: 2, regularization_roughness: 0.0, ..IntegratorConfig::product() };
+        let blurred = IntegratorConfig { max_bounces: 2, ..IntegratorConfig::product() };
+        let ray = Ray::new(point + vec3(3.0, 1.0, 0.0), vec3(-3.0, -1.0, 0.0).normalize());
+        let floor = Material::diffuse(Spectrum::splat(0.5));
+        let mirrored = |config: &IntegratorConfig| {
+            let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![floor.clone(), perfect_mirror()], Arc::new(Environment::uniform(Spectrum::ZERO)));
+            let intersector = AnalyticIntersector::new(with_lamps(scene, vec![Light::new(LightKind::Area(lamp))]))
+                .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)))
+                .with_plane(Plane::new(vec3(0.0, 0.0, -1.0), Vec3::Z, tequila_core::ids::MaterialId(1)));
+            seen_along(&intersector, config, ray, 40_000)
+        };
+        let imaged = {
+            let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![floor.clone()], Arc::new(Environment::uniform(Spectrum::ZERO)));
+            let lamps = vec![Light::new(LightKind::Area(lamp)), Light::new(LightKind::Area(image))];
+            let intersector = AnalyticIntersector::new(with_lamps(scene, lamps)).with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            seen_along(&intersector, &exact, ray, 40_000).0
+        };
+        let ((sharp, sharp_noise), (soft, soft_noise)) = (mirrored(&exact), mirrored(&blurred));
+        println!("the floor beside a mirror {sharp:.4} (noise {sharp_noise:.3}), lit by the lamp and its image {imaged:.4}; blurred {soft:.4} (noise {soft_noise:.3})");
+        assert!((sharp / imaged - 1.0).abs() < 0.05, "beside a mirror the floor is {sharp:.4}, lit by the lamp and its image {imaged:.4}");
+        assert!((soft / imaged - 1.0).abs() < 0.3, "beside a blurred mirror the floor is {soft:.4}, lit by the lamp and its image {imaged:.4}");
+        assert!(soft_noise < 0.5 * sharp_noise, "the blurred mirror's light is as noisy as the sharp one's: {soft_noise:.3} against {sharp_noise:.3}");
+    }
+
+    /// A scene of a floor and a part above it: the part away, casting
+    /// shadows, casting none, or left out of the lamp's shadows.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Part {
+        Absent,
+        Casting,
+        CastingNone,
+        LeftOutOfLinks,
+    }
+
+    /// A diffuse floor under a uniform sky keeps the sky a part that casts no
+    /// shadow would hide. A shadow ray passes such a part, so the floor's
+    /// light sample counts the sky behind it; the floor's bounce stopped at
+    /// it, and the sky's share by MIS that the bounce was left was lost - most
+    /// of it, for a sky sampled no more densely than a diffuse floor's own
+    /// bounces: the part cast nearly its whole shadow after all.
+    #[test]
+    fn a_floor_keeps_the_sky_a_part_that_casts_no_shadow_would_hide() {
+        let lit = |part: Part| {
+            let mut sphere = crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(1));
+            sphere.casts_shadows = part != Part::CastingNone;
+            let floor = crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0));
+            let scene = SceneSnapshot::new(
+                Vec::new(),
+                vec![sphere, floor],
+                vec![Material::diffuse(Spectrum::splat(0.8)), Material::diffuse(Spectrum::ZERO)],
+                Arc::new(Environment::uniform(Spectrum::ONE)),
+            );
+            // Absent: under the floor, where nothing above it sees it.
+            let centre = if part == Part::Absent { vec3(0.0, -50.0, 0.0) } else { vec3(0.0, 1.2, 0.0) };
+            let intersector = AnalyticIntersector::new(scene)
+                .with_sphere(Sphere::new(centre, 1.0, tequila_core::ids::MaterialId(1)))
+                .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            let ray = Ray::new(vec3(10.0, 0.5, 0.0), vec3(-10.0, -0.5, 0.0).normalize());
+            seen_along(&intersector, &IntegratorConfig::product(), ray, 20_000).0
+        };
+        let (open, passed, shadowed) = (lit(Part::Absent), lit(Part::CastingNone), lit(Part::Casting));
+        println!("the floor in the open {open:.4}, under a part casting no shadow {passed:.4}, under one casting it {shadowed:.4}");
+        assert!(shadowed < 0.5 * open, "the part's shadow is missing: {shadowed:.4} against {open:.4}");
+        assert!((passed / open - 1.0).abs() < 0.02, "under a part that casts no shadow the floor is {passed:.4}, in the open {open:.4}");
+    }
+
+    /// A glossy floor mirrors a lamp past a part that casts no shadow, or
+    /// none of that lamp's (shadow linking), as it mirrors it in the open:
+    /// its light sample passes the part, and so now does its bounce, which
+    /// met the lamp only in front of the part and lost the share of the
+    /// lamp MIS had left it. The part is black, so all the floor shows there
+    /// is the lamp.
+    #[test]
+    fn a_glossy_floor_mirrors_a_lamp_past_a_part_that_casts_no_shadow() {
+        use crate::light::{Light, LightKind, LightLinks};
+        let mirrored = mirrored_from_origin();
+        let mirrors = |part: Part| {
+            let mut sphere = crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(1));
+            sphere.casts_shadows = part != Part::CastingNone;
+            let floor = crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0));
+            let mut lamp = Light::new(LightKind::Area(panel_lamp(mirrored * 2.5, -mirrored, 0.3, 10.0)));
+            if part == Part::LeftOutOfLinks {
+                lamp.shadow_links = LightLinks::AllBut(Arc::from(vec![0u32]));
+            }
+            let scene = SceneSnapshot::new(
+                Vec::new(),
+                vec![sphere, floor],
+                vec![Material::metal(metals::SILVER, 0.1), Material::diffuse(Spectrum::ZERO)],
+                Arc::new(Environment::uniform(Spectrum::ZERO)),
+            );
+            let centre = if part == Part::Absent { vec3(0.0, -50.0, 0.0) } else { mirrored * 1.2 };
+            let intersector = AnalyticIntersector::new(with_lamps(scene, vec![lamp]))
+                .with_sphere(Sphere::new(centre, 0.25, tequila_core::ids::MaterialId(1)))
+                .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            seen_along(&intersector, &IntegratorConfig::product(), Ray::new(EYE, (-EYE).normalize()), 20_000)
+        };
+        let (open, open_noise) = mirrors(Part::Absent);
+        let (shadowed, _) = mirrors(Part::Casting);
+        println!("the lamp in the floor in the open {open:.4} (noise {open_noise:.3}), behind a part casting its shadow {shadowed:.4}");
+        assert!(shadowed < 0.1 * open, "the part casting shadows hid little of the lamp: {shadowed:.4} against {open:.4}");
+        for part in [Part::CastingNone, Part::LeftOutOfLinks] {
+            let (passed, noise) = mirrors(part);
+            println!("  {part:?}: {passed:.4} (noise {noise:.3})");
+            assert!((passed / open - 1.0).abs() < 0.03, "{part:?}: the floor mirrors the lamp past the part at {passed:.4}, in the open {open:.4}");
+            assert!(noise < 1.5 * open_noise, "{part:?}: the lamp past the part is noisier, {noise:.3} against {open_noise:.3}");
+        }
+    }
+
+    /// A lamp that casts no shadow at all is mirrored by a glossy floor as
+    /// smoothly as one that casts them: the floor's bounces meet it too, past
+    /// what is in their way as its shadow rays pass it. Its light sample
+    /// alone found it before, on so narrow a lobe as specks.
+    #[test]
+    fn a_lamp_that_casts_no_shadow_is_mirrored_smoothly() {
+        use crate::light::{Light, LightKind};
+        let mirrored = mirrored_from_origin();
+        let mirrors = |shadow: bool| {
+            let mut lamp = Light::new(LightKind::Area(panel_lamp(mirrored * 2.5, -mirrored, 0.3, 10.0)));
+            lamp.visibility.shadow = shadow;
+            let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![Material::metal(metals::SILVER, 0.1)], Arc::new(Environment::uniform(Spectrum::ZERO)));
+            let intersector = AnalyticIntersector::new(with_lamps(scene, vec![lamp])).with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            seen_along(&intersector, &IntegratorConfig::product(), Ray::new(EYE, (-EYE).normalize()), 20_000)
+        };
+        let (casting, casting_noise) = mirrors(true);
+        let (none, none_noise) = mirrors(false);
+        println!("a lamp casting shadows {casting:.4} (noise {casting_noise:.3}), one casting none {none:.4} (noise {none_noise:.3})");
+        assert!((none / casting - 1.0).abs() < 0.03, "a lamp casting no shadow is mirrored at {none:.4}, one casting them at {casting:.4}");
+        assert!(none_noise < 1.5 * casting_noise, "a lamp casting no shadow is mirrored with noise {none_noise:.3}, one casting them {casting_noise:.3}");
+    }
+
+    /// A reflecting floor that fades its reflection by how near the product
+    /// is shows a part that casts no shadow as it shows one that does: the
+    /// nearness is how much the floor sees of what stands on it, not a
+    /// shadow, and measured as one, a part casting none was not near at all
+    /// and was left out of the reflection.
+    #[test]
+    fn a_floor_fading_its_reflection_by_distance_shows_a_part_that_casts_no_shadow() {
+        let share = |casts_shadows: bool| {
+            let mut ball = crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0));
+            ball.casts_shadows = casts_shadows;
+            let mut floor = crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0));
+            let catcher = ShadowCatcher {
+                reflections: 1.0,
+                reflection_fade: Some(0.5),
+                reflection_fade_by_distance: true,
+                ..ShadowCatcher::default()
+            };
+            floor.shadow_catcher = Some(catcher.clone());
+            let scene = SceneSnapshot::new(Vec::new(), vec![ball, floor], vec![Material::diffuse(Spectrum::splat(0.5))], Arc::new(Environment::uniform(Spectrum::ONE)));
+            let intersector = AnalyticIntersector::new(scene)
+                .with_sphere(Sphere::new(vec3(0.0, 0.3, 0.0), 0.3, tequila_core::ids::MaterialId(0)))
+                .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+            // The floor just in front of the ball, seen from in front and
+            // above, mirroring the ball's lower front.
+            let at = vec3(0.0, 0.0, 0.35);
+            let eye = vec3(0.0, 0.4, 1.5);
+            let view = (at - eye).normalize();
+            let hit = intersector.intersect(&Ray::new(eye, view)).expect("the floor is in view");
+            let mut total = 0.0;
+            for i in 0..2000 {
+                let mut sampler = Sampler::new(1, 1, i, 3);
+                if let Some((_, share)) = floor_reflection(&intersector, &IntegratorConfig::product(), &hit, &catcher, view, Vec3::Y, &mut sampler) {
+                    total += share;
+                }
+            }
+            total / 2000.0
+        };
+        let (casting, none) = (share(true), share(false));
+        println!("the reflection's share beside a ball casting shadows {casting:.4}, one casting none {none:.4}");
+        assert!(casting > 0.2, "the floor hardly mirrors the ball: {casting:.4}");
+        assert!((none / casting - 1.0).abs() < 0.05, "the floor mirrors a ball casting no shadow at {none:.4}, one casting them at {casting:.4}");
     }
 }

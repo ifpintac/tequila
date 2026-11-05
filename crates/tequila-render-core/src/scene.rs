@@ -72,6 +72,16 @@ pub struct Fibres {
     /// A number from 0 to 1 per fibre, drawn when it was grown: how much of
     /// the material's colour variation darkens this fibre.
     pub random: Vec<f32>,
+    /// Each fibre's own colour, in the rendering space, where the
+    /// material's Sheen Color varies over the part - a printed texture, a
+    /// pattern: the colour the surface has where the fibre is rooted, so a
+    /// velvet's print or a fur's stripes are in its fibres too. Empty when
+    /// the colour is the same everywhere, and every fibre wears the
+    /// material's own.
+    pub colors: Vec<Spectrum>,
+    /// Each fibre's own roughness where the Sheen Roughness varies over the
+    /// part, taken as its colour is; empty when it is the same everywhere.
+    pub roughness: Vec<f32>,
 }
 
 impl Fibres {
@@ -86,6 +96,26 @@ impl Fibres {
 
     pub fn segment_count(&self) -> usize {
         self.count() * Self::SEGMENTS
+    }
+
+    /// Fibre `fibre`'s own colour, if the fibres carry colours.
+    pub fn color(&self, fibre: usize) -> Option<Spectrum> {
+        self.colors.get(fibre).copied()
+    }
+
+    /// Fibre `fibre`'s own roughness, if the fibres carry roughnesses.
+    pub fn roughness(&self, fibre: usize) -> Option<f32> {
+        self.roughness.get(fibre).copied()
+    }
+
+    /// What the fibres hold, in bytes: what a part's fur costs before any
+    /// renderer has built its own structures over it.
+    pub fn bytes(&self) -> usize {
+        self.points.len() * std::mem::size_of::<Vec3>()
+            + self.radii.len() * 4
+            + self.random.len() * 4
+            + self.colors.len() * std::mem::size_of::<Spectrum>()
+            + self.roughness.len() * 4
     }
 
     /// The first point of segment `segment`; the next is its other end.
@@ -118,6 +148,11 @@ pub struct FibreHit {
     pub offset: f32,
     /// The fibre's own random number ([`Fibres::random`]).
     pub random: f32,
+    /// The fibre's own colour and roughness, where the material's vary over
+    /// the part ([`Fibres::colors`], [`Fibres::roughness`]); `None` where
+    /// the fibre wears the material's.
+    pub color: Option<Spectrum>,
+    pub roughness: Option<f32>,
 }
 
 impl Mesh {
@@ -438,6 +473,20 @@ pub struct SceneSnapshot {
     panes: PaneCache,
     /// Where the glass that bends light is ([`SceneSnapshot::bending_bounds`]).
     bending: BendingCache,
+    /// Whether a part casts no shadow ([`SceneSnapshot::has_shadowless_parts`]).
+    shadowless: ShadowlessCache,
+}
+
+/// [`SceneSnapshot::has_shadowless_parts`], worked out once a render rather
+/// than once a path walking every instance. A copy starts without it, as
+/// [`EmitterCache`] does.
+#[derive(Debug, Default)]
+struct ShadowlessCache(std::sync::OnceLock<bool>);
+
+impl Clone for ShadowlessCache {
+    fn clone(&self) -> Self {
+        ShadowlessCache::default()
+    }
 }
 
 /// [`SceneSnapshot::bending_bounds`], worked out once. A copy starts
@@ -780,6 +829,7 @@ impl SceneSnapshot {
             dispersive: DispersionCache::default(),
             panes: PaneCache::default(),
             bending: BendingCache::default(),
+            shadowless: ShadowlessCache::default(),
             materials,
         }
     }
@@ -864,6 +914,15 @@ impl SceneSnapshot {
                 None => disperses(material),
             })
         })
+    }
+
+    /// Whether some part casts no shadow, other than a light's stand-in,
+    /// which every path but the camera's passes anyway: what decides whether
+    /// the integrator looks past the part a path stops at for the light its
+    /// shadow rays let by (`integrator::light_past`). Nearly every scene has
+    /// none.
+    pub fn has_shadowless_parts(&self) -> bool {
+        *self.shadowless.0.get_or_init(|| self.instances.iter().any(|i| !i.casts_shadows && !i.light_proxy))
     }
 
     /// Whether a surface of this instance stops a shadow ray. One with its
@@ -1019,7 +1078,15 @@ impl SceneSnapshot {
             .unwrap_or_else(|| tequila_core::math::Onb::from_normal(tangent).t);
         let across = facing.cross(tangent);
         let offset = if radius > 0.0 { ((hit.position - centre).dot(across) / radius).clamp(-1.0, 1.0) } else { 0.0 };
-        Some(FibreHit { tangent, facing, offset, random: fibres.random[segment / Fibres::SEGMENTS] })
+        let fibre = segment / Fibres::SEGMENTS;
+        Some(FibreHit {
+            tangent,
+            facing,
+            offset,
+            random: fibres.random[fibre],
+            color: fibres.color(fibre),
+            roughness: fibres.roughness(fibre),
+        })
     }
 
     /// The mean curvature at a hit, in inverse scene units, interpolated
