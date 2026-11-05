@@ -62,6 +62,7 @@ mod recent;
 mod render_frame;
 mod render_window;
 mod scene_tab;
+mod self_test;
 mod procedural_gpu;
 mod solid_gpu;
 mod start_screen;
@@ -470,6 +471,8 @@ struct TequilaApp {
     uv_editor: uv_editor::UvEditor,
     /// What went wrong last time, or in a worker just now, or from Help.
     crash_window: crash::CrashWindow,
+    /// Help > Test this computer.
+    self_test: self_test::SelfTest,
     /// The status line last noted for a crash report.
     noted_status: String,
     show_hud: bool,
@@ -919,6 +922,7 @@ impl TequilaApp {
             show_about: false,
             uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
+            self_test: self_test::SelfTest::default(),
             noted_status: String::new(),
             show_hud: false,
             viewport_paused: false,
@@ -1564,6 +1568,7 @@ impl eframe::App for TequilaApp {
         if self.recoverable.is_empty() {
             self.crash_window.ui(ctx);
         }
+        self.self_test.ui(ctx);
         self.update_report_window(ctx);
         self.model_units_window(ctx);
         self.improve_model_window(ctx);
@@ -1664,7 +1669,11 @@ impl eframe::App for TequilaApp {
         // until something is edited, and repainting it sixty times a second
         // burns a core to display a static picture — in the one mode a person
         // chose *because* the machine was busy.
+        // And while Help > Test this computer runs, which times the
+        // processor and the graphics cards: the viewport's render would be
+        // racing it for both.
         let suspended = self.viewport_paused
+            || self.self_test.running()
             || (self.batch.is_running() && self.shading != orchestrator::Shading::Fast)
             || ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         self.orchestrator.set_paused(suspended);
@@ -3210,6 +3219,14 @@ impl TequilaApp {
                     ui.separator();
                     if ui.button("Crash reports").on_hover_text("What happened when Tequila stopped unexpectedly, to copy for Discord").clicked() {
                         self.crash_window.browse();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .button("Test this computer...")
+                        .on_hover_text("A few minutes of checks of the processor, the graphics cards, the denoisers and the viewport, with a report to share on Discord")
+                        .clicked()
+                    {
+                        self.self_test.open = true;
                         ui.close_menu();
                     }
                     let label = self.updates.menu_label();

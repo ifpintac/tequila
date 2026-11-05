@@ -322,6 +322,9 @@ pub struct UiChange {
     pub appearance: Option<bool>,
     /// Help > About Tequila, open.
     pub about: Option<bool>,
+    /// Help > Test this computer, open and running: opening it starts the
+    /// checks, unless they are running already.
+    pub self_test: Option<bool>,
     /// The start screen, open.
     pub start_screen: Option<bool>,
     /// Help > Check for updates, open. Opening it asks GitHub for the
@@ -1184,6 +1187,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             about: opt_bool(value, "about")?,
             start_screen: opt_bool(value, "start_screen")?,
             updates: opt_bool(value, "updates")?,
+            self_test: opt_bool(value, "self_test")?,
             connect: opt_bool(value, "connect")?,
             uv_editor: opt_bool(value, "uv_editor")?,
             uv: value.get("uv").map(uv_editor_change).transpose()?,

@@ -53,6 +53,28 @@ Questions, bugs, ideas and renders: join the
 Tequila is free, with no account, no licence key and no ads. If it saves you
 time, you can support it on **[Ko-fi](https://ko-fi.com/ifpintac)**.
 
+## Testing Tequila on your computer
+
+Tequila is made on a Windows PC with one NVIDIA card, and tested on GitHub's
+Windows and Mac machines. If yours is something else - an AMD graphics card,
+several cards, an Intel or Apple-silicon Mac, Linux - you can help:
+
+1. Choose **Help > Test this computer** and wait a minute or two (longer
+   the first time a graphics card is used, while it prepares). It renders a
+   small scene with every engine and graphics card it finds, times each and
+   checks the picture against a reference, then tries the denoisers and the
+   viewport.
+2. Click **Copy the report** and paste it into the
+   [Tequila Discord](https://discord.gg/Na5T2qgQBX).
+
+Tequila sends nothing anywhere itself, and the report names no one: no user
+or computer name, no file paths, serial numbers or network addresses - just
+the system, processor, memory, graphics cards and drivers, and how each check
+went. The report and the pictures are also kept in `.tequila/self-test` in
+your home folder. From a terminal it is `tequila-cli --self-test` (beside
+Tequila once installed; `Tequila.app/Contents/MacOS/tequila-cli` on a Mac),
+with `--cpu-only` to leave the graphics cards out.
+
 ## What it does
 
 <p>

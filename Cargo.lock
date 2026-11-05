@@ -4076,6 +4076,7 @@ dependencies = [
  "tequila-render-cycles",
  "tequila-scene",
  "tequila-scripting",
+ "tequila-texture",
 ]
 
 [[package]]
