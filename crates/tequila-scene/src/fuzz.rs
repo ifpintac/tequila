@@ -15,6 +15,17 @@
 //! move with the part, and they wear the part's material: the renderers
 //! shade them with a fibre's BSDF in the fuzz colour and roughness.
 //!
+//! Two settings make them a pile rather than a fur. `clump` gathers
+//! neighbours into locks, as a hairy suede's nap mats or a sheepskin's wool
+//! tufts: clumps are grown first, each with a fibre of its own, and every
+//! fibre is drawn toward its nearest clump's shape, carried over to its own
+//! root and narrowing evenly to the clump's tip, taking most of its shade
+//! too. `comb` lays fibres the
+//! same way as their neighbours, along a smooth field of directions over
+//! the part that holds over a few centimetres and turns between. Both draw
+//! from random streams of their own, so fibres asked for without them come
+//! out exactly as they did before either existed.
+//!
 //! Fibres are a lot of geometry, so the count is capped at [`MOST`]: past
 //! that, a large part gets fewer, sparser fibres rather than a scene that
 //! will not build.
@@ -89,8 +100,21 @@ pub fn grow(mesh: &RenderMesh, scale: f32, request: &FuzzRequest) -> Option<Rend
     }
 
     let mut random = SplitMix(u64::from(request.seed) ^ 0x5eed_f022);
-    let lean = request.lean().clamp(0.0, 1.0);
-    let curl = request.curl().clamp(0.0, 1.0);
+    let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+    let clump = unit(request.clump());
+    let comb = unit(request.comb());
+    let surface = Surface { mesh, triangles: &triangles, running: &running, total, flip_winding, flip_normals };
+    let shape = Shape {
+        lean: request.lean().clamp(0.0, 1.0),
+        curl: request.curl().clamp(0.0, 1.0),
+        length,
+        comb,
+        field: (comb > 0.0).then(|| CombField::new(request.seed, COMB_PATCH / scale)),
+    };
+    // The clumps' own fibres, each the one its clump gathers to. Drawn from
+    // a stream of their own, so fibres asked for without clumping, or
+    // without combing, come out exactly as they always have.
+    let clumps = (clump > 0.0).then(|| Clumps::grow(&surface, &shape, n, request.seed));
     let segments = Fibres::SEGMENTS;
     let mut fibres = Fibres {
         points: Vec::with_capacity(n * Fibres::POINTS),
@@ -98,10 +122,66 @@ pub fn grow(mesh: &RenderMesh, scale: f32, request: &FuzzRequest) -> Option<Rend
         random: Vec::with_capacity(n),
     };
     for _ in 0..n {
-        // A root, evenly by area.
-        let pick = random.unit() as f64 * total;
-        let index = running.partition_point(|&r| r < pick).min(triangles.len() - 1);
-        let [ia, ib, ic] = triangles[index];
+        let (root, normal) = surface.sample(&mut random);
+        let mut points = shape.fibre(&mut random, root, normal);
+        // Gathered into the nearest clump: its own fibre's shape, carried
+        // over to this root and narrowing evenly to its tip, so a clump is a
+        // lock that tapers, not a tuft pinched in at its base. The root
+        // stays where it grew.
+        let mut shade = None;
+        if let Some(guide) = clumps.as_ref().and_then(|c| c.nearest(root)) {
+            let offset = root - guide.points[0];
+            for (point, at) in points.iter_mut().enumerate().skip(1) {
+                let along = point as f32 / segments as f32;
+                let lock = guide.points[point] + offset * (1.0 - along);
+                *at = *at + (lock - *at) * clump;
+            }
+            shade = Some(guide.random);
+        }
+        for (point, at) in points.iter().enumerate() {
+            let along = point as f32 / segments as f32;
+            fibres.points.push(*at);
+            fibres.radii.push(radius * (1.0 - (1.0 - TIP) * along));
+        }
+        // A clump's fibres share most of its shade, so a clump reads as one
+        // lock, lighter or darker than the next.
+        let own = random.unit();
+        fibres.random.push(match shade {
+            Some(theirs) => own + (theirs - own) * clump * 0.75,
+            None => own,
+        });
+    }
+    Some(RenderMesh::of_fibres(fibres))
+}
+
+/// How wide a clump is, as a share of the fibres' length: a lock of
+/// hairy suede about half as wide as it is long.
+const CLUMP_RADIUS: f32 = 0.45;
+
+/// How wide a combed patch is, in scene units (metres): the nap of a hide
+/// lies one way over a few centimetres, then turns.
+const COMB_PATCH: f32 = 0.04;
+
+/// The most clumps one part has, past which they are larger than asked.
+const MOST_CLUMPS: usize = 60_000;
+
+/// The mesh, for spreading roots over it evenly by area.
+struct Surface<'a> {
+    mesh: &'a RenderMesh,
+    triangles: &'a [[u32; 3]],
+    running: &'a [f64],
+    total: f64,
+    flip_winding: bool,
+    flip_normals: bool,
+}
+
+impl Surface<'_> {
+    /// A point on the surface, evenly by area, and which way is out there.
+    fn sample(&self, random: &mut SplitMix) -> (Vec3, Vec3) {
+        let mesh = self.mesh;
+        let pick = random.unit() as f64 * self.total;
+        let index = self.running.partition_point(|&r| r < pick).min(self.triangles.len() - 1);
+        let [ia, ib, ic] = self.triangles[index];
         let (a, b, c) = (mesh.positions[ia as usize], mesh.positions[ib as usize], mesh.positions[ic as usize]);
         let (mut u, mut v) = (random.unit(), random.unit());
         if u + v > 1.0 {
@@ -109,39 +189,171 @@ pub fn grow(mesh: &RenderMesh, scale: f32, request: &FuzzRequest) -> Option<Rend
             v = 1.0 - v;
         }
         let root = a + (b - a) * u + (c - a) * v;
-        let face = if flip_winding { (c - a).cross(b - a) } else { (b - a).cross(c - a) };
+        let face = if self.flip_winding { (c - a).cross(b - a) } else { (b - a).cross(c - a) };
         let normal = if mesh.normals.len() == mesh.positions.len() {
             let n = mesh.normals[ia as usize] * (1.0 - u - v) + mesh.normals[ib as usize] * u + mesh.normals[ic as usize] * v;
-            let n = if flip_normals { -n } else { n };
+            let n = if self.flip_normals { -n } else { n };
             n.try_normalize().unwrap_or_else(|| face.normalize())
         } else {
             face.try_normalize().unwrap_or(Vec3::Y)
         };
+        (root, normal)
+    }
+}
+
+/// How a fibre stands, leans and bends, in mesh units.
+struct Shape {
+    lean: f32,
+    curl: f32,
+    length: f32,
+    comb: f32,
+    field: Option<CombField>,
+}
+
+impl Shape {
+    /// One fibre's points, root to tip.
+    fn fibre(&self, random: &mut SplitMix, root: Vec3, normal: Vec3) -> [Vec3; Fibres::POINTS] {
+        let segments = Fibres::SEGMENTS;
         let (t, s) = perpendiculars(normal);
-        // Leaning a random way, by up to `lean` of a near-flat 80 degrees.
+        // Leaning a random way, by up to `lean` of a near-flat 80 degrees;
+        // combed, mostly the way the nap lies here, and laid down evenly,
+        // nearly as far as `lean` says rather than anywhere up to it.
         let azimuth = random.unit() * std::f32::consts::TAU;
-        let tilt = lean * (0.35 + 0.65 * random.unit()) * 80f32.to_radians();
-        let sideways = t * azimuth.cos() + s * azimuth.sin();
+        let spread = 0.35 + 0.65 * random.unit();
+        let spread = spread + (1.0 - spread) * self.comb * 0.8;
+        let tilt = self.lean * spread * 80f32.to_radians();
+        let mut sideways = t * azimuth.cos() + s * azimuth.sin();
+        if let Some(along) = self.field.as_ref().and_then(|f| f.along(root, normal)) {
+            sideways = (sideways * (1.0 - self.comb) + along * self.comb).try_normalize().unwrap_or(along);
+        }
         let mut direction = (normal * tilt.cos() + sideways * tilt.sin()).normalize();
         // Bending about an axis across the fibre, a little more each step,
         // the axis itself turning a little so a curl is not flat.
         let mut bend_axis = normal.cross(sideways).try_normalize().unwrap_or(t);
-        let bend = curl * (0.4 + 0.6 * random.unit()) * 35f32.to_radians();
-        let twist = curl * (random.unit() * 2.0 - 1.0) * 40f32.to_radians();
-        let step = length * (0.7 + 0.6 * random.unit()) / segments as f32;
+        let bend = self.curl * (0.4 + 0.6 * random.unit()) * 35f32.to_radians();
+        let twist = self.curl * (random.unit() * 2.0 - 1.0) * 40f32.to_radians();
+        let step = self.length * (0.7 + 0.6 * random.unit()) / segments as f32;
 
+        let mut points = [Vec3::ZERO; Fibres::POINTS];
         let mut at = root;
-        for point in 0..Fibres::POINTS {
-            let along = point as f32 / segments as f32;
-            fibres.points.push(at);
-            fibres.radii.push(radius * (1.0 - (1.0 - TIP) * along));
+        for point in points.iter_mut() {
+            *point = at;
             at = at + direction * step;
             direction = rotate(direction, bend_axis, bend).normalize();
             bend_axis = rotate(bend_axis, direction, twist).normalize();
         }
-        fibres.random.push(random.unit());
+        points
     }
-    Some(RenderMesh::of_fibres(fibres))
+}
+
+/// Which way the nap lies across a part: a smooth field of directions, a
+/// steady drift with a few long waves over it, so it holds one way over a
+/// patch and turns a little between patches.
+///
+/// The drift runs along the part's diagonal. Where it stands straight out
+/// of the surface the waves alone are left, and turn the nap round in
+/// whorls; along the diagonal, that is at a corner of a part modelled along
+/// its axes, never across a face - not a top, whichever way is up, and not
+/// a side.
+struct CombField {
+    waves: [(Vec3, f32, Vec3); 4],
+}
+
+/// The drift, a unit vector along the diagonal.
+const DRIFT: Vec3 = tequila_core::math::vec3(0.577_350_3, 0.577_350_3, 0.577_350_3);
+
+/// How far the waves turn the nap from the drift: a third of it, so a
+/// patch's nap wanders by a few tens of degrees and never doubles back.
+const WANDER: f32 = 0.3;
+
+impl CombField {
+    /// Patches `patch` mesh units across.
+    fn new(seed: u32, patch: f32) -> CombField {
+        let mut random = SplitMix(u64::from(seed) ^ 0xc0_4b_f1e1d);
+        let direction = |random: &mut SplitMix| {
+            // Uniform on the sphere.
+            let z = random.unit() * 2.0 - 1.0;
+            let angle = random.unit() * std::f32::consts::TAU;
+            let r = (1.0 - z * z).max(0.0).sqrt();
+            tequila_core::math::vec3(r * angle.cos(), r * angle.sin(), z)
+        };
+        let frequency = std::f32::consts::TAU / patch.max(1e-9);
+        let waves = std::array::from_fn(|_| {
+            let k = direction(&mut random) * frequency;
+            let phase = random.unit() * std::f32::consts::TAU;
+            (k, phase, direction(&mut random) * WANDER)
+        });
+        CombField { waves }
+    }
+
+    /// The way the nap lies at `p`, along the surface; `None` where the
+    /// field stands straight out of it.
+    fn along(&self, p: Vec3, normal: Vec3) -> Option<Vec3> {
+        let mut f = DRIFT;
+        for (k, phase, amplitude) in &self.waves {
+            f = f + *amplitude * (k.dot(p) + phase).sin();
+        }
+        let flat = f - normal * normal.dot(f);
+        (flat.length() > 1e-3 * f.length()).then(|| flat.normalize())
+    }
+}
+
+/// A clump's own fibre, which the fibres around it gather to.
+struct Guide {
+    points: [Vec3; Fibres::POINTS],
+    random: f32,
+}
+
+/// The clumps over a part, and a grid to find the nearest by.
+struct Clumps {
+    cell: f32,
+    guides: Vec<Guide>,
+    grid: std::collections::HashMap<(i32, i32, i32), Vec<u32>>,
+}
+
+impl Clumps {
+    /// Clumps [`CLUMP_RADIUS`] of a fibre's length across, spread evenly
+    /// by area; at least four fibres each and at most [`MOST_CLUMPS`].
+    fn grow(surface: &Surface, shape: &Shape, fibres: usize, seed: u32) -> Clumps {
+        let radius = (CLUMP_RADIUS * shape.length).max(1e-9);
+        let wanted = surface.total / (std::f64::consts::PI * (radius as f64).powi(2));
+        let count = (wanted.round() as usize).clamp(1, (fibres / 4).max(1)).min(MOST_CLUMPS);
+        // Fewer clumps than wanted are larger: found within their own size.
+        let radius = radius * (wanted / count as f64).max(1.0).sqrt() as f32;
+        let mut random = SplitMix(u64::from(seed) ^ 0xc10b_5eed);
+        let mut clumps = Clumps { cell: 2.0 * radius, guides: Vec::with_capacity(count), grid: Default::default() };
+        for index in 0..count {
+            let (root, normal) = surface.sample(&mut random);
+            let points = shape.fibre(&mut random, root, normal);
+            clumps.guides.push(Guide { points, random: random.unit() });
+            clumps.grid.entry(clumps.key(root)).or_default().push(index as u32);
+        }
+        clumps
+    }
+
+    fn key(&self, p: Vec3) -> (i32, i32, i32) {
+        let k = |x: f32| (x / self.cell).floor() as i32;
+        (k(p.x), k(p.y), k(p.z))
+    }
+
+    /// The clump whose root is nearest `p`, if one is within a cell of it.
+    fn nearest(&self, p: Vec3) -> Option<&Guide> {
+        let (x, y, z) = self.key(p);
+        let mut best: Option<(f32, u32)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for &index in self.grid.get(&(x + dx, y + dy, z + dz)).into_iter().flatten() {
+                        let d = (self.guides[index as usize].points[0] - p).length_squared();
+                        if best.is_none_or(|(b, _)| d < b) {
+                            best = Some((d, index));
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|(_, index)| &self.guides[index as usize])
+    }
 }
 
 /// Two unit vectors perpendicular to `n` and to each other.
@@ -185,8 +397,99 @@ mod tests {
             thickness_bits: 0.00002f32.to_bits(),
             lean_bits: lean.to_bits(),
             curl_bits: curl.to_bits(),
+            clump_bits: 0f32.to_bits(),
+            comb_bits: 0f32.to_bits(),
             seed: 3,
         }
+    }
+
+    fn clumped(length: f32, density: f32, lean: f32, clump: f32, comb: f32) -> FuzzRequest {
+        FuzzRequest { clump_bits: clump.to_bits(), comb_bits: comb.to_bits(), ..request(length, density, lean) }
+    }
+
+    /// For a sample of fibres, the fibre whose root is nearest each one's.
+    fn neighbours(fibres: &Fibres, sample: usize) -> Vec<(usize, usize)> {
+        let roots: Vec<Vec3> = fibres.points.chunks_exact(Fibres::POINTS).map(|f| f[0]).collect();
+        let step = (roots.len() / sample).max(1);
+        (0..roots.len())
+            .step_by(step)
+            .map(|i| {
+                let j = (0..roots.len())
+                    .filter(|&j| j != i)
+                    .min_by(|&a, &b| (roots[a] - roots[i]).length_squared().total_cmp(&(roots[b] - roots[i]).length_squared()))
+                    .unwrap();
+                (i, j)
+            })
+            .collect()
+    }
+
+    /// Clumping gathers neighbours' tips together, more the more it is
+    /// asked, while their roots stay where they grew and nothing dips into
+    /// the part: the tips of fibres side by side end far apart unclumped,
+    /// close together clumped.
+    #[test]
+    fn fibres_gather_into_clumps_as_asked() {
+        let sphere = crate::demo::uv_sphere(1.0, 64, 32);
+        // Tips' spread over roots' spread, between neighbours.
+        let spread = |clump: f32| {
+            let fur = grow(&sphere, 0.02, &clumped(0.002, 300.0, 0.7, clump, 0.0)).expect("fibres");
+            let fibres = fibres_of(&fur);
+            let at = |i: usize, k: usize| fibres.points[i * Fibres::POINTS + k];
+            let (mut tips, mut roots) = (0.0f32, 0.0f32);
+            for (i, j) in neighbours(fibres, 400) {
+                roots += (at(i, 0) - at(j, 0)).length();
+                tips += (at(i, Fibres::POINTS - 1) - at(j, Fibres::POINTS - 1)).length();
+            }
+            for fibre in fibres.points.chunks_exact(Fibres::POINTS) {
+                assert!((fibre[0].length() - 1.0).abs() < 0.01, "a root off the surface: {:?}", fibre[0]);
+                assert!(fibre.iter().all(|p| p.length() >= fibre[0].length() - 1e-4), "a fibre dips into the part");
+            }
+            tips / roots
+        };
+        let (apart, loose, tight) = (spread(0.0), spread(0.5), spread(1.0));
+        assert!(apart > 2.0, "unclumped neighbours' tips {apart} times as far apart as their roots");
+        assert!(loose < 0.75 * apart && tight < 0.6 * loose, "clumping 0, 0.5, 1: tips {apart}, {loose}, {tight} times their roots");
+    }
+
+    /// Combed fibres lie the same way as their neighbours; uncombed, each
+    /// its own way.
+    #[test]
+    fn combed_fibres_lie_the_same_way() {
+        let sphere = crate::demo::uv_sphere(1.0, 64, 32);
+        // How alike neighbours' leans are along the surface, 1 the same way.
+        let agreement = |comb: f32| {
+            let fur = grow(&sphere, 0.05, &clumped(0.002, 30.0, 0.8, 0.0, comb)).expect("fibres");
+            let fibres = fibres_of(&fur);
+            let lean = |i: usize| {
+                let (root, next) = (fibres.points[i * Fibres::POINTS], fibres.points[i * Fibres::POINTS + 1]);
+                let n = root.normalize();
+                let d = next - root;
+                (d - n * n.dot(d)).normalize()
+            };
+            let pairs = neighbours(fibres, 400);
+            pairs.iter().map(|&(i, j)| lean(i).dot(lean(j))).sum::<f32>() / pairs.len() as f32
+        };
+        let (free, combed) = (agreement(0.0), agreement(1.0));
+        assert!(free.abs() < 0.15, "uncombed neighbours agree by {free}");
+        assert!(combed > 0.85, "combed neighbours agree by only {combed}");
+    }
+
+    /// Fibres asked for without clumping or combing grow exactly as they did
+    /// before either existed: the same roots, the same shapes, the same
+    /// shades, so no saved render changes.
+    #[test]
+    fn unclumped_uncombed_fibres_are_unchanged() {
+        let sphere = crate::demo::uv_sphere(1.0, 32, 16);
+        let fur = grow(&sphere, 1.0, &request_with(0.05, 0.5, 0.6, 0.4)).expect("fibres");
+        let fibres = fibres_of(&fur);
+        // The first fibre and shade, as the generator drew them before
+        // clumping: its own stream, root, lean and bend, in that order.
+        let mut random = SplitMix(3u64 ^ 0x5eed_f022);
+        let mut draws: Vec<f32> = (0..9).map(|_| random.unit()).collect();
+        let shade = draws.pop().unwrap();
+        assert_eq!(fibres.random[0], shade);
+        let root = fibres.points[0];
+        assert!((root.length() - 1.0).abs() < 0.01);
     }
 
     fn fibres_of(mesh: &RenderMesh) -> &Fibres {

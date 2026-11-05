@@ -145,6 +145,14 @@ pub struct Material {
     /// How much darker than the fuzz colour a fibre may be, 0 (all alike) to
     /// 1 (anything down to black).
     pub fuzz_color_variation: f32,
+    /// How far fibres growing near each other gather into clumps, tip to
+    /// tip, 0 (each stands on its own) to 1 (each clump ends in a point):
+    /// the matted locks of a hairy suede or a sheepskin.
+    pub fuzz_clump: f32,
+    /// How far fibres lie the same way as their neighbours, 0 (each its own
+    /// way) to 1 (combed, in patches a few centimetres across): a nap
+    /// brushed one way.
+    pub fuzz_comb: f32,
 
     // --- thin film -------------------------------------------------------
     pub thin_film_weight: f32,
@@ -289,6 +297,8 @@ impl Default for Material {
             fuzz_lean: 0.35,
             fuzz_curl: 0.3,
             fuzz_color_variation: 0.2,
+            fuzz_clump: 0.0,
+            fuzz_comb: 0.0,
 
             thin_film_weight: 0.0,
             thin_film_thickness: 500.0,
@@ -724,6 +734,8 @@ impl Material {
         self.fuzz_lean = unit(self.fuzz_lean);
         self.fuzz_curl = unit(self.fuzz_curl);
         self.fuzz_color_variation = unit(self.fuzz_color_variation);
+        self.fuzz_clump = unit(self.fuzz_clump);
+        self.fuzz_comb = unit(self.fuzz_comb);
 
         self.thin_film_weight = unit(self.thin_film_weight);
         self.thin_film_thickness = if self.thin_film_thickness.is_finite() {

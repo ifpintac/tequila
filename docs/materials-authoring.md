@@ -83,6 +83,11 @@ stays readable and diffable.
 - Metals name their measured optics rather than giving numbers:
   `"metal_preset": "Aluminium"` (also Silver, Gold, Copper, Chromium, Iron,
   Nickel, Titanium, Tungsten, Platinum).
+- A material read along a strip's own UVs - a lace's braid, a tape's rib, a
+  thread's twist - says how much of the strip one UV unit is, in metres:
+  `"preview_uv_unit": 0.02`. Its library thumbnail then shows the pattern at
+  that size on the preview ball, rather than stretched round it once. Only
+  the thumbnail reads it; most presets have none.
 
 ### Patterns, the short way
 

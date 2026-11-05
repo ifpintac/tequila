@@ -47,8 +47,8 @@ impl Default for Swatch {
 }
 
 /// The quick pass and the clean one.
-const ROUGH: PreviewSettings = PreviewSettings { size: 112, samples: 6, shape: PreviewShape::Sphere, radius: PREVIEW_RADIUS };
-const CLEAN: PreviewSettings = PreviewSettings { size: 256, samples: 64, shape: PreviewShape::Sphere, radius: PREVIEW_RADIUS };
+const ROUGH: PreviewSettings = PreviewSettings { size: 112, samples: 6, shape: PreviewShape::Sphere, radius: PREVIEW_RADIUS, uv_unit: None };
+const CLEAN: PreviewSettings = PreviewSettings { size: 256, samples: 64, shape: PreviewShape::Sphere, radius: PREVIEW_RADIUS, uv_unit: None };
 
 impl Swatch {
     fn start(&mut self, ctx: &egui::Context) {

@@ -5371,6 +5371,12 @@ impl TequilaApp {
                 if !is_light {
                     let mut tab = std::mem::take(&mut self.material_tab);
                     tab.library_categories = tequila_format::library::categories(self.library.entries());
+                    tab.library_strips = self
+                        .library
+                        .entries()
+                        .iter()
+                        .filter_map(|entry| entry.preview_uv_unit.map(|unit| (entry.name.clone(), unit)))
+                        .collect();
                     // So the Place button can show as held down while the
                     // viewport is in that mode. Read before the panel draws,
                     // written back after it asks for a change.
