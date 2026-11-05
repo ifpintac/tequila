@@ -9,8 +9,9 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn scratch() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tequila-self-test-{}", std::process::id()));
+/// A folder of its own for each test: they run at once.
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tequila-self-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
@@ -18,7 +19,7 @@ fn scratch() -> PathBuf {
 
 #[test]
 fn the_report_is_written_and_names_no_one() {
-    let dir = scratch();
+    let dir = scratch("report");
     let folder = dir.join("run");
     let result = Command::new(env!("CARGO_BIN_EXE_tequila")).args(["--self-test", "--facts-only", "-o"]).arg(&folder).output().expect("the test runs");
     let said = String::from_utf8_lossy(&result.stdout).into_owned();
@@ -47,7 +48,7 @@ fn the_report_is_written_and_names_no_one() {
 /// in reported as a crash with what the application saw.
 #[test]
 fn a_stopped_run_is_carried_on_and_its_crash_reported() {
-    let dir = scratch().join("resume");
+    let dir = scratch("resume").join("run");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("results.tsv"), "started\tfacts\noutcome\tfacts\tpass\t-\t-\t-\t-\tfacts\t\nstarted\ttequila-cpu\n").unwrap();
     // Only what is cheap runs: the scene's renders are left to CI.

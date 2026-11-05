@@ -1171,10 +1171,10 @@ mod tests {
 
     #[test]
     fn the_difference_is_zero_for_the_same_picture_and_grows_with_a_change() {
-        let a: Vec<u8> = (0..16 * 8).flat_map(|i| [(i * 2) as u8, 100, 50, 255]).collect();
+        let a: Vec<u8> = (0..16 * 8).flat_map(|i| [(i % 100) as u8, 100, 50, 255]).collect();
         assert_eq!(difference(&a, &a, 16, 8, 4), 0.0);
         // Every channel 51 out (20% of full scale): 20% at any block size.
-        let b: Vec<u8> = a.chunks_exact(4).flat_map(|p| [p[0].saturating_add(51), p[1] + 51, p[2] + 51, 255]).collect();
+        let b: Vec<u8> = a.chunks_exact(4).flat_map(|p| [p[0] + 51, p[1] + 51, p[2] + 51, 255]).collect();
         assert!((difference(&a, &b, 16, 8, 1) - 20.0).abs() < 0.01);
         assert!((difference(&a, &b, 16, 8, 4) - 20.0).abs() < 0.01);
         // Noise that averages out within a block nearly vanishes at 4.
