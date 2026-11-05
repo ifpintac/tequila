@@ -627,7 +627,7 @@
  },
  {
   "name": "tequila_import",
-  "description": "Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, OBJ, STL, USD (.usda) or IFC. Not FBX: ask for glTF, OBJ or USD instead.",
+  "description": "Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda) or IFC.",
   "inputSchema": {
    "type": "object",
    "properties": {

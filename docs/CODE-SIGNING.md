@@ -99,8 +99,8 @@ Answers for the Foundation's form, as they stand:
 - **Licence**: Apache-2.0 (OSI-approved)
 - **What it is**: a free product-rendering application for Windows and
   macOS, for making studio pictures of 3D models: CAD import (STEP, IGES,
-  glTF, OBJ, STL, USD, IFC), physically based materials, Cycles and its
-  own path tracer, labels, environments, and scripting.
+  glTF, FBX, OBJ, STL, 3MF, PLY, USD, IFC), physically based materials,
+  Cycles and its own path tracer, labels, environments, and scripting.
 - **Releases**: published on GitHub since 2026-10-17, announced on the
   project's Discord.
 - **What is to be signed**: the Windows installer and update installer,

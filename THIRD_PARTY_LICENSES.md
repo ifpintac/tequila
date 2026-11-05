@@ -121,7 +121,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | `bcdec_rs` | MIT | Block-compressed (BC1 to BC7) DDS textures |
 | `jxl-oxide`, `jxl-bitstream`, `jxl-coding`, `jxl-color`, `jxl-frame`, `jxl-grid`, `jxl-image`, `jxl-jbr`, `jxl-modular`, `jxl-oxide-common`, `jxl-render`, `jxl-threadpool`, `jxl-vardct` | MIT OR Apache-2.0 | JPEG XL textures |
 | `brotli-decompressor`, `alloc-no-stdlib`, `alloc-stdlib`, `tracing`, `tracing-core` | BSD-3-Clause OR MIT (alloc-*: BSD-3-Clause; tracing: MIT) | `jxl-oxide`'s own dependencies |
-| `resvg`, `usvg`, `svgtypes`, `simplecss`, `roxmltree`, `kurbo`, `data-url`, `imagesize`, `xmlwriter`, `euclid`, `siphasher`, `pico-args` | MIT OR Apache-2.0 (imagesize, xmlwriter, pico-args: MIT) | SVG artwork, rasterized (`tequila-texture`) |
+| `resvg`, `usvg`, `svgtypes`, `simplecss`, `roxmltree`, `kurbo`, `data-url`, `imagesize`, `xmlwriter`, `euclid`, `siphasher`, `pico-args` | MIT OR Apache-2.0 (imagesize, xmlwriter, pico-args: MIT) | SVG artwork, rasterized (`tequila-texture`); `roxmltree` also reads 3MF models (`tequila-import`) |
 | `tiny-skia`, `tiny-skia-path`, `arrayref` | BSD-3-Clause (arrayref: BSD-2-Clause) | resvg's rasterizer |
 | `fontdb`, `fontconfig-parser`, `rustybuzz`, `ttf-parser`, `unicode-bidi`, `unicode-bidi-mirroring`, `unicode-ccc`, `unicode-properties`, `unicode-script`, `unicode-vo`, `core_maths`, `memmap2` | MIT OR Apache-2.0 (fontdb, fontconfig-parser, rustybuzz, core_maths: MIT) | The system's fonts, for text in SVG artwork |
 | `zune-jpeg`, `zune-core`, `rgb`, `strict-num`, `float-cmp` | MIT OR Apache-2.0 OR Zlib (rgb, strict-num, float-cmp: MIT) | Pictures embedded in SVG artwork, and resvg's own dependencies |
@@ -139,6 +139,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | `truck-stepio` (vendored in `vendor/truck-stepio` with one fix, see its `TEQUILA-PATCH.md`), `truck-base`, `truck-geometry`, `truck-geotrait`, `truck-topology`, `truck-modeling`, `truck-polymesh`, `truck-meshalgo`, `truck-derivers` | Apache-2.0 | STEP import: B-rep conversion and tessellation (`tequila-import`) |
 | `ruststep`, `ruststep-derive` | Apache-2.0 | Parsing STEP exchange files |
 | `spade`, `robust` | MIT OR Apache-2.0 | Constrained Delaunay triangulation of STEP faces |
+| `ufbx` | MIT OR Unlicense; builds [ufbx](https://github.com/ufbx/ufbx) 0.23 (one C file, MIT OR Unlicense) from source with `cc` | FBX import (`tequila-import`) |
 | `cgmath`, `approx`, `matext4cgmath` | Apache-2.0 | truck's linear algebra |
 | `nom`, `derive_more`, `derive-new`, `convert_case`, `winnow`, `branches` | MIT | STEP parsing and derives |
 | `Inflector` | BSD-2-Clause | Name conversion in `ruststep-derive` (build time) |

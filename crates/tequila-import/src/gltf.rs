@@ -367,6 +367,7 @@ fn image_source(
                 uri: uri.to_string(),
                 role,
                 embedded: None,
+                elsewhere: None,
             });
         }
     }
@@ -417,6 +418,7 @@ fn image_source(
         uri: format!("{}.{extension}", embedded_name(image, image_index)),
         role,
         embedded: Some(std::sync::Arc::new(bytes)),
+        elsewhere: None,
     })
 }
 

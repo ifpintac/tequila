@@ -98,6 +98,13 @@ pub struct RawTexture {
     /// Reading still touches no filesystem: this is bytes already in hand
     /// from the container, not a file that was opened.
     pub embedded: Option<std::sync::Arc<Vec<u8>>>,
+    /// Another place the file names the same image, tried when [`uri`]
+    /// does not resolve: an FBX's absolute path beside its relative one,
+    /// for a model moved away from its pictures on the machine that made
+    /// it. `None` for a format that names one.
+    ///
+    /// [`uri`]: RawTexture::uri
+    pub elsewhere: Option<String>,
 }
 
 impl RawTexture {

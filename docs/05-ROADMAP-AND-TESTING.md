@@ -106,7 +106,7 @@ that does not assume the thing it is testing.
 ### M1 — Scene, document, and I/O foundation
 - [x] `SceneDocument`, `SceneTree`, `GeometryStore` with instancing (§03 §2).
 - [x] Command bus, undo/redo, dirty classification, command journal (§04 §8).
-- [x] Import: OBJ, STL, glTF/GLB with the full post-process pipeline (§03 §6.1). **FBX is out of scope** — see note 2.
+- [x] Import: OBJ, STL, glTF/GLB with the full post-process pipeline (§03 §6.1). PLY, 3MF and FBX joined them on November 5 — see note 2, which records why FBX, once out of scope, is in.
 - [x] Instancing detection by content hash.
 - [x] Scene units with both conversion modes (§03 §3).
 - [x] `.tequila` container: write, read, schema validation, version migration hook (§03 §4).
@@ -136,23 +136,34 @@ Recorded per §2. Six deviations, all deliberate:
    exit criterion is written against. Strict `==` remains correct for the
    save/reopen round trip, where the counters are in the file.
 
-2. **No Assimp, and FBX is out of scope.** §03 §6.1 names Assimp and eight
-   formats. OBJ, STL and glTF/GLB are implemented directly, for the same
-   reason the HDR and EXR readers are (M0 note 2): the library crates carry no
-   third-party Rust dependencies, and a C++ build dependency to reach three
-   formats of a few hundred lines each is a poor trade.
+2. **No Assimp.** §03 §6.1 names Assimp and eight formats. OBJ, STL and
+   glTF/GLB are implemented directly, for the same reason the HDR and EXR
+   readers are (M0 note 2): a C++ build dependency to reach formats of a few
+   hundred lines each is a poor trade. PLY and 3MF followed the same way on
+   November 5 (`tequila-import/src/ply.rs`, `three_mf.rs`).
 
-   **FBX is a separate decision, and the answer is no.** It is Autodesk's
-   proprietary format — undocumented, with no published specification, and
-   reachable only through their own SDK or a reverse-engineered reader.
-   §0.2 already puts the equivalent proprietary CAD formats out of scope
-   for exactly this reason, and FBX belongs with them. The cost to a user is
-   small: every tool that writes FBX also writes glTF, OBJ or USD, so this is
-   one export menu rather than a lost model. The importer refuses it by name
-   and says which formats to use instead, rather than failing as though the
-   file were corrupt.
+   **FBX was a separate decision, first no, now yes.** The first answer was
+   that FBX is Autodesk's proprietary format — undocumented, with no
+   published specification — and so reachable only through their own SDK or
+   a reverse-engineered reader, which put it beside the proprietary CAD
+   formats §0.2 rules out; the importer refused it by name and said which
+   formats to use instead.
 
-   PLY, 3DS, Collada and 3MF remain M8's business alongside the CAD kernels.
+   *Reversed, November 5.* The owner put FBX on the roadmap, and the
+   objection no longer holds: ufbx (github.com/ufbx/ufbx) is an open-source
+   FBX reader, one C file under MIT or the Unlicense, maintained and tested
+   against a large corpus of real files, that reads binary and ASCII FBX
+   from 6.1 to 7.7 and gets the undocumented parts right — pivots, pre- and
+   post-rotation, Maya's segment scale compensation, geometric transforms,
+   the axis system and the unit scale. Tequila reads FBX through its Rust
+   bindings (the `ufbx` crate, MIT OR Unlicense, built with `cc`); there is
+   still no Autodesk SDK anywhere in the build or the package, and §0.2's
+   rule about proprietary CAD kernels is unchanged. The refusal is gone; an
+   FBX that ufbx cannot read is reported as a malformed file, with ufbx's
+   own reason. What is read and what is left out is §03 §6.1's as-built
+   note.
+
+   3DS and Collada remain M8's business alongside the CAD kernels.
 
 3. **Instancing hashes topology, not positions.** §03 §6.4 says to hash
    `(positions, indices)` after translating to the centroid. That cannot work

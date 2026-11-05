@@ -84,9 +84,9 @@ with `--cpu-only` to leave the graphics cards out.
 </p>
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, Rhino
-  (`.3dm`, with its layers, materials and blocks), glTF/GLB,
-  OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
-  colours and units, and a CAD file's attributes and layers (shown and
+  (`.3dm`, with its layers, materials and blocks), glTF/GLB, FBX,
+  OBJ (with ZBrush polypaint), STL, 3MF, PLY, USD and IFC, with assemblies,
+  names, colours and units, and a CAD file's attributes and layers (shown and
   hidden as groups); very large models; re-tessellate and re-import that
   keep your work. Send models from Blender (live), SolidWorks and ZBrush
   ([integrations](integrations)). Open KeyShot scenes (`.ksp`, `.bip`) with

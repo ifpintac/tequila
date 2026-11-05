@@ -1,6 +1,6 @@
 [package]
 name = "tequila-import"
-description = "Geometry import: OBJ, STL, glTF/GLB, STEP, and the post-process pipeline"
+description = "Geometry import: OBJ, STL, PLY, 3MF, FBX, glTF/GLB, STEP, and the post-process pipeline"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -31,6 +31,13 @@ truck-meshalgo = { version = "0.4", default-features = false, features = ["tesse
 # IFC profiles and faces with holes: constrained Delaunay, as truck uses.
 spade = "2"
 truck-topology = "0.6"
+# 3MF: the model inside the package is XML. roxmltree already comes with
+# usvg (tequila-texture's SVG reader), so this adds no crate. MIT OR
+# Apache-2.0.
+roxmltree = "0.20"
+# FBX: ufbx, the open-source FBX reader in one C file, through its Rust
+# bindings. MIT OR Unlicense; built with `cc`, as the bindings ship it.
+ufbx = "0.11"
 
 [dev-dependencies]
 # Tests build B-spline surfaces of their own (step.rs, face_alone_tests).

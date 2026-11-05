@@ -4140,6 +4140,7 @@ dependencies = [
  "flate2",
  "png 0.17.16",
  "rayon",
+ "roxmltree",
  "ruststep",
  "spade",
  "tequila-color",
@@ -4153,6 +4154,7 @@ dependencies = [
  "truck-meshalgo",
  "truck-stepio",
  "truck-topology",
+ "ufbx",
 ]
 
 [[package]]
@@ -4622,6 +4624,15 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ufbx"
+version = "0.11.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "260522f1eb74139f0e78b29dd82a58e5437d728c5498024a39e5af7282694240"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

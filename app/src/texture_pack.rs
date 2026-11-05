@@ -280,7 +280,7 @@ pub fn classify_drop(path: &Path) -> Dropped {
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "3dm" | "usda" | "usd" | "ifc" => Dropped::Model,
+        model if tequila_import::MODEL_EXTENSIONS.contains(&model) => Dropped::Model,
         "tequila" | "freeshot" => Dropped::Project,
         "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.
@@ -520,6 +520,9 @@ mod tests {
         assert_eq!(classify_drop(Path::new("C:/models/bracket.STEP")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/models/kettle.3DM")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/models/headset.glb")), Dropped::Model);
+        for model in ["C:/models/rig.FBX", "C:/models/plate.3mf", "C:/scans/statue.ply"] {
+            assert_eq!(classify_drop(Path::new(model)), Dropped::Model, "{model}");
+        }
         assert_eq!(classify_drop(Path::new("C:/work/shot.tequila")), Dropped::Project);
         assert_eq!(classify_drop(Path::new("C:/work/speaker.KSP")), Dropped::Scene);
         assert_eq!(classify_drop(Path::new("C:/work/speaker.bip")), Dropped::Scene);

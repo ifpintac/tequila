@@ -598,6 +598,12 @@ fn unit_label(unit: tequila_core::units::LengthUnit) -> &'static str {
     }
 }
 
+/// What the Import dialog's Models filter offers: every model format the
+/// importer reads, and KeyShot scenes, which an import brings in too.
+fn importable() -> Vec<&'static str> {
+    tequila_import::MODEL_EXTENSIONS.iter().copied().chain(["ksp", "bip"]).collect()
+}
+
 /// The notice when the viewport could not use Cycles: what happened, what
 /// it does instead, and what usually fixes it, with Cycles' own words last.
 fn fallback_notice(why: &str) -> String {
@@ -3359,7 +3365,7 @@ impl TequilaApp {
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.render_button(ui);
-                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, OBJ, STL, USD and IFC", "Ctrl + I")
+                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, FBX, OBJ, STL, 3MF, PLY, USD and IFC", "Ctrl + I")
                         .clicked()
                     {
                         self.ask_for_file(Action::Import);
@@ -4703,7 +4709,7 @@ impl TequilaApp {
         let chosen = match action {
             Action::Import => dialog
                 .set_title("Import model")
-                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "ifc", "ksp", "bip"])
+                .add_filter("Models", &importable())
                 .add_filter("Rhino model", &["3dm"])
                 .add_filter("KeyShot scene", &["ksp", "bip"])
                 .add_filter("All files", &["*"])
@@ -5100,7 +5106,7 @@ impl TequilaApp {
             (_, recorded) => {
                 let mut dialog = rfd::FileDialog::new()
                     .set_title("Update model from")
-                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "ifc", "ksp", "bip"]);
+                    .add_filter("Models", &importable());
                 if let Some(folder) = recorded.as_ref().and_then(|p| p.parent()) {
                     dialog = dialog.set_directory(folder);
                 }
