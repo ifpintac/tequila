@@ -543,8 +543,8 @@ Alembic deformation import serve neither.
 - [x] UV editor (§04 §7.1), shipped in three stages in v2026.11.01.1340.
       *November 5, the leftovers.* **Pins** are kept on the part
       (`SceneNode::uv_pins`, `uv/pins.rs`), set by set, and written into
-      the project as `uv_pins`. A new command, `uv.set_pins` (catalog 73),
-      puts them down and takes them up, so Pin, Unpin, Clear and Rectangle's
+      the project as `uv_pins`. A new command, `uv.set_pins` (catalog 74
+      with Substance's `material.set_substance`), puts them down and takes them up, so Pin, Unpin, Clear and Rectangle's
       border pins are each a step to undo. The layout's own edits carry the
       pins by the corners they sat at: a set copied takes its pins with it,
       a set deleted loses them, and an unwrap or a new set (both number the

@@ -600,9 +600,9 @@ impl Images<'_> {
                 }
                 let member = parts.join("/");
                 let bytes = zip.get(&member)?;
-                Some(RawTexture { uri: member.replace('/', "_"), role, embedded: Some(std::sync::Arc::new(bytes.to_vec())) })
+                Some(RawTexture { uri: member.replace('/', "_"), role, embedded: Some(std::sync::Arc::new(bytes.to_vec())), elsewhere: None })
             }
-            None => Some(RawTexture { uri: asset.to_string(), role, embedded: None }),
+            None => Some(RawTexture { uri: asset.to_string(), role, embedded: None, elsewhere: None }),
         }
     }
 }

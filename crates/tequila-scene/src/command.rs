@@ -1221,7 +1221,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 73] = [
+    pub const CATALOG: [&'static str; 74] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",

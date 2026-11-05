@@ -104,7 +104,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-73 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+74 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
