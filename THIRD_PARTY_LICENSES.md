@@ -130,6 +130,7 @@ POSSIBILITY OF SUCH DAMAGE.
 | `rustls-pki-types`, `zeroize` | MIT OR Apache-2.0 | TLS certificate types; wiping key material |
 | `rustls-webpki`, `untrusted` | ISC | Certificate verification |
 | `ring` | Apache-2.0 AND ISC | Cryptography for TLS |
+| `hidapi` (Windows and macOS builds) | MIT; on a Mac it builds the HIDAPI C library, used under its BSD-style licence (it offers GPL-3.0, BSD or its original licence) | Reading a 3D mouse's HID reports (`app/src/spacemouse`) |
 | `subtle` | BSD-3-Clause | Constant-time comparisons for TLS |
 | `webpki-roots` | CDLA-Permissive-2.0 | Mozilla's root certificates |
 | `vdb-rs` (vendored in `vendor/vdb-rs` with one fix, see its `TEQUILA-PATCH.md`) | MIT | Reading OpenVDB volumes for Volume Maps (`tequila-texture`) |

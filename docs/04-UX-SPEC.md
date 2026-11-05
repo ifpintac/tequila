@@ -223,6 +223,21 @@ Standard tree conventions: expand/collapse, `Shift` range-select, drag-to-repare
 
 Ship alternative navigation presets emulating SolidWorks, Rhino, Blender, Maya, and Fusion 360, selectable in Preferences. This is a five-minute feature that removes a real adoption barrier.
 
+#### 6.1.1 3D mouse
+
+A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans and zooms the view with one hand while the other keeps the mouse, as in CAD applications. The cap moves the model: push it right and the model goes right, lift it and the model rises, pull it toward you and the model comes closer; twist it and the model turns about the vertical, tilt it forward and the model tips away. The two main buttons step to the next Studio (the left, Menu on the larger devices) and fit the view (the right, Fit). Its settings are in Edit > Preferences (§12).
+
+*As built, November 5* (`app/src/spacemouse/`): **untested on a device** - none was at hand; everything below is held by tests that feed it synthetic reports.
+- **Reading it, without 3Dconnexion's SDK.** On Windows and macOS the device's own HID reports are read on a thread of its own through `hidapi` (Windows' HID calls; IOKit on a Mac), from the first 3Dconnexion device on its multi-axis interface (usage page 1, usage 8): any device under 3Dconnexion's vendor id 0x256F, and the named SpaceMouse family under Logitech's 0x046D (SpaceNavigator, SpaceExplorer, SpacePilot and Pro, SpaceMouse Pro and Classic, and the rest). On Windows any number of programs read a HID device at once, so it works beside 3Dconnexion's driver, 3DxWare; if 3DxWare also acts on Tequila (scrolling or zooming the view itself), turn its own actions off for Tequila. On a Mac 3DxWare takes the device for itself and nothing else can read it while it runs; without it, Tequila opens the device for itself, which also keeps macOS from moving the pointer with it. 3Dconnexion's `3DconnexionClient.framework`, which Blender loads when it is installed, was left out: its interface and event layout are defined only by the SDK's header. On Linux, and on a Mac where it runs, the reader talks to spacenavd over its socket (`$SPNAV_SOCKET`, `$XDG_RUNTIME_DIR/spnav.sock` or `/var/run/spnav.sock`), protocol 0, as libspnav does without asking for more. A device unplugged is looked for again every two seconds.
+- **The reports.** Report 1 with six bytes is translation and report 2 rotation (the older devices); report 1 with twelve is all six at once (the newer wireless ones and the Enterprise), told by its length; report 3 is the buttons, bit 0 the left and bit 1 the right. Each axis is a signed 16-bit number, full deflection about 350. The device's X right, Y toward the person and Z down become the view's x right, y up and z out of the screen, and each rotation follows its axis. spacenavd's numbers are the device's, unless its own configuration swaps or inverts them.
+- **The camera.** Each frame the axes go through the dead zone (taken out of the middle of each axis, so full deflection still gives the full rate), a gentle curve (half the rate at half way), the inverts and, when asked, only the strongest axis. They are then smoothed with a 50 ms lag and moved by their exact mean over the frame, so the view moves alike at 30 frames a second and at 144. At full deflection and speed 1:
+  - turning, 1.6 radians a second, about the selection's centre or the model's (chosen when a motion starts; the camera swings round it without the view jumping) or about the view's centre;
+  - panning, 1.2 times the height the view frames at that point a second, so the model crosses the view alike near and far;
+  - zooming, the distance changed by a factor of e^1.5 a second, as the wheel's zoom is a share a notch.
+
+  The orbit camera keeps the horizon level, as the mouse's orbit does, so the roll is read and shown and moves nothing. The window keeps drawing while the cap is off centre, and each report wakes it. A motion that comes to rest is one step to undo. A motion never put back at rest is dropped after two seconds, so a lost report cannot leave the view turning.
+- **Buttons.** Fit view frames the selection, or everything (`F`). Next and Previous Studio apply the Studios in turn, stepping through the saved cameras when there are none. Either button can also do nothing.
+
 ### 6.2 Command hotkeys (defaults)
 
 | Key | Action | Key | Action |
@@ -411,6 +426,17 @@ Unlimited by default (configurable), with a visible history panel listing named 
 ---
 
 ## 12. Preferences
+
+*As built, November 5:* Edit > Preferences opens a window with the 3D mouse's settings, kept in `3d-mouse.txt` beside the person's library:
+- on or off, with the device found shown;
+- speed (0.1 to 4);
+- dead zone (0 to 40%);
+- what turning goes about;
+- only the strongest axis;
+- each axis inverted, with a live bar of what the view takes from it;
+- what the two buttons do.
+
+The other sections below are not built yet.
 
 Sections: **General** (language, autosave interval, undo depth, startup scene) · **Interface** (theme light/dark, UI scale, panel layout presets, tooltips) · **Navigation** (application preset, invert axes, sensitivity) · **Hotkeys** (§6.3) · **Colour Management** (OCIO config path, display transform, view transform per output) · **Units** (default scene unit, display precision) · **Rendering** (default backend, GPU device selection, CPU thread count, texture cache size, default lighting preset) · **Folders** (library, output, temp, autosave) · **Advanced** (developer overlays, shading-language cache, telemetry off by default and opt-in only).
 

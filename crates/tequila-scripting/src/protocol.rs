@@ -261,6 +261,29 @@ pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", 
 /// A `studio_preset.apply` naming an installed preset by `id` rather than
 /// carrying it: the preset read in, so the command is whole - what the
 /// journal records, and what replays.
+/// `{"reports": [[1, 0, 0, ...], ...], "seconds": 1}`: each report a list
+/// of bytes, 0 to 255.
+fn spacemouse_input(value: &Value) -> Result<SpaceMouseInput, ProtocolError> {
+    let bad = || ProtocolError("`spacemouse` is {\"reports\": [[id, byte, ...], ...], \"seconds\": n}, each byte 0 to 255".into());
+    let mut reports = Vec::new();
+    for report in value.get("reports").map(|r| r.as_array()).unwrap_or(&[]) {
+        let mut bytes = Vec::new();
+        for byte in report.as_array() {
+            let b = byte.as_index().filter(|b| *b < 256).ok_or_else(bad)?;
+            bytes.push(b as u8);
+        }
+        if bytes.is_empty() || bytes.len() > 64 {
+            return Err(bad());
+        }
+        reports.push(bytes);
+    }
+    let seconds = match value.get("seconds") {
+        None => 0.0,
+        Some(v) => v.as_f32().filter(|s| s.is_finite() && *s >= 0.0).ok_or_else(bad)?,
+    };
+    Ok(SpaceMouseInput { reports, seconds })
+}
+
 fn with_preset(command: Value) -> Result<Value, ProtocolError> {
     if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
         return Ok(command);
@@ -337,6 +360,21 @@ pub struct UiChange {
     /// The Material Graph editor: `Some(Some(material))` opens it on that
     /// material, `Some(None)` (from `false`) closes it.
     pub graph: Option<Option<u64>>,
+    /// The Preferences window (the 3D mouse's settings), open.
+    pub preferences: Option<bool>,
+    /// A 3D mouse's input, made up: reports as a device would send them.
+    pub spacemouse: Option<SpaceMouseInput>,
+}
+
+/// Synthetic 3D mouse input, for scripts and tests without a device: HID
+/// input reports, each its report id and then its bytes (report 1, six
+/// signed 16-bit little-endian numbers for translation or twelve for all
+/// six axes; report 2, rotation; report 3, a button mask), read as a
+/// device's are. The motion they end on is held for `seconds`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpaceMouseInput {
+    pub reports: Vec<Vec<u8>>,
+    pub seconds: f32,
 }
 
 /// The UV editor, as a script asks for it. Absent fields are left alone.
@@ -1194,6 +1232,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                     ProtocolError("`graph` must be a material number, or false to close the editor".into())
                 })? as u64)),
             },
+            preferences: opt_bool(value, "preferences")?,
+            spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1571,6 +1611,18 @@ mod tests {
         assert!(matches!(open.operation, Operation::Project { action: ProjectAction::Open(ref path), save: true, discard: false } if path == "C:/work/kettle.tequila"));
         assert!(parse_request(r#"{"id":3,"op":"open"}"#).is_err(), "an open with nothing to open");
         assert!(matches!(parse_request(r#"{"id":4,"op":"ui","about":true}"#).unwrap().operation, Operation::Ui(UiChange { about: Some(true), .. })));
+    }
+
+    /// A 3D mouse's input, made up: its reports as bytes, and how long the
+    /// motion is held; a byte past 255 or an empty report is refused.
+    #[test]
+    fn synthetic_3d_mouse_input_parses() {
+        let request = parse_request(r#"{"id":5,"op":"ui","preferences":true,"spacemouse":{"reports":[[1,0,0,0,0,0,0,0,0,0,0,94,1],[3,2]],"seconds":0.5}}"#).unwrap();
+        let Operation::Ui(UiChange { preferences: Some(true), spacemouse: Some(input), .. }) = request.operation else { panic!("a ui change") };
+        assert_eq!(input.reports, vec![vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 94, 1], vec![3, 2]]);
+        assert_eq!(input.seconds, 0.5);
+        assert!(parse_request(r#"{"id":6,"op":"ui","spacemouse":{"reports":[[1,300]]}}"#).is_err());
+        assert!(parse_request(r#"{"id":7,"op":"ui","spacemouse":{"reports":[[]]}}"#).is_err());
     }
 
     #[test]

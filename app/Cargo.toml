@@ -37,6 +37,11 @@ rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] 
 ureq = "3.2.1"
 ring = "0.17"
 
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+# A 3D mouse's HID reports (`spacemouse`): through Windows' own HID calls
+# (no C compiled there), and IOKit on a Mac. Linux reads spacenavd's socket.
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # Quit through the window's close, which asks about unsaved work (`mac.rs`):
 # the versions winit and rfd already bring.

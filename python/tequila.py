@@ -310,7 +310,9 @@ class Client:
         providers), frame (the render's shape in the viewport) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
-        'meadow'|'rose'."""
+        'meadow'|'rose', preferences (bool), spacemouse={'reports': [[id,
+        byte, ...]], 'seconds': n} (made-up 3D mouse input, read as a
+        device's HID reports)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):
