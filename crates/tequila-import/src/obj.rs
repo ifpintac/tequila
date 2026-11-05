@@ -705,13 +705,30 @@ fn attach_map(
     param: tequila_materials::material_type::Param,
     fallback: tequila_materials::graph::Value,
 ) {
-    use tequila_materials::graph::{Node, NodeKind, Socket, TextureId};
-
     let wanted = crate::raw::RawTexture {
         uri: uri.to_string(),
         role,
         embedded: None,
+        elsewhere: None,
     };
+    attach_texture(definition, textures, wanted, param, fallback);
+}
+
+/// [`attach_map`] for an image already described: one named by a path, or
+/// one carried inside the model (a 3MF's, an FBX's). The PLY, 3MF and FBX
+/// readers wire their maps through here too, so a map arrives the same way
+/// whichever format it came in. Returns the image's node, for a caller that
+/// puts something between it and the parameter.
+pub(crate) fn attach_texture(
+    definition: &mut MaterialDefinition,
+    textures: &mut Vec<crate::raw::RawTexture>,
+    wanted: crate::raw::RawTexture,
+    param: tequila_materials::material_type::Param,
+    fallback: tequila_materials::graph::Value,
+) -> tequila_materials::graph::NodeId {
+    use tequila_materials::graph::{Node, NodeKind, Socket, TextureId};
+
+    let role = wanted.role;
     let index = textures
         .iter()
         .position(|existing| existing.same_image(&wanted))
@@ -740,9 +757,10 @@ fn attach_map(
         }));
         graph.connect(node, bump, Socket::Input(0));
         graph.connect(bump, output, Socket::Param(param));
-        return;
+        return node;
     }
     graph.connect(node, output, Socket::Param(param));
+    node
 }
 
 fn read_color(words: &[&str]) -> Option<Spectrum> {
