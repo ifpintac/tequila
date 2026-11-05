@@ -697,7 +697,7 @@ fn map_filename(words: &[&str]) -> Option<String> {
 
 /// Wire one map into a material's graph, reserving its slot in the scene's
 /// texture list.
-fn attach_map(
+pub(crate) fn attach_map(
     definition: &mut MaterialDefinition,
     textures: &mut Vec<crate::raw::RawTexture>,
     uri: &str,
