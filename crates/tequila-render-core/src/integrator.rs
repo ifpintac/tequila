@@ -510,6 +510,43 @@ impl Medium {
     }
 }
 
+/// The shading normal turned towards the geometric one just enough that
+/// the mirror reflection of the way the surface is seen stays above the
+/// surface - by a hundredth, or by most of how far above it the view is
+/// when that is less - as Cycles turns it (Blender's
+/// `ensure_valid_specular_reflection`, Apache-2.0). A coarse curved mesh is
+/// smoothed by its vertex normals, and at a grazing angle, near the
+/// silhouette, the reflection about such a normal points into the triangle:
+/// the path that took it ended, black, and a dark line ran along every
+/// facet at the rim - the model's triangles showing, on curved glass and
+/// velvet, in close-ups and in a mirror floor. Turned, the normal still
+/// curves the shading smoothly; one that already reflects above the surface
+/// is left exactly as it was.
+pub(crate) fn valid_for_reflection(geometric: Vec3, wo: Vec3, shading: Vec3) -> Vec3 {
+    let iz = wo.dot(geometric);
+    if iz <= 0.0 {
+        return shading;
+    }
+    let mirrored = shading * (2.0 * shading.dot(wo)) - wo;
+    let threshold = (0.9 * iz).min(0.01);
+    if mirrored.dot(geometric) >= threshold {
+        return shading;
+    }
+    // In a frame with the geometric normal up and the shading normal in the
+    // plane of it and X, find the normal whose reflection of `wo` rises by
+    // exactly the threshold: a quadratic in its height squared.
+    let x = (shading - geometric * shading.dot(geometric)).try_normalize().unwrap_or(shading);
+    let ix = wo.dot(x);
+    let a = ix * ix + iz * iz;
+    let b = 2.0 * (a + iz * threshold);
+    let c = (threshold + iz) * (threshold + iz);
+    let root = (b * b - 4.0 * a * c).max(0.0).sqrt();
+    let nz2 = if ix < 0.0 { 0.25 * (b + root) / a } else { 0.25 * (b - root) / a };
+    let nx = (1.0 - nz2).max(0.0).sqrt();
+    let nz = nz2.max(0.0).sqrt();
+    (x * nx + geometric * nz).try_normalize().unwrap_or(geometric)
+}
+
 /// The media a path is inside, in the order it entered them.
 ///
 /// A stack with priorities rather than one medium, because a filled
@@ -1444,6 +1481,10 @@ fn trace<C: PathColour>(
         } else {
             shading_normal
         };
+        // And turned just far enough that the surface's mirror reflection
+        // stays above it, where a coarse mesh's smoothed normal would send
+        // it in.
+        let shading_normal = valid_for_reflection(geometric_normal, wo_world, shading_normal);
 
         // A material with a graph is evaluated here; one without is used as it
         // stands. Most materials in most scenes have no graph — fasteners,
@@ -4789,5 +4830,72 @@ mod tests {
         assert!(intersector.scene().has_cutouts());
         let (caught, _) = caught_at_origin(&intersector);
         assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
+    }
+
+    fn mirrored(normal: Vec3, wo: Vec3) -> Vec3 {
+        normal * (2.0 * normal.dot(wo)) - wo
+    }
+
+    /// Seen at a grazing angle, a coarse mesh's smoothed normal - leaning
+    /// away from the view - reflects the view into the triangle, and the
+    /// path ends black: the dark line along every facet at a curved rim.
+    /// Turned, it reflects a hundredth above the surface, as Cycles has it.
+    #[test]
+    fn a_grazing_reflection_off_a_smoothed_facet_stays_above_it() {
+        let geometric = vec3(0.0, 0.0, 1.0);
+        let wo = vec3(0.99, 0.0, 0.05).normalize();
+        let smoothed = vec3(-0.3, 0.0, 1.0).normalize();
+        assert!(mirrored(smoothed, wo).dot(geometric) < 0.0, "the case has to reflect into the surface");
+
+        let turned = valid_for_reflection(geometric, wo, smoothed);
+        assert!((turned.length() - 1.0).abs() < 1e-5);
+        let rise = mirrored(turned, wo).dot(geometric);
+        assert!((rise - 0.01).abs() < 1e-3, "the reflection rises {rise}, not 0.01");
+        // Turned towards the geometric normal, in the plane of the two,
+        // and no further than it has to be.
+        assert!(turned.y.abs() < 1e-6);
+        assert!(turned.x < 0.0 && turned.x > smoothed.x, "{turned:?} from {smoothed:?}");
+    }
+
+    /// A normal whose reflection is already above the surface - nearly
+    /// everywhere on a model - is left exactly as it was, so smooth shading
+    /// away from the silhouette is untouched.
+    #[test]
+    fn a_normal_that_already_reflects_above_the_surface_is_left_alone() {
+        let geometric = vec3(0.0, 0.0, 1.0);
+        for (wo, smoothed) in [
+            (vec3(0.3, 0.0, 1.0), vec3(0.1, 0.0, 1.0)),
+            (vec3(-0.5, 0.4, 0.7), vec3(0.2, -0.1, 1.0)),
+            (vec3(0.0, 0.0, 1.0), vec3(0.0, 0.3, 1.0)),
+        ] {
+            let (wo, smoothed) = (wo.normalize(), smoothed.normalize());
+            assert_eq!(valid_for_reflection(geometric, wo, smoothed), smoothed);
+        }
+    }
+
+    /// Every way of seeing a surface, against every way its smoothed normal
+    /// can lean, reflects at least as high as the turn promises.
+    #[test]
+    fn every_reflection_is_kept_above_the_surface() {
+        let geometric = vec3(0.0, 0.0, 1.0);
+        let mut worst = f32::INFINITY;
+        for view_height in [0.012f32, 0.03, 0.1, 0.3, 0.7, 1.0] {
+            for view_turn in 0..12 {
+                let phi = view_turn as f32 * std::f32::consts::TAU / 12.0;
+                let across = (1.0 - view_height * view_height).sqrt();
+                let wo = vec3(across * phi.cos(), across * phi.sin(), view_height);
+                for lean in [0.05f32, 0.2, 0.5, 0.8, 0.95] {
+                    for lean_turn in 0..16 {
+                        let psi = lean_turn as f32 * std::f32::consts::TAU / 16.0;
+                        let smoothed = vec3(lean * psi.cos(), lean * psi.sin(), (1.0 - lean * lean).sqrt());
+                        let turned = valid_for_reflection(geometric, wo, smoothed);
+                        let promised = (0.9 * view_height).min(0.01);
+                        worst = worst.min(mirrored(turned, wo).dot(geometric) - promised);
+                        assert!(turned.dot(geometric) > 0.0);
+                    }
+                }
+            }
+        }
+        assert!(worst > -1e-3, "a reflection fell {worst} short of its promise");
     }
 }
