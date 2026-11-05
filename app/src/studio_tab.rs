@@ -1140,7 +1140,10 @@ mod tests {
         }
         h.frame(Vec::new());
         let shown: Vec<f32> = h.tab.reorder.rows.iter().map(|r| r.height()).collect();
+        // The tab sees the edit when it next draws, and the scene has been
+        // still from then on.
         h.project.apply(Command::TurnProduct { yaw: 0.3 }).unwrap();
+        h.frame(Vec::new());
         std::thread::sleep(STILL);
         h.frame(Vec::new());
         h.frame(Vec::new());
