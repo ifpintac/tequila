@@ -174,6 +174,9 @@ pub struct SceneNode {
     /// Guides on the part's UV layout (`crate::guides`), laid down in the UV
     /// editor. Empty for every part nobody has put one on.
     pub uv_guides: Vec<crate::guides::UvGuide>,
+    /// Pins on the part's UV layouts (`crate::uv::pins`), set by set, put
+    /// down in the UV editor. Empty for every part nobody has pinned.
+    pub uv_pins: crate::uv::UvPins,
 }
 
 impl SceneNode {
@@ -199,6 +202,7 @@ impl SceneNode {
             pivot: None,
             path_key: None,
             uv_guides: Vec::new(),
+            uv_pins: crate::uv::UvPins::new(),
         }
     }
 

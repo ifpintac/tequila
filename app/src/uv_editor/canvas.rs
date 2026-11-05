@@ -856,9 +856,22 @@ impl UvEditor {
         }
         painter.rect_stroke(square, 0.0, egui::Stroke::new(1.0_f32, p.line_strong));
 
+        // The checker the part wears, behind the layout, a square to each
+        // of the layout's and repeating past it as it does on the part.
+        let exposure = self.exposure_tint();
+        if self.display.checker_behind && self.display.behind.is_none() {
+            let picture = self.checker_texture(ui.ctx());
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let shift = vec2(dx as f32, dy as f32);
+                    let quad = [vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0)].map(|c| xform.to_screen(c + shift));
+                    let main = dx == 0 && dy == 0;
+                    textured_quad(&painter, &picture, quad, egui::Color32::WHITE.gamma_multiply(if main { 1.0 } else { 0.35 } * self.prefs.artwork_opacity * exposure));
+                }
+            }
+        }
         // The texture chosen to show behind the layout, tiled as it lays,
         // in every mode, lighter or darker as View options say.
-        let exposure = self.exposure_tint();
         if let Some(layer) = self.display.behind.filter(|p| self.selection.texture() != Some(*p)).and_then(|p| part.textures.iter().find(|t| t.param == p)) {
             if let Some(picture) = layer.texture.and_then(|id| self.exposed_artwork(project, id, ui.ctx())) {
                 let tile = placement::corners(&layer.mapping);
@@ -1112,7 +1125,7 @@ impl UvEditor {
         if let (Some(v), Mode::Vertices, None) = (self.hover.vertex, self.mode, &self.gesture) {
             painter.circle_stroke(xform.to_screen(place(v)), 6.0, egui::Stroke::new(2.0_f32, tint.hover));
         }
-        if let Some(pins) = self.pins.get(&(part.node, layout.uv.set)) {
+        if let Some(pins) = part.pins.get(&layout.uv.set) {
             for &v in pins {
                 let Some(&uv) = layout.vertex_uv.get(v as usize).filter(|&&u| u != u32::MAX) else { continue };
                 // A dot on the vertex, and a pin standing on it, on a plate
@@ -1265,13 +1278,27 @@ impl UvEditor {
     }
 
     /// What the viewport lights for what is under the pointer here: the
-    /// island, the face, the edge and its seam's other side, the vertex.
+    /// island, the face, the edge and its seam's other side, the vertex;
+    /// and in the layout's modes its seams and what is selected; and the
+    /// pins.
     fn viewport_hint_of(&self, part: &Part, layout: &Layout) -> super::link::Hint {
         let mut hint = super::link::Hint { node: Some(part.node), ..Default::default() };
+        let outline = |island: u32| -> Vec<[u32; 2]> { layout.uv.edges[layout.uv.islands[island as usize].edges.clone()].iter().filter(|e| e.kind != EdgeKind::Inner).map(|e| e.vertices).collect() };
+        hint.pins = part.pins.get(&layout.uv.set).cloned().unwrap_or_default();
+        if self.mode.is_layout() {
+            // Each seam once, by one of its sides: both are the same edge
+            // of the part.
+            hint.seams = layout.uv.edges.iter().enumerate().filter(|(i, e)| e.kind == EdgeKind::Seam && e.twin.is_none_or(|t| *i < t as usize)).map(|(_, e)| e.vertices).collect();
+            match self.mode {
+                Mode::Islands => hint.selected_edges = editing::islands(layout, &self.selection).into_iter().flat_map(outline).collect(),
+                Mode::Edges => hint.selected_edges = self.selection.edges(),
+                Mode::Vertices => hint.selected_vertices = self.selection.vertices(),
+                Mode::Labels => {}
+            }
+        }
         if self.gesture.is_some() {
             return hint;
         }
-        let outline = |island: u32| -> Vec<[u32; 2]> { layout.uv.edges[layout.uv.islands[island as usize].edges.clone()].iter().filter(|e| e.kind != EdgeKind::Inner).map(|e| e.vertices).collect() };
         match self.mode {
             Mode::Islands => {
                 if let Some(island) = self.hover.island {

@@ -529,6 +529,81 @@ Alembic deformation import serve neither.
       carries the nodes, Tidy refits each round what it held. Solo shows one
       node's output on the model, unlit, as a view override — never saved,
       never undone, cleared when the editor closes.
+- [x] UV editor (§04 §7.1), shipped in three stages in v2026.11.01.1340.
+      *November 5, the leftovers.* **Pins** are kept on the part
+      (`SceneNode::uv_pins`, `uv/pins.rs`), set by set, and written into
+      the project as `uv_pins`. A new command, `uv.set_pins` (catalog 73),
+      puts them down and takes them up, so Pin, Unpin, Clear and Rectangle's
+      border pins are each a step to undo. The layout's own edits carry the
+      pins by the corners they sat at: a set copied takes its pins with it,
+      a set deleted loses them, and an unwrap or a new set (both number the
+      vertices anew) keeps them in place. `Undo::UvEdited` and
+      `Undo::Unwrapped` hold the pins as they were. Held by the `uv::pins`
+      tests, `uv_pins_survive_a_round_trip_and_follow_their_sets`,
+      `pins_hold_through_a_reflatten` and
+      `uv_pins_undo_and_are_saved_with_the_project`.
+
+      **Lines on the part** (`uv_editor/link.rs`). The viewport now also
+      draws the layout's seams, the selection and the pins. Each line is
+      cut into pieces of at most 8 points, and each piece and each vertex
+      is checked by a ray through the geometry the viewport picks against.
+      A line whose faces on the part all face away from the camera is
+      hidden outright, because its rays only graze the outline. Otherwise a
+      line or vertex is hidden where the part's own surface is in front of
+      it, and drawn faintly where another part is. The result is cached
+      until the hint, the geometry, the camera or the viewport's size
+      changes, and costs at most 24,000 rays. It works the same over the
+      graphics card's views, the processor's Solid and Rendered
+      (`lines_behind_the_part_are_hidden_and_behind_another_faint`).
+
+      **Line up edges** (`vertices::square_edges_reported`). Edges are now
+      taken nearest-to-square first, and only an edge that would put two
+      vertices on one place, or a face's three corners on one line, is
+      left. Before, the whole run it was in was dropped. If moving just the
+      runs' own vertices would turn a face over, the island's other
+      vertices are carried along (`shape::carried`). A run is left only if
+      even that folds. A picked path that runs within the tolerance from
+      end to end is lined up whole. On ten sample parts it found 95,090 edges near square. It now lines up 81.3% of them exactly, against 76.3% before: 17,786 are left, against 22,491. Of those left, 1,274 would put two vertices on one place or flatten a face. The headphones' stitching gains most: 1,344 left before, 290 now, every one of them a clash. On
+      the can (`sheet-3-lineup`), a picked border used to come out as a
+      30.6 mm staircase and is now one straight line. The editor says what
+      it left and why.
+
+      **As on the part** (`sort::as_on_part`, `AsOnPart`). Each island is
+      turned to read as the view sees it. `turn_as_seen` finds the
+      least-squares turn that takes the view's across and down to u and v,
+      and reads an island seen from behind as if through the part. Each
+      island is also scaled to the layout's own scale. On ten sample parts,
+      the turn the islands still needed to read as seen fell from a mean of
+      26–106° per part to 0.00° (worst 0.04°), and every island is within
+      ×1.0005 of the layout's scale. The pairwise push apart is now followed
+      by drawing each island back toward where it is seen, as far as it
+      goes, with 0 overlaps. The middles end 0.7–4.1 island sizes from where
+      the part puts them (0.5–4.6 before), measured on boxes that are now
+      the islands' true sizes and turns. A greedy "nearest free spot,
+      largest first" placement was tried and measured worse (up to 10.3).
+      The turn and the scaling can each be switched off. Held by
+      `as_on_the_part_gives_each_island_its_real_size_and_turn` and
+      `line_up_and_as_on_the_part_keep_their_promises`.
+
+      **The checker** follows the UV set the editor shows, or a set picked
+      (`Checker::set`). For a set other than the first, its places go to
+      the viewport beside the checker: a second vertex buffer at attribute
+      4 on the graphics card (`sync_checker_mesh`), and weights at the hit
+      on the processor (`PreviewChecker`, `preview_pass_checked`). The
+      checker now also draws in Wireframe and in the processor's Solid, and
+      Behind the layout can show it on the canvas. It is still never in
+      Rendered or a render, never saved and never in the history
+      (`the_checker_follows_the_uv_set_shown`,
+      `the_checker_is_drawn_through_the_set_it_is_given`). Setting
+      `TEQUILA_SOLID_ON_CPU` draws Solid on the processor, so that path can
+      be checked on a machine that has OpenGL.
+
+      *Left:* pins on a part that is re-imported or split keep their
+      numbers and are only filtered when used. While the checker shows a
+      set other than the first, the part's own maps in Material Preview
+      still read the first set (the checker replaces only the colour). On a
+      CAD part's fans and slivers, most of what Line up edges still leaves
+      would fold even with the island carried along.
 - [x] All remaining procedural texture nodes with the algorithms in §02 §6.
       *Done:* Wood (Advanced) — uneven years, earlywood/latewood, ray
       flecks, knots, planks; Occlusion — per vertex, against the part

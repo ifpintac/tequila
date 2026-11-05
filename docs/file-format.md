@@ -308,6 +308,7 @@ Each is a light, a picture or a gradient painted onto the environment sphere.
 | `path_key` | string? | The source file's stable identifier for this node, so a re-import can match it and keep its material. |
 | `pivot` | number[3]? | A custom pivot in this node's local space, if one has been set. Absent means the gizmo uses a derived pivot. Stored because §04 §5 requires pivots to persist — they are what an animation track rotates about. |
 | `uv_guides` | object[]? | A part's guides on its UV layout, laid down in the UV editor and snapped to there, in the order they were added. Each is one key, the axis it marks a place along, with that place in layout units (0 to 1 across the unit square): `{"u": 0.25}` is a line down the layout a quarter of the way across, `{"v": 0.5}` one across it halfway down (`v` runs down the layout, as an image's rows do). Absent means none; written only on a part that has some. They change nothing that renders. |
+| `uv_pins` | object[]? | A part's pins on its UV layouts, put down in the UV editor: one object for each UV set that has any, `{"set": 0, "vertices": [3, 17]}`, the set's number from 0 and its pinned mesh vertices in order. A pin is held where it is when an island is laid out flat again, relaxed or reshaped round it. Absent means none; written only on a part that has some. They change nothing that renders. |
 
 Parent and child links must agree: if A lists B as a child, B must name A as its
 parent. A loader that finds otherwise rejects the file rather than guessing.

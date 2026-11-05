@@ -431,26 +431,42 @@ fn a_refusal_says_why_and_changes_nothing() {
 
 /// Pinned vertices stay exactly where they are when their island, squashed,
 /// is laid out flat again; the rest of it moves, and the pins are still
-/// pins after.
+/// pins after. Pinning and unpinning are each a step to undo, kept on the
+/// part in the document.
 #[test]
 fn pins_hold_through_a_reflatten() {
     let (mut project, node, _) = one_strip();
     let ctx = egui::Context::default();
     let mut editor = editor_on(&mut project, node, &ctx);
+    let pins = |project: &Project| project.document().tree.get(node).unwrap().uv_pins.get(&0).cloned().unwrap_or_default();
     // Squashed to half its height, so laying it out again changes it.
     ask(&mut editor, &mut project, &ctx, UvEditorChange { islands: Some(vec![0]), transform: Some(tequila_scripting::protocol::UvTransform { scale: Some([1.0, 0.5]), ..Default::default() }), ..Default::default() });
     let squashed = mesh_of(&project, node).uv_sets[0].clone();
     ask(&mut editor, &mut project, &ctx, UvEditorChange { vertices: Some(vec![0, 2]), pin: Some(true), ..Default::default() });
-    assert_eq!(editor.pins.get(&(node, 0)).map(|p| p.len()), Some(2));
+    assert_eq!(pins(&project), vec![0, 2]);
+    assert_eq!(project.undo_step().map(|(name, _)| name), Some("uv.set_pins"), "pinning is a step of its own");
     ask(&mut editor, &mut project, &ctx, UvEditorChange { islands: Some(vec![0]), reflatten: true, ..Default::default() });
     let flat = mesh_of(&project, node).uv_sets[0].clone();
     assert_eq!((flat[0], flat[2]), (squashed[0], squashed[2]), "the pins held");
     assert!((flat[4] - squashed[4]).length() > 1e-3, "the rest laid out again: {:?} {:?}", flat[4], squashed[4]);
     let height = (flat[3] - flat[0]).length();
     assert!((height - 0.3).abs() < 0.02, "back to its true shape: {height}");
-    assert_eq!(editor.pins.get(&(node, 0)).map(|p| p.iter().copied().collect::<Vec<_>>()), Some(vec![0, 2]), "the pins are still pins");
+    assert_eq!(pins(&project), vec![0, 2], "the pins are still pins");
     ask(&mut editor, &mut project, &ctx, UvEditorChange { vertices: Some(vec![0]), pin: Some(false), ..Default::default() });
-    assert_eq!(editor.pins.get(&(node, 0)).map(|p| p.len()), Some(1));
+    assert_eq!(pins(&project), vec![2]);
+    // Undone, the unpinned vertex is pinned again; undone once more, the
+    // re-flatten goes; redone, both come back.
+    project.undo();
+    frames(&mut editor, &mut project, &ctx, 2);
+    assert_eq!(pins(&project), vec![0, 2]);
+    assert_eq!(editor.state().get("pins").map(|p| p.as_array().len()), Some(2), "the editor shows the document's pins");
+    project.undo();
+    project.undo();
+    assert!(pins(&project).is_empty(), "the pinning undone");
+    project.redo();
+    project.redo();
+    project.redo();
+    assert_eq!(pins(&project), vec![2]);
 }
 
 /// Packed between two guides down the layout and two across, every island

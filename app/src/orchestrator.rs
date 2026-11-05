@@ -22,7 +22,7 @@ use tequila_render_core::intersect::{Hit, Intersector};
 use tequila_render_core::scene::SceneSnapshot;
 use tequila_render_core::scheduler::ProgressiveSchedule;
 use tequila_render_core::settings::IntegratorConfig;
-use tequila_render_cpu::{preview_pass, render_pass, Device, EmbreeIntersector, RenderContext};
+use tequila_render_cpu::{preview_pass_checked, render_pass, Device, EmbreeIntersector, RenderContext};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -111,6 +111,10 @@ pub struct RenderRequest {
     /// `width` and `height` are pixels, which Cycles renders; Tequila's own
     /// renderer traces the points ([`RenderRequest::traced_size`]).
     pub pixels_per_point: f32,
+    /// The UV editor's checker, drawn by the processor's Solid on the part
+    /// it is on, and what it is, to know when it changes. Only Solid reads
+    /// it: the path tracer's picture is the render's.
+    pub checker: Option<(u64, Arc<tequila_render_core::preview::PreviewChecker>)>,
 }
 
 impl RenderRequest {
@@ -122,6 +126,35 @@ impl RenderRequest {
     fn traced_size(&self) -> (usize, usize) {
         let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).max(1);
         (points(self.width), points(self.height))
+    }
+}
+
+/// The geometry on screen, to pick against: see [`Orchestrator::picker`].
+pub struct Picker {
+    intersector: Arc<EmbreeIntersector>,
+    /// Solid shading, which sees through what it shows see-through.
+    solid: bool,
+}
+
+impl Picker {
+    pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        if self.solid {
+            return tequila_render_core::preview::intersect_solid(self.intersector.as_ref(), *ray);
+        }
+        // Through a part's fibres to the part: a click on fur picks the
+        // surface it grows on, its face and its edges, which is what the
+        // tools that read a pick - face selection, measuring - work with.
+        let mut ray = *ray;
+        for _ in 0..64 {
+            let hit = self.intersector.intersect(&ray)?;
+            let scene = self.intersector.scene();
+            let fur = scene.instances.get(hit.instance.0 as usize).is_some_and(|i| scene.mesh(i.mesh).fibres.is_some());
+            if !fur {
+                return Some(hit);
+            }
+            ray.t_min = hit.t + 1e-5 * hit.t.abs().max(1.0);
+        }
+        None
     }
 }
 
@@ -174,6 +207,7 @@ impl PartialEq for RenderRequest {
             && self.interacting == other.interacting
             && self.engine == other.engine
             && self.pixels_per_point == other.pixels_per_point
+            && self.checker.as_ref().map(|c| c.0) == other.checker.as_ref().map(|c| c.0)
     }
 }
 
@@ -350,24 +384,15 @@ impl Orchestrator {
     /// mid-rebuild — a click in that window selects nothing, which is right:
     /// there is nothing on screen to have clicked.
     pub fn pick(&self, ray: &Ray) -> Option<Hit> {
+        self.picker()?.pick(ray)
+    }
+
+    /// What [`Orchestrator::pick`] picks against, held for many rays: the
+    /// geometry on screen, taken once rather than for each.
+    pub fn picker(&self) -> Option<Picker> {
         let intersector = self.shared.intersector.lock().unwrap().clone()?;
-        if self.shared.request.lock().unwrap().as_ref().is_some_and(|r| r.shading == Shading::Fast) {
-            return tequila_render_core::preview::intersect_solid(intersector.as_ref(), *ray);
-        }
-        // Through a part's fibres to the part: a click on fur picks the
-        // surface it grows on, its face and its edges, which is what the
-        // tools that read a pick - face selection, measuring - work with.
-        let mut ray = *ray;
-        for _ in 0..64 {
-            let hit = intersector.intersect(&ray)?;
-            let scene = intersector.scene();
-            let fur = scene.instances.get(hit.instance.0 as usize).is_some_and(|i| scene.mesh(i.mesh).fibres.is_some());
-            if !fur {
-                return Some(hit);
-            }
-            ray.t_min = hit.t + 1e-5 * hit.t.abs().max(1.0);
-        }
-        None
+        let solid = self.shared.request.lock().unwrap().as_ref().is_some_and(|r| r.shading == Shading::Fast);
+        Some(Picker { intersector, solid })
     }
 
     /// What the viewport has to say about its engine, if anything.
@@ -794,11 +819,12 @@ fn render_loop(shared: Arc<Shared>) {
                 wait_for_news(&shared, seen_request, seen_style, Duration::from_millis(100));
                 continue;
             }
-            crate::profile::time("render: solid trace", || preview_pass(
+            crate::profile::time("render: solid trace", || preview_pass_checked(
                 state.intersector.as_ref(),
                 &mut state.framebuffer,
                 &state.context,
                 if completed == 0 { 1 } else { cap - completed },
+                state.request.checker.as_ref().map(|(_, c)| c.as_ref()),
             ));
             // Shown even when the camera has already moved on. Throwing a
             // finished frame away for being one mouse-move old looked like
@@ -1392,6 +1418,7 @@ mod tests {
             shading: Shading::Rendered,
             engine: RenderEngine::Tequila,
             pixels_per_point: 1.0,
+            checker: None,
         };
         let mut engines = vec![RenderEngine::Tequila];
         match tequila_render_cycles::available() {
@@ -1566,6 +1593,7 @@ mod tests {
             // starting a card session of its own at once left one without.
             engine: tequila_scene::render::RenderEngine::Tequila,
             pixels_per_point: 1.0,
+            checker: None,
         }
     }
 

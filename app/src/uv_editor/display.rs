@@ -32,6 +32,11 @@ pub struct Display {
     /// The material's texture shown behind the layout in every mode, by
     /// the parameter it drives.
     pub behind: Option<Param>,
+    /// The checker shown behind the layout instead, as the part wears it
+    /// through the set shown.
+    pub checker_behind: bool,
+    /// The checker's picture, for the canvas, and what it was drawn for.
+    checker_picture: Option<(u64, egui::TextureHandle)>,
     /// Pictures as read, to be lightened or darkened.
     sources: HashMap<TextureId, Option<Arc<egui::ColorImage>>>,
     /// Pictures lightened by some stops, by the stops in quarters.
@@ -230,18 +235,29 @@ impl UvEditor {
         let p = crate::theme::p();
         crate::theme::section(ui, "Behind the layout");
         let textures: Vec<(Param, String)> = part.textures.iter().map(|t| (t.param, format!("{} · {}", t.param.label(), t.name))).collect();
-        let shown = self.display.behind.and_then(|b| textures.iter().find(|(p, _)| *p == b)).map(|(_, n)| n.clone()).unwrap_or_else(|| "Nothing".to_string());
-        ui.add_enabled_ui(!textures.is_empty(), |ui| {
-            egui::ComboBox::from_id_salt("uv-behind").width(240.0).selected_text(shown).show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.display.behind, None, "Nothing");
-                for (param, name) in &textures {
-                    ui.selectable_value(&mut self.display.behind, Some(*param), name.as_str());
+        let shown = match self.display.behind.and_then(|b| textures.iter().find(|(p, _)| *p == b)) {
+            Some((_, name)) => name.clone(),
+            None if self.display.checker_behind => "The checker".to_string(),
+            None => "Nothing".to_string(),
+        };
+        egui::ComboBox::from_id_salt("uv-behind")
+            .width(240.0)
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(self.display.behind.is_none() && !self.display.checker_behind, "Nothing").clicked() {
+                    (self.display.behind, self.display.checker_behind) = (None, false);
                 }
-            });
-        })
-        .response
-        .on_hover_text("One of the material's textures laid on by the layout, shown behind it in every mode")
-        .on_disabled_hover_text("The material has no texture laid on by the UV layout");
+                if ui.selectable_label(self.display.behind.is_none() && self.display.checker_behind, "The checker").on_hover_text("The checker the part wears in the viewport, as it lies on this layout").clicked() {
+                    (self.display.behind, self.display.checker_behind) = (None, true);
+                }
+                for (param, name) in &textures {
+                    if ui.selectable_label(self.display.behind == Some(*param), name.as_str()).clicked() {
+                        (self.display.behind, self.display.checker_behind) = (Some(*param), false);
+                    }
+                }
+            })
+            .response
+            .on_hover_text("The checker, or one of the material's textures laid on by the layout, shown behind it in every mode");
         let mut stops = self.prefs.background_exposure;
         if ui
             .add(crate::field::Slider::new(&mut stops, -4.0..=4.0).text("Exposure").suffix(" stops").fixed_decimals(1))
@@ -283,14 +299,47 @@ impl UvEditor {
         ui.add(crate::field::Checkbox::new(&mut self.prefs.show_cursor, "Show the cursor")).on_hover_text("Shift and a right click put it down; the right-click menu moves it to the selection or the layout's middle");
         crate::theme::section(ui, "Checker on the part");
         ui.add(crate::field::Checkbox::new(&mut self.checker.on, "Show a checker on the part"))
-            .on_hover_text("The part in the viewport drawn with a checker through its first UV set, in place of its colour, to see how the layout lies on it. In Solid and Material Preview only, never in a render, and nothing is saved or changed");
+            .on_hover_text("The part in the viewport drawn with a checker through a UV set, in place of its colour, to see how the layout lies on it. In Wireframe, Solid and Material Preview, on the graphics card or the processor; never in Rendered or a render, and nothing is saved or changed");
         ui.horizontal(|ui| {
             ui.add(egui::DragValue::new(&mut self.checker.squares).range(1..=64).prefix("Squares ")).on_hover_text("How many squares across the layout's square");
         });
         crate::theme::segmented(ui, &mut self.checker.pattern, &[(super::checker::Pattern::Plain, "Plain"), (super::checker::Pattern::Letters, "Letters"), (super::checker::Pattern::Numbers, "Numbers")]);
-        if self.checker.on && self.shown_set != 0 {
-            ui.small("The viewport shows the part's first UV set, not the one shown here.");
+        // The UV set it is drawn through: the one shown here, which it
+        // follows, or one of the part's.
+        let set_name = |set: usize| format!("UV set {}", set + 1);
+        let following = format!("The one shown here ({})", set_name(self.shown_set));
+        let chosen = match self.checker.set {
+            None => following.clone(),
+            Some(set) => set_name(set.min(part.sets.saturating_sub(1))),
+        };
+        ui.add_enabled_ui(part.sets > 1, |ui| {
+            egui::ComboBox::from_id_salt("uv-checker-set").width(240.0).selected_text(chosen).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.checker.set, None, following);
+                for set in 0..part.sets {
+                    ui.selectable_value(&mut self.checker.set, Some(set), set_name(set));
+                }
+            });
+        })
+        .response
+        .on_hover_text("The UV set the checker is drawn through: the one the editor shows, following it as you pick another, or one of the part's")
+        .on_disabled_hover_text("The part has one UV set");
+    }
+
+    /// The checker's picture for the canvas, sent again when its squares or
+    /// pattern change.
+    pub(super) fn checker_texture(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        let key = self.checker.squares as u64 * 4 + self.checker.pattern as u64;
+        if let Some((k, texture)) = &self.display.checker_picture {
+            if *k == key {
+                return texture.clone();
+            }
         }
+        let image = self.checker_image();
+        let (side, bytes) = (image.0, &image.1);
+        let pixels = bytes.chunks_exact(4).map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3])).collect();
+        let texture = ctx.load_texture("uv-editor-checker", egui::ColorImage { size: [side, side], pixels }, egui::TextureOptions::LINEAR);
+        self.display.checker_picture = Some((key, texture.clone()));
+        texture
     }
 
     /// Let go of the pictures, as the document goes.

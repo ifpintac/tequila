@@ -146,6 +146,9 @@ pub fn encode(command: &Command) -> String {
             });
             out.set("node", node.0).set("set", *set).set("islands", numbers(islands)).set("maps", Value::Array(maps.collect()));
         }
+        Command::SetUvPins { node, set, vertices } => {
+            out.set("node", node.0).set("set", *set).set("vertices", numbers(vertices));
+        }
         Command::Rename { node, name } => {
             out.set("node", node.0).set("name", name.clone());
         }
@@ -611,7 +614,7 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
         }
         "uv.cut" | "uv.stitch" | "uv.transform" | "uv.reflatten" | "uv.pack" | "uv.straighten" | "uv.even_density" | "uv.add_set"
-        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" | "uv.set_positions" | "uv.place_islands" => uv_command(name, &value)?,
+        | "uv.copy_set" | "uv.delete_set" | "uv.move_set" | "uv.set_positions" | "uv.place_islands" | "uv.set_pins" => uv_command(name, &value)?,
         "scene.rename" => Command::Rename {
             node: node("node")?,
             name: text("name")?,
@@ -1423,6 +1426,7 @@ fn uv_command(name: &str, value: &Value) -> Result<Command, FormatError> {
             }
             Command::PlaceUvIslands { node: node()?, set: set(), islands, maps }
         }
+        "uv.set_pins" => Command::SetUvPins { node: node()?, set: set(), vertices: list("vertices")? },
         other => return Err(FormatError::Invalid(format!("`{other}` is not a UV command"))),
     })
 }
@@ -1660,6 +1664,9 @@ fn node_to_json(node: &SceneNode) -> Value {
     if !node.uv_guides.is_empty() {
         out.set("uv_guides", crate::uv_guides_to_json(&node.uv_guides));
     }
+    if !node.uv_pins.is_empty() {
+        out.set("uv_pins", crate::uv_pins_to_json(&node.uv_pins));
+    }
     out.build()
 }
 
@@ -1807,6 +1814,7 @@ fn node_from_json(value: &Value) -> Result<SceneNode, FormatError> {
     }
     node.layers = crate::read_layers(value.get("layers"));
     node.uv_guides = crate::read_uv_guides(value.get("uv_guides"))?;
+    node.uv_pins = crate::read_uv_pins(value.get("uv_pins"))?;
     Ok(node)
 }
 

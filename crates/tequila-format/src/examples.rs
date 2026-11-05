@@ -207,6 +207,7 @@ pub fn commands() -> Vec<Command> {
             islands: vec![0, 2],
             maps: vec![tequila_scene::uv::UvAffine::translation(tequila_core::math::vec2(0.1, 0.0)), tequila_scene::uv::UvAffine::quarter_turns(1).about(tequila_core::math::vec2(0.5, 0.5))],
         },
+        Command::SetUvPins { node: ids[1], set: 0, vertices: vec![3, 7] },
         Command::SetParameterProcedural {
             material,
             param: Param::BaseColor,

@@ -614,6 +614,9 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if !node.uv_guides.is_empty() {
         object.set("uv_guides", uv_guides_to_json(&node.uv_guides));
     }
+    if !node.uv_pins.is_empty() {
+        object.set("uv_pins", uv_pins_to_json(&node.uv_pins));
+    }
 
     let Value::Object(known) = object.build() else {
         unreachable!()
@@ -663,6 +666,37 @@ pub(crate) fn read_uv_guides(value: Option<&Value>) -> Result<Vec<tequila_scene:
             })
         })
         .collect()
+}
+
+/// A part's UV pins, as the project and the journal write them: one object
+/// for each UV set that has any, its number and its pinned mesh vertices,
+/// `{"set": 0, "vertices": [3, 17]}`.
+pub(crate) fn uv_pins_to_json(pins: &tequila_scene::uv::UvPins) -> Value {
+    Value::Array(
+        pins.iter()
+            .map(|(set, vertices)| {
+                let mut entry = Object::new();
+                entry.set("set", *set).set("vertices", Value::Array(vertices.iter().map(|&v| Value::from(v as usize)).collect()));
+                entry.build()
+            })
+            .collect(),
+    )
+}
+
+/// A part's UV pins back; absent, none. An entry that is not a set and a
+/// list of vertex numbers is refused rather than dropped.
+pub(crate) fn read_uv_pins(value: Option<&Value>) -> Result<tequila_scene::uv::UvPins, FormatError> {
+    let Some(value) = value else { return Ok(Default::default()) };
+    let refused = || FormatError::Invalid("`uv_pins` is a list of a UV set and its pinned vertices, such as [{\"set\": 0, \"vertices\": [3, 17]}]".into());
+    let Value::Array(entries) = value else { return Err(refused()) };
+    let mut pins = tequila_scene::uv::UvPins::new();
+    for entry in entries {
+        let set = entry.get("set").and_then(|v| v.as_index()).ok_or_else(refused)?;
+        let Some(Value::Array(vertices)) = entry.get("vertices") else { return Err(refused()) };
+        let vertices = vertices.iter().map(|v| v.as_index().and_then(|v| u32::try_from(v).ok())).collect::<Option<Vec<u32>>>().ok_or_else(refused)?;
+        pins.entry(set).or_default().extend(vertices);
+    }
+    Ok(tequila_scene::uv::pins::tidy(pins))
 }
 
 /// A node's CAD layers, as the project and the journal write them: their
@@ -3091,7 +3125,7 @@ fn read_tree(
 ) -> Result<(), FormatError> {
     // Every field `node_to_json` writes, or a project opened in the build
     // that wrote it reports itself as from a newer one.
-    const KNOWN_NODE_FIELDS: [&str; 16] = [
+    const KNOWN_NODE_FIELDS: [&str; 17] = [
         "id",
         "name",
         "kind",
@@ -3110,6 +3144,7 @@ fn read_tree(
         "metadata",
         "layers",
         "uv_guides",
+        "uv_pins",
     ];
 
     let nodes = root
@@ -3214,6 +3249,8 @@ fn read_tree(
         }
         node.layers = read_layers(value.get("layers"));
         node.uv_guides = read_uv_guides(value.get("uv_guides"))
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
+        node.uv_pins = read_uv_pins(value.get("uv_pins"))
             .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         // A project saved before layers had a field of their own kept them
         // in a metadata field, `Layer`, joined with commas: moved across, so

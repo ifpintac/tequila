@@ -406,11 +406,13 @@ struct TequilaApp {
     solid: solid_gpu::SolidView,
     /// What `solid` was last told about, so a GPU failure resubmits once.
     gpu_solid_submitted: bool,
+    /// The UV editor's checker as last handed to the processor's Solid.
+    cpu_checker_submitted: Option<u64>,
     /// Instance ids to ring, shared by both Solid paths.
     outlined: Vec<u32>,
     /// Which of the faces the UV editor lights the camera sees, and what
     /// for: the part, the faces and the view.
-    uv_link_seen: Option<(UvLinkKey, Vec<bool>)>,
+    uv_link_seen: Option<(u64, uv_editor::link::Sight)>,
     assistant: assistant::Assistant,
     /// Set by a scripted `quit` that has already settled unsaved work, so the
     /// close goes through without asking a question nobody is there to answer.
@@ -627,7 +629,6 @@ enum Action {
 /// Where the journal and auto-save snapshots live (§4.5).
 /// What the UV editor's lit faces were found seen or hidden for: the part,
 /// the scene's rebuild, the faces, and the eye.
-type UvLinkKey = (Option<tequila_scene::tree::NodeId>, u64, usize, u32, [u32; 3]);
 
 fn journal_directory() -> std::path::PathBuf {
     // Disposable QA sessions must not rewrite the user's persisted queue.
@@ -886,6 +887,7 @@ impl TequilaApp {
             graph_editor: graph_editor::GraphEditor::default(),
             solid: solid_gpu::SolidView::new(false),
             gpu_solid_submitted: false,
+            cpu_checker_submitted: None,
             outlined: Vec::new(),
             uv_link_seen: None,
             assistant: assistant::Assistant::default(),
@@ -1062,6 +1064,10 @@ impl TequilaApp {
         }
         let (width, height) = render_pixels(self.viewport_size, self.render_scale);
         let settings = self.project.render_settings().clone();
+        // The UV editor's checker, where the processor draws Solid: the
+        // graphics card's Solid is handed it as it draws.
+        let checker = self.cpu_checker();
+        self.cpu_checker_submitted = checker.as_ref().map(|c| c.0);
         self.orchestrator.submit(RenderRequest {
             camera: self.camera.camera,
             width,
@@ -1084,8 +1090,19 @@ impl TequilaApp {
             shading: self.shading,
             engine: settings.engine,
             pixels_per_point: self.render_scale,
+            checker,
         });
         self.gpu_solid_submitted = self.gpu_solid();
+    }
+
+    /// The UV editor's checker for the processor's Solid: only while the
+    /// processor draws it, and not in a presentation.
+    fn cpu_checker(&mut self) -> Option<(u64, Arc<tequila_render_core::preview::PreviewChecker>)> {
+        if self.shading == orchestrator::Shading::Fast && !self.gpu_solid() && self.presenting.is_none() {
+            self.uv_editor.cpu_checker(&self.project)
+        } else {
+            None
+        }
     }
 
     /// Show `mode` in the viewport.
@@ -1634,6 +1651,11 @@ impl eframe::App for TequilaApp {
             }
             self.submit();
         }
+        // The UV editor's checker turned on, off or changed, where the
+        // processor draws Solid.
+        if self.cpu_checker().map(|c| c.0) != self.cpu_checker_submitted {
+            self.submit();
+        }
 
         // And the display pipeline, which the built-in transform is part of —
         // so choosing a different tone map goes through here too rather than
@@ -2008,18 +2030,22 @@ impl TequilaApp {
             self.gizmo.draw(ui, rect, &self.camera.camera);
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
-            // What the UV editor points at, lit on the part; what another
-            // part hides found again only when that or the view changes.
+            // What the UV editor points at, lit on the part; what the part
+            // itself or another part hides found again only when that or
+            // the view changes.
             if let Some(hint) = self.uv_editor.viewport_hint() {
-                let eye = self.camera.camera.position();
-                let key: UvLinkKey = (hint.node, self.project.rebuilds(), hint.triangles.len(), hint.triangles.first().copied().unwrap_or(u32::MAX), [eye.x.to_bits(), eye.y.to_bits(), eye.z.to_bits()]);
-                if self.uv_link_seen.as_ref().map(|(k, _)| k) != Some(&key) {
-                    let (orchestrator, mapping) = (&self.orchestrator, self.project.mapping());
-                    let seen = uv_editor::link::seen(&self.project, &self.camera.camera, hint, |ray| orchestrator.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
-                    self.uv_link_seen = Some((key, seen));
+                let key = hint.sight_key(self.project.rebuilds(), &self.camera.camera, rect);
+                if self.uv_link_seen.as_ref().map(|(k, _)| *k) != Some(key) {
+                    let (picker, mapping) = (self.orchestrator.picker(), self.project.mapping());
+                    let sight = uv_editor::link::sight(&self.project, &self.camera.camera, rect, hint, |ray| picker.as_ref()?.pick(ray).map(|h| (mapping.node_of(h.instance), h.primitive, h.t)));
+                    // Not kept until there is geometry to look through.
+                    if picker.is_some() {
+                        self.uv_link_seen = Some((key, sight.clone()));
+                    }
+                    uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, &sight);
+                } else if let Some((_, sight)) = &self.uv_link_seen {
+                    uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, sight);
                 }
-                let seen = self.uv_link_seen.as_ref().map(|(_, s)| s.as_slice()).unwrap_or(&[]);
-                uv_editor::link::draw(ui, rect, &self.camera.camera, &self.project, hint, seen);
             }
         }
 
@@ -6455,6 +6481,37 @@ mod undo_tests {
         app.redo();
         app.sync_viewport_camera();
         assert_eq!(*app.project.camera(), after);
+    }
+
+    /// UV pins, put down in the UV editor, are a step to undo like any other
+    /// edit, and are saved with the project and there when it is opened
+    /// again.
+    #[test]
+    fn uv_pins_undo_and_are_saved_with_the_project() {
+        let mut app = TequilaApp::for_tests();
+        let document = app.project.document();
+        let node = document
+            .tree
+            .iter()
+            .find(|n| n.mesh().and_then(|m| document.geometry.get(m)).is_some_and(|m| !m.uv_sets.is_empty() && m.vertex_count() > 3))
+            .map(|n| n.id)
+            .expect("a laid-out part in the demo scene");
+        app.project.end_interaction();
+        app.project.apply(Command::SetUvPins { node, set: 0, vertices: vec![3, 1] }).unwrap();
+        app.project.end_interaction();
+        let pins = |app: &TequilaApp| app.project.document().tree.get(node).unwrap().uv_pins.clone();
+        assert_eq!(pins(&app), tequila_scene::uv::UvPins::from([(0, vec![1, 3])]));
+        app.undo();
+        assert!(pins(&app).is_empty(), "undone, no pins");
+        app.redo();
+        assert_eq!(pins(&app)[&0], vec![1, 3], "redone, pinned again");
+
+        let path = std::env::temp_dir().join(format!("tequila-uv-pins-{}.tequila", std::process::id()));
+        app.project.save(&path).unwrap();
+        let mut reopened = Project::with_document(tequila_scene::SceneDocument::new(), Arc::new(tequila_scene::demo::studio_environment()));
+        reopened.open(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(reopened.document().tree.get(node).unwrap().uv_pins[&0], vec![1, 3], "the pins came back with the project");
     }
 
     /// Help > About lays out, with or without a BUILD.txt beside the program.
