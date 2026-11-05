@@ -175,6 +175,8 @@ project.tequila
 
 Rationale for splitting materials and geometry out of `scene.json`: a scene with 500 materials stays diffable, and a change to one material produces a one-file diff in git rather than rewriting a monolithic document.
 
+*As built, November 5:* the first embedded textures are a Substance material's rendered maps (`substance/<key>/<output>.png`, `docs/file-format.md` §1 and §4.2), written by `tequila_format::archive` from the textures a material's `substance.maps` names and put back into the render cache on load (`read_into`, `load_into`), so a project with Substance materials opens and renders the same on a computer without Adobe's tools. Every other texture is still a path.
+
 ### 4.2 `scene.json` shape (abbreviated schema)
 
 ```json
@@ -333,6 +335,10 @@ Tessellation quality presets, exposed in the import dialog and in the Re-Tessell
 Import and **export**. USD is the interchange format that matters going forward; supporting it well makes Tequila a good pipeline citizen. Map: `UsdGeomMesh`/`UsdGeomXform` → scene tree; `UsdShade` + **MaterialX/OpenPBR** → material graphs (near-lossless in both directions since Tequila's shading model *is* OpenPBR); `UsdLux` → lights; `UsdGeomCamera` → cameras. Support `.usdz` for delivery.
 
 Instancing: honour `UsdGeomPointInstancer` and scene-graph instancing (`instanceable`) natively.
+
+### 6.3.1 Adobe Substance materials
+
+*As built, November 5* (`tequila-import/src/substance/`, `docs/02-MATERIAL-SYSTEM.md` §5.6). An `.sbsar` (a 7-Zip archive around an XML description) or an `.sbs` (Designer's XML) is read for its graphs' settings, presets, outputs and pictures in pure Rust, without Adobe's software; it becomes one material per graph, wired from the outputs by the texture-pack code, whose maps Adobe's `sbsrender` renders when it is installed (`bridge.rs`). The tests read synthetic files written from the published format; no file made by Adobe's tools was available.
 
 ### 6.4 Instancing detection
 

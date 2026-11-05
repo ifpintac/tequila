@@ -489,6 +489,30 @@ impl Project {
         Ok(())
     }
 
+    /// Point textures at other files, outside the undo history: what a
+    /// Substance material's maps become when they have been rendered again
+    /// (`crate::substance`). Not an edit — the person's edit was the change
+    /// of settings, which is in the history; this is the application
+    /// catching the pictures up with it, as it would again after an undo —
+    /// but it changes what a save writes, so the project counts as changed.
+    pub fn repoint_textures(&mut self, changes: &[(tequila_materials::graph::TextureId, std::path::PathBuf)]) {
+        let mut changed = Vec::new();
+        for (id, path) in changes {
+            if let Some(source) = self.document.textures.get_mut(*id) {
+                if source.path != *path {
+                    source.path = path.clone();
+                    changed.push(*id);
+                }
+            }
+        }
+        if changed.is_empty() {
+            return;
+        }
+        self.meshes.forget_textures(changed);
+        self.bus.mark_unsaved();
+        self.after_change();
+    }
+
     pub fn undo(&mut self) {
         if self.bus.undo(&mut self.document).ok().flatten().is_some() {
             // Conservative: undo can restore deleted geometry, and it is not a

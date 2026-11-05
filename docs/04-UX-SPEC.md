@@ -165,6 +165,11 @@ Users coming from other tools frequently expect per-object materials. The badge 
 | Texture | Opens a small chooser: apply as Colour / Bump / Roughness / **Label** | Applies as colour map |
 | Model | Imports into the scene at the drop point (raycast to ground plane) | Imports as a child of the drop target |
 | Label image | Creates a label at the drop point (§02 §7.3) | Adds a label at default orientation |
+| Substance material (`.sbsar`, `.sbs`) | A material with its settings (§02 §5.6), on the selected parts | Same |
+
+### 3.5 Substance materials
+
+*As built, November 5* (`app/src/substance.rs`). An Adobe Substance file comes in by **File › Import Substance material…**, the Library panel's **+ › Substance material**, the Material tab's **Substance…** (onto every part using the material shown), a file dropped on the window, or the scripting channel's `substance open`; all take one route. A Substance material's Material tab opens with a **Substance** section above the usual ones: the file's own picture, its name, author, category and description; a line saying how its maps stand (rendered at 1024 × 1024 · rendering, with a spinner · could not be rendered, with what the tool said and *Try again* · the file is not there, with *Find it…*); then **Preset**, **Output size** (256 to 4096) and **Random seed**, and the graph's inputs in the file's groups, each with the control its widget asks for — a slider for one number, number fields for two to four, a colour button, a switch, a drop-down, a text field, a picture chooser — a hover with its description and identifier, and ↺ back to the file's value. Every change is one undo step (a drag is one), and the maps follow a moment after it settles. Below: which outputs became which maps and which were not used and why, **Reset all**, **Read the file again** (after changing it in Designer) and **Keep the maps, let go of the file**. Without Adobe's tools the section says so in a card — install Substance 3D Designer or the Substance 3D Automation Toolkit, or **Set the folder of Adobe's tools…**, or **Look again** — and that the material shows the maps saved with the project, or its plain colours until it can render. The rest of the Material tab works on it as on any textured material: texture size, projection, type.
 
 ---
 
@@ -411,6 +416,8 @@ Unlimited by default (configurable), with a visible history panel listing named 
 ---
 
 ## 12. Preferences
+
+*As built, November 5:* where Adobe's Substance tools are, when they are not in a default folder, is set from the Substance section of the Material tab (**Set the folder of Adobe's tools…**) or the scripting channel's `substance tools`, and kept in `substance.txt` beside the person's other settings; `TEQUILA_SUBSTANCE_TOOLS` overrides it.
 
 Sections: **General** (language, autosave interval, undo depth, startup scene) · **Interface** (theme light/dark, UI scale, panel layout presets, tooltips) · **Navigation** (application preset, invert axes, sensitivity) · **Hotkeys** (§6.3) · **Colour Management** (OCIO config path, display transform, view transform per output) · **Units** (default scene unit, display precision) · **Rendering** (default backend, GPU device selection, CPU thread count, texture cache size, default lighting preset) · **Folders** (library, output, temp, autosave) · **Advanced** (developer overlays, shading-language cache, telemetry off by default and opt-in only).
 

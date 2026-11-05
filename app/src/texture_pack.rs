@@ -30,16 +30,8 @@ pub fn load(project: &mut Project, source: &Path, targets: Vec<NodeId>) -> Resul
     if !source.exists() {
         return Err(format!("{} does not exist", source.display()));
     }
-    let size = fitted_size(project.document(), &targets);
-    let options = match uv_layout(project.document(), &targets) {
-        Some(uv_repeats) => SetOptions {
-            size,
-            projection: tequila_texture::projection::Projection::Uv,
-            uv_repeats,
-            ..SetOptions::default()
-        },
-        None => SetOptions { size, ..SetOptions::default() },
-    };
+    let options = set_options(project.document(), &targets);
+    let size = options.size;
     // The parts first, before anything is added: a part that is not there
     // or is locked used to fail the assignment after the pack's materials
     // and textures were already in the project.
@@ -73,6 +65,22 @@ pub fn load(project: &mut Project, source: &Path, targets: Vec<NodeId>) -> Resul
     };
     project.end_interaction();
     Ok(Loaded { report, assigned, size })
+}
+
+/// How a set of maps lies on `targets`: along their own UVs where they have
+/// UVs made for texturing, tri-planar and as wide as they are otherwise. A
+/// texture pack's and a Substance material's maps alike.
+pub(crate) fn set_options(document: &tequila_scene::SceneDocument, targets: &[NodeId]) -> SetOptions {
+    let size = fitted_size(document, targets);
+    match uv_layout(document, targets) {
+        Some(uv_repeats) => SetOptions {
+            size,
+            projection: tequila_texture::projection::Projection::Uv,
+            uv_repeats,
+            ..SetOptions::default()
+        },
+        None => SetOptions { size, ..SetOptions::default() },
+    }
 }
 
 /// How wide one repeat of a pack is on `targets`: as wide as they are, so it
@@ -263,6 +271,8 @@ pub enum Dropped {
     TexturePack,
     /// A material somebody shared: a package, or a preset's `.json`.
     Material,
+    /// An Adobe Substance material: `.sbsar`, or Designer's `.sbs`.
+    Substance,
     Unknown,
 }
 
@@ -287,6 +297,7 @@ pub fn classify_drop(path: &Path) -> Dropped {
         "fsmat" | "json" | "zip" if tequila_format::library::is_material_file(path) => Dropped::Material,
         // KeyShot's material packages.
         "kmp" => Dropped::Material,
+        "sbsar" | "sbs" => Dropped::Substance,
         "zip" | "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" | "bmp" | "webp" | "dds" | "jxl" => Dropped::TexturePack,
         _ => Dropped::Unknown,
     }
@@ -523,6 +534,8 @@ mod tests {
         assert_eq!(classify_drop(Path::new("C:/work/speaker.KSP")), Dropped::Scene);
         assert_eq!(classify_drop(Path::new("C:/work/speaker.bip")), Dropped::Scene);
         assert_eq!(classify_drop(Path::new("C:/notes.txt")), Dropped::Unknown);
+        assert_eq!(classify_drop(Path::new("C:/materials/bricks.SBSAR")), Dropped::Substance);
+        assert_eq!(classify_drop(Path::new("C:/materials/bricks.sbs")), Dropped::Substance);
         assert_eq!(classify_drop(Path::new("C:/hdri/studio_small_08_4k.exr")), Dropped::Unknown);
     }
 

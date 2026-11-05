@@ -225,6 +225,7 @@ impl Session {
                 self.export(format, path, *live, *photos, (*columns, *rows, *tilt), *transparent)
             }
             Operation::StudioPreset(request) => self.studio_preset(request),
+            Operation::Substance(request) => substance(request),
             Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
@@ -1028,5 +1029,25 @@ mod tests {
         assert!(!operations.contains(&"screenshot") && operations.contains(&"render"));
         let ping = value(&mut s, r#"{"op":"ping"}"#);
         assert_eq!(ping.get("headless").and_then(Value::as_bool), Some(true));
+    }
+}
+
+/// `substance` without a window: a file described, and the tools found.
+/// Opening one as a material and rendering its maps is the application's.
+fn substance(request: &Value) -> Reply {
+    use tequila_import::substance::bridge;
+    let found = bridge::find(std::env::var_os("TEQUILA_SUBSTANCE_TOOLS").map(PathBuf::from).as_deref());
+    match request.get("action").and_then(|a| a.as_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "info" => {
+            let Some(path) = request.get("path").and_then(|p| p.as_str()) else {
+                return Reply::Failed("`info` needs the file's \"path\"".into());
+            };
+            match tequila_import::substance::read(std::path::Path::new(path)) {
+                Ok(file) => Reply::Value(tequila_scripting::substance::info(std::path::Path::new(path), &file, &found)),
+                Err(error) => Reply::Failed(format!("{path}: {error}")),
+            }
+        }
+        "tools" => Reply::Value(tequila_scripting::substance::tools(&found)),
+        other => Reply::Failed(format!("`substance {other}` needs the application: a headless session answers info and tools")),
     }
 }

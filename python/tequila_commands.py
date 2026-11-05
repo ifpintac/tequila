@@ -58,6 +58,7 @@ CATALOG = (
     'material.set_procedural',
     'material.set_gradient',
     'material.set_mapping',
+    'material.set_substance',
     'lighting.set_preset',
     'lighting.set_custom',
     'environment.set_parameter',
@@ -185,6 +186,13 @@ class MaterialCommands(_Commands):
         { "axis": "z", "blend_sharpness": 6, "command": "material.set_mapping", "flip_u": true, "flip_v": false, "material": 1, "offset": [0, 0], "param": "base_color", "pivot": [0, 0], "projection": "uv", "real_world_units": false, "rigid": false, "rotation": 0.5, "scale": [1, 1, 1], "uv_set": 1, "wrap_u": "repeat", "wrap_v": "repeat" }
         """
         return self._apply('material.set_mapping', {'axis': axis, 'blend_sharpness': blend_sharpness, 'flip_u': flip_u, 'flip_v': flip_v, 'material': material, 'offset': offset, 'param': param, 'pivot': pivot, 'projection': projection, 'real_world_units': real_world_units, 'rigid': rigid, 'rotation': rotation, 'scale': scale, 'uv_set': uv_set, 'wrap_u': wrap_u, 'wrap_v': wrap_v})
+
+    def set_substance(self, *, material=_UNSET, substance=_UNSET):
+        r"""`material.set_substance`: A Substance material's file, graph and input values (`docs/02` §5.6), or `null` to make it an ordinary material that keeps the maps it has.
+
+        { "command": "material.set_substance", "material": 1, "substance": { "file": "materials/bricks.sbsar", "file_hash": "9e3779b97f4a7c15", "graph": "pkg://bricks", "images": {}, "maps": {}, "values": { "$outputsize": "10,10", "brick_color": "0.6,0.25,0.15,1" } } }
+        """
+        return self._apply('material.set_substance', {'material': material, 'substance': substance})
 
     def set_multi_materials(self, *, multi_materials=_UNSET):
         r"""`material.set_multi_materials`: The whole list, and the active variant of each assigned to its parts.

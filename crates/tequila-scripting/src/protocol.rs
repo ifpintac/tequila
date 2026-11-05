@@ -148,6 +148,11 @@ pub enum Operation {
     /// `install` or `export` a package, `delete` one, or `render_all`
     /// views. Carried as sent; the application reads its fields.
     StudioPreset(Value),
+    /// `substance`: Adobe Substance materials (`docs/02` §5.6) - `info` on a
+    /// file, `open` one as materials, `set` a material's values, `status`
+    /// of its maps, `wait` for them, `tools` to say where Adobe's are.
+    /// Carried as sent; the application reads its fields.
+    Substance(Value),
     /// The material library: putting presets on parts, and adding to the
     /// user's own - what a script or a plugin does with materials beyond
     /// the document. See [`LibraryRequest`].
@@ -257,6 +262,9 @@ pub struct LibraryRequest {
 
 /// The `studio_preset` operation's actions.
 pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", "install", "export", "render_all"];
+
+/// What the `substance` operation does.
+pub const SUBSTANCE_ACTIONS: &[&str] = &["info", "open", "set", "status", "wait", "tools"];
 
 /// A `studio_preset.apply` naming an installed preset by `id` rather than
 /// carrying it: the preset read in, so the command is whole - what the
@@ -950,6 +958,16 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
             Operation::StudioPreset(value.clone())
         }
+        "substance" => {
+            let action = string(value, "action")?.to_ascii_lowercase();
+            if !SUBSTANCE_ACTIONS.contains(&action.as_str()) {
+                return Err(ProtocolError(format!(
+                    "`{action}` is not a substance action; the actions are {}",
+                    SUBSTANCE_ACTIONS.join(", ")
+                )));
+            }
+            Operation::Substance(value.clone())
+        }
         "library" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !LIBRARY_ACTIONS.contains(&action.as_str()) {
@@ -1286,6 +1304,10 @@ impl Operation {
             Operation::StudioPreset(request) => match request.get("preset").and_then(|i| i.as_str()) {
                 Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+            },
+            Operation::Substance(request) => match request.get("path").and_then(|p| p.as_str()) {
+                Some(path) => format!("substance {} {path}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+                None => format!("substance {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
             },
             Operation::Export { format, path, .. } => format!("export {format} to {path}"),
             Operation::Queue(job) => match &job.name {

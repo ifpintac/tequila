@@ -775,6 +775,17 @@ Every material parameter is now implemented; nothing is greyed out.
   material is reusable everywhere. *Not yet:* reading a pack's real-world size
   from its metadata.
 
+- **Adobe Substance materials** (November 5; File → Import Substance
+  material…, the Library panel's + → Substance material, the Material tab's
+  Substance…, a dropped `.sbsar` or `.sbs`, or the scripting op `substance`;
+  all go through `app/src/substance.rs`). The file's settings are read by
+  Tequila itself (`tequila-import/src/substance/`); its maps are wired by the
+  texture-pack code and rendered by Adobe's `sbsrender` in the background
+  when it is installed, a moment after a setting stops changing; the project
+  keeps them. Without Adobe's tools the Material tab still shows every
+  setting and the file's picture, and says what to install. See `docs/02`
+  §5.6; unproven against real Adobe files and tools.
+
 - **Caustics are real** (Lighting → Transport → Caustics, on in the Jewelry
   preset; `--caustics` on the command line). Light through solid glass,
   liquids and gems, and off mirrors, is traced from the lights as photons
