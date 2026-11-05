@@ -3359,7 +3359,7 @@ impl TequilaApp {
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.render_button(ui);
-                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, glTF, OBJ, STL, USD and IFC", "Ctrl + I")
+                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, OBJ, STL, USD and IFC", "Ctrl + I")
                         .clicked()
                     {
                         self.ask_for_file(Action::Import);
@@ -4703,7 +4703,8 @@ impl TequilaApp {
         let chosen = match action {
             Action::Import => dialog
                 .set_title("Import model")
-                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"])
+                .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "ifc", "ksp", "bip"])
+                .add_filter("Rhino model", &["3dm"])
                 .add_filter("KeyShot scene", &["ksp", "bip"])
                 .add_filter("All files", &["*"])
                 .pick_file(),
@@ -5099,7 +5100,7 @@ impl TequilaApp {
             (_, recorded) => {
                 let mut dialog = rfd::FileDialog::new()
                     .set_title("Update model from")
-                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "usda", "usd", "ifc", "ksp", "bip"]);
+                    .add_filter("Models", &["obj", "stl", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "ifc", "ksp", "bip"]);
                 if let Some(folder) = recorded.as_ref().and_then(|p| p.parent()) {
                     dialog = dialog.set_directory(folder);
                 }

@@ -1,0 +1,31 @@
+Two Rhino files from McNeel's rhino3dm, used as test fixtures by
+crates/tequila-import/tests/rhino.rs (mcneel_files_read). Unchanged copies of
+
+  https://github.com/mcneel/rhino3dm/blob/2bfb1db7c91057b92b95e467464a8f5830b0ecea/tests/models/mesh.3dm
+      (written by Rhinoceros 8.16 on macOS: one mesh)
+  https://github.com/mcneel/rhino3dm/blob/2bfb1db7c91057b92b95e467464a8f5830b0ecea/tests/models/subd_creases.3dm
+      (written by rhino3dm's openNURBS 8: one SubD with creases)
+
+rhino3dm is distributed under the MIT licence below.
+
+MIT License
+
+Copyright (c) 2023 Robert McNeel & Associates
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

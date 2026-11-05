@@ -349,8 +349,15 @@ fn archive(document: &SceneDocument, preserved: &Preserved, preview: Option<&[u8
         .collect();
     for (id, bytes) in document.sources.iter() {
         if referenced.contains(id.as_str()) {
-            // Named for what it is: a STEP file begins by saying so.
-            let extension = if bytes.trim_ascii_start().starts_with(b"ISO-10303-21") { "step" } else { "iges" };
+            // Named for what it is: a STEP file begins by saying so, and
+            // so does a Rhino file.
+            let extension = if bytes.trim_ascii_start().starts_with(b"ISO-10303-21") {
+                "step"
+            } else if bytes.starts_with(b"3D Geometry File Format ") {
+                "3dm"
+            } else {
+                "iges"
+            };
             archive.add(format!("sources/{id}.{extension}"), bytes.to_vec());
         }
     }
@@ -2964,7 +2971,7 @@ fn studio_picture_key(name: &str) -> Option<u64> {
 
 fn read_sources(archive: &zip::ZipArchive, document: &mut SceneDocument) {
     for name in archive.names() {
-        let Some(id) = name.strip_prefix("sources/").and_then(|n| n.strip_suffix(".step").or_else(|| n.strip_suffix(".iges"))) else { continue };
+        let Some(id) = name.strip_prefix("sources/").and_then(|n| n.strip_suffix(".step").or_else(|| n.strip_suffix(".iges")).or_else(|| n.strip_suffix(".3dm"))) else { continue };
         document.sources.insert(id.to_string(), std::sync::Arc::new(archive.get(name).unwrap_or_default().to_vec()));
     }
 }

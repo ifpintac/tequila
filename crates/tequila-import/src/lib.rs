@@ -25,6 +25,9 @@
 //! corrupt.
 //!
 //! PLY, 3DS, Collada and 3MF are M8's business, alongside the CAD kernels.
+//!
+//! Rhino's `.3dm` is read by [`rhino`], Tequila's own reader of the
+//! openNURBS archive, whose format McNeel publishes as open source.
 
 pub mod axf;
 mod bip;
@@ -39,6 +42,7 @@ mod occt;
 mod part21;
 mod planar;
 pub mod raw;
+pub mod rhino;
 pub mod step;
 pub mod usd;
 pub mod stl;
@@ -327,6 +331,8 @@ pub fn read_cad(bytes: &[u8], name: &str, path: Option<std::path::PathBuf>, qual
         bip_scene::read_package(bytes, name, quality)?
     } else if iges::looks_like(bytes) {
         iges::read_with(bytes, name, quality)?
+    } else if rhino::looks_like(bytes) {
+        rhino::read_with(bytes, name, quality)?
     } else {
         step::read_with(bytes, name, quality)?
     };
@@ -367,10 +373,17 @@ pub fn read_file_with(path: &Path, quality: step::Tessellation) -> Result<ReadMo
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let cad = matches!(extension.as_str(), "step" | "stp" | "igs" | "iges");
+    let mut cad = matches!(extension.as_str(), "step" | "stp" | "igs" | "iges");
     let scene = match extension.as_str() {
         "step" | "stp" => step::read_with(&bytes, &name, quality)?,
         "igs" | "iges" => iges::read_with(&bytes, &name, quality)?,
+        // Kept to divide again only when something in it was divided: a
+        // file of saved meshes has nothing a quality would change.
+        "3dm" => {
+            let scene = rhino::read_with(&bytes, &name, quality)?;
+            cad = scene.tessellation.is_some();
+            scene
+        }
         // A scene's pictures stay where they are beside it; a package's
         // are written out beside the package, as a glTF's are.
         "bip" => bip_scene::read(&bytes, &name, bip_scene::Pictures::Folder(path.parent()), quality)?,
@@ -543,6 +556,7 @@ pub fn read_format(
         "step" | "stp" => step::read(bytes, name),
         "igs" | "iges" => iges::read(bytes, name),
         "ifc" => ifc::read(bytes, name),
+        "3dm" => rhino::read(bytes, name),
         "bip" => bip_scene::read(bytes, name, bip_scene::Pictures::Sibling(sibling), step::Tessellation::default()),
         "ksp" => bip_scene::read_package(bytes, name, step::Tessellation::default()),
         // Named explicitly so the message can say what to do. Falling

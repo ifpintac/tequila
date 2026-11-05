@@ -280,7 +280,7 @@ pub fn classify_drop(path: &Path) -> Dropped {
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "usda" | "usd" | "ifc" => Dropped::Model,
+        "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "3dm" | "usda" | "usd" | "ifc" => Dropped::Model,
         "tequila" | "freeshot" => Dropped::Project,
         "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.
@@ -518,6 +518,7 @@ mod tests {
         }
         assert_eq!(classify_drop(Path::new("C:/art/logo.svg")), Dropped::Unknown, "artwork is not a pack");
         assert_eq!(classify_drop(Path::new("C:/models/bracket.STEP")), Dropped::Model);
+        assert_eq!(classify_drop(Path::new("C:/models/kettle.3DM")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/models/headset.glb")), Dropped::Model);
         assert_eq!(classify_drop(Path::new("C:/work/shot.tequila")), Dropped::Project);
         assert_eq!(classify_drop(Path::new("C:/work/speaker.KSP")), Dropped::Scene);

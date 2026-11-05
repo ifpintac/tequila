@@ -1222,9 +1222,21 @@ fn kept_cad_sources_survive_a_round_trip_while_named() {
     let second = document.tree.roots()[1];
     bus.apply(&mut document, tequila_scene::Command::SetMetadata { node: second, key: BREP.into(), value: Some(iges_id.clone()) }).unwrap();
 
-    let reopened = read(&write(&document, &Preserved::default())).expect("the file we just wrote must read");
+    // A Rhino file, kept as one.
+    let rhino = b"3D Geometry File Format       70 and the rest".to_vec();
+    let rhino_id = Sources::id_of(&rhino);
+    document.sources.insert(rhino_id.clone(), std::sync::Arc::new(rhino.clone()));
+    bus.apply(&mut document, tequila_scene::Command::AddGroup { parent: None, name: "Rhino".into() }).unwrap();
+    let third = document.tree.roots()[2];
+    bus.apply(&mut document, tequila_scene::Command::SetMetadata { node: third, key: BREP.into(), value: Some(rhino_id.clone()) }).unwrap();
+    let written = write(&document, &Preserved::default());
+    let members = tequila_format::zip::ZipArchive::read(&written).unwrap();
+    assert!(members.names().iter().any(|n| *n == format!("sources/{rhino_id}.3dm")), "named for what it is");
+
+    let reopened = read(&written).expect("the file we just wrote must read");
     assert_eq!(reopened.document.sources.get(&named_id).map(|b| b.as_slice()), Some(named.as_slice()));
     assert_eq!(reopened.document.sources.get(&iges_id).map(|b| b.as_slice()), Some(iges.as_slice()));
+    assert_eq!(reopened.document.sources.get(&rhino_id).map(|b| b.as_slice()), Some(rhino.as_slice()));
     assert!(reopened.document.sources.get(&orphan_id).is_none(), "a source no model names was kept");
     assert!(reopened.preserved.is_empty(), "the source came back as an unknown member");
 }

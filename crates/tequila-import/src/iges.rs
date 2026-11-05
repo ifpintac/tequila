@@ -463,7 +463,7 @@ fn path(pieces: &[Piece]) -> CurveFn {
 
 /// The basis functions of a B-spline at `t`, in its knot span: the
 /// Cox-de Boor recursion (Piegl and Tiller, A2.2).
-fn basis(knots: &[f64], degree: usize, count: usize, t: f64) -> (usize, Vec<f64>) {
+pub(crate) fn basis(knots: &[f64], degree: usize, count: usize, t: f64) -> (usize, Vec<f64>) {
     let n = count - 1;
     let t = t.clamp(knots[degree], knots[n + 1]);
     let span = if t >= knots[n + 1] {
@@ -643,6 +643,60 @@ pub(crate) fn divide_nurbs(face: NurbsFace, tolerance: f64) -> Option<Divided> {
         segments.push(l.into_iter().map(|c| Segment::Params(nurbs_pieces(c.knots, c.degree, c.points, c.range[0], c.range[1]))).collect());
     }
     let face = Face { surface, loops: segments, reversed: false, colour: None, body: None, name: None, layers: Vec::new() };
+    let meshed = tessellate(&face, tolerance);
+    if meshed.triangles.is_empty() {
+        return None;
+    }
+    Some(Divided { positions: meshed.positions, normals: meshed.normals, triangles: meshed.triangles, edges: meshed.edges, params: meshed.params })
+}
+
+/// A trimmed face on any surface a function gives, its loops pieces of
+/// curves in the surface's parameters: a Rhino file's faces
+/// (`crate::rhino`), whose surfaces of revolution, sums and planes, and
+/// trims of lines, arcs and joined pieces, are not all NURBS.
+pub(crate) struct ParametricFace {
+    pub at: SurfaceFn,
+    /// u0, u1, v0, v1.
+    pub domain: [f64; 4],
+    /// The grid divisions its shape needs at least, each way.
+    pub spans: [usize; 2],
+    /// Its loops, each of pieces end to end: a function from t to (u, v),
+    /// run from the first t to the second (either way round), sampled at
+    /// least so many times. None for a face that is its whole surface.
+    pub loops: Vec<Vec<(Arc<dyn Fn(f64) -> P2 + Send + Sync>, f64, f64, usize)>>,
+    /// Facing against the surface's own normal.
+    pub reversed: bool,
+}
+
+/// Divide a [`ParametricFace`] at `tolerance`, as IGES's faces are; `None`
+/// for one that came out empty.
+pub(crate) fn divide_parametric(face: ParametricFace, tolerance: f64) -> Option<Divided> {
+    let ParametricFace { at, domain, spans, loops, reversed } = face;
+    if !domain.iter().all(|d| d.is_finite()) || !(domain[1] > domain[0] && domain[3] > domain[2]) || !(tolerance > 0.0 && tolerance.is_finite()) {
+        return None;
+    }
+    let surface = Surface { at, domain, spans: [spans[0].max(1), spans[1].max(1)], invert: None, period: [None, None], native: true };
+    let loops = loops
+        .into_iter()
+        .map(|l| {
+            vec![Segment::Params(
+                l.into_iter()
+                    .map(|(f, t0, t1, min)| {
+                        Piece::new(
+                            move |t| {
+                                let [u, v] = f(t);
+                                [u, v, 0.0]
+                            },
+                            t0,
+                            t1,
+                            min,
+                        )
+                    })
+                    .collect(),
+            )]
+        })
+        .collect();
+    let face = Face { surface, loops, reversed, colour: None, body: None, name: None, layers: Vec::new() };
     let meshed = tessellate(&face, tolerance);
     if meshed.triangles.is_empty() {
         return None;

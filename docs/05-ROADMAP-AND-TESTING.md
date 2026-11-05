@@ -1031,6 +1031,33 @@ under M10's spectral item).
       property sets become searchable metadata; units, Z up and far-off
       georeferenced coordinates are handled. Not read: swept disks,
       revolved solids, NURBS (`IfcAdvancedBrep`) - listed in a warning.
+- [x] Rhino `.3dm` import, Rhino 5 to 8 (2026-11-05; `docs/03` §6.2,
+      `tequila-import/src/rhino/`): Tequila's own pure-Rust reader of the
+      openNURBS archive, from McNeel's published source, no new
+      dependency. File > Import and Update from, a drop, the CLI and the
+      scripting `import` all take it. Layers (full names, colours, on/off
+      down the tree) as the scene tree and as CAD layers; materials (basic
+      and Rhino 7 PBR) as OpenPBR with their maps; meshes (compressed
+      arrays, normals, UVs, vertex colours, double vertices); B-reps from
+      their saved render meshes or divided face by face (NURBS, plane,
+      revolved and sum surfaces, trims of NURBS, lines, polylines, arcs,
+      polycurves) by the IGES divider; extrusions; SubD by Catmull-Clark of
+      its cage; blocks meshed once and placed, nested too; names, display
+      colours by layer/object/material/parent, hidden objects; Z up turned
+      to Y up; units and tolerance; kept for Re-Tessellate. *Unproven:*
+      no Rhino here, so meshes, materials, extrusions, SubD and blocks are
+      tested against a test writer of the same reading of openNURBS
+      (`tests/rhino.rs`, 14 tests); read by hand, a box written by
+      McNeel's rhino3dm (archive 70, an open-source project's fixture) and
+      sphere meshes written in archives 50 to 80 by cadmpeg's independent
+      writer, whose reader also agrees with the test writer's files. A
+      folder of real files runs through `real_files`
+      (`TEQUILA_3DM_SAMPLES`): McNeel's 72 (openNURBS example files for
+      Rhino 4 to 8, rhino3dm's test models) all read, nothing they should
+      bring left out, once Rhino's own classes (`TL_Brep` and the rest)
+      read as openNURBS's. Two of rhino3dm's (MIT) are committed fixtures. Not read: curves, annotation, lights,
+      linked blocks, embedded bitmaps, mitered extrusion ends, RDK content
+      beyond its simulated material.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
       opened as a project of their own (File > Open, a drop, the start
       screen, `tequila -i`) or imported into one (File > Import, the

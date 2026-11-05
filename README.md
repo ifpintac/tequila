@@ -83,7 +83,8 @@ with `--cpu-only` to leave the graphics cards out.
   <img src="website/assets/img/app-uv.jpg" width="32%" alt="Tequila's UV editor">
 </p>
 
-- **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, glTF/GLB,
+- **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, Rhino
+  (`.3dm`, with its layers, materials and blocks), glTF/GLB,
   OBJ (with ZBrush polypaint), STL, USD and IFC, with assemblies, names,
   colours and units, and a CAD file's attributes and layers (shown and
   hidden as groups); very large models; re-tessellate and re-import that

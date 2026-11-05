@@ -259,7 +259,7 @@ These depend on diffusion-model infrastructure orthogonal to the renderer. Note 
 
 ## 1.18 File format support
 
-**Native CAD** (out of scope, §0.2 rule 5): 3ds Max `.max` · ALIAS `.wire` · AutoCAD `.dwg`/`.dxf` · CATIA `.cgr`/`.catpart`/`.catproduct`/`.catdrawing` · Cinema 4D `.c4d` · Creo `.prt`/`.asm` · Creo View `.pvz`/`.pvs`/`.edz`/`.ed`/`.c3di`/`.ol` · Inventor `.ipt`/`.iam` · Maya `.ma`/`.mb` · NX `.prt` · Onshape · Pro/ENGINEER · Revit `.rvt` · Rhinoceros `.3dm` · SketchUp `.skp` · Solid Edge `.par`/`.asm`/`.psm` · SOLIDWORKS `.sldprt`/`.sldasm`.
+**Native CAD** (out of scope, §0.2 rule 5): 3ds Max `.max` · ALIAS `.wire` · AutoCAD `.dwg`/`.dxf` · CATIA `.cgr`/`.catpart`/`.catproduct`/`.catdrawing` · Cinema 4D `.c4d` · Creo `.prt`/`.asm` · Creo View `.pvz`/`.pvs`/`.edz`/`.ed`/`.c3di`/`.ol` · Inventor `.ipt`/`.iam` · Maya `.ma`/`.mb` · NX `.prt` · Onshape · Pro/ENGINEER · Revit `.rvt` · Rhinoceros `.3dm` (read since 2026-11-05 all the same: its openNURBS format is published as open source, `docs/03` §6.2) · SketchUp `.skp` · Solid Edge `.par`/`.asm`/`.psm` · SOLIDWORKS `.sldprt`/`.sldasm`.
 
 **Open exchange (in scope):** STEP `.stp`/`.step` · IGES `.igs`/`.iges` · ACIS `.sat`* · JT `.jt`* · Parasolid `.x_t`* · **IFC** (BIM, 2026.1). *(\*ACIS/JT/Parasolid require additional kernels; STEP and IGES via OCCT are the priority.)*
 
