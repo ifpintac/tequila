@@ -31,7 +31,20 @@ truck-meshalgo = { version = "0.4", default-features = false, features = ["tesse
 # IFC profiles and faces with holes: constrained Delaunay, as truck uses.
 spade = "2"
 truck-topology = "0.6"
+# Adobe Substance materials: an .sbsar is a 7-Zip archive around an XML
+# description of its graphs; an .sbs is that XML on its own. Pure Rust,
+# Apache-2.0 (sevenz-rust2), MIT/Apache-2.0 (roxmltree, base64). The
+# encoder is what writes the synthetic archives the tests read.
+sevenz-rust2 = "0.10"
+roxmltree = "0.20"
+base64 = "0.22"
 
 [dev-dependencies]
 # Tests build B-spline surfaces of their own (step.rs, face_alone_tests).
 truck-geometry = "0.5"
+
+# The Substance bridge against a separate program: the test is its own
+# main, and acts as Adobe's tools when started with their arguments.
+[[test]]
+name = "substance_bridge"
+harness = false

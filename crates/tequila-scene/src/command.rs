@@ -362,6 +362,19 @@ pub enum Command {
         material: MaterialKey,
         graph: Box<tequila_materials::graph::MaterialGraph>,
     },
+    /// `material.set_substance` — a Substance material's file, graph and
+    /// input values (`docs/02` §5.6), or `null` to make it an ordinary
+    /// material that keeps the maps it has.
+    ///
+    /// Nothing the renderer sees changes with it: the maps are rendered
+    /// from the new values afterwards, outside the document, and the
+    /// application points the material's textures at them when they are
+    /// ready. So undoing it brings back the old values, and the maps that
+    /// were rendered from them, without a render.
+    SetSubstance {
+        material: MaterialKey,
+        substance: Option<Box<crate::material::SubstanceLink>>,
+    },
     /// `material.set_type` — a material's type (plastic, metal, glass,
     /// velvet, ...), keeping what carries over.
     SetMaterialType {
@@ -1162,6 +1175,7 @@ impl Command {
             Command::SetTextureMapping { .. } => "material.set_mapping",
             Command::RenameMaterial { .. } => "material.rename",
             Command::SetGraph { .. } => "material.set_graph",
+            Command::SetSubstance { .. } => "material.set_substance",
             Command::SetLightingPreset { .. } => "lighting.set_preset",
             Command::SetLightingConfig { .. } => "lighting.set_custom",
             Command::SetEnvironmentParameter { .. } => "environment.set_parameter",
@@ -1195,7 +1209,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 72] = [
+    pub const CATALOG: [&'static str; 73] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1240,6 +1254,7 @@ impl Command {
         "material.set_procedural",
         "material.set_gradient",
         "material.set_mapping",
+        "material.set_substance",
         "lighting.set_preset",
         "lighting.set_custom",
         "environment.set_parameter",
@@ -1359,6 +1374,9 @@ impl Command {
             | Command::RemoveCamera { .. }
             | Command::RenameCamera { .. }
             | Command::RenameMaterial { .. }
+            // The values a Substance material's maps are rendered from: the
+            // maps come later, and the textures with them.
+            | Command::SetSubstance { .. }
             // An annotation over the image, never in it.
             | Command::SetMeasurements { .. }
             | Command::SetStudios { .. }
@@ -1393,6 +1411,8 @@ impl Command {
             // the interaction barrier ends the run, so two separate edits
             // still undo separately.
             (Command::SetGraph { material: a, .. }, Command::SetGraph { material: b, .. }) => a == b,
+            // A Substance slider's drag, one per frame, as a literal's.
+            (Command::SetSubstance { material: a, .. }, Command::SetSubstance { material: b, .. }) => a == b,
             (
                 Command::SetMaterialParameter {
                     material: a,
@@ -2968,6 +2988,16 @@ fn execute(
                 .ok_or(CommandError::NoSuchMaterial(*material))?;
             let previous = definition.clone();
             definition.graph = (**graph).clone();
+            Ok(Undo::MaterialType(*material, Box::new(previous)))
+        }
+
+        Command::SetSubstance { material, substance } => {
+            let definition = document
+                .materials
+                .get_mut(*material)
+                .ok_or(CommandError::NoSuchMaterial(*material))?;
+            let previous = definition.clone();
+            definition.substance = substance.clone();
             Ok(Undo::MaterialType(*material, Box::new(previous)))
         }
 

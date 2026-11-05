@@ -288,6 +288,13 @@ pub fn encode(command: &Command) -> String {
             out.set("material", material.0)
                 .set("type", material_type.id());
         }
+        Command::SetSubstance { material, substance } => {
+            out.set("material", material.0);
+            match substance {
+                Some(link) => out.set("substance", crate::substance_to_json(link)),
+                None => out.set("substance", Value::Null),
+            };
+        }
         Command::AddDecal { material, source, name } => {
             out.set("material", material.0).set("name", name.clone())
                 .set("path", source.path.to_string_lossy().to_string()).set("role", role_name(source.role));
@@ -890,6 +897,15 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
                 graph: Box::new(crate::read_material(definition, "material.set_graph")?.graph),
             }
         }
+        "material.set_substance" => Command::SetSubstance {
+            material: material("material")?,
+            substance: match value.get("substance") {
+                None | Some(Value::Null) => None,
+                Some(link) => Some(Box::new(crate::read_substance(link).ok_or_else(|| {
+                    FormatError::Invalid("material.set_substance: `substance` needs at least a `file`".into())
+                })?)),
+            },
+        },
         "material.add_decal" => Command::AddDecal {
             material: material("material")?, name: text("name")?,
             source: TextureSource {

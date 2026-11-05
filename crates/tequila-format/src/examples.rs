@@ -498,6 +498,21 @@ pub fn commands() -> Vec<Command> {
             material,
             name: "Anodized".into(),
         },
+        // A Substance material's settings, and letting go of the file.
+        Command::SetSubstance {
+            material,
+            substance: Some(Box::new(tequila_scene::material::SubstanceLink {
+                file: PathBuf::from("materials/bricks.sbsar"),
+                file_hash: "9e3779b97f4a7c15".into(),
+                graph: "pkg://bricks".into(),
+                values: [("$outputsize".to_string(), "10,10".to_string()), ("brick_color".to_string(), "0.6,0.25,0.15,1".to_string())]
+                    .into_iter()
+                    .collect(),
+                images: Default::default(),
+                maps: Default::default(),
+            })),
+        },
+        Command::SetSubstance { material, substance: None },
         Command::SetMaterialType {
             material,
             material_type: MaterialType::GlassSolid,

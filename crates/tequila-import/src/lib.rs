@@ -42,6 +42,7 @@ pub mod raw;
 pub mod step;
 pub mod usd;
 pub mod stl;
+pub mod substance;
 pub mod texture_set;
 
 use tequila_core::math::{Mat4, Transform, Vec3};

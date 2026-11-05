@@ -138,6 +138,9 @@ POSSIBILITY OF SUCH DAMAGE.
 | `truck-stepio` (vendored in `vendor/truck-stepio` with one fix, see its `TEQUILA-PATCH.md`), `truck-base`, `truck-geometry`, `truck-geotrait`, `truck-topology`, `truck-modeling`, `truck-polymesh`, `truck-meshalgo`, `truck-derivers` | Apache-2.0 | STEP import: B-rep conversion and tessellation (`tequila-import`) |
 | `ruststep`, `ruststep-derive` | Apache-2.0 | Parsing STEP exchange files |
 | `spade`, `robust` | MIT OR Apache-2.0 | Constrained Delaunay triangulation of STEP faces |
+| `sevenz-rust2`, `lzma-rust2` | Apache-2.0 | Reading Adobe Substance `.sbsar` files, which are 7-Zip archives (`tequila-import`) |
+| `bit-set`, `bit-vec`, `filetime`, `filetime_creation`, `nt-time`, `time`, `time-core`, `time-macros`, `deranged`, `num-conv`, `powerfmt` | MIT OR Apache-2.0 | `sevenz-rust2`'s own dependencies |
+| `roxmltree`, `base64` | MIT OR Apache-2.0 | Reading a Substance file's XML description and an `.sbs` file's icon (also listed above, for SVG and HTTPS) |
 | `cgmath`, `approx`, `matext4cgmath` | Apache-2.0 | truck's linear algebra |
 | `nom`, `derive_more`, `derive-new`, `convert_case`, `winnow`, `branches` | MIT | STEP parsing and derives |
 | `Inflector` | BSD-2-Clause | Name conversion in `ruststep-derive` (build time) |

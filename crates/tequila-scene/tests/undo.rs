@@ -572,6 +572,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetTextureMapping { .. }
         | Command::RenameMaterial { .. }
         | Command::SetGraph { .. }
+        | Command::SetSubstance { .. }
         | Command::SetLightingPreset { .. }
         | Command::SetLightingConfig { .. }
         | Command::SetEnvironmentParameter { .. }
@@ -704,6 +705,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             material: MaterialKey(1),
             graph: Box::new(tequila_materials::graph::MaterialGraph::from_material(Default::default())),
         },
+        Command::SetSubstance { material: MaterialKey(1), substance: None },
         Command::SetLightingPreset {
             preset: LightingPreset::Product,
         },

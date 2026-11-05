@@ -53,6 +53,62 @@ pub struct MaterialDefinition {
     /// drift, and "I changed it in the graph and the panel still shows the old
     /// value" becomes unfixable rather than merely unfixed.
     pub graph: MaterialGraph,
+    /// The Adobe Substance file this material is made from, and the
+    /// settings the person gave it, when it is one (`docs/02` §5.6). `None`
+    /// for every other material.
+    pub substance: Option<Box<SubstanceLink>>,
+}
+
+/// A material made from an Adobe Substance file (`.sbsar`, or Designer's
+/// `.sbs`): which file and which of its graphs, and the values the person
+/// set its inputs to.
+///
+/// Its maps are pictures Adobe's `sbsrender` makes from these, outside the
+/// document: the graph reads them through ordinary textures, wired as a
+/// texture pack's are, and `maps` says which texture holds which output.
+/// When the settings change the application renders the maps again and
+/// points those textures at the new pictures; the textures are where the
+/// latest finished render went, which is not always the render of these
+/// settings yet.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SubstanceLink {
+    /// The file, where it was opened from.
+    pub file: std::path::PathBuf,
+    /// A hash of the file's content when it was read, so a render made
+    /// from one version of the file is not taken for another's.
+    pub file_hash: String,
+    /// Which graph: its package URL, `pkg://bricks`.
+    pub graph: String,
+    /// The inputs the person set, by identifier, as `sbsrender --set-value`
+    /// takes them (`0.5`, `1,0,0,1`, `$outputsize` → `10,10`). An input not
+    /// here is at the file's default.
+    pub values: BTreeMap<String, String>,
+    /// Image inputs given a picture, by identifier.
+    pub images: BTreeMap<String, std::path::PathBuf>,
+    /// Which texture holds which output's map, by output identifier.
+    pub maps: BTreeMap<String, tequila_materials::graph::TextureId>,
+}
+
+impl SubstanceLink {
+    /// What a render of these settings is filed under: the same on every
+    /// computer, so maps saved with a project are found again as the
+    /// render of the settings they were made with. FNV-1a, stable across
+    /// builds and platforms.
+    pub fn settings_key(&self) -> String {
+        let mut text = format!("{}\n{}\n", self.file_hash, self.graph);
+        for (id, value) in &self.values {
+            text.push_str(&format!("v {id}={value}\n"));
+        }
+        for (id, path) in &self.images {
+            text.push_str(&format!("i {id}={}\n", path.display()));
+        }
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in text.as_bytes() {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{hash:016x}")
+    }
 }
 
 impl MaterialDefinition {
@@ -65,6 +121,7 @@ impl MaterialDefinition {
             name: name.into(),
             material_type,
             graph: MaterialGraph::from_material(material),
+            substance: None,
         }
     }
 
@@ -78,6 +135,7 @@ impl MaterialDefinition {
             name: name.into(),
             material_type,
             graph,
+            substance: None,
         }
     }
 

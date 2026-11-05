@@ -12,6 +12,11 @@ KeyShot is a trademark of Luxion ApS. Pantone, RAL, Mold-Tech, Sorensen,
 Coloro, INTERPON and Axalta are trademarks of their respective owners.
 Tequila bundles none of their content.
 
+Adobe and Substance are trademarks of Adobe Inc. Tequila reads Substance
+files from their published description and renders their maps only through
+Adobe's own command-line tools, installed by the person; it ships no Adobe
+software and loads none of Adobe's libraries.
+
 References to other products in Tequila's specification and documentation are
 **descriptive and comparative**: they identify capabilities and workflows that
 Tequila aims to provide, so that people evaluating or building the software
