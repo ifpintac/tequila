@@ -927,30 +927,10 @@ fn trace<C: PathColour>(
             // A background mode replaces this only on a path the camera can
             // still see along — directly, or through glass and mirrors. Every
             // other path is carrying light *to* a surface, and a solid colour
-            // or a backplate must not light anything (§1.5).
-            // Two different rules, for two different things.
-            //
-            // A solid colour or a backplate replaces the view along the whole
-            // specular chain, because §1.5 wants a backplate photograph to
-            // appear in a chrome surface — without it the product looks
-            // pasted onto the picture rather than standing in it.
-            //
-            // A pin marked not to show in the background is the opposite: it
-            // leaves the *primary* ray's view and stays everywhere else, so
-            // the backdrop is clean while chrome goes on reflecting the
-            // softbox. That is the arrangement a product photographer sets up,
-            // and neither background mode can produce it on its own.
-            let emitted = if specular_chain && !scene.background.is_environment() {
-                scene
-                    .background
-                    .radiance(&scene.environment, ray.origin, ray.direction, film)
-            } else if bounce == 0 && !config.reflected {
-                scene
-                    .environment
-                    .background_radiance_from(ray.origin, ray.direction)
-            } else {
-                scene.environment.radiance_from(ray.origin, ray.direction)
-            };
+            // or a backplate must not light anything (§1.5). Which is which
+            // is `past_the_scene`'s, shared with what a shadow catcher shows
+            // behind it.
+            let emitted = past_the_scene(scene, config, &ray, film, bounce, specular_chain);
             // Light reached through mirror-smooth surfaces after reading the
             // photons: theirs, not this path's.
             let emitted = if read_caustics && smooth_since > 0 { Spectrum::ZERO } else { emitted };
@@ -1233,12 +1213,15 @@ fn trace<C: PathColour>(
         {
             if catcher_view {
                 // What the catcher stands in front of, which is what the
-                // camera would have seen through it — the background, by the
-                // same argument as above.
-                let behind =
-                    scene
-                        .background
-                        .radiance(&scene.environment, ray.origin, ray.direction, film);
+                // camera would have seen through it: what this path would
+                // have met had the floor not been there, by the rule an
+                // escaping path follows. It used to be the backdrop the
+                // camera sees whatever the path, while a path escaping after
+                // a bounce sees the lighting: so through clear glass the
+                // floor, below the horizon, showed one sky and the open sky
+                // above it another, and a hard band ran through the glass
+                // where the refracted view crossed from one to the other.
+                let behind = past_the_scene(scene, config, &ray, film, bounce, specular_chain);
                 let caught = catch_shadow(
                     intersector,
                     config,
@@ -2406,6 +2389,37 @@ fn met_by_bounces(light: &crate::light::Light, instance: InstanceId) -> bool {
         && light.visibility.shadow
         && light.shadow_links.is_all()
         && light.links.lights(instance.0)
+}
+
+/// What a path sees past the scene along `ray`: where it escapes, and behind
+/// a shadow catcher it meets as the camera would see it. One rule for both,
+/// so that a floor seen through glass or in a mirror has the same sky behind
+/// it below the horizon as the path sees above it.
+///
+/// Two different rules within it, for two different things. A solid colour
+/// or a backplate replaces the view along the whole specular chain, because
+/// §1.5 wants a backplate photograph to appear in a chrome surface — without
+/// it the product looks pasted onto the picture rather than standing in it.
+/// A pin marked not to show in the background is the opposite: it leaves the
+/// *primary* ray's view and stays everywhere else, so the backdrop is clean
+/// while chrome goes on reflecting the softbox. That is the arrangement a
+/// product photographer sets up, and neither background mode can produce it
+/// on its own.
+fn past_the_scene(
+    scene: &crate::scene::SceneSnapshot,
+    config: &IntegratorConfig,
+    ray: &Ray,
+    film: Vec2,
+    bounce: u32,
+    specular_chain: bool,
+) -> Spectrum {
+    if specular_chain && !scene.background.is_environment() {
+        scene.background.radiance(&scene.environment, ray.origin, ray.direction, film)
+    } else if bounce == 0 && !config.reflected {
+        scene.environment.background_radiance_from(ray.origin, ray.direction)
+    } else {
+        scene.environment.radiance_from(ray.origin, ray.direction)
+    }
 }
 
 /// The chance that a path reflected off `material` still sees a shadow
@@ -4789,5 +4803,51 @@ mod tests {
         assert!(intersector.scene().has_cutouts());
         let (caught, _) = caught_at_origin(&intersector);
         assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
+    }
+
+    /// A floor seen in a mirror, or through clear glass, has behind it the
+    /// sky the mirror shows above the horizon - not the backdrop the camera
+    /// sees directly. Here the backdrop (the camera's image) is twice as
+    /// bright as the light: a mirror ball's reflection down onto the floor
+    /// used to come back with the backdrop's brightness and its reflection up
+    /// into the sky with the light's, and through a glass ball that drew a
+    /// hard band where the view crossed the horizon.
+    #[test]
+    fn the_floor_in_a_mirror_shows_the_sky_the_mirror_shows() {
+        let mut environment = Environment::uniform(Spectrum::splat(0.5));
+        environment.set_camera_image(Some(Arc::new(tequila_texture::Image::constant(16, 8, Vec3::splat(1.0)))));
+        let floor = ShadowCatcher { shadows: false, ..ShadowCatcher::default() };
+        let size = crate::scene::Mesh::new(vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)], vec![0, 1, 2]);
+        let instances = vec![
+            crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
+            crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))
+                .with_shadow_catcher(floor),
+        ];
+        let mirror = Material::metal(metals::ALUMINIUM, 0.0);
+        let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![mirror], Arc::new(environment));
+        let centre = vec3(0.0, 1.0, 0.0);
+        let intersector = AnalyticIntersector::new(scene)
+            .with_sphere(Sphere::new(centre, 0.5, tequila_core::ids::MaterialId(0)))
+            .with_plane(Plane::new(Vec3::ZERO, Vec3::Y, tequila_core::ids::MaterialId(0)));
+
+        // Two camera rays meeting the ball at the same angle, 25 degrees
+        // above and below its middle: the same Fresnel, one reflection up
+        // into the sky and one down onto the floor.
+        let eye = vec3(0.0, 1.0, 5.0);
+        let seen = |tilt: f32| {
+            let normal = vec3(0.0, tilt.sin(), tilt.cos());
+            let ray = Ray::new(eye, (centre + normal * 0.5 - eye).normalize());
+            let mut sampler = Sampler::new(1, 1, 0, 0);
+            let result = trace_path(&intersector, &IntegratorConfig::product(), ray, Vec2::ZERO, &mut sampler);
+            assert_eq!(result.object_id, 0, "the camera ray missed the ball");
+            result.radiance.luminance()
+        };
+        let (sky, floor) = (seen(25f32.to_radians()), seen(-25f32.to_radians()));
+        assert!(sky > 0.2, "the ball reflects too little of the sky to compare ({sky:.3})");
+        assert!(
+            (floor / sky - 1.0).abs() < 0.02,
+            "the floor in the mirror came back {floor:.3} against the sky's {sky:.3}: it showed the backdrop \
+             the camera sees rather than what the mirror sees beyond it"
+        );
     }
 }
