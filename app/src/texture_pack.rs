@@ -280,7 +280,7 @@ pub fn classify_drop(path: &Path) -> Dropped {
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "usda" | "usd" | "ifc" => Dropped::Model,
+        "obj" | "stl" | "gltf" | "glb" | "step" | "stp" | "igs" | "iges" | "usda" | "usd" | "usdc" | "usdz" | "ifc" => Dropped::Model,
         "tequila" | "freeshot" => Dropped::Project,
         "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.

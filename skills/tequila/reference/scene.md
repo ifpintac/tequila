@@ -111,4 +111,4 @@ These are lists the whole project shares: read the current one from the context'
 
 ## Exporting
 
-`{"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}` (what is shown, as glTF binary), `"format": "usd"` (`.usda`), `"format": "web"` (above), `"format": "spin"` (a 360° spin viewer: `columns` 36, `rows` 1, `tilt` 15, `transparent`). Only when the user asks, to a path they gave or agreed.
+`{"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}` (what is shown, as glTF binary), `"format": "usd"` (`.usda`), `"format": "usdz"` (one file an iPhone, iPad or Vision Pro opens in AR, at the product's real size), `"format": "web"` (above), `"format": "spin"` (a 360° spin viewer: `columns` 36, `rows` 1, `tilt` 15, `transparent`). Only when the user asks, to a path they gave or agreed.

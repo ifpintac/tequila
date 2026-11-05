@@ -67,11 +67,25 @@ impl std::error::Error for ZipError {}
 #[derive(Default)]
 pub struct ZipWriter {
     entries: Vec<(String, Vec<u8>)>,
+    /// Where each member's data must start: a multiple of this many bytes,
+    /// or anywhere when 0.
+    alignment: usize,
 }
+
+/// The extra field that pads a member's local header, by the id Pixar's
+/// USDZ writer gives it.
+const PADDING_FIELD: u16 = 0x1986;
 
 impl ZipWriter {
     pub fn new() -> ZipWriter {
         ZipWriter::default()
+    }
+
+    /// A ZIP whose members' data each start on a multiple of `alignment`
+    /// bytes, as a USDZ package's must (64), so a reader can map them in
+    /// place. The local header is padded with an extra field to get there.
+    pub fn aligned(alignment: usize) -> ZipWriter {
+        ZipWriter { alignment, ..ZipWriter::default() }
     }
 
     pub fn add(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
@@ -101,6 +115,17 @@ impl ZipWriter {
             let offset = out.len() as u32;
             let crc = crc32(data);
             let name_bytes = name.as_bytes();
+            // The padding that puts the data on the alignment: an extra
+            // field is at least its four-byte header, so a gap of one to
+            // three bytes takes a whole alignment more.
+            let mut padding = 0usize;
+            if self.alignment > 1 {
+                let unpadded = out.len() + LOCAL_HEADER_SIZE + name_bytes.len();
+                padding = (self.alignment - unpadded % self.alignment) % self.alignment;
+                if padding > 0 && padding < 4 {
+                    padding += self.alignment;
+                }
+            }
 
             out.extend_from_slice(&LOCAL_HEADER.to_le_bytes());
             out.extend_from_slice(&20u16.to_le_bytes()); // version needed
@@ -112,8 +137,13 @@ impl ZipWriter {
             out.extend_from_slice(&(data.len() as u32).to_le_bytes());
             out.extend_from_slice(&(data.len() as u32).to_le_bytes());
             out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
-            out.extend_from_slice(&0u16.to_le_bytes()); // extra field length
+            out.extend_from_slice(&(padding as u16).to_le_bytes()); // extra field length
             out.extend_from_slice(name_bytes);
+            if padding > 0 {
+                out.extend_from_slice(&PADDING_FIELD.to_le_bytes());
+                out.extend_from_slice(&((padding - 4) as u16).to_le_bytes());
+                out.resize(out.len() + padding - 4, 0);
+            }
             out.extend_from_slice(data);
 
             directory.extend_from_slice(&CENTRAL_HEADER.to_le_bytes());

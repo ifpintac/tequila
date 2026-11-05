@@ -104,6 +104,7 @@ struct Options {
     dress: bool,
     export_glb: Option<String>,
     export_usd: Option<String>,
+    export_usdz: Option<String>,
     export_web: Option<String>,
     /// Render a photo of every configuration into the web export.
     photos: bool,
@@ -180,6 +181,7 @@ impl Default for Options {
             dress: false,
             export_glb: None,
             export_usd: None,
+            export_usdz: None,
             export_web: None,
             photos: false,
             export_spin: None,
@@ -287,6 +289,10 @@ From a project's own setup:
 Exports (with no -o, only these run):
       --export-glb PATH what is shown, as a glTF binary
       --export-usd PATH what is shown, as a USD stage (.usda)
+      --export-usdz PATH
+                        what is shown, as a USDZ package for AR on an
+                        iPhone, iPad or Vision Pro: real size, standing on
+                        the ground, materials baked to preview surfaces
       --export-web DIR  the configurator as a static web folder
       --photos          with --export-web: render every configuration into
                         it as photos (DIR/images)
@@ -382,6 +388,7 @@ fn parse_args() -> Result<Options, String> {
             "--dress" => options.dress = true,
             "--export-glb" => options.export_glb = Some(value()?),
             "--export-usd" => options.export_usd = Some(value()?),
+            "--export-usdz" => options.export_usdz = Some(value()?),
             "--export-web" => options.export_web = Some(value()?),
             "--photos" => options.photos = true,
             "--export-spin" => options.export_spin = Some(value()?),
@@ -757,10 +764,20 @@ fn benchmark(scene: BenchScene) -> Result<(), String> {
 fn run(options: &Options) -> Result<(), String> {
     let mut document = prepare(options)?;
     select(&mut document, options)?;
-    let exporting = options.export_glb.is_some() || options.export_usd.is_some() || options.export_web.is_some() || options.export_spin.is_some();
+    let exporting = options.export_glb.is_some() || options.export_usd.is_some() || options.export_usdz.is_some() || options.export_web.is_some() || options.export_spin.is_some();
     if let Some(path) = &options.export_usd {
         std::fs::write(path, tequila_format::usd::export(&document)).map_err(|e| format!("{path}: {e}"))?;
         println!("wrote {path}");
+    }
+
+    if let Some(path) = &options.export_usdz {
+        let name = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let exported = tequila_format::usdz::export(&document, &tequila_format::usdz::UsdzOptions { name, ..Default::default() });
+        std::fs::write(path, &exported.bytes).map_err(|e| format!("{path}: {e}"))?;
+        for warning in &exported.warnings {
+            eprintln!("tequila: {warning}");
+        }
+        println!("wrote {path} ({:.1} MB)", exported.bytes.len() as f64 / 1e6);
     }
 
     if let Some(path) = &options.export_glb {

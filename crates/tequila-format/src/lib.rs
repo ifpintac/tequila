@@ -19,6 +19,7 @@
 //! quietly delete the newer build's work on the user's next save, which is the
 //! worst failure this format can have.
 
+mod bake;
 pub mod exr;
 pub mod fsmesh;
 pub mod hdri;
@@ -29,6 +30,8 @@ pub mod livelink;
 pub mod psd;
 pub mod spin;
 pub mod usd;
+pub mod usdc;
+pub mod usdz;
 pub mod web;
 pub mod queue;
 pub mod examples;
