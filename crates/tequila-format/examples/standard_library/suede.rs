@@ -21,11 +21,11 @@ use tequila_materials::graph::{CurvatureMode, Node, NodeKind};
 use tequila_materials::material_type::{MaterialType, Param};
 
 /// `colour` times `factor`, a node's output.
-fn tint(r: &mut Recipe, colour: Spectrum, factor: Out) -> Out {
+pub(crate) fn tint(r: &mut Recipe, colour: Spectrum, factor: Out) -> Out {
     r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", colour).w("B", factor).out("Result")
 }
 
-fn noise(r: &mut Recipe, coords: Out, scale: f32, detail: f32, roughness: f32, distortion: f32) -> Out {
+pub(crate) fn noise(r: &mut Recipe, coords: Out, scale: f32, detail: f32, roughness: f32, distortion: f32) -> Out {
     r.node("noise_texture")
         .w("Vector", coords)
         .f("Scale", scale)
@@ -35,7 +35,7 @@ fn noise(r: &mut Recipe, coords: Out, scale: f32, detail: f32, roughness: f32, d
         .out("Fac")
 }
 
-fn product(r: &mut Recipe, factors: &[Out]) -> Out {
+pub(crate) fn product(r: &mut Recipe, factors: &[Out]) -> Out {
     let mut out = factors[0];
     for &f in &factors[1..] {
         out = r.math("multiply", out, f);
@@ -43,11 +43,11 @@ fn product(r: &mut Recipe, factors: &[Out]) -> Out {
     out
 }
 
-fn curvature(r: &mut Recipe, radius: f32, contrast: f32) -> Out {
+pub(crate) fn curvature(r: &mut Recipe, radius: f32, contrast: f32) -> Out {
     Out(r.graph.add_node(Node::new(NodeKind::Curvature { mode: CurvatureMode::Convex, radius, contrast })), 0)
 }
 
-fn occlusion(r: &mut Recipe, radius: f32, contrast: f32) -> Out {
+pub(crate) fn occlusion(r: &mut Recipe, radius: f32, contrast: f32) -> Out {
     Out(r.graph.add_node(Node::new(NodeKind::Occlusion { radius, contrast })), 0)
 }
 

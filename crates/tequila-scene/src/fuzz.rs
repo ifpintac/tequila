@@ -248,23 +248,11 @@ impl Shape {
 
 /// Which way the nap lies across a part: a smooth field of directions, a
 /// steady drift with a few long waves over it, so it holds one way over a
-/// patch and turns a little between patches.
-///
-/// The drift runs along the part's diagonal. Where it stands straight out
-/// of the surface the waves alone are left, and turn the nap round in
-/// whorls; along the diagonal, that is at a corner of a part modelled along
-/// its axes, never across a face - not a top, whichever way is up, and not
-/// a side.
+/// patch and turns between patches.
 struct CombField {
+    drift: Vec3,
     waves: [(Vec3, f32, Vec3); 4],
 }
-
-/// The drift, a unit vector along the diagonal.
-const DRIFT: Vec3 = tequila_core::math::vec3(0.577_350_3, 0.577_350_3, 0.577_350_3);
-
-/// How far the waves turn the nap from the drift: a third of it, so a
-/// patch's nap wanders by a few tens of degrees and never doubles back.
-const WANDER: f32 = 0.3;
 
 impl CombField {
     /// Patches `patch` mesh units across.
@@ -277,19 +265,20 @@ impl CombField {
             let r = (1.0 - z * z).max(0.0).sqrt();
             tequila_core::math::vec3(r * angle.cos(), r * angle.sin(), z)
         };
+        let drift = direction(&mut random) * 1.2;
         let frequency = std::f32::consts::TAU / patch.max(1e-9);
         let waves = std::array::from_fn(|_| {
             let k = direction(&mut random) * frequency;
             let phase = random.unit() * std::f32::consts::TAU;
-            (k, phase, direction(&mut random) * WANDER)
+            (k, phase, direction(&mut random))
         });
-        CombField { waves }
+        CombField { drift, waves }
     }
 
     /// The way the nap lies at `p`, along the surface; `None` where the
     /// field stands straight out of it.
     fn along(&self, p: Vec3, normal: Vec3) -> Option<Vec3> {
-        let mut f = DRIFT;
+        let mut f = self.drift;
         for (k, phase, amplitude) in &self.waves {
             f = f + *amplitude * (k.dot(p) + phase).sin();
         }
