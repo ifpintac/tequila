@@ -15,6 +15,14 @@ name: Windows release
 # installer it makes is unsigned, as the ones built on a PC are. The package
 # it made is kept as an artifact, for the next run's update installer
 # (`patch_from_run`).
+#
+# The portable zip, Tequila-Portable-<version>-windows.zip, is the same
+# package with portable.txt added (scripts/package-portable.ps1): a copy that
+# keeps everything in a data folder beside itself. It is attached next to
+# the installers; with signing on, it is made again from the signed
+# Tequila.exe and tequila-cli.exe. With `release` empty nothing is attached
+# to any release: the package, the installers and the zip are only kept as
+# this run's artifacts.
 
 on:
   workflow_dispatch:
@@ -162,6 +170,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
           $package = Get-ChildItem dist -Directory -Filter 'Tequila-Windows-*' | Where-Object { $_.Name -notlike '*-symbols' } | Sort-Object Name | Select-Object -Last 1
           "PACKAGE=$($package.FullName)" >> $env:GITHUB_ENV
+          # The portable zip the packaging made beside it.
+          $portable = Get-ChildItem dist -File -Filter 'Tequila-Portable-*-windows.zip' | Sort-Object Name | Select-Object -Last 1
+          if (-not $portable) { throw 'The portable zip was not made' }
+          "PORTABLE=$($portable.FullName)" >> $env:GITHUB_ENV
+          Write-Host "$($portable.Name): $([math]::Round($portable.Length / 1MB)) MB"
           # Beside it, so the artifact keeps the package's folder, whose name
           # is its version.
           Set-Content dist\package.txt $package.Name
@@ -198,14 +211,20 @@ jobs:
           }
           New-Item -ItemType Directory -Force installers | Out-Null
           Move-Item dist\Tequila-Setup-*.exe, dist\Tequila-Update-*.exe installers -ErrorAction SilentlyContinue
-          Get-ChildItem installers
+          # The portable zip's programs, sent to be signed with the
+          # installers (.signpath/artifact-configuration.xml).
+          New-Item -ItemType Directory -Force installers\portable | Out-Null
+          Copy-Item (Join-Path $env:PACKAGE 'Tequila.exe'), (Join-Path $env:PACKAGE 'tequila-cli.exe') installers\portable
+          Get-ChildItem installers -Recurse -File
 
       - name: Keep the installers
         id: unsigned
         uses: actions/upload-artifact@v4
         with:
           name: Tequila-Windows-installers
-          path: installers\*.exe
+          path: |
+            installers\*.exe
+            installers\portable\*.exe
 
       - name: Whether SignPath is set up
         id: signing
@@ -238,6 +257,24 @@ jobs:
           name: Tequila-Windows-installers-signed
           path: signed\*.exe
 
+      # The portable zip again, around the signed programs, so what it ships
+      # is signed as the installers are.
+      - name: Portable zip from the signed programs
+        if: steps.signing.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item signed\portable\Tequila.exe, signed\portable\tequila-cli.exe $env:PACKAGE -Force
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-portable.ps1 -Package $env:PACKAGE -Out $env:PORTABLE
+          if ($LASTEXITCODE -ne 0) { throw 'The portable zip was not made' }
+
+      - name: Keep the portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tequila-Windows-portable
+          path: ${{ env.PORTABLE }}
+          # A zip already.
+          compression-level: 0
+
       - name: Attach them to the release
         if: inputs.release != ''
         shell: bash
@@ -245,4 +282,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ steps.signing.outputs.configured }}" = "true" ]; then dir=signed; else dir=installers; fi
-          gh release upload "$TAG" "$dir"/*.exe --clobber
+          gh release upload "$TAG" "$dir"/*.exe "$PORTABLE" --clobber

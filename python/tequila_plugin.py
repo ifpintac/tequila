@@ -85,7 +85,12 @@ _id = None
 
 def _settings_folder():
     # Tequila's folder of the person's settings, as the application has
-    # it (tequila_format::library::settings_directory).
+    # it (tequila_format::library::settings_directory): a portable copy's
+    # data folder, when this is the module inside one.
+    from tequila import portable_folder
+    portable = portable_folder()
+    if portable:
+        return portable
     if sys.platform == 'darwin':
         return Path.home() / 'Library' / 'Application Support' / 'Tequila'
     base = os.environ.get('APPDATA') or os.environ.get('XDG_CONFIG_HOME') or (Path.home() / '.config')

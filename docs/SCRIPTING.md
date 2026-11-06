@@ -323,7 +323,10 @@ the tools that reach beyond the open scene - raw requests, imports, saving
 to the library, and every plugin tool - and refuses them if called by name.
 
 Tequila has to be open, with its scripting channel on. The bridge finds it
-through `~/.tequila/channel.json` and reconnects if Tequila is restarted.
+through `~/.tequila/channel.json` and reconnects if Tequila is restarted. A
+portable Tequila (a `portable.txt` beside the program) writes the file to
+`data/channel.json` beside it instead, where its own `tequila-cli --mcp`
+and the `python` folder inside it look.
 The ChatGPT desktop app connects only to *remote* MCP servers over HTTP, which
 this local bridge is not. For ChatGPT, use an agent that can run commands on
 this computer, such as Codex, together with the Python client.
@@ -343,8 +346,9 @@ document to the same path every time. On a Mac the program is
 
 ## Wire protocol
 
-Read `~/.tequila/channel.json` locally for `port`, `token`, and `pid`.
-Connect to `127.0.0.1:port`, sending one UTF-8 JSON object per newline:
+Read `~/.tequila/channel.json` locally for `port`, `token`, and `pid`
+(`data/channel.json` beside a portable Tequila's program; `tequila.discovery_file()`
+says which). Connect to `127.0.0.1:port`, sending one UTF-8 JSON object per newline:
 
 ```json
 {"id":1,"token":"<read locally>","op":"query","what":"context"}

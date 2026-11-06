@@ -45,8 +45,7 @@ impl Default for NetworkPanel {
 }
 
 fn remembered() -> PathBuf {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join(".tequila").join("farm.txt")
+    tequila_format::library::home_directory().join("farm.txt")
 }
 
 impl NetworkPanel {

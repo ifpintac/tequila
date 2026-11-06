@@ -838,15 +838,52 @@ pub fn user_directory() -> PathBuf {
     settings_directory().join("library")
 }
 
+/// The file that makes a copy of Tequila portable, beside its executable.
+/// What is in it is only a note for whoever finds it, which the portable
+/// zip's packaging writes (`scripts/package-portable.ps1`).
+pub const PORTABLE_MARKER: &str = "portable.txt";
+
+/// The folder a portable copy keeps the person's things in, beside the
+/// marker.
+pub const PORTABLE_DATA: &str = "data";
+
+/// Where this copy keeps the person's things, if it is a portable one: the
+/// `data` folder beside the executable, when a `portable.txt` sits there.
+/// `None` for an installed copy, which uses the computer's own folders.
+///
+/// The one rule for every place below. The application, `tequila-cli`, a
+/// headless session and a script's plugins all run from the same folder,
+/// so they agree. Not on a Mac, whose application is a signed bundle that
+/// must not write into itself. Looked at once: a running copy does not
+/// change from one kind to the other.
+pub fn portable_directory() -> Option<PathBuf> {
+    static PORTABLE: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PORTABLE
+        .get_or_init(|| portable_directory_for(cfg!(target_os = "macos"), std::env::current_exe().ok().as_deref()))
+        .clone()
+}
+
+fn portable_directory_for(mac: bool, executable: Option<&Path>) -> Option<PathBuf> {
+    if mac {
+        return None;
+    }
+    let folder = executable?.parent()?;
+    folder.join(PORTABLE_MARKER).is_file().then(|| folder.join(PORTABLE_DATA))
+}
+
 /// Tequila's folder among the person's settings, which holds their
 /// library, plugins, recent projects and appearance: `%APPDATA%\Tequila`
 /// on Windows, `~/Library/Application Support/Tequila` on a Mac, and
-/// `$XDG_CONFIG_HOME/Tequila` (or `~/.config/Tequila`) elsewhere.
+/// `$XDG_CONFIG_HOME/Tequila` (or `~/.config/Tequila`) elsewhere. A
+/// portable copy's data folder.
 pub fn settings_directory() -> PathBuf {
-    settings_directory_for(cfg!(target_os = "macos"), |name| std::env::var_os(name))
+    settings_directory_for(cfg!(target_os = "macos"), portable_directory().as_deref(), |name| std::env::var_os(name))
 }
 
-fn settings_directory_for(mac: bool, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+fn settings_directory_for(mac: bool, portable: Option<&Path>, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(data) = portable {
+        return data.to_path_buf();
+    }
     let home = || var("HOME").map(PathBuf::from);
     let base = if mac {
         home().map(|h| h.join("Library").join("Application Support"))
@@ -861,12 +898,16 @@ fn settings_directory_for(mac: bool, var: impl Fn(&str) -> Option<std::ffi::OsSt
 
 /// Tequila's folder of caches, things it can always make again: in
 /// `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on a Mac, and
-/// `$XDG_CACHE_HOME` (or `~/.cache`) elsewhere.
+/// `$XDG_CACHE_HOME` (or `~/.cache`) elsewhere. A portable copy's
+/// `data/cache`, apart from the rest so it can be emptied.
 pub fn cache_directory() -> PathBuf {
-    cache_directory_for(cfg!(target_os = "macos"), |name| std::env::var_os(name))
+    cache_directory_for(cfg!(target_os = "macos"), portable_directory().as_deref(), |name| std::env::var_os(name))
 }
 
-fn cache_directory_for(mac: bool, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+fn cache_directory_for(mac: bool, portable: Option<&Path>, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(data) = portable {
+        return data.join("cache");
+    }
     let home = || var("HOME").map(PathBuf::from);
     let base = if mac {
         home().map(|h| h.join("Library").join("Caches"))
@@ -877,6 +918,24 @@ fn cache_directory_for(mac: bool, var: impl Fn(&str) -> Option<std::ffi::OsStrin
             .or_else(|| home().map(|h| h.join(".cache")))
     };
     base.unwrap_or_else(std::env::temp_dir).join("Tequila")
+}
+
+/// Tequila's own folder in the person's home, `~/.tequila`: the crash
+/// reports, the journal with the render history and queue beside it, the
+/// connected AI providers, the network-rendering list, the scripting
+/// channel's discovery file and the self-test's reports. A portable copy's
+/// data folder, beside its settings. `TEQUILA_CRASH_DIR`,
+/// `TEQUILA_JOURNAL_DIR` and `TEQUILA_CHANNEL_FILE` still come first where
+/// those are read.
+pub fn home_directory() -> PathBuf {
+    home_directory_for(portable_directory().as_deref(), |name| std::env::var_os(name))
+}
+
+fn home_directory_for(portable: Option<&Path>, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(data) = portable {
+        return data.to_path_buf();
+    }
+    var("HOME").or_else(|| var("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join(".tequila")
 }
 
 /// The application's name before 2026-10-17, which its folders still carry
@@ -890,7 +949,13 @@ const OLDER_NAME: &str = "Freeshot";
 /// and copied, not moved, so a Freeshot still installed keeps what it had.
 /// Bundled plugins were `freeshot.<name>` and are `tequila.<name>` now, so
 /// the ones that were on stay on. Says what came across.
+///
+/// Not into a portable copy: it starts with nothing of the computer it
+/// runs on, which may be anybody's.
 pub fn adopt_older_name() -> Vec<String> {
+    if portable_directory().is_some() {
+        return Vec::new();
+    }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
     let settings = settings_directory();
     let cache = cache_directory();
@@ -898,7 +963,7 @@ pub fn adopt_older_name() -> Vec<String> {
     adopt_from(&Adoption {
         settings: sibling(&settings).map(|old| (old, settings.clone())),
         cache: sibling(&cache).map(|old| (old, cache.clone())),
-        home: home.map(|h| (h.join(".freeshot"), h.join(".tequila"))),
+        home: home.map(|h| (h.join(".freeshot"), home_directory())),
     })
 }
 
@@ -1967,18 +2032,67 @@ mod tests {
         let path = PathBuf::from;
         // A Mac: the Library, whatever else is set.
         let mac = environment(&[("HOME", "/Users/me"), ("XDG_CONFIG_HOME", "/Users/me/.config"), ("XDG_CACHE_HOME", "/Users/me/.cache")]);
-        assert_eq!(settings_directory_for(true, mac), path("/Users/me/Library/Application Support/Tequila"));
-        assert_eq!(cache_directory_for(true, mac), path("/Users/me/Library/Caches/Tequila"));
+        assert_eq!(settings_directory_for(true, None, mac), path("/Users/me/Library/Application Support/Tequila"));
+        assert_eq!(cache_directory_for(true, None, mac), path("/Users/me/Library/Caches/Tequila"));
+        assert_eq!(home_directory_for(None, mac), path("/Users/me/.tequila"));
         // Windows, as it has always been.
-        let windows = environment(&[("APPDATA", "C:/Users/me/AppData/Roaming"), ("LOCALAPPDATA", "C:/Users/me/AppData/Local"), ("HOME", "C:/Users/me")]);
-        assert_eq!(settings_directory_for(false, windows), path("C:/Users/me/AppData/Roaming/Tequila"));
-        assert_eq!(cache_directory_for(false, windows), path("C:/Users/me/AppData/Local/Tequila"));
+        let windows = environment(&[("APPDATA", "C:/Users/me/AppData/Roaming"), ("LOCALAPPDATA", "C:/Users/me/AppData/Local"), ("USERPROFILE", "C:/Users/me")]);
+        assert_eq!(settings_directory_for(false, None, windows), path("C:/Users/me/AppData/Roaming/Tequila"));
+        assert_eq!(cache_directory_for(false, None, windows), path("C:/Users/me/AppData/Local/Tequila"));
+        assert_eq!(home_directory_for(None, windows), path("C:/Users/me/.tequila"));
         // Linux: XDG, else the dot folders.
         let linux = environment(&[("HOME", "/home/me"), ("XDG_CACHE_HOME", "/tmp/cache")]);
-        assert_eq!(settings_directory_for(false, linux), path("/home/me/.config/Tequila"));
-        assert_eq!(cache_directory_for(false, linux), path("/tmp/cache/Tequila"));
+        assert_eq!(settings_directory_for(false, None, linux), path("/home/me/.config/Tequila"));
+        assert_eq!(cache_directory_for(false, None, linux), path("/tmp/cache/Tequila"));
+        assert_eq!(home_directory_for(None, linux), path("/home/me/.tequila"));
         // The library and everything kept beside it hang off the one folder.
         assert_eq!(user_directory().parent(), Some(settings_directory().as_path()));
+    }
+
+    /// A `portable.txt` beside the executable puts everything the copy
+    /// keeps in the `data` folder beside it - settings, caches and what goes
+    /// in `~/.tequila` - whatever the environment says. Without it, or on a
+    /// Mac, the computer's own folders as before.
+    #[test]
+    fn a_portable_copy_keeps_everything_beside_itself() {
+        let root = std::env::temp_dir().join(format!("tequila-portable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("Tequila");
+        std::fs::create_dir_all(&folder).unwrap();
+        let executable = folder.join("Tequila.exe");
+        std::fs::write(&executable, "").unwrap();
+        let environment = |name: &str| {
+            [("APPDATA", "C:/Users/me/AppData/Roaming"), ("LOCALAPPDATA", "C:/Users/me/AppData/Local"), ("USERPROFILE", "C:/Users/me"), ("HOME", "C:/Users/me"), ("XDG_CONFIG_HOME", "/home/me/.config")]
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| std::ffi::OsString::from(v))
+        };
+
+        // Installed: no marker, and the computer's folders.
+        assert_eq!(portable_directory_for(false, Some(&executable)), None);
+        assert_eq!(settings_directory_for(false, None, environment), PathBuf::from("C:/Users/me/AppData/Roaming/Tequila"));
+
+        // Portable: everything in `data`, beside the executable.
+        std::fs::write(folder.join(PORTABLE_MARKER), "This file makes this copy of Tequila portable.").unwrap();
+        let data = portable_directory_for(false, Some(&executable));
+        assert_eq!(data, Some(folder.join("data")));
+        let data = data.as_deref();
+        assert_eq!(settings_directory_for(false, data, environment), folder.join("data"));
+        assert_eq!(cache_directory_for(false, data, environment), folder.join("data").join("cache"));
+        assert_eq!(home_directory_for(data, environment), folder.join("data"));
+        // The same rule for every program in the folder: the application,
+        // tequila-cli and the rest.
+        assert_eq!(portable_directory_for(false, Some(&folder.join("tequila-cli.exe"))), Some(folder.join("data")));
+        // A folder named portable.txt is not the marker; nor is one in
+        // another folder.
+        assert_eq!(portable_directory_for(false, Some(&root.join("Tequila.exe"))), None);
+        // A Mac's bundle never writes into itself.
+        assert_eq!(portable_directory_for(true, Some(&executable)), None);
+        assert_eq!(portable_directory_for(false, None), None);
+        std::fs::remove_file(folder.join(PORTABLE_MARKER)).unwrap();
+        std::fs::create_dir_all(folder.join(PORTABLE_MARKER)).unwrap();
+        assert_eq!(portable_directory_for(false, Some(&executable)), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// M2 asks for "50 materials minimum, all as JSON presets", and every one

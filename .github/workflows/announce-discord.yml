@@ -61,7 +61,7 @@ jobs:
           version = release['tagName'].removeprefix('v')
           title = release['name'] or f'Tequila {version}'
           lines = [f'# {title} is out', release['url']]
-          for system, ending in (('Windows', '.exe'), ('Mac with Apple silicon', '.dmg'), ('Intel Mac', '-intel.dmg'), ('Linux', '.tar.gz')):
+          for system, ending in (('Windows', '.exe'), ('Windows, portable', '-windows.zip'), ('Mac with Apple silicon', '.dmg'), ('Intel Mac', '-intel.dmg'), ('Linux', '.tar.gz')):
               for name in names:
                   # An Intel Mac's disk image ends in .dmg too: it is listed
                   # as its own.

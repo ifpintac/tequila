@@ -10,8 +10,10 @@ Until that is in place, the installers on the Releases page are unsigned,
 and Windows says "Windows protected your PC" the first time one is run
 (README, "The first time you open it").
 
-What is signed: the Windows installer (`Tequila-Setup-<version>.exe`) and the
-update installer (`Tequila-Update-<from>-to-<to>.exe`). They are built by the
+What is signed: the Windows installer (`Tequila-Setup-<version>.exe`), the
+update installer (`Tequila-Update-<from>-to-<to>.exe`), and `Tequila.exe` and
+`tequila-cli.exe` in the portable zip (`Tequila-Portable-<version>-windows.zip`),
+which is made again around the signed two. They are built by the
 repository's own GitHub Actions workflow
 ([`release-windows.yml`](../.github/workflows/release-windows.yml)), from this
 repository's source at the release's commit. Nothing built on a personal
@@ -53,15 +55,20 @@ Tequila sends no usage data.
    It keeps the package as an artifact for the next update installer
    (`patch_from_run`).
 3. With the `SIGNPATH_API_TOKEN` secret and the `SIGNPATH_ORGANIZATION_ID`
-   variable set, the workflow sends the installers to SignPath. It waits
-   for the request's approval, downloads the signed files, and attaches them
-   to the release.
+   variable set, the workflow sends the installers, and the portable zip's
+   two programs (in `portable/`), to SignPath. It waits for the request's
+   approval, downloads the signed files, zips the portable copy again
+   around the signed programs, and attaches the installers and the zip to
+   the release.
 4. SignPath signs what
    [`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml)
-   names: the installers inside the artifact, with Authenticode.
+   names: the installers and `portable/Tequila.exe` and
+   `portable/tequila-cli.exe` inside the artifact, with Authenticode. The
+   two `portable/` entries are new since the configuration was first
+   written: SignPath's project needs the file as it is now.
 
-Without those settings the workflow attaches the unsigned installers, as a
-release built on a PC has today.
+Without those settings the workflow attaches the unsigned installers and the
+portable zip, as a release built on a PC has today.
 
 ## Setting it up (the maintainer's steps)
 
@@ -104,7 +111,8 @@ Answers for the Foundation's form, as they stand:
 - **Releases**: published on GitHub since 2026-10-17, announced on the
   project's Discord.
 - **What is to be signed**: the Windows installer and update installer,
-  built by GitHub Actions from the repository
+  and the two programs of the portable zip, built by GitHub Actions from
+  the repository
   (`.github/workflows/release-windows.yml`).
 - **Code signing policy**: this page, linked from the README.
 - **Maintainer**: ifpintac, the project's author.

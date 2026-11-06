@@ -136,5 +136,56 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(len(self.received), 1)
 
 
+class PortableTests(unittest.TestCase):
+    """The module inside a portable Tequila finds the application, and keeps
+    plugin settings, in the copy's data folder, as the application does."""
+
+    def load(self, folder, name):
+        import importlib.util
+        import sys
+        spec = importlib.util.spec_from_file_location(name, folder / f'{name}.py')
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_a_portable_copy_looks_in_its_data_folder(self):
+        import os
+        import shutil
+        import sys
+        here = Path(__file__).resolve().parent
+        saved = {name: sys.modules.get(name) for name in ('tequila', 'tequila_plugin')}
+        before = os.environ.pop('TEQUILA_CHANNEL_FILE', None)
+        with tempfile.TemporaryDirectory() as root:
+            programs = Path(root) / 'Tequila'
+            (programs / 'python').mkdir(parents=True)
+            for name in ('tequila.py', 'tequila_plugin.py'):
+                shutil.copy(here / name, programs / 'python' / name)
+            try:
+                copy = self.load(programs / 'python', 'tequila')
+                self.assertIsNone(copy.portable_folder())
+                self.assertEqual(copy.discovery_file(), Path.home() / '.tequila' / 'channel.json')
+                (programs / 'portable.txt').write_text('portable')
+                if sys.platform == 'darwin':
+                    self.assertIsNone(copy.portable_folder())
+                    return
+                self.assertEqual(copy.portable_folder(), programs.resolve() / 'data')
+                self.assertEqual(copy.discovery_file(), programs.resolve() / 'data' / 'channel.json')
+                plugin = self.load(programs / 'python', 'tequila_plugin')
+                self.assertEqual(plugin._settings_folder(), programs.resolve() / 'data')
+                # An explicit file still wins.
+                os.environ['TEQUILA_CHANNEL_FILE'] = str(Path(root) / 'mine.json')
+                self.assertEqual(copy.discovery_file(), Path(root) / 'mine.json')
+            finally:
+                os.environ.pop('TEQUILA_CHANNEL_FILE', None)
+                if before is not None:
+                    os.environ['TEQUILA_CHANNEL_FILE'] = before
+                for name, module in saved.items():
+                    if module is None:
+                        sys.modules.pop(name, None)
+                    else:
+                        sys.modules[name] = module
+
+
 if __name__ == '__main__':
     unittest.main()

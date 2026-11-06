@@ -107,10 +107,10 @@ pub struct Settings {
 }
 
 /// Where a run's folder goes by default: `.tequila/self-test/<when>` in the
-/// person's home, beside the crash reports.
+/// person's home, beside the crash reports, or in a portable copy's data
+/// folder.
 pub fn default_folder() -> PathBuf {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    home.join(".tequila").join("self-test").join(format!("{} {}", tequila_core::clock::date(), tequila_core::clock::time_for_filename()))
+    tequila_format::library::home_directory().join("self-test").join(format!("{} {}", tequila_core::clock::date(), tequila_core::clock::time_for_filename()))
 }
 
 /// What became of one check.

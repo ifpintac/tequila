@@ -650,20 +650,14 @@ enum Action {
     SaveAs,
 }
 
-/// Where the journal and auto-save snapshots live (§4.5).
-/// What the UV editor's lit faces were found seen or hidden for: the part,
-/// the scene's rebuild, the faces, and the eye.
-
+/// Where the journal and auto-save snapshots live (§4.5): `.tequila/journal`
+/// in the person's home, or in a portable copy's data folder.
 fn journal_directory() -> std::path::PathBuf {
     // Disposable QA sessions must not rewrite the user's persisted queue.
     if let Some(directory) = std::env::var_os("TEQUILA_JOURNAL_DIR") {
         return directory.into();
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    home.join(".tequila").join("journal")
+    tequila_format::library::home_directory().join("journal")
 }
 
 /// Hide the selection, and show everything again. A Mac's Cmd+H hides the
@@ -1046,10 +1040,12 @@ impl TequilaApp {
         if std::env::var_os("TEQUILA_NO_CHANNEL").is_none() {
             match tequila_scripting::server::Channel::start_with(tequila_scripting::document::APP_OWN_OPERATIONS) {
                 Ok(open) => {
-                    app.project.status = format!(
-                        "Scripting channel ready on port {} — see ~/.tequila/channel.json",
-                        open.port()
-                    );
+                    let file = if tequila_format::library::portable_directory().is_some() {
+                        "data/channel.json beside the program"
+                    } else {
+                        "~/.tequila/channel.json"
+                    };
+                    app.project.status = format!("Scripting channel ready on port {} — see {file}", open.port());
                     app.channel = Some(open);
                 }
                 Err(error) => app.project.status = error,
@@ -4649,19 +4645,22 @@ impl TequilaApp {
     /// and an update to install.
     fn updates_window(&mut self, ctx: &egui::Context) {
         let act = self.updates.window(ctx);
+        let platform = update::Platform::this();
         if let Some(version) = self.updates.found.take() {
-            self.toasts.info(format!("Tequila {version} is out: Help, Update to {version} installs it"));
+            let does = if platform.install_closes() { "installs" } else { "fetches" };
+            self.toasts.info(format!("Tequila {version} is out: Help, Update to {version} {does} it"));
         }
         if let Some(update::Act::Install(file)) = act {
-            // Saved or let go first: the installer closes Tequila.
-            if !self.confirm_unsaved() {
+            // Saved or let go first: the installer closes Tequila. Showing a
+            // portable copy's zip does not.
+            if platform.install_closes() && !self.confirm_unsaved() {
                 return;
             }
-            match update::install(&file, update::Platform::this()) {
+            match update::install(&file, platform) {
                 Ok(true) => self.quit_requested = true,
                 Ok(false) => {
                     self.updates.open = false;
-                    self.project.status = update::Platform::this().install_label().1.to_string();
+                    self.project.status = platform.install_label().1.to_string();
                 }
                 Err(error) => self.toasts.warn(format!("The update could not start: {error}")),
             }
@@ -5159,8 +5158,37 @@ impl TequilaApp {
                         ui.label(format!("Development build {}", env!("CARGO_PKG_VERSION")));
                     }
                 }
+                // A portable copy says so, and where its things are: named
+                // by where they are rather than by a path, which would be
+                // long and say whose computer it is.
+                let portable = tequila_format::library::portable_directory();
+                if let Some(data) = &portable {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Portable").font(theme::strong(13.0)).color(p.text));
+                    ui.scope(|ui| {
+                        ui.set_max_width(330.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "This copy keeps your settings, library, plugins, presets, caches, recent projects, \
+                                 crash reports and journal in the data folder beside the program, not in this \
+                                 computer's user folders. Check for updates, in the Help menu, fetches the next \
+                                 version as a zip to extract over this folder.",
+                            )
+                            .size(12.0)
+                            .color(p.text_dim),
+                        );
+                    })
+                    .response
+                    .on_hover_text(data.display().to_string());
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    if let Some(data) = &portable {
+                        if ui.button("Open the data folder").on_hover_text(data.display().to_string()).clicked() {
+                            let _ = std::fs::create_dir_all(data);
+                            crate::library_tab::open_folder(data);
+                        }
+                    }
                     if let Some(licences) = shipped_file("THIRD_PARTY_LICENSES.md", "THIRD_PARTY_LICENSES.md") {
                         if ui.button("Licences").on_hover_text("Tequila's licence and the open-source software it is built with").clicked() {
                             crate::library_tab::open_folder(&licences);

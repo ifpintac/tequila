@@ -77,8 +77,10 @@ Type: files; Name: "{app}\*.dll"
 
 [Files]
 ; The portable package's own read-me is about unzipping it, which an
-; installed copy has no use for.
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "START-HERE.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
+; installed copy has no use for; and portable.txt, should a package carry
+; one, would make the installed copy keep its things in the program folder
+; (scripts/package-portable.ps1 adds it to the portable zip only).
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "START-HERE.txt,\portable.txt"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "tequila.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

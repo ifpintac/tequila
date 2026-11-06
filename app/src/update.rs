@@ -172,6 +172,11 @@ pub fn fetch_latest() -> Result<Release, String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
     Windows,
+    /// A portable copy on Windows, unzipped from
+    /// `Tequila-Portable-<version>-windows.zip` (`portable.txt` beside it):
+    /// no installer may touch it, or a second Tequila would be installed
+    /// under Programs while this one stayed as it was.
+    WindowsPortable,
     /// A Mac with Apple silicon.
     Mac,
     /// A Mac with an Intel processor, whose disk image is its own
@@ -186,7 +191,11 @@ pub enum Platform {
 impl Platform {
     pub fn this() -> Platform {
         if cfg!(target_os = "windows") {
-            Platform::Windows
+            if tequila_format::library::portable_directory().is_some() {
+                Platform::WindowsPortable
+            } else {
+                Platform::Windows
+            }
         } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
             Platform::IntelMac
         } else if cfg!(target_os = "macos") {
@@ -207,15 +216,25 @@ impl Platform {
                 "Show the download",
                 "Unpack it in place of this Tequila's folder, then open it again. Your materials, plugins and settings stay.",
             ),
+            Platform::WindowsPortable => (
+                "Show the download",
+                "It is in this Tequila's folder. Close Tequila, then extract the zip into that folder, replacing the files there, and open it again. Your data folder is not in the zip, so your materials, plugins and settings stay.",
+            ),
             _ => ("Install and restart", "Tequila closes, the update installs, and Tequila opens again. It asks about unsaved work first."),
         }
+    }
+
+    /// Whether installing closes Tequila, so unsaved work is settled first.
+    pub fn install_closes(self) -> bool {
+        self != Platform::WindowsPortable
     }
 }
 
 /// The file to fetch to go from `current` to `release`: on Windows the
 /// update installer made from exactly this version when there is one, a
-/// tenth of the size, and the full installer otherwise; on a Mac the disk
-/// image made for its processor.
+/// tenth of the size, and the full installer otherwise; a portable copy the
+/// portable zip, never an installer; on a Mac the disk image made for its
+/// processor.
 pub fn asset_for(release: &Release, current: Option<Version>, platform: Platform) -> Option<&Asset> {
     let named = |name: String| release.assets.iter().find(|a| a.name == name);
     let latest = release.version;
@@ -223,6 +242,7 @@ pub fn asset_for(release: &Release, current: Option<Version>, platform: Platform
         Platform::Windows => current
             .and_then(|from| named(format!("Tequila-Update-{from}-to-{latest}.exe")))
             .or_else(|| named(format!("Tequila-Setup-{latest}.exe"))),
+        Platform::WindowsPortable => named(format!("Tequila-Portable-{latest}-windows.zip")),
         Platform::Mac => named(format!("Tequila-{latest}.dmg")),
         Platform::IntelMac => named(format!("Tequila-{latest}-intel.dmg")),
         Platform::Linux => named(format!("Tequila-{latest}-linux-x86_64.tar.gz")),
@@ -289,17 +309,24 @@ pub fn fetch(url: &str, size: u64, sha256: Option<&str>, target: &std::path::Pat
     result
 }
 
-/// Where downloaded updates are kept until they are installed.
-fn downloads() -> std::path::PathBuf {
-    std::env::temp_dir().join("Tequila updates")
+/// Where downloaded updates are kept until they are installed: a portable
+/// copy's own folder, where its zip is to be extracted, and the temporary
+/// folder otherwise.
+fn downloads(platform: Platform) -> std::path::PathBuf {
+    match (platform, tequila_format::library::portable_directory()) {
+        (Platform::WindowsPortable, Some(data)) => data.parent().map(std::path::Path::to_path_buf).unwrap_or(data),
+        _ => std::env::temp_dir().join("Tequila updates"),
+    }
 }
 
 /// Start installing the downloaded `file`: on Windows, the installer runs
 /// once Tequila has closed, replacing this installation, and opens Tequila
-/// again; on a Mac the disk image opens, for Tequila to be dragged into
-/// Applications; on Linux the folder it is in opens, for it to be unpacked
-/// in place of this one, which a running Tequila would be unwise to do to
-/// itself. True when Tequila should close now.
+/// again; for a portable copy, Explorer shows the zip, to be extracted over
+/// this folder once Tequila is closed - an executable that is running
+/// cannot be replaced; on a Mac the disk image opens, for Tequila to be
+/// dragged into Applications; on Linux the folder it is in opens, for it to
+/// be unpacked in place of this one, which a running Tequila would be
+/// unwise to do to itself. True when Tequila should close now.
 pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, String> {
     match platform {
         Platform::Windows => std::process::Command::new(file)
@@ -307,6 +334,9 @@ pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, Strin
             .spawn()
             .map(|_| true)
             .map_err(|e| format!("the installer could not be started ({e})")),
+        Platform::WindowsPortable => show_in_explorer(file)
+            .map(|_| false)
+            .map_err(|e| format!("Explorer could not show it ({e}); it is {}", file.display())),
         Platform::Mac | Platform::IntelMac => std::process::Command::new("open")
             .arg(file)
             .spawn()
@@ -319,6 +349,20 @@ pub fn install(file: &std::path::Path, platform: Platform) -> Result<bool, Strin
             .map_err(|e| format!("its folder could not be opened ({e}); it is in {}", file.display())),
         Platform::Other => Err("there is no installer for this computer".into()),
     }
+}
+
+/// Open Explorer on the folder `file` is in, with it selected. Explorer
+/// reads its own command line: the path goes after `/select,` in quotes,
+/// as one argument, which the usual quoting would get wrong.
+#[cfg(windows)]
+fn show_in_explorer(file: &std::path::Path) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{}\"", file.display())).spawn()
+}
+
+#[cfg(not(windows))]
+fn show_in_explorer(file: &std::path::Path) -> std::io::Result<std::process::Child> {
+    Err(std::io::Error::other(format!("Explorer is Windows' own ({})", file.display())))
 }
 
 // ---- the person's choice -----------------------------------------------------
@@ -484,7 +528,7 @@ impl Updates {
         let (send, arriving) = std::sync::mpsc::channel();
         let (theirs, from) = (progress.clone(), asset.clone());
         std::thread::spawn(move || {
-            let folder = downloads();
+            let folder = downloads(Platform::this());
             let result = std::fs::create_dir_all(&folder)
                 .map_err(|e| format!("{} could not be made ({e})", folder.display()))
                 .and_then(|()| {
@@ -555,12 +599,17 @@ impl Updates {
                         notes(ui, &release.notes);
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            match asset_for(release, have, Platform::this()) {
+                            let platform = Platform::this();
+                            match asset_for(release, have, platform) {
                                 Some(asset) => {
-                                    let label = format!("Download and install ({:.0} MB)", asset.size as f64 / 1e6);
+                                    let action = if platform.install_closes() { "Download and install" } else { "Download" };
+                                    let label = format!("{action} ({:.0} MB)", asset.size as f64 / 1e6);
                                     if ui.add(egui::Button::new(egui::RichText::new(label).color(p.on_accent)).fill(p.accent)).clicked() {
                                         want = Some(Want::Download(release.clone(), asset.clone()));
                                     }
+                                }
+                                None if platform == Platform::WindowsPortable => {
+                                    ui.label(egui::RichText::new("This release has no portable zip to fetch.").color(p.text_dim));
                                 }
                                 None => {
                                     ui.label(egui::RichText::new("There is no installer for this computer to fetch.").color(p.text_dim));
@@ -581,7 +630,11 @@ impl Updates {
                         }
                     }
                     State::Ready { release, file } => {
-                        heading(ui, &format!("Tequila {} is ready to install", release.version));
+                        if Platform::this().install_closes() {
+                            heading(ui, &format!("Tequila {} is ready to install", release.version));
+                        } else {
+                            heading(ui, &format!("Tequila {} is downloaded", release.version));
+                        }
                         let (label, about) = Platform::this().install_label();
                         ui.label(egui::RichText::new(about).color(p.text_dim));
                         ui.add_space(6.0);
@@ -771,6 +824,37 @@ mod tests {
         with_intel.assets.push(Asset { name: "Tequila-2026.11.02.0930-intel.dmg".into(), size: 1, url: String::new(), sha256: None });
         assert_eq!(asset_for(&with_intel, from, Platform::IntelMac).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930-intel.dmg"));
         assert_eq!(asset_for(&with_intel, from, Platform::Mac).map(|a| a.name.as_str()), Some("Tequila-2026.11.02.0930.dmg"));
+    }
+
+    /// A portable copy fetches the portable zip and nothing else: an
+    /// installer would put a second Tequila under Programs. Showing the zip
+    /// does not close Tequila, so it asks nothing about unsaved work.
+    #[test]
+    fn a_portable_copy_fetches_the_zip_never_an_installer() {
+        let release = read_release(RELEASE.as_bytes()).unwrap();
+        let from = Version::parse("2026.10.21.0106");
+        assert_eq!(asset_for(&release, from, Platform::WindowsPortable), None, "this release made no portable zip");
+        assert_eq!(asset_for(&release, None, Platform::WindowsPortable), None);
+        let mut with_zip = release.clone();
+        with_zip.assets.push(Asset { name: "Tequila-Portable-2026.11.02.0930-windows.zip".into(), size: 1, url: String::new(), sha256: None });
+        // An older version's zip, left on a release, is not the one.
+        with_zip.assets.push(Asset { name: "Tequila-Portable-2026.10.21.0106-windows.zip".into(), size: 1, url: String::new(), sha256: None });
+        for current in [from, None] {
+            assert_eq!(
+                asset_for(&with_zip, current, Platform::WindowsPortable).map(|a| a.name.as_str()),
+                Some("Tequila-Portable-2026.11.02.0930-windows.zip")
+            );
+        }
+        // An installed copy goes on fetching its installers.
+        assert_eq!(asset_for(&with_zip, from, Platform::Windows).map(|a| a.name.as_str()), Some("Tequila-Update-2026.10.21.0106-to-2026.11.02.0930.exe"));
+        assert!(!Platform::WindowsPortable.install_closes());
+        assert!(Platform::Windows.install_closes());
+        let (button, about) = Platform::WindowsPortable.install_label();
+        assert_eq!(button, "Show the download");
+        assert!(about.contains("extract") && about.contains("data folder"), "{about}");
+        // A copy run from its checkout is not portable, so its downloads go
+        // where they always did.
+        assert_eq!(downloads(Platform::Windows), std::env::temp_dir().join("Tequila updates"));
     }
 
     /// Serve `body` once, over plain HTTP on a free port, and say where.

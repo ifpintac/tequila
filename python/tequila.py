@@ -33,6 +33,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -49,7 +50,7 @@ class Client:
     may be unknown. Reconnect, inspect the scene, then decide what to do.
     """
     def __init__(self, discovery=None, *, timeout=30, expected_pid=None):
-        path = Path(discovery) if discovery else Path.home() / '.tequila' / 'channel.json'
+        path = Path(discovery) if discovery else discovery_file()
         info, self._socket = _connect(path, timeout)
         if expected_pid is not None and info['pid'] != expected_pid:
             self._socket.close()
@@ -381,6 +382,26 @@ class Client:
         result = self.request('quit', save=save, discard=discard)
         self.close()
         return result
+
+
+def portable_folder():
+    """A portable Tequila's data folder, when this module is the one inside
+    it: `portable.txt` beside the programs, one folder up from this one,
+    keeps everything in the `data` folder beside them. None otherwise, and
+    always on a Mac. The rule is tequila_format::library::portable_directory."""
+    programs = Path(__file__).resolve().parent.parent
+    if sys.platform != 'darwin' and (programs / 'portable.txt').is_file():
+        return programs / 'data'
+    return None
+
+
+def discovery_file():
+    """Where the application says how to reach it: TEQUILA_CHANNEL_FILE when
+    that is set, a portable copy's data/channel.json, else
+    ~/.tequila/channel.json, as the application has it."""
+    if os.environ.get('TEQUILA_CHANNEL_FILE'):
+        return Path(os.environ['TEQUILA_CHANNEL_FILE'])
+    return (portable_folder() or Path.home() / '.tequila') / 'channel.json'
 
 
 def _connect(path, timeout):

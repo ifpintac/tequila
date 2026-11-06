@@ -86,13 +86,12 @@ pub struct Channel {
 /// back to the newest one still running (see [`Channel::retire`]), so a
 /// second window opened and closed does not leave every client pointed at a
 /// process that no longer exists.
+///
+/// `~/.tequila/channel.json`, or `data/channel.json` in a portable copy,
+/// where `tequila-cli --mcp` and the Python module beside it look too.
 pub fn discovery_path() -> std::path::PathBuf {
     if let Some(path) = std::env::var_os("TEQUILA_CHANNEL_FILE") { return path.into(); }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    home.join(".tequila").join("channel.json")
+    tequila_format::library::home_directory().join("channel.json")
 }
 
 /// Every running instance's own discovery record, beside the shared file:
@@ -378,7 +377,8 @@ fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, e
     let mismatch = || {
         Reply::Failed(
             "that token does not match this instance; read the port and \
-             token from ~/.tequila/channel.json"
+             token from ~/.tequila/channel.json (data/channel.json beside \
+             a portable copy's program)"
                 .into(),
         )
     };
