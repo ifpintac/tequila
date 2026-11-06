@@ -19,7 +19,9 @@ LiveLink is part of Tequila's scripting channel, so a client needs nothing
 else to be running:
 
 1. Read `~/.tequila/channel.json`. It holds `port`, `token` and `pid` while
-   Tequila is open. If it is missing, Tequila is not running.
+   Tequila is open. If it is missing, Tequila is not running. (A portable
+   Tequila writes it to `data/channel.json` beside its program instead, which
+   this add-on does not look in.)
 2. Connect a TCP socket to `127.0.0.1:<port>`. The channel listens on the
    loopback address only; nothing outside this computer can reach it.
 3. Send one JSON object per line (UTF-8, ending `\n`), each with an `id` you

@@ -173,12 +173,37 @@ try {
     # from source and includes none of its licence files), kept in the repo.
     Get-ChildItem -LiteralPath (Join-Path $projectRoot 'scripts/notices') -Directory |
         ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $licensePath -Recurse }
+    # The read-me of the portable zip (package-portable.ps1), the one place
+    # this folder is handed to anyone as it is: the installers leave it out.
     @'
-TEQUILA FOR WINDOWS
+TEQUILA FOR WINDOWS, PORTABLE
 
-Double-click Tequila.exe. No terminal or Rust installation is needed.
-Keep the executable, DLLs, assets and licenses together in this folder.
-To move the app, copy the entire folder. Extract the ZIP before launching.
+This is Tequila as a folder you can keep anywhere you can write to: a USB
+drive, your Documents, a work PC where nothing may be installed. Double-click
+Tequila.exe. Nothing needs installing, and no administrator rights.
+Extract the whole zip first; Tequila does not run from inside it.
+
+Portable: portable.txt, beside Tequila.exe, makes this copy keep everything
+it remembers in the data folder beside it - your settings, library
+materials, plugins, studio presets, recent projects, caches, crash reports
+and the journal that recovers unsaved work - rather than in this computer's
+user folders. Help > About Tequila says so. Delete portable.txt to have it use
+the usual folders, as an installed Tequila does. Keep the folder out of
+Program Files, where Windows will not let it write.
+Renders and projects go where you save them; before a project is saved,
+renders go to Pictures\Tequila. To move Tequila, or to take your things to
+another computer, copy the whole folder, data and all.
+
+Updating: Help > Check for updates downloads the new portable zip into this
+folder and shows it. Close Tequila, then extract the zip into this same
+folder, replacing the files: in Explorer, right-click the zip, choose Extract
+All, and take the zip's own name off the end of the folder it suggests. The
+data folder is not in the zip, so your things stay. Or download the zip from
+the Releases page and do the same. Do not run the Tequila installer over a
+portable copy: it installs a second Tequila under Programs instead.
+
+The first time: Windows may say "Windows protected your PC". Click More
+info, then Run anyway.
 
 Import: Ctrl+I (STEP, IGES, glTF, GLB, FBX, OBJ, STL, 3MF, PLY, USD, IFC)
 New / open / save project: Ctrl+N / Ctrl+O / Ctrl+S (File > Open recent)
@@ -216,7 +241,6 @@ python\ holds the scripting module: tequila.open() needs no open window.
     $version = '{0}.{1}.{2}.{3}' -f $stamp.Substring(0, 4), $stamp.Substring(4, 2), $stamp.Substring(6, 2), $stamp.Substring(9, 4)
     "Source: $revision`nVersion: $version`nBuilt: $(Get-Date -Format o)`nIncludes current working-tree changes." |
         Set-Content -LiteralPath (Join-Path $packagePath 'BUILD.txt') -Encoding utf8
-    $archivePath = "$packagePath.zip"
     # The zip format cannot date anything before 1980, and some crates ship
     # their licence files stamped 1970 or 1973; copied, they keep the stamp.
     # Date them to the build instead.
@@ -224,14 +248,17 @@ python\ holds the scripting module: tequila.open() needs no open window.
     Get-ChildItem -LiteralPath $packagePath -Recurse -File |
         Where-Object { $_.LastWriteTime -lt $zipEpoch } |
         ForEach-Object { $_.LastWriteTime = Get-Date }
-    # The zip is a convenience for moving the build to another machine; the
-    # folder is the package. Should it still fail, that must not cost the
-    # shortcuts below, so a failed zip is reported and passed over.
+    # The portable zip, Tequila-Portable-<version>-windows.zip beside the
+    # folder: the folder and portable.txt (package-portable.ps1). The folder
+    # itself stays an ordinary copy. Here the zip is a convenience for moving
+    # the build to another machine, and the folder is the package: should it
+    # fail, that must not cost the shortcuts below, so a failed zip is
+    # reported and passed over. The release workflow checks it is there.
+    $archivePath = Join-Path $projectRoot "dist/Tequila-Portable-$version-windows.zip"
     try {
-        Compress-Archive -LiteralPath $packagePath -DestinationPath $archivePath -CompressionLevel Optimal
+        & (Join-Path $PSScriptRoot 'package-portable.ps1') -Package $packagePath -Out $archivePath | Write-Host
     } catch {
         Write-Warning "No zip was made: $($_.Exception.Message)"
-        Remove-Item -LiteralPath $archivePath -ErrorAction SilentlyContinue
         $archivePath = '(none)'
     }
     $shortcutShell = New-Object -ComObject WScript.Shell
@@ -253,7 +280,7 @@ python\ holds the scripting module: tequila.open() needs no open window.
         $shortcut.Save()
     }
     Write-Output "Executable: $(Join-Path $packagePath 'Tequila.exe')"
-    Write-Output "Archive: $archivePath"
+    Write-Output "Portable zip: $archivePath"
     Write-Output "Shortcut: $(Join-Path $projectRoot 'Tequila.lnk')"
 } finally {
     Pop-Location

@@ -21,6 +21,7 @@ Get the newest version from the **[Releases page](../../releases/latest)**:
 | | File | Needs |
 |---|---|---|
 | **Windows** | `Tequila-Setup-<version>.exe` | Windows 10 or 11, 64-bit. An NVIDIA graphics card (GTX 900 series or newer) or an AMD one (RDNA, Radeon RX 5000 series or newer) renders on the graphics card, every card at once when there are several; any other computer renders on the processor. |
+| **Windows, portable** | `Tequila-Portable-<version>-windows.zip` | The same, with nothing to install, in the releases after 2026.11.06.0224. Extract it anywhere you can write to (a USB drive, your Documents; not Program Files) and open `Tequila.exe`. |
 | **Mac** | `Tequila-<version>.dmg` | A Mac with Apple's own chips (M1 or newer) and a recent macOS. |
 | **Intel Mac** | `Tequila-<version>-intel.dmg` | A Mac with an Intel processor and macOS 12 or newer. Renders with Tequila's own renderer: Cycles comes from Blender, whose current version no longer runs on Intel Macs. |
 | **Linux** | `Tequila-<version>-linux-x86_64.tar.gz` | 64-bit Linux with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). Unpack it anywhere and run `./Tequila`; `./install.sh` adds it to the application menu. An NVIDIA or AMD graphics card renders with Cycles, as on Windows. |
@@ -33,6 +34,16 @@ window can turn off. Or download the newer one and install it over the old.
 Either way your materials, plugins and settings are kept. Plugins are written in Python, so
 they need Python 3 on the computer (on a Mac, it comes with Apple's command
 line tools).
+
+**The portable version** keeps everything it remembers - settings, library
+materials, plugins, studio presets, recent projects, caches, crash reports
+and the journal - in a `data` folder beside `Tequila.exe` instead of the
+computer's user folders: that is what the `portable.txt` beside it does, and
+**Help > About Tequila** says so. Renders and projects go where you save
+them. **Help > Check for updates** downloads the newer zip into the folder
+rather than running an installer; close Tequila and extract it over the same
+folder, and the `data` folder, which is not in the zip, stays. Don't run the
+installer over a portable copy: it would install a second Tequila.
 
 **The first time you open it**, your computer warns you, because Tequila is
 not signed with a paid certificate:
@@ -71,7 +82,7 @@ Tequila sends nothing anywhere itself, and the report names no one: no user
 or computer name, no file paths, serial numbers or network addresses - just
 the system, processor, memory, graphics cards and drivers, and how each check
 went. The report and the pictures are also kept in `.tequila/self-test` in
-your home folder. From a terminal it is `tequila-cli --self-test` (beside
+your home folder (`data\self-test` in a portable copy). From a terminal it is `tequila-cli --self-test` (beside
 Tequila once installed; `Tequila.app/Contents/MacOS/tequila-cli` on a Mac),
 with `--cpu-only` to leave the graphics cards out.
 

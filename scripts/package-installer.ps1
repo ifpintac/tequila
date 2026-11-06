@@ -67,10 +67,12 @@ if ($PatchFrom) {
     $baseVersion = '{0}.{1}.{2}.{3}{4}' -f $Matches[1], $Matches[2], $Matches[3], $Matches[4], $Matches[5]
     if ($baseVersion -eq $version) { throw 'The base and the new package are the same version.' }
     # Every file by its checksum, as the installed copy has it: the
-    # portable read-me is not installed.
+    # portable read-me is not installed, nor a portable.txt (tequila.iss),
+    # so the update neither carries one nor removes one.
     $files = {
         param($root)
-        Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Name -ne 'START-HERE.txt' } | ForEach-Object {
+        Get-ChildItem -LiteralPath $root -Recurse -File |
+            Where-Object { $_.Name -ne 'START-HERE.txt' -and $_.FullName -ne (Join-Path $root 'portable.txt') } | ForEach-Object {
             [pscustomobject]@{ Path = $_.FullName.Substring($root.Length + 1); Hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
         }
     }

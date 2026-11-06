@@ -444,6 +444,8 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - each axis inverted, with a live bar of what the view takes from it;
 - what the two buttons do.
 
+*As built, November 6:* in a portable copy, one with a `portable.txt` beside the program, every one of these files is in its `data` folder instead of the person's settings folder (`docs/05-ROADMAP-AND-TESTING.md` §5). Help > About says the copy is portable and opens that folder.
+
 The other sections below are not built yet.
 
 Sections: **General** (language, autosave interval, undo depth, startup scene) · **Interface** (theme light/dark, UI scale, panel layout presets, tooltips) · **Navigation** (application preset, invert axes, sensitivity) · **Hotkeys** (§6.3) · **Colour Management** (OCIO config path, display transform, view transform per output) · **Units** (default scene unit, display precision) · **Rendering** (default backend, GPU device selection, CPU thread count, texture cache size, default lighting preset) · **Folders** (library, output, temp, autosave) · **Advanced** (developer overlays, shading-language cache, telemetry off by default and opt-in only).

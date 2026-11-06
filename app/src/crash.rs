@@ -63,16 +63,13 @@ struct Session {
 static SESSION: OnceLock<Session> = OnceLock::new();
 static GRAPHICS: OnceLock<String> = OnceLock::new();
 
-/// Where reports are kept: `.tequila/crashes` in the person's home.
+/// Where reports are kept: `.tequila/crashes` in the person's home, or in
+/// a portable copy's data folder.
 pub fn folder() -> PathBuf {
     if let Some(folder) = std::env::var_os("TEQUILA_CRASH_DIR") {
         return folder.into();
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    home.join(".tequila").join("crashes")
+    tequila_format::library::home_directory().join("crashes")
 }
 
 /// Start reporting for this session: the earlier sessions' reports come

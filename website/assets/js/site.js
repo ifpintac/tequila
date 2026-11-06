@@ -62,6 +62,7 @@
     return assets.find(function (a) {
       var n = a.name;
       if (which === 'windows') return /^Tequila-Setup-.*\.exe$/.test(n);
+      if (which === 'portable') return /^Tequila-Portable-.*-windows\.zip$/.test(n);
       if (which === 'mac') return /^Tequila-[\d.]+\.dmg$/.test(n);
       if (which === 'intel') return /-intel\.dmg$/.test(n);
       if (which === 'linux') return /linux-x86_64\.tar\.gz$/.test(n);
@@ -135,6 +136,20 @@
         var file = card.querySelector('.file');
         if (file) file.textContent = asset.name;
       });
+      // The Windows portable zip, and what is said about it: hidden until the
+      // latest release has one, which releases before it don't.
+      var portable = assetFor(assets, 'portable');
+      if (portable) {
+        document.querySelectorAll('[data-portable]').forEach(function (el) {
+          if (el.tagName === 'A') {
+            el.href = portable.browser_download_url;
+            el.title = portable.name;
+            var size = el.querySelector('[data-size]');
+            if (size) size.textContent = megabytes(portable.size);
+          }
+          el.hidden = false;
+        });
+      }
     });
   }
 

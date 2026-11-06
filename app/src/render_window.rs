@@ -61,16 +61,23 @@ pub fn output_directory(settings: &RenderSettings, project: Option<&Path>) -> Pa
 
 /// Where renders go when neither the settings nor a saved project say: the
 /// working folder, unless that is the root of a disk - where a Mac app
-/// opened from the Finder runs, and cannot write - and then the user's
-/// `Pictures/Tequila`.
+/// opened from the Finder runs, and cannot write - or the program's own
+/// folder - where a copy opened from Explorer runs, a portable one above
+/// all, and where renders would be lost among its files - and then the
+/// user's `Pictures/Tequila`, where the installer's shortcuts start it.
+/// Renders are the person's work, not something Tequila remembers, so a
+/// portable copy sends them there too rather than into its data folder.
 pub fn fallback_directory() -> PathBuf {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
-    choose_fallback(std::env::current_dir().ok(), home)
+    let program = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf));
+    choose_fallback(std::env::current_dir().ok(), program.as_deref(), home)
 }
 
-fn choose_fallback(current: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
+fn choose_fallback(current: Option<PathBuf>, program: Option<&Path>, home: Option<PathBuf>) -> PathBuf {
+    let same = |a: &Path, b: &Path| a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    let usable = |dir: &Path| dir.parent().is_some() && !program.is_some_and(|program| same(program, dir));
     match (current, home) {
-        (Some(dir), _) if dir.parent().is_some() => dir,
+        (Some(dir), _) if usable(&dir) => dir,
         (_, Some(home)) => {
             let pictures = home.join("Pictures").join("Tequila");
             let _ = std::fs::create_dir_all(&pictures);
@@ -2019,16 +2026,24 @@ mod tests {
 
     /// Renders with nowhere set go to the working folder, unless that is a
     /// disk's root - a Mac app opened from the Finder, which cannot write
-    /// there - and then to Pictures/Tequila.
+    /// there - or the program's own folder - a portable copy opened from
+    /// Explorer - and then to Pictures/Tequila.
     #[test]
     fn renders_with_nowhere_set_avoid_the_root_of_the_disk() {
         let home = std::env::temp_dir().join(format!("tequila-home-{}", std::process::id()));
         let work = home.join("work");
-        assert_eq!(choose_fallback(Some(work.clone()), Some(home.clone())), work);
+        let program = home.join("Tequila");
+        std::fs::create_dir_all(&program).unwrap();
+        assert_eq!(choose_fallback(Some(work.clone()), Some(&program), Some(home.clone())), work);
         let root = if cfg!(windows) { PathBuf::from("C:\\") } else { PathBuf::from("/") };
-        let chosen = choose_fallback(Some(root), Some(home.clone()));
+        let chosen = choose_fallback(Some(root), Some(&program), Some(home.clone()));
         assert_eq!(chosen, home.join("Pictures").join("Tequila"));
         assert!(chosen.is_dir(), "it is made, to be written into");
+        // Started in its own folder, as Explorer starts a program: not among
+        // its files, however the folder is spelled.
+        assert_eq!(choose_fallback(Some(program.clone()), Some(&program), Some(home.clone())), chosen);
+        assert_eq!(choose_fallback(Some(program.join(".")), Some(&program), Some(home.clone())), chosen);
+        assert_eq!(choose_fallback(Some(program.clone()), None, Some(home.clone())), program);
         std::fs::remove_dir_all(&home).ok();
     }
 

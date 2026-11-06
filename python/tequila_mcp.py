@@ -10,6 +10,7 @@ Standard library only. Run it with the Python that runs `tequila.py`:
     claude mcp add tequila -- python C:/path/to/tequila/python/tequila_mcp.py
 
 Tequila must be open; the bridge finds it through ~/.tequila/channel.json
+(data/channel.json in a portable copy, when this is the bridge inside it)
 and reconnects if the application is restarted. Everything it does appears in
 Tequila's console, in amber, as it happens.
 

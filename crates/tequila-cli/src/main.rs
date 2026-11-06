@@ -348,8 +348,9 @@ Testing this computer:
                         timing each and comparing it with a reference; then
                         write a short report to paste into the Tequila
                         Discord, beside the pictures, in -o DIR (default
-                        .tequila/self-test in your home). Sends nothing
-                        anywhere, and names no one. Exits 1 if a check fails
+                        .tequila/self-test in your home, or data/self-test
+                        in a portable copy). Sends nothing anywhere, and
+                        names no one. Exits 1 if a check fails
       --cpu-only        with --self-test: leave the graphics cards out
       --facts-only      with --self-test: describe the computer, render
                         nothing
@@ -563,6 +564,9 @@ fn parse_args() -> Result<Options, String> {
 }
 
 fn main() {
+    // A portable copy's graphics-driver caches go in its data folder, set
+    // before any thread starts.
+    tequila_format::library::move_driver_caches_if_portable();
     let options = match parse_args() {
         Ok(options) => options,
         Err(error) => {

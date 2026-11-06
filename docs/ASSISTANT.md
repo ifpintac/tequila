@@ -86,9 +86,10 @@ one.
 
 ### Where keys are kept
 
-In `~/.tequila/assistant.json`, encrypted with Windows' Data Protection API
-for your Windows account. The file is useless on another computer or to
-another user. A key is sent only to the address of the provider it belongs
+In `~/.tequila/assistant.json` (a portable Tequila's `data` folder), encrypted
+with Windows' Data Protection API for your Windows account. The file is useless
+on another computer or to another user: a portable copy taken to another PC
+asks for its keys again. A key is sent only to the address of the provider it belongs
 to, and only over `https://`; plain `http://` is allowed only for a server on
 this computer. You can also keep a key in an environment variable and give
 Tequila just the variable's name.

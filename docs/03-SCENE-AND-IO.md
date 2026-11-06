@@ -256,6 +256,8 @@ Write a migration function per version bump and a test that loads every historic
 
 Journal every command (§04 §8) to `~/.tequila/journal/<session>.jsonl` as it is applied. On crash, offer to replay the journal onto the last saved state. Auto-save a full snapshot every N minutes (configurable, default 5) to a rotating set of files. This is cheap to build on top of the command bus and it saves users' work — which matters far more than it appears on a feature list.
 
+*As built, November 6:* the folder is `tequila_format::library::home_directory()/journal`, which is `~/.tequila/journal`, or `data/journal` beside the program in a portable copy (a `portable.txt` beside it; `docs/05-ROADMAP-AND-TESTING.md` §5). `TEQUILA_JOURNAL_DIR` still comes first. The crash reports, the render history and queue, and the scripting channel's discovery file follow the same folder.
+
 ---
 
 ## 5. `.fsenv` — environment container
