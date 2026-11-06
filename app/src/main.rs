@@ -139,6 +139,9 @@ use scene_tab::SceneTab;
 use std::sync::Arc;
 
 fn main() -> eframe::Result<()> {
+    // A portable copy's graphics-driver caches go in its data folder, set
+    // before any thread starts.
+    tequila_format::library::move_driver_caches_if_portable();
     // `--write-icon <file.png>`: the icon at 1024 pixels on a Mac
     // application's grid, which scripts/package-macos.sh makes the bundle's
     // .icns from - drawn by the same code as the window's icon.

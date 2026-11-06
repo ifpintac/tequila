@@ -564,6 +564,9 @@ fn parse_args() -> Result<Options, String> {
 }
 
 fn main() {
+    // A portable copy's graphics-driver caches go in its data folder, set
+    // before any thread starts.
+    tequila_format::library::move_driver_caches_if_portable();
     let options = match parse_args() {
         Ok(options) => options,
         Err(error) => {

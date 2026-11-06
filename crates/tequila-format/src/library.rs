@@ -871,6 +871,26 @@ fn portable_directory_for(mac: bool, executable: Option<&Path>) -> Option<PathBu
     folder.join(PORTABLE_MARKER).is_file().then(|| folder.join(PORTABLE_DATA))
 }
 
+/// In a portable copy, the graphics driver's own caches go in its data
+/// folder too, where the driver lets them be moved: NVIDIA's CUDA compute
+/// cache and OptiX's, which the driver otherwise makes among the computer's
+/// AppData the first time Cycles looks at the card. A variable already set
+/// is left as it is. Called first thing in `main`, before any thread starts
+/// or Cycles is loaded; nothing for an installed copy.
+pub fn move_driver_caches_if_portable() {
+    let Some(data) = portable_directory() else { return };
+    for (name, folder) in driver_caches(&data) {
+        if std::env::var_os(name).is_none() {
+            std::env::set_var(name, folder);
+        }
+    }
+}
+
+fn driver_caches(data: &Path) -> [(&'static str, PathBuf); 2] {
+    let cache = data.join("cache");
+    [("CUDA_CACHE_PATH", cache.join("cuda")), ("OPTIX_CACHE_PATH", cache.join("optix"))]
+}
+
 /// Tequila's folder among the person's settings, which holds their
 /// library, plugins, recent projects and appearance: `%APPDATA%\Tequila`
 /// on Windows, `~/Library/Application Support/Tequila` on a Mac, and
@@ -2080,6 +2100,9 @@ mod tests {
         assert_eq!(settings_directory_for(false, data, environment), folder.join("data"));
         assert_eq!(cache_directory_for(false, data, environment), folder.join("data").join("cache"));
         assert_eq!(home_directory_for(data, environment), folder.join("data"));
+        // And the graphics driver's caches, which it would make in AppData.
+        let drivers = driver_caches(&folder.join("data"));
+        assert!(drivers.iter().all(|(_, path)| path.starts_with(folder.join("data").join("cache"))), "{drivers:?}");
         // The same rule for every program in the folder: the application,
         // tequila-cli and the rest.
         assert_eq!(portable_directory_for(false, Some(&folder.join("tequila-cli.exe"))), Some(folder.join("data")));
