@@ -284,6 +284,11 @@
   // Pictures for the releases the website has them for, by the section
   // heading they go under. Later releases can carry their own in the notes.
   var ART = {
+    'v2026.11.06.0224': {
+      'Look at a design in AR, and bring in more kinds of files': ['assets/img/app-usdz.jpg', 'File › Export USDZ for AR, on the perfume bottle sample.'],
+      'Rendering': ['assets/img/fibres-printed.jpg', 'A printed velvet: the texture now colours every fibre, in both renderers.'],
+      'Materials': ['assets/img/fur-suedes.jpg', 'Fine Suede Sand, Roughout Suede Tobacco and the new Faux Fur Camel, rendered in Cycles through Tequila.']
+    },
     'v2026.11.02.1748': {
       'A third sample: the palma P8': ['assets/img/palma-front.jpg', 'The palma P8, the third sample scene: clear lime polycarbonate with its boards seen through the shell.']
     },

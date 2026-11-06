@@ -68,7 +68,8 @@
         <figure><img src="assets/img/holder-hero.jpg" alt="An orange 3D-printed helmet holder on a teal wall, its triangle thrown across the wall as a long shadow" loading="lazy" data-zoom><figcaption>A helmet holder designed in Fusion and brought in as an STL: orange PLA on a teal wall, one low, hard light throwing its triangle across the wall.</figcaption></figure>
         <ul>
           <li><strong>CAD:</strong> STEP through OpenCASCADE and IGES, with assemblies, names, colours, units, attributes and layers. Show or hide a layer at once.</li>
-          <li><strong>3D:</strong> glTF and GLB, OBJ (with ZBrush polypaint), STL, USD and IFC building models.</li>
+          <li><strong>3D:</strong> glTF and GLB, FBX, OBJ (with ZBrush polypaint), STL, 3MF, PLY, USD (<code>.usda</code>, <code>.usdc</code>, <code>.usdz</code>) and IFC building models.</li>
+          <li><strong>Rhino:</strong> <code>.3dm</code> files from Rhino 5 to 8, with their layers as the scene tree, materials and textures, polysurfaces, SubD and blocks.</li>
           <li><strong>Very large models.</strong> Re-tessellate a CAD part finer or coarser, and re-import a changed model without losing your materials, labels or names.</li>
           <li><strong>Live from other apps:</strong> send models from Blender (live), SolidWorks and ZBrush.</li>
           <li><strong>KeyShot scenes:</strong> open <code>.ksp</code> and <code>.bip</code> files with their parts, materials, labels, environments, cameras and model sets.</li>
@@ -82,7 +83,9 @@
         <figure><img src="assets/img/holder-macro.jpg" alt="Close-up of a navy 3D-printed part, its layer lines wrapping a rounded end" loading="lazy" data-zoom><figcaption>Close on the rounded end: the print's layers wrap the curve, stacked through the part's thickness, as it prints lying flat.</figcaption></figure>
         <ul>
           <li><strong>A library of over 300</strong> procedural materials: plastics with mould textures, anodised, brushed and polished metals, car paint with flakes, glass, gems, liquids with bubbles, wood, stone, leather, ceramics, fabrics and 3D-print filaments.</li>
-          <li><strong>Real fibres:</strong> a material's Fuzz grows fibres for felt, velvet and tennis-ball fuzz, and both renderers draw them.</li>
+          <li><strong>Real fibres:</strong> a material's Fuzz grows fibres for felt, velvet, fur and tennis-ball fuzz, a texture colours each fibre where it grows, and both renderers draw them.</li>
+          <li><strong>Suedes and footwear:</strong> roughout and fine suedes, Faux Fur Camel, jersey lining, nylon taffeta, outsole rubber, laces, bonded thread and webbing.</li>
+          <li><strong>Adobe Substance materials</strong> (<code>.sbsar</code>, <code>.sbs</code>) with their settings; with Adobe's Substance tools installed, the textures render again as you change them.</li>
           <li><strong>A node editor</strong> for your own materials, with procedural patterns, and recipes that an AI app can write for you.</li>
           <li><strong>Labels and decals</strong>, placed and sized in millimetres.</li>
           <li><strong>Texture packs</strong> turned into materials in one go, and KeyShot material packages (<code>.kmp</code>).</li>
@@ -144,6 +147,7 @@
         <figure><img src="assets/img/turntable.jpg" alt="Six frames of the helmet holder turning" loading="lazy" data-zoom><figcaption>Six frames of a turntable. The spin viewer turns them as you drag.</figcaption></figure>
         <ul>
           <li><strong>Web export:</strong> a page with the product in live 3D, or pre-rendered.</li>
+          <li><strong>AR:</strong> export a USDZ that an iPhone, iPad or Apple Vision Pro opens in AR, at real size, standing on the ground.</li>
           <li><strong>A spin viewer</strong>, and glTF and USD export.</li>
           <li><strong>Presentation mode</strong>, full screen.</li>
           <li><strong>Cutaways and measurements</strong>, model sets and a configurator.</li>
@@ -156,6 +160,7 @@
           <li><strong>Connect an AI app</strong> in one click: Claude, Cursor, VS Code (GitHub Copilot), Codex, Gemini CLI, Windsurf, LM Studio, or any other app that speaks MCP. It can set up materials, lighting and renders, make materials from a description, and write plugins.</li>
           <li><strong>A built-in Assistant</strong> for OpenAI, Claude, Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq or a local model.</li>
           <li><strong>Python scripting and plugins</strong>, a command-line renderer, and a Blender live link.</li>
+          <li><strong>A 3Dconnexion SpaceMouse</strong> to turn, pan and zoom the view.</li>
           <li>Every edit is an undoable command with a name, so scripts and AI apps can do anything the buttons do. See <a href="docs.html#scripting">Scripting</a>.</li>
         </ul>
 
@@ -164,6 +169,7 @@
           <li><strong>Windows</strong> 10 or 11, 64-bit.</li>
           <li><strong>Mac</strong> with Apple silicon, and <strong>Intel Macs</strong> on macOS 12 or newer (with Tequila's own renderer).</li>
           <li><strong>Linux</strong>, 64-bit, glibc 2.35 or newer.</li>
+          <li><strong>Test this computer</strong> (Help menu) renders with every engine and graphics card it finds and gives a short report to share.</li>
           <li>NVIDIA (GTX 900 series or newer) and AMD (RX 5000 series or newer) cards render with Cycles; any other computer renders on the processor.</li>
         </ul>
         <p>Beyond turntables, animation isn't part of Tequila yet; it's on the <a href="roadmap.html">Roadmap</a>.</p>

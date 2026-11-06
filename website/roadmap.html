@@ -42,7 +42,7 @@
     <span class="kicker">Roadmap</span>
     <h1>Where Tequila is going.</h1>
     <p class="lede">What's being worked on now, what comes next, and what's further out. Plans move as people use Tequila and tell us what they need; what has actually shipped is on <a href="whats-new.html">What's new</a>.</p>
-    <p class="updated">Updated November 3, 2026</p>
+    <p class="updated">Updated November 6, 2026</p>
   </div>
 </section>
 
@@ -66,7 +66,7 @@
         <ul>
           <li>Use it for real work, client renders included.</li>
           <li>Updates come often. <strong>Help › Check for updates</strong> installs them and keeps your materials and settings.</li>
-          <li>Some things are still rough. Windows and Mac warn you when you first open it, and a few rendering bugs are on the list below.</li>
+          <li>Some things are still rough. Windows and Mac warn you when you first open it, and some of the newest features haven't met real hardware yet.</li>
           <li>Tell us what breaks, on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</li>
         </ul>
       </article>
@@ -75,8 +75,8 @@
         <h3>Stable</h3>
         <p>When these are done:</p>
         <ul>
-          <li>The rendering fixes under <strong>Now</strong> below.</li>
           <li>Tested on many more computers and graphics cards.</li>
+          <li>The newest features tried on real hardware: see <strong>Now</strong> below.</li>
           <li>A signed Windows installer, so no warning when you open it.</li>
         </ul>
       </article>
@@ -94,21 +94,12 @@
           <p>The work for the next release.</p>
         </header>
         <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe5c8;</i>Material previews, ready from the start</h3>
-          <p>The library's 320 materials come with their previews, so nothing has to render the first time you open it, and previews of your own materials keep rendering while Tequila is in the background. Today they render a screenful at a time, and only while the window is in front.</p>
-          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+          <h3><i class="icon" aria-hidden="true">&#xe0ad;</i>Tested on more machines</h3>
+          <p>Choose <strong>Help › Test this computer…</strong>: it renders a small scene with every engine and graphics card it finds, checks the pictures and gives you a short report. Paste it on <a href="https://discord.gg/Na5T2qgQBX">Discord</a>. Reports from AMD cards, several cards at once, and Intel and Apple-silicon Macs help most.</p>
         </article>
         <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe2d4;</i>Smooth curves in Tequila's renderer</h3>
-          <p>On curved glass and velvet, Tequila's own renderer can show the model's triangles, most of all in close-ups and in a mirror floor's reflection. Cycles draws the same models smooth.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe0b9;</i>Liquid inside glass in Cycles</h3>
-          <p>Where a liquid touches its bottle, Cycles bends the light as if the liquid met air, so perfume and drinks look paler than in Tequila's renderer. Both renderers should agree on bottles.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe361;</i>Inside-out models in Cycles</h3>
-          <p>Some exporters write a solid inside out. Tequila's renderer shows it as the solid it is, but Cycles shows an air bubble. Both should show the solid.</p>
+          <h3><i class="icon" aria-hidden="true">&#xe2e4;</i>New features, on real hardware</h3>
+          <p>A SpaceMouse turning the view, Substance materials with Adobe's own files and tools, USDZ files on an iPhone, iPad and Apple Vision Pro, and Rhino files side by side with Rhino. Each is built and tested against its format, but not yet used on the real thing. Have one? Tell us how it goes.</p>
         </article>
       </section>
 
@@ -118,38 +109,16 @@
           <p>Planned once the work above ships.</p>
         </header>
         <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe20c;</i>USDZ export</h3>
-          <p>Export a USDZ, the packaged USD that Apple's devices open, to check a design at full size on Apple Vision Pro, an iPhone or an iPad. Tequila already exports USD (<code>.usda</code>).</p>
-          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+          <h3><i class="icon" aria-hidden="true">&#xe1fe;</i>A signed Windows installer</h3>
+          <p>Free signing through the SignPath Foundation, so Windows stops warning about Tequila the first time it runs.</p>
         </article>
         <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe312;</i>More 3D formats</h3>
-          <p>Today Tequila reads STEP, IGES, glTF, OBJ, STL, USD, IFC and KeyShot scenes. Next come open formats such as Rhino's <code>.3dm</code>, FBX (from 3ds Max and Maya), 3MF and PLY. SolidWorks, Fusion, CATIA and other CAD apps keep their own files closed: for those, export STEP. SolidWorks also has a Send to Tequila add-on, in beta.</p>
-          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
+          <h3><i class="icon" aria-hidden="true">&#xe29a;</i>More animation</h3>
+          <p>Exploded views, camera fly-throughs, part reveals and motion blur, on top of today's turntables.</p>
         </article>
         <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe2d7;</i>Glossy reflections, finished</h3>
-          <p>A lamp seen in a mirror-smooth surface on every light path, parts that cast no shadow treated the same everywhere, and less noise from weak lamps in scenes with many lights.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe0c2;</i>Fibres</h3>
-          <p>A texture on velvet or fur colours the fibres too, not only the surface under them, and large parts get denser fibres.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe104;</i>UV editor</h3>
-          <p>Pins saved with the project and undoable, lines on the part hidden behind it, tighter <strong>Line up edges</strong> and <strong>As on the part</strong>, and the checker in every view and on every UV set.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe52d;</i>Studios</h3>
-          <p>A picture of each Studio in the Studio tab, and reordering them by dragging.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe2e4;</i>SpaceMouse support</h3>
-          <p>Turn, pan and zoom the view with a 3Dconnexion SpaceMouse, the way CAD apps do, with the other hand free for the mouse.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe0ad;</i>Tested on more machines</h3>
-          <p>AMD graphics cards, several cards at once, and Intel and Apple-silicon Macs, tried on real computers as well as GitHub's. Have one? Tell us how it goes on <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</p>
+          <h3><i class="icon" aria-hidden="true">&#xe5a3;</i>KeyShot materials, closer</h3>
+          <p>Materials from KeyShot scenes matched more closely to how KeyShot renders them.</p>
         </article>
       </section>
 
@@ -158,23 +127,6 @@
           <h2 id="lane-later"><span class="lane-dot" aria-hidden="true"></span>Later</h2>
           <p>Wanted, but not scheduled yet.</p>
         </header>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe5a3;</i>Substance materials</h3>
-          <p>Open Adobe Substance materials (<code>.sbsar</code> and <code>.sbs</code>) with their settings, not only the pictures they export. It needs Adobe's Substance engine, so it's further out. Until then, export the maps from Substance and bring them in with <strong>File › Import texture pack</strong>.</p>
-          <span class="asked"><i class="icon" aria-hidden="true">&#xe119;</i>Asked for on Discord</span>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe29a;</i>More animation</h3>
-          <p>Exploded views, camera fly-throughs, part reveals and motion blur, on top of today's turntables.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe1fe;</i>A signed Windows installer</h3>
-          <p>Free signing through the SignPath Foundation, so Windows stops warning about Tequila the first time it runs.</p>
-        </article>
-        <article class="item">
-          <h3><i class="icon" aria-hidden="true">&#xe5a3;</i>KeyShot materials, closer</h3>
-          <p>Materials from KeyShot scenes matched more closely to how KeyShot renders them.</p>
-        </article>
         <article class="item">
           <h3><i class="icon" aria-hidden="true">&#xe35a;</i>AI image tools</h3>
           <p>Restyle a finished render, change its background or upscale it, guided by the render's own depth, normals and masks.</p>
@@ -194,9 +146,17 @@
     <div class="section-head">
       <span class="kicker">Recently shipped</span>
       <h2>Already in Tequila.</h2>
-      <p>The last three releases. Every version's full notes are on <a href="whats-new.html">What's new</a>.</p>
+      <p>The last three releases. Everything that was under Now and Next on November 3 shipped on November 6. Every version's full notes are on <a href="whats-new.html">What's new</a>.</p>
     </div>
     <div class="shipped">
+      <a class="card" href="whats-new.html">
+        <img src="assets/img/fur-suedes.jpg" alt="Fine Suede Sand, Roughout Suede Tobacco and Faux Fur Camel on three swatches" loading="lazy">
+        <div class="body">
+          <time datetime="2026-11-06">November 6, 2026</time>
+          <h3>2026.11.06.0224</h3>
+          <p>Everything that was under Now and Next: USDZ export for AR, Rhino, FBX, 3MF and PLY, Substance materials, glossy reflections and fibres finished, suedes and Faux Fur Camel, previews ready from the start, bottles in Cycles, Test this computer, SpaceMouse, Studios and the UV editor.</p>
+        </div>
+      </a>
       <a class="card" href="whats-new.html">
         <img src="assets/img/palma-front.jpg" alt="The palma P8 sample scene" loading="lazy">
         <div class="body">
@@ -211,14 +171,6 @@
           <time datetime="2026-11-01">November 1, 2026</time>
           <h3>2026.11.01.1340</h3>
           <p>A full UV editor, wireframe renders, KeyShot scenes, real fibres, spectral rendering, AMD cards and every card at once, Cycles on Linux, and Intel Macs.</p>
-        </div>
-      </a>
-      <a class="card" href="whats-new.html">
-        <img src="assets/img/headphones-three-quarter.jpg" alt="The headphones sample scene" loading="lazy">
-        <div class="body">
-          <time datetime="2026-10-30">October 30, 2026</time>
-          <h3>2026.10.30.1120</h3>
-          <p>Tequila on Linux, a start screen with sample scenes, updates from inside Tequila, studio presets, turntables, passes and relighting from Cycles, and AI apps in one click.</p>
         </div>
       </a>
     </div>
