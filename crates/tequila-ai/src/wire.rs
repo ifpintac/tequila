@@ -12,18 +12,47 @@ use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
 
 /// What came back from one request.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reply {
     pub text: Vec<String>,
     pub calls: Vec<Call>,
+    /// What the model reasoned before answering, where the service sends
+    /// it. Shown to the person; not sent back, since neither format needs
+    /// it again.
+    pub reasoning: String,
+}
+
+/// How a request is written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Options {
+    /// Ask for the reply as a stream of events, as it is written.
+    pub stream: bool,
+    /// How many of the conversation's images go with it: the newest.
+    pub images: usize,
+}
+
+impl Options {
+    /// The whole reply at once, with as many pictures as the model can use.
+    pub fn plain(provider: &Provider) -> Options {
+        Options { stream: false, images: if provider.vision { IMAGES_KEPT } else { 0 } }
+    }
 }
 
 pub fn request_body(provider: &Provider, system: &str, tools: &[Tool], messages: &[Message]) -> String {
-    let messages = with_recent_images(messages, if provider.vision { IMAGES_KEPT } else { 0 });
-    let body = match provider.kind {
+    request_body_with(provider, system, tools, messages, Options::plain(provider))
+}
+
+pub fn request_body_with(provider: &Provider, system: &str, tools: &[Tool], messages: &[Message], options: Options) -> String {
+    let messages = with_recent_images(messages, options.images);
+    let mut body = match provider.kind {
         Kind::Anthropic => anthropic_body(provider, system, tools, &messages),
         Kind::OpenAi => openai_body(provider, system, tools, &messages),
     };
+    if options.stream {
+        if let Value::Object(fields) = &mut body {
+            fields.insert("stream".into(), Value::Bool(true));
+        }
+    }
     json_write::to_string(&body)
 }
 
@@ -130,12 +159,17 @@ fn anthropic_reply(value: &Value) -> Result<Reply, String> {
     let content = value
         .get("content")
         .ok_or_else(|| format!("the reply had no content: {}", excerpt(&json_write::to_string(value))))?;
-    let mut reply = Reply { text: Vec::new(), calls: Vec::new() };
+    let mut reply = Reply::default();
     for block in content.as_array() {
         match block.get("type").and_then(|t| t.as_str()) {
             Some("text") => {
                 if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                     reply.text.push(text.to_string());
+                }
+            }
+            Some("thinking") => {
+                if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
+                    reply.reasoning.push_str(text);
                 }
             }
             Some("tool_use") => reply.calls.push(Call {
@@ -259,8 +293,10 @@ fn openai_reply(value: &Value) -> Result<Reply, String> {
         .and_then(|c| c.as_array().first())
         .and_then(|c| c.get("message"))
         .ok_or_else(|| format!("the reply had no message: {}", excerpt(&json_write::to_string(value))))?;
-    let mut reply = Reply { text: Vec::new(), calls: Vec::new() };
+    let mut reply = Reply { reasoning: reasoning_of(message).unwrap_or_default().to_string(), ..Reply::default() };
     if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
+        let (thought, text) = split_thinking(text);
+        reply.reasoning.push_str(thought.unwrap_or_default());
         if !text.trim().is_empty() {
             reply.text.push(text.to_string());
         }
@@ -272,8 +308,7 @@ fn openai_reply(value: &Value) -> Result<Reply, String> {
                 .and_then(|f| f.get("arguments"))
                 .map(|a| match a {
                     // Normally a JSON string; some servers send the object.
-                    Value::String(text) if text.trim().is_empty() => Ok(object(vec![])),
-                    Value::String(text) => json::parse(text.as_bytes()).map_err(|_| format!("the arguments were not valid JSON: {}", excerpt(text))),
+                    Value::String(text) => parse_arguments(text),
                     other => Ok(other.clone()),
                 })
                 .unwrap_or_else(|| Ok(object(vec![])));
@@ -292,6 +327,306 @@ fn openai_reply(value: &Value) -> Result<Reply, String> {
         }
     }
     Ok(reply)
+}
+
+/// The reasoning an OpenAI-compatible server puts beside the answer. The
+/// field is not part of OpenAI's own format, and servers name it
+/// differently: Ollama and LM Studio `reasoning`, vLLM and DeepSeek
+/// `reasoning_content`.
+fn reasoning_of(message: &Value) -> Option<&str> {
+    ["reasoning", "reasoning_content"].iter().filter_map(|key| message.get(key).and_then(|r| r.as_str())).find(|r| !r.is_empty())
+}
+
+/// Reasoning written into the answer itself, as some local servers send
+/// it: `<think>…</think>` before the words. The reasoning (all of it while
+/// the closing tag has not come yet), then the rest.
+pub fn split_thinking(text: &str) -> (Option<&str>, &str) {
+    let Some(after) = text.trim_start().strip_prefix("<think>") else {
+        return (None, text);
+    };
+    match after.find("</think>") {
+        Some(end) => (Some(&after[..end]), after[end + "</think>".len()..].trim_start()),
+        None => (Some(after), ""),
+    }
+}
+
+fn parse_arguments(text: &str) -> Result<Value, String> {
+    if text.trim().is_empty() {
+        return Ok(object(vec![]));
+    }
+    json::parse(text.as_bytes()).map_err(|_| format!("the arguments were not valid JSON: {}", excerpt(text)))
+}
+
+// ---- Streams ---------------------------------------------------------------------
+
+/// What a streaming reply is doing at the moment.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Activity {
+    /// Nothing has come yet: the server is reading the request.
+    #[default]
+    Waiting,
+    Thinking,
+    Writing,
+    /// Writing a call to this tool.
+    Calling(String),
+}
+
+/// A tool call as it arrives, a piece at a time.
+#[derive(Default)]
+struct PartialCall {
+    /// The OpenAI format numbers calls, so their pieces can interleave.
+    index: Option<i64>,
+    id: String,
+    name: String,
+    arguments: String,
+    /// An Anthropic call's input as its start gave it, for when no pieces
+    /// follow.
+    input: Option<Value>,
+}
+
+/// What an Anthropic content block's pieces add to.
+enum Block {
+    Text(usize),
+    Call(usize),
+    Thinking,
+    Other,
+}
+
+/// A reply put together from its stream of events, in either format.
+pub struct Assembler {
+    kind: Kind,
+    texts: Vec<String>,
+    reasoning: String,
+    calls: Vec<PartialCall>,
+    blocks: Vec<(i64, Block)>,
+    activity: Activity,
+    /// The end was announced: `[DONE]`, a finish reason, `message_stop`.
+    finished: bool,
+    events: usize,
+}
+
+impl Assembler {
+    pub fn new(kind: Kind) -> Assembler {
+        Assembler {
+            kind,
+            texts: Vec::new(),
+            reasoning: String::new(),
+            calls: Vec::new(),
+            blocks: Vec::new(),
+            activity: Activity::Waiting,
+            finished: false,
+            events: 0,
+        }
+    }
+
+    /// One event of the stream. An error the service reports inside it
+    /// ends the reply with that error.
+    pub fn event(&mut self, event: &crate::sse::Event) -> Result<(), String> {
+        let data = event.data.trim();
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.events += 1;
+        if data == "[DONE]" {
+            self.finished = true;
+            return Ok(());
+        }
+        let value = json::parse(data.as_bytes()).map_err(|_| format!("the stream held something that was not JSON: {}", excerpt(data)))?;
+        if let Some(message) = error_message(&value) {
+            return Err(message);
+        }
+        match self.kind {
+            Kind::OpenAi => self.openai_event(&value),
+            Kind::Anthropic => self.anthropic_event(&value),
+        }
+        Ok(())
+    }
+
+    fn openai_event(&mut self, value: &Value) {
+        // A chunk with no choices carries only the token counts.
+        let Some(choice) = value.get("choices").and_then(|c| c.as_array().first()) else { return };
+        if choice.get("finish_reason").and_then(|r| r.as_str()).is_some() {
+            self.finished = true;
+        }
+        let Some(delta) = choice.get("delta").or_else(|| choice.get("message")) else { return };
+        if let Some(piece) = reasoning_of(delta) {
+            self.reasoning.push_str(piece);
+            self.activity = Activity::Thinking;
+        }
+        if let Some(piece) = delta.get("content").and_then(|c| c.as_str()).filter(|p| !p.is_empty()) {
+            if self.texts.is_empty() {
+                self.texts.push(String::new());
+            }
+            self.texts[0].push_str(piece);
+            let (thought, rest) = split_thinking(&self.texts[0]);
+            self.activity = if thought.is_some() && rest.is_empty() { Activity::Thinking } else { Activity::Writing };
+        }
+        for call in delta.get("tool_calls").map(|c| c.as_array()).unwrap_or(&[]) {
+            let index = call.get("index").and_then(|i| i.as_f64()).map(|i| i as i64);
+            let id = call.get("id").and_then(|i| i.as_str()).filter(|i| !i.is_empty());
+            let found = match (index, id) {
+                (Some(index), _) => self.calls.iter().position(|c| c.index == Some(index)),
+                (None, Some(id)) => self.calls.iter().position(|c| c.id == id),
+                // Neither: more of the call being written.
+                (None, None) => self.calls.len().checked_sub(1),
+            };
+            let slot = found.unwrap_or_else(|| {
+                self.calls.push(PartialCall { index, ..PartialCall::default() });
+                self.calls.len() - 1
+            });
+            let partial = &mut self.calls[slot];
+            if let (Some(id), true) = (id, partial.id.is_empty()) {
+                partial.id = id.to_string();
+            }
+            let function = call.get("function");
+            if let Some(name) = function.and_then(|f| f.get("name")).and_then(|n| n.as_str()).filter(|n| !n.is_empty()) {
+                // Sent once, normally; some servers repeat it with each piece.
+                if partial.name != name {
+                    partial.name.push_str(name);
+                }
+            }
+            match function.and_then(|f| f.get("arguments")) {
+                Some(Value::String(piece)) => partial.arguments.push_str(piece),
+                Some(Value::Null) | None => {}
+                Some(whole) => partial.arguments = json_write::to_string(whole),
+            }
+            self.activity = Activity::Calling(partial.name.clone());
+        }
+    }
+
+    fn anthropic_event(&mut self, value: &Value) {
+        let index = value.get("index").and_then(|i| i.as_f64()).map(|i| i as i64).unwrap_or(-1);
+        match value.get("type").and_then(|t| t.as_str()).unwrap_or_default() {
+            "content_block_start" => {
+                let block = value.get("content_block");
+                let text_of = |key: &str| block.and_then(|b| b.get(key)).and_then(|t| t.as_str()).unwrap_or_default().to_string();
+                let slot = match block.and_then(|b| b.get("type")).and_then(|t| t.as_str()) {
+                    Some("text") => {
+                        self.texts.push(text_of("text"));
+                        self.activity = Activity::Writing;
+                        Block::Text(self.texts.len() - 1)
+                    }
+                    Some("tool_use") => {
+                        let name = text_of("name");
+                        self.activity = Activity::Calling(name.clone());
+                        self.calls.push(PartialCall {
+                            id: text_of("id"),
+                            name,
+                            input: block.and_then(|b| b.get("input")).cloned(),
+                            ..PartialCall::default()
+                        });
+                        Block::Call(self.calls.len() - 1)
+                    }
+                    Some("thinking") => {
+                        self.reasoning.push_str(&text_of("thinking"));
+                        self.activity = Activity::Thinking;
+                        Block::Thinking
+                    }
+                    _ => Block::Other,
+                };
+                self.blocks.push((index, slot));
+            }
+            "content_block_delta" => {
+                let Some(delta) = value.get("delta") else { return };
+                let piece = |key: &str| delta.get(key).and_then(|t| t.as_str()).unwrap_or_default();
+                match self.blocks.iter().rev().find(|(i, _)| *i == index).map(|(_, b)| b) {
+                    Some(Block::Text(slot)) => {
+                        self.texts[*slot].push_str(piece("text"));
+                        self.activity = Activity::Writing;
+                    }
+                    Some(Block::Call(slot)) => {
+                        let call = &mut self.calls[*slot];
+                        call.arguments.push_str(piece("partial_json"));
+                        self.activity = Activity::Calling(call.name.clone());
+                    }
+                    Some(Block::Thinking) => {
+                        self.reasoning.push_str(piece("thinking"));
+                        self.activity = Activity::Thinking;
+                    }
+                    Some(Block::Other) | None => {}
+                }
+            }
+            "message_delta" => {
+                if value.get("delta").and_then(|d| d.get("stop_reason")).and_then(|r| r.as_str()).is_some() {
+                    self.finished = true;
+                }
+            }
+            "message_stop" => self.finished = true,
+            _ => {}
+        }
+    }
+
+    pub fn activity(&self) -> &Activity {
+        &self.activity
+    }
+
+    /// The reasoning so far, including any written into the answer.
+    pub fn reasoning(&self) -> String {
+        let written = match self.kind {
+            Kind::OpenAi => self.texts.first().and_then(|t| split_thinking(t).0),
+            Kind::Anthropic => None,
+        };
+        match written {
+            Some(thought) if self.reasoning.is_empty() => thought.to_string(),
+            Some(thought) => format!("{}\n{thought}", self.reasoning),
+            None => self.reasoning.clone(),
+        }
+    }
+
+    /// The answer's words so far.
+    pub fn text(&self) -> String {
+        self.texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| if i == 0 && self.kind == Kind::OpenAi { split_thinking(t).1 } else { t.as_str() })
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// How much has been written, in characters: words, reasoning and the
+    /// tools' arguments.
+    pub fn written(&self) -> usize {
+        self.texts.iter().map(|t| t.chars().count()).sum::<usize>()
+            + self.reasoning.chars().count()
+            + self.calls.iter().map(|c| c.arguments.chars().count() + c.name.len()).sum::<usize>()
+    }
+
+    /// The whole reply, once the stream has ended.
+    pub fn finish(self) -> Result<Reply, String> {
+        if self.events == 0 {
+            return Err("the service ended the stream without replying".into());
+        }
+        // The OpenAI format's end is announced by convention only, and a
+        // few servers just close the connection after the last piece; an
+        // Anthropic stream always ends with `message_stop`.
+        let unfinished_call = self.calls.iter().any(|c| parse_arguments(&c.arguments).is_err());
+        if !self.finished && (self.kind == Kind::Anthropic || unfinished_call) {
+            return Err("the reply broke off part-way, before the service said it had finished".into());
+        }
+        let mut reply = Reply { reasoning: self.reasoning(), ..Reply::default() };
+        for (i, text) in self.texts.iter().enumerate() {
+            let text = if i == 0 && self.kind == Kind::OpenAi { split_thinking(text).1 } else { text.as_str() };
+            if !text.trim().is_empty() {
+                reply.text.push(text.to_string());
+            }
+        }
+        for (i, call) in self.calls.into_iter().enumerate() {
+            let arguments = match (call.arguments.trim().is_empty(), call.input) {
+                (true, Some(input)) => Ok(input),
+                _ => parse_arguments(&call.arguments),
+            };
+            reply.calls.push(Call {
+                // Some local servers send no ids; the result still needs one
+                // to answer to.
+                id: if call.id.is_empty() { format!("call_{i}") } else { call.id },
+                name: call.name,
+                arguments,
+            });
+        }
+        Ok(reply)
+    }
 }
 
 /// The model ids a `/models` endpoint lists, in either format.
@@ -422,5 +757,52 @@ mod tests {
     fn model_lists_are_read_in_both_formats() {
         assert_eq!(parse_models(r#"{"data":[{"id":"b"},{"id":"a"}]}"#).unwrap(), ["a", "b"]);
         assert_eq!(parse_models(r#"{"models":[{"name":"llama3"}]}"#).unwrap(), ["llama3"]);
+    }
+
+    #[test]
+    fn a_streamed_request_says_so_in_both_formats() {
+        for kind in Kind::ALL {
+            let options = Options { stream: true, images: 1 };
+            let text = request_body_with(&provider(kind), "s", &tools::all(), &conversation(), options);
+            let body = json::parse(text.as_bytes()).unwrap();
+            assert_eq!(body.get("stream").and_then(|s| s.as_bool()), Some(true), "{kind:?}");
+            assert!(!request_body(&provider(kind), "s", &[], &conversation()).contains("\"stream\""));
+        }
+    }
+
+    /// Reasoning written into the answer, whole or still coming, is taken
+    /// out of it; an answer without any is left alone.
+    #[test]
+    fn thinking_written_into_the_answer_is_taken_out() {
+        assert_eq!(split_thinking("<think>a plan</think>\n\nThe answer."), (Some("a plan"), "The answer."));
+        assert_eq!(split_thinking("  <think>still going"), (Some("still going"), ""));
+        assert_eq!(split_thinking("Plain words."), (None, "Plain words."));
+        let reply = parse_reply(Kind::OpenAi, r#"{"choices":[{"message":{"content":"<think>hm</think>Done.","reasoning_content":"first "}}]}"#).unwrap();
+        assert_eq!(reply.text, ["Done."]);
+        assert_eq!(reply.reasoning, "first hm");
+    }
+
+    /// The live view of a stream: what it is doing, its words and its
+    /// reasoning so far, and a count that grows.
+    #[test]
+    fn a_stream_shows_what_it_is_doing_as_it_goes() {
+        let event = |data: &str| crate::sse::Event { name: String::new(), data: data.to_string() };
+        let mut stream = Assembler::new(Kind::OpenAi);
+        assert_eq!(stream.activity(), &Activity::Waiting);
+        stream.event(&event(r#"{"choices":[{"delta":{"reasoning":"Look first."}}]}"#)).unwrap();
+        assert_eq!(stream.activity(), &Activity::Thinking);
+        stream.event(&event(r#"{"choices":[{"delta":{"content":"Checking."}}]}"#)).unwrap();
+        assert_eq!((stream.activity(), stream.text().as_str()), (&Activity::Writing, "Checking."));
+        stream.event(&event(r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"tequila_scene","arguments":"{}"}}]}}]}"#)).unwrap();
+        assert_eq!(stream.activity(), &Activity::Calling("tequila_scene".into()));
+        assert!(stream.written() > 20);
+        // Ended with no word that it had finished, a call half-written: cut off.
+        let mut cut = Assembler::new(Kind::OpenAi);
+        cut.event(&event(r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"tequila_apply","arguments":"{\"comm"}}]}}]}"#)).unwrap();
+        assert!(cut.finish().unwrap_err().contains("broke off"));
+        // An Anthropic stream that never said it was done is cut off too.
+        let mut anthropic = Assembler::new(Kind::Anthropic);
+        anthropic.event(&event(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hal"}}"#)).unwrap();
+        assert!(anthropic.finish().is_err());
     }
 }

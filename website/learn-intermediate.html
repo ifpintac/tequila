@@ -247,6 +247,16 @@
           <li><strong>Ask.</strong> <kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> starts a new line. <strong>Undo request</strong> takes back everything the last request changed.</li>
         </ol>
         <figure><img src="assets/img/app-connect.jpg" alt="The Connect an AI window" loading="lazy" data-zoom><figcaption>Connect an AI: the providers, and the AI apps found on this computer.</figcaption></figure>
+        <p>While it works, the line under the conversation says what it is doing and for how long: loading the model, reading the request, thinking, writing, or calling a tool. A model that reasons shows its thinking as it comes, dimmed; click it to fold it away. <strong>Stop</strong> ends a request at once, and the conversation is kept, so asking again carries on.</p>
+
+        <h3 id="local-model">Using a model on this computer</h3>
+        <p>Ollama and LM Studio run a model on your own computer, for free. Three things make it work with the Assistant:</p>
+        <ul>
+          <li><strong>A model that can use tools.</strong> The Assistant works through tools. Ollama's library marks the models that can with <em>tools</em>, Qwen 3 among them.</li>
+          <li><strong>A context length of 32k or more.</strong> The Assistant's instructions and tools alone are about 5,000 tokens, the command catalog it reads before editing materials about 16,000 more, and Ollama gives a model 4,096 unless told otherwise. Set it in the Ollama app under <strong>Settings › Context length</strong>, or set <code>OLLAMA_CONTEXT_LENGTH=32768</code> and restart Ollama. In LM Studio, set <strong>Context Length</strong> when you load the model. Tequila checks with Ollama first and tells you if a request won't fit.</li>
+          <li><strong>A model that fits in the graphics card's memory.</strong> A local model reads the whole request before it answers: seconds on the graphics card, minutes on the processor. <code>ollama ps</code> shows where it runs. <code>OLLAMA_FLASH_ATTENTION=1</code> with <code>OLLAMA_KV_CACHE_TYPE=q8_0</code> roughly halves the memory the context takes; with them, <code>qwen3:4b</code> at 32k runs three quarters on a 6 GB card.</li>
+        </ul>
+        <div class="tip"><p><strong>Good to know.</strong> <strong>Test</strong>, under Providers…, checks the context length and tool use for an Ollama model as well as the connection.</p></div>
 
         <div class="next-lesson">
           <a class="button button-quiet" href="learn-basics.html"><i class="icon" aria-hidden="true">&#xe063;</i>Basics</a>

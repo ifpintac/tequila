@@ -237,13 +237,39 @@ impl Provider {
     }
 }
 
-fn is_local(url: &str) -> bool {
-    let host = url
-        .trim_start_matches("http://")
-        .split(['/', ':'])
-        .next()
-        .unwrap_or("");
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+/// Whether an address is this computer: a server such as Ollama or LM
+/// Studio running beside the application.
+pub fn is_local(url: &str) -> bool {
+    host(url).is_some_and(|host| matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1"))
+}
+
+/// The host an address names, without its port: `localhost`, `::1`,
+/// `api.openai.com`.
+pub fn host(url: &str) -> Option<String> {
+    let authority = authority(url);
+    // An IPv6 address is bracketed, since its own colons are not a port.
+    let host = match authority.strip_prefix('[') {
+        Some(inside) => inside.split(']').next().unwrap_or(""),
+        None => authority.split(':').next().unwrap_or(""),
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
+}
+
+/// The port an address names, if it names one.
+pub fn port(url: &str) -> Option<u16> {
+    let authority = authority(url);
+    let after_host = match authority.strip_prefix('[') {
+        Some(inside) => inside.split_once(']')?.1,
+        None => &authority[authority.find(':')?..],
+    };
+    after_host.strip_prefix(':')?.parse().ok()
+}
+
+/// `host:port` out of an address.
+fn authority(url: &str) -> &str {
+    let rest = url.trim();
+    let rest = rest.strip_prefix("http://").or_else(|| rest.strip_prefix("https://")).unwrap_or(rest);
+    rest.split('/').next().unwrap_or("")
 }
 
 #[cfg(test)]
@@ -308,6 +334,19 @@ mod tests {
         assert!(provider(Kind::OpenAi, "http://127.0.0.1:1234/v1").problem().is_none());
         assert!(provider(Kind::OpenAi, "http://ai.example.com/v1").problem().unwrap().contains("https"));
         assert!(provider(Kind::OpenAi, "ai.example.com").problem().is_some());
+        assert!(provider(Kind::OpenAi, "http://[::1]:11434/v1").problem().is_none(), "IPv6's own address is this computer too");
+    }
+
+    #[test]
+    fn hosts_and_ports_are_read_from_an_address() {
+        assert_eq!(host("http://LocalHost:11434/v1").as_deref(), Some("localhost"));
+        assert_eq!(host("https://api.openai.com/v1").as_deref(), Some("api.openai.com"));
+        assert_eq!(host("http://[::1]:1234/v1").as_deref(), Some("::1"));
+        assert_eq!(port("http://localhost:11434/v1"), Some(11434));
+        assert_eq!(port("http://[::1]:1234/v1"), Some(1234));
+        assert_eq!(port("https://api.openai.com/v1"), None);
+        assert!(is_local("https://localhost:8443"));
+        assert!(!is_local("https://localhost.example.com/v1"));
     }
 
     #[test]
