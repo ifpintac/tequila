@@ -9,19 +9,30 @@
 //! moving the pointer with it.
 
 use super::report::{device_name, Decoder, Event};
+use super::OpenProblem;
 
 /// Read devices until told to stop: the first 3D mouse found, opened, read
 /// until it goes, and looked for again every two seconds meanwhile. Each
-/// event is handed to `send`, and `status` told what is being read.
-pub fn run(running: &std::sync::atomic::AtomicBool, send: &mut dyn FnMut(Event), status: &mut dyn FnMut(Option<String>)) {
+/// event is handed to `send`, `status` told what is being read, and
+/// `problem` why a device that is there could not be opened, or that it
+/// could.
+pub fn run(
+    running: &std::sync::atomic::AtomicBool,
+    send: &mut dyn FnMut(Event),
+    status: &mut dyn FnMut(Option<String>),
+    problem: &mut dyn FnMut(Option<OpenProblem>),
+) {
     use std::sync::atomic::Ordering;
     let mut api = match hidapi::HidApi::new() {
         Ok(api) => api,
         Err(error) => {
-            status(Some(format!("HID unavailable: {error}")));
+            eprintln!("Tequila: HID is unavailable, so no 3D mouse can be read: {error}");
+            problem(Some(OpenProblem { message: format!("3D mice can't be read here: HID is unavailable ({error})."), details: None }));
             return;
         }
     };
+    // The last error written to the log, so a retry does not write it again.
+    let mut logged: Option<String> = None;
     while running.load(Ordering::Relaxed) {
         let _ = api.refresh_devices();
         let found = api.device_list().find_map(|info| {
@@ -29,17 +40,28 @@ pub fn run(running: &std::sync::atomic::AtomicBool, send: &mut dyn FnMut(Event),
         });
         let Some((name, info)) = found else {
             status(None);
+            problem(None);
             sleep_while(running, 2000);
             continue;
         };
         let device = match info.open_device(&api) {
             Ok(device) => device,
             Err(error) => {
-                status(Some(format!("{name} could not be opened: {error}")));
+                // Tried again every two seconds, and said once: the log
+                // keeps hidapi's own words for whoever reads it.
+                let error = error.to_string();
+                if logged.as_deref() != Some(error.as_str()) {
+                    eprintln!("Tequila: the 3D mouse ({name}) could not be opened: {error}");
+                    logged = Some(error.clone());
+                }
+                status(None);
+                problem(Some(OpenProblem::of(&name, &error)));
                 sleep_while(running, 2000);
                 continue;
             }
         };
+        logged = None;
+        problem(None);
         status(Some(name));
         let mut decoder = Decoder::default();
         let mut buffer = [0u8; 64];
