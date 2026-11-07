@@ -120,11 +120,12 @@ pub enum LibraryAction {
     ImportTexturePack(bool),
     /// Make a material from an Adobe Substance file, with its settings.
     ImportSubstance,
-    /// Something asked of the Studios section.
+    /// Something asked of the Snapshots section.
     Studio(crate::studio_shelf::StudioAction),
 }
 
-/// What the browser shows: materials, or whole studios.
+/// What the browser shows: materials, or Snapshots - whole studios, the
+/// presets of `studio_preset`, named Snapshots wherever a person reads them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
@@ -188,7 +189,7 @@ pub struct LibraryTab {
     /// The enabled plugins' material folders, and the plugins' names.
     plugin_folders: Vec<(std::path::PathBuf, String)>,
     pub section: Section,
-    /// Studio presets, the other section.
+    /// Snapshots (studio presets), the other section.
     pub studios: crate::studio_shelf::StudioShelf,
 }
 
@@ -424,7 +425,7 @@ impl LibraryTab {
         in_project: &BTreeSet<String>,
         selected: Option<&crate::library_dialogs::Selected>,
     ) -> Option<LibraryAction> {
-        crate::theme::segmented(ui, &mut self.section, &[(Section::Materials, "Materials"), (Section::Studios, "Studios")]);
+        crate::theme::segmented(ui, &mut self.section, &[(Section::Materials, "Materials"), (Section::Studios, "Snapshots")]);
         ui.add_space(2.0);
         if self.section == Section::Studios {
             return self.studios.show(ui).map(LibraryAction::Studio);

@@ -503,7 +503,7 @@ fn linking_fold(
                 return;
             };
             ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
-                .on_hover_text("Everything in the scene but its lights. What a studio preset keeps, since it cannot name a product's parts.");
+                .on_hover_text("Everything in the scene but its lights. What a snapshot keeps, since it cannot name a product's parts.");
             let document = project.document();
             let roots = tequila_scene::studio::product_roots(document);
             if !links.product {

@@ -1,7 +1,9 @@
-//! The Library's Studios section: studio presets to apply in one step,
-//! grouped by family with their sizes side by side, the size nearest the
-//! product marked; the scene's studio saved as one; presets installed from
-//! a package, exported, deleted (`docs/studio-presets.md`).
+//! The Library's Snapshots section: studio presets - called snapshots
+//! wherever a person reads them - to apply in one step, grouped by family
+//! with their sizes side by side, the size nearest the product marked; the
+//! scene's studio saved as one; presets installed from a package,
+//! exported, deleted (`docs/studio-presets.md`). The code, the files and
+//! the scripting channel keep the name `studio_preset`.
 
 use eframe::egui;
 use std::collections::HashMap;
@@ -111,12 +113,14 @@ impl StudioShelf {
         self.load();
         let mut action = None;
         ui.label(
-            egui::RichText::new("Complete studios - lights, cameras and views, floor, look - applied to the product in one step.")
+            egui::RichText::new("Snapshots of a whole studio - lights, cameras and views, floor, look - put on the product in one step.")
                 .small()
                 .color(crate::theme::dim()),
         );
-        ui.horizontal(|ui| {
-            if ui.button("Save current studio…").on_hover_text("Everything but the product, as a preset of your own.").clicked() {
+        // Wrapped: the Library is narrow, and a third button cut off at its
+        // edge read as a missing one.
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Save as snapshot…").on_hover_text("Everything but the product, as a snapshot of your own.").clicked() {
                 self.saving = Some(crate::studio_presets::SaveAs {
                     name: String::new(),
                     family: String::new(),
@@ -125,14 +129,14 @@ impl StudioShelf {
                     materials: false,
                 });
             }
-            if ui.button("Install…").on_hover_text("A studio preset package (.tqstudio) or a preset's .studio.json").clicked() {
+            if ui.button("Install…").on_hover_text("A snapshot package (.tqstudio), or a snapshot's .studio.json").clicked() {
                 action = Some(StudioAction::Install);
             }
-            if ui.small_button("Folder").on_hover_text("Where your presets are kept").clicked() {
+            if ui.button("Folder").on_hover_text("Where your snapshots are kept").clicked() {
                 action = Some(StudioAction::OpenFolder);
             }
         });
-        crate::theme::search_field(ui, &mut self.query, "Search studios");
+        crate::theme::search_field(ui, &mut self.query, "Search snapshots");
         ui.add_space(4.0);
 
         let query = self.query.to_lowercase();
@@ -151,7 +155,7 @@ impl StudioShelf {
             .collect();
         if visible.is_empty() {
             ui.add_space(12.0);
-            ui.label(egui::RichText::new(if self.presets.is_empty() { "No studio presets yet. Install one, or save the studio you have." } else { "None match." }).color(crate::theme::dim()));
+            ui.label(egui::RichText::new(if self.presets.is_empty() { "No snapshots yet. Install one, or save the studio you have as one." } else { "None match." }).color(crate::theme::dim()));
         }
         let width = ui.available_width();
         let tile = ((width - 8.0) / 2.0).floor().max(60.0);
@@ -164,7 +168,7 @@ impl StudioShelf {
                     rows.push((None, std::mem::take(&mut row)));
                 }
                 family = Some(file.preset.family.clone());
-                rows.push((Some(if file.preset.family.is_empty() { "Studios".into() } else { file.preset.family.clone() }), Vec::new()));
+                rows.push((Some(if file.preset.family.is_empty() { "Snapshots".into() } else { file.preset.family.clone() }), Vec::new()));
             }
             row.push(file);
             if row.len() == 2 {
@@ -209,7 +213,7 @@ impl StudioShelf {
                             })
                             .inner;
                         let response = response.on_hover_text(format!(
-                            "{}\n{}\n{} views, {} lights, {} materials",
+                            "{}\n{}\n{} views, {} lights, {} materials\nClick to apply the snapshot",
                             file.preset.name,
                             file.preset.description,
                             file.preset.studios.len(),
@@ -236,8 +240,8 @@ impl StudioShelf {
         if let Some(file) = self.deleting.clone() {
             let mut open = true;
             let mut answer = None;
-            egui::Window::new("Delete studio preset").collapsible(false).resizable(false).open(&mut open).show(ui.ctx(), |ui| {
-                ui.label(format!("Delete {}? Its folder goes; the materials it installed stay in your library.", file.preset.name));
+            egui::Window::new("Delete snapshot").collapsible(false).resizable(false).open(&mut open).show(ui.ctx(), |ui| {
+                ui.label(format!("Delete the snapshot {}? Its folder goes; the materials it installed stay in your library.", file.preset.name));
                 ui.horizontal(|ui| {
                     if ui.button("Delete").clicked() {
                         answer = Some(true);
@@ -293,13 +297,13 @@ impl StudioShelf {
             if !preset.material_rules.is_empty() {
                 ui.add(crate::field::Checkbox::new(
                     &mut applying.dress,
-                    format!("Dress it with the studio's materials ({} rules)", preset.material_rules.len()),
+                    format!("Dress it with the snapshot's materials ({} rules)", preset.material_rules.len()),
                 ))
-                .on_hover_text("By part name: the preset's rules, as a Material Template. Off, the materials are added to assign yourself.");
+                .on_hover_text("By part name: the snapshot's rules, as a Material Template. Off, the materials are added to assign yourself.");
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button(egui::RichText::new("Apply").strong()).clicked() {
+                if ui.button(egui::RichText::new("Apply snapshot").strong()).clicked() {
                     action = Some(StudioAction::Apply(Box::new(applying.file.clone()), applying.options, applying.dress));
                     close = true;
                 }
@@ -323,7 +327,7 @@ impl StudioShelf {
         let mut open = true;
         let mut action = None;
         let mut close = false;
-        egui::Window::new("Save studio as preset").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
+        egui::Window::new("Save as snapshot").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
             ui.set_max_width(320.0);
             ui.label(
                 egui::RichText::new("Everything but the product: lights, cameras and Studios, environment and floor, look, render and lighting settings - framed for the product you have now.")

@@ -341,19 +341,19 @@ fn within(folder: &Path, relative: &str, what: &str) -> Result<PathBuf, String> 
 /// its materials are files there; without one (a journal line), its paths
 /// are as written and its materials inline.
 fn parse(root: &Value, folder: Option<&Path>) -> Result<(StudioPreset, Option<PathBuf>, BTreeMap<String, Value>), String> {
-    let Value::Object(map) = root else { return Err("a studio preset is a JSON object".into()) };
+    let Value::Object(map) = root else { return Err("a snapshot is a JSON object".into()) };
     match root.get("format").and_then(|v| v.as_str()) {
         Some(FORMAT) => {}
-        Some(other) => return Err(format!("this is a `{other}` file, not a Tequila studio preset (`{FORMAT}`)")),
-        None => return Err(format!("this is not a Tequila studio preset: it has no \"format\": \"{FORMAT}\"")),
+        Some(other) => return Err(format!("this is a `{other}` file, not a Tequila snapshot (`{FORMAT}`)")),
+        None => return Err(format!("this is not a Tequila snapshot: it has no \"format\": \"{FORMAT}\"")),
     }
-    let version = root.get("version").and_then(|v| v.as_index()).ok_or("a studio preset needs a whole-number \"version\"")?;
+    let version = root.get("version").and_then(|v| v.as_index()).ok_or("a snapshot needs a whole-number \"version\"")?;
     if version as u32 > VERSION {
         return Err(format!("this preset is version {version}, made by a newer Tequila; this one reads version {VERSION}"));
     }
     let text = |key: &str| root.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    let id = text("id").filter(|s| !s.trim().is_empty()).ok_or("a studio preset needs an \"id\"")?;
-    let name = text("name").filter(|s| !s.trim().is_empty()).ok_or("a studio preset needs a \"name\"")?;
+    let id = text("id").filter(|s| !s.trim().is_empty()).ok_or("a snapshot needs an \"id\"")?;
+    let name = text("name").filter(|s| !s.trim().is_empty()).ok_or("a snapshot needs a \"name\"")?;
     if id.contains(['/', '\\', ':']) || id.contains("..") {
         return Err(format!("the id `{id}` cannot name a folder: use letters, digits and dashes"));
     }
@@ -541,7 +541,7 @@ fn size_rank(size: &str) -> (u8, String) {
 /// The installed preset of `id`.
 pub fn find(id: &str) -> Result<PresetFile, String> {
     let (all, _) = list();
-    all.into_iter().find(|p| p.preset.id == id).ok_or_else(|| format!("no studio preset `{id}` is installed"))
+    all.into_iter().find(|p| p.preset.id == id).ok_or_else(|| format!("no snapshot `{id}` is installed"))
 }
 
 /// What to save a scene's studio as.
@@ -561,13 +561,16 @@ pub struct SaveAs {
 pub fn save_document(document: &tequila_scene::SceneDocument, what: &SaveAs, thumbnail: Option<&[u8]>) -> Result<PresetFile, String> {
     let name = what.name.trim();
     if name.is_empty() {
-        return Err("a studio preset needs a name".into());
+        return Err("a snapshot needs a name".into());
     }
     let id: String = slug(name).chars().take(64).collect();
     let mut preset = tequila_scene::preset::capture(document, &id, name, what.family.trim(), what.size.trim());
     preset.description = what.description.clone();
     if what.materials {
-        preset.materials = tequila_scene::preset::document_materials(document, "My studios");
+        // The library category its materials go into when it is applied:
+        // named for what the Library calls these now. Snapshots saved
+        // before that keep the "My studios" they were saved with.
+        preset.materials = tequila_scene::preset::document_materials(document, "My snapshots");
     }
     save(&preset, thumbnail)
 }
@@ -779,7 +782,7 @@ mod tests {
             }
             parse(&value, Some(&folder)).err().unwrap_or_default()
         };
-        assert!(refused(&|m| { m.remove("format"); }).contains("not a Tequila studio preset"));
+        assert!(refused(&|m| { m.remove("format"); }).contains("not a Tequila snapshot"));
         assert!(refused(&|m| { m.insert("version".into(), Value::from(9.0)); }).contains("newer Tequila"));
         assert!(refused(&|m| { m.remove("id"); }).contains("\"id\""));
         assert!(refused(&|m| { m.insert("id".into(), Value::from("../escape")); }).contains("cannot name a folder"));
