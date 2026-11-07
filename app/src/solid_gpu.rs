@@ -400,6 +400,10 @@ pub struct Frame {
     pub model_edges: bool,
     /// The UV editor's checker, on the part it shows: for looking only.
     pub checker: Option<CheckerFrame>,
+    /// Read this frame back once drawn, for P's Screenshot
+    /// ([`SolidView::take_capture`]). Its `selected` is empty then: the
+    /// outline is the viewport's, not the picture's.
+    pub capture: bool,
 }
 
 /// A pattern drawn on some parts in place of their base colour, through
@@ -577,6 +581,9 @@ pub struct SolidView {
     gpu: Arc<Mutex<Gpu>>,
     failed: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
+    /// P's Screenshot of what the view drew, read back from a frame that
+    /// asked for it ([`Frame::capture`]), until it is taken.
+    captured: Arc<Mutex<Option<egui::ColorImage>>>,
 }
 
 impl SolidView {
@@ -589,7 +596,15 @@ impl SolidView {
             gpu: Arc::new(Mutex::new(Gpu::default())),
             failed: Arc::new(AtomicBool::new(error.is_some())),
             error: Arc::new(Mutex::new(error)),
+            captured: Arc::default(),
         }
+    }
+
+    /// The picture a frame asked to be read back ([`Frame::capture`]), once
+    /// it has been drawn: the view alone, before anything egui paints over
+    /// it - the grid, the gizmo, the statistics - at the screen's pixels.
+    pub fn take_capture(&self) -> Option<egui::ColorImage> {
+        self.captured.lock().unwrap().take()
     }
 
     /// Whether to draw Solid on the GPU. False after a failure, and the CPU
@@ -626,9 +641,16 @@ impl SolidView {
             unsafe { gl.finish() };
         }
         let started = std::time::Instant::now();
-        if let Err(error) = unsafe { gpu.draw(gl, info) } {
-            *self.error.lock().unwrap() = Some(error);
-            self.failed.store(true, Ordering::Release);
+        let capture = gpu.frame.as_ref().is_some_and(|frame| frame.capture);
+        match unsafe { gpu.draw(gl, info) } {
+            Err(error) => {
+                *self.error.lock().unwrap() = Some(error);
+                self.failed.store(true, Ordering::Release);
+            }
+            // SAFETY: a read of the window's framebuffer, which the view has
+            // just drawn into and bound again.
+            Ok(()) if capture => *self.captured.lock().unwrap() = Some(unsafe { read_back(gl, info) }),
+            Ok(()) => {}
         }
         if timing {
             unsafe { gl.finish() };
@@ -675,6 +697,28 @@ pub fn probe(gl: &glow::Context) -> String {
             Some(error) => format!("failed: {context} · {}", error.replace(['\n', '\r'], " ")),
         }
     }
+}
+
+/// The view's pixels as just drawn, top row first. The window's
+/// framebuffer is multisampled, and a read of it gets them resolved.
+unsafe fn read_back(gl: &glow::Context, info: &egui::PaintCallbackInfo) -> egui::ColorImage {
+    let viewport = info.viewport_in_pixels();
+    let (width, height) = (viewport.width_px.max(1) as usize, viewport.height_px.max(1) as usize);
+    let mut pixels = vec![0u8; width * height * 4];
+    gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
+    gl.read_pixels(
+        viewport.left_px,
+        viewport.from_bottom_px,
+        width as i32,
+        height as i32,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelPackData::Slice(&mut pixels),
+    );
+    gl.pixel_store_i32(glow::PACK_ALIGNMENT, 4);
+    let rows: Vec<u8> = pixels.chunks_exact(width * 4).rev().flatten().copied().collect();
+    // Opaque, as it is on screen: what is left of the clear is the panel.
+    egui::ColorImage::from_rgb([width, height], &rows.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect::<Vec<u8>>())
 }
 
 unsafe fn restore(gl: &glow::Context) {

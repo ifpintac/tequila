@@ -332,7 +332,11 @@ class Client:
         through a drag in the Studios tab, for a screenshot) or False,
         preferences (bool), spacemouse={'reports': [[id,
         byte, ...]], 'seconds': n} (made-up 3D mouse input, read as a
-        device's HID reports)."""
+        device's HID reports), library_section='materials'|'snapshots',
+        save_screenshot=True (P's Screenshot of the viewport, into the
+        screenshot folder), screenshot_folder='<folder>' (kept in the
+        application's settings; '' for the default), window_size=[w, h]
+        (the window's inner size, in points)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

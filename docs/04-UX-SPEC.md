@@ -12,7 +12,7 @@ Exact behavior of every interaction. This document exists because "drag a materi
 +-----------------------------------------------------------------------------+
 | (o) Tequila  File Edit View Workspace Help   Untitled *   lib con ai | save Import [Render] |
 +------------+--------------------------------------------+-------------+-----+
-| Materials x| [o Solid  studio light]   [frame | shadings | pause] | Material x | Sce |
+| Materials x| [o Solid  studio light] [frame | shadings | dn pause | shot] | Material x | Sce |
 | drag a ... | +----+                       (HUD, H)       | what it's for| Mat |
 | [search  ] | |move|                                     |-------------| --- |
 | All|Fav|.. | |rot |                                     | [preview]   | Env |
@@ -104,7 +104,8 @@ Top-right, semi-transparent, toggleable (`H`):
 
 - **Islands**: the viewport's tools float over it on dark translucent plates, and take their own clicks and drags (a drag that starts on one never turns the camera).
   - Top left, a chip naming what the view shows. A hollow dot marks a preview, not the render, so a material is not judged by it. In Rendered, the dot is amber while the image converges, teal when it has settled and grey when paused, with a thin progress line under it.
-  - Top right: frame all and frame selection, the four shadings, and pause.
+  - Top right: frame all and frame selection, the four shadings, the viewport's denoise switch and pause, and Screenshot.
+  - *As built, November 8:* the denoise switch (Lucide's wand-sparkles, lit while on) denoises the Rendered view or shows its raw samples, apart from the final render's Denoise in the Render window and Image › Denoise; strength, cadence and guides are shared. It is the render settings' `preview_denoise`, saved with the project and a step to undo; a project from before takes the render's `denoise`, and a snapshot leaves it alone. Switching it keeps the samples: the picture showing is denoised or not again at once (`differs_only_in_denoise` in `orchestrator.rs`, test `switching_the_viewports_denoising_keeps_the_samples`). The Screenshot button (Lucide's camera), **P**, and View › Screenshot save the viewport's picture as a PNG: developed and graded as shown, at the preview's own size, still refining or not, without the statistics, the gizmo, the outline or the grid - the renderer's image with what the outline drew over put back (`DisplayImage::without_outline`), or the graphics card's Solid read back as a frame draws it (`SolidView::take_capture`). It goes to `Pictures/Tequila Screenshots` (a portable copy's `data/Tequila Screenshots`), or the folder View › Screenshot folder… chose, kept in `screenshots.txt` beside the other settings. The name is the project's, or Untitled, with the date and time, and a second in the same second is `(2)`: never over a file (`app/src/screenshot.rs`). A notice names the file with an **Open folder** link, which opens the folder on it; a notice with a link stays six seconds, and while pointed at.
   - Down the left: Move, Rotate, Scale (dimmed with nothing selected), World/Local space, and the snapping menu.
 - **Axis legend** (bottom-left), toggleable. Its backing disc is faint until the pointer reaches it.
 - **Ground grid** with real-world spacing labels when enabled in the Camera tab.
@@ -205,6 +206,7 @@ Standard tree conventions: expand/collapse, `Shift` range-select, drag-to-repare
 - **Snapping**: grid snap, angle snap (15° default), vertex/edge/face snap when hovering geometry, and snap-to-ground (drop the object onto the ground plane — a one-click operation people use constantly in product staging).
 - **Pivot modes** (§03 §2.4): Origin, Bounding-box centre, Corner, Cylinder axis, Sphere centre, Custom. Setting a pivot is `Insert`+drag or via the context menu, and pivots persist for animation use.
 - Transform in world or local space, toggled in the gizmo header.
+- *As built, November 8:* the gizmo is the same size on screen whatever the window: its arms, and its rings' radius, are `GIZMO_POINTS` (90) points long - 90 pixels at 100% display scaling, 180 on a Retina screen - turned into a length at the pivot's depth from the camera's vertical field of view and the view's height, or from an orthographic camera's scale (`world_length_of_points` in `gizmo_ui.rs`). It was a seventh of the camera's distance, a share of the view's height, which on a large monitor was a sixth of the screen. Its handles are picked at the size they are drawn (`the_gizmo_is_the_same_size_on_screen_at_any_window_size`). The label and pin placement tools do not share this code (they draw the label's own outline, at its size on the part, and a banner), nor does the UV editor, whose handles are drawn on its own canvas in points.
 
 ---
 
@@ -257,10 +259,13 @@ A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans an
 | `Ctrl+G` | Group | `Ctrl+Shift+G` | Ungroup |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo | `Ctrl+S` | Save |
 | `Ctrl+I` | Import | `Ctrl+R` | Render |
-| `Ctrl+P` | Screenshot of viewport | `Ctrl+D` | Duplicate |
+| `P` | Screenshot of viewport | `Ctrl+D` | Duplicate |
 | `Del` | Delete | `Ctrl+H` | Hide selection |
 | `Alt+H` | Unhide all | `/` | Isolate selection |
-| `P` | Pause/resume rendering | `,` | Toggle denoiser |
+| `Shift+P` | Pause/resume rendering | `,` | Toggle denoiser |
+| `Ctrl+A` | Select all | `Ctrl+Shift+A` / `Esc` | Deselect all |
+
+*As built, November 8:* **P** saves a Screenshot and **Shift+P** pauses the viewport, which P did before; **Ctrl+A** selects all only without Shift, and **Ctrl+Shift+A** (Cmd on a Mac) deselects all, beside Esc. The Shortcuts window and the right-click menu's *Deselect all* say so. Clicking empty space deselects in every view: a click on the floor - the shadow catcher Material Preview and Rendered trace, which has no part of its own - was taken as a click on something and kept the selection (`clicked_part` in `main.rs`, test `a_click_on_the_floor_deselects_and_a_click_on_a_part_selects`). The viewport's denoise switch is on its toolbar rather than `,`.
 
 `E` conflicts between "Background = Environment" and "Rotate gizmo". Resolve by context: gizmo shortcuts apply when the viewport has focus and a transformable selection exists; otherwise the background shortcut applies. Document the resolution, expose both in the hotkey editor, and let users rebind.
 
@@ -399,6 +404,8 @@ Unlimited by default (configurable), with a visible history panel listing named 
 
 ## 9. Library window
 
+*As built, November 8:* the Library has two sections, **Materials** and **Snapshots** - whole studios (lights, cameras and views, floor, look) put on the product in one step, called studio presets in the files and the scripting channel (`docs/studio-presets.md`).
+
 - **Categories**: Materials, Environments, Backplates, Textures, Colours, Models. Tree of folders plus flat tag filtering.
 - **Sources**: bundled Standard Library (read-only), user library (writable, path configurable), project-local (materials in the open document), and optional shared network folders.
 - **Search**: fuzzy over name, tags, and category; instant filtering.
@@ -443,6 +450,8 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - only the strongest axis;
 - each axis inverted, with a live bar of what the view takes from it;
 - what the two buttons do.
+
+*As built, November 8:* on a Mac, 3Dconnexion's driver (3DxWare) opens the device for itself, and opening it fails with IOKit's exclusive-access error, `0xE00002C5`. The preferences then say "3Dconnexion's driver is using the 3D mouse, so Tequila can't open it while the driver runs. Support through the driver is coming." with hidapi's own words under **Details**, and the log keeps them, once rather than at each retry (`OpenProblem` in `app/src/spacemouse/mod.rs`, test `the_driver_holding_the_device_is_said_plainly`). Any other failure is shown as it was, no longer as "Connected:". `query ui` reports it as `spacemouse.problem`.
 
 *As built, November 6:* in a portable copy, one with a `portable.txt` beside the program, every one of these files is in its `data` folder instead of the person's settings folder (`docs/05-ROADMAP-AND-TESTING.md` §5). Help > About says the copy is portable and opens that folder.
 

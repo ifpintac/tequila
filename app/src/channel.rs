@@ -408,6 +408,14 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         },
         None => None,
     };
+    let section = match change.library_section.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+        None => None,
+        Some(name) if name == "materials" => Some(crate::library_tab::Section::Materials),
+        // The Snapshots are studio presets, and `studios` is what the
+        // section was called.
+        Some(name) if matches!(name.as_str(), "snapshots" | "studios" | "presets") => Some(crate::library_tab::Section::Studios),
+        Some(name) => return Reply::Failed(format!("the Library's sections are `materials` and `snapshots`, not `{name}`")),
+    };
     let view = match change.viewport.as_deref().map(str::to_ascii_lowercase) {
         None => None,
         Some(name) => match crate::view_mode::ViewMode::from_key(&name) {
@@ -466,6 +474,10 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if let Some(show) = change.library {
         app.show_library = show;
+    }
+    if let Some(section) = section {
+        app.library.section = section;
+        app.show_library = true;
     }
     if let Some(mode) = view {
         app.view_mode = mode;
@@ -551,6 +563,18 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
     }
+    if let Some(folder) = &change.screenshot_folder {
+        app.screenshots.folder = (!folder.trim().is_empty()).then(|| std::path::PathBuf::from(folder.trim()));
+        if let Err(error) = app.screenshots.save() {
+            return Reply::Failed(format!("the screenshot folder could not be kept: {error}"));
+        }
+    }
+    if change.save_screenshot == Some(true) {
+        app.take_screenshot();
+    }
+    if let Some([width, height]) = change.window_size {
+        app.pending_window_size = Some(egui::vec2(width, height));
+    }
     if change.mode.is_some() || change.theme.is_some() {
         let mut look = app.pending_look.unwrap_or_else(crate::theme::appearance);
         if let Some(mode) = &change.mode {
@@ -602,6 +626,20 @@ fn ui_state(app: &TequilaApp) -> Value {
             pictures.set("current", current as f64).set("studios", app.project.document().studios.len() as f64).set("rendering", rendering);
             pictures.build()
         })
+        .set("library_section", match app.library.section {
+            crate::library_tab::Section::Materials => "materials",
+            crate::library_tab::Section::Studios => "snapshots",
+        })
+        // P's Screenshot: where they go, the last one saved, and whether one
+        // is waiting for the graphics card's next frame.
+        .set("screenshot", {
+            let mut shot = Object::new();
+            shot.set("folder", app.screenshots.folder().display().to_string())
+                .set("last", app.last_screenshot.as_ref().map_or(Value::Null, |p| Value::String(p.display().to_string())))
+                .set("waiting", app.screenshot_waiting);
+            shot.build()
+        })
+        .set("preview_denoise", app.project.render_settings().preview_denoise)
         .set("preferences", app.spacemouse.preferences_open)
         .set("spacemouse", {
             // The 3D mouse: the device read, if any, and the six axes as
@@ -610,6 +648,9 @@ fn ui_state(app: &TequilaApp) -> Value {
             mouse
                 .set("enabled", app.spacemouse.settings.enabled)
                 .set("device", app.spacemouse.device().map_or(Value::Null, Value::String))
+                // Why one that is there is not read: 3Dconnexion's driver
+                // holding it on a Mac, said plainly.
+                .set("problem", app.spacemouse.problem().map_or(Value::Null, |p| Value::String(p.message)))
                 .set("axes", app.spacemouse.axes().iter().map(|v| Value::Number(*v as f64)).collect::<Vec<_>>());
             mouse.build()
         })
@@ -750,7 +791,7 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
     }
     if job.studios == Some(true) {
         if app.project.document().studios.is_empty() {
-            return Reply::Failed("there are no Studios; set them with studio.set or apply a studio preset".into());
+            return Reply::Failed("there are no Studios; set them with studio.set or apply a snapshot (studio_preset)".into());
         }
         let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
         let ids = app.queue_studios(Some(settings));
@@ -1171,7 +1212,7 @@ fn studio_preset(app: &mut TequilaApp, request: &Value) -> Reply {
         "export" => done(path("the package's").and_then(|to| shared::named(request, "export").and_then(|file| presets::export(&file, &to)))),
         "render_all" => {
             if app.project.document().studios.is_empty() {
-                return Reply::Failed("there are no Studios; apply a studio preset first".into());
+                return Reply::Failed("there are no Studios; apply a snapshot (studio_preset) first".into());
             }
             let ids = app.queue_studios(None);
             let mut out = Object::new();

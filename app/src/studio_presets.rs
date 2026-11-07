@@ -69,6 +69,9 @@ pub fn thumbnail_png(image: &crate::orchestrator::DisplayImage) -> Option<Vec<u8
     }
     let (cw, ch) = if w * 3 > h * 4 { (h * 4 / 3, h) } else { (w, w * 3 / 4) };
     let (x0, y0) = ((w - cw) / 2, (h - ch) / 2);
+    // Without the selection's outline, which is the viewport's and not the
+    // snapshot's.
+    let pixels = image.without_outline();
     let mut out = vec![0u8; SIZE.0 * SIZE.1 * 4];
     for y in 0..SIZE.1 {
         let (sy0, sy1) = (y0 + y * ch / SIZE.1, (y0 + (y + 1) * ch / SIZE.1).max(y0 + y * ch / SIZE.1 + 1));
@@ -77,7 +80,7 @@ pub fn thumbnail_png(image: &crate::orchestrator::DisplayImage) -> Option<Vec<u8
             let mut sum = [0u32; 4];
             for sy in sy0..sy1.min(h) {
                 for sx in sx0..sx1.min(w) {
-                    let p = &image.pixels[(sy * w + sx) * 4..(sy * w + sx) * 4 + 4];
+                    let p = &pixels[(sy * w + sx) * 4..(sy * w + sx) * 4 + 4];
                     for c in 0..4 {
                         sum[c] += p[c] as u32;
                     }

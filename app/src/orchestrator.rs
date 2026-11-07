@@ -127,6 +127,13 @@ impl RenderRequest {
         let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).max(1);
         (points(self.width), points(self.height))
     }
+
+    /// Whether `other` asks for this picture but for denoising it: the
+    /// viewport's denoise switch, which changes what is shown and not what
+    /// is traced.
+    fn differs_only_in_denoise(&self, other: &RenderRequest) -> bool {
+        self.denoise != other.denoise && *self == RenderRequest { denoise: self.denoise, ..other.clone() }
+    }
 }
 
 /// The geometry on screen, to pick against: see [`Orchestrator::picker`].
@@ -183,6 +190,26 @@ pub struct DisplayImage {
     /// the image rather than from the app's own setting so it can never
     /// describe a frame that was made before the mode changed.
     pub shading: Shading,
+    /// What the selection's outline drew over: each pixel's index and its
+    /// colour before, for a Screenshot of the picture without it. A few
+    /// thousand at most, where a copy of the picture would be megabytes on
+    /// every frame.
+    pub under_outline: Vec<(u32, [u8; 3])>,
+}
+
+impl DisplayImage {
+    /// The picture as developed, without the selection's outline: what P's
+    /// Screenshot saves.
+    pub fn without_outline(&self) -> Vec<u8> {
+        let mut pixels = self.pixels.clone();
+        for (index, colour) in &self.under_outline {
+            let i = *index as usize * 4;
+            if let Some(pixel) = pixels.get_mut(i..i + 3) {
+                pixel.copy_from_slice(colour);
+            }
+        }
+        pixels
+    }
 }
 
 /// Equality decides whether a submitted request restarts the render, so it
@@ -576,6 +603,32 @@ fn render_loop(shared: Arc<Shared>) {
             let Some(request) = shared.request.lock().unwrap().clone() else {
                 continue;
             };
+            // Only the viewport's denoising switched, on its toolbar. That is
+            // done to the picture shown, never to the samples (§13), so they
+            // are kept, and the picture showing is put up again with it or
+            // without it: starting again from one sample to show the same
+            // render cleaner or noisier would hide the very difference the
+            // switch is there to show.
+            if let Some(state) = built.as_mut().filter(|state| state.request.differs_only_in_denoise(&request)) {
+                state.request.denoise = request.denoise;
+                let engine = state.request.engine;
+                let rendered = state.request.shading == Shading::Rendered;
+                let on_cycles = rendered && engine.is_cycles() && cycles.is_some();
+                let denoise = request.denoise && rendered;
+                if denoise && on_cycles && engine == tequila_scene::render::RenderEngine::CyclesGpu && gpu_denoiser.is_none() {
+                    gpu_denoiser = tequila_denoise::GpuDenoiser::shared().ok();
+                }
+                let view_denoiser = match (&gpu_denoiser, engine) {
+                    (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) if on_cycles => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
+                    _ => cpu_denoiser,
+                };
+                publish(&shared, state, style, &display, &selection, view_denoiser, denoise);
+                cycles_clean = denoise && on_cycles;
+                if denoise {
+                    cycles_denoised_at = Instant::now();
+                }
+                continue;
+            }
             // Release the UI's reference first. An in-place transform
             // update needs `&mut` on the intersector, which means being its
             // only owner; holding the picking clone across the rebuild would
@@ -1019,7 +1072,8 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
 /// hides the edge of the thing being selected. That is also why it goes on
 /// after the develop: it is an annotation, not part of the picture, and must
 /// not be graded, tone-mapped or denoised with it. `density` is the image's
-/// pixels per point, one or more.
+/// pixels per point, one or more. Returns what it drew over, each pixel's
+/// index and colour ([`DisplayImage::under_outline`]).
 fn outline_selection(
     pixels: &mut [u8],
     fb: &Framebuffer,
@@ -1027,9 +1081,10 @@ fn outline_selection(
     height: usize,
     density: f32,
     selected: &[u32],
-) {
+) -> Vec<(u32, [u8; 3])> {
+    let mut under = Vec::new();
     if selected.is_empty() || width == 0 || height == 0 {
-        return;
+        return under;
     }
     // Which pixels are the selection, asked once each — and the box they
     // fill, since a ring can only be near them. Asking every neighbour of
@@ -1050,7 +1105,7 @@ fn outline_selection(
         }
     }
     if x0 == usize::MAX {
-        return;
+        return under;
     }
 
     // The accent: no material is that saturated a teal, so the ring never
@@ -1081,12 +1136,14 @@ fn outline_selection(
             }
             if (lo..=hi).any(|k| across[k * width + x]) {
                 let i = (y * width + x) * 4;
+                under.push(((y * width + x) as u32, [pixels[i], pixels[i + 1], pixels[i + 2]]));
                 pixels[i] = ring[0];
                 pixels[i + 1] = ring[1];
                 pixels[i + 2] = ring[2];
             }
         }
     }
+    under
 }
 
 /// Tone-map the accumulation buffer and hand it to the UI.
@@ -1183,7 +1240,7 @@ fn publish(
     // The image's own pixels per point: a Retina screen's for a full-size
     // Cycles frame, and one for Tequila's, which traces the points.
     let density = (width as f32 * state.request.pixels_per_point / state.request.width.max(1) as f32).max(1.0);
-    crate::profile::time("publish: outline", || outline_selection(&mut pixels, fb, width, height, density, selection));
+    let under_outline = crate::profile::time("publish: outline", || outline_selection(&mut pixels, fb, width, height, density, selection));
 
     let elapsed = state.started.elapsed().as_secs_f64();
     if state.first_pixel_ms.is_none() {
@@ -1215,6 +1272,7 @@ fn publish(
         elapsed_seconds: elapsed,
         resolution_divisor: state.schedule.resolution_divisor,
         shading: state.request.shading,
+        under_outline,
     };
     drop(slot);
     shared.image_generation.fetch_add(1, Ordering::Release);
@@ -1269,6 +1327,56 @@ mod tests {
         assert_eq!(renderer.shared.image.lock().unwrap().width, 32);
         renderer.set_paused(false);
         until(|| renderer.shared.image.lock().unwrap().width == 48);
+    }
+
+    /// The viewport's denoise switch keeps the samples so far: it changes
+    /// the picture shown, put up again at once, and not the render. Any
+    /// other change still starts again.
+    #[test]
+    fn switching_the_viewports_denoising_keeps_the_samples() {
+        fn until(mut ready: impl FnMut() -> bool) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !ready() {
+                assert!(Instant::now() < deadline, "renderer did not reach the expected state");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        let mut req = request();
+        let mut toggled = req.clone();
+        toggled.denoise = !req.denoise;
+        assert!(req.differs_only_in_denoise(&toggled));
+        assert!(!req.differs_only_in_denoise(&req.clone()), "the same request is not a switch");
+        toggled.width += 8;
+        assert!(!req.differs_only_in_denoise(&toggled), "a new size is more than the switch");
+
+        let renderer = Orchestrator::new();
+        req.width = 32;
+        req.height = 24;
+        req.denoise = false;
+        req.config.adaptive_sampling_threshold = 0.0;
+        renderer.submit(req.clone());
+        until(|| {
+            let image = renderer.shared.image.lock().unwrap();
+            image.resolution_divisor == 1 && image.samples >= 16
+        });
+        let before = renderer.shared.image.lock().unwrap().samples;
+        req.denoise = true;
+        renderer.submit(req.clone());
+        let denoiser = Denoiser::shared().is_ok();
+        // Shown denoised, where there is a denoiser to show it with, and
+        // never starting again from the first samples.
+        let started = Instant::now();
+        let mut shown_denoised = false;
+        while started.elapsed() < Duration::from_millis(400) {
+            let image = renderer.shared.image.lock().unwrap().clone();
+            assert!(image.resolution_divisor == 1 && image.samples >= before, "the switch started the render again: {before} -> {}", image.samples);
+            shown_denoised |= image.denoised;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(shown_denoised || !denoiser, "switched on, the picture was never shown denoised");
+        req.width = 40;
+        renderer.submit(req);
+        until(|| renderer.shared.image.lock().unwrap().width == 40);
     }
 
     #[test]
