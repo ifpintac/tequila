@@ -226,7 +226,14 @@ impl Session {
             }
             Operation::StudioPreset(request) => self.studio_preset(request),
             Operation::Substance(request) => substance(request),
-            Operation::Screenshot { .. } | Operation::Ui(_) | Operation::Queue(_) | Operation::Stop | Operation::TextureSet { .. } | Operation::LiveLink(_) | Operation::Plugin(_) => {
+            Operation::Screenshot { .. }
+            | Operation::Ui(_)
+            | Operation::Queue(_)
+            | Operation::Stop
+            | Operation::TextureSet { .. }
+            | Operation::LiveLink(_)
+            | Operation::Plugin(_)
+            | Operation::Assistant(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
         }
