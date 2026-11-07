@@ -392,7 +392,10 @@ pub fn post_streaming(
                     break Err(error);
                 }
             }
-            Ok(Arrived::End) => break Ok(()),
+            // A socket closed by Stop reads as an error on Windows and Linux,
+            // but as the end of the reply on a Mac: the flag, set before the
+            // close, tells the two apart.
+            Ok(Arrived::End) => break if hangup.is_stopped() { Err(STOPPED.into()) } else { Ok(()) },
             Ok(Arrived::Failed(error)) => break Err(if hangup.is_stopped() { STOPPED.into() } else { error }),
             Err(RecvTimeoutError::Timeout) => {
                 let (since, limit) = if begun { (last, limits.silence) } else { (start, limits.first) };
@@ -400,6 +403,7 @@ pub fn post_streaming(
                     break Err(too_slow(url, limits, begun));
                 }
             }
+            Err(RecvTimeoutError::Disconnected) if hangup.is_stopped() => break Err(STOPPED.into()),
             Err(RecvTimeoutError::Disconnected) => break Err(format!("the reply from {url} ended without finishing")),
         }
     };
