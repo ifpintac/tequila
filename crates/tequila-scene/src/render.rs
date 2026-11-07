@@ -412,7 +412,14 @@ pub struct RenderSettings {
     pub max_seconds: Option<u32>,
     pub adaptive: bool,
 
+    /// Denoise the final render.
     pub denoise: bool,
+    /// Denoise the viewport's Rendered view: the switch on its toolbar, apart
+    /// from the render's, so a person can look at the noise in the preview
+    /// and still get a clean render, or the other way round. Strength,
+    /// cadence and guides are the render's for both. A project from before
+    /// there were two takes the render's.
+    pub preview_denoise: bool,
     pub denoise_strength: f32,
     /// How many passes between denoises while a render is in progress. One
     /// means every pass, which looks smooth and costs real time on a large
@@ -497,6 +504,7 @@ impl Default for RenderSettings {
             max_seconds: None,
             adaptive: true,
             denoise: true,
+            preview_denoise: true,
             denoise_strength: 1.0,
             denoise_cadence: 4,
             prefilter_guides: true,
