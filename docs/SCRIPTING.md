@@ -240,6 +240,16 @@ Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq, a model on this computer
 or your company's AI, see `docs/ASSISTANT.md`. It uses the same
 scripting requests described here.
 
+A script can drive the Assistant itself, to try a model or record what it
+does: `{"op":"assistant","ask":"make the strap black velvet"}` sends a
+request as though typed, `{"op":"assistant","stop":true}` stops it,
+`{"op":"assistant","open":true}` shows the panel, and `{"op":"assistant"}`
+alone answers with what it is doing: `working`, `phase` (`loading`,
+`reading`, `thinking`, `writing`, `calling`, `tools` or `looking`), `doing`
+in words, `step`, `seconds`, `tokens`, and the `transcript` as the panel
+shows it. Neither the Assistant's own tools nor a restricted MCP
+connection can send it, and it cannot be part of a batch.
+
 ## Plugins
 
 A script that should live in Tequila's own menus - with a panel of fields,

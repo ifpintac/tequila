@@ -17,7 +17,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "substance", "stop", "ui", "new", "open", "quit", "uv_layout"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "substance", "stop", "ui", "assistant", "new", "open", "quit", "uv_layout"];
 /// The application's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const APP_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];

@@ -148,6 +148,12 @@ pub enum Operation {
     /// `install` or `export` a package, `delete` one, or `render_all`
     /// views. Carried as sent; the application reads its fields.
     StudioPreset(Value),
+    /// `assistant`: the built-in Assistant - `ask` it something, as though
+    /// typed and sent; `stop` it; `open` its panel. Answers with what it is
+    /// doing. A script's to drive, not the Assistant's own or a remote
+    /// caller's: neither can send it. Carried as sent; the application
+    /// reads its fields.
+    Assistant(Value),
     /// `substance`: Adobe Substance materials (`docs/02` §5.6) - `info` on a
     /// file, `open` one as materials, `set` a material's values, `status`
     /// of its maps, `wait` for them, `tools` to say where Adobe's are.
@@ -1006,6 +1012,14 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
             Operation::StudioPreset(value.clone())
         }
+        "assistant" => {
+            if value.get("ask").is_some_and(|a| a.as_str().is_none_or(|t| t.trim().is_empty())) {
+                return Err(ProtocolError("`ask` must be the request, in words".into()));
+            }
+            opt_bool(value, "stop")?;
+            opt_bool(value, "open")?;
+            Operation::Assistant(value.clone())
+        }
         "substance" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !SUBSTANCE_ACTIONS.contains(&action.as_str()) {
@@ -1367,6 +1381,11 @@ impl Operation {
             Operation::StudioPreset(request) => match request.get("preset").and_then(|i| i.as_str()) {
                 Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
+            },
+            Operation::Assistant(request) => match request.get("ask").and_then(|a| a.as_str()) {
+                Some(text) => format!("ask the Assistant: {}", text.chars().take(60).collect::<String>()),
+                None if request.get("stop").and_then(Value::as_bool) == Some(true) => "stop the Assistant".into(),
+                None => "the Assistant".into(),
             },
             Operation::Substance(request) => match request.get("path").and_then(|p| p.as_str()) {
                 Some(path) => format!("substance {} {path}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
