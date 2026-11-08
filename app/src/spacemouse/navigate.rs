@@ -39,8 +39,8 @@ impl ButtonAction {
         match self {
             ButtonAction::Nothing => "Nothing",
             ButtonAction::FitView => "Fit view",
-            ButtonAction::NextStudio => "Next Studio",
-            ButtonAction::PreviousStudio => "Previous Studio",
+            ButtonAction::NextStudio => "Next Snapshot",
+            ButtonAction::PreviousStudio => "Previous Snapshot",
         }
     }
 

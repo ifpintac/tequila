@@ -1984,6 +1984,7 @@ pub(crate) fn render_settings_to_json(settings: &RenderSettings) -> Value {
         .set("max_samples", settings.max_samples as f64)
         .set("adaptive", settings.adaptive)
         .set("denoise", settings.denoise)
+        .set("preview_denoise", settings.preview_denoise)
         .set("denoise_strength", settings.denoise_strength)
         .set("denoise_cadence", settings.denoise_cadence as f64)
         .set("prefilter_guides", settings.prefilter_guides)
@@ -2136,6 +2137,9 @@ pub(crate) fn read_render_settings_value(value: &Value) -> RenderSettings {
         max_seconds: value.get("max_seconds").and_then(|v| v.as_index()).map(|v| v as u32),
         adaptive: flag("adaptive", default.adaptive),
         denoise: flag("denoise", default.denoise),
+        // Saved before the viewport had a switch of its own, the preview
+        // denoised as the render did.
+        preview_denoise: flag("preview_denoise", flag("denoise", default.denoise)),
         denoise_strength: number("denoise_strength", default.denoise_strength),
         denoise_cadence: count("denoise_cadence", default.denoise_cadence).max(1),
         prefilter_guides: flag("prefilter_guides", default.prefilter_guides),
@@ -3760,6 +3764,23 @@ mod engine_tests {
         assert_eq!(read_render_settings_value(&old).engine, RenderEngine::CyclesGpu);
         let unknown = json::parse(br#"{"engine":"lux"}"#).unwrap();
         assert_eq!(read_render_settings_value(&unknown).engine, RenderEngine::CyclesGpu);
+    }
+
+    /// The viewport's denoising is kept apart from the render's, both ways
+    /// round, and a project from before it had its own switch denoises its
+    /// viewport as it denoises its render.
+    #[test]
+    fn the_viewports_denoising_is_kept_apart_from_the_renders() {
+        for (denoise, preview_denoise) in [(true, false), (false, true), (true, true), (false, false)] {
+            let saved = render_settings_to_json(&RenderSettings { denoise, preview_denoise, ..RenderSettings::default() });
+            let again = read_render_settings_value(&saved);
+            assert_eq!((again.denoise, again.preview_denoise), (denoise, preview_denoise));
+        }
+        for denoise in [true, false] {
+            let old = json::parse(format!(r#"{{"resolution":[640,480],"denoise":{denoise}}}"#).as_bytes()).unwrap();
+            assert_eq!(read_render_settings_value(&old).preview_denoise, denoise, "an old project's viewport with denoise {denoise}");
+        }
+        assert!(RenderSettings::default().preview_denoise, "a new project's viewport is denoised");
     }
 
     /// A wireframe's look is kept, a job's kind with it, and a project from

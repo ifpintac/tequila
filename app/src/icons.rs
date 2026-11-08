@@ -33,6 +33,9 @@ pub enum Icon {
     FrameSelected,
     Pause,
     Play,
+    /// The viewport's own denoising, on or off; and P's Screenshot of it.
+    Denoise,
+    Screenshot,
     Scene,
     Material,
     Environment,
@@ -220,6 +223,9 @@ impl Icon {
             Icon::FrameSelected => 0xe29d,
             Icon::Pause => 0xe131,
             Icon::Play => 0xe13f,
+            // Lucide's wand-sparkles: the plain sparkles are the Assistant's.
+            Icon::Denoise => 0xe35a,
+            Icon::Screenshot => 0xe068,
             Icon::Scene => 0xe40c,
             Icon::Material => 0xe2e6,
             Icon::Environment => 0xe17c,
@@ -551,7 +557,7 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             line((6.1, 12.2), (9.9, 12.2));
             line((6.8, 14.2), (9.2, 14.2));
         }
-        Icon::Camera => {
+        Icon::Camera | Icon::Screenshot => {
             rounded(1.4, 4.6, 14.6, 13.4, 2.0);
             poly(&[(5.0, 4.6), (6.2, 2.6), (9.8, 2.6), (11.0, 4.6)]);
             circle(8.0, 9.0, 2.7);
@@ -953,7 +959,7 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
                 line((2.0, 2.0), (14.0, 14.0));
             }
         }
-        Icon::Reflatten => {
+        Icon::Reflatten | Icon::Denoise => {
             line((2.0, 14.0), (10.5, 5.5));
             for (x, y) in [(12.5, 2.5), (13.5, 7.0), (9.0, 1.5)] {
                 disc(x, y, 0.9, color);
@@ -1669,7 +1675,7 @@ mod tests {
         vec![
             Icon::Aperture, Icon::Wireframe, Icon::Solid, Icon::MaterialPreview, Icon::Rendered, Icon::Move,
             Icon::Rotate, Icon::Scale, Icon::World, Icon::Local, Icon::Magnet, Icon::FrameAll, Icon::FrameSelected,
-            Icon::Pause, Icon::Play, Icon::Scene, Icon::Material, Icon::Environment, Icon::Light, Icon::Camera,
+            Icon::Pause, Icon::Play, Icon::Denoise, Icon::Screenshot, Icon::Scene, Icon::Material, Icon::Environment, Icon::Light, Icon::Camera,
             Icon::Image, Icon::Studios, Icon::Script, Icon::Library, Icon::Console, Icon::Assistant, Icon::Import,
             Icon::Save, Icon::Eye, Icon::EyeClosed, Icon::Lock, Icon::Unlock, Icon::ChevronRight,
             Icon::ChevronDown, Icon::Group, Icon::Part, Icon::Cutaway, Icon::Search, Icon::Help, Icon::Close,

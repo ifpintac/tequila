@@ -1453,6 +1453,8 @@ Enumerate the command catalog at build time. Assert every command has (a) a Pyth
 
 *(a) is `tequila-scripting`'s `bindings` tests: the generated module and reference must match the build, and every command must have an example and a description. (b) is not yet enforced.*
 
+*As built, November 8:* what a key or a toolbar button does that a script could not, the `ui` request now does: `save_screenshot` is P's Screenshot, `screenshot_folder` is View › Screenshot folder…, `library_section` is the Library's Materials and Studios switch, and `window_size` sizes the window, which is how the gizmo was pictured at two sizes. Tests: `ui_takes_the_library_section_a_screenshot_and_a_window_size` (protocol), and in the application `a_click_on_the_floor_deselects_and_a_click_on_a_part_selects`, `ctrl_shift_a_deselects_all_and_ctrl_a_selects_all`, `a_screenshot_is_the_picture_without_its_outline`, `the_gizmo_is_the_same_size_on_screen_at_any_window_size`, `switching_the_viewports_denoising_keeps_the_samples` and `the_driver_holding_the_device_is_said_plainly`.
+
 ### 3.9 Viewport/final consistency
 
 Render a scene through the interactive viewport path at N samples and through the final-render path at N samples with the same seed; assert they match within tolerance (§01 §9.6).

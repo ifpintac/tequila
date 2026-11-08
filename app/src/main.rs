@@ -70,6 +70,7 @@ mod start_screen;
 mod uv_editor;
 mod studio_tab;
 mod studio_shelf;
+mod screenshot;
 mod studio_presets;
 mod configurator_panel;
 mod templates_panel;
@@ -408,6 +409,16 @@ struct TequilaApp {
     /// A screenshot the channel asked for, waiting for egui to hand the
     /// framebuffer over on a later frame.
     pending_screenshot: Option<std::path::PathBuf>,
+    /// P's Screenshot (`screenshot`): where they go, as the person chose.
+    screenshots: screenshot::Preferences,
+    /// One asked for of the graphics card's Solid, whose picture is read
+    /// back as a frame draws it; and whether that frame has been drawn.
+    screenshot_waiting: bool,
+    screenshot_drawn: bool,
+    /// The last one saved, for a script to find.
+    last_screenshot: Option<std::path::PathBuf>,
+    /// A window size a script asked for, sent with the next frame.
+    pending_window_size: Option<egui::Vec2>,
     console: console::Console,
     graph_editor: graph_editor::GraphEditor,
     /// The Solid viewport on the GPU, when OpenGL allows.
@@ -416,6 +427,8 @@ struct TequilaApp {
     gpu_solid_submitted: bool,
     /// The UV editor's checker as last handed to the processor's Solid.
     cpu_checker_submitted: Option<u64>,
+    /// What of the render settings the last request read (`viewport_reads`).
+    settings_submitted: Option<ViewportReads>,
     /// Instance ids to ring, shared by both Solid paths.
     outlined: Vec<u32>,
     /// Which of the faces the UV editor lights the camera sees, and what
@@ -546,7 +559,7 @@ impl ProjectTab {
             ProjectTab::Lighting => "Lighting",
             ProjectTab::Camera => "Camera",
             ProjectTab::Image => "Image",
-            ProjectTab::Studios => "Studios",
+            ProjectTab::Studios => "Snapshots",
             ProjectTab::Scripting => "Scripting",
         }
     }
@@ -666,6 +679,36 @@ fn journal_directory() -> std::path::PathBuf {
 /// Hide the selection, and show everything again. A Mac's Cmd+H hides the
 /// application, and never reaches Tequila: there it is Control+H.
 const HIDE_KEYS: &str = if cfg!(target_os = "macos") { "Control + H / Alt + H" } else { "Ctrl + H / Alt + H" };
+
+/// What of the render settings the viewport's request reads: its denoise
+/// switch and the denoiser's settings, the clamps, the engine.
+type ViewportReads = (bool, u32, u32, bool, bool, Option<u32>, tequila_scene::render::RenderEngine);
+
+fn viewport_reads(settings: &tequila_scene::render::RenderSettings) -> ViewportReads {
+    (
+        settings.preview_denoise,
+        settings.denoise_strength.to_bits(),
+        settings.denoise_cadence,
+        settings.prefilter_guides,
+        settings.reject_fireflies,
+        settings.clamp_indirect.map(f32::to_bits),
+        settings.engine,
+    )
+}
+
+/// The part a click in the viewport landed on, and its triangle, or `None`
+/// for a click on empty space.
+///
+/// A ray that meets something has not always met a part. The floor - the
+/// shadow catcher under the product, which Material Preview and Rendered
+/// trace - and an area light's stand-in are geometry in the scene the
+/// renderer traces with no part of their own in the document. A click on
+/// them is a click on empty space, and deselects: taken as "something was
+/// hit", it left the selection as it was, and clicking beside a product
+/// never deselected anything, since beside a product is the floor.
+fn clicked_part(mapping: &tequila_scene::snapshot::SnapshotMapping, hit: &tequila_render_core::intersect::Hit) -> Option<(tequila_scene::tree::NodeId, u32)> {
+    mapping.node_of(hit.instance).map(|node| (node, hit.primitive))
+}
 
 /// The group a double-click on `node` selects: the one it is in, or - when
 /// the selection before the click was one of its groups - the group around
@@ -848,6 +891,7 @@ impl TequilaApp {
         app.recent_file = Some(recent_file);
         app.updates = update::Updates::with_preferences(update::Preferences::load());
         app.spacemouse = spacemouse::SpaceMouse::load();
+        app.screenshots = screenshot::Preferences::load();
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -940,11 +984,17 @@ impl TequilaApp {
             last_preview_mode: view_mode::ViewMode::default(),
             channel: None,
             pending_screenshot: None,
+            screenshots: screenshot::Preferences::default(),
+            screenshot_waiting: false,
+            screenshot_drawn: false,
+            last_screenshot: None,
+            pending_window_size: None,
             console: console::Console::default(),
             graph_editor: graph_editor::GraphEditor::default(),
             solid: solid_gpu::SolidView::new(false),
             gpu_solid_submitted: false,
             cpu_checker_submitted: None,
+            settings_submitted: None,
             outlined: Vec::new(),
             uv_link_seen: None,
             assistant: assistant::Assistant::default(),
@@ -1132,6 +1182,7 @@ impl TequilaApp {
         // graphics card's Solid is handed it as it draws.
         let checker = self.cpu_checker();
         self.cpu_checker_submitted = checker.as_ref().map(|c| c.0);
+        self.settings_submitted = Some(viewport_reads(&settings));
         self.orchestrator.submit(RenderRequest {
             camera: self.camera.camera,
             width,
@@ -1140,10 +1191,12 @@ impl TequilaApp {
             scene: self.project.scene(),
             scene_generation: self.project.generation(),
             // The viewport and the final render denoise with the same
-            // settings, from the document. Two sets of controls for one
-            // denoiser would mean a preview that does not look like the render
-            // it is previewing, which is the one thing a preview must not do.
-            denoise: settings.denoise,
+            // strength, cadence and guides, from the document: a preview
+            // denoised otherwise than its render would not look like it.
+            // Whether to denoise at all is the viewport's own switch, on its
+            // toolbar - to see the noise, or to see it clean while the render
+            // is kept raw - saved with the project as the render's is.
+            denoise: settings.preview_denoise,
             denoise_strength: settings.denoise_strength,
             denoise_cadence: settings.denoise_cadence,
             prefilter_guides: Some(settings.prefilter_guides),
@@ -1428,6 +1481,7 @@ impl eframe::App for TequilaApp {
         // Plugins: their code, their messages, their window and panels.
         self.plugins_frame(ctx);
         self.serve_screenshot(ctx);
+        self.finish_screenshot();
         self.dropped_files(ctx);
         // The assistant's tool calls, carried out between frames like the
         // scripting channel's.
@@ -1447,6 +1501,9 @@ impl eframe::App for TequilaApp {
         }
         if !self.fitted {
             self.fit_to_screen(ctx);
+        }
+        if let Some(size) = self.pending_window_size.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
 
         let name = self
@@ -1584,7 +1641,13 @@ impl eframe::App for TequilaApp {
                 .exact_width(library_tab::PANEL_WIDTH)
                 .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }))
                 .show(ctx, |ui| {
-                    panel_title(ui, icons::Icon::Library, theme::hue(theme::Hue::Pink), "Materials", "Drag a finish onto your model", || {
+                    // Named for the section showing: the materials, or the
+                    // Studios - whole studio setups.
+                    let (title, about) = match self.library.section {
+                        library_tab::Section::Materials => ("Materials", "Drag a finish onto your model"),
+                        library_tab::Section::Studios => ("Studios", "A whole studio on your model in one step"),
+                    };
+                    panel_title(ui, icons::Icon::Library, theme::hue(theme::Hue::Pink), title, about, || {
                         self.show_library = false;
                     }, "Hide the library · M");
                     profile::time("ui: library", || self.library_panel(ui));
@@ -1747,6 +1810,11 @@ impl eframe::App for TequilaApp {
         // The UV editor's checker turned on, off or changed, where the
         // processor draws Solid.
         if self.cpu_checker().map(|c| c.0) != self.cpu_checker_submitted {
+            self.submit();
+        }
+        // The render settings the viewport reads, changed from elsewhere:
+        // its denoise switch undone, or set by a script.
+        if Some(viewport_reads(self.project.render_settings())) != self.settings_submitted {
             self.submit();
         }
 
@@ -1929,7 +1997,7 @@ impl TequilaApp {
                 if !response.double_clicked() {
                     self.selected_before_click = self.project.selection.nodes().collect();
                 }
-                self.pick_at(ui, rect, response.interact_pointer_pos());
+                self.pick_at(ui.input(|i| i.modifiers), rect, response.interact_pointer_pos());
                 if response.double_clicked() && !ui.input(|i| i.modifiers.any()) {
                     self.select_enclosing(rect, response.interact_pointer_pos());
                 }
@@ -2097,17 +2165,26 @@ impl TequilaApp {
 
         // ---- Draw -------------------------------------------------------
         if self.gpu_solid() {
+            // A frame read back for P's Screenshot is drawn without the
+            // selection's outline, which is the viewport's and not the
+            // picture's; the frames on either side of it keep it.
+            let capture = self.screenshot_waiting;
             let frame = solid_gpu::Frame {
                 scene: self.project.scene(),
                 camera: self.camera.camera,
-                selected: self.outlined.clone(),
+                selected: if capture { Vec::new() } else { self.outlined.clone() },
                 pixels_per_point: ui.ctx().pixels_per_point(),
                 mode: self.view_mode.gpu().unwrap_or_default(),
                 exposure: 2f32.powf(self.project.developed_style(&self.camera.camera).exposure),
                 model_edges: self.show_model_edges && self.presenting.is_none(),
                 checker: self.uv_editor.checker_frame(&self.project).filter(|_| self.presenting.is_none()),
+                capture,
             };
             ui.painter().add(self.solid.paint(rect, frame));
+            if capture {
+                self.screenshot_drawn = true;
+                ui.ctx().request_repaint();
+            }
         } else if let Some(texture) = &self.texture {
             // The render buffer is smaller than the viewport while
             // interacting; stretching it is exactly the "upsampled for
@@ -2194,6 +2271,9 @@ impl TequilaApp {
 
         let mut toasts = std::mem::take(&mut self.toasts);
         toasts.show(ui.ctx(), area);
+        if let Some(toast::Action::Reveal(path)) = toasts.take_action() {
+            library_tab::reveal(&path.to_string_lossy());
+        }
         self.toasts = toasts;
     }
 
@@ -2384,7 +2464,7 @@ impl TequilaApp {
             self.frame(true);
             ui.close_menu();
         }
-        if ui.button("Deselect all").on_hover_text("Esc").clicked() {
+        if ui.button("Deselect all").on_hover_text(theme::keys("Esc / Ctrl + Shift + A")).clicked() {
             self.project.selection.clear();
             ui.close_menu();
         }
@@ -2605,7 +2685,7 @@ impl TequilaApp {
                 return true;
             }
         } else {
-            self.toasts.info("No Studios or other cameras to step through");
+            self.toasts.info("No Snapshots or other cameras to step through");
         }
         false
     }
@@ -2844,12 +2924,11 @@ impl TequilaApp {
         }
     }
 
-    fn pick_at(&mut self, ui: &egui::Ui, rect: egui::Rect, at: Option<egui::Pos2>) {
+    fn pick_at(&mut self, modifiers: egui::Modifiers, rect: egui::Rect, at: Option<egui::Pos2>) {
         let Some(at) = at else { return };
         let Some(ray) = gizmo_ui::ray_through(&self.camera.camera, rect, at) else {
             return;
         };
-        let modifiers = ui.input(|i| i.modifiers);
         let mode = if modifiers.shift && modifiers.command {
             SelectionMode::Remove
         } else if modifiers.shift {
@@ -2871,20 +2950,21 @@ impl TequilaApp {
             self.project.selection.set_level(level);
         }
 
-        match self.orchestrator.pick(&ray) {
-            Some(hit) => {
-                if let Some(node) = self.project.mapping().node_of(hit.instance) {
-                    let mut selection = std::mem::take(&mut self.project.selection);
-                    if selection.level() == tequila_scene::selection::SelectionLevel::Face {
-                        selection.click_face(node, hit.primitive, mode);
-                    } else {
-                        selection.click(self.project.document(), node, mode);
-                    }
-                    self.project.selection = selection;
+        match self.orchestrator.pick(&ray).and_then(|hit| clicked_part(self.project.mapping(), &hit)) {
+            Some((node, primitive)) => {
+                let mut selection = std::mem::take(&mut self.project.selection);
+                if selection.level() == tequila_scene::selection::SelectionLevel::Face {
+                    selection.click_face(node, primitive, mode);
+                } else {
+                    selection.click(self.project.document(), node, mode);
                 }
+                self.project.selection = selection;
             }
             // Clicking empty space deselects, which is what every DCC does and
-            // what makes "click away to finish" work.
+            // what makes "click away to finish" work. Empty space is
+            // whatever is not a part: the background, and the floor - which
+            // in Material Preview and Rendered is a surface the click meets,
+            // and which is where most clicks around a product land.
             None if mode == SelectionMode::Replace => self.project.selection.clear(),
             None => {}
         }
@@ -3227,7 +3307,7 @@ impl TequilaApp {
                 });
                 self.menu_buttons.push(("file", file.response.rect));
 
-                ui.menu_button("View", |ui| {
+                let view = ui.menu_button("View", |ui| {
                     if ui
                         .add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
                         .on_hover_text("Draw the parts' edges in Solid and Material Preview: a CAD part's own B-rep edges, or a mesh's creases and borders")
@@ -3278,6 +3358,23 @@ impl TequilaApp {
                     }
                     ui.separator();
                     if ui
+                        .add(egui::Button::new("Screenshot").shortcut_text("P"))
+                        .on_hover_text("Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.take_screenshot();
+                    }
+                    if ui
+                        .button("Screenshot folder…")
+                        .on_hover_text(format!("Where screenshots go: {}", self.screenshots.folder().display()))
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.choose_screenshot_folder();
+                    }
+                    ui.separator();
+                    if ui
                         .button("UV editor")
                         .on_hover_text("The selected part's surface laid out flat: unwrap it, and place labels and textures on it by hand")
                         .clicked()
@@ -3286,6 +3383,9 @@ impl TequilaApp {
                         ui.close_menu();
                     }
                 });
+                // For a script to open, as it opens File: View holds the
+                // Screenshot and its folder.
+                self.menu_buttons.push(("view", view.response.rect));
 
                 ui.menu_button("Edit", |ui| {
                     let undo = self
@@ -3722,9 +3822,9 @@ impl TequilaApp {
             );
         }
 
-        // ---- Framing, shading and pause: top right ----------------------
+        // ---- Framing, shading, denoise and pause, Screenshot: top right ---
         let (pad, gap) = (4.0, 9.0);
-        let width = pad * 2.0 + TOOL * 7.0 + gap * 2.0;
+        let width = pad * 2.0 + TOOL * 9.0 + gap * 3.0;
         let island = egui::Rect::from_min_size(
             egui::pos2(rect.right() - OVERLAY_INSET - width, rect.top() + OVERLAY_INSET),
             egui::vec2(width, ISLAND),
@@ -3770,16 +3870,45 @@ impl TequilaApp {
         }
         icons::divider(&painter, egui::pos2(x + gap * 0.5, island.top() + 9.0), egui::pos2(x + gap * 0.5, island.bottom() - 9.0));
         x += gap;
+        // The viewport's own denoising, apart from the final render's: lit
+        // while it is on.
+        let denoising = self.project.render_settings().preview_denoise;
+        if icons::tip(
+            button(ui, next(&mut x), "denoise", Icon::Denoise, denoising, true),
+            if denoising { "Viewport denoising: on" } else { "Viewport denoising: off" },
+            if denoising {
+                "The Rendered view is denoised as it refines. Click to see its raw samples. This is the viewport's alone: the final render's denoising is in the Render window."
+            } else {
+                "The Rendered view shows its raw samples. Click to denoise it. This is the viewport's alone: the final render's denoising is in the Render window."
+            },
+            "",
+        )
+        .clicked()
+        {
+            self.set_preview_denoise(!denoising);
+        }
         let paused = self.viewport_paused;
         if icons::tip(
             button(ui, next(&mut x), "pause", if paused { Icon::Play } else { Icon::Pause }, paused, true),
             if paused { "Resume" } else { "Pause" },
             if paused { "Carry on rendering the viewport" } else { "Stop rendering the viewport, keeping the samples so far" },
-            "P",
+            "Shift + P",
         )
         .clicked()
         {
             self.viewport_paused = !paused;
+        }
+        icons::divider(&painter, egui::pos2(x + gap * 0.5, island.top() + 9.0), egui::pos2(x + gap * 0.5, island.bottom() - 9.0));
+        x += gap;
+        if icons::tip(
+            button(ui, next(&mut x), "screenshot", Icon::Screenshot, false, true),
+            "Screenshot",
+            "Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics. View › Screenshot folder… chooses where.",
+            "P",
+        )
+        .clicked()
+        {
+            self.take_screenshot();
         }
 
         // ---- Transform tools: down the left -----------------------------
@@ -4379,7 +4508,12 @@ impl TequilaApp {
             return;
         }
 
+        // P saves what the viewport shows, as KeyShot's P does; Shift+P
+        // pauses it, which P did before.
         if modifiers.is_none() && pressed(egui::Key::P) {
+            self.take_screenshot();
+        }
+        if modifiers.shift_only() && pressed(egui::Key::P) {
             self.viewport_paused = !self.viewport_paused;
         }
 
@@ -4398,10 +4532,16 @@ impl TequilaApp {
         if modifiers.command && pressed(egui::Key::Y) {
             self.redo();
         }
-        if modifiers.command && pressed(egui::Key::A) {
+        // Ctrl+A selects everything and Ctrl+Shift+A nothing, as in
+        // Photoshop and Illustrator; Esc deselects too. Select all asks for
+        // no Shift, or the two would both fire on the second chord.
+        if modifiers.command && !modifiers.shift && pressed(egui::Key::A) {
             let mut selection = std::mem::take(&mut self.project.selection);
             selection.select_all(self.project.document());
             self.project.selection = selection;
+        }
+        if modifiers.command && modifiers.shift && pressed(egui::Key::A) {
+            self.project.selection.clear();
         }
         if modifiers.command && pressed(egui::Key::G) {
             let nodes: Vec<_> = self.project.selection.nodes().collect();
@@ -4513,6 +4653,87 @@ impl TequilaApp {
                 let next = self.view_mode.next();
                 self.set_view_mode(next);
             }
+        }
+    }
+
+    /// The viewport's own denoising on or off (its toolbar's switch): saved
+    /// with the project, a step to undo as the render's switch is, and shown
+    /// at once without a sample lost (`orchestrator`).
+    fn set_preview_denoise(&mut self, on: bool) {
+        let mut settings = self.project.render_settings().clone();
+        if settings.preview_denoise == on {
+            return;
+        }
+        settings.preview_denoise = on;
+        let _ = self.project.apply(Command::SetRenderSettings { settings: Box::new(settings) });
+        self.project.status = if on { "The viewport is denoised".into() } else { "The viewport shows its raw samples".into() };
+        self.submit();
+    }
+
+    /// P, the viewport toolbar's camera and View › Screenshot: the
+    /// viewport's picture as it shows now, saved as a PNG into the
+    /// screenshot folder (`screenshot`). The renderer's image straight
+    /// away, without the selection's outline; the graphics card's Solid as
+    /// its next frame draws it.
+    pub(crate) fn take_screenshot(&mut self) {
+        if self.gpu_solid() {
+            self.screenshot_waiting = true;
+            self.screenshot_drawn = false;
+            return;
+        }
+        let pixels = self.image.without_outline();
+        let (width, height) = (self.image.width, self.image.height);
+        self.save_screenshot(width, height, &pixels);
+    }
+
+    /// A Screenshot of the graphics card's Solid, once a frame drawn for it
+    /// has been read back; or the renderer's picture, if the view stopped
+    /// being the graphics card's before one was.
+    fn finish_screenshot(&mut self) {
+        if !self.screenshot_waiting {
+            return;
+        }
+        if let Some(image) = self.solid.take_capture() {
+            self.screenshot_waiting = false;
+            let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+            self.save_screenshot(image.width(), image.height(), &rgba);
+        } else if !self.gpu_solid() {
+            self.screenshot_waiting = false;
+            self.take_screenshot();
+        } else if self.screenshot_drawn && !self.solid.usable() {
+            // The card failed on the frame: the processor draws from now on.
+            self.screenshot_waiting = false;
+            self.toasts.warn("The screenshot could not be taken: the graphics card stopped drawing the view");
+        }
+    }
+
+    fn save_screenshot(&mut self, width: usize, height: usize, rgba: &[u8]) {
+        let project = crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref());
+        let stem = screenshot::file_stem(&project, &today(), &now());
+        let folder = self.screenshots.folder();
+        match screenshot::save(&folder, &stem, width, height, rgba) {
+            Ok(path) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.toasts.info_with(format!("Screenshot saved: {name}"), "Open folder", toast::Action::Reveal(path.clone()));
+                self.last_screenshot = Some(path);
+            }
+            Err(error) => self.toasts.warn(format!("The screenshot could not be saved: {error}")),
+        }
+    }
+
+    /// View › Screenshot folder…: where screenshots go, kept in the
+    /// application's settings.
+    fn choose_screenshot_folder(&mut self) {
+        let start = self.screenshots.folder();
+        let mut dialog = rfd::FileDialog::new().set_title("Screenshot folder");
+        if start.is_dir() {
+            dialog = dialog.set_directory(&start);
+        }
+        let Some(folder) = dialog.pick_folder() else { return };
+        self.screenshots.folder = Some(folder.clone());
+        match self.screenshots.save() {
+            Ok(()) => self.toasts.info(format!("Screenshots go to {}", folder.display())),
+            Err(error) => self.toasts.warn(format!("The screenshot folder could not be kept: {error}")),
         }
     }
 
@@ -5719,15 +5940,20 @@ impl TequilaApp {
                 {
                     // The same settings the final render uses, edited here because
                     // this is where a person notices noise. The Render window shows
-                    // the identical controls; both write to the document.
+                    // the identical controls; both write to the document. The
+                    // viewport's own on and off is on its toolbar.
                     let before = self.project.render_settings().clone();
                     let mut settings = before.clone();
-                    ui.add(crate::field::Checkbox::new(&mut settings.denoise, "Enabled"));
+                    ui.add(crate::field::Checkbox::new(&mut settings.denoise, "Denoise the final render"))
+                        .on_hover_text("The render's own switch. The viewport has its own, on its toolbar; strength and cadence are for both.");
                     // Cycles' denoiser has no strength: it cleans fully or not
                     // at all.
                     let cycles = settings.engine.is_cycles();
+                    // Strength and cadence are the viewport's as well as the
+                    // render's: there to set while either denoises.
+                    let either = settings.denoise || settings.preview_denoise;
                     ui.add_enabled(
-                        settings.denoise && !cycles,
+                        either && !cycles,
                         crate::field::Slider::new(&mut settings.denoise_strength, 0.0..=1.0)
                             .text("Strength"),
                     )
@@ -5737,7 +5963,7 @@ impl TequilaApp {
                         "Denoising is off"
                     });
                     ui.add_enabled(
-                        settings.denoise,
+                        either,
                         crate::field::Slider::new(&mut settings.denoise_cadence, 1..=32)
                             .text("Every N passes"),
                     )
@@ -5961,7 +6187,7 @@ impl TequilaApp {
                             ui.add_space(14.0);
                         }
                         if configurator.is_empty() {
-                            ui.label("There is no configurator yet. Build one in the Studios tab, then present it.");
+                            ui.label("There is no configurator yet. Build one in the Snapshots tab, then present it.");
                         } else {
                             let columns = configurator.placement == Placement::Bottom;
                             picked = configurator_panel::picker_laid_out(ui, self.project.document(), &configurator, true, columns);
@@ -6131,7 +6357,7 @@ impl TequilaApp {
     /// finished by queueing it again.
     pub(crate) fn queue_frames(&mut self, first: u32, last: u32, settings: Option<tequila_scene::render::RenderSettings>) -> Vec<u64> {
         let Some(animation) = self.project.document().animation.clone() else {
-            self.project.status = "There is no animation to render: make a turntable in the Studio tab first".into();
+            self.project.status = "There is no animation to render: make a turntable in the Snapshots tab first".into();
             return Vec::new();
         };
         let mut settings = settings.unwrap_or_else(|| self.project.render_settings().clone());
@@ -6428,7 +6654,9 @@ impl TequilaApp {
         let spec = windows::Spec {
             kind: windows::Kind::Shortcuts,
             title: "Shortcuts".into(),
-            size: egui::vec2(780.0, 520.0),
+            // Tall enough for both columns on a laptop's screen; shorter
+            // ones scroll.
+            size: egui::vec2(780.0, 680.0),
             min_size: egui::vec2(520.0, 320.0),
             resizable: true,
             margin: 18.0,
@@ -6465,7 +6693,8 @@ impl TequilaApp {
                         &[
                             ("Step through the shadings", "Z"),
                             ("Rendered, and back", "D"),
-                            ("Pause the viewport", "P"),
+                            ("Screenshot of the viewport", "P"),
+                            ("Pause the viewport", "Shift + P"),
                             ("Render statistics", "H"),
                             ("Full viewport", "Tab"),
                         ],
@@ -6475,6 +6704,8 @@ impl TequilaApp {
                         &[
                             ("Move / rotate / scale", "W / E / R"),
                             ("Select the part's group", "Double-click"),
+                            ("Select all", "Ctrl + A"),
+                            ("Deselect all", "Esc / Ctrl + Shift + A"),
                             ("Group", "Ctrl + G"),
                             ("Hide / show everything", HIDE_KEYS),
                             ("Isolate", "/"),
@@ -6487,7 +6718,7 @@ impl TequilaApp {
                         &[
                             ("Inspector", "Space"),
                             ("Material library", "M"),
-                            ("Studios", "U"),
+                            ("Snapshots", "U"),
                             ("Console", "`"),
                             ("Render", "Ctrl + R"),
                             ("Import / save", "Ctrl + I / Ctrl + S"),
@@ -7088,6 +7319,156 @@ mod undo_tests {
         std::fs::write(&broken, "this is not a model").unwrap();
         import_through_the_menu(&mut app, broken);
         assert_eq!(names(&app), vec!["Demo".to_string(), "Sphere".to_string()]);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+}
+
+#[cfg(test)]
+mod selection_and_screenshot_tests {
+    use super::*;
+
+    /// One frame of the viewport, `size` points, at a pixel a point.
+    fn draw_viewport(app: &mut TequilaApp, ctx: &egui::Context, size: egui::Vec2) {
+        let mut input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(1.0);
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| app.viewport(ui));
+        });
+    }
+
+    /// A click on the floor deselects, as a click on the background does,
+    /// and a click on a part still selects it. The cause of "clicking
+    /// empty space doesn't deselect": in Material Preview and Rendered the
+    /// floor is a surface the click's ray meets, with no part of its own,
+    /// and a hit on it was taken as "something was clicked" and left the
+    /// selection as it was. Shift held, a click on the floor still adds
+    /// nothing and takes nothing away.
+    #[test]
+    fn a_click_on_the_floor_deselects_and_a_click_on_a_part_selects() {
+        let mut app = TequilaApp::for_tests();
+        app.show_render_frame = false;
+        // Tequila's renderer, which any test machine has.
+        let settings = tequila_scene::render::RenderSettings {
+            engine: tequila_scene::render::RenderEngine::Tequila,
+            ..app.project.render_settings().clone()
+        };
+        app.project.apply(Command::SetRenderSettings { settings: Box::new(settings) }).unwrap();
+        app.set_view_mode(view_mode::ViewMode::Rendered);
+        // Looking down on the product, as a product shot does: the floor
+        // all round it.
+        app.camera.set_standard_view(StandardView::Isometric);
+        app.frame(true);
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        draw_viewport(&mut app, &ctx, egui::vec2(240.0, 180.0));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.orchestrator.picker().is_none() {
+            assert!(std::time::Instant::now() < deadline, "the viewport built nothing to pick");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let picker = app.orchestrator.picker().unwrap();
+        let rect = app.viewport_rect;
+        let (mut floor, mut part, mut sky) = (None, None, None);
+        let mut counts = [0usize; 3];
+        for y in (2..rect.height() as i32).step_by(4) {
+            for x in (2..rect.width() as i32).step_by(4) {
+                let at = rect.min + egui::vec2(x as f32, y as f32);
+                let Some(hit) = gizmo_ui::ray_through(&app.camera.camera, rect, at).and_then(|ray| picker.pick(&ray)) else {
+                    sky.get_or_insert(at);
+                    counts[2] += 1;
+                    continue;
+                };
+                match app.project.mapping().node_of(hit.instance) {
+                    Some(node) => {
+                        part.get_or_insert((at, node));
+                        counts[0] += 1;
+                    }
+                    None => {
+                        floor.get_or_insert(at);
+                        counts[1] += 1;
+                    }
+                }
+            }
+        }
+        let catchers = app.project.scene().instances.iter().filter(|i| i.shadow_catcher.is_some()).count();
+        let Some(floor) = floor else {
+            panic!(
+                "no click met the floor: {counts:?} parts, floor, nothing; {catchers} floors in the scene; camera at {:?} looking {:?}",
+                app.camera.camera.position(),
+                app.camera.camera.forward()
+            );
+        };
+        let (on_part, node) = part.expect("a part in view");
+
+        app.pick_at(egui::Modifiers::NONE, rect, Some(on_part));
+        assert!(app.project.selection.active().is_some(), "a click on a part ({node:?}) did not select it");
+        app.pick_at(egui::Modifiers::SHIFT, rect, Some(floor));
+        assert!(app.project.selection.active().is_some(), "Shift and a click on the floor took the part away");
+        app.pick_at(egui::Modifiers::NONE, rect, Some(floor));
+        assert!(app.project.selection.active().is_none(), "a click on the floor kept the selection");
+        // And the background, past the floor, where there is some in view.
+        if let Some(sky) = sky {
+            app.pick_at(egui::Modifiers::NONE, rect, Some(on_part));
+            app.pick_at(egui::Modifiers::NONE, rect, Some(sky));
+            assert!(app.project.selection.active().is_none(), "a click on the background kept the selection");
+        }
+    }
+
+    /// Ctrl+A selects everything and Ctrl+Shift+A nothing (Cmd on a Mac),
+    /// and the second does not also select everything as the first.
+    #[test]
+    fn ctrl_shift_a_deselects_all_and_ctrl_a_selects_all() {
+        let mut app = TequilaApp::for_tests();
+        let ctx = egui::Context::default();
+        let press = |app: &mut TequilaApp, modifiers: egui::Modifiers| {
+            let input = egui::RawInput {
+                modifiers,
+                events: vec![egui::Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers }],
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.global_hotkeys(ctx));
+        };
+        let command = egui::Modifiers { ctrl: !cfg!(target_os = "macos"), mac_cmd: cfg!(target_os = "macos"), command: true, ..Default::default() };
+        press(&mut app, command);
+        let everything = app.project.selection.nodes().count();
+        assert!(everything > 0, "Ctrl+A selected nothing");
+        press(&mut app, egui::Modifiers { shift: true, ..command });
+        assert_eq!(app.project.selection.nodes().count(), 0, "Ctrl+Shift+A left a selection");
+        press(&mut app, command);
+        assert_eq!(app.project.selection.nodes().count(), everything);
+    }
+
+    /// P's Screenshot is the picture as it shows, without the selection's
+    /// outline, at the preview's own size, into the folder chosen; a second
+    /// in the same second is a second file.
+    #[test]
+    fn a_screenshot_is_the_picture_without_its_outline() {
+        let mut app = TequilaApp::for_tests();
+        let folder = std::env::temp_dir().join(format!("tequila-app-screenshots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        app.screenshots.folder = Some(folder.clone());
+        let (width, height) = (6usize, 4usize);
+        let mut pixels: Vec<u8> = (0..width * height).flat_map(|i| [i as u8 * 10, 20, 30, 255]).collect();
+        // Pixel 5 ringed, as the outline rings what is selected.
+        pixels[20..23].copy_from_slice(&[0, 200, 180]);
+        app.image = orchestrator::DisplayImage { width, height, pixels, under_outline: vec![(5, [50, 20, 30])], ..Default::default() };
+        assert!(!app.gpu_solid(), "the test's viewport is the processor's");
+        app.take_screenshot();
+        let first = app.last_screenshot.clone().expect("nothing was saved");
+        assert_eq!(first.parent(), Some(folder.as_path()));
+        let name = first.file_name().unwrap().to_string_lossy().into_owned();
+        let project = crate::render_window::project_name(&app.project.document().meta.name, None);
+        assert!(name.starts_with(&format!("{project} ")) && name.ends_with(".png"), "{name}");
+        let decoder = png::Decoder::new(std::fs::File::open(&first).unwrap());
+        let mut reader = decoder.read_info().unwrap();
+        let mut saved = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut saved).unwrap();
+        assert_eq!((info.width, info.height), (width as u32, height as u32), "not at the preview's own size");
+        assert_eq!(&saved[20..24], &[50, 20, 30, 255], "the outline was saved with the picture");
+        assert_eq!(&saved[24..28], &[60, 20, 30, 255]);
+        app.take_screenshot();
+        assert_ne!(app.last_screenshot.as_ref(), Some(&first), "the second wrote over the first");
+        assert!(first.is_file());
         let _ = std::fs::remove_dir_all(&folder);
     }
 }

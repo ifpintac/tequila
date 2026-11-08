@@ -338,6 +338,9 @@ pub struct UiChange {
     /// lighting, camera, image, scripting. Showing a tab shows the Inspector.
     pub tab: Option<String>,
     pub library: Option<bool>,
+    /// The Library's section: `materials` or `studios`. Showing one
+    /// shows the Library.
+    pub library_section: Option<String>,
     /// `wireframe`, `solid`, `material` or `rendered`.
     pub viewport: Option<String>,
     /// Hide everything but the viewport.
@@ -362,7 +365,7 @@ pub struct UiChange {
     /// Help > Test this computer, open and running: opening it starts the
     /// checks, unless they are running already.
     pub self_test: Option<bool>,
-    /// A menu of the menu bar, open: `file`. What the documentation shows
+    /// A menu of the menu bar, open: `file` or `view`. What the documentation shows
     /// a menu with.
     pub menu: Option<String>,
     /// The start screen, open.
@@ -388,6 +391,14 @@ pub struct UiChange {
     pub preferences: Option<bool>,
     /// A 3D mouse's input, made up: reports as a device would send them.
     pub spacemouse: Option<SpaceMouseInput>,
+    /// P's Screenshot, as the key takes it: the viewport's picture saved
+    /// into the screenshot folder, with its notice.
+    pub save_screenshot: Option<bool>,
+    /// Where Screenshots go, as View › Screenshot folder… chooses it; kept
+    /// in the application's settings.
+    pub screenshot_folder: Option<String>,
+    /// The window's inner size, in points.
+    pub window_size: Option<[f32; 2]>,
 }
 
 /// Synthetic 3D mouse input, for scripts and tests without a device: HID
@@ -1252,6 +1263,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             inspector: opt_bool(value, "inspector")?,
             tab: opt_string(value, "tab")?,
             library: opt_bool(value, "library")?,
+            library_section: opt_string(value, "library_section")?,
             viewport: opt_string(value, "viewport")?,
             full_viewport: opt_bool(value, "full_viewport")?,
             present: opt_bool(value, "present")?,
@@ -1289,6 +1301,12 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             },
             preferences: opt_bool(value, "preferences")?,
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
+            save_screenshot: opt_bool(value, "save_screenshot")?,
+            screenshot_folder: opt_string(value, "screenshot_folder")?,
+            window_size: optional(value, "window_size", "[width, height] in points", |v| match v.as_array() {
+                [w, h] => Some([w.as_f32()?, h.as_f32()?]).filter(|[w, h]| w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0),
+                _ => None,
+            })?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1675,6 +1693,21 @@ mod tests {
         assert!(matches!(open.operation, Operation::Project { action: ProjectAction::Open(ref path), save: true, discard: false } if path == "C:/work/kettle.tequila"));
         assert!(parse_request(r#"{"id":3,"op":"open"}"#).is_err(), "an open with nothing to open");
         assert!(matches!(parse_request(r#"{"id":4,"op":"ui","about":true}"#).unwrap().operation, Operation::Ui(UiChange { about: Some(true), .. })));
+    }
+
+    /// The Library's section, P's Screenshot and its folder, and the
+    /// window's size, as a script asks for them; a size that is not two
+    /// numbers of a point or more is refused.
+    #[test]
+    fn ui_takes_the_library_section_a_screenshot_and_a_window_size() {
+        let request = parse_request(r#"{"id":8,"op":"ui","library_section":"studios","save_screenshot":true,"screenshot_folder":"C:/shots","window_size":[1200,800]}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("a ui change") };
+        assert_eq!(change.library_section.as_deref(), Some("studios"));
+        assert_eq!(change.save_screenshot, Some(true));
+        assert_eq!(change.screenshot_folder.as_deref(), Some("C:/shots"));
+        assert_eq!(change.window_size, Some([1200.0, 800.0]));
+        assert!(parse_request(r#"{"id":9,"op":"ui","window_size":[0,800]}"#).is_err());
+        assert!(parse_request(r#"{"id":10,"op":"ui","window_size":"big"}"#).is_err());
     }
 
     /// A 3D mouse's input, made up: its reports as bytes, and how long the

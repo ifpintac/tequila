@@ -292,12 +292,14 @@ pub fn views(preset: &StudioPreset, scale: f32) -> Vec<Studio> {
 
 /// The preset's render settings for `document`: the project keeps its
 /// output folder, its render layers and its region, which name its own
-/// parts and its own machine.
+/// parts and its own machine; and whether its viewport denoises, which is
+/// how the person is looking at it rather than how it renders.
 pub fn render_settings(preset: &StudioPreset, document: &SceneDocument) -> RenderSettings {
     RenderSettings {
         output_directory: document.render.output_directory.clone(),
         layers: document.render.layers.clone(),
         region: document.render.region,
+        preview_denoise: document.render.preview_denoise,
         ..preset.render.clone()
     }
 }
@@ -486,6 +488,22 @@ mod tests {
         assert_eq!(with(product_only.clone()), Some(product_only));
         let shadows = portable_links(LightSettings { shadow_links: Some(LightLinking { nodes: vec![part], ..LightLinking::default() }), ..LightSettings::default() });
         assert_eq!(shadows.shadow_links, Some(LightLinking { product: true, ..LightLinking::default() }), "shadow links kept a product's part");
+    }
+
+    /// A snapshot brings its render settings, and leaves the viewport's
+    /// denoising as the project had it: how the person is looking, not how
+    /// it renders.
+    #[test]
+    fn a_studio_preset_leaves_the_viewports_denoising_alone() {
+        let mut document = SceneDocument::new();
+        document.render.preview_denoise = false;
+        let mut preset = capture(&SceneDocument::new(), "x", "x", "Product Studio", "Small");
+        preset.render.preview_denoise = true;
+        preset.render.denoise = false;
+        preset.render.max_samples = 77;
+        let settings = render_settings(&preset, &document);
+        assert!(!settings.preview_denoise, "the studio preset switched the viewport's denoising");
+        assert!(!settings.denoise && settings.max_samples == 77, "the studio preset's own render settings did not come");
     }
 
     /// Of three sizes, the one framed nearest a product's size by ratio.

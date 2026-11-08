@@ -1,4 +1,4 @@
-//! The Studios tab: saved shots, model sets and material variants
+//! The Snapshots tab (called Studios in the code and the files): saved shots, model sets and material variants
 //! (`TEQUILA_SPEC.md` §1.12, `docs/02` §8.1).
 //!
 //! The three are one tab because they are one job — keeping several
@@ -51,13 +51,13 @@ impl StudioTab {
     /// camera has to follow.
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
         let mut camera_moved = false;
-        crate::theme::section(ui, "Studios");
+        crate::theme::section(ui, "Snapshots");
         camera_moved |= studios(ui, project, &mut self.thumbnails, &mut self.reorder);
         let views = project.document().studios.len();
         if views > 1
             && ui
                 .button(format!("Render all {views} views"))
-                .on_hover_text("Queue every Studio, one image each, named for the view: {view} in the file name.")
+                .on_hover_text("Queue every Snapshot, one image each, named for the view: {view} in the file name.")
                 .clicked()
         {
             self.render_all = true;
@@ -582,7 +582,7 @@ impl Reorder {
 fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails, reorder: &mut Reorder) -> bool {
     thumbnails.update(ui.ctx(), project);
     ui.small(
-        "A Studio is a saved shot: the camera, the environment, the image style, \
+        "A Snapshot is a saved shot: the camera, the environment, the image style, \
          the model set and the material variants, recalled in one click. Drag \
          one by its picture to move it in the list.",
     );
@@ -593,11 +593,11 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
     let mut swap = None;
 
     if ui
-        .button("+ Studio from the current shot")
+        .button("+ Snapshot from the current shot")
         .on_hover_text("Captures everything as it is now.")
         .clicked()
     {
-        let name = format!("Studio {}", list.len() + 1);
+        let name = format!("Snapshot {}", list.len() + 1);
         list.push(Studio::capture(&name, project.document()));
     }
 
@@ -848,7 +848,7 @@ fn model_sets(ui: &mut egui::Ui, project: &mut Project) {
 fn variants(ui: &mut egui::Ui, project: &mut Project) {
     ui.small(
         "Colourways: several materials for the same parts, one in use. Switching \
-         is one click and one undo step, and a Studio can remember the choice.",
+         is one click and one undo step, and a Snapshot can remember the choice.",
     );
     let original = project.document().multi_materials.clone();
     let mut list: Vec<MultiMaterial> = original.clone();

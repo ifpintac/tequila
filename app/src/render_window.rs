@@ -1687,8 +1687,9 @@ fn cycles_controls(ui: &mut egui::Ui, settings: &mut RenderSettings) {
 
 fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
     ui.add(crate::field::Checkbox::new(&mut settings.denoise, "Denoise the image"))
-        .on_hover_text("Clean up the remaining noise with Open Image Denoise");
-    ui.add_enabled_ui(settings.denoise, |ui| {
+        .on_hover_text("Clean up the render's remaining noise with Open Image Denoise. The viewport has its own switch, on its toolbar.");
+    // Strength, cadence and guides are the viewport's too.
+    ui.add_enabled_ui(settings.denoise || settings.preview_denoise, |ui| {
         // Cycles' denoiser has no strength: it cleans fully or not at all.
         let cycles = settings.engine.is_cycles();
         ui.add_enabled(!cycles, crate::field::Slider::new(&mut settings.denoise_strength, 0.0..=1.0).text("strength"))

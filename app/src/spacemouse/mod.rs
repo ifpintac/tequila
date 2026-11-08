@@ -42,6 +42,44 @@ struct Shared {
     pressed: Vec<u32>,
     /// The device being read, or `None` while there is none.
     device: Option<String>,
+    /// Why a 3D mouse that is there is not being read, when one is not.
+    problem: Option<OpenProblem>,
+}
+
+/// What 3Dconnexion's driver holding the device on a Mac comes to, in the
+/// preferences.
+pub const HELD_BY_DRIVER: &str = "3Dconnexion's driver is using the 3D mouse, so Tequila can't open it while the driver runs. Support through the driver is coming.";
+
+/// Why a 3D mouse was found and could not be read: what to tell the
+/// person, and the system's own words, when they are not the message.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OpenProblem {
+    pub message: String,
+    pub details: Option<String>,
+}
+
+impl OpenProblem {
+    /// Device `name` would not open, saying `error`.
+    ///
+    /// On a Mac, 3Dconnexion's driver (3DxWare) opens the device for
+    /// itself, and IOKit refuses anyone else: hidapi passes on
+    /// `kIOReturnExclusiveAccess`, 0xE00002C5, sometimes as its number and
+    /// sometimes in words. That one is said plainly, with the raw text kept
+    /// as details; anything else is said as it was.
+    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    pub fn of(name: &str, error: &str) -> OpenProblem {
+        if held_by_driver(error) {
+            OpenProblem { message: HELD_BY_DRIVER.into(), details: Some(error.to_string()) }
+        } else {
+            OpenProblem { message: format!("{name} could not be opened: {error}"), details: None }
+        }
+    }
+}
+
+/// Whether an open's error says another program has the device to itself.
+pub fn held_by_driver(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("e00002c5") || error.contains("exclusive access") || error.contains("exclusiveaccess")
 }
 
 /// A synthetic motion from the scripting channel: held until a moment.
@@ -125,6 +163,11 @@ impl SpaceMouse {
     /// The device being read, if any.
     pub fn device(&self) -> Option<String> {
         self.shared.lock().ok().and_then(|s| s.device.clone())
+    }
+
+    /// Why a 3D mouse that is there is not being read, if one is not.
+    pub fn problem(&self) -> Option<OpenProblem> {
+        self.shared.lock().ok().and_then(|s| s.problem.clone())
     }
 
     /// The axes as the view takes them now, smoothed, for the preferences
@@ -229,16 +272,30 @@ impl SpaceMouse {
         let mut open = true;
         let before = self.settings;
         let device = self.device();
+        let problem = self.problem();
         let axes = self.axes();
         egui::Window::new("Preferences").open(&mut open).collapsible(false).resizable(false).default_width(360.0).show(ctx, |ui| {
             crate::theme::section(ui, "3D mouse");
             let p = crate::theme::p();
-            let status = match (&device, self.settings.enabled) {
-                (_, false) => "Off".to_string(),
-                (Some(name), true) => format!("Connected: {name}"),
-                (None, true) => "No 3D mouse found. Plug one in, or start spacenavd on Linux.".into(),
-            };
-            ui.label(egui::RichText::new(status).small().color(if device.is_some() && self.settings.enabled { p.success } else { crate::theme::dim() }));
+            match (&device, &problem, self.settings.enabled) {
+                (_, _, false) => {
+                    ui.label(egui::RichText::new("Off").small().color(crate::theme::dim()));
+                }
+                (Some(name), _, true) => {
+                    ui.label(egui::RichText::new(format!("Connected: {name}")).small().color(p.success));
+                }
+                (None, Some(problem), true) => {
+                    ui.add(egui::Label::new(egui::RichText::new(&problem.message).small().color(p.busy)).wrap());
+                    if let Some(details) = &problem.details {
+                        egui::CollapsingHeader::new(egui::RichText::new("Details").small()).id_salt("3d-mouse-problem").show(ui, |ui| {
+                            ui.add(egui::Label::new(egui::RichText::new(details).small().monospace().color(crate::theme::dim())).wrap().selectable(true));
+                        });
+                    }
+                }
+                (None, None, true) => {
+                    ui.label(egui::RichText::new("No 3D mouse found. Plug one in, or start spacenavd on Linux.").small().color(crate::theme::dim()));
+                }
+            }
             ui.add(crate::field::Checkbox::new(&mut self.settings.enabled, "Move the view with a 3D mouse"))
                 .on_hover_text("A 3Dconnexion SpaceMouse, SpaceNavigator or the like: turn, pan and zoom with one hand while the other keeps the mouse.");
             ui.add_enabled_ui(self.settings.enabled, |ui| {
@@ -336,6 +393,12 @@ fn read(running: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui::Context) {
             s.device = device;
         }
     };
+    #[cfg(any(windows, target_os = "macos"))]
+    let mut problem = |problem: Option<OpenProblem>| {
+        if let Ok(mut s) = shared.lock() {
+            s.problem = problem;
+        }
+    };
     // spacenavd first where there may be one: on Linux it is the way in,
     // and on a Mac it is the one that works beside nothing else.
     #[cfg(target_os = "linux")]
@@ -345,11 +408,11 @@ fn read(running: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui::Context) {
         if spnav::socket_paths().iter().any(|p| p.exists()) {
             spnav::run(running, &mut send, &mut status);
         } else {
-            hid::run(running, &mut send, &mut status);
+            hid::run(running, &mut send, &mut status, &mut problem);
         }
     }
     #[cfg(windows)]
-    hid::run(running, &mut send, &mut status);
+    hid::run(running, &mut send, &mut status, &mut problem);
     #[cfg(not(any(windows, unix)))]
     {
         let _ = (running, &mut send, &mut status);
@@ -493,6 +556,31 @@ mod tests {
             mouse.frame(&ctx, &mut camera, 1.0 / 60.0, 1.5, || None);
         }
         assert_eq!(camera.camera.camera_to_world, still.camera.camera_to_world);
+    }
+
+    /// On a Mac, 3Dconnexion's driver holding the device is said plainly,
+    /// hidapi's own words kept as details, however hidapi puts it: the
+    /// IOKit code as a number, or in words. Any other failure is said as
+    /// it was, and nothing is kept aside.
+    #[test]
+    fn the_driver_holding_the_device_is_said_plainly() {
+        for error in [
+            "hid_open_path: failed to open IOHIDDevice from mach entry: (0xE00002C5) (iokit/common) exclusive access and device already open",
+            "IOHIDDeviceOpen failed: (0xe00002c5)",
+            "Failed to open device: kIOReturnExclusiveAccess",
+            "Exclusive access and device already open",
+        ] {
+            let problem = OpenProblem::of("SpaceMouse Compact", error);
+            assert_eq!(problem.message, HELD_BY_DRIVER, "{error}");
+            assert_eq!(problem.details.as_deref(), Some(error));
+        }
+        for error in ["hid_open_path: failed to open IOHIDDevice from mach entry: (0xE00002E2) (iokit/common) not permitted", "Access is denied. (0x80070005)", ""] {
+            assert!(!held_by_driver(error), "{error}");
+            let problem = OpenProblem::of("SpaceMouse Compact", error);
+            assert_eq!(problem.message, format!("SpaceMouse Compact could not be opened: {error}"));
+            assert_eq!(problem.details, None);
+        }
+        assert!(HELD_BY_DRIVER.starts_with("3Dconnexion's driver is using the 3D mouse"));
     }
 
     /// A motion the device never puts back at rest - a lost report - stops

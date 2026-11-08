@@ -14,6 +14,11 @@
 //! times in a second is one thing that happened five times, and five copies
 //! sliding up the screen is the sort of detail that makes an application feel
 //! like it is shouting.
+//!
+//! A notice may offer one thing to do next, as a link at its end - a
+//! Screenshot's "Open folder". Only the link takes a click, and the notice
+//! stays a while longer, and while the pointer is on it, so it can be
+//! reached; ignored, it goes as any other does.
 
 use eframe::egui;
 use std::time::{Duration, Instant};
@@ -22,6 +27,15 @@ use std::time::{Duration, Instant};
 const HOLD: Duration = Duration::from_millis(2600);
 /// And how long the fade itself takes.
 const FADE: Duration = Duration::from_millis(450);
+/// How long one with something to do stays, to be reached.
+const HOLD_ACTION: Duration = Duration::from_millis(6000);
+
+/// What a notice's link does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Action {
+    /// Show this file in the file manager: its folder, opened on it.
+    Reveal(std::path::PathBuf),
+}
 
 #[derive(Clone, Debug)]
 struct Notice {
@@ -30,6 +44,14 @@ struct Notice {
     raised: Instant,
     /// How many times this same message has arrived.
     count: u32,
+    /// A link at its end: what it says, and what it does.
+    action: Option<(String, Action)>,
+}
+
+impl Notice {
+    fn hold(&self) -> Duration {
+        if self.action.is_some() { HOLD_ACTION } else { HOLD }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +66,8 @@ pub enum Kind {
 #[derive(Debug, Default)]
 pub struct Toasts {
     notices: Vec<Notice>,
+    /// A link clicked, for the application to act on.
+    chosen: Option<Action>,
 }
 
 impl Toasts {
@@ -55,11 +79,25 @@ impl Toasts {
         self.push(text.into(), Kind::Warning);
     }
 
+    /// Something happened, with one thing to do next: `label`, a link at
+    /// the notice's end, which [`Toasts::take_action`] hands over clicked.
+    pub fn info_with(&mut self, text: impl Into<String>, label: impl Into<String>, action: Action) {
+        self.notices.push(Notice { text: text.into(), kind: Kind::Info, raised: Instant::now(), count: 1, action: Some((label.into(), action)) });
+        if self.notices.len() > 4 {
+            self.notices.remove(0);
+        }
+    }
+
+    /// The link clicked since this was last asked, if one was.
+    pub fn take_action(&mut self) -> Option<Action> {
+        self.chosen.take()
+    }
+
     fn push(&mut self, text: String, kind: Kind) {
         // Coalesce with the most recent notice if it says the same thing,
         // rather than appending a duplicate.
         if let Some(last) = self.notices.last_mut() {
-            if last.text == text && last.kind == kind {
+            if last.text == text && last.kind == kind && last.action.is_none() {
                 last.count += 1;
                 last.raised = Instant::now();
                 return;
@@ -70,6 +108,7 @@ impl Toasts {
             kind,
             raised: Instant::now(),
             count: 1,
+            action: None,
         });
         // A cap, because a runaway caller should degrade into "the last few
         // things that happened" rather than into a wall.
@@ -83,7 +122,7 @@ impl Toasts {
     pub fn show(&mut self, ctx: &egui::Context, viewport: egui::Rect) -> bool {
         let now = Instant::now();
         self.notices
-            .retain(|n| now.duration_since(n.raised) < HOLD + FADE);
+            .retain(|n| now.duration_since(n.raised) < n.hold() + FADE);
         if self.notices.is_empty() {
             return false;
         }
@@ -97,12 +136,14 @@ impl Toasts {
         ));
 
         let mut y = viewport.bottom() - 26.0;
-        for notice in self.notices.iter().rev() {
+        let mut done = None;
+        for (index, notice) in self.notices.iter_mut().enumerate().rev() {
             let age = now.duration_since(notice.raised);
-            let alpha = if age < HOLD {
+            let hold = notice.hold();
+            let alpha = if age < hold {
                 1.0
             } else {
-                1.0 - (age - HOLD).as_secs_f32() / FADE.as_secs_f32()
+                1.0 - (age - hold).as_secs_f32() / FADE.as_secs_f32()
             }
             .clamp(0.0, 1.0);
 
@@ -116,7 +157,11 @@ impl Toasts {
                 egui::FontId::proportional(12.5),
                 crate::theme::p().text.gamma_multiply(alpha),
             );
-            let size = galley.size() + egui::vec2(22.0, 11.0);
+            let link = notice.action.as_ref().map(|(label, _)| {
+                painter.layout_no_wrap(label.clone(), egui::FontId::proportional(12.5), crate::theme::p().accent.gamma_multiply(alpha))
+            });
+            let room = link.as_ref().map_or(0.0, |l| l.size().x + 16.0);
+            let size = galley.size() + egui::vec2(22.0 + room, 11.0);
             let rect = egui::Rect::from_center_size(
                 egui::pos2(viewport.center().x, y - size.y * 0.5),
                 size,
@@ -131,12 +176,38 @@ impl Toasts {
                 fill.gamma_multiply(alpha * 0.94),
                 egui::Stroke::new(1.0_f32, edge.gamma_multiply(alpha)),
             );
-            painter.galley(
-                rect.center() - galley.size() * 0.5,
-                galley,
-                egui::Color32::PLACEHOLDER,
-            );
+            let text_at = egui::pos2(rect.left() + 11.0, rect.center().y - galley.size().y * 0.5);
+            painter.galley(text_at, galley, egui::Color32::PLACEHOLDER);
+            if let (Some(link), Some((_, action))) = (link, &notice.action) {
+                let at = egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - 11.0 - link.size().x, rect.center().y - link.size().y * 0.5),
+                    link.size(),
+                );
+                // The link alone takes the pointer: an area of its own, the
+                // size of its words, over the notice.
+                let response = egui::Area::new(egui::Id::new(("toast-action", notice.text.as_str())))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at.min)
+                    .show(ctx, |ui| ui.allocate_exact_size(at.size(), egui::Sense::click()).1)
+                    .inner;
+                let colour = crate::theme::p().accent.gamma_multiply(alpha);
+                painter.galley(at.min, link, egui::Color32::PLACEHOLDER);
+                if response.hovered() {
+                    // Kept while it is pointed at, so it cannot fade away
+                    // under the pointer.
+                    notice.raised = now;
+                    painter.line_segment([at.left_bottom(), at.right_bottom()], egui::Stroke::new(1.0_f32, colour));
+                    ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if response.clicked() {
+                    self.chosen = Some(action.clone());
+                    done = Some(index);
+                }
+            }
             y -= size.y + 6.0;
+        }
+        if let Some(index) = done {
+            self.notices.remove(index);
         }
         true
     }
@@ -176,6 +247,21 @@ mod tests {
         toasts.info("Rendering");
         toasts.warn("Rendering");
         assert_eq!(toasts.notices.len(), 2);
+    }
+
+    /// A notice with something to do stays longer than one without, and is
+    /// a notice of its own even when the words are the same: its link must
+    /// not be lost into an earlier notice that has none.
+    #[test]
+    fn a_notice_with_a_link_stays_longer_and_keeps_it() {
+        let mut toasts = Toasts::default();
+        toasts.info("Saved Untitled.png");
+        toasts.info_with("Saved Untitled.png", "Open folder", Action::Reveal("Untitled.png".into()));
+        toasts.info("Saved Untitled.png");
+        assert_eq!(toasts.notices.len(), 3, "a link was coalesced away");
+        assert_eq!(toasts.notices[1].action, Some(("Open folder".to_string(), Action::Reveal("Untitled.png".into()))));
+        assert!(toasts.notices[1].hold() > toasts.notices[0].hold());
+        assert_eq!(toasts.take_action(), None, "nothing was clicked");
     }
 
     /// A runaway caller degrades into "the last few things that happened"

@@ -19,6 +19,31 @@ use tequila_scene::gizmo::{self, Axis, Drag, GizmoFrame, GizmoMode, Handle, Pivo
 use tequila_scene::tree::NodeId;
 use tequila_scene::Command;
 
+/// How long the gizmo's arms are on screen, in points - pixels at 100%
+/// display scaling, twice that on a Retina screen - and the radius of its
+/// rotation rings: the same whatever the window, the lens or the distance.
+/// One number, for the Preferences window to offer one day.
+pub const GIZMO_POINTS: f32 = 90.0;
+
+/// The length in the world, `depth` in front of the camera along its view,
+/// that spans `points` on screen in a view `height` points tall: what a
+/// handle of a fixed size on screen is where the gizmo stands.
+///
+/// A perspective view is as tall in the world as twice the depth times the
+/// tangent of half its vertical field of view; an orthographic one is its
+/// scale tall at any depth. A 360° view has no straight lines to measure
+/// along, and keeps a seventh of the depth, which the gizmo always was.
+pub fn world_length_of_points(camera: &Camera, aspect: f32, height: f32, depth: f32, points: f32) -> f32 {
+    use tequila_render_core::camera::Projection;
+    let depth = depth.max(1e-3);
+    let tall = match camera.projection {
+        Projection::Perspective { .. } | Projection::Shift { .. } => 2.0 * depth * (camera.vertical_fov(aspect.max(1e-3)) * 0.5).tan(),
+        Projection::Orthographic { scale } => scale.abs(),
+        Projection::Equirectangular => return depth * 0.14,
+    };
+    (tall * points / height.max(1.0)).max(1e-6)
+}
+
 #[derive(Debug)]
 pub struct GizmoUi {
     pub mode: GizmoMode,
@@ -127,10 +152,14 @@ impl GizmoUi {
         };
 
         let view = camera.forward();
-        let distance = (pivot - camera.position()).length().max(1e-3);
         // Constant size on screen: a gizmo that shrinks with distance becomes
-        // unclickable on a large assembly.
-        let handle_length = distance * 0.14;
+        // unclickable on a large assembly. And the same size whatever the
+        // window: a seventh of the distance, as it was, is a share of the
+        // view's height, which on a large monitor made it a sixth of the
+        // screen.
+        let aspect = rect.width().max(1.0) / rect.height().max(1.0);
+        let depth = (pivot - camera.position()).dot(view);
+        let handle_length = world_length_of_points(camera, aspect, rect.height(), depth, GIZMO_POINTS);
 
         // Local space follows the first selected node's orientation. With
         // several selected there is no single "local", and picking one is less
@@ -419,6 +448,48 @@ mod transform_tests {
         assert!((after.y - before.y - 0.5).abs() < 1e-4, "the pivot did not follow the move: {before:?} -> {after:?}");
         project.selection.clear();
         assert!(gizmo.targets(&project).0.is_empty(), "a cleared selection kept its targets");
+    }
+
+    /// The gizmo's arms are GIZMO_POINTS long on screen however tall the
+    /// view, however far off the part and whatever the lens, perspective
+    /// or orthographic: a length across the view at the gizmo's depth,
+    /// projected, comes back as that many points. And its handles are
+    /// picked where they are drawn, at any size.
+    #[test]
+    fn the_gizmo_is_the_same_size_on_screen_at_any_window_size() {
+        use tequila_render_core::camera::Projection;
+        for (width, height) in [(640.0, 400.0), (1280.0, 800.0), (2400.0, 1300.0), (500.0, 900.0)] {
+            let rect = egui::Rect::from_min_size(egui::pos2(30.0, 20.0), egui::vec2(width, height));
+            let aspect = width / height;
+            for (distance, projection) in [
+                (1.0, Projection::Perspective { focal_length_mm: 50.0 }),
+                (40.0, Projection::Perspective { focal_length_mm: 135.0 }),
+                (3.0, Projection::Shift { focal_length_mm: 24.0, shift_x: 0.0, shift_y: 0.1 }),
+                (5.0, Projection::Orthographic { scale: 2.5 }),
+            ] {
+                let pivot = vec3(0.2, 0.1, -0.3);
+                let eye = pivot + vec3(0.6, 0.45, 1.0).normalize() * distance;
+                let camera = Camera { projection, ..Camera::look_at(eye, pivot, Vec3::Y) };
+                let depth = (pivot - camera.position()).dot(camera.forward());
+                let length = world_length_of_points(&camera, aspect, height, depth, GIZMO_POINTS);
+                let up = camera.camera_to_world.transform_vector(Vec3::Y).normalize();
+                let right = camera.camera_to_world.transform_vector(Vec3::X).normalize();
+                let centre = project_point(&camera, rect, pivot).expect("in front");
+                for across in [up, right] {
+                    let end = project_point(&camera, rect, pivot + across * length).expect("in front");
+                    let on_screen = (end - centre).length();
+                    assert!(
+                        (on_screen - GIZMO_POINTS).abs() < 0.5,
+                        "{projection:?} at {distance} in {width}x{height}: {on_screen} points, not {GIZMO_POINTS}"
+                    );
+                }
+                // A click on the X arm's tip, on screen, picks the X arm.
+                let frame = GizmoFrame::world(pivot, length);
+                let tip = project_point(&camera, rect, pivot + Vec3::X * length * 0.8).expect("in front");
+                let ray = ray_through(&camera, rect, tip).expect("in the view");
+                assert_eq!(gizmo::pick(&ray, &frame, GizmoMode::Move, camera.forward()), Some(Handle::Axis(Axis::X)), "{projection:?} in {width}x{height}");
+            }
+        }
     }
 
     #[test]
