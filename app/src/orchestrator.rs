@@ -1185,11 +1185,12 @@ fn publish(
                     // Automatic unless the user said otherwise: guides are
                     // themselves noisy early on and clean later, so the sample
                     // count is the right judge right up until someone
-                    // disagrees with it.
-                    prefilter_guides: state
-                        .request
-                        .prefilter_guides
-                        .unwrap_or(fb.min_samples() < 32),
+                    // disagrees with it. A frame of fewer than four samples,
+                    // as each one after a move is, has them filtered anyway.
+                    prefilter_guides: tequila_denoise::prefilter_guides(
+                        state.request.prefilter_guides.unwrap_or(fb.min_samples() < 32),
+                        fb.min_samples(),
+                    ),
                 },
             )
             .ok()

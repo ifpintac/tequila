@@ -1716,7 +1716,8 @@ fn denoise_section(ui: &mut egui::Ui, settings: &mut RenderSettings) {
             );
         ui.add(crate::field::Checkbox::new(&mut settings.prefilter_guides, "Prefilter guides")).on_hover_text(
             "Filter the albedo and normal passes before using them. Worth it at low sample \
-             counts, where the guides are themselves noisy.",
+             counts, where the guides are themselves noisy; either way they keep fine texture. \
+             Below four samples they are filtered whatever this says.",
         );
     });
 }

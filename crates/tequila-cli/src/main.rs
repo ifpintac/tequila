@@ -1415,9 +1415,8 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
                         strength: denoise_strength,
                         // A project's own choice; otherwise, at a final
                         // render's sample count the guides are already
-                        // clean, and prefiltering them would only blur
-                        // detail out of the result.
-                        prefilter_guides: if project { settings.prefilter_guides } else { samples < 64 },
+                        // clean, and prefiltering them is wasted effort.
+                        prefilter_guides: tequila_denoise::prefilter_guides(if project { settings.prefilter_guides } else { samples < 64 }, samples),
                     },
                 )
                 .ok()
@@ -1610,7 +1609,7 @@ fn render_with_cycles(
     // the Render window renders it; otherwise Cycles' defaults.
     let quality = match project {
         Some(settings) => translate::Quality::with_lighting(settings.adaptive, denoise, settings.max_seconds.map(f64::from), lighting)
-            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
+            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, tequila_denoise::prefilter_guides(settings.prefilter_guides, samples))
             .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
         None => translate::Quality::with_lighting(true, denoise, None, lighting),
     };

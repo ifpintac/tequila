@@ -427,7 +427,9 @@ pub struct RenderSettings {
     pub denoise_cadence: u32,
     /// Pre-filter the albedo and normal guides before denoising. Worth it at
     /// low sample counts, where the guides are themselves noisy, and wasted
-    /// once they are clean.
+    /// once they are clean. Off, the guides are denoised against as clean,
+    /// which keeps fine texture as well; below four samples they are
+    /// filtered anyway (`tequila_denoise::prefilter_guides`).
     pub prefilter_guides: bool,
 
     /// Outlier rejection (§3.5).

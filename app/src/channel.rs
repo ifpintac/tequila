@@ -1876,7 +1876,7 @@ fn render_to_file(
                 tequila_denoise::DenoiseSettings {
                     quality: tequila_denoise::Quality::High,
                     strength: settings.denoise_strength,
-                    prefilter_guides: settings.prefilter_guides,
+                    prefilter_guides: tequila_denoise::prefilter_guides(settings.prefilter_guides, samples),
                 })
             .map_err(|e| format!("Denoising failed: {e}"))?)
     } else { None };

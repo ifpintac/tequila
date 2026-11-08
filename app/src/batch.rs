@@ -895,7 +895,11 @@ fn render_cycles(
     translate::configure(
         &mut session,
         &translate::Quality::with_lighting(settings.adaptive, settings.denoise && !keeping, settings.max_seconds.map(f64::from), &job.config)
-            .with_clamping(settings.reject_fireflies, settings.clamp_indirect, settings.prefilter_guides)
+            .with_clamping(
+                settings.reject_fireflies,
+                settings.clamp_indirect,
+                tequila_denoise::prefilter_guides(settings.prefilter_guides, settings.max_samples),
+            )
             .with_render_controls(settings.clamp_direct, settings.pixel_filter, settings.adaptive_threshold),
     )?;
 
@@ -982,7 +986,7 @@ fn render_cycles(
             let quality = tequila_denoise::DenoiseSettings {
                 quality: tequila_denoise::Quality::High,
                 strength: settings.denoise_strength,
-                prefilter_guides: settings.prefilter_guides,
+                prefilter_guides: tequila_denoise::prefilter_guides(settings.prefilter_guides, rendered),
             };
             if let Ok(clean) = denoiser.denoise(settings.width, settings.height, &flat, &albedo, &normal, quality) {
                 color = clean
@@ -1560,7 +1564,7 @@ impl Relight {
                         tequila_denoise::DenoiseSettings {
                             quality: tequila_denoise::Quality::High,
                             strength: settings.denoise_strength,
-                            prefilter_guides: settings.prefilter_guides,
+                            prefilter_guides: tequila_denoise::prefilter_guides(settings.prefilter_guides, samples),
                         },
                     ) {
                         image = clean
@@ -1616,7 +1620,7 @@ impl Relight {
                     let quality = tequila_denoise::DenoiseSettings {
                         quality: tequila_denoise::Quality::High,
                         strength: settings.denoise_strength,
-                        prefilter_guides: settings.prefilter_guides,
+                        prefilter_guides: tequila_denoise::prefilter_guides(settings.prefilter_guides, settings.max_samples),
                     };
                     if let Ok(clean) = denoiser.denoise(width, height, &flat, &albedo, &normal, quality) {
                         image = clean
@@ -1744,7 +1748,7 @@ fn develop(
                         // once, against a render that took minutes.
                         quality: tequila_denoise::Quality::High,
                         strength: settings.denoise_strength,
-                        prefilter_guides: settings.prefilter_guides,
+                        prefilter_guides: tequila_denoise::prefilter_guides(settings.prefilter_guides, framebuffer.min_samples()),
                     },
                 )
                 .ok()
