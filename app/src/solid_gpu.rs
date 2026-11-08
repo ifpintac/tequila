@@ -2929,14 +2929,14 @@ unsafe fn upload_texture(gl: &glow::Context, texture: &Arc<Texture>) -> Result<G
     // texture, so filtering happens on linear values and eight bits are
     // spent where the eye needs them. Data maps are sent as they are.
     let colour = texture.role == MapRole::Color;
-    let channels = image.channels.max(1);
     let mut bytes = Vec::with_capacity(image.width * image.height * 4);
-    for texel in image.data.chunks_exact(channels) {
-        let get = |c: usize| texel.get(c).copied().unwrap_or(if channels == 1 { texel[0] } else { 0.0 });
-        let (r, g, b) = (get(0), if channels >= 3 { get(1) } else { get(0) }, if channels >= 3 { get(2) } else { get(0) });
-        let a = if channels == 4 { texel[3] } else { 1.0 };
-        let encode = |v: f32| if colour { encode_srgb8(v) } else { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
-        bytes.extend_from_slice(&[encode(r), encode(g), encode(b), (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8]);
+    for y in 0..image.height {
+        for x in 0..image.width {
+            // Grey reads as three equal channels, and no alpha as 1.
+            let [r, g, b, a] = image.rgba(x, y);
+            let encode = |v: f32| if colour { encode_srgb8(v) } else { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
+            bytes.extend_from_slice(&[encode(r), encode(g), encode(b), (a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8]);
+        }
     }
     let handle = gl.create_texture()?;
     gl.bind_texture(glow::TEXTURE_2D, Some(handle));
@@ -2969,14 +2969,14 @@ unsafe fn upload_label(gl: &glow::Context, texture: &Arc<Texture>) -> Result<Gpu
         .unwrap_or(pyramid.levels() - 1);
     let image = pyramid.level(level);
     let colour = texture.role == MapRole::Color;
-    let channels = image.channels.max(1);
     let mut bytes = Vec::with_capacity(image.width * image.height * 4);
-    for texel in image.data.chunks_exact(channels) {
-        let grey = channels < 3;
-        let (r, g, b) = if grey { (texel[0], texel[0], texel[0]) } else { (texel[0], texel[1], texel[2]) };
-        let a = if channels == 4 { texel[3].clamp(0.0, 1.0) } else { 1.0 };
-        let encode = |v: f32| if colour { encode_srgb8(v * a) } else { ((v * a).clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
-        bytes.extend_from_slice(&[encode(r), encode(g), encode(b), (a * 255.0 + 0.5) as u8]);
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let [r, g, b, a] = image.rgba(x, y);
+            let a = a.clamp(0.0, 1.0);
+            let encode = |v: f32| if colour { encode_srgb8(v * a) } else { ((v * a).clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
+            bytes.extend_from_slice(&[encode(r), encode(g), encode(b), (a * 255.0 + 0.5) as u8]);
+        }
     }
     let handle = gl.create_texture()?;
     gl.bind_texture(glow::TEXTURE_2D, Some(handle));

@@ -14,6 +14,9 @@ png = "0.17"
 jpeg-decoder = "0.3"
 tequila-core.workspace = true
 exr = "1"
+# MIT OR Apache-2.0. Half floats, for the pyramid levels a picture is kept
+# in (`level.rs`); exr already brings it.
+half = "2"
 # MIT. OpenVDB reading, for Volume Maps; builds Blosc and LZ4 (BSD) from
 # source through blosc-src.
 vdb-rs = "0.6"

@@ -7,6 +7,12 @@
 //! merely strain that machine, it exceeds its entire memory on the textures
 //! alone. Something has to evict.
 //!
+//! Levels are kept smaller than that now ([`crate::level`]): an 8-bit colour
+//! map as its bytes, a grey one as one channel, other floats as half floats.
+//! Forty 4K colour maps from 8-bit files come to 2.7 GB with their pyramids,
+//! which still does not leave an 8 GB machine room for everything else, so
+//! the budget stands; it counts what the levels actually take.
+//!
 //! What makes eviction safe here is that a texture is *reconstructible*: it came
 //! from a file, and it can come from that file again. Dropping one costs a
 //! reload, not a wrong image. So the cache holds what fits, evicts what has gone
@@ -35,11 +41,9 @@
 use crate::texture::Texture;
 use std::collections::HashMap;
 
-/// Bytes one texture occupies, pyramid included.
+/// Bytes one texture occupies, pyramid included, as its levels keep it.
 fn footprint(texture: &Texture) -> usize {
-    texture.pyramid().texels()
-        * texture.pyramid().base().channels
-        * std::mem::size_of::<f32>()
+    texture.pyramid().bytes()
 }
 
 /// A cache entry and its last-use stamp.
