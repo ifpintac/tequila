@@ -119,6 +119,28 @@ impl GpuDenoiser {
         self.kind
     }
 
+    /// Let go of what the last image size held on the graphics card: the
+    /// buffers bound to it, and the working memory OIDN's filters keep for
+    /// it, which a Retina viewport's size makes hundreds of megabytes. The
+    /// filters are made again, empty; the next frame binds and commits them
+    /// at its own size, as the first did.
+    pub fn release(&self) {
+        let Ok(mut state) = self.state.lock() else { return };
+        state.bound = None;
+        let rt = CString::new("RT").unwrap();
+        // SAFETY: each handle came from `oidnNewFilter` and is released once,
+        // under the mutex, with nothing bound to it any more; the new ones
+        // are made on the same device.
+        unsafe {
+            sys::oidnReleaseFilter(state.beauty);
+            sys::oidnReleaseFilter(state.albedo);
+            sys::oidnReleaseFilter(state.normal);
+            state.beauty = sys::oidnNewFilter(self.device.0, rt.as_ptr());
+            state.albedo = sys::oidnNewFilter(self.device.0, rt.as_ptr());
+            state.normal = sys::oidnNewFilter(self.device.0, rt.as_ptr());
+        }
+    }
+
     /// Denoise one frame. The same contract as
     /// [`Denoiser::denoise`](crate::Denoiser::denoise).
     pub fn denoise(

@@ -183,6 +183,13 @@ impl MeshCache {
         loaded
     }
 
+    /// Keep only the decoded textures and Volume Map grids `used` says the
+    /// scene still asks for, whether they were read or failed to be.
+    pub(crate) fn keep_textures(&mut self, used: impl Fn(TextureId) -> bool) {
+        self.textures.retain(|id, _| used(*id));
+        self.volumes.retain(|id, _| used(*id));
+    }
+
     /// Forget what `ids` decoded to, so the next snapshot reads their files
     /// again: for a texture whose file was replaced under it, as a
     /// Substance material's are when its maps are rendered again.
@@ -593,6 +600,16 @@ pub fn snapshot_with(
             }
         }
     }
+
+    // Decoded pictures no material asks for any more - a deleted model's, a
+    // map taken off - are let go, as meshes are below. Each is kept as
+    // floats with its mipmaps, a quarter of a gigabyte for a 4K map, and
+    // they were all kept for as long as Tequila ran: a model of 446 parts
+    // wearing sixteen 4K maps, deleted, left 5.9 GB behind. Undoing the
+    // delete reads them again.
+    let asked: std::collections::BTreeSet<TextureId> =
+        programs.iter().flatten().flat_map(|p| p.requirements.textures.iter().chain(&p.requirements.volumes).copied()).collect();
+    cache.keep_textures(|id| asked.contains(&id));
 
     displace_instances(&mut meshes, &mut instances, &instance_meshes, &programs, &textures, cache);
     occlude_instances(&mut meshes, &mut instances, &programs, cache);
@@ -1748,6 +1765,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A decoded picture is kept while a material asks for it, let go once
+    /// none does, and read again when an undo brings it back: deleted
+    /// models' maps were kept, as floats with their mipmaps, for as long as
+    /// Tequila ran.
+    #[test]
+    fn a_picture_no_material_asks_for_is_let_go() {
+        use tequila_texture::texture::MapRole;
+        let dir = std::env::temp_dir().join(format!("tequila-let-go-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("map.png");
+        {
+            let mut encoder = png::Encoder::new(std::fs::File::create(&path).unwrap(), 2, 2);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().unwrap().write_image_data(&[200, 100, 50, 255].repeat(4)).unwrap();
+        }
+        let (mut document, mut bus, ids) = assembly(1);
+        let material = document.tree.get(ids[1]).and_then(|n| n.material).unwrap();
+        let mut cache = MeshCache::new();
+        let environment = Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ZERO));
+        let source = crate::textures::TextureSource::new(path.clone(), MapRole::Color);
+        bus.apply(&mut document, Command::SetParameterTexture { material, param: tequila_materials::material_type::Param::BaseColor, source: Some(source) }).unwrap();
+        snapshot(&document, environment.clone(), &mut cache);
+        assert_eq!(cache.textures.len(), 1, "the map is decoded");
+        let kept = cache.textures.values().next().unwrap().clone().expect("read");
+        assert_eq!(kept.pyramid().base().channels, 3, "an opaque map keeps no alpha");
+
+        bus.apply(&mut document, Command::SetParameterTexture { material, param: tequila_materials::material_type::Param::BaseColor, source: None }).unwrap();
+        snapshot(&document, environment.clone(), &mut cache);
+        assert!(cache.textures.is_empty(), "the map no material uses is still kept");
+
+        bus.undo(&mut document).unwrap();
+        snapshot(&document, environment, &mut cache);
+        assert_eq!(cache.textures.len(), 1, "undone, the map is read again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Which rays see a part come from it and every group above it, and
     /// reach its instance; one undo puts them back.
     #[test]
@@ -1841,6 +1895,10 @@ pub fn load_texture(source: &crate::textures::TextureSource) -> Option<Texture> 
     } else {
         tequila_texture::image::Image::load(&source.path).ok()?
     };
+    // Kept as floats, with their mipmaps, for as long as the document uses
+    // them: an alpha that is opaque throughout is a quarter of that for
+    // nothing (a 4K map, 357 MB with it, 268 MB without).
+    let image = image.without_opaque_alpha();
     Some(Texture::from_linear(
         image,
         source.role,
