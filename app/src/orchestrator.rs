@@ -1985,6 +1985,78 @@ mod tests {
         assert_eq!(view.translations(), 1, "a dragged part translated the scene again");
     }
 
+    /// Parts imported into a Cycles viewport on a card with memory of its
+    /// own go into a session made afresh, the old one ended first, and the
+    /// view shows them; a part deleted, the same; a colour picked keeps the
+    /// session. Rebuilt inside the running session, an import or a delete
+    /// ended on CUDA in an illegal-address error and the view fell back to
+    /// the processor. Driven here on the processor, the renewal forced, as
+    /// no NVIDIA card is at hand. Skipped where Cycles is not installed
+    /// (`TEQUILA_CYCLES`).
+    #[test]
+    fn parts_imported_or_deleted_go_into_a_fresh_cycles_session() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        view.renew_on_new_parts = true;
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(64, 48);
+        // Synced, and a picture of some samples drawn of it.
+        let mut shown = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !view.sync(req).expect("synced") {
+                assert!(Instant::now() < deadline, "Cycles never took the change");
+                view.take_frame(&mut framebuffer);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            loop {
+                if view.take_frame(&mut framebuffer).is_some_and(|frame| frame.samples >= 4 && frame.width == 64) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "Cycles never drew the change");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        shown(&mut view, &req);
+        assert_eq!(view.renewals(), 0, "the first scene is the session's own");
+
+        // A second sphere, as an import adds parts.
+        let mut imported = (*req.scene).clone();
+        let mut copy = imported.instances[0].clone();
+        copy.id = tequila_core::ids::InstanceId(imported.instances.len() as u32);
+        copy.transform = tequila_core::math::Transform::translation(Vec3 { x: 0.8, y: 1.0, z: 0.0 });
+        imported.instances.push(copy);
+        req.scene = Arc::new(imported);
+        req.scene_generation += 1;
+        shown(&mut view, &req);
+        assert_eq!(view.renewals(), 1, "the import went into the running session");
+
+        // Painted: the same session.
+        let mut painted = (*req.scene).clone();
+        let material = painted.instances[0].material.index();
+        painted.materials[material].base_color = tequila_core::spectrum::Spectrum { r: 0.8, g: 0.02, b: 0.02 };
+        painted.lights = Arc::new((*painted.lights).clone());
+        painted.textures = Arc::new((*painted.textures).clone());
+        req.scene = Arc::new(painted);
+        req.scene_generation += 1;
+        shown(&mut view, &req);
+        assert_eq!(view.renewals(), 1, "a colour change made a new session");
+
+        // The second sphere deleted.
+        let mut deleted = (*req.scene).clone();
+        deleted.instances.pop();
+        deleted.lights = Arc::new((*deleted.lights).clone());
+        req.scene = Arc::new(deleted);
+        req.scene_generation += 1;
+        shown(&mut view, &req);
+        assert_eq!(view.renewals(), 2, "the delete went into the running session");
+    }
+
     /// Orbiting a Cycles viewport shows Cycles' pictures as it goes, each a
     /// picture of the view. It showed none until the mouse stopped: every
     /// move restarted Cycles before its picture of the last was made, and the
