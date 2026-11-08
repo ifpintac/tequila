@@ -6,7 +6,10 @@
 //! - **Always pass albedo and normal guides.** "Denoising the beauty pass
 //!   alone destroys texture detail; with guides it preserves it."
 //! - **Prefilter the guides** when the sample count is low, or noise in the
-//!   guides propagates into the result.
+//!   guides propagates into the result. Guides that are not prefiltered are
+//!   handed over as clean, as Cycles' "None" prefilter hands them: told they
+//!   were noisy, OIDN trusted them less and smoothed fine texture away with
+//!   the noise ([`DenoiseSettings::prefilter_guides`]).
 //! - **HDR mode on scene-linear data.** Never denoise after tone mapping.
 //! - **Expose a blend control**, because at high sample counts many people
 //!   prefer a little residual grain to the plastic look of full denoising.
@@ -85,7 +88,28 @@ pub struct DenoiseSettings {
     pub strength: f32,
     /// Run the guide buffers through their own denoiser first. Worth it at
     /// low sample counts, wasted effort at high ones.
+    ///
+    /// Either way OIDN is told the guides are clean (`cleanAux`): filtered,
+    /// or left as rendered because they have samples enough to be. Told they
+    /// were noisy, as unfiltered guides were until November 9, OIDN leaned on
+    /// them less and kept a third to two thirds of a fine texture's detail,
+    /// at 16 samples and at 256 alike (`docs/01` §13). Guides of fewer than
+    /// [`GUIDES_CLEAN_AT`] samples are not clean yet: [`prefilter_guides`]
+    /// filters those whatever the setting says.
     pub prefilter_guides: bool,
+}
+
+/// From this many samples a pixel's albedo and normal are clean enough to
+/// denoise against as they are: unfiltered, they keep as much detail as
+/// prefiltered ones and leave no grain. Below it they still carry noise
+/// of their own, which a denoiser told they are clean would keep.
+pub const GUIDES_CLEAN_AT: u32 = 4;
+
+/// Whether to prefilter guides averaged over `samples` samples when the
+/// setting says `asked`: as asked, and always while they are too few to be
+/// clean.
+pub fn prefilter_guides(asked: bool, samples: u32) -> bool {
+    asked || samples < GUIDES_CLEAN_AT
 }
 
 impl Default for DenoiseSettings {
@@ -279,9 +303,9 @@ impl Denoiser {
             sys::oidnSetFilterBool(beauty, hdr.as_ptr(), true);
 
             let clean_aux = CString::new("cleanAux").unwrap();
-            // Tell OIDN the guides are already filtered, so it does not filter
-            // them a second time.
-            sys::oidnSetFilterBool(beauty, clean_aux.as_ptr(), settings.prefilter_guides);
+            // The guides are clean: filtered above, or with samples enough
+            // to be (see `DenoiseSettings::prefilter_guides`).
+            sys::oidnSetFilterBool(beauty, clean_aux.as_ptr(), true);
 
             let quality = CString::new("quality").unwrap();
             sys::oidnSetFilterInt(beauty, quality.as_ptr(), settings.quality.raw());
@@ -507,6 +531,60 @@ mod tests {
                 assert!(apart < 0.02, "the GPU and CPU denoisers disagree by {apart}");
             }
         }
+    }
+
+    /// A fine texture - one-pixel checks and lines - lit evenly and rendered
+    /// with grain, and its albedo as a render of a few samples has it:
+    /// clean. Denoised against guides left unfiltered, the texture keeps
+    /// its detail, as it does against filtered ones. Told the guides were
+    /// noisy, as it was until November 9, OIDN kept about half of it.
+    #[test]
+    fn unfiltered_clean_guides_keep_fine_texture() {
+        let denoiser = Denoiser::shared().unwrap();
+        let (width, height) = (128, 128);
+        let mut rng = tequila_core::rng::Pcg32::new(7, 3);
+        let (mut noisy, mut clean, mut albedo, mut normal) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for y in 0..height {
+            for x in 0..width {
+                let a = if y < 64 {
+                    if (x + y) % 2 == 0 { 0.15 } else { 0.8 }
+                } else if x % 3 == 0 {
+                    0.1
+                } else {
+                    0.7
+                };
+                let light = 0.9;
+                // Zero-mean grain of about a fifth, as a few samples leave.
+                let n = a * light * (0.8 + 0.4 * rng.next_f32());
+                noisy.extend_from_slice(&[n, n, n]);
+                clean.extend_from_slice(&[a * light; 3]);
+                albedo.extend_from_slice(&[a; 3]);
+                normal.extend_from_slice(&[0.0, 0.0, 1.0]);
+            }
+        }
+        // How much of the clean picture's pixel-to-pixel detail is left.
+        let detail = |image: &[f32]| -> f64 {
+            let at = |x: usize, y: usize| image[(y * width + x) * 3] as f64;
+            let mut sum = 0.0;
+            for y in 1..height - 1 {
+                for x in 1..width - 1 {
+                    sum += (4.0 * at(x, y) - at(x - 1, y) - at(x + 1, y) - at(x, y - 1) - at(x, y + 1)).powi(2);
+                }
+            }
+            sum
+        };
+        let mut errors = Vec::new();
+        for prefilter_guides in [true, false] {
+            let settings = DenoiseSettings { quality: Quality::High, strength: 1.0, prefilter_guides };
+            let out = denoiser.denoise(width, height, &noisy, &albedo, &normal, settings).unwrap().data;
+            let kept = detail(&out) / detail(&clean);
+            assert!((0.9..1.1).contains(&kept), "prefilter {prefilter_guides}: {kept:.2} of the texture's detail kept");
+            let error = rms(&out, &clean);
+            assert!(error < rms(&noisy, &clean) * 0.85, "prefilter {prefilter_guides}: RMS {error}, raw {}", rms(&noisy, &clean));
+            errors.push(error);
+        }
+        assert!(errors[1] < errors[0] * 1.1, "unfiltered guides: RMS {} against {} filtered", errors[1], errors[0]);
+        assert_eq!((prefilter_guides(false, 3), prefilter_guides(false, 4), prefilter_guides(true, 1000)), (true, false, true));
     }
 
     #[test]

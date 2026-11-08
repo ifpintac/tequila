@@ -16,7 +16,6 @@ struct Bound {
     width: usize,
     height: usize,
     quality: i32,
-    prefilter: bool,
     color: sys::OIDNBuffer,
     albedo: sys::OIDNBuffer,
     normal: sys::OIDNBuffer,
@@ -141,9 +140,10 @@ impl GpuDenoiser {
         let bytes = expected * std::mem::size_of::<f32>();
         let quality = settings.quality.raw();
         let mut state = self.state.lock().map_err(|_| "denoiser mutex poisoned")?;
-        let rebind = state.bound.as_ref().is_none_or(|b| {
-            b.width != width || b.height != height || b.quality != quality || b.prefilter != settings.prefilter_guides
-        });
+        // Prefiltering or not changes only which filters run, so the
+        // viewport's frames, filtered below four samples and not above, keep
+        // their buffers.
+        let rebind = state.bound.as_ref().is_none_or(|b| b.width != width || b.height != height || b.quality != quality);
         // SAFETY: buffers are created on this device and bound before the
         // filters run; every call below is serialized by the mutex.
         unsafe {
@@ -154,7 +154,6 @@ impl GpuDenoiser {
                     width,
                     height,
                     quality,
-                    prefilter: settings.prefilter_guides,
                     color: sys::oidnNewBuffer(device, bytes),
                     albedo: sys::oidnNewBuffer(device, bytes),
                     normal: sys::oidnNewBuffer(device, bytes),
@@ -182,7 +181,8 @@ impl GpuDenoiser {
                     sys::oidnSetFilterBool(state.beauty, name.as_ptr(), value);
                 };
                 set_bool("hdr", true);
-                set_bool("cleanAux", settings.prefilter_guides);
+                // Clean either way; see `DenoiseSettings::prefilter_guides`.
+                set_bool("cleanAux", true);
                 let q = CString::new("quality").unwrap();
                 sys::oidnSetFilterInt(state.beauty, q.as_ptr(), quality);
                 sys::oidnCommitFilter(state.beauty);
