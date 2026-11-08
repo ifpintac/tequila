@@ -1155,6 +1155,15 @@ says so. `cycles_keeps_passes_tequila_would` holds the depth and normal to
 what Tequila's tracer finds along the same rays, and the groups to the
 picture.
 
+*As built, November 8:* a queued Cycles render shows the Render window its
+picture as it refines - its session is a watched one
+(`fsc_create_watched`, `fsc_render_preview`), where the library's final
+sessions had been headless, which turns Cycles' display updates off - and
+the floor's reflection Tequila lays over Cycles' picture is made alongside
+Cycles from the job's start, not after it (§04 §11: the launch video's
+headphones at 1920 x 1080 and 256 samples went from 114.5 s to 65 s). A
+Cycles library from before renders as it did, without pictures.
+
 Where the two still part, by design (each held by a test in `app/src/batch.rs`):
 
 - **Dispersion.** This Cycles has none, so clear glass with an Abbe number
