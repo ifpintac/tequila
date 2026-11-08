@@ -47,6 +47,9 @@ hidapi = { version = "2.6", default-features = false, features = ["windows-nativ
 # the versions winit and rfd already bring.
 objc2 = "0.6"
 raw-window-handle = "0.6"
+# 3Dconnexion's driver framework, loaded at run time where the driver
+# installed it (`spacemouse/connexion.rs`): the version Cycles' loader uses.
+libloading = "0.8"
 
 [dev-dependencies]
 # The batch tests read back the EXR they wrote.
