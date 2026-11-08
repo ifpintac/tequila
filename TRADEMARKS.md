@@ -17,6 +17,12 @@ files from their published description and renders their maps only through
 Adobe's own command-line tools, installed by the person; it ships no Adobe
 software and loads none of Adobe's libraries.
 
+3Dconnexion, SpaceMouse and 3DxWare are trademarks of 3Dconnexion. On a Mac
+with 3Dconnexion's driver installed, Tequila reads a 3D mouse through the
+framework that driver put on the computer, loaded when Tequila runs; it ships
+no 3Dconnexion software, is built without any, and uses no part of
+3Dconnexion's SDK.
+
 References to other products in Tequila's specification and documentation are
 **descriptive and comparative**: they identify capabilities and workflows that
 Tequila aims to provide, so that people evaluating or building the software

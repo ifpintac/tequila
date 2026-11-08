@@ -4,9 +4,11 @@
 //! On Windows any number of programs may read a HID device at once, each
 //! getting every report, so this reads alongside 3Dconnexion's own driver
 //! (3DxWare) when it is installed. On a Mac 3DxWare takes the device for
-//! itself, and nothing else can read it while it runs; without 3DxWare,
-//! this opens the device for itself in turn - which also stops macOS
-//! moving the pointer with it.
+//! itself, and nothing else can open it while it runs: the device is then
+//! read through the driver ([`super::connexion`]), this still looking every
+//! two seconds whether it is plugged in. Without 3DxWare, this opens the
+//! device for itself in turn - which also stops macOS moving the pointer
+//! with it.
 
 use super::report::{device_name, Decoder, Event};
 use super::OpenProblem;
@@ -47,9 +49,23 @@ pub fn run(
         let device = match info.open_device(&api) {
             Ok(device) => device,
             Err(error) => {
+                let error = error.to_string();
+                // On a Mac, 3Dconnexion's driver holding the device: read
+                // it through the driver, for as long as it stays plugged in.
+                #[cfg(target_os = "macos")]
+                let error = if super::held_by_driver(&error) {
+                    match through_driver(&mut api, &info, &name, running, send, status, problem) {
+                        Ok(()) => {
+                            logged = None;
+                            continue;
+                        }
+                        Err(why) => format!("{why}\n{error}"),
+                    }
+                } else {
+                    error
+                };
                 // Tried again every two seconds, and said once: the log
                 // keeps hidapi's own words for whoever reads it.
-                let error = error.to_string();
                 if logged.as_deref() != Some(error.as_str()) {
                     eprintln!("Tequila: the 3D mouse ({name}) could not be opened: {error}");
                     logged = Some(error.clone());
@@ -83,6 +99,35 @@ pub fn run(
         }
         status(None);
     }
+}
+
+/// The device, held by 3Dconnexion's driver, read through the driver until
+/// it is unplugged or reading stops. `Err` says why the driver couldn't be
+/// used, for the person.
+#[cfg(target_os = "macos")]
+fn through_driver(
+    api: &mut hidapi::HidApi,
+    info: &hidapi::DeviceInfo,
+    name: &str,
+    running: &std::sync::atomic::AtomicBool,
+    send: &mut dyn FnMut(Event),
+    status: &mut dyn FnMut(Option<String>),
+    problem: &mut dyn FnMut(Option<OpenProblem>),
+) -> Result<(), String> {
+    let driver = super::connexion::api()?;
+    problem(None);
+    status(Some(format!("{name}{}", super::connexion::THROUGH_DRIVER)));
+    let path = info.path().to_owned();
+    let mut present = || {
+        let _ = api.refresh_devices();
+        api.device_list().any(|d| d.path() == path.as_c_str())
+    };
+    let read = super::connexion::run(&driver, running, &mut present, send);
+    // At rest, whatever the driver last said.
+    send(Event::Motion(Default::default()));
+    send(Event::Buttons(0));
+    status(None);
+    read
 }
 
 fn sleep_while(running: &std::sync::atomic::AtomicBool, millis: u64) {

@@ -6,9 +6,10 @@
 //! be read openly:
 //!
 //! - **Windows and macOS**: its HID reports, on a thread of its own
-//!   ([`hid`]). On Windows this works beside 3Dconnexion's driver; on a Mac
-//!   that driver takes the device for itself, and a Mac reads it only
-//!   without the driver, or through spacenavd.
+//!   ([`hid`]). On Windows this works beside 3Dconnexion's driver.
+//! - **A Mac with 3Dconnexion's driver**: the driver takes the device for
+//!   itself, so it is read through the driver, by the framework the driver
+//!   installed ([`connexion`]); the driver's own settings then apply.
 //! - **Linux, and a Mac with spacenavd**: the free daemon's socket
 //!   ([`spnav`]).
 //!
@@ -18,6 +19,7 @@
 //! buttons do what the preferences say. Everything here was written and
 //! tested against synthetic reports: no device was at hand.
 
+pub mod connexion;
 pub mod navigate;
 pub mod report;
 pub mod spnav;
@@ -47,8 +49,8 @@ struct Shared {
 }
 
 /// What 3Dconnexion's driver holding the device on a Mac comes to, in the
-/// preferences.
-pub const HELD_BY_DRIVER: &str = "3Dconnexion's driver is using the 3D mouse, so Tequila can't open it while the driver runs. Support through the driver is coming.";
+/// preferences, when Tequila couldn't read it through the driver either.
+pub const HELD_BY_DRIVER: &str = "3Dconnexion's driver is using the 3D mouse, and Tequila couldn't connect to the driver. Updating 3DxWare may help; or quit 3DxWare, and Tequila reads the mouse itself.";
 
 /// Why a 3D mouse was found and could not be read: what to tell the
 /// person, and the system's own words, when they are not the message.
@@ -283,6 +285,14 @@ impl SpaceMouse {
                 }
                 (Some(name), _, true) => {
                     ui.label(egui::RichText::new(format!("Connected: {name}")).small().color(p.success));
+                    if name.ends_with(connexion::THROUGH_DRIVER) {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new("3Dconnexion's own settings for Tequila apply as well as these.").small().color(crate::theme::dim()),
+                            )
+                            .wrap(),
+                        );
+                    }
                 }
                 (None, Some(problem), true) => {
                     ui.add(egui::Label::new(egui::RichText::new(&problem.message).small().color(p.busy)).wrap());

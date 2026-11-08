@@ -121,7 +121,12 @@ impl Motion {
 /// toward the person is out of the screen, +z. The rotations follow their
 /// axes: about Z (down) is minus about y (up).
 pub fn to_view(device: [i32; 6]) -> Motion {
-    let f = |v: i32| (v as f32 / FULL_SCALE).clamp(-1.5, 1.5);
+    to_view_within(device, 1.5)
+}
+
+/// [`to_view`], held within `limit` times full deflection either way.
+pub fn to_view_within(device: [i32; 6], limit: f32) -> Motion {
+    let f = |v: i32| (v as f32 / FULL_SCALE).clamp(-limit, limit);
     let [x, y, z, rx, ry, rz] = device;
     Motion { translation: [f(x), -f(z), f(y)], rotation: [f(rx), -f(rz), f(ry)] }
 }

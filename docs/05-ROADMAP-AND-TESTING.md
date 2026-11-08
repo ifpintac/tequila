@@ -1347,7 +1347,10 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
         `hidapi` (MIT; on Windows its pure-Rust backend), on a thread of
         its own.
       - Linux, and a Mac where it runs, read spacenavd's socket, protocol 0.
-      - 3Dconnexion's SDK and its Mac framework are not used.
+      - 3Dconnexion's SDK is not used. *November 9:* a Mac with 3DxWare
+        running reads the device through the driver, by the framework the
+        driver installed, loaded at run time (`spacemouse/connexion.rs`,
+        `docs/04` §6.1); the driver's own settings apply.
       - Reports 1 and 2 (translation, rotation), report 1 of twelve bytes
         (all six axes) and report 3 (buttons) are decoded for the devices
         under 0x256F, and for the named SpaceMouse family under 0x046D.
@@ -1372,8 +1375,8 @@ Where the two still part, by design (each held by a test in `app/src/batch.rs`):
       place and returns, sensitivity, a lost report stopping on its own,
       the settings file, and reports driving the camera from end to end,
       one gesture one undo step. Not done: testing on hardware; the roll
-      axis (the orbit camera has no roll); the Mac with 3DxWare running,
-      which keeps the device to itself; more of a SpaceMouse Pro's or
+      axis (the orbit camera has no roll); the Mac through 3DxWare on a
+      real device; more of a SpaceMouse Pro's or
       Enterprise's keys than the two main buttons.
 - [~] Adobe Substance materials (`.sbsar`, `.sbs`) opened with their settings
       (§02 §5.6). *As built, November 5:* read natively — the 7-Zip archive

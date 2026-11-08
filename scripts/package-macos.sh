@@ -302,21 +302,35 @@ cp "$readme" "$resources/"
 
 # Signed, the innermost code first and the bundle last: ad hoc, or with a
 # Developer ID for the hardened runtime (see the top). The hardened runtime
-# needs no exceptions: every library is signed by the same identity, Metal
-# compiles its kernels without JIT memory, and plugins run Python as a
-# process of its own.
+# needs one exception, for the application only: every library Tequila
+# ships is signed by the same identity, Metal compiles its kernels without
+# JIT memory, and plugins run Python as a process of its own; but a 3D
+# mouse is read through 3Dconnexion's driver by loading the framework the
+# driver installed, signed by 3Dconnexion, which library validation would
+# refuse (`app/src/spacemouse/connexion.rs`).
 identity="${TEQUILA_SIGN_IDENTITY:--}"
+entitlements=()
 if [ "$identity" = "-" ]; then
     sign=(codesign --force -s -)
 else
     sign=(codesign --force --timestamp --options runtime -s "$identity")
+    cat > "$package/entitlements.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+PLIST
+    entitlements=(--entitlements "$package/entitlements.plist")
 fi
 while IFS= read -r library; do
     "${sign[@]}" "$library"
 done < <(find "$contents/Frameworks" "$contents/MacOS" -name '*.dylib' -type f)
 if [ -f "$contents/MacOS/occt/tequila-occt" ]; then "${sign[@]}" "$contents/MacOS/occt/tequila-occt"; fi
 "${sign[@]}" "$contents/MacOS/tequila-cli"
-"${sign[@]}" "$app"
+"${sign[@]}" ${entitlements[@]+"${entitlements[@]}"} "$app"
 codesign --verify --deep --strict "$app"
 echo "Packaged and signed ($([ "$identity" = "-" ] && echo "ad hoc" || echo "$identity")): $app"
 
