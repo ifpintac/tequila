@@ -40,6 +40,12 @@ pub fn has_passes() -> bool {
     })
 }
 
+/// Whether the installed library hands out a final render's picture as it
+/// goes (`Session::watched`): one from before shows nothing until the end.
+pub fn has_watched_renders() -> bool {
+    ffi::api().is_ok_and(|api| api.fsc_create_watched.is_some() && api.fsc_render_preview.is_some())
+}
+
 /// Whether the installed library takes fibres, as hair (`Session::curves`):
 /// one from before leaves them out of its renders.
 pub fn has_curves() -> bool {
@@ -138,6 +144,9 @@ fn c(text: &str) -> CString {
 pub struct Session {
     api: &'static ffi::Api,
     raw: *mut ffi::Session,
+    /// Made by [`Session::watched`] from a library that hands out a final
+    /// render's picture as it goes.
+    watched: bool,
 }
 
 // The library serializes scene edits under Cycles' own scene mutex, and a
@@ -163,6 +172,25 @@ pub struct Frame {
     pub samples: u32,
 }
 
+/// A watched final render's picture so far ([`Session::render_watched`]):
+/// premultiplied scene-linear RGBA, as [`Session::render`] hands back the
+/// finished one, not yet denoised, shrunk to the size asked for, rows top
+/// first.
+pub struct Picture<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub samples: u32,
+    pub rgba: &'a [f32],
+}
+
+/// What kind of session to make.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Final,
+    Watched,
+    Live,
+}
+
 /// A shader being built. Nodes are added to it until [`Session::commit`].
 #[derive(Clone, Copy, Debug)]
 pub struct Shader(pub(crate) Node);
@@ -173,34 +201,56 @@ impl Session {
     /// kernels: by default `TEQUILA_CYCLES_KERNELS`, else the library's own
     /// folder, which is where a packaged build keeps them.
     pub fn new(device: &str, threads: usize, kernels: Option<&std::path::Path>) -> Result<Session, String> {
-        Session::create(device, threads, kernels, false)
+        Session::create(device, threads, kernels, Kind::Final)
+    }
+
+    /// The same, for a final render someone watches: while it renders it
+    /// hands out its picture so far, every second or two
+    /// ([`Session::render_watched`]). From a library that predates that, a
+    /// plain session, which [`Session::hands_out_pictures`] tells.
+    pub fn watched(device: &str, threads: usize, kernels: Option<&std::path::Path>) -> Result<Session, String> {
+        Session::create(device, threads, kernels, Kind::Watched)
+    }
+
+    /// Whether this session's renders hand out their picture as they go.
+    pub fn hands_out_pictures(&self) -> bool {
+        self.watched
     }
 
     /// A live session, for a viewport: it renders continuously, refining one
     /// image, and restarts it at every [`Session::end_edit`].
     pub fn live(device: &str, threads: usize, kernels: Option<&std::path::Path>) -> Result<Session, String> {
-        Session::create(device, threads, kernels, true)
+        Session::create(device, threads, kernels, Kind::Live)
     }
 
-    fn create(device: &str, threads: usize, kernels: Option<&std::path::Path>, live: bool) -> Result<Session, String> {
+    fn create(device: &str, threads: usize, kernels: Option<&std::path::Path>, kind: Kind) -> Result<Session, String> {
         // "GPU": whichever kind of card this computer has, every one of it.
         let device = if device.eq_ignore_ascii_case("GPU") {
             best_gpu().ok_or_else(|| "Cycles found no graphics card it can use".to_string())?
         } else {
             device
         };
-        match Session::create_on(device, threads, kernels, live) {
+        match Session::create_on(device, threads, kernels, kind) {
             // OptiX needs RTX hardware and a recent driver; CUDA runs on any
             // NVIDIA card Cycles supports, a little slower.
-            Err(_) if device.eq_ignore_ascii_case("OPTIX") => Session::create_on("CUDA", threads, kernels, live),
+            Err(_) if device.eq_ignore_ascii_case("OPTIX") => Session::create_on("CUDA", threads, kernels, kind),
             result => result,
         }
     }
 
-    fn create_on(device: &str, threads: usize, kernels: Option<&std::path::Path>, live: bool) -> Result<Session, String> {
+    fn create_on(device: &str, threads: usize, kernels: Option<&std::path::Path>, kind: Kind) -> Result<Session, String> {
         let api = ffi::api()?;
         let kernels = Some(c(&kernel_folder(api, kernels).to_string_lossy()));
-        let create = if live { api.fsc_create_live } else { api.fsc_create };
+        // Watched only from a library that can say what it has so far.
+        let watched = match (api.fsc_create_watched, api.fsc_render_preview) {
+            (Some(create), Some(_)) if kind == Kind::Watched => Some(create),
+            _ => None,
+        };
+        let create = match (kind, watched) {
+            (Kind::Live, _) => api.fsc_create_live,
+            (_, Some(create)) => create,
+            _ => api.fsc_create,
+        };
         let raw = unsafe {
             create(
                 c(device).as_ptr(),
@@ -211,7 +261,7 @@ impl Session {
         if raw.is_null() {
             return Err(ffi::last_error(api));
         }
-        Ok(Session { api, raw })
+        Ok(Session { api, raw, watched: watched.is_some() })
     }
 
     fn check(&self, ok: c_int) -> Result<(), String> {
@@ -593,15 +643,70 @@ impl Session {
         mut progress: impl FnMut(f32, u32),
         cancel: Option<&AtomicBool>,
     ) -> Result<Vec<f32>, String> {
-        // Progress is reported from Cycles' own thread, which is also the
-        // one place that can notice the flag while the render runs.
+        self.render_with(width, height, samples, &mut progress, None, cancel)
+    }
+
+    /// The same, from a session made by [`Session::watched`], handing each
+    /// new picture of the render so far to `picture`, shrunk to fit the
+    /// size `fit` gives, asked each time: (0, 0) makes none for now, at no
+    /// cost to the render. Pictures come at most once a second, on Cycles'
+    /// own thread, as `progress` does; from a session that does not hand
+    /// them out, none come.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_watched(
+        &mut self,
+        width: usize,
+        height: usize,
+        samples: u32,
+        mut progress: impl FnMut(f32, u32),
+        fit: impl Fn() -> (usize, usize),
+        mut picture: impl FnMut(Picture<'_>),
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Vec<f32>, String> {
+        self.render_with(width, height, samples, &mut progress, Some((&fit, &mut picture)), cancel)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn render_with(
+        &mut self,
+        width: usize,
+        height: usize,
+        samples: u32,
+        progress: &mut dyn FnMut(f32, u32),
+        mut watch: Option<(&dyn Fn() -> (usize, usize), &mut dyn FnMut(Picture<'_>))>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Vec<f32>, String> {
         let (api, raw) = (self.api, self.raw as usize);
+        let ask = api.fsc_render_preview.filter(|_| self.watched && watch.is_some());
+        let mut seen = 0u64;
+        let mut pixels: Vec<f32> = Vec::new();
+        // The size, before the first picture is made.
+        if let (Some(ask), Some((fit, _))) = (ask, &watch) {
+            let (w, h) = fit();
+            let none = std::ptr::null_mut();
+            unsafe { ask(raw as *mut ffi::Session, w as c_int, h as c_int, std::ptr::null_mut(), 0, none, none, none, &mut seen) };
+        }
+        // Progress is reported from Cycles' own thread, which is also the
+        // one place that can notice the flag while the render runs, and
+        // hear of a new picture.
         let mut progress = move |fraction: f32| {
             if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
                 unsafe { (api.fsc_cancel)(raw as *mut ffi::Session) };
             }
             let done = unsafe { (api.fsc_rendered_samples)(raw as *mut ffi::Session) };
             progress(fraction, done.max(0) as u32);
+            if let (Some(ask), Some((fit, picture))) = (ask, watch.as_mut()) {
+                let (w, h) = fit();
+                pixels.resize(w * h * 4, 0.0);
+                let (mut pw, mut ph, mut ps) = (0, 0, 0);
+                let got = unsafe {
+                    ask(raw as *mut ffi::Session, w as c_int, h as c_int, pixels.as_mut_ptr(), (w * h) as c_int, &mut pw, &mut ph, &mut ps, &mut seen)
+                };
+                let (pw, ph) = (pw.max(0) as usize, ph.max(0) as usize);
+                if got != 0 && pw * ph * 4 <= pixels.len() {
+                    picture(Picture { width: pw, height: ph, samples: ps.max(0) as u32, rgba: &pixels[..pw * ph * 4] });
+                }
+            }
         };
         unsafe extern "C" fn trampoline<F: FnMut(f32)>(user: *mut c_void, fraction: f32) {
             let f = &mut *(user as *mut F);

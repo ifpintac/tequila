@@ -237,6 +237,88 @@ class CaptureDriver : public OutputDriver {
     }
     written = true;
   }
+
+  /* A watched render's picture so far (fsc_create_watched, fsc_render_preview):
+   * the combined pass as it stands, the shadow tinted, shrunk to fit the size
+   * the caller last asked for, rows top first. */
+  std::mutex preview_mutex;
+  std::vector<float> preview;
+  int preview_width = 0, preview_height = 0, preview_samples = 0;
+  unsigned long long preview_generation = 0;
+  /* The size asked for; 0 x 0 while nobody is looking, which makes nothing. */
+  std::atomic<int> fit_width{0}, fit_height{0};
+  Progress *progress = nullptr;
+  /* When the last picture was made, and what it cost. */
+  double preview_made = 0.0, preview_cost = 0.0;
+
+  /* Called by Cycles after each stretch of samples, only when the session is
+   * not headless: every second or two in a final render, as Blender's own
+   * render window is fed. */
+  bool update_render_tile(const Tile &tile) override
+  {
+    const int fit_w = fit_width, fit_h = fit_height;
+    if (fit_w <= 0 || fit_h <= 0 || !(tile.size == tile.full_size)) {
+      return false;
+    }
+    /* Reading a pass copies the whole render buffer back from the graphics
+     * card, every pass in it: 60 to 100 ms at 1920 x 1080 on an RTX 2060.
+     * Kept to one picture a second, and to a hundredth of the render's
+     * time. */
+    const double begun = time_dt();
+    if (preview_made > 0.0 && begun - preview_made < std::max(1.0, 100.0 * preview_cost)) {
+      return false;
+    }
+    const int w = tile.size.x, h = tile.size.y;
+    std::vector<float> pixels(size_t(w) * h * 4);
+    if (!tile.get_pass_pixels("combined", 4, pixels.data())) {
+      return false;
+    }
+    tint_shadow(tile, tint, pixels, w, h);
+    /* Each pixel of the small picture the mean of the pixels it covers, so
+     * it shows the noise as it will settle rather than a pick of it. */
+    const double scale = std::min({1.0, double(fit_w) / w, double(fit_h) / h});
+    const int pw = std::max(1, int(w * scale + 0.5)), ph = std::max(1, int(h * scale + 0.5));
+    std::vector<float> small(size_t(pw) * ph * 4);
+    for (int y = 0; y < ph; y++) {
+      const int y0 = y * h / ph, y1 = std::max(y0 + 1, (y + 1) * h / ph);
+      for (int x = 0; x < pw; x++) {
+        const int x0 = x * w / pw, x1 = std::max(x0 + 1, (x + 1) * w / pw);
+        float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int sy = y0; sy < y1; sy++) {
+          const float *row = pixels.data() + (size_t(sy) * w + x0) * 4;
+          for (int sx = x0; sx < x1; sx++, row += 4) {
+            sum[0] += row[0];
+            sum[1] += row[1];
+            sum[2] += row[2];
+            sum[3] += row[3];
+          }
+        }
+        const float share = 1.0f / float((y1 - y0) * (x1 - x0));
+        /* Cycles' rows run bottom to top; Tequila's top to bottom. */
+        float *out = small.data() + (size_t(ph - 1 - y) * pw + x) * 4;
+        for (int c = 0; c < 4; c++) {
+          out[c] = sum[c] * share;
+        }
+      }
+    }
+    {
+      const std::lock_guard<std::mutex> lock(preview_mutex);
+      preview.swap(small);
+      preview_width = pw;
+      preview_height = ph;
+      preview_samples = std::max(1, progress ? progress->get_current_sample() : 0);
+      preview_generation++;
+    }
+    const double now = time_dt();
+    preview_made = now;
+    preview_cost = now - begun;
+    static const bool trace = getenv("TEQUILA_CYCLES_TRACE") != nullptr;
+    if (trace) {
+      fprintf(stderr, "watched: picture %dx%d of %dx%d at sample %d in %.1f ms\n", pw, ph, w, h,
+              preview_samples, preview_cost * 1000.0);
+    }
+    return true;
+  }
 };
 
 /* Keeps the newest progressive picture of a live session. */
@@ -469,7 +551,7 @@ struct FscSession {
   }
 };
 
-static FscSession *create(const char *device, int threads, const char *kernel_dir, bool live);
+static FscSession *create(const char *device, int threads, const char *kernel_dir, bool live, bool watched);
 
 /* Cycles' log, and where it finds its GPU kernels: once a process, by the
  * first caller (fsc_init). */
@@ -523,6 +605,7 @@ static bool start_session(FscSession *s)
   if (s->session_params.background) {
     auto capture = make_unique<CaptureDriver>();
     capture->tint = &s->tint;
+    capture->progress = &s->session->progress;
     s->capture = capture.get();
     s->session->set_output_driver(std::move(capture));
   }
@@ -592,7 +675,12 @@ const char *fsc_devices(void)
 
 FscSession *fsc_create(const char *device, int threads, const char *kernel_dir)
 {
-  return create(device, threads, kernel_dir, false);
+  return create(device, threads, kernel_dir, false, false);
+}
+
+FscSession *fsc_create_watched(const char *device, int threads, const char *kernel_dir)
+{
+  return create(device, threads, kernel_dir, false, true);
 }
 
 void fsc_destroy(FscSession *s)
@@ -1257,6 +1345,12 @@ int fsc_render(FscSession *s, int width, int height, int samples, float *rgba,
   s->session->progress.reset();
   s->capture->target = rgba;
   s->capture->written = false;
+  {
+    /* The last render's picture is not this one's. */
+    const std::lock_guard<std::mutex> lock(s->capture->preview_mutex);
+    s->capture->preview_width = 0;
+    s->capture->preview_made = 0.0;
+  }
   if (progress) {
     Session *session = s->session.get();
     session->progress.set_update_callback(
@@ -1280,6 +1374,42 @@ int fsc_render(FscSession *s, int width, int height, int samples, float *rgba,
     fail("the render finished without writing an image");
     return 0;
   }
+  return 1;
+}
+
+int fsc_render_preview(FscSession *s,
+                       int max_width,
+                       int max_height,
+                       float *rgba,
+                       int capacity_pixels,
+                       int *width,
+                       int *height,
+                       int *samples,
+                       unsigned long long *generation)
+{
+  CaptureDriver *capture = s->capture;
+  if (capture == nullptr) {
+    fail("fsc_render_preview needs a session from fsc_create_watched");
+    return 0;
+  }
+  capture->fit_width = std::max(0, max_width);
+  capture->fit_height = std::max(0, max_height);
+  if (rgba == nullptr) {
+    return 0;
+  }
+  const std::lock_guard<std::mutex> lock(capture->preview_mutex);
+  if (capture->preview_width == 0 || capture->preview_generation == *generation) {
+    return 0;
+  }
+  if (size_t(capture->preview_width) * capture->preview_height > size_t(std::max(0, capacity_pixels))) {
+    /* Made at a size asked for before; the next one is at the new size. */
+    return 0;
+  }
+  memcpy(rgba, capture->preview.data(), capture->preview.size() * sizeof(float));
+  *width = capture->preview_width;
+  *height = capture->preview_height;
+  *samples = capture->preview_samples;
+  *generation = capture->preview_generation;
   return 1;
 }
 
@@ -1322,7 +1452,7 @@ static bool use_rendering_space()
 #endif
 }
 
-static FscSession *create(const char *device, int threads, const char *kernel_dir, bool live)
+static FscSession *create(const char *device, int threads, const char *kernel_dir, bool live, bool watched)
 {
   if (!use_rendering_space()) {
     return nullptr;
@@ -1335,8 +1465,11 @@ static FscSession *create(const char *device, int threads, const char *kernel_di
   }
   s->session_params.background = !live;
   /* Headless turns off progressive display updates, which are the whole
-   * point of a live session. */
-  s->session_params.headless = !live;
+   * point of a live session, and the pictures a watched render hands out
+   * as it goes: Cycles then updates every second or two, as it does for
+   * Blender's render window (RenderScheduler, background but not headless);
+   * headless, it never does. */
+  s->session_params.headless = !live && !watched;
   s->session_params.threads = threads;
   s->session_params.use_auto_tile = false;
   s->session_params.tile_size = 0;
@@ -1352,7 +1485,7 @@ extern "C" {
 
 FscSession *fsc_create_live(const char *device, int threads, const char *kernel_dir)
 {
-  return create(device, threads, kernel_dir, true);
+  return create(device, threads, kernel_dir, true, false);
 }
 
 void fsc_edit_begin(FscSession *s)

@@ -66,6 +66,10 @@ FSC_API const char *fsc_devices(void);
  * kernel_dir is where precompiled GPU kernels live (may be NULL for CPU).
  * Returns NULL on failure. */
 FSC_API FscSession *fsc_create(const char *device, int threads, const char *kernel_dir);
+/* The same, for a final render someone watches: while fsc_render runs,
+ * Cycles hands over its picture so far every second or two, as it does for
+ * Blender's render window, for fsc_render_preview to copy out. */
+FSC_API FscSession *fsc_create_watched(const char *device, int threads, const char *kernel_dir);
 FSC_API void fsc_destroy(FscSession *session);
 
 /* Scene-level nodes: "integrator", "film", "background" or "camera". */
@@ -219,6 +223,26 @@ FSC_API int fsc_render(FscSession *session,
                        float *rgba,
                        FscProgress progress,
                        void *user);
+
+/* A watched render's picture so far (fsc_create_watched). Asks the next
+ * pictures to fit max_width x max_height (0 x 0 makes none, at no cost),
+ * and copies the newest, if it is newer than *generation, into rgba (room
+ * for capacity_pixels): the combined pass as fsc_render hands it back,
+ * shadow tint and all, not yet denoised, shrunk by averaging, rows top
+ * first. Returns 1 and updates the outputs when it copied one, else 0; rgba
+ * NULL only sets the size. Safe to call from fsc_render's progress
+ * callback, which is where the caller hears of a new picture. Each picture
+ * reads the render back from the device, so they come at most once a
+ * second and take at most a hundredth of the render's time. */
+FSC_API int fsc_render_preview(FscSession *session,
+                               int max_width,
+                               int max_height,
+                               float *rgba,
+                               int capacity_pixels,
+                               int *width,
+                               int *height,
+                               int *samples,
+                               unsigned long long *generation);
 
 /* The colour of the shadow a shadow catcher casts: Cycles' is always black,
  * a darkening of what lies behind the floor, and this mixes towards the
