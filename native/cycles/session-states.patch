@@ -1,0 +1,71 @@
+--- a/src/device/device.h
++++ b/src/device/device.h
+@@ -102,6 +102,11 @@
+                                                * kernels (Metal only). */
+   DenoiserTypeMask denoisers = DENOISER_NONE; /* Supported denoiser types. */
+   int cpu_threads = 0;
++  /* Tequila: at most so many integrator path states for a session on this device, when fewer
++   * than the device would choose (Metal only): max_concurrent_states in all, or else
++   * concurrent_states_per_core for each of the GPU's cores. 0 lets the device choose. */
++  int max_concurrent_states = 0;
++  int concurrent_states_per_core = 0;
+   vector<DeviceInfo> multi_devices;
+   string error_msg;
+ 
+--- a/src/device/metal/queue.mm
++++ b/src/device/metal/queue.mm
+@@ -265,12 +265,25 @@
+ 
+ int MetalDeviceQueue::num_concurrent_states(const size_t state_size) const
+ {
+-  static int result = 0;
+-  if (result) {
+-    return result;
++  /* Tequila: decided for each session, not once for the whole process (it was kept in a
++   * function-level static, so the first session decided for every later one), and never more
++   * than the session asks for (DeviceInfo::max_concurrent_states, or concurrent_states_per_core
++   * for each GPU core, rounded down to a multiple of 65536 as sort partitions divide it). */
++  const DeviceInfo &info = metal_device_->info;
++  int64_t session_max = info.max_concurrent_states;
++  if (session_max <= 0 && info.concurrent_states_per_core > 0) {
++    const int64_t cores = MetalInfo::get_apple_gpu_core_count(metal_device_->mtlDevice);
++    if (cores > 0) {
++      session_max = std::max(int64_t(info.concurrent_states_per_core) * cores / 65536 * 65536,
++                             int64_t(65536));
++    }
+   }
+ 
+-  result = 4194304;
++  int result = 4194304;
++  if (session_max > 0 && session_max <= result) {
++    LOG_DEBUG << "Path states for this session: " << session_max;
++    return int(session_max);
++  }
+ 
+   /* Increasing the state count doesn't notably benefit M1-family systems. */
+   if (MetalInfo::get_apple_gpu_architecture(metal_device_->mtlDevice) != APPLE_M1) {
+@@ -280,14 +293,22 @@
+ 
+     /* Determine whether we can double the state count, and leave enough GPU-available memory
+      * (1/8 the system RAM or 1GB - whichever is largest). Enlarging the state size allows us to
+-     * keep dispatch sizes high and minimize work submission overheads. */
++     * keep dispatch sizes high and minimize work submission overheads.
++     *
++     * Tequila: added up rather than subtracted. The sizes are unsigned: when the doubled states
++     * would not fit beside what is already allocated, the difference wrapped round to a huge
++     * number, and the count doubled on exactly the Macs with too little memory for it. */
+     size_t min_headroom = std::max(system_ram / 8, size_t(1024 * 1024 * 1024));
+     size_t total_state_size = result * state_size;
+-    if (max_recommended_working_set - allocated_so_far - total_state_size * 2 >= min_headroom) {
++    if (allocated_so_far + total_state_size * 2 + min_headroom <= max_recommended_working_set) {
+       result *= 2;
+       metal_printf("Doubling state count to exploit available RAM (new size = %d)", result);
+     }
+   }
++  if (session_max > 0 && session_max < result) {
++    result = int(session_max);
++  }
++  LOG_DEBUG << "Path states for this session: " << result;
+   return result;
+ }
+ 
