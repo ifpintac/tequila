@@ -5996,11 +5996,20 @@ impl TequilaApp {
     fn pump_queue(&mut self, ctx: &egui::Context) {
         use tequila_scene::render::JobState;
 
+        // Pictures of a render in progress at the size the Render window
+        // shows them, and none while it is closed.
+        self.batch.show_previews_at(self.render_window.preview_fit());
         let mut changed = false;
         for event in self.batch.drain() {
             match event {
                 batch::BatchEvent::Stage { id, label } => {
                     if let Some(job) = self.project.queue_mut().get_mut(id) { job.message = label.into(); }
+                }
+                batch::BatchEvent::Step { id, label, done, of, seconds } => {
+                    if let Some(job) = self.project.queue_mut().get_mut(id) {
+                        job.message = batch::step_message(label, done, of);
+                        job.seconds = seconds;
+                    }
                 }
                 batch::BatchEvent::Preview { id, width, height, rgba } => {
                     self.render_window.set_preview(ctx, id, width, height, &rgba);

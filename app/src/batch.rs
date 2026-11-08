@@ -24,10 +24,10 @@ use tequila_render_core::scheduler::ProgressiveSchedule;
 use tequila_render_core::settings::IntegratorConfig;
 use tequila_render_cpu::{render_pass_with_aovs, Device, EmbreeIntersector, RenderContext};
 use tequila_scene::render::{AlphaMode, Halt, HiddenLines, RenderEngine, RenderKind, RenderSettings};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Everything one queued render needs.
 ///
@@ -57,6 +57,9 @@ pub struct BatchJob {
 /// What the renderer says about a job.
 pub enum BatchEvent {
     Stage { id: u64, label: &'static str },
+    /// A stage that counts how far it has got, with the job's time so far:
+    /// the floor's reflection, when a Cycles render waits for it.
+    Step { id: u64, label: &'static str, done: u32, of: u32, seconds: f64 },
     Preview { id: u64, width: usize, height: usize, rgba: Vec<u8> },
     Started {
         id: u64,
@@ -64,6 +67,7 @@ pub enum BatchEvent {
     Progress {
         id: u64,
         samples: u32,
+        /// Since the job started.
         seconds: f64,
     },
     Finished {
@@ -72,6 +76,8 @@ pub enum BatchEvent {
         width: usize,
         height: usize,
         samples: u32,
+        /// The whole job, from its start to its file saved: every stage,
+        /// not only the rendering.
         seconds: f64,
         /// The developed image, for the gallery.
         preview: Vec<u8>,
@@ -86,6 +92,12 @@ pub enum BatchEvent {
     },
 }
 
+/// What a job says of a stage that counts ([`BatchEvent::Step`]), in the
+/// queue and the Render window: "Floor reflection 40 / 128".
+pub fn step_message(label: &str, done: u32, of: u32) -> String {
+    format!("{label} {done} / {of}")
+}
+
 /// Owns the batch thread.
 pub struct BatchRenderer {
     jobs: Sender<BatchJob>,
@@ -93,7 +105,38 @@ pub struct BatchRenderer {
     cancel: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     preview: Arc<Mutex<Option<BatchEvent>>>,
+    /// The size of picture the Render window shows a render in progress at
+    /// ([`BatchRenderer::show_previews_at`]).
+    preview_size: Arc<AtomicU64>,
     thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// The size a render in progress is shown at until the Render window says:
+/// as large as it shows one.
+const PREVIEW_FIT: (usize, usize) = (1280, 1280);
+
+/// Where a job's pictures of itself go as it renders, and how large the
+/// Render window wants them.
+struct Previews<'a> {
+    slot: &'a Mutex<Option<BatchEvent>>,
+    size: &'a AtomicU64,
+}
+
+impl Previews<'_> {
+    /// The largest picture wanted, (0, 0) for none.
+    fn fit(&self) -> (usize, usize) {
+        let packed = self.size.load(Ordering::Relaxed);
+        ((packed >> 32) as usize, (packed & 0xffff_ffff) as usize)
+    }
+
+    /// The newest picture, replacing one not yet shown.
+    fn show(&self, event: BatchEvent) {
+        *self.slot.lock().unwrap() = Some(event);
+    }
+}
+
+fn pack(size: (usize, usize)) -> u64 {
+    ((size.0.min(u32::MAX as usize) as u64) << 32) | size.1.min(u32::MAX as usize) as u64
 }
 
 impl std::fmt::Debug for BatchRenderer {
@@ -116,6 +159,8 @@ impl BatchRenderer {
         let running = Arc::new(AtomicBool::new(false));
         let preview = Arc::new(Mutex::new(None));
         let thread_preview = preview.clone();
+        let preview_size = Arc::new(AtomicU64::new(pack(PREVIEW_FIT)));
+        let thread_size = preview_size.clone();
 
         let thread_cancel = cancel.clone();
         let thread_running = running.clone();
@@ -130,7 +175,8 @@ impl BatchRenderer {
                     thread_running.store(true, Ordering::Release);
                     let id = job.id;
                     let _ = event_sender.send(BatchEvent::Started { id });
-                    let work = || run(job, &event_sender, &thread_cancel, &thread_preview);
+                    let previews = Previews { slot: &thread_preview, size: &thread_size };
+                    let work = || run(job, &event_sender, &thread_cancel, &previews);
                     let result = match &pool { Some(pool) => pool.install(work), None => work() };
                     match result {
                         Ok(finished) => {
@@ -151,8 +197,16 @@ impl BatchRenderer {
             cancel,
             running,
             preview,
+            preview_size,
             thread,
         }
+    }
+
+    /// How large the Render window shows a render in progress, in pixels:
+    /// pictures of a Cycles render are made to fit it, and none at all
+    /// while it is closed (`None`), when nobody would see them.
+    pub fn show_previews_at(&self, size: Option<(usize, usize)>) {
+        self.preview_size.store(pack(size.unwrap_or((0, 0))), Ordering::Relaxed);
     }
 
     pub fn submit(&self, job: BatchJob) {
@@ -212,8 +266,11 @@ fn run(
     mut job: BatchJob,
     events: &Sender<BatchEvent>,
     cancel: &AtomicBool,
-    preview_slot: &Mutex<Option<BatchEvent>>,
+    previews: &Previews,
 ) -> Result<BatchEvent, String> {
+    // The job's time, which is what it reports: from here to its file
+    // saved, every stage included.
+    let begun = Instant::now();
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Preparing scene" });
     let settings = &job.settings;
     if settings.width == 0 || settings.height == 0 || settings.max_samples == 0 {
@@ -225,7 +282,7 @@ fn run(
         }
     }
     if settings.kind == RenderKind::Wireframe {
-        return render_wireframe(&job, events);
+        return render_wireframe(&job, events, begun);
     }
     if let Some(environment) = job.pending_environment.take() {
         let mut cache = tequila_scene::environment::EnvironmentCache::new();
@@ -245,22 +302,35 @@ fn run(
         eprintln!("Tequila: {why}");
     }
     if engine.is_cycles() {
-        let frame = match render_cycles(&job, engine, events, cancel) {
-            // A graphics card Cycles could open but not render on - older
-            // than the kernels shipped, or with a driver too old for them -
-            // failed the render; the processor can make it. Said in the
-            // queue, and the render goes on there. Only the render: a folder
-            // that cannot be made or a full disk, after it, is not the
-            // card's doing, and rendering again on the processor for hours
-            // only to fail the same way helped nobody.
-            Err(why) if engine == RenderEngine::CyclesGpu && !cancel.load(Ordering::Acquire) => {
-                eprintln!("Tequila: Cycles could not render on the graphics card, so it renders on the processor: {why}");
-                let _ = events.send(BatchEvent::Stage { id: job.id, label: "The graphics card failed: rendering on the processor" });
-                render_cycles(&job, RenderEngine::CyclesCpu, events, cancel)?
-            }
-            other => other?,
-        };
-        return finish_cycles(&job, frame, events, cancel);
+        let job = &job;
+        let floor_progress = FloorProgress::default();
+        return std::thread::scope(|scope| {
+            // The floor's reflection, which Cycles is left without, made on
+            // the processor from the start, while Cycles renders on the
+            // graphics card: it does not depend on Cycles' picture, and
+            // made after it, it took as long again as Cycles had.
+            let floor = tequila_render_cpu::floor::reflects(&job.scene)
+                .then(|| FloorReflection::start(scope, job, cancel, begun, &floor_progress));
+            // A render that fails stops it rather than waiting on it.
+            let _stop = StopOnDrop(&floor_progress.stop);
+            let frame = match render_cycles(job, engine, events, cancel, previews, begun) {
+                // A graphics card Cycles could open but not render on -
+                // older than the kernels shipped, or with a driver too old
+                // for them - failed the render; the processor can make it.
+                // Said in the queue, and the render goes on there. Only the
+                // render: a folder that cannot be made or a full disk, after
+                // it, is not the card's doing, and rendering again on the
+                // processor for hours only to fail the same way helped
+                // nobody.
+                Err(why) if engine == RenderEngine::CyclesGpu && !cancel.load(Ordering::Acquire) => {
+                    eprintln!("Tequila: Cycles could not render on the graphics card, so it renders on the processor: {why}");
+                    let _ = events.send(BatchEvent::Stage { id: job.id, label: "The graphics card failed: rendering on the processor" });
+                    render_cycles(job, RenderEngine::CyclesCpu, events, cancel, previews, begun)?
+                }
+                other => other?,
+            };
+            finish_cycles(job, frame, floor, events, cancel, previews, begun)
+        });
     }
     let device = Device::shared().map_err(|e| e.to_string())?;
     let intersector =
@@ -346,7 +416,7 @@ fn run(
         let _ = events.send(BatchEvent::Progress {
             id: job.id,
             samples: region_progress(&framebuffer, context.region).0,
-            seconds: started.elapsed().as_secs_f64(),
+            seconds: begun.elapsed().as_secs_f64(),
         });
         if samples == 0 || last_preview.elapsed().as_secs_f32() >= 1.0 {
             // Large enough to fill the Render window's stage without looking soft.
@@ -360,13 +430,12 @@ fn run(
             }}
             let output = RenderOutput { width, height, color, alpha, layers: Vec::new(),
                 style: job.style, display: job.display.clone(), alpha_mode: OutputAlphaMode::Straight };
-            *preview_slot.lock().unwrap() = Some(BatchEvent::Preview { id: job.id, width, height, rgba: output.to_rgba8() });
+            previews.show(BatchEvent::Preview { id: job.id, width, height, rgba: output.to_rgba8() });
             last_preview = Instant::now();
         }
     }
 
     let samples = region_progress(&framebuffer, context.region).0;
-    let seconds = started.elapsed().as_secs_f64();
     let stopped = cancel.load(Ordering::Acquire);
     if stopped && samples == 0 { return Err("Cancelled before any samples were rendered".into()); }
     let _ = events.send(BatchEvent::Stage { id: job.id, label: if settings.denoise { "Denoising" } else { "Saving image" } });
@@ -428,7 +497,7 @@ fn run(
         _ => output.write(&path, format).map_err(|e| e.to_string())?,
     }
 
-    write_sidecars(&path, &job, settings, samples, seconds, halt)?;
+    write_sidecars(&path, &job, settings, samples, begun.elapsed().as_secs_f64(), halt)?;
 
     // ---- Render layers -------------------------------------------------
     //
@@ -478,7 +547,7 @@ fn run(
         width: settings.width,
         height: settings.height,
         samples,
-        seconds: started.elapsed().as_secs_f64(),
+        seconds: begun.elapsed().as_secs_f64(),
         preview,
         halt,
         stopped: stopped || cancel.load(Ordering::Acquire),
@@ -550,14 +619,13 @@ pub(crate) fn wireframe_output(scene: &SceneSnapshot, camera: &Camera, settings:
 
 /// A wireframe job: drawn in a second or two rather than rendered, and
 /// written through the same output, file name and sidecars as a render.
-fn render_wireframe(job: &BatchJob, events: &Sender<BatchEvent>) -> Result<BatchEvent, String> {
-    let started = Instant::now();
+fn render_wireframe(job: &BatchJob, events: &Sender<BatchEvent>, begun: Instant) -> Result<BatchEvent, String> {
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Drawing the wireframe" });
     let output = wireframe_output(&job.scene, &job.camera, &job.settings)?;
     let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
     let (path, format) = output_file(job, 0)?;
     output.write(&path, format).map_err(|e| e.to_string())?;
-    let seconds = started.elapsed().as_secs_f64();
+    let seconds = begun.elapsed().as_secs_f64();
     write_sidecars(&path, job, &job.settings, 0, seconds, Halt::Samples)?;
     Ok(BatchEvent::Finished {
         id: job.id,
@@ -628,8 +696,6 @@ struct CyclesFrame {
     passes: Option<CyclesPasses>,
     transparent: bool,
     floor_reflection: bool,
-    started: Instant,
-    seconds: f64,
     rendered: u32,
     halt: Halt,
     stopped: bool,
@@ -752,14 +818,23 @@ fn cycles_passes(
     Ok(CyclesPasses { radiance, clown, depth, normal, position, albedo, mattes, groups: kept })
 }
 
-/// Render with Cycles on `engine`. An error here is Cycles' or the
-/// device's; [`finish_cycles`] does the rest.
-fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEvent>, cancel: &AtomicBool) -> Result<CyclesFrame, String> {
+/// Render with Cycles on `engine`, showing the picture as it refines. An
+/// error here is Cycles' or the device's; [`finish_cycles`] does the rest.
+fn render_cycles(
+    job: &BatchJob,
+    engine: RenderEngine,
+    events: &Sender<BatchEvent>,
+    cancel: &AtomicBool,
+    previews: &Previews,
+    begun: Instant,
+) -> Result<CyclesFrame, String> {
     use tequila_render_cycles::{translate, Session};
     let settings = &job.settings;
     let started = Instant::now();
 
-    let mut session = Session::new(engine.cycles_device(), 0, None)
+    // Watched: it hands over its picture so far every second or two, for
+    // the Render window. A library from before that renders without.
+    let mut session = Session::watched(engine.cycles_device(), 0, None)
         .map_err(|e| format!("Cycles could not start on {}: {e}", engine.label()))?;
     // Passes and light groups, named as Tequila's renderer names them.
     let want_passes = settings.effective_write_passes();
@@ -830,25 +905,46 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
     // The most samples Cycles said it had reached: it clears its own count
     // as the render winds up.
     let mut reached = 0;
-    let rgba = session.render_until(
-        settings.width,
-        settings.height,
-        total,
-        |_, samples| {
-            reached = reached.max(samples);
-            // Cycles reports often; the queue only needs to hear a few times a
-            // second.
-            if last.elapsed().as_secs_f32() >= 0.25 {
-                last = Instant::now();
-                let _ = events.send(BatchEvent::Progress {
-                    id: job.id,
-                    samples,
-                    seconds: started.elapsed().as_secs_f64(),
-                });
+    let transparent = view.transparent;
+    let rgba = std::thread::scope(|scope| {
+        // Its pictures arrive on Cycles' own thread and are developed on
+        // this one, so Cycles never waits for one to be.
+        let (pictures, arriving) = channel::<(usize, usize, Vec<f32>)>();
+        let under = under.as_deref();
+        scope.spawn(move || {
+            while let Ok(mut picture) = arriving.recv() {
+                // Only the newest of any that queued up.
+                while let Ok(newer) = arriving.try_recv() {
+                    picture = newer;
+                }
+                let (width, height, rgba) = picture;
+                previews.show(cycles_preview(job, width, height, &rgba, under, transparent));
             }
-        },
-        Some(cancel),
-    )?;
+        });
+        session.render_watched(
+            settings.width,
+            settings.height,
+            total,
+            |_, samples| {
+                reached = reached.max(samples);
+                // Cycles reports often; the queue only needs to hear a few
+                // times a second.
+                if last.elapsed().as_secs_f32() >= 0.25 {
+                    last = Instant::now();
+                    let _ = events.send(BatchEvent::Progress {
+                        id: job.id,
+                        samples,
+                        seconds: begun.elapsed().as_secs_f64(),
+                    });
+                }
+            },
+            || previews.fit(),
+            |picture| {
+                let _ = pictures.send((picture.width, picture.height, picture.rgba.to_vec()));
+            },
+            Some(cancel),
+        )
+    })?;
     let stopped = cancel.load(Ordering::Acquire);
     let seconds = started.elapsed().as_secs_f64();
     let halt = if stopped || settings.max_seconds.is_some_and(|limit| seconds >= f64::from(limit)) {
@@ -859,6 +955,10 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
     // What it reached, which a time limit or a cancel leaves short of what
     // was asked for.
     let rendered = if halt == Halt::Samples { total } else { reached.min(total) };
+    if tracing() {
+        let to = begun.elapsed().as_secs_f64();
+        eprintln!("Tequila: Cycles, {rendered} samples, from {:.1} s to {to:.1} s into the job ({seconds:.1} s)", to - seconds);
+    }
     let passes = if keeping { Some(cycles_passes(&mut session, job, &groups, want_passes)?) } else { None };
     let denoise_after = passes.as_ref().filter(|_| settings.denoise).map(|passes| {
         (passes.albedo.iter().flat_map(|s| s.to_array()).collect::<Vec<f32>>(), passes.normal.iter().flat_map(|n| [n.x, n.y, n.z]).collect::<Vec<f32>>())
@@ -899,8 +999,6 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
         passes,
         transparent: view.transparent,
         floor_reflection: translation.floor_reflection,
-        started,
-        seconds,
         rendered,
         halt,
         stopped,
@@ -909,48 +1007,45 @@ fn render_cycles(job: &BatchJob, engine: RenderEngine, events: &Sender<BatchEven
 
 /// Lay Tequila's floor reflection and cut-out over what Cycles rendered,
 /// and save it.
-fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>, cancel: &AtomicBool) -> Result<BatchEvent, String> {
+fn finish_cycles(
+    job: &BatchJob,
+    frame: CyclesFrame,
+    floor: Option<FloorReflection>,
+    events: &Sender<BatchEvent>,
+    cancel: &AtomicBool,
+    previews: &Previews,
+    begun: Instant,
+) -> Result<BatchEvent, String> {
     let settings = &job.settings;
-    let CyclesFrame { mut color, mut alpha, passes, transparent, floor_reflection, started, seconds, rendered, halt, stopped } = frame;
-    let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
+    let CyclesFrame { mut color, mut alpha, passes, transparent, floor_reflection, rendered, halt, stopped } = frame;
     // The floor's reflection, which Cycles was left without: Tequila's,
-    // through the same camera, laid over (`tequila_render_cpu::floor`).
-    if floor_reflection {
-        let _ = events.send(BatchEvent::Stage { id: job.id, label: "Floor reflection" });
-        let device = tequila_render_cpu::Device::shared().map_err(|e| e.to_string())?;
-        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, (*job.scene).clone()).map_err(|e| e.to_string())?;
-        let mut layer = Framebuffer::new(settings.width, settings.height);
-        // Half the image's samples, which a reflection's share of the pixel
-        // hides the rest of the noise of, and the denoiser the remainder;
-        // fewer once the render is stopped or out of time, as Cycles was.
-        let samples = (settings.max_samples / 2).clamp(16, 512);
-        let over = || {
-            cancel.load(Ordering::Acquire) || settings.max_seconds.is_some_and(|limit| started.elapsed().as_secs_f64() >= f64::from(limit))
-        };
-        tequila_render_cpu::floor::render_floor_reflection_until(&intersector, &mut layer, job.camera, &job.config, samples, &over);
-        let guides = layer.to_denoiser_buffers();
-        let denoised = settings
-            .denoise
-            .then(|| tequila_denoise::Denoiser::shared().ok())
-            .flatten()
-            .and_then(|denoiser| {
-                denoiser
-                    .denoise(
-                        settings.width,
-                        settings.height,
-                        &guides.color,
-                        &guides.albedo,
-                        &guides.normal,
-                        tequila_denoise::DenoiseSettings { quality: tequila_denoise::Quality::High, strength: 1.0, prefilter_guides: true },
-                    )
-                    .ok()
-            });
-        let reflected: &[f32] = denoised.as_ref().map_or(&guides.color, |image| &image.data);
-        // How much each pixel's reflection takes of what is under it,
-        // denoised as its colour is. Left as sampled, a blurred
-        // reflection's fade put dark specks on a light backdrop and grain in
-        // a transparent one.
-        let shares = smooth_alpha(settings.width, settings.height, layer.pixels().iter().map(|p| p.alpha()).collect(), settings.denoise);
+    // through the same camera, made alongside Cycles (`FloorReflection`),
+    // laid over (`tequila_render_cpu::floor`). Waited for if it is not
+    // done, Cycles' finished picture showing meanwhile; made here, as it
+    // was before, if it was not started.
+    let layer = match floor {
+        Some(floor) if floor_reflection => {
+            if !floor.is_finished() {
+                let fit = previews.fit();
+                if fit.0 > 0 && fit.1 > 0 {
+                    previews.show(finished_preview(job, &color, &alpha, fit));
+                }
+            }
+            Some(floor.wait(job, events, begun)?)
+        }
+        // A floor Cycles was not left without: nothing to lay over.
+        Some(_) => None,
+        None if floor_reflection => {
+            let _ = events.send(BatchEvent::Stage { id: job.id, label: "Floor reflection" });
+            let over = |_: u32| {
+                cancel.load(Ordering::Acquire) || settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
+            };
+            Some(floor_layer(job, floor_samples(settings), &over, begun)?)
+        }
+        None => None,
+    };
+    let _ = events.send(BatchEvent::Stage { id: job.id, label: "Saving image" });
+    if let Some(FloorLayer { reflected, shares }) = &layer {
         let bright = tequila_render_cpu::floor::alpha_by_brightness(&job.scene);
         for (i, &share) in shares.iter().enumerate() {
             if share > 0.0 {
@@ -1045,6 +1140,8 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         }
         _ => output.write(&path, format).map_err(|e| e.to_string())?,
     }
+    // The whole job's time, to its file saved, not only Cycles' part.
+    let seconds = begun.elapsed().as_secs_f64();
     write_sidecars(&path, job, settings, rendered, seconds, halt)?;
     let relight = match (passes, groups, settings.relight) {
         (Some(passes), Some(groups), true) => {
@@ -1066,6 +1163,347 @@ fn finish_cycles(job: &BatchJob, frame: CyclesFrame, events: &Sender<BatchEvent>
         stopped,
         relight,
     })
+}
+
+/// Tequila's reflection of the product in a reflecting floor, for a Cycles
+/// render (see [`finish_cycles`]), made on threads of its own from the
+/// job's start while Cycles renders: the processor is mostly idle while
+/// Cycles renders on the graphics card, and the reflection does not depend
+/// on Cycles' picture. Made after Cycles, as it was, it took as long again
+/// as Cycles had, with the job's progress standing still. Its threads run
+/// below normal priority while Cycles renders, so Cycles' own thread and the
+/// interface come first, and Cycles on the processor is not slowed by it;
+/// once the job is only waiting for it, at normal priority.
+struct FloorReflection<'scope> {
+    thread: std::thread::ScopedJoinHandle<'scope, Result<FloorLayer, String>>,
+    progress: &'scope FloorProgress,
+    samples: u32,
+    pool: Option<Arc<rayon::ThreadPool>>,
+}
+
+/// What the floor's thread says of itself, and is told.
+#[derive(Default)]
+struct FloorProgress {
+    /// The samples made so far.
+    done: AtomicU32,
+    /// Stop at once: the render failed, and nobody will see the reflection.
+    stop: AtomicBool,
+}
+
+/// Sets its flag when dropped, so a Cycles render that ends in an error
+/// tells its floor's thread to stop rather than waiting on it.
+struct StopOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+/// The floor's reflection, ready to lay over Cycles' picture: its colour,
+/// RGB in the rendering space, and how much of each pixel it takes, both
+/// denoised when the render is.
+struct FloorLayer {
+    reflected: Vec<f32>,
+    shares: Vec<f32>,
+}
+
+/// Half the image's samples, which a reflection's share of the pixel hides
+/// the rest of the noise of, and the denoiser the remainder.
+fn floor_samples(settings: &RenderSettings) -> u32 {
+    (settings.max_samples / 2).clamp(16, 512)
+}
+
+impl<'scope> FloorReflection<'scope> {
+    fn start<'env>(
+        scope: &'scope std::thread::Scope<'scope, 'env>,
+        job: &'env BatchJob,
+        cancel: &'env AtomicBool,
+        begun: Instant,
+        progress: &'env FloorProgress,
+    ) -> FloorReflection<'scope> {
+        let samples = floor_samples(&job.settings);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(std::thread::available_parallelism().map_or(2, |n| n.get()).saturating_sub(1).max(1))
+            .thread_name(|i| format!("tequila-floor-{i}"))
+            .start_handler(|_| set_priority(false))
+            .build()
+            .ok()
+            .map(Arc::new);
+        let threads = pool.clone();
+        let thread = scope.spawn(move || {
+            // Stopped or out of time as Cycles is, from the job's start -
+            // after the first few samples, so there is always a reflection
+            // to lay over.
+            let over = |done: u32| {
+                progress.done.store(done, Ordering::Relaxed);
+                progress.stop.load(Ordering::Acquire)
+                    || cancel.load(Ordering::Acquire)
+                    || job.settings.max_seconds.is_some_and(|limit| begun.elapsed().as_secs_f64() >= f64::from(limit))
+            };
+            let from = begun.elapsed().as_secs_f64();
+            let layer = match &threads {
+                Some(pool) => pool.install(|| floor_layer(job, samples, &over, begun)),
+                None => floor_layer(job, samples, &over, begun),
+            };
+            if tracing() {
+                let done = progress.done.load(Ordering::Relaxed);
+                eprintln!("Tequila: the floor's reflection, {done} of {samples} samples, from {from:.1} s to {:.1} s into the job", begun.elapsed().as_secs_f64());
+            }
+            layer
+        });
+        FloorReflection { thread, progress, samples, pool }
+    }
+
+    fn is_finished(&self) -> bool {
+        self.thread.is_finished()
+    }
+
+    /// The reflection, once it is done. Until it is, the job says how far
+    /// it has got ("Floor reflection 40 / 128") and its time goes on.
+    fn wait(self, job: &BatchJob, events: &Sender<BatchEvent>, begun: Instant) -> Result<FloorLayer, String> {
+        if let Some(pool) = self.pool.as_ref().filter(|_| !self.thread.is_finished()) {
+            // Nothing else of the job is left to make room for.
+            pool.spawn_broadcast(|_| set_priority(true));
+        }
+        let mut told: Option<Instant> = None;
+        while !self.thread.is_finished() {
+            if told.is_none_or(|t| t.elapsed() >= Duration::from_millis(250)) {
+                let done = self.progress.done.load(Ordering::Relaxed).min(self.samples);
+                let _ = events.send(BatchEvent::Step { id: job.id, label: "Floor reflection", done, of: self.samples, seconds: begun.elapsed().as_secs_f64() });
+                told = Some(Instant::now());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.thread.join().unwrap_or_else(|_| Err("the floor reflection failed".into()))
+    }
+}
+
+/// `samples` of the floor's reflection alone, through the job's camera,
+/// ending early when `over` says, told how many are done; denoised, its
+/// share smoothed, when the render is.
+fn floor_layer(job: &BatchJob, samples: u32, over: &dyn Fn(u32) -> bool, begun: Instant) -> Result<FloorLayer, String> {
+    let settings = &job.settings;
+    let device = tequila_render_cpu::Device::shared().map_err(|e| e.to_string())?;
+    let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, (*job.scene).clone()).map_err(|e| e.to_string())?;
+    let mut layer = Framebuffer::new(settings.width, settings.height);
+    tequila_render_cpu::floor::render_floor_reflection_until(&intersector, &mut layer, job.camera, &job.config, samples, over);
+    if tracing() {
+        eprintln!("Tequila: the floor's reflection sampled by {:.1} s into the job", begun.elapsed().as_secs_f64());
+    }
+    let (width, height) = (settings.width, settings.height);
+    let guides = layer.to_denoiser_buffers();
+    let alpha: Vec<f32> = layer.pixels().iter().map(|p| p.alpha()).collect();
+    let mut reflected = vec![0.0; width * height * 3];
+    let mut shares = vec![0.0; width * height];
+    // Denoised only round where the floor reflects anything - the band
+    // under the product, with a margin of nothing - and not over the whole
+    // frame, which is nothing elsewhere: at 1920 x 1080 the frame's colour
+    // and share took the processor 11 seconds after Cycles was done.
+    let Some(band) = reflection_bounds(width, height, &guides.color, &alpha, DENOISE_MARGIN) else {
+        return Ok(FloorLayer { reflected, shares });
+    };
+    let colour = band.crop(width, &guides.color, 3);
+    let denoised = settings
+        .denoise
+        .then(|| tequila_denoise::Denoiser::shared().ok())
+        .flatten()
+        .and_then(|denoiser| {
+            denoiser
+                .denoise(
+                    band.width(),
+                    band.height(),
+                    &colour,
+                    &band.crop(width, &guides.albedo, 3),
+                    &band.crop(width, &guides.normal, 3),
+                    tequila_denoise::DenoiseSettings { quality: tequila_denoise::Quality::High, strength: 1.0, prefilter_guides: true },
+                )
+                .ok()
+        });
+    band.paste(width, &denoised.map_or(colour, |image| image.data), &mut reflected, 3);
+    // How much each pixel's reflection takes of what is under it, denoised
+    // as its colour is. Left as sampled, a blurred reflection's fade put
+    // dark specks on a light backdrop and grain in a transparent one.
+    band.paste(width, &smooth_alpha(band.width(), band.height(), band.crop(width, &alpha, 1), settings.denoise), &mut shares, 1);
+    Ok(FloorLayer { reflected, shares })
+}
+
+/// Pixels of nothing kept round the floor's reflection when it is denoised
+/// on its own: more than the denoiser looks across, so it sees the same
+/// there as in the whole frame.
+const DENOISE_MARGIN: usize = 128;
+
+/// A rectangle of an image, `x0..x1` by `y0..y1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Band {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+impl Band {
+    fn width(&self) -> usize {
+        self.x1 - self.x0
+    }
+
+    fn height(&self) -> usize {
+        self.y1 - self.y0
+    }
+
+    /// Its pixels of `image`, `channels` a pixel, `image_width` wide.
+    fn crop(&self, image_width: usize, image: &[f32], channels: usize) -> Vec<f32> {
+        let mut out = Vec::with_capacity(self.width() * self.height() * channels);
+        for y in self.y0..self.y1 {
+            out.extend_from_slice(&image[(y * image_width + self.x0) * channels..(y * image_width + self.x1) * channels]);
+        }
+        out
+    }
+
+    /// `pixels`, cropped by [`Band::crop`], put back into `image`.
+    fn paste(&self, image_width: usize, pixels: &[f32], image: &mut [f32], channels: usize) {
+        let row = self.width() * channels;
+        for (i, y) in (self.y0..self.y1).enumerate() {
+            image[(y * image_width + self.x0) * channels..(y * image_width + self.x1) * channels].copy_from_slice(&pixels[i * row..(i + 1) * row]);
+        }
+    }
+}
+
+/// Where a floor reflection layer has anything - colour or share - with
+/// `margin` pixels round it, inside the image; `None` where it has nothing.
+fn reflection_bounds(width: usize, height: usize, colour: &[f32], alpha: &[f32], margin: usize) -> Option<Band> {
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for y in 0..height {
+        for x in 0..width {
+            let i = y * width + x;
+            if alpha[i] != 0.0 || colour[3 * i..3 * i + 3].iter().any(|&c| c != 0.0) {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    (x0 != usize::MAX).then(|| Band {
+        x0: x0.saturating_sub(margin),
+        y0: y0.saturating_sub(margin),
+        x1: (x1 + margin).min(width),
+        y1: (y1 + margin).min(height),
+    })
+}
+
+/// Whether to say on standard error how long a Cycles render's parts took,
+/// as `TEQUILA_CYCLES_TRACE` has Cycles say what it does.
+fn tracing() -> bool {
+    static TRACING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACING.get_or_init(|| std::env::var_os("TEQUILA_CYCLES_TRACE").is_some())
+}
+
+/// The calling thread's priority: normal, or lowered, for work that should
+/// have only what the rest leaves - below normal on Windows, niceness 10 on
+/// Linux (where it is the thread's own), the utility class on a Mac.
+fn set_priority(normal: bool) {
+    #[cfg(windows)]
+    {
+        extern "system" {
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+            fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
+        }
+        const THREAD_PRIORITY_NORMAL: i32 = 0;
+        const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+        unsafe { SetThreadPriority(GetCurrentThread(), if normal { THREAD_PRIORITY_NORMAL } else { THREAD_PRIORITY_BELOW_NORMAL }) };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        extern "C" {
+            fn setpriority(which: std::ffi::c_int, who: std::ffi::c_uint, priority: std::ffi::c_int) -> std::ffi::c_int;
+        }
+        // PRIO_PROCESS of thread 0, the caller: on Linux, the thread alone.
+        // Back to 0 only where the limits allow it; else it stays at 10.
+        unsafe { setpriority(0, 0, if normal { 0 } else { 10 }) };
+    }
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn pthread_set_qos_class_self_np(class: u32, relative_priority: i32) -> i32;
+        }
+        const QOS_CLASS_DEFAULT: u32 = 0x15;
+        const QOS_CLASS_UTILITY: u32 = 0x11;
+        unsafe { pthread_set_qos_class_self_np(if normal { QOS_CLASS_DEFAULT } else { QOS_CLASS_UTILITY }, 0) };
+    }
+}
+
+/// A picture of a Cycles render so far as the Render window shows it:
+/// Cycles' premultiplied RGBA, `width` x `height`, over Tequila's
+/// background where that goes under (taken where each pixel's middle
+/// falls), developed as the finished image will be.
+fn cycles_preview(
+    job: &BatchJob,
+    width: usize,
+    height: usize,
+    rgba: &[f32],
+    under: Option<&[tequila_core::spectrum::Spectrum]>,
+    transparent: bool,
+) -> BatchEvent {
+    use tequila_render_cycles::translate;
+    let (full_width, full_height) = (job.settings.width, job.settings.height);
+    let mut color = Vec::with_capacity(width * height);
+    let mut alpha = Vec::with_capacity(width * height);
+    for (i, px) in rgba.chunks_exact(4).enumerate() {
+        color.push(match under {
+            Some(background) => {
+                let x = ((2 * (i % width) + 1) * full_width / (2 * width)).min(full_width - 1);
+                let y = ((2 * (i / width) + 1) * full_height / (2 * height)).min(full_height - 1);
+                translate::lay_under(px, background[y * full_width + x])
+            }
+            None => translate::to_rendering(px[0], px[1], px[2]).sanitized(),
+        });
+        alpha.push(if transparent { px[3].clamp(0.0, 1.0) } else { 1.0 });
+    }
+    developed_preview(job, width, height, color, alpha)
+}
+
+/// Cycles' finished picture shrunk by averaging to fit `fit`, for the
+/// Render window while the floor's reflection is still being made.
+fn finished_preview(job: &BatchJob, color: &[tequila_core::spectrum::Spectrum], alpha: &[f32], fit: (usize, usize)) -> BatchEvent {
+    use tequila_core::spectrum::Spectrum;
+    let (w, h) = (job.settings.width, job.settings.height);
+    let scale = (fit.0 as f64 / w as f64).min(fit.1 as f64 / h as f64).min(1.0);
+    let (pw, ph) = (((w as f64 * scale).round() as usize).max(1), ((h as f64 * scale).round() as usize).max(1));
+    let mut small_color = Vec::with_capacity(pw * ph);
+    let mut small_alpha = Vec::with_capacity(pw * ph);
+    for y in 0..ph {
+        let (y0, y1) = (y * h / ph, ((y + 1) * h / ph).max(y * h / ph + 1));
+        for x in 0..pw {
+            let (x0, x1) = (x * w / pw, ((x + 1) * w / pw).max(x * w / pw + 1));
+            let (mut c, mut a) = (Spectrum::ZERO, 0.0);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    c = c + color[sy * w + sx];
+                    a += alpha[sy * w + sx];
+                }
+            }
+            let share = 1.0 / ((y1 - y0) * (x1 - x0)) as f32;
+            small_color.push(c * share);
+            small_alpha.push(a * share);
+        }
+    }
+    developed_preview(job, pw, ph, small_color, small_alpha)
+}
+
+/// A picture for the Render window, developed as the job's file will be.
+fn developed_preview(job: &BatchJob, width: usize, height: usize, color: Vec<tequila_core::spectrum::Spectrum>, alpha: Vec<f32>) -> BatchEvent {
+    let output = RenderOutput {
+        width,
+        height,
+        color,
+        alpha,
+        layers: Vec::new(),
+        style: job.style,
+        display: job.display.clone(),
+        alpha_mode: output_alpha(&job.settings),
+    };
+    BatchEvent::Preview { id: job.id, width, height, rgba: output.to_rgba8() }
 }
 
 /// A finished render split by light group (§5.5), to relight without
@@ -3934,7 +4372,9 @@ mod tests {
         job.material_names = vec!["Plastic".into(); job.scene.materials.len()];
         assert_eq!(engine_for(&job.settings, false).0, RenderEngine::CyclesCpu, "passes sent the render to Tequila's renderer");
         let (events, _heard) = std::sync::mpsc::channel();
-        let frame = render_cycles(&job, RenderEngine::CyclesCpu, &events, &AtomicBool::new(false)).expect("Cycles renders");
+        let (slot, size) = (Mutex::new(None), AtomicU64::new(0));
+        let previews = Previews { slot: &slot, size: &size };
+        let frame = render_cycles(&job, RenderEngine::CyclesCpu, &events, &AtomicBool::new(false), &previews, Instant::now()).expect("Cycles renders");
         let passes = frame.passes.as_ref().expect("the passes");
 
         // Along the same rays, through Tequila's own tracer.
@@ -6557,6 +6997,204 @@ mod tests {
             }
             assert!(Instant::now() < deadline, "the batch renderer never finished");
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A queued Cycles render shows its picture refining as it goes, as
+    /// Tequila's own renderer's does: made to fit the size the Render
+    /// window shows it at, and not made at all while the window is closed.
+    /// Cycles' final renders showed "Preparing the first preview…" until
+    /// they were done. Skipped where Cycles is not installed, or is a
+    /// library from before it handed out its pictures.
+    #[test]
+    fn a_queued_cycles_render_shows_its_picture_as_it_goes() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        if !tequila_render_cycles::has_watched_renders() {
+            eprintln!("skipped: this Cycles library shows nothing of a render until it is done");
+            return;
+        }
+        let directory = scratch("tequila-cycles-watched");
+        let mut seen = Vec::new();
+        for fit in [Some((80, 80)), None] {
+            let renderer = BatchRenderer::new();
+            renderer.show_previews_at(fit);
+            // Four seconds of samples: a picture comes every second or two.
+            renderer.submit(job(1, &directory, RenderSettings {
+                engine: tequila_scene::render::RenderEngine::CyclesCpu,
+                width: 160, height: 120, max_samples: 100_000, max_seconds: Some(4), adaptive: false, denoise: false,
+                ..Default::default()
+            }));
+            let mut pictures = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(120);
+            'render: loop {
+                for event in renderer.drain() {
+                    match event {
+                        BatchEvent::Preview { id, width, height, rgba } => pictures.push((id, width, height, rgba)),
+                        BatchEvent::Finished { .. } => break 'render,
+                        BatchEvent::Failed { message, .. } => panic!("{message}"),
+                        _ => {}
+                    }
+                }
+                assert!(Instant::now() < deadline, "the render never finished");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            seen.push(pictures);
+        }
+        let (shown, closed) = (&seen[0], &seen[1]);
+        assert!(!shown.is_empty(), "no picture of the render came while it rendered");
+        for (id, width, height, rgba) in shown {
+            assert_eq!(*id, 1);
+            assert_eq!((*width, *height), (80, 60), "made to fit 80 x 80, at the image's shape");
+            assert_eq!(rgba.len(), width * height * 4);
+            let mean = rgba.iter().step_by(4).map(|&v| f32::from(v)).sum::<f32>() / (width * height) as f32;
+            assert!(mean > 5.0, "the picture shows the lit scene: its mean red is {mean:.1}");
+        }
+        assert!(closed.is_empty(), "with the Render window closed, {} pictures were made", closed.len());
+    }
+
+    /// A job reports its whole time, from its start to its file saved, not
+    /// only its rendering: a Cycles render's takes in the floor's
+    /// reflection laid over it, and a render's its layers. Cycles' jobs
+    /// said only Cycles' part: 56 seconds of a 115-second job.
+    #[test]
+    fn a_job_reports_its_whole_time() {
+        use tequila_render_core::scene::ShadowCatcher;
+        use tequila_scene::render::RenderEngine;
+        let mut engines = vec![RenderEngine::Tequila];
+        match tequila_render_cycles::available() {
+            Ok(()) => engines.push(RenderEngine::CyclesCpu),
+            Err(why) => eprintln!("Cycles skipped: {why}"),
+        }
+        for engine in engines {
+            let directory = scratch(&format!("tequila-whole-time-{}", engine.key()));
+            let renderer = BatchRenderer::new();
+            let mut render = job(1, &directory, RenderSettings {
+                engine,
+                width: 128, height: 96, max_samples: 256, denoise: false,
+                ..Default::default()
+            });
+            let mut scene = (*render.scene).clone();
+            scene.instances[1].shadow_catcher = Some(ShadowCatcher { reflections: 1.0, ..ShadowCatcher::default() });
+            render.scene = Arc::new(scene);
+            if engine == RenderEngine::Tequila {
+                // A layer, rendered after the image is saved.
+                render.settings.max_samples = 32;
+                render.layers.push(("again".into(), render.scene.clone()));
+            }
+            let submitted = Instant::now();
+            renderer.submit(render);
+            let finished = wait_for_finish(&renderer);
+            let wall = submitted.elapsed().as_secs_f64();
+            match finished {
+                BatchEvent::Finished { seconds, .. } => {
+                    assert!(seconds <= wall, "{}: the job said {seconds:.2} s of {wall:.2}", engine.key());
+                    assert!(seconds >= 0.85 * wall - 0.05, "{}: the job took {wall:.2} s and said {seconds:.2}", engine.key());
+                }
+                BatchEvent::Failed { message, .. } => panic!("{message}"),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// While a Cycles render waits for its floor's reflection, the job says
+    /// a few times a second how far the reflection has got, and its time
+    /// goes on: the header sat at "Floor reflection · 256 / 256 samples ·
+    /// 0m 56s" for a minute.
+    #[test]
+    fn the_floor_stage_shows_its_progress() {
+        let directory = scratch("tequila-floor-progress");
+        let job = job(3, &directory, RenderSettings::default());
+        let progress = FloorProgress::default();
+        let release = AtomicBool::new(false);
+        let (events, heard) = channel();
+        let begun = Instant::now() - Duration::from_secs(50);
+        let layer = std::thread::scope(|scope| {
+            // A reflection that has made 40 of its 128 samples, and finishes
+            // when it is let go.
+            let thread = scope.spawn(|| {
+                progress.done.store(40, Ordering::Relaxed);
+                while !release.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                progress.done.store(128, Ordering::Relaxed);
+                Ok(FloorLayer { reflected: vec![0.5; 3], shares: vec![1.0] })
+            });
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(800));
+                release.store(true, Ordering::Release);
+            });
+            FloorReflection { thread, progress: &progress, samples: 128, pool: None }.wait(&job, &events, begun)
+        })
+        .unwrap();
+        assert_eq!(layer.shares, vec![1.0], "the reflection made is the one handed back");
+        let steps: Vec<(u32, u32, f64)> = heard
+            .try_iter()
+            .filter_map(|event| match event {
+                BatchEvent::Step { id: 3, label, done, of, seconds } => {
+                    assert_eq!(label, "Floor reflection");
+                    Some((done, of, seconds))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(steps.len() >= 2, "{} steps in 0.8 s", steps.len());
+        assert!(steps.iter().all(|&(done, of, _)| of == 128 && done <= of));
+        assert!(steps.iter().any(|&(done, _, _)| done == 40), "the samples made are told: {steps:?}");
+        assert!(steps.windows(2).all(|pair| pair[1].2 > pair[0].2), "the time goes on: {steps:?}");
+        assert!(steps[0].2 >= 50.0, "counted from the job's start: {steps:?}");
+        assert_eq!(step_message("Floor reflection", 40, 128), "Floor reflection 40 / 128");
+    }
+
+    /// The floor's reflection is denoised round where it has anything, with
+    /// a margin, and put back where it was; a layer with nothing in it has
+    /// nothing to denoise.
+    #[test]
+    fn the_floor_reflection_is_denoised_round_its_band() {
+        let (w, h) = (40, 30);
+        let mut colour = vec![0.0; w * h * 3];
+        let mut alpha = vec![0.0; w * h];
+        assert_eq!(reflection_bounds(w, h, &colour, &alpha, 4), None);
+        // A share at (10, 20) and a colour at (25, 22).
+        alpha[20 * w + 10] = 0.5;
+        colour[3 * (22 * w + 25) + 1] = 0.25;
+        let band = reflection_bounds(w, h, &colour, &alpha, 4).expect("something to denoise");
+        assert_eq!(band, Band { x0: 6, y0: 16, x1: 30, y1: 27 });
+        let near_edge = reflection_bounds(w, h, &colour, &alpha, 100).unwrap();
+        assert_eq!(near_edge, Band { x0: 0, y0: 0, x1: w, y1: h }, "kept inside the image");
+        let mut back = vec![0.0; w * h * 3];
+        band.paste(w, &band.crop(w, &colour, 3), &mut back, 3);
+        assert_eq!(back, colour, "cropped and put back, it is the same image");
+        let mut shares = vec![0.0; w * h];
+        band.paste(w, &band.crop(w, &alpha, 1), &mut shares, 1);
+        assert_eq!(shares, alpha);
+    }
+
+    /// A picture of a render in progress is shrunk by averaging to fit the
+    /// Render window, at the image's shape, never larger than the image.
+    #[test]
+    fn a_preview_fits_the_window_at_the_image_shape() {
+        use tequila_core::spectrum::Spectrum;
+        let directory = scratch("tequila-preview-fit");
+        let (w, h) = (192, 108);
+        let job = job(5, &directory, RenderSettings { width: w, height: h, ..Default::default() });
+        // Black on the left, grey on the right.
+        let color: Vec<Spectrum> = (0..w * h).map(|i| if i % w < w / 2 { Spectrum::ZERO } else { Spectrum::splat(0.18) }).collect();
+        let alpha = vec![1.0; w * h];
+        for (fit, wanted) in [((64, 64), (64, 36)), ((1000, 1000), (192, 108)), ((48, 200), (48, 27))] {
+            match finished_preview(&job, &color, &alpha, fit) {
+                BatchEvent::Preview { id, width, height, rgba } => {
+                    assert_eq!(id, 5);
+                    assert_eq!((width, height), wanted, "fitted into {fit:?}");
+                    assert_eq!(rgba.len(), width * height * 4);
+                    let red = |x: usize, y: usize| rgba[(y * width + x) * 4];
+                    assert!(red(width / 4, height / 2) < 10, "the black half stays black");
+                    assert!(red(3 * width / 4, height / 2) > 60, "the grey half stays grey");
+                }
+                _ => unreachable!(),
+            }
         }
     }
 

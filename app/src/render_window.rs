@@ -344,6 +344,9 @@ pub struct RenderWindow {
     frames: Option<(u32, u32)>,
     pub preview_job: Option<u64>,
     pub preview: Option<egui::TextureHandle>,
+    /// The stage's size in pixels, as last drawn: what a render in progress
+    /// is shown at.
+    stage_pixels: Option<(usize, usize)>,
     /// Where past renders are remembered between sessions, once known.
     history_file: Option<PathBuf>,
     /// Previews being read back from disk, by path.
@@ -396,6 +399,7 @@ impl Default for RenderWindow {
             frames: None,
             preview_job: None,
             preview: None,
+            stage_pixels: None,
             history_file: None,
             loading: Vec::new(),
             unreadable: Default::default(),
@@ -592,6 +596,12 @@ impl RenderWindow {
         self.open = true;
         self.selected = None;
         self.compare_with = None;
+    }
+
+    /// How large a render in progress is shown, in pixels: the stage, while
+    /// the window is open; `None` while it is closed, when nobody sees it.
+    pub fn preview_fit(&self) -> Option<(usize, usize)> {
+        self.open.then(|| self.stage_pixels.unwrap_or((1280, 720)))
     }
 
     pub fn set_preview(&mut self, ctx: &egui::Context, id: u64, width: usize, height: usize, rgba: &[u8]) {
@@ -1108,6 +1118,8 @@ impl RenderWindow {
     fn stage(&mut self, ui: &mut egui::Ui, project: &Project, settings: &RenderSettings, showing: &Showing) {
         let area = ui.available_rect_before_wrap();
         ui.allocate_rect(area, egui::Sense::hover());
+        let pixels = area.size() * ui.ctx().pixels_per_point();
+        self.stage_pixels = Some(((pixels.x as usize).max(64), (pixels.y as usize).max(64)));
         match *showing {
             Showing::Live(id) => {
                 let texture = self.preview.as_ref().filter(|_| self.preview_job == Some(id));
@@ -1118,7 +1130,10 @@ impl RenderWindow {
                         ui.painter().image(texture.id(), rect, full_uv(), egui::Color32::WHITE);
                     }
                     None => {
-                        let frame = fit(area, settings.width, settings.height);
+                        // The frame of the job's own picture, which is not
+                        // always the size the window is set to now.
+                        let (width, height) = project.queue().get(id).map_or((settings.width, settings.height), |job| (job.settings.width, job.settings.height));
+                        let frame = fit(area, width, height);
                         ui.painter().rect_stroke(frame, 2.0, egui::Stroke::new(1.0_f32, crate::theme::p().line_strong));
                         let spinner = egui::Rect::from_center_size(frame.center() - egui::vec2(0.0, 14.0), egui::vec2(22.0, 22.0));
                         ui.put(spinner, egui::Spinner::new());
