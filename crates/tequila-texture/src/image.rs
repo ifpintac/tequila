@@ -602,6 +602,19 @@ impl Image {
         }
     }
 
+    /// The same picture without its fourth channel, when every pixel of it is
+    /// opaque: a quarter less to keep, at no cost to the picture. Most
+    /// textures are such pictures - a PNG saved with an alpha it never uses,
+    /// or any 8-bit file, which is decoded to four channels - and each 4K
+    /// one is a quarter of a gigabyte as floats before its mipmaps.
+    pub fn without_opaque_alpha(self) -> Image {
+        if self.channels != 4 || !self.data.chunks_exact(4).all(|p| p[3] >= 1.0) {
+            return self;
+        }
+        let data = self.data.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        Image { channels: 3, data, ..self }
+    }
+
     /// Decode an 8-bit sRGB buffer into linear floats. Used for backplates and
     /// label textures; kept here so every path into the renderer removes the
     /// transfer function in exactly one place.
@@ -737,6 +750,19 @@ mod tests {
 
     /// A one-channel EXR — how Poly Haven stores roughness — reads as a
     /// grey, rather than failing and leaving the material at its default.
+    /// An opaque picture loses its alpha, keeping every colour; one with
+    /// any pixel less than opaque keeps all four channels.
+    #[test]
+    fn an_opaque_alpha_is_dropped_and_a_real_one_kept() {
+        let opaque = Image { width: 2, height: 1, channels: 4, data: vec![0.1, 0.2, 0.3, 1.0, 0.4, 0.5, 0.6, 1.0], color_space: ColorSpace::Srgb };
+        let three = opaque.without_opaque_alpha();
+        assert_eq!((three.channels, three.data), (3, vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6]));
+        let cut = Image { width: 2, height: 1, channels: 4, data: vec![0.1, 0.2, 0.3, 1.0, 0.4, 0.5, 0.6, 0.5], color_space: ColorSpace::Srgb };
+        assert_eq!(cut.clone().without_opaque_alpha().data, cut.data);
+        let rgb = Image { width: 1, height: 1, channels: 3, data: vec![0.7, 0.8, 0.9], color_space: ColorSpace::Raw };
+        assert_eq!(rgb.without_opaque_alpha().channels, 3);
+    }
+
     #[test]
     fn a_greyscale_exr_reads_as_a_grey() {
         let path = std::env::temp_dir().join(format!("tequila-grey-{}.exr", std::process::id()));

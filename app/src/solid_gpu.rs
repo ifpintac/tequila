@@ -656,6 +656,9 @@ impl SolidView {
             unsafe { gl.finish() };
             eprintln!("gpu view frame {:.2} ms", started.elapsed().as_secs_f64() * 1000.0);
         }
+        // What issuing the frame cost the window's thread, for
+        // TEQUILA_PROFILE: egui's own frame leaves the painting out.
+        crate::profile::record("paint: gpu view", started.elapsed().as_secs_f64() * 1000.0);
         unsafe { restore(gl) };
     }
 }

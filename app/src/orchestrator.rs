@@ -255,6 +255,8 @@ struct Shared {
     request: Mutex<Option<RenderRequest>>,
     /// See [`EngineNote`]; `None` when there is nothing to say.
     engine_note: Mutex<Option<EngineNote>>,
+    /// Whether the render thread keeps a Cycles view, showing or paused.
+    keeps_cycles: AtomicBool,
     /// The intersector the render thread most recently built, shared so the UI
     /// can pick against exactly the geometry that is on screen.
     ///
@@ -310,6 +312,7 @@ impl Orchestrator {
         let shared = Arc::new(Shared {
             request: Mutex::new(None),
             engine_note: Mutex::new(None),
+            keeps_cycles: AtomicBool::new(false),
             intersector: Mutex::new(None),
             request_generation: AtomicU64::new(0),
             image: Mutex::new(DisplayImage::default()),
@@ -427,6 +430,12 @@ impl Orchestrator {
         self.shared.engine_note.lock().unwrap().clone()
     }
 
+    /// Whether a Cycles view is kept, showing or paused: let go
+    /// `CYCLES_KEPT` after the viewport stops showing it.
+    pub fn keeps_cycles(&self) -> bool {
+        self.shared.keeps_cycles.load(Ordering::Acquire)
+    }
+
     /// The most recent finished image, if it has changed since `seen`.
     pub fn take_image(&self, seen: &mut u64) -> Option<DisplayImage> {
         let generation = self.shared.image_generation.load(Ordering::Acquire);
@@ -533,6 +542,9 @@ fn render_loop(shared: Arc<Shared>) {
     // alongside it, and what it is of: the scene, the camera and the size of
     // the frames it goes over.
     let mut reflection: Option<(Framebuffer, (usize, Camera, usize, usize))> = None;
+    // Since when the viewport has shown something other than the Cycles view
+    // it still keeps; let go after `CYCLES_KEPT`.
+    let mut cycles_away: Option<Instant> = None;
     let say = |note: Option<EngineNote>| {
         let mut current = shared.engine_note.lock().unwrap();
         if *current != note {
@@ -551,6 +563,7 @@ fn render_loop(shared: Arc<Shared>) {
     let mut restyled: Option<Instant> = None;
 
     while shared.running.load(Ordering::Acquire) {
+        shared.keeps_cycles.store(cycles.is_some(), Ordering::Release);
         let request_generation = shared.request_generation.load(Ordering::Acquire);
         let style_generation = shared.style_generation.load(Ordering::Acquire);
 
@@ -661,11 +674,15 @@ fn render_loop(shared: Arc<Shared>) {
             say(None);
         }
         if on_cycles && cycles_failed != Some(engine) {
+            cycles_away = None;
             if cycles.as_ref().map(|view| view.engine()) != Some(engine) {
                 cycles = None;
                 cycles_frames = 0;
                 match crate::profile::time("render: start cycles", || crate::cycles_view::CyclesView::new(engine)) {
-                    Ok(view) => cycles = Some(view),
+                    Ok(view) => {
+                        cycles = Some(view);
+                        shared.keeps_cycles.store(true, Ordering::Release);
+                    }
                     Err(error) => {
                         eprintln!("Tequila: Cycles could not start, so the viewport uses Tequila's renderer: {error}");
                         cycles_failed = Some(engine);
@@ -826,6 +843,29 @@ fn render_loop(shared: Arc<Shared>) {
         if let Some(view) = cycles.as_mut() {
             // Not showing, so not using the graphics card either.
             view.set_paused(true);
+            // And let go, once the viewport has stayed away from Cycles for
+            // a while: paused, it still held everything it had on the
+            // graphics card - its path states (four to eight million of
+            // them on a Mac, several gigabytes whatever the scene), the
+            // scene, the textures and the film. Measured on a 446-part model
+            // wearing sixteen 4K maps, Tequila kept 17 GB after leaving the
+            // Rendered view, and still did once the model was deleted. A
+            // quick look at Solid and back keeps the view, and its picture.
+            let away = *cycles_away.get_or_insert_with(Instant::now);
+            if away.elapsed() >= CYCLES_KEPT {
+                cycles = None;
+                shared.keeps_cycles.store(false, Ordering::Release);
+                cycles_frames = 0;
+                cycles_clean = false;
+                cycles_away = None;
+                // The floor reflection laid over Cycles' frames, at their size.
+                reflection = None;
+                // The graphics card's denoiser, its buffers and its filters'
+                // working memory, at the Rendered view's size.
+                if let Some(gpu) = gpu_denoiser.take() {
+                    gpu.release();
+                }
+            }
         }
 
         // Interactive frames render at reduced resolution with one sample; a
@@ -953,6 +993,14 @@ impl Shared {
         self.wakeup.notify_all();
     }
 }
+
+/// How long the Cycles view is kept, paused, once the viewport shows
+/// something else: long enough for a look at Solid or Material Preview and
+/// back, which keeps its picture and costs nothing, and no longer, since it
+/// holds gigabytes on the graphics card. Coming back after it has gone costs
+/// starting Cycles again: its kernels are cached, and the scene is sent again
+/// (three seconds for a model of a million triangles on an M-series Mac).
+const CYCLES_KEPT: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(10) };
 
 /// Sleep until a request or a style change arrives, or `timeout` passes.
 ///
@@ -1915,6 +1963,63 @@ mod tests {
         let ringed = redraw(vec![0]);
         let changed = ringed.pixels.chunks_exact(4).zip(plain.pixels.chunks_exact(4)).filter(|(a, b)| a != b).count();
         assert!(changed > 20, "selecting the sphere drew no outline ({changed} pixels changed)");
+    }
+
+    /// The Cycles view is kept while the viewport shows something else for
+    /// a moment, let go once it has for `CYCLES_KEPT` (half a second under
+    /// test), with everything it held on the device, and made again when the
+    /// viewport shows Rendered again. Kept paused, it held gigabytes on the
+    /// graphics card for as long as Tequila ran. Skipped where Cycles is not
+    /// installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn the_cycles_view_is_let_go_after_the_viewport_leaves_it() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        req.shading = Shading::Rendered;
+        let mut seen = 0;
+        let drawn = |renderer: &Orchestrator, seen: &mut u64| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            loop {
+                if renderer.take_image(seen).is_some_and(|image| image.samples >= 4 && image.width == 64) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "Cycles never drew the viewport");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        renderer.submit(req.clone());
+        drawn(&renderer, &mut seen);
+        assert!(renderer.keeps_cycles());
+
+        req.shading = Shading::Fast;
+        renderer.submit(req.clone());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(renderer.keeps_cycles(), "let go at once: a look at Solid and back would start Cycles again");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while renderer.keeps_cycles() {
+            assert!(Instant::now() < deadline, "the Cycles view was kept after the viewport left it");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Back to Rendered: a view made again, and its picture.
+        req.shading = Shading::Rendered;
+        req.scene_generation += 1;
+        renderer.submit(req.clone());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !renderer.keeps_cycles() {
+            assert!(Instant::now() < deadline, "no Cycles view was made again");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The Solid pictures published before the switch, passed over.
+        while renderer.take_image(&mut seen).is_some() {}
+        drawn(&renderer, &mut seen);
     }
 
     /// A material changed in a Cycles viewport - a colour picked, a label
