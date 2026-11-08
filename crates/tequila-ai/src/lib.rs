@@ -19,14 +19,16 @@
 pub mod base64;
 pub mod conversation;
 pub mod http;
+pub mod ollama;
 pub mod provider;
 pub mod secret;
 pub mod session;
 pub mod settings;
+pub mod sse;
 pub mod tools;
 pub mod wire;
 
 pub use conversation::{Call, Message, Part, Role};
 pub use provider::{Key, Kind, Provider};
-pub use session::{Session, Turn};
+pub use session::{Phase, Progress, Session, Turn};
 pub use settings::Settings;

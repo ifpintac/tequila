@@ -9,7 +9,7 @@
 //! the assistant's name on it, so a person can watch it work.
 
 use crate::TequilaApp;
-use tequila_ai::{session, tools, Call, Key, Kind, Part, Provider, Session, Settings};
+use tequila_ai::{session, tools, Call, Key, Kind, Part, Phase, Progress, Provider, Session, Settings};
 use tequila_scripting::protocol::{parse_request, Reply};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -24,6 +24,9 @@ const SENT_SIZE: usize = 1024;
 enum Entry {
     You(String),
     Said(String),
+    /// What the model reasoned before a reply, and for how long: folded
+    /// away, to open when wanted.
+    Thought { text: String, seconds: f32 },
     Step { text: String, ok: bool, detail: String },
     Picture(egui::TextureHandle),
     Problem(String),
@@ -115,6 +118,10 @@ pub struct Assistant {
     apps: Option<(std::time::Instant, Vec<(crate::connect_apps::App, bool, bool)>)>,
     /// What connecting an app last said.
     apps_message: Option<Result<String, String>>,
+    /// When the request being worked on was asked, for the time shown.
+    asked: Option<std::time::Instant>,
+    /// The reply on its way, as last looked at: what the panel shows of it.
+    live: Option<Progress>,
 }
 
 impl Assistant {
@@ -161,6 +168,7 @@ impl Assistant {
             Ok(()) => {
                 self.turn_start = Some(depth);
                 self.turn_end = None;
+                self.asked = Some(std::time::Instant::now());
             }
             Err(error) => self.transcript.push(Entry::Problem(error)),
         }
@@ -173,7 +181,95 @@ impl Assistant {
         self.calls.clear();
         self.results.clear();
         self.shot = None;
+        self.plugin_wait = None;
+        self.live = None;
+        self.asked = None;
         self.transcript.push(Entry::Note("Stopped.".into()));
+    }
+
+    /// Whether a request is being worked on: waiting for the model, or
+    /// carrying out what it asked for.
+    pub fn is_working(&self) -> bool {
+        self.working()
+    }
+
+    /// What it is doing, in a few words, and the same as a word for a script.
+    fn doing(&self) -> (String, &'static str) {
+        if self.shot.is_some() {
+            return ("Looking at the scene".into(), "looking");
+        }
+        if self.plugin_wait.is_some() {
+            return ("Running the plugin".into(), "tools");
+        }
+        let waiting = self.session.as_ref().is_some_and(Session::busy);
+        match (&self.live, waiting) {
+            (Some(live), true) => match &live.phase {
+                Phase::Loading => ("Loading the model".into(), "loading"),
+                Phase::Reading => ("Reading the request".into(), "reading"),
+                Phase::Thinking => ("Thinking".into(), "thinking"),
+                Phase::Writing => ("Writing".into(), "writing"),
+                Phase::Calling(name) => (format!("Calling {}", name.trim_start_matches("tequila_")), "calling"),
+            },
+            (None, true) => ("Sending".into(), "reading"),
+            (_, false) => ("Carrying out its steps".into(), "tools"),
+        }
+    }
+
+    /// The line under the conversation while it works: what it is doing,
+    /// how much it has written, which step.
+    fn status_line(&self) -> String {
+        let (doing, phase) = self.doing();
+        let mut line = doing;
+        if let Some(live) = &self.live {
+            if matches!(phase, "thinking" | "writing" | "calling") && live.tokens > 0 {
+                line.push_str(&format!(" · {} tokens", tequila_ai::ollama::thousands(live.tokens as u32)));
+            }
+        }
+        let step = self.session.as_ref().map(Session::steps).unwrap_or(0);
+        if step > 0 {
+            line.push_str(&format!(" · step {}", step + 1));
+        }
+        line
+    }
+
+    /// What the Assistant is doing, for a script: whether it is working and
+    /// on what, and the conversation as the panel shows it.
+    pub fn status(&self) -> tequila_format::json::Value {
+        use tequila_format::json::Value;
+        let mut out = tequila_format::json_write::Object::new();
+        out.set("open", self.open).set("working", self.working());
+        if let Some(provider) = self.settings.active() {
+            out.set("provider", provider.name.clone()).set("model", provider.model.clone());
+        }
+        if self.working() {
+            let (doing, phase) = self.doing();
+            out.set("doing", doing).set("phase", phase);
+            out.set("step", self.session.as_ref().map(Session::steps).unwrap_or(0) as f64 + 1.0);
+            out.set_some("seconds", self.asked.map(|a| (a.elapsed().as_secs_f64() * 10.0).round() / 10.0));
+            if let Some(live) = &self.live {
+                out.set("tokens", live.tokens as f64);
+            }
+        }
+        let entries: Vec<Value> = self
+            .transcript
+            .iter()
+            .map(|entry| {
+                let (kind, text) = match entry {
+                    Entry::You(text) => ("you", text.clone()),
+                    Entry::Said(text) => ("said", text.clone()),
+                    Entry::Thought { text, .. } => ("thought", text.clone()),
+                    Entry::Step { text, ok, .. } => (if *ok { "step" } else { "failed step" }, text.clone()),
+                    Entry::Picture(_) => ("picture", String::new()),
+                    Entry::Problem(text) => ("problem", text.clone()),
+                    Entry::Note(text) => ("note", text.clone()),
+                };
+                let mut item = tequila_format::json_write::Object::new();
+                item.set("kind", kind).set("text", text);
+                item.build()
+            })
+            .collect();
+        out.set("transcript", Value::Array(entries));
+        out.build()
     }
 
     /// Whether "undo what the assistant did" would take back only its work:
@@ -213,20 +309,55 @@ impl Assistant {
     /// Move the conversation along: collect replies, carry out tool calls,
     /// send results. Called every frame.
     pub fn pump(&mut self, app: &mut TequilaApp, ctx: &egui::Context) {
-        if let Some(session) = &mut self.session {
-            match session.poll() {
-                Some(Ok(turn)) => {
-                    for text in turn.text {
-                        self.transcript.push(Entry::Said(text));
+        // What the request has come to, and what it is doing; then the
+        // session is let go of, for the rest to touch the panel.
+        let (polled, live, notes) = match &mut self.session {
+            Some(session) => {
+                let live = session.progress();
+                let polled = session.poll();
+                (polled, live, session.take_notes())
+            }
+            None => (None, None, Vec::new()),
+        };
+        match polled {
+            Some(Ok(turn)) => {
+                // How long it reasoned, where that is known; the round's time if not.
+                let seconds = live
+                    .as_ref()
+                    .map(|l| if l.thought_for.is_zero() { l.since.elapsed() } else { l.thought_for }.as_secs_f32())
+                    .unwrap_or(0.0);
+                if !turn.reasoning.trim().is_empty() {
+                    self.transcript.push(Entry::Thought { text: turn.reasoning.trim().to_string(), seconds });
+                }
+                let said = !turn.text.is_empty();
+                for text in turn.text {
+                    self.transcript.push(Entry::Said(text));
+                }
+                self.calls.extend(turn.calls);
+                if self.calls.is_empty() {
+                    if !said {
+                        self.transcript.push(Entry::Note(
+                            "It finished without an answer: it may have run out of room for its reply (Providers…, Edit, Advanced: Longest reply). Ask again to carry on.".into(),
+                        ));
                     }
-                    self.calls.extend(turn.calls);
-                    if self.calls.is_empty() {
-                        self.finish_turn(app);
+                    self.finish_turn(app);
+                }
+                self.live = None;
+            }
+            Some(Err(error)) => {
+                self.live = None;
+                if error != tequila_ai::http::STOPPED {
+                    let again = error.to_lowercase().contains("ask again");
+                    self.transcript.push(Entry::Problem(error));
+                    if !again {
+                        self.transcript.push(Entry::Note("The conversation is kept: ask again to carry on.".into()));
                     }
                 }
-                Some(Err(error)) => self.transcript.push(Entry::Problem(error)),
-                None => {}
             }
+            None => self.live = live,
+        }
+        for note in notes {
+            self.transcript.push(Entry::Note(note));
         }
 
         self.collect_screenshot(ctx);
@@ -252,6 +383,9 @@ impl Assistant {
             // Replies arrive on another thread; keep looking for them even
             // when nobody is moving the mouse.
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        } else {
+            self.asked = None;
+            self.live = None;
         }
     }
 
@@ -501,19 +635,30 @@ impl Assistant {
         egui::TopBottomPanel::bottom("assistant-prompt").show_inside(ui, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if self.working() {
-                    ui.spinner();
-                    let step = self.session.as_ref().map(Session::steps).unwrap_or(0);
-                    let what = if self.shot.is_some() { "Looking" } else if self.calls.is_empty() { "Thinking" } else { "Working" };
-                    ui.label(egui::RichText::new(if step > 0 { format!("{what} · step {}", step + 1) } else { format!("{what}…") }).color(crate::theme::dim()));
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_enabled(can_undo_turn && !self.working(), egui::Button::new("Undo request").small())
-                        .on_hover_text("Take back everything the last request changed")
-                        .clicked()
-                    {
-                        action = Action::UndoTurn;
+                    // While it works, how long it has been at it; after, the
+                    // way to take it back.
+                    match self.asked.filter(|_| self.working()) {
+                        Some(asked) => {
+                            ui.label(egui::RichText::new(clock(asked.elapsed())).monospace().color(crate::theme::dim()))
+                                .on_hover_text("How long it has been working on this request");
+                        }
+                        None => {
+                            if ui
+                                .add_enabled(can_undo_turn, egui::Button::new("Undo request").small())
+                                .on_hover_text("Take back everything the last request changed")
+                                .clicked()
+                            {
+                                action = Action::UndoTurn;
+                            }
+                        }
+                    }
+                    // What it is doing, in the room left.
+                    if self.working() {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.spinner();
+                            ui.add(egui::Label::new(egui::RichText::new(self.status_line()).color(crate::theme::dim())).truncate());
+                        });
                     }
                 });
             });
@@ -560,7 +705,7 @@ impl Assistant {
                     }
                     return;
                 }
-                for entry in &self.transcript {
+                for (index, entry) in self.transcript.iter().enumerate() {
                     match entry {
                         Entry::You(text) => {
                             ui.add_space(6.0);
@@ -572,6 +717,13 @@ impl Assistant {
                         Entry::Said(text) => {
                             ui.add_space(4.0);
                             ui.add(egui::Label::new(text.as_str()).wrap());
+                        }
+                        Entry::Thought { text, seconds } => {
+                            ui.add_space(4.0);
+                            let title = egui::RichText::new(format!("Thought for {}", spoken(*seconds))).small().color(crate::theme::dim());
+                            egui::CollapsingHeader::new(title).id_salt(("assistant-thought", index)).default_open(false).show(ui, |ui| {
+                                reasoning(ui, text);
+                            });
                         }
                         Entry::Step { text, ok, detail } => {
                             let colour = if *ok { crate::theme::dim() } else { crate::theme::p().danger };
@@ -590,8 +742,25 @@ impl Assistant {
                             ui.add(egui::Label::new(egui::RichText::new(text).color(crate::theme::p().danger)).wrap());
                         }
                         Entry::Note(text) => {
-                            ui.label(egui::RichText::new(text).small().italics().color(crate::theme::dim()));
+                            ui.add(egui::Label::new(egui::RichText::new(text).small().italics().color(crate::theme::dim())).wrap());
                         }
+                    }
+                }
+                // The reply on its way: its reasoning as it streams, dimmed
+                // and folding away, then its words.
+                if let Some(live) = self.live.as_ref().filter(|_| self.session.as_ref().is_some_and(Session::busy)) {
+                    ui.add_space(4.0);
+                    if !live.reasoning.trim().is_empty() {
+                        let title = if live.phase == Phase::Thinking { "Thinking…" } else { "Its reasoning" };
+                        let title = egui::RichText::new(title).small().color(crate::theme::dim());
+                        egui::CollapsingHeader::new(title).id_salt("assistant-live-reasoning").default_open(true).show(ui, |ui| {
+                            egui::ScrollArea::vertical().id_salt("assistant-live-reasoning-text").max_height(150.0).stick_to_bottom(true).show(ui, |ui| {
+                                reasoning(ui, &live.reasoning);
+                            });
+                        });
+                    }
+                    if !live.text.trim().is_empty() {
+                        ui.add(egui::Label::new(live.text.trim()).wrap());
                     }
                 }
             });
@@ -1031,7 +1200,8 @@ impl Assistant {
 impl Draft {
     fn of(original: Option<String>, provider: Provider) -> Draft {
         let (key_mode, env_name) = match &provider.key {
-            Key::None if provider.kind == Kind::OpenAi && provider.base_url.contains("localhost") => (KeyMode::None, String::new()),
+            // A server on this computer, by any of its names, needs no key.
+            Key::None if tequila_ai::provider::is_local(&provider.base_url) => (KeyMode::None, String::new()),
             Key::None => (KeyMode::Stored, String::new()),
             Key::Stored(_) => (KeyMode::Stored, String::new()),
             Key::Env(name) => (KeyMode::Env, name.clone()),
@@ -1084,6 +1254,33 @@ impl Draft {
             self.status = Some(status);
             self.check = None;
         }
+    }
+}
+
+/// Reasoning, as the panel shows it: small and dimmed, beside the answer
+/// rather than part of it.
+fn reasoning(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(egui::RichText::new(text.trim()).small().italics().color(crate::theme::dim())).wrap());
+}
+
+/// `0:42`, `12:05`, `1:02:03`.
+fn clock(elapsed: std::time::Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+/// `8 s`, `2 min 5 s`.
+fn spoken(seconds: f32) -> String {
+    let whole = seconds.round().max(1.0) as u64;
+    match (whole / 60, whole % 60) {
+        (0, s) => format!("{s} s"),
+        (m, 0) => format!("{m} min"),
+        (m, s) => format!("{m} min {s} s"),
     }
 }
 
@@ -1288,6 +1485,61 @@ mod tests {
         assert!(image.size[0] <= SENT_SIZE && image.size[1] <= SENT_SIZE, "{:?}", image.size);
         let decoded = tequila_ai::base64::decode(&encoded).unwrap();
         assert!(decoded.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn times_read_at_a_glance() {
+        assert_eq!(clock(std::time::Duration::from_secs(42)), "0:42");
+        assert_eq!(clock(std::time::Duration::from_secs(725)), "12:05");
+        assert_eq!(clock(std::time::Duration::from_secs(3723)), "1:02:03");
+        assert_eq!(spoken(7.6), "8 s");
+        assert_eq!(spoken(125.0), "2 min 5 s");
+        assert_eq!(spoken(120.0), "2 min");
+    }
+
+    /// The panel while a reply streams in, drawn for real: its reasoning
+    /// folded under a header, and the line saying what it is doing; and
+    /// the same for a script.
+    #[test]
+    fn a_reply_on_its_way_is_shown_as_it_comes() {
+        // A server that takes the request and never answers: the request
+        // stays on its way for as long as the test needs.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}/v1", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            let held: Vec<_> = listener.incoming().take(4).collect();
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            drop(held);
+        });
+        let mut assistant = Assistant::default();
+        assistant.open = true;
+        let provider = Provider { model: "test".into(), base_url: url, ..Provider::preset("ollama").unwrap() };
+        assistant.settings = Settings { providers: vec![provider.clone()], active: Some(provider.id.clone()) };
+        assistant.ask("Make the strap velvet".into(), 0);
+        assistant.transcript.push(Entry::Thought { text: "Earlier.".into(), seconds: 3.0 });
+        assistant.live = Some(Progress {
+            phase: Phase::Thinking,
+            since: std::time::Instant::now(),
+            reasoning: "The strap is part 4.".into(),
+            text: String::new(),
+            tokens: 1312,
+            thinking_from: Some(std::time::Instant::now()),
+            thought_for: std::time::Duration::from_secs(12),
+        });
+        assert_eq!(assistant.status_line(), "Thinking · 1,312 tokens");
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assistant.show(ui, false);
+            });
+        });
+        let status = assistant.status();
+        assert_eq!(status.get("phase").and_then(|v| v.as_str()), Some("thinking"));
+        assert_eq!(status.get("tokens").and_then(|v| v.as_f64()), Some(1312.0));
+        let kinds: Vec<&str> = status.get("transcript").unwrap().as_array().iter().filter_map(|e| e.get("kind").and_then(|k| k.as_str())).collect();
+        assert_eq!(kinds, ["you", "thought"]);
+        assistant.stop();
+        assert!(!assistant.is_working(), "Stop frees the panel at once");
     }
 
     #[test]

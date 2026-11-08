@@ -145,6 +145,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
         Operation::StudioPreset(request) => studio_preset(app, request),
+        Operation::Assistant(request) => assistant(app, request),
         Operation::Substance(request) => substance(app, request),
         Operation::Material(request) => material(app, request),
         Operation::Plugin(request) => plugin(app, request),
@@ -274,10 +275,36 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
     }
 }
 
+/// The built-in Assistant, from a script: `open` its panel, `stop` it, `ask`
+/// it something as though typed and sent. Answers with what it is doing
+/// and the conversation as the panel shows it, so a script can follow a
+/// request through.
+fn assistant(app: &mut TequilaApp, request: &Value) -> Reply {
+    if let Some(open) = request.get("open").and_then(Value::as_bool) {
+        app.assistant.open = open;
+    }
+    if request.get("stop").and_then(Value::as_bool) == Some(true) && app.assistant.is_working() {
+        app.assistant.stop();
+    }
+    if let Some(text) = request.get("ask").and_then(Value::as_str) {
+        if app.assistant.is_working() {
+            return Reply::Failed("the Assistant is still working on the last request; stop it first (stop=true)".into());
+        }
+        app.start_screen.open = false;
+        app.assistant.open = true;
+        let depth = app.project.bus().depth();
+        app.assistant.ask(text.trim().to_string(), depth);
+    }
+    Reply::Value(app.assistant.status())
+}
+
 /// Several operations as one undo step. See [`Operation::Batch`].
 fn batch(app: &mut TequilaApp, operations: &[Operation], atomic: bool) -> Reply {
     if operations.iter().any(|op| matches!(op, Operation::Quit { .. })) {
         return Reply::Failed("quit cannot be part of a batch; send it on its own".into());
+    }
+    if operations.iter().any(|op| matches!(op, Operation::Assistant(_))) {
+        return Reply::Failed("the Assistant cannot be part of a batch; send it on its own".into());
     }
     let before_camera = app.project.camera().clone();
     let total = operations.len();
@@ -2303,6 +2330,23 @@ mod handler_tests {
         assert_eq!(name_of(&app, a), before);
         assert!(failure(&mut app, r#"{"op":"batch","ops":[{"op":"quit","discard":true}]}"#).contains("quit"));
         assert!(!app.quit_requested);
+    }
+
+    /// A script can open the Assistant and ask it something, and reads back
+    /// what it is doing; the Assistant is never part of a batch.
+    #[test]
+    fn a_script_drives_the_assistant() {
+        let mut app = TequilaApp::for_tests();
+        let status = value(&mut app, r#"{"op":"assistant","open":true}"#);
+        assert_eq!(status.get("open").and_then(Value::as_bool), Some(true));
+        assert_eq!(status.get("working").and_then(Value::as_bool), Some(false));
+        // Nothing is connected in a test application: the request is
+        // answered with what to do, in the transcript.
+        let status = value(&mut app, r#"{"op":"assistant","ask":"Make the strap velvet"}"#);
+        let kinds: Vec<&str> = status.get("transcript").unwrap().as_array().iter().filter_map(|e| e.get("kind").and_then(Value::as_str)).collect();
+        assert_eq!(kinds, ["problem"], "{status:?}");
+        assert!(parse_request(r#"{"op":"assistant","ask":"  "}"#).unwrap_err().to_string().contains("ask"));
+        assert!(failure(&mut app, r#"{"op":"batch","ops":[{"op":"assistant","ask":"hello"}]}"#).contains("batch"));
     }
 
     /// A script never closes the window on someone's work by default.
