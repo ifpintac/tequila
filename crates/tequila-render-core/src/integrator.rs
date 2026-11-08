@@ -2727,8 +2727,15 @@ fn catch_shadow(
         -hit.geometric_normal
     };
 
-    // A floor there only for its reflection darkens by nothing.
+    // A floor there only for its reflection darkens by nothing. Nor is the
+    // shadow worked out where only the reflection is wanted - laid over
+    // Cycles' picture, whose shadow is its own: traced at every floor pixel
+    // and sample, it was thrown away below. The sampler is left where the
+    // shadow would have left it, so the reflection is the same.
     let coverage = if !catcher.shadows {
+        0.0
+    } else if config.floor_reflection_only {
+        sampler.begin_bounce(bounce);
         0.0
     } else if catcher.occlusion_only {
         occlusion_at(intersector, hit, normal, catcher.occlusion_radius, sampler)

@@ -27,20 +27,22 @@ pub fn render_floor_reflection(
     config: &IntegratorConfig,
     samples: u32,
 ) {
-    render_floor_reflection_until(intersector, layer, camera, config, samples, &|| false);
+    render_floor_reflection_until(intersector, layer, camera, config, samples, &|_| false);
 }
 
 /// The same, a few samples at a time, ending early once `stop` says so -
 /// after the first few, so there is always a reflection to lay over. One
 /// call for all of them could not be stopped: a 4K frame at 512 samples
 /// held a cancelled render, and quitting the application, for minutes.
+/// `stop` is told how many samples are done, which a caller showing
+/// progress shows.
 pub fn render_floor_reflection_until(
     intersector: &dyn Intersector,
     layer: &mut Framebuffer,
     camera: Camera,
     config: &IntegratorConfig,
     samples: u32,
-    stop: &dyn Fn() -> bool,
+    stop: &dyn Fn(u32) -> bool,
 ) {
     const CHUNK: u32 = 8;
     let mut context = RenderContext {
@@ -53,7 +55,7 @@ pub fn render_floor_reflection_until(
         let now = CHUNK.min(samples - done);
         render_pass(intersector, layer, &context, &ProgressiveSchedule::default(), now);
         done += now;
-        if stop() {
+        if stop(done) {
             break;
         }
         // The rest only where the first pass found a reflection. Under a
