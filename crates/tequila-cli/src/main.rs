@@ -301,9 +301,9 @@ From a project's own setup:
       --frames A-B      render the project's turntable, frames A to B (or
                         one frame, A), each to the output name with
                         {frame} in it; a frame already there is skipped
-      --studio-preset P apply a snapshot (a studio preset) first: an
-                        installed one's id, or its folder or .studio.json;
-                        the render then takes the snapshot's settings
+      --studio-preset P apply a studio preset first: an installed one's id,
+                        or its folder or .studio.json; the render then
+                        takes the preset's settings
       --front F         with --studio-preset, the product's side that faces
                         the Main camera: +z (default), -z, +x or -x
       --dress           with --studio-preset, put its materials on parts
@@ -980,7 +980,7 @@ fn each_configuration(options: &Options, document: &tequila_scene::SceneDocument
 pub(crate) fn each_studio(options: &Options, document: &tequila_scene::SceneDocument, template: Option<&str>) -> Result<Vec<String>, String> {
     use tequila_format::output::{expand_template, first_free, output_path, ImageFormat, NameFields};
     if document.studios.is_empty() {
-        return Err("the project has no Studios to render; apply a snapshot or save some views first".into());
+        return Err("the project has no Studios to render; apply a studio preset or save some views first".into());
     }
     let (date, time) = (tequila_core::clock::date(), tequila_core::clock::time_for_filename());
     let mut written = Vec::new();
@@ -1125,7 +1125,7 @@ fn apply_studio_preset(document: &mut tequila_scene::SceneDocument, options: &Op
             bus.apply(document, command).map_err(|e| e.to_string())?;
         }
     }
-    println!("applied the snapshot {} ({} views)", file.preset.name, file.preset.studios.len());
+    println!("applied the studio preset {} ({} views)", file.preset.name, file.preset.studios.len());
     Ok(())
 }
 

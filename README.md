@@ -36,7 +36,7 @@ they need Python 3 on the computer (on a Mac, it comes with Apple's command
 line tools).
 
 **The portable version** keeps everything it remembers - settings, library
-materials, plugins, snapshots, recent projects, caches, crash reports, screenshots
+materials, plugins, studio presets, recent projects, caches, crash reports
 and the journal - in a `data` folder beside `Tequila.exe` instead of the
 computer's user folders: that is what the `portable.txt` beside it does, and
 **Help > About Tequila** says so. Renders and projects go where you save
@@ -114,8 +114,8 @@ with `--cpu-only` to leave the graphics cards out.
   density and a stretch heatmap, and SVG or PNG layout export.
 - **Lighting** - HDRI environments and an HDRI editor, sun and sky, area,
   spot, point and IES lights, light groups you can relight after rendering,
-  and Snapshots - studio presets - that set up lights, cameras, floor and
-  look for any product in one step.
+  and studio presets that set up lights, cameras, floor and look for any
+  product in one step.
 - **Camera and look** - a photographic camera with depth of field,
   orthographic views, and AgX, ACES and PBR Neutral tone mapping.
 - **Floors** - shadow catchers, contact shadows, and objects-only mirror

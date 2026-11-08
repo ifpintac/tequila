@@ -152,7 +152,7 @@ impl crate::TequilaApp {
         }
     }
 
-    /// Do what the Snapshots section asked.
+    /// Do what the Studios section asked.
     fn studio_action(&mut self, asked: crate::studio_shelf::StudioAction) {
         use crate::studio_shelf::StudioAction;
         use tequila_format::studio_preset as presets;
@@ -163,7 +163,7 @@ impl crate::TequilaApp {
                     self.submit();
                     let dressed = if applied.dressed > 0 { format!(", {} parts dressed", applied.dressed) } else { String::new() };
                     self.toasts.info(format!(
-                        "Applied the snapshot {} - {} views, framed ×{:.2}{dressed}. Undo takes it all back.",
+                        "Applied {} - {} views, framed ×{:.2}{dressed}. Undo takes it all back.",
                         file.preset.name, applied.views, applied.scale
                     ));
                 }
@@ -174,15 +174,15 @@ impl crate::TequilaApp {
                 match crate::studio_presets::save(&self.project, &what, thumbnail.as_deref()) {
                     Ok(file) => {
                         self.library.reload_studios();
-                        self.toasts.info(format!("Saved the snapshot `{}`", file.preset.name));
+                        self.toasts.info(format!("Saved the studio as `{}`", file.preset.name));
                     }
                     Err(error) => self.toasts.warn(error),
                 }
             }
             StudioAction::Install => {
                 let Some(from) = rfd::FileDialog::new()
-                    .set_title("Install a snapshot")
-                    .add_filter("Snapshot", &[presets::PACKAGE_EXTENSION, "json"])
+                    .set_title("Install a studio preset")
+                    .add_filter("Studio preset", &[presets::PACKAGE_EXTENSION, "json"])
                     .pick_file()
                 else {
                     return;
@@ -192,7 +192,7 @@ impl crate::TequilaApp {
                         self.library.reload();
                         self.library.reload_studios();
                         let materials = if installed.materials.is_empty() { String::new() } else { format!(" and {} materials", installed.materials.len()) };
-                        self.toasts.info(format!("Installed the snapshot `{}`{materials}", installed.preset.preset.name));
+                        self.toasts.info(format!("Installed `{}`{materials}", installed.preset.preset.name));
                     }
                     Err(error) => self.toasts.warn(error),
                 }
@@ -200,9 +200,9 @@ impl crate::TequilaApp {
             StudioAction::Export(file) => {
                 let name = format!("{}.{}", file.preset.id, presets::PACKAGE_EXTENSION);
                 let Some(to) = rfd::FileDialog::new()
-                    .set_title("Export snapshot")
+                    .set_title("Export studio preset")
                     .set_file_name(name)
-                    .add_filter("Snapshot", &[presets::PACKAGE_EXTENSION])
+                    .add_filter("Studio preset", &[presets::PACKAGE_EXTENSION])
                     .save_file()
                 else {
                     return;
@@ -215,7 +215,7 @@ impl crate::TequilaApp {
             StudioAction::Delete(file) => match presets::delete(&file) {
                 Ok(()) => {
                     self.library.reload_studios();
-                    self.toasts.info(format!("Deleted the snapshot `{}`", file.preset.name));
+                    self.toasts.info(format!("Deleted the studio preset `{}`", file.preset.name));
                 }
                 Err(error) => self.toasts.warn(error),
             },
