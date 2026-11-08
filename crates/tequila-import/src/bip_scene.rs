@@ -1146,7 +1146,7 @@ fn staging(file: &File, setup: &mut RawSetup, notes: &mut Notes) {
         }
     }
     if !setup.studios.is_empty() {
-        notes.push("each KeyShot camera became a Studio, with the environment named after it where there is one; environments no camera is named after are Studios of their own");
+        notes.push("each KeyShot camera became a Snapshot, with the environment named after it where there is one; environments no camera is named after are Snapshots of their own");
     }
 
     // The render: its size and samples.

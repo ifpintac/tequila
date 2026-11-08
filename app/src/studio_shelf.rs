@@ -326,7 +326,7 @@ impl StudioShelf {
         egui::Window::new("Save studio as preset").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
             ui.set_max_width(320.0);
             ui.label(
-                egui::RichText::new("Everything but the product: lights, cameras and Studios, environment and floor, look, render and lighting settings - framed for the product you have now.")
+                egui::RichText::new("Everything but the product: lights, cameras and Snapshots, environment and floor, look, render and lighting settings - framed for the product you have now.")
                     .small()
                     .color(crate::theme::dim()),
             );

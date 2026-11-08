@@ -288,14 +288,14 @@ A wireframe, drawn rather than rendered - in a second or two, at any size:
 
 From a project's own setup:
       --camera NAME     a saved camera, by name or number from 0
-      --studio NAME     apply a Studio first, by name or number
+      --studio NAME     apply a Snapshot first, by name or number
       --model-set NAME  show a model set, by name or number
       --configuration C the configurator's choices, by label or number,
                         comma-separated in option order: 'Red,Leather'
       --all-configurations
                         render every valid configuration, each to the
                         output name with {configuration} in it
-      --all-studios     render every Studio (every view), each to the
+      --all-studios     render every Snapshot (every view), each to the
                         output name with {view} in it - or, without -o,
                         to the project's own output folder and name
       --frames A-B      render the project's turntable, frames A to B (or
@@ -658,7 +658,7 @@ fn load_document(options: &Options) -> Result<tequila_scene::SceneDocument, Stri
         let studios = document.studios.len();
         let parts = document.tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count();
         eprintln!(
-            "opened {} nodes ({parts} parts), {} meshes ({} instanced), {} triangles, {materials} materials, {} variant sets, {cameras} cameras, {studios} studios, {} pins, in {:.1} s",
+            "opened {} nodes ({parts} parts), {} meshes ({} instanced), {} triangles, {materials} materials, {} variant sets, {cameras} cameras, {studios} snapshots, {} pins, in {:.1} s",
             report.nodes,
             report.meshes_kept,
             report.instances_detected,
@@ -980,7 +980,7 @@ fn each_configuration(options: &Options, document: &tequila_scene::SceneDocument
 pub(crate) fn each_studio(options: &Options, document: &tequila_scene::SceneDocument, template: Option<&str>) -> Result<Vec<String>, String> {
     use tequila_format::output::{expand_template, first_free, output_path, ImageFormat, NameFields};
     if document.studios.is_empty() {
-        return Err("the project has no Studios to render; apply a studio preset or save some views first".into());
+        return Err("the project has no Snapshots to render; apply a studio preset or save some views first".into());
     }
     let (date, time) = (tequila_core::clock::date(), tequila_core::clock::time_for_filename());
     let mut written = Vec::new();
@@ -988,7 +988,7 @@ pub(crate) fn each_studio(options: &Options, document: &tequila_scene::SceneDocu
         let mut copy = document.clone();
         tequila_scene::CommandBus::new()
             .apply(&mut copy, tequila_scene::Command::ApplyStudio { index })
-            .map_err(|e| format!("Studio {}: {e}", studio.name))?;
+            .map_err(|e| format!("Snapshot {}: {e}", studio.name))?;
         let settings = &copy.render;
         let fields = NameFields {
             project: if copy.meta.name.is_empty() { "Tequila".into() } else { copy.meta.name.clone() },
@@ -1046,7 +1046,7 @@ fn frame_range(text: &str) -> Result<(u32, u32), String> {
 pub(crate) fn each_frame(options: &Options, document: &tequila_scene::SceneDocument, template: Option<&str>, first: u32, last: u32) -> Result<Vec<String>, String> {
     use tequila_format::output::{expand_template, output_path, ImageFormat, NameFields};
     let Some(animation) = &document.animation else {
-        return Err("the project has no turntable to render; make one in the Studio tab first".into());
+        return Err("the project has no turntable to render; make one in the Snapshots tab first".into());
     };
     let (date, time) = (tequila_core::clock::date(), tequila_core::clock::time_for_filename());
     let frames = animation.range(first, last);
@@ -1157,7 +1157,7 @@ fn select(document: &mut tequila_scene::SceneDocument, options: &Options) -> Res
     let mut bus = tequila_scene::CommandBus::new();
     if let Some(name) = &options.studio {
         let names: Vec<String> = document.studios.iter().map(|s| s.name.clone()).collect();
-        let index = pick("Studio", name, &names)?;
+        let index = pick("Snapshot", name, &names)?;
         bus.apply(document, tequila_scene::Command::ApplyStudio { index }).map_err(|e| e.to_string())?;
     }
     if let Some(name) = &options.camera {

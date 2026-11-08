@@ -32,7 +32,7 @@ Exact behavior of every interaction. This document exists because "drag a materi
 - **The viewport** keeps the panel's full height. Its controls float over it on dark islands (§2.2) instead of a toolbar across the top.
 - **The inspector rail** runs down the window's right edge, one icon per Project tab in three groups: the scene and its surfaces (Scene, Material); light, lens and film (Environment, Lighting, Camera, Image); versions and automation (Studios, Scripting). Help sits at the bottom. A tab opens the inspector at that page; the tab already showing closes it. The rail is always there, so the inspector is one click from open and from closed.
 - **The inspector** sits against its rail: the tab's name and what it is for, then its page. The Assistant opens between it and the viewport.
-- **The Studios page** lists the project's Studios, each as a picture of its shot with its name, what it holds and its buttons. Click the picture to apply the Studio; drag it, or its grip, to move the Studio in the list. *As built, November 5:* while a Studio is dragged it is lifted (tinted), an accent line with a dot at each end marks the gap it would land in, and a card of its picture and name follows the pointer; letting go moves it as one undo step, Escape cancels, and near the panel's top or bottom the list scrolls. Up and Down stay beside the name for the keyboard. A picture out of date - the scene edited under it - stays until it is rendered again, with a small spinner in its corner meanwhile; one not made yet is a grey card with a spinner. The pictures are saved with the project (`docs/05` M6, Studios).
+- **The Snapshots page** (the Studios page until November 8) lists the project's Snapshots, each as a picture of its shot with its name, what it holds and its buttons. Click the picture to apply the Snapshot; drag it, or its grip, to move the Snapshot in the list. *As built, November 5:* while a Snapshot is dragged it is lifted (tinted), an accent line with a dot at each end marks the gap it would land in, and a card of its picture and name follows the pointer; letting go moves it as one undo step, Escape cancels, and near the panel's top or bottom the list scrolls. Up and Down stay beside the name for the keyboard. A picture out of date - the scene edited under it - stays until it is rendered again, with a small spinner in its corner meanwhile; one not made yet is a grey card with a spinner. The pictures are saved with the project (`docs/05` M6, Studios).
 - **The library** is on the left: search, shelves (All, Favorites, Recent, In project), category, and tiles that fill the panel's width. Preview size and texture-pack import are in its ⋯ menu.
 - **The status line** spans the window: the selection and the last message on the left, the viewport's engine and size on the right.
 - `Space` toggles the Project window. `M` toggles the Library. `Tab` toggles all panels (full-viewport mode); the viewport's islands stay.
@@ -244,7 +244,7 @@ A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans an
   - zooming, the distance changed by a factor of e^1.5 a second, as the wheel's zoom is a share a notch.
 
   The orbit camera keeps the horizon level, as the mouse's orbit does, so the roll is read and shown and moves nothing. The window keeps drawing while the cap is off centre, and each report wakes it. A motion that comes to rest is one step to undo. A motion never put back at rest is dropped after two seconds, so a lost report cannot leave the view turning.
-- **Buttons.** Fit view frames the selection, or everything (`F`). Next and Previous Studio apply the Studios in turn, stepping through the saved cameras when there are none. Either button can also do nothing.
+- **Buttons.** Fit view frames the selection, or everything (`F`). Next and Previous Snapshot apply the Snapshots in turn, stepping through the saved cameras when there are none. Either button can also do nothing.
 
 ### 6.2 Command hotkeys (defaults)
 
@@ -254,7 +254,7 @@ A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans an
 | `Tab` | Full-viewport mode | `H` | Toggle HUD |
 | `E` | Background = Environment | `C` | Background = Colour |
 | `B` | Background = Backplate | `G` | Flatten ground |
-| `U` | Studios | `L` | Add label to selection |
+| `U` | Snapshots | `L` | Add label to selection |
 | `W`/`E`/`R` | Move/Rotate/Scale | `F`/`Shift+F` | Frame selection / all |
 | `Ctrl+G` | Group | `Ctrl+Shift+G` | Ungroup |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo | `Ctrl+S` | Save |
@@ -404,7 +404,7 @@ Unlimited by default (configurable), with a visible history panel listing named 
 
 ## 9. Library window
 
-*As built, November 8:* the Library has two sections, **Materials** and **Snapshots** - whole studios (lights, cameras and views, floor, look) put on the product in one step, called studio presets in the files and the scripting channel (`docs/studio-presets.md`).
+*As built, November 8:* the two things called Studios now have names of their own. The Library keeps **Studios** - whole studios (lights, cameras and views, floor, look) put on the product in one step, called studio presets in the files and the scripting channel (`docs/studio-presets.md`). The Project panel's Studios tab is **Snapshots** - the project's saved shots, with its turntable, model sets, variants and configurator - and one saved shot is a Snapshot ("+ Snapshot from the current shot", Snapshot 1, Next and Previous Snapshot on the 3D mouse, `U`). Only the words changed: the files, the commands (`studio.set`, `studio.apply`), the scripting channel's `studios`, the command line's `--studio` and `--all-studios`, and `{studio}` in file names keep their names, and a script may still open the tab as `studios`. Screenshot (`P`) is the viewport's picture saved as a file, and is neither.
 
 - **Categories**: Materials, Environments, Backplates, Textures, Colours, Models. Tree of folders plus flat tag filtering.
 - **Sources**: bundled Standard Library (read-only), user library (writable, path configurable), project-local (materials in the open document), and optional shared network folders.

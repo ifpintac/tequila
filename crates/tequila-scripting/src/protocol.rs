@@ -332,7 +332,7 @@ pub struct UiChange {
     /// lighting, camera, image, scripting. Showing a tab shows the Inspector.
     pub tab: Option<String>,
     pub library: Option<bool>,
-    /// The Library's section: `materials` or `snapshots`. Showing one
+    /// The Library's section: `materials` or `studios`. Showing one
     /// shows the Library.
     pub library_section: Option<String>,
     /// `wireframe`, `solid`, `material` or `rendered`.
@@ -1681,9 +1681,9 @@ mod tests {
     /// numbers of a point or more is refused.
     #[test]
     fn ui_takes_the_library_section_a_screenshot_and_a_window_size() {
-        let request = parse_request(r#"{"id":8,"op":"ui","library_section":"snapshots","save_screenshot":true,"screenshot_folder":"C:/shots","window_size":[1200,800]}"#).unwrap();
+        let request = parse_request(r#"{"id":8,"op":"ui","library_section":"studios","save_screenshot":true,"screenshot_folder":"C:/shots","window_size":[1200,800]}"#).unwrap();
         let Operation::Ui(change) = request.operation else { panic!("a ui change") };
-        assert_eq!(change.library_section.as_deref(), Some("snapshots"));
+        assert_eq!(change.library_section.as_deref(), Some("studios"));
         assert_eq!(change.save_screenshot, Some(true));
         assert_eq!(change.screenshot_folder.as_deref(), Some("C:/shots"));
         assert_eq!(change.window_size, Some([1200.0, 800.0]));

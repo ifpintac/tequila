@@ -559,7 +559,7 @@ impl ProjectTab {
             ProjectTab::Lighting => "Lighting",
             ProjectTab::Camera => "Camera",
             ProjectTab::Image => "Image",
-            ProjectTab::Studios => "Studios",
+            ProjectTab::Studios => "Snapshots",
             ProjectTab::Scripting => "Scripting",
         }
     }
@@ -1642,10 +1642,10 @@ impl eframe::App for TequilaApp {
                 .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 12.0, right: 12.0, top: 0.0, bottom: 0.0 }))
                 .show(ctx, |ui| {
                     // Named for the section showing: the materials, or the
-                    // Snapshots - whole studios.
+                    // Studios - whole studio setups.
                     let (title, about) = match self.library.section {
                         library_tab::Section::Materials => ("Materials", "Drag a finish onto your model"),
-                        library_tab::Section::Studios => ("Snapshots", "A whole studio on your model in one step"),
+                        library_tab::Section::Studios => ("Studios", "A whole studio on your model in one step"),
                     };
                     panel_title(ui, icons::Icon::Library, theme::hue(theme::Hue::Pink), title, about, || {
                         self.show_library = false;
@@ -2685,7 +2685,7 @@ impl TequilaApp {
                 return true;
             }
         } else {
-            self.toasts.info("No Studios or other cameras to step through");
+            self.toasts.info("No Snapshots or other cameras to step through");
         }
         false
     }
@@ -6187,7 +6187,7 @@ impl TequilaApp {
                             ui.add_space(14.0);
                         }
                         if configurator.is_empty() {
-                            ui.label("There is no configurator yet. Build one in the Studios tab, then present it.");
+                            ui.label("There is no configurator yet. Build one in the Snapshots tab, then present it.");
                         } else {
                             let columns = configurator.placement == Placement::Bottom;
                             picked = configurator_panel::picker_laid_out(ui, self.project.document(), &configurator, true, columns);
@@ -6357,7 +6357,7 @@ impl TequilaApp {
     /// finished by queueing it again.
     pub(crate) fn queue_frames(&mut self, first: u32, last: u32, settings: Option<tequila_scene::render::RenderSettings>) -> Vec<u64> {
         let Some(animation) = self.project.document().animation.clone() else {
-            self.project.status = "There is no animation to render: make a turntable in the Studio tab first".into();
+            self.project.status = "There is no animation to render: make a turntable in the Snapshots tab first".into();
             return Vec::new();
         };
         let mut settings = settings.unwrap_or_else(|| self.project.render_settings().clone());
@@ -6718,7 +6718,7 @@ impl TequilaApp {
                         &[
                             ("Inspector", "Space"),
                             ("Material library", "M"),
-                            ("Studios", "U"),
+                            ("Snapshots", "U"),
                             ("Console", "`"),
                             ("Render", "Ctrl + R"),
                             ("Import / save", "Ctrl + I / Ctrl + S"),

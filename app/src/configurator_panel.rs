@@ -69,7 +69,7 @@ fn switches(document: &SceneDocument, drives: Drives) -> String {
             None => "Switches a Multi-Material that was deleted".into(),
         },
         Drives::ModelSet => "Switches the model set".into(),
-        Drives::Studio => "Switches the Studio: camera, lighting and look".into(),
+        Drives::Studio => "Switches the Snapshot: camera, lighting and look".into(),
     }
 }
 
@@ -91,7 +91,7 @@ pub fn swatch(document: &SceneDocument, option: &ConfigOption, choice: &Choice) 
 impl Wizard {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> Option<Action> {
         ui.small(
-            "Turns the variants, model sets and Studios above into a product \
+            "Turns the variants, model sets and Snapshots above into a product \
              configurator: the choices a customer makes, the rules between them, \
              and a picker to present full screen or render every combination from.",
         );
@@ -99,12 +99,12 @@ impl Wizard {
         if original.is_empty() {
             let draft = Configurator::draft(project.document());
             if draft.is_empty() {
-                ui.weak("Make a Multi-Material, two model sets or two Studios first: those are what a configurator's choices switch.");
+                ui.weak("Make a Multi-Material, two model sets or two Snapshots first: those are what a configurator's choices switch.");
                 return None;
             }
             if ui
                 .button("Build a configurator")
-                .on_hover_text("Starts with one option for each Multi-Material, and for the model sets and Studios when there are several.")
+                .on_hover_text("Starts with one option for each Multi-Material, and for the model sets and Snapshots when there are several.")
                 .clicked()
             {
                 let result = project.apply(Command::SetConfigurator { configurator: Box::new(draft) });
@@ -274,7 +274,7 @@ fn options_step(ui: &mut egui::Ui, document: &SceneDocument, c: &mut Configurato
             add(c, "Model".into(), Drives::ModelSet);
             ui.close_menu();
         }
-        if ui.add_enabled(!document.studios.is_empty(), egui::Button::new("Studios")).clicked() {
+        if ui.add_enabled(!document.studios.is_empty(), egui::Button::new("Snapshots")).clicked() {
             add(c, "View".into(), Drives::Studio);
             ui.close_menu();
         }

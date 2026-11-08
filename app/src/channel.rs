@@ -384,6 +384,10 @@ fn project(app: &mut TequilaApp, action: &tequila_scripting::protocol::ProjectAc
 
 /// Every Inspector tab, by the name a script uses for it.
 fn tab_named(name: &str) -> Option<crate::ProjectTab> {
+    // The Snapshots tab was called Studios, and older scripts say so.
+    if name.trim().eq_ignore_ascii_case("studios") {
+        return Some(crate::ProjectTab::Studios);
+    }
     crate::ProjectTab::ALL
         .into_iter()
         .find(|tab| tab.label().eq_ignore_ascii_case(name.trim()))
@@ -392,7 +396,7 @@ fn tab_named(name: &str) -> Option<crate::ProjectTab> {
 fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> Reply {
     // Checked first, so a request with one bad field changes nothing at all
     // rather than everything up to the bad field.
-    // `configurator` is the Studios tab, scrolled to it.
+    // `configurator` is the Snapshots tab, scrolled to it.
     let reveal = change.tab.as_deref().is_some_and(|t| t.trim().eq_ignore_ascii_case("configurator"));
     let tab = match &change.tab {
         Some(_) if reveal => Some(crate::ProjectTab::Studios),
@@ -411,10 +415,8 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     let section = match change.library_section.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
         None => None,
         Some(name) if name == "materials" => Some(crate::library_tab::Section::Materials),
-        // The Snapshots are studio presets, and `studios` is what the
-        // section was called.
-        Some(name) if matches!(name.as_str(), "snapshots" | "studios" | "presets") => Some(crate::library_tab::Section::Studios),
-        Some(name) => return Reply::Failed(format!("the Library's sections are `materials` and `snapshots`, not `{name}`")),
+        Some(name) if matches!(name.as_str(), "studios" | "presets") => Some(crate::library_tab::Section::Studios),
+        Some(name) => return Reply::Failed(format!("the Library's sections are `materials` and `studios`, not `{name}`")),
     };
     let view = match change.viewport.as_deref().map(str::to_ascii_lowercase) {
         None => None,
@@ -427,7 +429,7 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(Some([from, slot])) = change.studio_drag {
         let count = app.project.document().studios.len();
         if from >= count || slot > count {
-            return Reply::Failed(format!("`studio_drag` is [studio, slot]: a Studio from 0 to {}, and a slot from 0 to {count}", count.saturating_sub(1)));
+            return Reply::Failed(format!("`studio_drag` is [studio, slot]: a Snapshot from 0 to {}, and a slot from 0 to {count}", count.saturating_sub(1)));
         }
     }
 
@@ -628,7 +630,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         })
         .set("library_section", match app.library.section {
             crate::library_tab::Section::Materials => "materials",
-            crate::library_tab::Section::Studios => "snapshots",
+            crate::library_tab::Section::Studios => "studios",
         })
         // P's Screenshot: where they go, the last one saved, and whether one
         // is waiting for the graphics card's next frame.
@@ -791,7 +793,7 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
     }
     if job.studios == Some(true) {
         if app.project.document().studios.is_empty() {
-            return Reply::Failed("there are no Studios; set them with studio.set or apply a snapshot (studio_preset)".into());
+            return Reply::Failed("there are no Snapshots (`studios` here); set them with studio.set or apply a studio preset".into());
         }
         let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
         let ids = app.queue_studios(Some(settings));
@@ -799,7 +801,7 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
         out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>())
             .set("count", ids.len() as f64)
             .set("folder", folder.display().to_string())
-            .set("note", "one job per Studio, each view captured now; query jobs for progress");
+            .set("note", "one job per Snapshot, each view captured now; query jobs for progress");
         return Reply::Value(out.build());
     }
     if let Some(wanted) = &job.studio {
@@ -810,7 +812,7 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
             .or_else(|| wanted.parse::<usize>().ok().filter(|&i| i < studios.len()))
         else {
             let names: Vec<&str> = studios.iter().map(|s| s.name.as_str()).collect();
-            return Reply::Failed(format!("there is no Studio `{wanted}`; there are {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+            return Reply::Failed(format!("there is no Snapshot `{wanted}`; there are {}", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
         };
         // Applied for the render and taken back, as a batch of views is.
         let before = app.project.last_studio.clone();
@@ -835,7 +837,7 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
             .set("height", height as f64)
             .set("samples", samples as f64)
             .set("folder", folder.display().to_string())
-            .set("note", "the Studio is captured now and the scene left as it was; query jobs for progress and the file");
+            .set("note", "the Snapshot is captured now and the scene left as it was; query jobs for progress and the file");
         return Reply::Value(out.build());
     }
     if job.configurations == Some(true) {
@@ -1212,7 +1214,7 @@ fn studio_preset(app: &mut TequilaApp, request: &Value) -> Reply {
         "export" => done(path("the package's").and_then(|to| shared::named(request, "export").and_then(|file| presets::export(&file, &to)))),
         "render_all" => {
             if app.project.document().studios.is_empty() {
-                return Reply::Failed("there are no Studios; apply a snapshot (studio_preset) first".into());
+                return Reply::Failed("there are no Snapshots (`studios` here); apply a studio preset first".into());
             }
             let ids = app.queue_studios(None);
             let mut out = Object::new();
@@ -2334,6 +2336,24 @@ mod handler_tests {
         let message = failure(&mut app, r#"{"op":"ui","console":false,"tab":"nonsense"}"#);
         assert!(message.contains("scene"), "the refusal lists the real tabs: {message}");
         assert!(app.console.open, "the console was not closed by a refused request");
+    }
+
+    /// The Project's Studios tab is Snapshots now, and the Library keeps
+    /// Studios: a script that opens the tab by its old name still gets it.
+    #[test]
+    fn the_snapshots_tab_answers_to_studios_and_the_library_keeps_studios() {
+        let mut app = TequilaApp::for_tests();
+        let state = value(&mut app, r#"{"op":"ui","tab":"studios"}"#);
+        assert_eq!(state.get("tab").and_then(|t| t.as_str()), Some("snapshots"));
+        let state = value(&mut app, r#"{"op":"ui","tab":"material"}"#);
+        assert_eq!(state.get("tab").and_then(|t| t.as_str()), Some("material"));
+        let state = value(&mut app, r#"{"op":"ui","tab":"Snapshots"}"#);
+        assert_eq!(state.get("tab").and_then(|t| t.as_str()), Some("snapshots"));
+
+        let state = value(&mut app, r#"{"op":"ui","library_section":"studios"}"#);
+        assert_eq!(state.get("library_section").and_then(|t| t.as_str()), Some("studios"));
+        let message = failure(&mut app, r#"{"op":"ui","library_section":"snapshots"}"#);
+        assert!(message.contains("`studios`"), "the refusal names the Library's sections: {message}");
     }
 
     /// A screenshot asked of a minimized window waits for it to come back,
