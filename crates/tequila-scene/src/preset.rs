@@ -494,7 +494,7 @@ mod tests {
     /// denoising as the project had it: how the person is looking, not how
     /// it renders.
     #[test]
-    fn a_snapshot_leaves_the_viewports_denoising_alone() {
+    fn a_studio_preset_leaves_the_viewports_denoising_alone() {
         let mut document = SceneDocument::new();
         document.render.preview_denoise = false;
         let mut preset = capture(&SceneDocument::new(), "x", "x", "Product Studio", "Small");
@@ -502,8 +502,8 @@ mod tests {
         preset.render.denoise = false;
         preset.render.max_samples = 77;
         let settings = render_settings(&preset, &document);
-        assert!(!settings.preview_denoise, "the snapshot switched the viewport's denoising");
-        assert!(!settings.denoise && settings.max_samples == 77, "the snapshot's own render settings did not come");
+        assert!(!settings.preview_denoise, "the studio preset switched the viewport's denoising");
+        assert!(!settings.denoise && settings.max_samples == 77, "the studio preset's own render settings did not come");
     }
 
     /// Of three sizes, the one framed nearest a product's size by ratio.

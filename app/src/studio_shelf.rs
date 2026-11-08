@@ -115,7 +115,9 @@ impl StudioShelf {
                 .small()
                 .color(crate::theme::dim()),
         );
-        ui.horizontal(|ui| {
+        // Wrapped: the Library is narrow, and a third button cut off at its
+        // edge read as a missing one.
+        ui.horizontal_wrapped(|ui| {
             if ui.button("Save current studio…").on_hover_text("Everything but the product, as a preset of your own.").clicked() {
                 self.saving = Some(crate::studio_presets::SaveAs {
                     name: String::new(),
@@ -128,7 +130,7 @@ impl StudioShelf {
             if ui.button("Install…").on_hover_text("A studio preset package (.tqstudio) or a preset's .studio.json").clicked() {
                 action = Some(StudioAction::Install);
             }
-            if ui.small_button("Folder").on_hover_text("Where your presets are kept").clicked() {
+            if ui.button("Folder").on_hover_text("Where your presets are kept").clicked() {
                 action = Some(StudioAction::OpenFolder);
             }
         });

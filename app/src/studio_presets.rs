@@ -70,7 +70,7 @@ pub fn thumbnail_png(image: &crate::orchestrator::DisplayImage) -> Option<Vec<u8
     let (cw, ch) = if w * 3 > h * 4 { (h * 4 / 3, h) } else { (w, w * 3 / 4) };
     let (x0, y0) = ((w - cw) / 2, (h - ch) / 2);
     // Without the selection's outline, which is the viewport's and not the
-    // snapshot's.
+    // studio's.
     let pixels = image.without_outline();
     let mut out = vec![0u8; SIZE.0 * SIZE.1 * 4];
     for y in 0..SIZE.1 {
