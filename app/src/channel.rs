@@ -508,9 +508,11 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         app.library.section = section;
         app.show_library = true;
     }
+    // As the toolbar does it, telling the renderer. Setting the mode alone
+    // left it rendering what was there before: Cycles, after a script left
+    // Rendered, until something else asked again.
     if let Some(mode) = view {
-        app.view_mode = mode;
-        app.shading = mode.shading();
+        app.set_view_mode(mode);
     }
     if let Some(full) = change.full_viewport {
         app.full_viewport = full;
@@ -2380,6 +2382,41 @@ mod handler_tests {
         let message = failure(&mut app, r#"{"op":"ui","console":false,"tab":"nonsense"}"#);
         assert!(message.contains("scene"), "the refusal lists the real tabs: {message}");
         assert!(app.console.open, "the console was not closed by a refused request");
+    }
+
+    /// A script switching the viewport tells the renderer, as the toolbar
+    /// does. Leaving Rendered from a script did not: the window drew Solid
+    /// while the renderer went on with Cycles - on the graphics card, holding
+    /// its gigabytes, to the last of its samples - until something else asked
+    /// again, a turn of the view. Measured on a Mac, a scripted Solid still
+    /// had Cycles rendering 15 s later, and the view it keeps for a look back
+    /// (`orchestrator::CYCLES_KEPT`) was never let go.
+    #[test]
+    fn a_scripted_view_switch_reaches_the_renderer() {
+        let mut app = TequilaApp::for_tests();
+        // A viewport the size a window would give it, which the renderer is
+        // only asked for once it has.
+        app.viewport_size = (160, 120);
+        // Tequila's renderer, which any test machine has.
+        let settings = tequila_scene::render::RenderSettings {
+            engine: tequila_scene::render::RenderEngine::Tequila,
+            ..app.project.render_settings().clone()
+        };
+        app.project.apply(tequila_scene::Command::SetRenderSettings { settings: Box::new(settings) }).unwrap();
+        app.set_view_mode(crate::view_mode::ViewMode::Rendered);
+        let shading = |app: &TequilaApp| app.orchestrator.request().map(|r| r.shading);
+        assert_eq!(shading(&app), Some(crate::orchestrator::Shading::Rendered));
+
+        for (view, expected) in [
+            ("solid", crate::orchestrator::Shading::Fast),
+            ("rendered", crate::orchestrator::Shading::Rendered),
+            ("material", crate::orchestrator::Shading::Fast),
+            ("rendered", crate::orchestrator::Shading::Rendered),
+            ("wireframe", crate::orchestrator::Shading::Fast),
+        ] {
+            value(&mut app, &format!(r#"{{"op":"ui","viewport":"{view}"}}"#));
+            assert_eq!(shading(&app), Some(expected), "the renderer was not told of `viewport {view}`");
+        }
     }
 
     /// The Project's Studios tab is Snapshots now, and the Library keeps
