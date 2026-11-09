@@ -75,6 +75,8 @@ fn log_reply(app: &mut TequilaApp, peer: &str, summary: String, steps: &[String]
 /// ([`begin_import`]), answered when it has arrived ([`poll_imports`]).
 pub struct PendingImport {
     path: std::path::PathBuf,
+    /// The up axis the script asked for, over the setting.
+    up: Option<tequila_import::UpAxis>,
     parent: Option<NodeId>,
     peer: String,
     summary: String,
@@ -94,6 +96,17 @@ pub struct PendingImport {
 /// read where it stands, so the batch stays one step.
 pub fn begin_import(app: &mut TequilaApp, request: &Request, path: &str, parent: Option<u64>, responder: tequila_scripting::server::Responder, ctx: &egui::Context) {
     let path = std::path::PathBuf::from(path);
+    let up = match up_axis(match &request.operation {
+        Operation::Import { up, .. } => up.as_deref(),
+        _ => None,
+    }) {
+        Ok(up) => up,
+        Err(reply) => {
+            log_reply(app, &request.peer, request.operation.summary(), &[], &reply);
+            responder.answer(&reply);
+            return;
+        }
+    };
     if !path.is_file() {
         let reply = Reply::Failed(format!("{} is not a file", path.display()));
         log_reply(app, &request.peer, request.operation.summary(), &[], &reply);
@@ -111,6 +124,7 @@ pub fn begin_import(app: &mut TequilaApp, request: &Request, path: &str, parent:
     app.project.status = format!("Importing {name}\u{2026}");
     app.script_imports.push(PendingImport {
         path,
+        up,
         parent: parent.map(NodeId),
         peer: request.peer.clone(),
         summary: request.operation.summary(),
@@ -146,7 +160,7 @@ pub fn poll_imports(app: &mut TequilaApp) -> bool {
             match result {
                 Ok(model) => {
                     arrived = true;
-                    finish_import(app, &pending.path, pending.parent, model)
+                    finish_import(app, &pending.path, pending.parent, model, pending.up)
                 }
                 Err(error) => Reply::Failed(error),
             }
@@ -239,7 +253,10 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             Reply::Done
         }
         Operation::Query(query) => Reply::Value(answer(app, *query)),
-        Operation::Import { path, parent } => import(app, path, *parent),
+        Operation::Import { path, parent, up } => match up_axis(up.as_deref()) {
+            Ok(up) => import(app, path, *parent, up),
+            Err(reply) => reply,
+        },
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
         Operation::StudioPreset(request) => studio_preset(app, request),
@@ -1785,7 +1802,17 @@ fn texture_set(app: &mut TequilaApp, path: &str, nodes: &[u64]) -> Reply {
 /// The importer produces a `scene.import` command and this applies it through
 /// the bus like any other, so a scripted import is undoable, journalled, and
 /// indistinguishable from one done through the File menu.
-fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>) -> Reply {
+/// A script's `up`, read: none for the setting's.
+fn up_axis(key: Option<&str>) -> Result<Option<tequila_import::UpAxis>, Reply> {
+    match key {
+        None => Ok(None),
+        Some(key) => tequila_import::UpAxis::from_key(key)
+            .map(Some)
+            .ok_or_else(|| Reply::Failed(format!("`up` is file, y, z, x, -y, -z or -x, not {key:?}"))),
+    }
+}
+
+fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>, up: Option<tequila_import::UpAxis>) -> Reply {
     let path = std::path::PathBuf::from(path);
     if !path.is_file() {
         return Reply::Failed(format!("{} is not a file", path.display()));
@@ -1794,12 +1821,12 @@ fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>) -> Reply {
         Ok(model) => model,
         Err(error) => return Reply::Failed(error.to_string()),
     };
-    finish_import(app, &path, parent.map(NodeId), model)
+    finish_import(app, &path, parent.map(NodeId), model, up)
 }
 
 /// Put a model read from `path` into the scene, under `parent`, and say what
 /// came in.
-fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<NodeId>, model: tequila_import::ReadModel) -> Reply {
+fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<NodeId>, model: tequila_import::ReadModel, up: Option<tequila_import::UpAxis>) -> Reply {
     // As the File menu imports: the CAD file's bytes kept, so the model
     // divides again without its file, and a guessed unit applied in the
     // same undo step.
@@ -1811,7 +1838,9 @@ fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<No
         let _ = app.project.apply(tequila_scene::Command::DeleteNodes { nodes: demo.clone() });
     }
     let before = app.node_ids();
+    app.project.import_up_override = up;
     let imported = app.project.import_read_under(model, parent);
+    app.project.import_up_override = None;
     if starter.is_some() {
         if imported.is_ok() {
             app.project.end_group();
@@ -2207,7 +2236,7 @@ mod handler_tests {
             assert!(std::time::Instant::now() < deadline, "the import was never answered");
             open.drain_with_responders(|arrived, responder| match arrived {
                 tequila_scripting::server::Arrived::Request(request) => match &request.operation {
-                    Operation::Import { path, parent } => {
+                    Operation::Import { path, parent, .. } => {
                         asked = true;
                         begin_import(&mut app, request, path, *parent, responder, &ctx);
                     }
@@ -2342,6 +2371,30 @@ mod handler_tests {
         let bounds = document.tree.bounds(top, &|m| document.geometry.get(m).map(|m| m.bounds()));
         let width = bounds.max.x - bounds.min.x;
         assert!((width - 0.12).abs() < 1e-3, "120 units came in {width} wide");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// A model drawn Z up, imported by a script with `"up": "z"`, stands
+    /// up: its height along the file's Z comes in along Y. A wrong `up` is
+    /// refused by name.
+    #[test]
+    fn a_scripted_import_stands_a_z_up_model_up() {
+        let mut app = TequilaApp::for_tests();
+        let directory = std::env::temp_dir().join(format!("tequila-scripted-up-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let file = directory.join("tower.obj");
+        // 0.1 square, 0.3 tall along Z, in metres-sized numbers.
+        std::fs::write(&file, "v 0 0 0\nv 0.1 0 0\nv 0.1 0.1 0\nv 0 0.1 0\nv 0 0 0.3\nv 0.1 0 0.3\nv 0.1 0.1 0.3\nv 0 0.1 0.3\nf 1 2 3 4\nf 5 6 7 8\n").unwrap();
+        let path = file.display().to_string().replace('\\', "/");
+        let message = failure(&mut app, &format!(r#"{{"op":"import","path":"{path}","up":"sideways"}}"#));
+        assert!(message.contains("`up`"), "{message}");
+        let reply = ask(&mut app, &format!(r#"{{"op":"import","path":"{path}","up":"z"}}"#));
+        assert!(!matches!(reply, Reply::Failed(_)), "{reply:?}");
+        let document = app.project.document();
+        let top = document.tree.iter().find(|n| n.name.starts_with("tower")).expect("the model").id;
+        let size = document.tree.bounds(top, &|m| document.geometry.get(m).map(|m| m.bounds())).diagonal();
+        assert!(size.y > size.z * 2.5, "it stands 3 times as tall as it is deep: {size:?}");
+        assert_eq!(app.project.import_up_override, None, "the script's choice was for that import alone");
         let _ = std::fs::remove_dir_all(&directory);
     }
 

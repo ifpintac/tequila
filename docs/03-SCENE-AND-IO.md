@@ -295,6 +295,8 @@ Export to plain `.hdr`/`.exr` by rasterizing the composite at a chosen resolutio
 
 ## 6. Import pipeline
 
+*Which way up* (as built, November 9): Tequila is Y up, and a STEP, IGES, STL or OBJ file does not say which way up it was drawn; one drawn Z up arrived lying on its back, to be turned in the Scene tab (Turn, Upright) or exported again turned. **File › Up axis of imports** keeps the choice (`import.txt`, beside the other settings): as the file says (the default: glTF, USD and FBX say, the rest are taken as Y up), Y up, Z up, X up, or upside down on each axis. An import turns the model about the origin so that axis points up (`UpAxis::turn` in `tequila-import`; Z up with its front, −Y, toward +Z, where the default camera looks), before it is set on the floor, and the status line says it was stood up. An update of a model turns it the same way. A file with its own cameras and lighting is not turned, and a note says so: they would no longer match. A script's `import` takes `up` for that import alone (`file`, `y`, `z`, `x`, `-y`, `-z`, `-x`), as the AI tools' `tequila_import` does.
+
 ### 6.1 Mesh formats (Assimp) — M1
 
 OBJ, STL, PLY, 3DS, FBX, Collada, 3MF, glTF/GLB.
