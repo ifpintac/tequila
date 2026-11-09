@@ -159,7 +159,7 @@ TOOLS = [
     tool('tequila_stop', 'Stop the running background render; it still writes its image.'),
     tool('tequila_ui', 'Open or close panels and switch the viewport shading.',
          {'render_window': {'type': 'boolean'}, 'console': {'type': 'boolean'}, 'inspector': {'type': 'boolean'},
-          'library': {'type': 'boolean'}, 'full_viewport': {'type': 'boolean'}, 'help': {'type': 'boolean'},
+          'library': {'type': 'boolean'}, 'full_viewport': {'type': 'boolean'}, 'statistics': {'type': 'boolean'}, 'help': {'type': 'boolean'},
           'frame': {'type': 'boolean', 'description': "Show the viewport at the render's size and shape (on by default)."},
           'start_screen': {'type': 'boolean', 'description': 'The start screen, with recent projects and the sample scenes.'},
           'updates': {'type': 'boolean', 'description': 'Help > Check for updates. Opening it asks GitHub for the latest release.'},
