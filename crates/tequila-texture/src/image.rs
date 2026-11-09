@@ -29,6 +29,10 @@ pub enum ColorSpace {
 }
 
 /// A 32-bit float image with 3 or 4 channels, stored row-major from the top.
+///
+/// One handed to [`crate::mip::MipPyramid::build`] may also have one channel
+/// (grey) or two (grey and alpha), which a pyramid reads back as three;
+/// [`Image::texel`] itself reads three.
 #[derive(Clone, Debug)]
 pub struct Image {
     pub width: usize,

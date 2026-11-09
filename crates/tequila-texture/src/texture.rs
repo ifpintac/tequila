@@ -34,7 +34,7 @@
 //! [`MipPyramid::build`]'s exact mean-preservation is worth anything for.
 
 use crate::image::{ColorSpace, Image};
-use crate::mip::{MipPyramid, Wrap};
+use crate::mip::{MipPyramid, Precision, Wrap};
 use crate::projection::{Mapping, SurfacePoint};
 use tequila_core::math::Vec3;
 use tequila_core::spectrum::srgb_eotf;
@@ -66,6 +66,16 @@ impl MapRole {
         match self {
             MapRole::Color => ColorSpace::Srgb,
             MapRole::Data | MapRole::Normal | MapRole::Height | MapRole::Volume => ColorSpace::Raw,
+        }
+    }
+
+    /// How much a pyramid of a map in this role may round
+    /// ([`Precision`]): a height is differentiated by a bump, so it is not
+    /// rounded into steps; anything else as far as the eye cannot tell.
+    pub fn precision(self) -> Precision {
+        match self {
+            MapRole::Height => Precision::Height,
+            MapRole::Color | MapRole::Data | MapRole::Normal | MapRole::Volume => Precision::Display,
         }
     }
 
@@ -108,7 +118,7 @@ impl Texture {
         Texture {
             decal_pyramid: std::sync::OnceLock::new(),
             alpha_pyramid: std::sync::OnceLock::new(),
-            pyramid: MipPyramid::build(image),
+            pyramid: MipPyramid::build_with(image, role.precision()),
             mapping,
             source_color_space,
             role,
@@ -156,7 +166,7 @@ impl Texture {
         Texture {
             decal_pyramid: std::sync::OnceLock::new(),
             alpha_pyramid: std::sync::OnceLock::new(),
-            pyramid: MipPyramid::build(image),
+            pyramid: MipPyramid::build_with(image, role.precision()),
             mapping,
             source_color_space: space,
             role,
@@ -202,18 +212,13 @@ impl Texture {
         let pyramid = self.decal_pyramid.get_or_init(|| {
             let source = self.pyramid.base();
             let mut data = Vec::with_capacity(source.width * source.height * 4);
-            for pixel in source.data.chunks_exact(source.channels) {
-                let alpha = if source.channels == 4 {
-                    pixel[3].clamp(0.0, 1.0)
-                } else {
-                    1.0
-                };
-                data.extend_from_slice(&[
-                    pixel[0] * alpha,
-                    pixel[1] * alpha,
-                    pixel[2] * alpha,
-                    alpha,
-                ]);
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    // A level without alpha reads 1 for it.
+                    let [r, g, b, a] = source.rgba(x, y);
+                    let alpha = a.clamp(0.0, 1.0);
+                    data.extend_from_slice(&[r * alpha, g * alpha, b * alpha, alpha]);
+                }
             }
             MipPyramid::build(Image {
                 width: source.width,
@@ -266,23 +271,22 @@ impl Texture {
     /// 1 where the image has no alpha at all, which is a fully present
     /// surface — the answer that changes nothing.
     pub fn sample_alpha(&self, mapping: &Mapping, point: &SurfacePoint) -> f32 {
-        if self.pyramid.base().channels < 4 {
+        if !self.pyramid.base().has_alpha() {
             return 1.0;
         }
         let pyramid = self.alpha_pyramid.get_or_init(|| {
             let source = self.pyramid.base();
-            // Splatted across three channels rather than kept as one:
-            // `Image::texel` reads three floats per texel whatever `channels`
-            // says, so a single-channel image would read into its neighbour
-            // and index past the end at the last one.
-            let mut data = Vec::with_capacity(source.width * source.height * 3);
-            for pixel in source.data.chunks_exact(source.channels) {
-                data.extend_from_slice(&[pixel[3], pixel[3], pixel[3]]);
+            // One channel, which a level reads back as three equal ones.
+            let mut data = Vec::with_capacity(source.width * source.height);
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    data.push(source.rgba(x, y)[3]);
+                }
             }
             MipPyramid::build(Image {
                 width: source.width,
                 height: source.height,
-                channels: 3,
+                channels: 1,
                 data,
                 // Alpha is coverage, not colour, and was never given a
                 // transfer curve to remove — `Image::from_srgb8` skips the
@@ -683,7 +687,7 @@ mod tests {
     fn alpha_is_left_alone_in_a_colour_map() {
         let bytes = vec![128u8, 128, 128, 128];
         let texture = Texture::from_bytes(1, 1, 4, &bytes, MapRole::Color, Mapping::default());
-        let alpha = texture.pyramid().base().data[3];
+        let alpha = texture.pyramid().base().rgba(0, 0)[3];
         assert!(
             (alpha - 128.0 / 255.0).abs() < 1e-4,
             "alpha was decoded as a colour: {alpha}"

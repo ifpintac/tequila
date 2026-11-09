@@ -1752,8 +1752,8 @@ mod tests {
         }
         let texel = |role: MapRole| {
             let texture = load_texture(&crate::textures::TextureSource::new(path.clone(), role)).expect("loads");
-            let base = texture.pyramid().level(0);
-            (base.data[0], base.data[2])
+            let texel = texture.pyramid().level(0).texel(0, 0);
+            (texel.x, texel.z)
         };
         for role in [MapRole::Normal, MapRole::Data, MapRole::Height] {
             let (r, b) = texel(role);
@@ -1762,6 +1762,40 @@ mod tests {
         // Colour still has the curve removed: 128 in sRGB is about 0.216 linear.
         let (r, _) = texel(MapRole::Color);
         assert!((r - 0.2158).abs() < 2e-3, "colour read 128 as {r}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A map read from a file is kept as its bytes: a colour PNG on the
+    /// sRGB curve, a grey roughness PNG as one channel, which reads back as
+    /// three equal ones - the numbers the file holds, as before.
+    #[test]
+    fn a_map_from_an_8bit_file_is_kept_as_its_bytes() {
+        use tequila_texture::texture::MapRole;
+        use tequila_texture::Encoding;
+        let dir = std::env::temp_dir().join(format!("tequila-bytes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, colour: png::ColorType, pixels: &[u8]| {
+            let path = dir.join(name);
+            let mut encoder = png::Encoder::new(std::fs::File::create(&path).unwrap(), 2, 2);
+            encoder.set_color(colour);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().unwrap().write_image_data(pixels).unwrap();
+            path
+        };
+        let rough = write("roughness.png", png::ColorType::Grayscale, &[0, 64, 128, 255]);
+        let colour = write("colour.png", png::ColorType::Rgb, &[200, 100, 50].repeat(4));
+        let read = |path: &std::path::Path, role| load_texture(&crate::textures::TextureSource::new(path.to_path_buf(), role)).expect("loads");
+
+        let roughness = read(&rough, MapRole::Data);
+        let base = roughness.pyramid().base();
+        assert_eq!((base.encoding(), base.stored_channels(), base.channels()), (Encoding::Unorm8, 1, 3));
+        assert_eq!(base.texel(0, 1), tequila_core::math::Vec3::splat(128.0 / 255.0), "the file's number, in all three");
+        assert_eq!(base.bytes(), 4, "a byte a texel");
+
+        let colour = read(&colour, MapRole::Color);
+        let base = colour.pyramid().base();
+        assert_eq!((base.encoding(), base.stored_channels()), (Encoding::Srgb8, 3));
+        assert_eq!(base.texel(1, 1).x, tequila_core::spectrum::srgb_eotf(200.0 / 255.0), "decoded exactly as before");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1790,7 +1824,7 @@ mod tests {
         snapshot(&document, environment.clone(), &mut cache);
         assert_eq!(cache.textures.len(), 1, "the map is decoded");
         let kept = cache.textures.values().next().unwrap().clone().expect("read");
-        assert_eq!(kept.pyramid().base().channels, 3, "an opaque map keeps no alpha");
+        assert_eq!(kept.pyramid().base().channels(), 3, "an opaque map keeps no alpha");
 
         bus.apply(&mut document, Command::SetParameterTexture { material, param: tequila_materials::material_type::Param::BaseColor, source: None }).unwrap();
         snapshot(&document, environment.clone(), &mut cache);
@@ -1895,9 +1929,11 @@ pub fn load_texture(source: &crate::textures::TextureSource) -> Option<Texture> 
     } else {
         tequila_texture::image::Image::load(&source.path).ok()?
     };
-    // Kept as floats, with their mipmaps, for as long as the document uses
-    // them: an alpha that is opaque throughout is a quarter of that for
-    // nothing (a 4K map, 357 MB with it, 268 MB without).
+    // Kept, with their mipmaps, for as long as the document uses them: an
+    // alpha that is opaque throughout is a quarter of that for nothing. The
+    // pyramid keeps an 8-bit file's values as its bytes and a grey map as
+    // one channel (`tequila_texture::level`): a 4K colour map, 268 MB as
+    // floats, is 67 MB; a 4K roughness map 28 MB.
     let image = image.without_opaque_alpha();
     Some(Texture::from_linear(
         image,

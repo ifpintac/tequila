@@ -360,10 +360,13 @@ const BYTE_ROUNDING: f32 = 1e-5;
 /// which Cycles takes off again as it reads: the curve spends the bytes where
 /// the eye needs them. Rec.709 lies inside ACEScg, so its colours stay in
 /// [0, 1]. Data (roughness, normals, masks) goes as it is.
-fn encode_picture(image: &tequila_texture::Image, colour: bool) -> Encoded {
+///
+/// The picture is handed over, and converted where it lies: a 4K one is
+/// 200 MB as floats, and a copy of it was another 200 MB while it went.
+fn encode_picture(image: tequila_texture::Image, colour: bool) -> Encoded {
     use rayon::prelude::*;
     let channels = image.channels;
-    let mut data = image.data.clone();
+    let mut data = image.data;
     if colour && channels >= 3 {
         data.par_chunks_exact_mut(channels).for_each(|pixel| {
             let v = tequila_core::spectrum::srgb_to_acescg(vec3(pixel[0], pixel[1], pixel[2]));
@@ -400,10 +403,11 @@ fn encode_picture(image: &tequila_texture::Image, colour: bool) -> Encoded {
 /// label had its coverage taken twice as floats - a white print at a quarter
 /// all but vanished - and divided out on the curve as bytes, which drew a
 /// cream print at a quarter brighter than solid ink.
-fn encode_label(image: &tequila_texture::Image, colour: bool) -> Encoded {
+fn encode_label(image: tequila_texture::Image, colour: bool) -> Encoded {
     use rayon::prelude::*;
+    let channels = image.channels;
     match encode_picture(image, colour) {
-        Encoded::Bytes(mut bytes) if image.channels == 4 => {
+        Encoded::Bytes(mut bytes) if channels == 4 => {
             bytes.par_chunks_exact_mut(4).for_each(|pixel| {
                 let coverage = u32::from(pixel[3]);
                 for value in &mut pixel[..3] {
@@ -417,11 +421,12 @@ fn encode_label(image: &tequila_texture::Image, colour: bool) -> Encoded {
 }
 
 /// `image` on the device; `label` for a label's (`encode_label`).
-fn send_picture(session: &mut Session, name: &str, image: &tequila_texture::Image, colour: bool, label: bool) -> Result<i32, String> {
+fn send_picture(session: &mut Session, name: &str, image: tequila_texture::Image, colour: bool, label: bool) -> Result<i32, String> {
+    let (width, height, channels) = (image.width, image.height, image.channels);
     let encoded = if label { encode_label(image, colour) } else { encode_picture(image, colour) };
     match encoded {
-        Encoded::Floats(data) => session.image(name, image.width, image.height, image.channels, &data),
-        Encoded::Bytes(bytes) => session.image_bytes(name, image.width, image.height, image.channels, &bytes, colour),
+        Encoded::Floats(data) => session.image(name, width, height, channels, &data),
+        Encoded::Bytes(bytes) => session.image_bytes(name, width, height, channels, &bytes, colour),
     }
 }
 
@@ -1556,7 +1561,10 @@ impl Builder<'_> {
         if let Some(id) = self.images.get(key) {
             return Ok(Some(id));
         }
-        let base = source.pyramid().base();
+        // As floats in three or four channels, a grey map's read back as
+        // three: the picture Cycles was always sent, whatever form the
+        // pyramid keeps it in.
+        let base = source.pyramid().base().to_image();
         // Colour, in Rec.709 primaries, goes over in ACEScg; data
         // (roughness, normals, masks) as it is.
         let colour = base.color_space == tequila_texture::image::ColorSpace::LinearSrgb;
@@ -4731,12 +4739,12 @@ mod tests {
             color_space: tequila_texture::image::ColorSpace::LinearSrgb,
         };
         let want = tequila_core::spectrum::srgb_to_acescg(red);
-        let Encoded::Bytes(bytes) = encode_picture(&image, true) else { panic!("an in-range colour goes as bytes") };
+        let Encoded::Bytes(bytes) = encode_picture(image.clone(), true) else { panic!("an in-range colour goes as bytes") };
         let back: Vec<f32> = bytes.iter().map(|&b| tequila_core::spectrum::srgb_eotf(f32::from(b) / 255.0)).collect();
         for (got, want) in back.iter().zip([want.x, want.y, want.z]) {
             assert!((got - want).abs() < 0.004, "{back:?} came back for {want:?}");
         }
-        let Encoded::Bytes(data) = encode_picture(&image, false) else { panic!("in-range data goes as bytes") };
+        let Encoded::Bytes(data) = encode_picture(image.clone(), false) else { panic!("in-range data goes as bytes") };
         assert_eq!(data, vec![204, 26, 13], "data was changed");
     }
 
@@ -4753,12 +4761,12 @@ mod tests {
             data: vec![1.0, 1.0, 1.0, 1.0, 0.8, 0.1, 0.05, 0.5],
             color_space: tequila_texture::image::ColorSpace::LinearSrgb,
         };
-        let Encoded::Bytes(bytes) = encode_picture(&image, true) else { panic!("white went as floats") };
+        let Encoded::Bytes(bytes) = encode_picture(image.clone(), true) else { panic!("white went as floats") };
         assert_eq!(&bytes[..4], &[255, 255, 255, 255], "white came out as {bytes:?}");
         let hdr = tequila_texture::Image { data: vec![1.001, 1.0, 1.0, 1.0, 0.8, 0.1, 0.05, 0.5], ..image };
-        assert!(matches!(encode_picture(&hdr, true), Encoded::Floats(_)), "over white went as bytes");
+        assert!(matches!(encode_picture(hdr.clone(), true), Encoded::Floats(_)), "over white went as bytes");
         let height = tequila_texture::Image { channels: 1, width: 1, data: vec![1.001], ..hdr };
-        assert!(matches!(encode_picture(&height, false), Encoded::Floats(_)), "a height over 1 went as bytes");
+        assert!(matches!(encode_picture(height, false), Encoded::Floats(_)), "a height over 1 went as bytes");
     }
 
     /// A label partly covering reads back in Cycles as its own colour, so
@@ -4779,7 +4787,7 @@ mod tests {
                 data: vec![cream.x, cream.y, cream.z, coverage],
                 color_space: tequila_texture::image::ColorSpace::LinearSrgb,
             };
-            let Encoded::Bytes(bytes) = encode_label(&image, true) else { panic!("an in-range label goes as bytes") };
+            let Encoded::Bytes(bytes) = encode_label(image.clone(), true) else { panic!("an in-range label goes as bytes") };
             // As Cycles reads it: the coverage divided out, then the curve.
             let alpha = f32::from(bytes[3]) / 255.0;
             let back: Vec<f32> = bytes[..3].iter().map(|&b| tequila_core::spectrum::srgb_eotf(f32::from(b) / 255.0 / alpha)).collect();
@@ -4789,7 +4797,7 @@ mod tests {
                 assert!((got - want).abs() * coverage < 0.006, "cream at {coverage} came back {back:?}, not {want:?}");
             }
             let bright = tequila_texture::Image { data: vec![1.5, 1.5, 1.5, coverage], ..image };
-            let Encoded::Floats(data) = encode_label(&bright, true) else { panic!("an over-white label goes as floats") };
+            let Encoded::Floats(data) = encode_label(bright, true) else { panic!("an over-white label goes as floats") };
             assert_eq!(data[3], coverage, "the coverage was changed");
             assert!((data[0] - 1.5).abs() < 1e-3, "a float label went over multiplied: {data:?}");
         }
