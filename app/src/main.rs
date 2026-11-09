@@ -685,7 +685,7 @@ const HIDE_KEYS: &str = if cfg!(target_os = "macos") { "Control + H / Alt + H" }
 
 /// What of the render settings the viewport's request reads: its denoise
 /// switch and the denoiser's settings, the clamps, the engine.
-type ViewportReads = (bool, u32, u32, bool, bool, Option<u32>, tequila_scene::render::RenderEngine);
+type ViewportReads = (bool, u32, u32, bool, bool, Option<u32>, tequila_scene::render::RenderEngine, (usize, usize));
 
 fn viewport_reads(settings: &tequila_scene::render::RenderSettings) -> ViewportReads {
     (
@@ -696,6 +696,8 @@ fn viewport_reads(settings: &tequila_scene::render::RenderSettings) -> ViewportR
         settings.reject_fireflies,
         settings.clamp_indirect.map(f32::to_bits),
         settings.engine,
+        // The render's size, which the preview's pixels are held to.
+        (settings.width, settings.height),
     )
 }
 
@@ -756,6 +758,27 @@ fn render_scale(native_pixels_per_point: Option<f32>, pixels_per_point: f32) -> 
 fn render_pixels(points: (usize, usize), scale: f32) -> (usize, usize) {
     let pixels = |n: usize| ((n as f32 * scale).round() as usize).max(1);
     (pixels(points.0), pixels(points.1))
+}
+
+/// The preview's size in pixels for a viewport `points` across at `scale`
+/// pixels a point, and its pixels a point: the viewport's own pixels
+/// (`render_pixels`), but no more of them than the final render, `render`,
+/// has, in the viewport's own shape, drawn stretched over the rest. On a big
+/// monitor the preview was the window's size: a 27-inch Retina screen's
+/// viewport was 13 million pixels, traced and denoised, for a 1920 x 1080
+/// render of two, and the bigger the monitor the slower the preview. Held to
+/// the render's pixels it shows the detail the render will have and costs
+/// what that costs. A viewport with fewer pixels than the render keeps its
+/// own.
+fn preview_pixels(points: (usize, usize), scale: f32, render: (usize, usize)) -> ((usize, usize), f32) {
+    let (width, height) = render_pixels(points, scale);
+    let (have, cap) = ((width * height) as f64, (render.0.max(1) * render.1.max(1)) as f64);
+    if have <= cap {
+        return ((width, height), scale);
+    }
+    let shrink = (cap / have).sqrt();
+    let size = (((width as f64 * shrink) as usize).max(1), ((height as f64 * shrink) as usize).max(1));
+    (size, scale * size.0 as f32 / width as f32)
 }
 
 /// The guides on the Help menu: title, the file beside a packaged Tequila,
@@ -1180,8 +1203,9 @@ impl TequilaApp {
         if self.viewport_size.0 == 0 || self.viewport_size.1 == 0 {
             return;
         }
-        let (width, height) = render_pixels(self.viewport_size, self.render_scale);
         let settings = self.project.render_settings().clone();
+        // No more pixels than the final render has (`preview_pixels`).
+        let ((width, height), pixels_per_point) = preview_pixels(self.viewport_size, self.render_scale, (settings.width, settings.height));
         // The UV editor's checker, where the processor draws Solid: the
         // graphics card's Solid is handed it as it draws.
         let checker = self.cpu_checker();
@@ -1210,7 +1234,7 @@ impl TequilaApp {
             gpu_solid: self.gpu_solid(),
             shading: self.shading,
             engine: settings.engine,
-            pixels_per_point: self.render_scale,
+            pixels_per_point,
             checker,
         });
         self.gpu_solid_submitted = self.gpu_solid();
@@ -7184,6 +7208,35 @@ mod undo_tests {
         // A desktop monitor fits it already; nothing shrinks past the minimum.
         assert_eq!(fitted_window(first, egui::vec2(1920.0, 1080.0)), None);
         assert_eq!(fitted_window(first, egui::vec2(600.0, 400.0)), Some(egui::vec2(640.0, 480.0)));
+    }
+
+    /// The preview has the viewport's pixels, but no more than the final
+    /// render has, in the viewport's shape: a 27-inch Retina screen's 2560 x
+    /// 1440 points, 5120 x 2880 pixels, preview a 1920 x 1080 render at its
+    /// own 1920 x 1080. A viewport with fewer pixels keeps its own.
+    #[test]
+    fn the_preview_has_no_more_pixels_than_the_render() {
+        assert_eq!(preview_pixels((2560, 1440), 2.0, (1920, 1080)), ((1920, 1080), 0.75));
+        assert_eq!(preview_pixels((800, 600), 2.0, (1920, 1080)), ((1600, 1200), 2.0), "fewer pixels than the render: as they are");
+        let ((w, h), ppp) = preview_pixels((1000, 1000), 1.0, (1920, 1080));
+        assert!(w * h <= 1920 * 1080 && (w as f32 - h as f32).abs() <= 1.0, "a square viewport stays square: {w} x {h}");
+        assert!((ppp - w as f32 / 1000.0).abs() < 1e-6);
+        // The viewport, at its size, asks for that.
+        let mut app = TequilaApp::for_tests();
+        app.show_render_frame = false;
+        let settings = tequila_scene::render::RenderSettings { width: 160, height: 120, ..app.project.render_settings().clone() };
+        app.project.apply(Command::SetRenderSettings { settings: Box::new(settings) }).unwrap();
+        app.set_view_mode(view_mode::ViewMode::Rendered);
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 150.0))), ..Default::default() };
+        input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(2.0);
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| app.viewport(ui));
+        });
+        let request = app.orchestrator.request().expect("the viewport asked for nothing");
+        assert_eq!((request.width, request.height), (160, 120), "the render's 160 x 120, not the viewport's 400 x 300");
+        assert!((request.pixels_per_point - 0.8).abs() < 1e-5, "{}", request.pixels_per_point);
     }
 
     /// On a Retina screen the Rendered viewport asks for the screen's own
