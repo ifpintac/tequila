@@ -3950,7 +3950,7 @@ impl TequilaApp {
         // ---- Transform tools: down the left -----------------------------
         let strip = egui::Rect::from_min_size(
             egui::pos2(rect.left() + OVERLAY_INSET, chip.bottom() + 10.0),
-            egui::vec2(ISLAND, pad * 2.0 + TOOL * 5.0 + gap),
+            egui::vec2(ISLAND, pad * 2.0 + TOOL * 6.0 + gap),
         );
         icons::island(&painter, strip);
         let _ = ui.interact(strip, ui.id().with("tool-strip"), sense);
@@ -3965,12 +3965,16 @@ impl TequilaApp {
         // nowhere to be: pressing them then did nothing at all, and a button
         // that does nothing when pressed reads as broken rather than as
         // inapplicable.
-        for (mode, icon) in [(GizmoMode::Move, Icon::Move), (GizmoMode::Rotate, Icon::Rotate), (GizmoMode::Scale, Icon::Scale)] {
+        for (mode, icon) in [(GizmoMode::Universal, Icon::Transform), (GizmoMode::Move, Icon::Move), (GizmoMode::Rotate, Icon::Rotate), (GizmoMode::Scale, Icon::Scale)] {
             let response = button(ui, next(&mut y), mode.label(), icon, has_selection && self.gizmo.mode == mode, has_selection);
             let response = icons::tip(
                 response,
                 mode.label(),
-                if has_selection { "Drag a handle in the viewport" } else { "Select a part first" },
+                match (has_selection, mode) {
+                    (false, _) => "Select a part first",
+                    (true, GizmoMode::Universal) => "Arrows move, rings turn, cubes scale",
+                    (true, _) => "Drag a handle in the viewport",
+                },
                 &mode.hotkey().to_string(),
             );
             if response.clicked() && has_selection {
@@ -4628,6 +4632,9 @@ impl TequilaApp {
         }
 
         if !modifiers.any() {
+            if pressed(egui::Key::Q) {
+                self.gizmo.mode = GizmoMode::Universal;
+            }
             if pressed(egui::Key::W) {
                 self.gizmo.mode = GizmoMode::Move;
             }
@@ -6747,6 +6754,7 @@ impl TequilaApp {
                     (
                         "Edit",
                         &[
+                            ("Move, turn and scale at once", "Q"),
                             ("Move / rotate / scale", "W / E / R"),
                             ("Select the part's group", "Double-click"),
                             ("Select all", "Ctrl + A"),

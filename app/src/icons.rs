@@ -23,6 +23,8 @@ pub enum Icon {
     Solid,
     MaterialPreview,
     Rendered,
+    /// The universal gizmo: move, turn and scale at once.
+    Transform,
     Move,
     Rotate,
     Scale,
@@ -213,6 +215,7 @@ impl Icon {
     fn glyph(self) -> Option<char> {
         let code = match self {
             Icon::Aperture | Icon::Wireframe | Icon::Solid | Icon::MaterialPreview | Icon::Rendered => return None,
+            Icon::Transform => 0xe2fd,
             Icon::Move => 0xe124,
             Icon::Rotate => 0xe2e9,
             Icon::Scale => 0xe116,
@@ -473,6 +476,14 @@ fn drawn(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Rendered => {
             painter.add(Shape::ellipse_filled(p(8.0, 14.0), egui::vec2(5.6 * s, 1.3 * s), color.gamma_multiply(0.35)));
             sphere(painter, p(8.0, 7.2), 6.0 * s, color, Finish::Gloss);
+        }
+        Icon::Transform => {
+            // Lucide's axis-3d: three axes from a corner.
+            line((3.0, 13.0), (3.0, 2.6));
+            line((3.0, 13.0), (13.4, 13.0));
+            line((3.0, 13.0), (9.6, 6.4));
+            head((3.0, 2.6), (0.0, -1.0), 2.4);
+            head((13.4, 13.0), (1.0, 0.0), 2.4);
         }
         Icon::Move => {
             line((8.0, 1.8), (8.0, 14.2));
@@ -1673,7 +1684,7 @@ mod tests {
 
     fn every_icon() -> Vec<Icon> {
         vec![
-            Icon::Aperture, Icon::Wireframe, Icon::Solid, Icon::MaterialPreview, Icon::Rendered, Icon::Move,
+            Icon::Aperture, Icon::Wireframe, Icon::Solid, Icon::MaterialPreview, Icon::Rendered, Icon::Transform, Icon::Move,
             Icon::Rotate, Icon::Scale, Icon::World, Icon::Local, Icon::Magnet, Icon::FrameAll, Icon::FrameSelected,
             Icon::Pause, Icon::Play, Icon::Denoise, Icon::Screenshot, Icon::Scene, Icon::Material, Icon::Environment, Icon::Light, Icon::Camera,
             Icon::Image, Icon::Studios, Icon::Script, Icon::Library, Icon::Console, Icon::Assistant, Icon::Import,
