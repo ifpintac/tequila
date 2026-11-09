@@ -213,6 +213,7 @@ The toolbar's Add menu adds a shape, a light or a cutaway. **Add › Shape** is 
 - **Pivot modes** (§03 §2.4): Origin, Bounding-box centre, Corner, Cylinder axis, Sphere centre, Custom. Setting a pivot is `Insert`+drag or via the context menu, and pivots persist for animation use.
 - Transform in world or local space, toggled in the gizmo header.
 - *As built, November 8:* the gizmo is the same size on screen whatever the window: its arms, and its rings' radius, are `GIZMO_POINTS` (90) points long - 90 pixels at 100% display scaling, 180 on a Retina screen - turned into a length at the pivot's depth from the camera's vertical field of view and the view's height, or from an orthographic camera's scale (`world_length_of_points` in `gizmo_ui.rs`). It was a seventh of the camera's distance, a share of the view's height, which on a large monitor was a sixth of the screen. Its handles are picked at the size they are drawn (`the_gizmo_is_the_same_size_on_screen_at_any_window_size`). The label and pin placement tools do not share this code (they draw the label's own outline, at its size on the part, and a banner), nor does the UV editor, whose handles are drawn on its own canvas in points.
+- *As built, November 9:* the Universal gizmo, **Q** and the first of the tools down the viewport's left (Lucide's axis-3d), is the default: move, turn and scale at once, as KeyShot's gizmo does, with W, E and R still picking one. From the centre out (`gizmo::universal`): the screen disc, which moves parallel to the view; the three plane squares; a scale cube on each axis; the rotation rings; and the arrows, which start outside the rings, as Blender's combined gizmo keeps them apart - arrows from the centre crossed every ring twice. A drag takes the mode of the handle grabbed (`pick_operation`), so each is exactly the single-mode drag, snapping and all. It is drawn 1.35 times the others' size (`UNIVERSAL_POINTS`), so its rings are not crowded inside fifty points, and every handle of every mode has a thin dark edge, so a red ring shows on a red part. Uniform scaling stays with R's centre handle.
 
 ---
 
@@ -261,7 +262,8 @@ A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans an
 | `E` | Background = Environment | `C` | Background = Colour |
 | `B` | Background = Backplate | `G` | Flatten ground |
 | `U` | Snapshots | `L` | Add label to selection |
-| `W`/`E`/`R` | Move/Rotate/Scale | `F`/`Shift+F` | Frame selection / all |
+| `Q` | Move, turn and scale at once | `W`/`E`/`R` | Move/Rotate/Scale |
+| `F`/`Shift+F` | Frame selection / all | | |
 | `Ctrl+G` | Group | `Ctrl+Shift+G` | Ungroup |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo | `Ctrl+S` | Save |
 | `Ctrl+I` | Import | `Ctrl+R` | Render |

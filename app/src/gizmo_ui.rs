@@ -25,6 +25,20 @@ use tequila_scene::Command;
 /// One number, for the Preferences window to offer one day.
 pub const GIZMO_POINTS: f32 = 90.0;
 
+/// The universal gizmo's arms, longer: it holds rings, cubes and squares
+/// inside its arrows, which at the others' size were crowded into a ring
+/// fifty points across.
+pub const UNIVERSAL_POINTS: f32 = GIZMO_POINTS * 1.35;
+
+/// How long a mode's arms are on screen, in points.
+pub fn arm_points(mode: GizmoMode) -> f32 {
+    if mode == GizmoMode::Universal {
+        UNIVERSAL_POINTS
+    } else {
+        GIZMO_POINTS
+    }
+}
+
 /// The length in the world, `depth` in front of the camera along its view,
 /// that spans `points` on screen in a view `height` points tall: what a
 /// handle of a fixed size on screen is where the gizmo stands.
@@ -52,7 +66,9 @@ pub struct GizmoUi {
     /// World space when false. §5's world/local toggle.
     pub local_space: bool,
     drag: Option<ActiveDrag>,
-    hovered: Option<Handle>,
+    /// The handle under the pointer and what dragging it does: in the
+    /// universal gizmo an axis is an arrow, a ring or a cube.
+    hovered: Option<(GizmoMode, Handle)>,
     /// What [`GizmoUi::draw`] will paint, worked out by [`GizmoUi::interact`].
     ///
     /// The two are separate calls because the gizmo has to *read* the pointer
@@ -89,7 +105,7 @@ struct ActiveDrag {
 impl Default for GizmoUi {
     fn default() -> Self {
         GizmoUi {
-            mode: GizmoMode::Move,
+            mode: GizmoMode::Universal,
             pivot_mode: PivotMode::BoundingBoxCenter,
             snapping: Snapping {
                 grid: None,
@@ -159,7 +175,7 @@ impl GizmoUi {
         // screen.
         let aspect = rect.width().max(1.0) / rect.height().max(1.0);
         let depth = (pivot - camera.position()).dot(view);
-        let handle_length = world_length_of_points(camera, aspect, rect.height(), depth, GIZMO_POINTS);
+        let handle_length = world_length_of_points(camera, aspect, rect.height(), depth, arm_points(self.mode));
 
         // Local space follows the first selected node's orientation. With
         // several selected there is no single "local", and picking one is less
@@ -212,7 +228,7 @@ impl GizmoUi {
             }
         } else if response.drag_started() {
             let press_ray = ui.input(|i| i.pointer.press_origin()).and_then(|p| ray_through(camera, rect, p));
-            if let Some((ray, handle)) = press_ray.as_ref().and_then(|ray| gizmo::pick(ray, &frame, self.mode, view).map(|handle| (ray, handle))) {
+            if let Some((ray, (operation, handle))) = press_ray.as_ref().and_then(|ray| gizmo::pick_operation(ray, &frame, self.mode, view).map(|picked| (ray, picked))) {
                 let starts: Vec<(NodeId, Transform)> = targets
                     .iter()
                     .map(|id| (*id, project.document().tree.world_transform(*id)))
@@ -222,7 +238,7 @@ impl GizmoUi {
                 // the cursor.
                 let gizmo = gizmo::begin(
                     handle,
-                    self.mode,
+                    operation,
                     frame,
                     starts
                         .first()
@@ -236,8 +252,8 @@ impl GizmoUi {
         }
 
         self.hovered = match (&ray, &self.drag) {
-            (_, Some(drag)) => Some(drag.gizmo.handle),
-            (Some(ray), None) => gizmo::pick(ray, &frame, self.mode, view),
+            (_, Some(drag)) => Some((drag.gizmo.mode, drag.gizmo.handle)),
+            (Some(ray), None) => gizmo::pick_operation(ray, &frame, self.mode, view),
             _ => None,
         };
 
@@ -293,111 +309,129 @@ impl GizmoUi {
             return;
         };
 
-        let colour = |axis: Axis, handle: Handle| {
-            let base = match axis {
-                Axis::X => egui::Color32::from_rgb(230, 80, 80),
-                Axis::Y => egui::Color32::from_rgb(110, 210, 110),
-                Axis::Z => egui::Color32::from_rgb(90, 150, 250),
-            };
-            if self.hovered == Some(handle) {
-                egui::Color32::from_rgb(255, 220, 80)
-            } else {
-                base
+        // Each handle in its axis's colour, yellow under the pointer.
+        let colour = |axis: Option<Axis>, operation: GizmoMode, handle: Handle| {
+            let lit = self.hovered == Some((operation, handle))
+                || (self.mode != GizmoMode::Universal && self.hovered.map(|(_, h)| h) == Some(handle));
+            if lit {
+                return egui::Color32::from_rgb(255, 220, 80);
             }
+            match axis {
+                Some(Axis::X) => egui::Color32::from_rgb(230, 80, 80),
+                Some(Axis::Y) => egui::Color32::from_rgb(110, 210, 110),
+                Some(Axis::Z) => egui::Color32::from_rgb(90, 150, 250),
+                None => egui::Color32::from_gray(200),
+            }
+        };
+        let length = frame.handle_length;
+        let at = |p: Vec3| project_point(camera, rect, p);
+        // A thin dark edge under every stroke: a red ring over a red part,
+        // or any handle over a busy render, is otherwise hard to see.
+        let edge = |stroke: egui::Stroke| egui::Stroke::new(stroke.width + 2.0, egui::Color32::from_black_alpha(90));
+        let line = |points: Vec<egui::Pos2>, stroke: egui::Stroke| {
+            painter.add(egui::Shape::line(points.clone(), edge(stroke)));
+            painter.add(egui::Shape::line(points, stroke));
+        };
+        let block = |rect: egui::Rect, colour: egui::Color32| {
+            painter.rect_filled(rect.expand(1.0), 2.0, egui::Color32::from_black_alpha(90));
+            painter.rect_filled(rect, 1.0, colour);
+        };
+
+        // A ring of `radius` about `axis`, its far half left out: the object
+        // it surrounds hides it, and drawn, the near and far edges are
+        // indistinguishable under the cursor.
+        let ring = |axis: Axis, radius: f32, stroke: egui::Stroke| {
+            let normal = frame.direction(axis);
+            let (u, v) = perpendicular(normal);
+            let mut points = Vec::with_capacity(65);
+            for i in 0..=64 {
+                let a = i as f32 / 64.0 * std::f32::consts::TAU;
+                let world = frame.pivot + (u * a.cos() + v * a.sin()) * radius;
+                if (world - frame.pivot).dot(view) > 0.0 {
+                    if points.len() > 1 {
+                        line(std::mem::take(&mut points), stroke);
+                    }
+                    points.clear();
+                    continue;
+                }
+                if let Some(point) = at(world) {
+                    points.push(point);
+                }
+            }
+            if points.len() > 1 {
+                line(points, stroke);
+            }
+        };
+        // The plane square normal to `axis`, between `low` and `high`.
+        let square = |axis: Axis, low: f32, high: f32, operation: GizmoMode| {
+            let (u, v) = plane_axes(frame, axis);
+            let corners: Option<Vec<egui::Pos2>> = [u * low + v * low, u * high + v * low, u * high + v * high, u * low + v * high]
+                .iter()
+                .map(|p| at(frame.pivot + *p))
+                .collect();
+            if let Some(corners) = corners {
+                let fill = colour(Some(axis), operation, Handle::Plane(axis));
+                let alpha = if self.hovered == Some((operation, Handle::Plane(axis))) { 160 } else { 60 };
+                painter.add(egui::Shape::convex_polygon(corners, egui::Color32::from_rgba_unmultiplied(fill.r(), fill.g(), fill.b(), alpha), egui::Stroke::NONE));
+            }
+        };
+        let label = |axis: Axis, tip: egui::Pos2, colour: egui::Color32| {
+            painter.text(tip + egui::vec2(8.0, -8.0), egui::Align2::LEFT_BOTTOM, axis.label(), egui::FontId::proportional(12.0), colour);
+        };
+        let screen = |radius: f32, operation: GizmoMode| {
+            painter.circle_stroke(centre, radius, egui::Stroke::new(1.5_f32, colour(None, operation, Handle::Screen)));
         };
 
         match self.mode {
             GizmoMode::Rotate => {
                 for axis in Axis::ALL {
-                    let normal = frame.direction(axis);
-                    let (u, v) = perpendicular(normal);
-                    let mut points = Vec::with_capacity(65);
-                    for i in 0..=64 {
-                        let a = i as f32 / 64.0 * std::f32::consts::TAU;
-                        let world = frame.pivot + (u * a.cos() + v * a.sin()) * frame.handle_length;
-                        // The far half of a ring is hidden by the object it
-                        // surrounds; drawing it makes the near and far edges
-                        // indistinguishable under the cursor.
-                        if (world - frame.pivot).dot(view) > 0.0 {
-                            if points.len() > 1 {
-                                painter.add(egui::Shape::line(
-                                    std::mem::take(&mut points),
-                                    egui::Stroke::new(2.0_f32, colour(axis, Handle::Axis(axis))),
-                                ));
-                            }
-                            points.clear();
-                            continue;
+                    ring(axis, length, egui::Stroke::new(2.0_f32, colour(Some(axis), GizmoMode::Rotate, Handle::Axis(axis))));
+                }
+            }
+            GizmoMode::Universal => {
+                use gizmo::universal::*;
+                for axis in Axis::ALL {
+                    ring(axis, length * RING, egui::Stroke::new(2.0_f32, colour(Some(axis), GizmoMode::Rotate, Handle::Axis(axis))));
+                }
+                for axis in Axis::ALL {
+                    square(axis, length * PLANE.0, length * PLANE.1, GizmoMode::Move);
+                    let d = frame.direction(axis);
+                    // The arrow, outside the rings, with a head that points.
+                    let arrow = colour(Some(axis), GizmoMode::Move, Handle::Axis(axis));
+                    if let (Some(from), Some(tip)) = (at(frame.pivot + d * length * ARROW.0), at(frame.pivot + d * length * ARROW.1)) {
+                        line(vec![from, tip], egui::Stroke::new(2.5_f32, arrow));
+                        if let Some(way) = (tip - from).normalized().is_finite().then(|| (tip - from).normalized()) {
+                            let side = egui::vec2(-way.y, way.x);
+                            painter.add(egui::Shape::convex_polygon(vec![tip + way * 9.0, tip + side * 5.0, tip - side * 5.0], arrow, egui::Stroke::new(1.0_f32, egui::Color32::from_black_alpha(90))));
                         }
-                        if let Some(point) = project_point(camera, rect, world) {
-                            points.push(point);
-                        }
+                        label(axis, tip + (tip - from).normalized() * 6.0, arrow);
                     }
-                    if points.len() > 1 {
-                        painter.add(egui::Shape::line(
-                            points,
-                            egui::Stroke::new(2.0_f32, colour(axis, Handle::Axis(axis))),
-                        ));
+                    // The scale cube, on the axis inside the rings.
+                    if let Some(cube) = at(frame.pivot + d * length * SCALE_AT) {
+                        let side = SCALE_HALF * 2.0 * UNIVERSAL_POINTS;
+                        block(egui::Rect::from_center_size(cube, egui::vec2(side, side)), colour(Some(axis), GizmoMode::Scale, Handle::Axis(axis)));
                     }
                 }
+                screen(UNIVERSAL_POINTS * SCREEN * 0.85, GizmoMode::Move);
             }
             _ => {
                 for axis in Axis::ALL {
-                    let tip = frame.pivot + frame.direction(axis) * frame.handle_length;
-                    if let Some(end) = project_point(camera, rect, tip) {
-                        painter.text(end + egui::vec2(8.0, -8.0), egui::Align2::LEFT_BOTTOM,
-                            axis.label(), egui::FontId::proportional(12.0), colour(axis, Handle::Axis(axis)));
-                        let stroke = egui::Stroke::new(2.5_f32, colour(axis, Handle::Axis(axis)));
-                        painter.line_segment([centre, end], stroke);
-                        // A square cap for scale, an arrowhead for move — the
-                        // conventional distinction, and the only thing on
-                        // screen that says which mode is active.
+                    let tip = frame.pivot + frame.direction(axis) * length;
+                    if let Some(end) = at(tip) {
+                        let stroke = egui::Stroke::new(2.5_f32, colour(Some(axis), self.mode, Handle::Axis(axis)));
+                        label(axis, end, stroke.color);
+                        line(vec![centre, end], stroke);
+                        // A square cap for scale, a ball for move.
                         if self.mode == GizmoMode::Scale {
-                            painter.rect_filled(
-                                egui::Rect::from_center_size(end, egui::vec2(8.0, 8.0)),
-                                1.0,
-                                stroke.color,
-                            );
+                            block(egui::Rect::from_center_size(end, egui::vec2(8.0, 8.0)), stroke.color);
                         } else {
                             painter.circle_filled(end, 4.5, stroke.color);
                         }
                     }
                     // The plane quad, in the inner corner between two axes.
-                    let (u, v) = plane_axes(frame, axis);
-                    let (low, high) = (frame.handle_length * 0.22, frame.handle_length * 0.55);
-                    let corners: Option<Vec<egui::Pos2>> = [
-                        frame.pivot + u * low + v * low,
-                        frame.pivot + u * high + v * low,
-                        frame.pivot + u * high + v * high,
-                        frame.pivot + u * low + v * high,
-                    ]
-                    .iter()
-                    .map(|p| project_point(camera, rect, *p))
-                    .collect();
-                    if let Some(corners) = corners {
-                        let mut fill = colour(axis, Handle::Plane(axis));
-                        fill = egui::Color32::from_rgba_unmultiplied(
-                            fill.r(),
-                            fill.g(),
-                            fill.b(),
-                            if self.hovered == Some(Handle::Plane(axis)) {
-                                160
-                            } else {
-                                60
-                            },
-                        );
-                        painter.add(egui::Shape::convex_polygon(
-                            corners,
-                            fill,
-                            egui::Stroke::NONE,
-                        ));
-                    }
+                    square(axis, length * 0.22, length * 0.55, self.mode);
                 }
-                let screen = if self.hovered == Some(Handle::Screen) {
-                    egui::Color32::from_rgb(255, 220, 80)
-                } else {
-                    egui::Color32::from_gray(200)
-                };
-                painter.circle_stroke(centre, 9.0, egui::Stroke::new(1.5_f32, screen));
+                screen(9.0, self.mode);
             }
         }
     }
@@ -488,6 +522,17 @@ mod transform_tests {
                 let tip = project_point(&camera, rect, pivot + Vec3::X * length * 0.8).expect("in front");
                 let ray = ray_through(&camera, rect, tip).expect("in the view");
                 assert_eq!(gizmo::pick(&ray, &frame, GizmoMode::Move, camera.forward()), Some(Handle::Axis(Axis::X)), "{projection:?} in {width}x{height}");
+                // And in the universal gizmo, the X arrow outside the rings
+                // moves and the X cube inside them scales.
+                for (share, operation) in [(0.85, GizmoMode::Move), (gizmo::universal::SCALE_AT, GizmoMode::Scale)] {
+                    let on = project_point(&camera, rect, pivot + Vec3::X * length * share).expect("in front");
+                    let ray = ray_through(&camera, rect, on).expect("in the view");
+                    assert_eq!(
+                        gizmo::pick_operation(&ray, &frame, GizmoMode::Universal, camera.forward()),
+                        Some((operation, Handle::Axis(Axis::X))),
+                        "{operation:?} on {projection:?} in {width}x{height}"
+                    );
+                }
             }
         }
     }

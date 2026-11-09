@@ -14,18 +14,25 @@ use crate::document::SceneDocument;
 use crate::tree::{NodeId, NodeKind};
 use tequila_core::math::{vec3, Aabb, Mat4, Ray, Transform, Vec3};
 
-/// `W` / `E` / `R` (§5).
+/// `Q` / `W` / `E` / `R` (§5).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GizmoMode {
+    /// Move, turn and scale at once, as KeyShot's gizmo does: arrows, rings
+    /// and scale handles together, laid out by [`universal`] so none sits
+    /// on another. A drag on one of its handles is that handle's own mode.
     #[default]
+    Universal,
     Move,
     Rotate,
     Scale,
 }
 
 impl GizmoMode {
+    pub const ALL: [GizmoMode; 4] = [GizmoMode::Universal, GizmoMode::Move, GizmoMode::Rotate, GizmoMode::Scale];
+
     pub fn label(self) -> &'static str {
         match self {
+            GizmoMode::Universal => "Move, turn and scale",
             GizmoMode::Move => "Move",
             GizmoMode::Rotate => "Rotate",
             GizmoMode::Scale => "Scale",
@@ -35,11 +42,32 @@ impl GizmoMode {
     /// The hotkey §6 binds to this mode.
     pub fn hotkey(self) -> char {
         match self {
+            GizmoMode::Universal => 'Q',
             GizmoMode::Move => 'W',
             GizmoMode::Rotate => 'E',
             GizmoMode::Scale => 'R',
         }
     }
+}
+
+/// Where the universal gizmo's handles are, as shares of the handle length:
+/// from the centre out, the screen disc, the plane squares, the scale cubes
+/// on the axes, the rotation rings, and the arrows outside them, which is
+/// how Blender's combined gizmo keeps them apart. Arrows from the centre
+/// would cross every ring twice, and a scale cap at an arrow's tip would
+/// sit on the arrow.
+pub mod universal {
+    /// The screen disc's radius: move parallel to the film.
+    pub const SCREEN: f32 = 0.12;
+    /// The plane squares' inner and outer edges, inside the rings.
+    pub const PLANE: (f32, f32) = (0.18, 0.34);
+    /// How far out along its axis a scale cube sits, and half its side.
+    pub const SCALE_AT: f32 = 0.43;
+    pub const SCALE_HALF: f32 = 0.055;
+    /// The rotation rings' radius.
+    pub const RING: f32 = 0.56;
+    /// Where an arrow starts and ends.
+    pub const ARROW: (f32, f32) = (0.68, 1.0);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -214,6 +242,64 @@ pub struct Drag {
     pub view: Vec3,
 }
 
+/// Which handle a ray hits and what dragging it does: the mode itself, or
+/// in the universal gizmo, the mode of the handle hit - an arrow moves, a
+/// ring turns, a cube scales.
+pub fn pick_operation(ray: &Ray, frame: &GizmoFrame, mode: GizmoMode, view: Vec3) -> Option<(GizmoMode, Handle)> {
+    match mode {
+        GizmoMode::Universal => pick_universal(ray, frame, view),
+        _ => pick(ray, frame, mode, view).map(|handle| (mode, handle)),
+    }
+}
+
+/// The universal gizmo's pick, from the centre out (see [`universal`]).
+fn pick_universal(ray: &Ray, frame: &GizmoFrame, view: Vec3) -> Option<(GizmoMode, Handle)> {
+    use universal::*;
+    let length = frame.handle_length.max(1e-6);
+    let reach = length * 0.08;
+    if let Some(hit) = intersect_plane(ray, frame.pivot, view) {
+        if (hit - frame.pivot).length() <= length * SCREEN {
+            return Some((GizmoMode::Move, Handle::Screen));
+        }
+    }
+    // The nearest of everything else the ray passes close enough to.
+    let mut best: Option<(f32, GizmoMode, Handle)> = None;
+    let mut consider = |distance: f32, mode: GizmoMode, handle: Handle| {
+        if best.is_none_or(|(d, _, _)| distance < d) {
+            best = Some((distance, mode, handle));
+        }
+    };
+    for axis in Axis::ALL {
+        let direction = frame.direction(axis);
+        let (on_axis, on_ray) = closest_points(frame.pivot, direction, ray);
+        let along = (on_axis - frame.pivot).dot(direction) / length;
+        let off = (on_axis - on_ray).length();
+        let distance = (on_ray - ray.origin).length();
+        // A scale cube, a little more forgiving than it is drawn.
+        if (along - SCALE_AT).abs() <= SCALE_HALF * 1.6 && off <= length * SCALE_HALF * 1.6 {
+            consider(distance, GizmoMode::Scale, Handle::Axis(axis));
+        }
+        // An arrow, outside the rings.
+        if (ARROW.0..=ARROW.1).contains(&along) && off <= reach {
+            consider(distance, GizmoMode::Move, Handle::Axis(axis));
+        }
+        // A ring, at its radius in the plane normal to its axis.
+        if let Some(point) = intersect_plane(ray, frame.pivot, direction) {
+            if ((point - frame.pivot).length() - length * RING).abs() <= reach {
+                consider((point - ray.origin).length(), GizmoMode::Rotate, Handle::Axis(axis));
+            }
+            // A plane square, inside them.
+            let local = point - frame.pivot;
+            let (u, v) = plane_axes(frame, axis);
+            let (a, b) = (local.dot(u) / length, local.dot(v) / length);
+            if (PLANE.0..=PLANE.1).contains(&a) && (PLANE.0..=PLANE.1).contains(&b) {
+                consider((point - ray.origin).length(), GizmoMode::Move, Handle::Plane(axis));
+            }
+        }
+    }
+    best.map(|(_, mode, handle)| (mode, handle))
+}
+
 /// Which handle a ray hits, or `None`.
 ///
 /// Tested against the handles in order of how hard they are to hit: the
@@ -350,7 +436,8 @@ fn grab_point(
 /// snapping on it would ratchet the object one increment per frame.
 pub fn update(drag: &Drag, ray: &Ray, snapping: &Snapping) -> Transform {
     let delta = match drag.mode {
-        GizmoMode::Move => translation_delta(drag, ray, snapping),
+        // A universal drag takes its handle's own mode when it begins.
+        GizmoMode::Move | GizmoMode::Universal => translation_delta(drag, ray, snapping),
         GizmoMode::Rotate => rotation_delta(drag, ray, snapping),
         GizmoMode::Scale => scale_delta(drag, ray, snapping),
     };
@@ -893,6 +980,40 @@ mod tests {
 
     /// Rotation rings are circles at the handle radius, not filled discs:
     /// clicking the middle of a ring must not grab it.
+    /// The universal gizmo, seen from three-quarters above as a product
+    /// usually is: each handle is picked where it is drawn, and its drag is
+    /// that handle's own - the centre and the arrows and squares move, the
+    /// cubes scale, the rings turn.
+    #[test]
+    fn the_universal_gizmo_picks_each_handle_where_it_is_drawn() {
+        use universal::*;
+        let frame = GizmoFrame::world(Vec3::ZERO, 1.0);
+        let eye = vec3(6.0, 4.0, 8.0);
+        let view = (-eye).normalize();
+        let at = |p: Vec3| Ray::new(eye, (p - eye).normalize());
+        let pick = |p: Vec3| pick_operation(&at(p), &frame, GizmoMode::Universal, view);
+        let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+        assert_eq!(pick(Vec3::ZERO), Some((GizmoMode::Move, Handle::Screen)));
+        for axis in Axis::ALL {
+            let d = axis.direction();
+            assert_eq!(pick(d * SCALE_AT), Some((GizmoMode::Scale, Handle::Axis(axis))), "{axis:?} cube");
+            assert_eq!(pick(d * 0.85), Some((GizmoMode::Move, Handle::Axis(axis))), "{axis:?} arrow");
+        }
+        let middle = (PLANE.0 + PLANE.1) * 0.5;
+        assert_eq!(pick(vec3(middle, 0.0, middle)), Some((GizmoMode::Move, Handle::Plane(Axis::Y))), "the floor square");
+        assert_eq!(pick(vec3(diagonal, 0.0, diagonal) * RING), Some((GizmoMode::Rotate, Handle::Axis(Axis::Y))), "the Y ring");
+        assert_eq!(pick(vec3(0.0, diagonal, diagonal) * RING), Some((GizmoMode::Rotate, Handle::Axis(Axis::X))), "the X ring");
+        assert_eq!(pick(vec3(diagonal, diagonal, 0.0) * RING), Some((GizmoMode::Rotate, Handle::Axis(Axis::Z))), "the Z ring");
+        assert_eq!(pick(vec3(3.0, 3.0, -3.0)), None, "away from it");
+
+        // The X cube, dragged out to twice as far, doubles X and nothing else.
+        let (mode, handle) = pick(Vec3::X * SCALE_AT).unwrap();
+        let drag = begin(handle, mode, frame, Transform::IDENTITY, &at(Vec3::X * SCALE_AT), view);
+        let scaled = update(&drag, &at(Vec3::X * SCALE_AT * 2.0), &Snapping::OFF);
+        assert!((scaled.point(Vec3::X).x - 2.0).abs() < 1e-3, "{:?}", scaled.point(Vec3::X));
+        assert!((scaled.point(Vec3::Y) - Vec3::Y).length() < 1e-3);
+    }
+
     #[test]
     fn a_rotation_ring_is_picked_at_its_radius_only() {
         let frame = GizmoFrame::world(Vec3::ZERO, 1.0);
