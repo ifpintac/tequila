@@ -285,17 +285,45 @@ impl Channel {
     /// As [`Channel::drain`], the session's own operations among what
     /// arrives, each as the request's JSON.
     pub fn drain_with(&self, mut handler: impl FnMut(Arrived<'_>) -> Reply) {
+        self.drain_with_responders(|arrived, responder| responder.answer(&handler(arrived)));
+    }
+
+    /// The same, each request handed over with where its answer goes, to be
+    /// answered at once or kept and answered on a later frame: a request the
+    /// application finishes on another thread, as an import reads its model,
+    /// while the window goes on drawing. The client waits as for any answer.
+    pub fn drain_with_responders(&self, mut handler: impl FnMut(Arrived<'_>, Responder)) {
         // Yield back to the UI even while clients continuously enqueue work.
         for _ in 0..16 {
-            let Some(next) = self.pending.lock().ok().and_then(|mut q| q.pop_front()) else {
+            let Some(Pending { request, reply }) = self.pending.lock().ok().and_then(|mut q| q.pop_front()) else {
                 return;
             };
-            let reply = match &next.request {
-                Incoming::Request(request) => handler(Arrived::Request(request)),
-                Incoming::Own { value, .. } => handler(Arrived::Own(value)),
-            };
-            let _ = next.reply.send(encode_reply(next.request.id(), &reply));
+            let responder = Responder { id: request.id(), reply };
+            match &request {
+                Incoming::Request(request) => handler(Arrived::Request(request), responder),
+                Incoming::Own { value, .. } => handler(Arrived::Own(value), responder),
+            }
         }
+    }
+}
+
+/// Where one request's answer goes ([`Channel::drain_with_responders`]).
+/// Dropped unanswered, it tells the client the application is closing.
+pub struct Responder {
+    id: u64,
+    reply: Sender<String>,
+}
+
+impl Responder {
+    /// Send the answer to the client that asked.
+    pub fn answer(self, reply: &Reply) {
+        let _ = self.reply.send(encode_reply(self.id, reply));
+    }
+}
+
+impl std::fmt::Debug for Responder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Responder").field("id", &self.id).finish_non_exhaustive()
     }
 }
 
@@ -525,6 +553,48 @@ mod tests {
         });
         woke.recv_timeout(std::time::Duration::from_secs(5)).expect("the request did not wake the application");
         channel.drain(|_| Reply::Done);
+    }
+
+    /// An answer kept and sent frames later reaches the client that asked,
+    /// which waited for it, while the application went on draining other
+    /// clients' requests meanwhile.
+    #[test]
+    fn an_answer_can_come_frames_later() {
+        let channel = Channel::open(&[]).expect("opens");
+        let (port, token) = (channel.port(), channel.token.clone());
+        let ask = move |id: u64| {
+            let token = token.clone();
+            std::thread::spawn(move || {
+                let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connects");
+                writeln!(stream, r#"{{"id":{id},"token":"{token}","op":"ping"}}"#).expect("writes");
+                stream.flush().expect("flushes");
+                let mut line = String::new();
+                BufReader::new(stream).read_line(&mut line).expect("an answer");
+                line
+            })
+        };
+        let slow = ask(1);
+        let mut kept = None;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while kept.is_none() {
+            assert!(std::time::Instant::now() < deadline, "the request never arrived");
+            channel.drain_with_responders(|_, responder| kept = Some(responder));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Another client is answered meanwhile.
+        let quick = ask(2);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !quick.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "the second client was not answered");
+            channel.drain_with(|_| Reply::Done);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(field_of(&quick.join().unwrap(), "id"), Value::Number(2.0));
+        assert!(!slow.is_finished(), "the kept request was answered before its answer was sent");
+        kept.unwrap().answer(&Reply::Done);
+        let line = slow.join().unwrap();
+        assert_eq!(field_of(&line, "id"), Value::Number(1.0), "{line}");
+        assert_eq!(field_of(&line, "ok"), Value::Bool(true), "{line}");
     }
 
     /// The whole loop, over a real socket: connect, send, get answered by
