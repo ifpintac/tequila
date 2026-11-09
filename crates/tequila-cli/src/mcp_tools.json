@@ -576,6 +576,9 @@
     "full_viewport": {
      "type": "boolean"
     },
+    "statistics": {
+     "type": "boolean"
+    },
     "help": {
      "type": "boolean"
     },
