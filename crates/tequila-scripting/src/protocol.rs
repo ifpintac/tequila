@@ -43,7 +43,9 @@ pub enum Operation {
     /// it carries the whole mesh inlined, which is the right shape for a
     /// journal and an absurd one for a request — so this names the file and
     /// lets the application read it, then applies the very same command.
-    Import { path: String, parent: Option<u64> },
+    /// `up`: which way up the file was drawn (`file`, `y`, `z`, `x`, `-y`,
+    /// `-z`, `-x`), over the setting File › Up axis of imports keeps.
+    Import { path: String, parent: Option<u64>, up: Option<String> },
     /// Make materials from a PBR texture pack — a folder, a ZIP, or one of
     /// its maps — and put the first on `nodes` (the selection when empty).
     TextureSet { path: String, nodes: Vec<u64> },
@@ -298,6 +300,39 @@ fn spacemouse_input(value: &Value) -> Result<SpaceMouseInput, ProtocolError> {
     Ok(SpaceMouseInput { reports, seconds })
 }
 
+/// `guides`: true or false to show or hide them, a guide's name or a list
+/// of names to show just those, or an object of `on`, `show`, `spiral`,
+/// `spiral_flip`, `golden_triangle`, `harmonious_triangles`, `pyramid` and
+/// `menu`.
+fn guides_change(value: &Value) -> Result<GuidesChange, ProtocolError> {
+    let names = |v: &Value| -> Result<Vec<String>, ProtocolError> {
+        let bad = || ProtocolError("`guides` names the guides as strings: \"thirds\", or [\"thirds\", \"golden_spiral\"]".into());
+        match v {
+            Value::String(name) => Ok(vec![name.clone()]),
+            Value::Array(items) => items.iter().map(|i| i.as_str().map(str::to_string).ok_or_else(bad)).collect(),
+            _ => Err(bad()),
+        }
+    };
+    match value {
+        Value::Bool(on) => Ok(GuidesChange { on: Some(*on), ..GuidesChange::default() }),
+        Value::String(_) | Value::Array(_) => Ok(GuidesChange { show: Some(names(value)?), ..GuidesChange::default() }),
+        Value::Object(_) => Ok(GuidesChange {
+            on: opt_bool(value, "on")?,
+            show: match value.get("show") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(names(v)?),
+            },
+            spiral: opt_string(value, "spiral")?,
+            spiral_flip: opt_bool(value, "spiral_flip")?,
+            golden_triangle: opt_string(value, "golden_triangle")?,
+            harmonious_triangles: opt_string(value, "harmonious_triangles")?,
+            pyramid: opt_string(value, "pyramid")?,
+            menu: opt_bool(value, "menu")?,
+        }),
+        _ => Err(ProtocolError("`guides` is true or false, a guide's name, a list of them, or {\"show\": [...], \"spiral\": \"top_left\", ...}".into())),
+    }
+}
+
 fn with_preset(command: Value) -> Result<Value, ProtocolError> {
     if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
         return Ok(command);
@@ -403,6 +438,33 @@ pub struct UiChange {
     pub screenshot_folder: Option<String>,
     /// The window's inner size, in points.
     pub window_size: Option<[f32; 2]>,
+    /// The viewport's composition guides, as View › Composition guides
+    /// sets them; kept in the application's settings.
+    pub guides: Option<GuidesChange>,
+}
+
+/// The viewport's composition guides, as a script sets them. Absent fields
+/// are left alone; the names are checked by the application, which knows
+/// them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GuidesChange {
+    /// Shown or hidden, keeping which are chosen, as O does.
+    pub on: Option<bool>,
+    /// Exactly these guides, by name, and shown; none puts them all away.
+    pub show: Option<Vec<String>>,
+    /// The corner the golden spiral winds to: `top_left`, `top_right`,
+    /// `bottom_right` or `bottom_left`.
+    pub spiral: Option<String>,
+    /// The golden spiral turned the other way.
+    pub spiral_flip: Option<bool>,
+    /// The golden triangle's diagonal: `rising` or `falling`.
+    pub golden_triangle: Option<String>,
+    /// The harmonious triangles' diagonal: `rising` or `falling`.
+    pub harmonious_triangles: Option<String>,
+    /// The pyramid's point: `up` or `down`.
+    pub pyramid: Option<String>,
+    /// The viewport toolbar's menu of guides, open, for a picture of it.
+    pub menu: Option<bool>,
 }
 
 /// Synthetic 3D mouse input, for scripts and tests without a device: HID
@@ -999,6 +1061,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
         "import" => Operation::Import {
             path: string(value, "path")?,
             parent: value.get("parent").and_then(|v| v.as_index()).map(|i| i as u64),
+            up: opt_string(value, "up")?,
         },
         "reimport" => Operation::Reimport {
             node: value.get("node").and_then(|v| v.as_index()).map(|i| i as u64),
@@ -1319,6 +1382,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 [w, h] => Some([w.as_f32()?, h.as_f32()?]).filter(|[w, h]| w.is_finite() && h.is_finite() && *w >= 1.0 && *h >= 1.0),
                 _ => None,
             })?,
+            guides: value.get("guides").filter(|v| !matches!(v, Value::Null)).map(guides_change).transpose()?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1722,6 +1786,29 @@ mod tests {
         assert!(parse_request(r#"{"id":10,"op":"ui","window_size":"big"}"#).is_err());
     }
 
+    /// The composition guides: shown or hidden, a guide or a list of them,
+    /// or the whole choice with the one-sided guides' ways round.
+    #[test]
+    fn ui_takes_the_composition_guides() {
+        let guides = |json: &str| match parse_request(json).map(|r| r.operation) {
+            Ok(Operation::Ui(UiChange { guides, .. })) => Ok(guides),
+            Ok(other) => panic!("{other:?}"),
+            Err(error) => Err(error),
+        };
+        assert_eq!(guides(r#"{"op":"ui","guides":false}"#).unwrap(), Some(GuidesChange { on: Some(false), ..GuidesChange::default() }));
+        assert_eq!(guides(r#"{"op":"ui","guides":"thirds"}"#).unwrap().unwrap().show, Some(vec!["thirds".to_string()]));
+        assert_eq!(guides(r#"{"op":"ui","guides":[]}"#).unwrap().unwrap().show, Some(Vec::new()));
+        let all = guides(r#"{"op":"ui","guides":{"show":["golden_spiral","pyramid"],"spiral":"top_left","spiral_flip":true,"golden_triangle":"falling","pyramid":"down"}}"#).unwrap().unwrap();
+        assert_eq!(all.show, Some(vec!["golden_spiral".to_string(), "pyramid".to_string()]));
+        assert_eq!((all.spiral.as_deref(), all.spiral_flip, all.golden_triangle.as_deref(), all.pyramid.as_deref()), (Some("top_left"), Some(true), Some("falling"), Some("down")));
+        assert_eq!((all.on, all.menu), (None, None), "left alone");
+        assert_eq!(guides(r#"{"op":"ui","guides":{"menu":true}}"#).unwrap().unwrap().menu, Some(true));
+        assert_eq!(guides(r#"{"op":"ui","about":true}"#).unwrap(), None);
+        assert!(guides(r#"{"op":"ui","guides":3}"#).is_err());
+        assert!(guides(r#"{"op":"ui","guides":["thirds",2]}"#).is_err());
+        assert!(guides(r#"{"op":"ui","guides":{"spiral_flip":"yes"}}"#).is_err());
+    }
+
     /// A 3D mouse's input, made up: its reports as bytes, and how long the
     /// motion is held; a byte past 255 or an empty report is refused.
     #[test]
@@ -1740,7 +1827,7 @@ mod tests {
             .expect("parses");
         assert!(matches!(
             import.operation,
-            Operation::Import { ref path, parent: None } if path == "C:/models/part.gltf"
+            Operation::Import { ref path, parent: None, .. } if path == "C:/models/part.gltf"
         ));
 
         // Save without a path means "where it came from", which is what a

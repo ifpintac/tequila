@@ -168,7 +168,10 @@ TOOLS = [
           'tab': {'type': 'string', 'enum': ['scene', 'material', 'environment', 'lighting', 'camera', 'image', 'studios', 'scripting']},
           'viewport': {'type': 'string', 'enum': ['wireframe', 'solid', 'material', 'rendered']}}),
     tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.',
-         {'path': {'type': 'string'}}, ['path']),
+         {'path': {'type': 'string'},
+          'up': {'type': 'string', 'enum': ['file', 'y', 'z', 'x', '-y', '-z', '-x'],
+                 'description': 'Which way up the file was drawn: z for a CAD model drawn Z up, which otherwise comes in lying on its back. Without it, the setting File > Up axis of imports decides.'}},
+         ['path']),
     tool('tequila_save', 'Save the project, to its own file or to a new path.',
          {'path': {'type': 'string'}}),
     tool('tequila_plugin_guide',
@@ -444,8 +447,8 @@ class Bridge:
     def tool_ui(self, **changes):
         return text(self.request('ui', **changes))
 
-    def tool_import(self, path):
-        return text(self.request('import', path=str(Path(path).resolve())))
+    def tool_import(self, path, up=None):
+        return text(self.request('import', path=str(Path(path).resolve()), **({'up': up} if up else {})))
 
     def tool_save(self, path=None):
         return text(self.request('save', **({'path': str(Path(path).resolve())} if path else {})))

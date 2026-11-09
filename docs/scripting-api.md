@@ -105,7 +105,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-74 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+75 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -354,6 +354,18 @@ A node's name.
 
 ```json
 { "command": "scene.rename", "name": "Renamed", "node": 2 }
+```
+
+#### `scene.set_shape`
+
+A shape from Add › Shape given new dimensions: its mesh built again from
+them (`shape`: what it is, `width`, `depth`, `height` and a backdrop's curve
+`radius`, in metres) under the mesh key given.
+
+`fs.commands.scene.set_shape(mesh=..., node=..., shape=...)`
+
+```json
+{ "command": "scene.set_shape", "mesh": 12, "node": 2, "shape": { "depth": 0.9, "height": 0.63, "radius": 0.135, "shape": "backdrop", "width": 2.7 } }
 ```
 
 #### `scene.set_transform`

@@ -24,6 +24,7 @@ mod crash;
 mod console;
 mod cutaway_panel;
 mod cycles_view;
+mod composition;
 mod scripting_tab;
 mod batch;
 mod camera_tab;
@@ -46,6 +47,7 @@ mod lighting_tab;
 mod material_tab;
 mod measure_tool;
 mod improve_model;
+mod import_settings;
 mod model_units;
 mod metadata_panel;
 mod network_panel;
@@ -64,6 +66,7 @@ mod render_frame;
 mod render_window;
 mod scene_tab;
 mod self_test;
+mod shape_panel;
 mod spacemouse;
 mod procedural_gpu;
 mod solid_gpu;
@@ -415,6 +418,13 @@ struct TequilaApp {
     pending_screenshot: Option<std::path::PathBuf>,
     /// P's Screenshot (`screenshot`): where they go, as the person chose.
     screenshots: screenshot::Preferences,
+    /// The composition guides over the picture (`composition`), and the
+    /// file they are kept in: none in tests, which keep nothing.
+    guides: composition::Guides,
+    guides_file: Option<std::path::PathBuf>,
+    /// The toolbar's menu of guides opened or closed by a script, for the
+    /// next frame to do.
+    open_guides_menu: Option<bool>,
     /// One asked for of the graphics card's Solid, whose picture is read
     /// back as a frame draws it; and whether that frame has been drawn.
     screenshot_waiting: bool,
@@ -920,6 +930,9 @@ impl TequilaApp {
         app.updates = update::Updates::with_preferences(update::Preferences::load());
         app.spacemouse = spacemouse::SpaceMouse::load();
         app.screenshots = screenshot::Preferences::load();
+        let guides_file = composition::Guides::file();
+        app.guides = composition::Guides::load(&guides_file);
+        app.guides_file = Some(guides_file);
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -1014,6 +1027,9 @@ impl TequilaApp {
             channel: None,
             pending_screenshot: None,
             screenshots: screenshot::Preferences::default(),
+            guides: composition::Guides::default(),
+            guides_file: None,
+            open_guides_menu: None,
             screenshot_waiting: false,
             screenshot_drawn: false,
             last_screenshot: None,
@@ -1501,7 +1517,7 @@ impl eframe::App for TequilaApp {
                     match &request.operation {
                         // Read on another thread, answered when it has
                         // arrived: the window goes on drawing meanwhile.
-                        Operation::Import { path, parent } => channel::begin_import(self, request, path, *parent, responder, ctx),
+                        Operation::Import { path, parent, .. } => channel::begin_import(self, request, path, *parent, responder, ctx),
                         _ => responder.answer(&channel::handle(self, request)),
                     }
                 }
@@ -2253,6 +2269,21 @@ impl TequilaApp {
             );
         }
 
+        // The composition guides: over the picture and the grid, under the
+        // tools, in the render's own frame so they divide what the render
+        // will hold. With the render frame off, that is where the render
+        // falls in the view, which can run past its top and bottom. Never
+        // while presenting, and never in a Screenshot, which is the picture
+        // alone.
+        if self.guides.visible() && self.presenting.is_none() {
+            let frame = if self.show_render_frame {
+                rect
+            } else {
+                composition::render_region(rect, self.render_aspect(), composition::Keeps::of(&self.camera.camera.projection))
+            };
+            composition::draw(&ui.painter_at(rect), frame, &self.guides);
+        }
+
         // Above the image and the grid, below the HUD. Anything painted before
         // the image is painted *under* it: egui draws in call order within a
         // layer, and the image covers the whole viewport.
@@ -2304,9 +2335,19 @@ impl TequilaApp {
         if !typing && ui.input(|i| i.key_pressed(egui::Key::H) && !i.modifiers.any()) {
             self.show_hud = !self.show_hud;
         }
+        // O shows and hides the composition guides and Shift+O turns the
+        // one-sided ones, as a photo editor's crop overlay does.
+        if !typing && !presenting {
+            let (show, turn) = ui.input(|i| (i.key_pressed(egui::Key::O) && !i.modifiers.any(), i.key_pressed(egui::Key::O) && i.modifiers.shift_only()));
+            if show {
+                self.guides.toggle();
+                self.guides_changed();
+            } else if turn && self.guides.turn() {
+                self.guides_changed();
+            }
+        }
         if !presenting {
             self.viewport_overlays(ui, area);
-            self.welcome_card(ui, area);
             if self.show_hud {
                 self.hud(ui, area);
             }
@@ -3240,6 +3281,14 @@ impl TequilaApp {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
                     }
+                    ui.menu_button("Up axis of imports", |ui| {
+                        ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
+                        if let Some(said) = import_settings::menu(ui) {
+                            self.project.status = said;
+                        }
+                    })
+                    .response
+                    .on_hover_text("A model drawn Z up comes in lying on its back unless this says Z up");
                     ui.menu_button("Import texture pack", |ui| {
                         if let Some(folder) = texture_pack::menu(ui) {
                             self.pick_texture_pack(folder);
@@ -3398,6 +3447,13 @@ impl TequilaApp {
                         .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
+                    let aspect = self.render_aspect();
+                    ui.menu_button("Composition guides", |ui| {
+                        ui.set_min_width(230.0);
+                        if composition::menu(ui, &mut self.guides, aspect) {
+                            self.guides_changed();
+                        }
+                    });
                     ui.separator();
                     ui.menu_button("Standard view", |ui| {
                         for view in StandardView::ALL {
@@ -3554,12 +3610,6 @@ impl TequilaApp {
                     }
                     if ui.button("Start screen").on_hover_text("New, open and recent projects, the samples, and where to find us").clicked() {
                         self.start_screen.open = true;
-                        ui.close_menu();
-                    }
-                    if ui.button("Show the welcome card").clicked() {
-                        let mut appearance = theme::appearance();
-                        appearance.welcome_seen = false;
-                        theme::set_appearance(ui.ctx(), appearance, true);
                         ui.close_menu();
                     }
                     ui.menu_button("Guides", |ui| {
@@ -3897,9 +3947,9 @@ impl TequilaApp {
             );
         }
 
-        // ---- Framing, shading, denoise and pause, Screenshot: top right ---
+        // ---- Framing and guides, shading, denoise and pause, Screenshot: top right
         let (pad, gap) = (4.0, 9.0);
-        let width = pad * 2.0 + TOOL * 9.0 + gap * 3.0;
+        let width = pad * 2.0 + TOOL * 10.0 + gap * 3.0;
         let island = egui::Rect::from_min_size(
             egui::pos2(rect.right() - OVERLAY_INSET - width, rect.top() + OVERLAY_INSET),
             egui::vec2(width, ISLAND),
@@ -3927,6 +3977,29 @@ impl TequilaApp {
         );
         if response.clicked() && has_selection {
             self.frame(false);
+        }
+        // The composition guides, lit while they show; a click opens their
+        // menu, as View › Composition guides.
+        let guides = button(ui, next(&mut x), "guides", Icon::Grid, self.guides.visible(), true);
+        let popup = ui.id().with("guides-popup");
+        if guides.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup));
+        }
+        match self.open_guides_menu.take() {
+            Some(true) => ui.memory_mut(|m| m.open_popup(popup)),
+            Some(false) if ui.memory(|m| m.is_popup_open(popup)) => ui.memory_mut(|m| m.close_popup()),
+            _ => {}
+        }
+        let guides = icons::tip(guides, "Composition guides", "Rule of thirds, the golden section and spiral, triangles and diagonals, over the picture in the render's shape. Never in screenshots or renders.", "O");
+        let aspect = self.render_aspect();
+        let mut changed = false;
+        egui::popup::popup_below_widget(ui, popup, &guides, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+            ui.set_min_width(230.0);
+            theme::section(ui, "Composition guides");
+            changed = composition::menu(ui, &mut self.guides, aspect);
+        });
+        if changed {
+            self.guides_changed();
         }
         icons::divider(&painter, egui::pos2(x + gap * 0.5, island.top() + 9.0), egui::pos2(x + gap * 0.5, island.bottom() - 9.0));
         x += gap;
@@ -4054,82 +4127,6 @@ impl TequilaApp {
                 self.snapping_controls(ui);
             },
         );
-    }
-
-    /// Three steps to a first picture, over the bottom of the viewport until
-    /// they are put away: bring in a model, dress it, render it.
-    fn welcome_card(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        if theme::appearance().welcome_seen || self.start_screen.open || rect.width() < 520.0 || rect.height() < 380.0 {
-            return;
-        }
-        let p = theme::p();
-        let size = egui::vec2(560.0_f32.min(rect.width() - 48.0), 178.0);
-        let card = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.bottom() - 28.0 - size.y * 0.5), size);
-        let painter = ui.painter().clone();
-        painter.add(egui::epaint::Shadow { offset: egui::vec2(0.0, 10.0), blur: 34.0, spread: 0.0, color: egui::Color32::from_black_alpha(if p.dark { 120 } else { 50 }) }.as_shape(card, 16.0));
-        painter.rect(card, 16.0, p.raised, egui::Stroke::new(1.0_f32, p.line));
-        // The card's own clicks and drags, so none of them turns the camera.
-        let _ = ui.interact(card, ui.id().with("welcome"), egui::Sense::click_and_drag());
-
-        let mut dismiss = false;
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card.shrink2(egui::vec2(20.0, 16.0))), |ui| {
-            ui.horizontal(|ui| {
-                let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
-                icons::paint(ui.painter(), mark, icons::Icon::Aperture, p.accent);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(egui::RichText::new("Welcome to Tequila").font(theme::strong(16.0)).color(p.text));
-                    ui.label(egui::RichText::new("Three steps to your first picture").size(12.0).color(p.text_dim));
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    if icons::button(ui, icons::Icon::Close, false, 26.0, egui::Sense::click()).on_hover_text("Put this away").clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-            ui.add_space(12.0);
-            let gap = 12.0;
-            let each = (ui.available_width() - gap * 2.0) / 3.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                let steps: [(theme::Hue, &str, &str, icons::Icon, &str); 3] = [
-                    (theme::Hue::Blue, "Bring in a model", "OBJ, STL, glTF, STEP and more", icons::Icon::Import, "Import"),
-                    (theme::Hue::Pink, "Dress it", "Drag a material onto any part", icons::Icon::Library, "Library"),
-                    (theme::Hue::Amber, "Take the shot", "Size, quality and file", icons::Icon::Aperture, "Render"),
-                ];
-                for (number, (hue, title, detail, icon, action)) in steps.into_iter().enumerate() {
-                    ui.allocate_ui_with_layout(egui::vec2(each, 96.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(each);
-                        let colour = theme::hue(hue);
-                        ui.horizontal(|ui| {
-                            let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot.center(), 11.0, colour.gamma_multiply(if p.dark { 0.22 } else { 0.16 }));
-                            ui.painter().text(dot.center(), egui::Align2::CENTER_CENTER, format!("{}", number + 1), theme::strong(12.0), colour);
-                            ui.label(egui::RichText::new(title).font(theme::strong(13.0)).color(p.text));
-                        });
-                        ui.label(egui::RichText::new(detail).size(11.5).color(p.text_dim));
-                        ui.add_space(2.0);
-                        if icons::labelled(ui, icon, action, number == 2).clicked() {
-                            match number {
-                                0 => self.ask_for_file(Action::Import),
-                                1 => {
-                                    self.show_library = true;
-                                    if ui.ctx().screen_rect().width() < 1100.0 {
-                                        self.show_project = false;
-                                    }
-                                }
-                                _ => self.render_window.open = true,
-                            }
-                        }
-                    });
-                }
-            });
-        });
-        if dismiss {
-            let mut appearance = theme::appearance();
-            appearance.welcome_seen = true;
-            theme::set_appearance(ui.ctx(), appearance, true);
-        }
     }
 
     /// Grid, angle and vertex snapping for the transform gizmo.
@@ -4800,6 +4797,27 @@ impl TequilaApp {
         }
     }
 
+    /// The composition guides as just changed, kept for the next session.
+    pub(crate) fn keep_guides(&self) -> Result<(), String> {
+        match &self.guides_file {
+            Some(file) => self.guides.save(file),
+            None => Ok(()),
+        }
+    }
+
+    /// The composition guides changed by the person: kept, or a warning.
+    fn guides_changed(&mut self) {
+        if let Err(error) = self.keep_guides() {
+            self.toasts.warn(format!("The composition guides could not be kept: {error}"));
+        }
+    }
+
+    /// The render's shape, width over height, for the guides' pictures.
+    fn render_aspect(&self) -> f32 {
+        let settings = self.project.render_settings();
+        settings.width.max(1) as f32 / settings.height.max(1) as f32
+    }
+
     /// View › Screenshot folder…: where screenshots go, kept in the
     /// application's settings.
     fn choose_screenshot_folder(&mut self) {
@@ -5415,8 +5433,11 @@ impl TequilaApp {
                         .extension()
                         .and_then(|e| e.to_str())
                         .is_some_and(|e| ["step", "stp", "iges", "igs"].iter().any(|c| e.eq_ignore_ascii_case(c)));
-                    if cad && report.warnings.is_empty() {
-                        self.project.status.push_str(". Lying on its back? Right-click it in the Scene tab: Turn, Upright");
+                    let up = import_settings::up_axis();
+                    if up != tequila_import::UpAxis::AsFile && report.warnings.is_empty() {
+                        self.project.status.push_str(&format!(", stood up from {}", up.label()));
+                    } else if cad && report.warnings.is_empty() {
+                        self.project.status.push_str(". Lying on its back? Right-click it in the Scene tab: Turn, Upright; or File › Up axis of imports");
                     }
                     if units.is_some() {
                         self.model_units = units;
@@ -5884,6 +5905,13 @@ impl TequilaApp {
                 let mut tab = std::mem::take(&mut self.scene_tab);
                 tab.show(ui, &mut self.project);
                 tab.rays_panel(ui, &mut self.project);
+                // A shape's dimensions, under the tree, where it was picked.
+                if let Some(node) = self.project.selection.active().filter(|n| self.project.document().tree.get(*n).is_some_and(|n| n.shape.is_some())) {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    theme::section(ui, "Shape");
+                    shape_panel::panel(ui, &mut self.project, node);
+                }
                 ui.add_space(4.0);
                 ui.separator();
                 theme::section(ui, "Metadata");
@@ -6791,6 +6819,7 @@ impl TequilaApp {
                             ("Pause the viewport", "Shift + P"),
                             ("Render statistics", "H"),
                             ("Full viewport", "Tab"),
+                            ("Composition guides / turn them", "O / Shift + O"),
                         ],
                     ),
                     (

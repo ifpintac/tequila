@@ -118,6 +118,75 @@ pub struct ImportOptions {
     /// draw the ground. Off for a file that has to land where it was
     /// modelled: one part of an assembly imported beside the rest.
     pub place_on_ground: bool,
+    /// Which way up the file was drawn, to stand it Y up as Tequila is: a
+    /// STEP, STL or OBJ does not say, and one drawn Z up arrived lying on
+    /// its back, to be turned or exported again turned.
+    pub up_axis: UpAxis,
+}
+
+/// Which way up a model's file was drawn (`ImportOptions::up_axis`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UpAxis {
+    /// As the importer reads it: glTF, USD and FBX say, and the rest are
+    /// taken as Y up.
+    #[default]
+    AsFile,
+    Y,
+    Z,
+    X,
+    NegativeY,
+    NegativeZ,
+    NegativeX,
+}
+
+impl UpAxis {
+    pub const ALL: [UpAxis; 7] = [UpAxis::AsFile, UpAxis::Y, UpAxis::Z, UpAxis::X, UpAxis::NegativeY, UpAxis::NegativeZ, UpAxis::NegativeX];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            UpAxis::AsFile => "As the file says",
+            UpAxis::Y => "Y up",
+            UpAxis::Z => "Z up",
+            UpAxis::X => "X up",
+            UpAxis::NegativeY => "−Y up (upside down)",
+            UpAxis::NegativeZ => "−Z up",
+            UpAxis::NegativeX => "−X up",
+        }
+    }
+
+    /// Its name in the settings and a script: `file`, `y`, `z`, `x`,
+    /// `-y`, `-z`, `-x`.
+    pub fn key(self) -> &'static str {
+        match self {
+            UpAxis::AsFile => "file",
+            UpAxis::Y => "y",
+            UpAxis::Z => "z",
+            UpAxis::X => "x",
+            UpAxis::NegativeY => "-y",
+            UpAxis::NegativeZ => "-z",
+            UpAxis::NegativeX => "-x",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<UpAxis> {
+        UpAxis::ALL.into_iter().find(|a| a.key() == key.trim())
+    }
+
+    /// The turn that brings the file's up to +Y, about the origin; none
+    /// for a model already Y up. Z up turns with its front, -Y, toward +Z,
+    /// the way the default camera looks at a product.
+    pub fn turn(self) -> Option<tequila_core::math::Mat4> {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        use tequila_core::math::Mat4;
+        match self {
+            UpAxis::AsFile | UpAxis::Y => None,
+            UpAxis::Z => Some(Mat4::rotation(Vec3::X, -FRAC_PI_2)),
+            UpAxis::X => Some(Mat4::rotation(Vec3::Z, FRAC_PI_2)),
+            UpAxis::NegativeY => Some(Mat4::rotation(Vec3::X, PI)),
+            UpAxis::NegativeZ => Some(Mat4::rotation(Vec3::X, FRAC_PI_2)),
+            UpAxis::NegativeX => Some(Mat4::rotation(Vec3::Z, -FRAC_PI_2)),
+        }
+    }
 }
 
 impl Default for ImportOptions {
@@ -129,6 +198,7 @@ impl Default for ImportOptions {
             detect_instances: true,
             source_unit: None,
             place_on_ground: true,
+            up_axis: UpAxis::AsFile,
         }
     }
 }
@@ -759,6 +829,19 @@ fn finish_build(
         }
     }
 
+    // Stood the way it was drawn, before it is set on the floor. A file
+    // with its own cameras and lighting is turned with them or not at all:
+    // not, and said so.
+    if let Some(turn) = options.up_axis.turn().and_then(Transform::from_matrix) {
+        if scene.setup.is_some() {
+            report.warnings.push(format!("{} was not applied: the file brings its own cameras and lighting, which would no longer match", options.up_axis.label()));
+        } else {
+            for &root in &scene.roots {
+                nodes[root].transform = turn * nodes[root].transform;
+            }
+        }
+    }
+
     // On the floor. Only for a model imported at the top of the tree: under
     // a parent, it is being placed relative to something else on purpose.
     if options.place_on_ground && parent.is_none() {
@@ -1193,6 +1276,42 @@ mod tests {
         let (document, report) = import_text(&centred, "obj", &kept);
         assert!((lowest(&document) + 0.5).abs() < 1e-6);
         assert_eq!(report.lifted, 0.0);
+    }
+
+    /// A model drawn Z up, imported as Z up, stands Y up: a 1 x 1 x 3 tower
+    /// along Z comes in 3 tall and on the floor, its front (-Y in the file)
+    /// toward the camera (+Z). Each up axis brings its own up to +Y.
+    #[test]
+    fn a_model_drawn_z_up_stands_up() {
+        let mut text = String::new();
+        for (x, y, z) in [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 3.0), (1.0, 0.0, 3.0), (1.0, 1.0, 3.0), (0.0, 1.0, 3.0)] {
+            text.push_str(&format!("v {x} {y} {z}\n"));
+        }
+        text.push_str("f 1 2 3 4\nf 5 6 7 8\n");
+        let lying = import_text(&text, "obj", &Default::default()).0.bounds();
+        assert!((lying.diagonal().z - 3.0).abs() < 1e-5, "as the file says, it lies along Z: {lying:?}");
+        let options = ImportOptions { up_axis: UpAxis::Z, ..Default::default() };
+        let (document, report) = import_text(&text, "obj", &options);
+        let standing = document.bounds();
+        assert!((standing.diagonal().y - 3.0).abs() < 1e-5, "Z up, it stands 3 tall: {standing:?}");
+        assert!(standing.min.y.abs() < 1e-5, "and on the floor");
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        // The file's -Y face, its front, now faces +Z.
+        let front = UpAxis::Z.turn().unwrap().transform_vector(-Vec3::Y);
+        assert!((front - Vec3::Z).length() < 1e-5, "{front:?}");
+        for axis in UpAxis::ALL {
+            let up = match axis {
+                UpAxis::AsFile | UpAxis::Y => Vec3::Y,
+                UpAxis::Z => Vec3::Z,
+                UpAxis::X => Vec3::X,
+                UpAxis::NegativeY => -Vec3::Y,
+                UpAxis::NegativeZ => -Vec3::Z,
+                UpAxis::NegativeX => -Vec3::X,
+            };
+            let turned = axis.turn().map_or(up, |t| t.transform_vector(up));
+            assert!((turned - Vec3::Y).length() < 1e-5, "{axis:?}: {turned:?}");
+            assert_eq!(UpAxis::from_key(axis.key()), Some(axis));
+        }
     }
 
     /// A part turned at an angle lands with its lowest point on the floor,
