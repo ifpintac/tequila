@@ -136,6 +136,7 @@ impl CyclesView {
     }
 
     /// How many times a fresh session took parts imported or deleted.
+    #[cfg(test)]
     pub fn renewals(&self) -> u64 {
         self.renewals
     }
