@@ -549,6 +549,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::PlaceUvIslands { .. }
         | Command::SetUvPins { .. }
         | Command::Rename { .. }
+        | Command::SetShape { .. }
         | Command::SetTransform { .. }
         | Command::SetVisibility { .. }
         | Command::SetLayerVisibility { .. }
@@ -696,6 +697,11 @@ fn the_catalog_lists_every_command_exactly_once() {
         },
         Command::set_pivot(NodeId(1), Some(vec3(0.0, 1.0, 0.0))),
         Command::SetPattern { group: NodeId(1), pattern: None },
+        Command::SetShape {
+            node: NodeId(1),
+            shape: tequila_scene::shapes::ShapeSpec::of(tequila_scene::shapes::Shape::Wall, 1.0),
+            mesh: tequila_scene::tree::MeshKey(9),
+        },
         Command::UnlinkMaterial { node: NodeId(1) },
         Command::SetMaterialParameter {
             material: MaterialKey(1),

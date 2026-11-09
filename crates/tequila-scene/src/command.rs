@@ -147,6 +147,11 @@ pub enum Command {
     DeleteNodes { nodes: Vec<NodeId> },
     /// `scene.rename` — a node's name.
     Rename { node: NodeId, name: String },
+    /// `scene.set_shape` — a shape from Add › Shape given new dimensions:
+    /// its mesh built again from them (`shape`: what it is, `width`,
+    /// `depth`, `height` and a backdrop's curve `radius`, in metres) under
+    /// the mesh key given.
+    SetShape { node: NodeId, shape: crate::shapes::ShapeSpec, mesh: MeshKey },
     /// `scene.set_transform`
     ///
     /// Takes a transform per node rather than one node, because moving a
@@ -1170,6 +1175,7 @@ impl Command {
             Command::PlaceUvIslands { .. } => "uv.place_islands",
             Command::SetUvPins { .. } => "uv.set_pins",
             Command::Rename { .. } => "scene.rename",
+            Command::SetShape { .. } => "scene.set_shape",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
             Command::SetLayerVisibility { .. } => "scene.set_layer_visibility",
@@ -1229,7 +1235,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 75] = [
+    pub const CATALOG: [&'static str; 76] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1253,6 +1259,7 @@ impl Command {
         "uv.place_islands",
         "uv.set_pins",
         "scene.rename",
+        "scene.set_shape",
         "scene.set_transform",
         "scene.set_visibility",
         "scene.set_layer_visibility",
@@ -1318,6 +1325,7 @@ impl Command {
             | Command::Group { .. }
             | Command::SetPattern { .. }
             | Command::SplitIntoParts { .. }
+            | Command::SetShape { .. }
             | Command::UnwrapUvs { .. }
             // A layout is what every texture and label on the part is
             // sampled by.
@@ -1457,6 +1465,9 @@ impl Command {
             (Command::SetRenderSettings { .. }, Command::SetRenderSettings { .. }) => true,
             (Command::SetCamera { index: a, .. }, Command::SetCamera { index: b, .. }) => a == b,
             (Command::SetLight { node: a, .. }, Command::SetLight { node: b, .. }) => a == b,
+            // A dimension dragged, one per frame: the undo record holds the
+            // mesh from before the first.
+            (Command::SetShape { node: a, .. }, Command::SetShape { node: b, .. }) => a == b,
             (Command::SetCutaway { node: a, .. }, Command::SetCutaway { node: b, .. }) => a == b,
             // A count or a spacing dragged, one per frame: the undo record
             // restores the copies as they were before the first.
@@ -1503,6 +1514,11 @@ enum Undo {
     /// and the one it was given; and its pins as they were, where the
     /// unwrap carried them to new numbers.
     Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey, pins: Option<crate::uv::UvPins> },
+    /// A shape as it was: its mesh key and dimensions, and its mesh where
+    /// the change took it out of the store, no other part using it.
+    /// Undoing drops whatever mesh the part has by then - edits merged into
+    /// one step replace it several times over - unless another uses it.
+    Shape { node: NodeId, previous: MeshKey, spec: Option<crate::shapes::ShapeSpec>, removed: Option<Box<crate::geometry::Mesh>> },
     /// A part given a mesh with its UV layout edited, as `Unwrapped`; and
     /// the materials whose mappings followed its sets, as they were.
     UvEdited {
@@ -2454,6 +2470,29 @@ fn execute(
                 }
             }
             Ok(Undo::RemovedNodes(removed))
+        }
+
+        Command::SetShape { node, shape, mesh } => {
+            check_unlocked(document, *node)?;
+            let NodeKind::Part { mesh: previous } = document.tree.try_get(*node)?.kind else {
+                return Err(CommandError::InconsistentHistory("only a part has a shape"));
+            };
+            if *mesh != previous && document.geometry.get(*mesh).is_some() {
+                return Err(CommandError::InconsistentHistory("the shape's mesh key is taken"));
+            }
+            let spec = document.tree.try_get(*node)?.shape;
+            document.geometry.insert_with_key(*mesh, shape.mesh());
+            let part = document.tree.get_mut(*node)?;
+            part.kind = NodeKind::Part { mesh: *mesh };
+            part.shape = Some(*shape);
+            let removed = if *mesh != previous && !mesh_in_use(document, previous) {
+                let old = document.geometry.get(previous).cloned().map(Box::new);
+                document.geometry.retain_keys(&|key| key != previous);
+                old
+            } else {
+                None
+            };
+            Ok(Undo::Shape { node: *node, previous, spec, removed })
         }
 
         Command::UnwrapUvs { node, options } => {
@@ -3538,6 +3577,21 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::Shape { node, previous, spec, removed } => {
+            let NodeKind::Part { mesh: current } = document.tree.try_get(*node)?.kind else {
+                return Err(CommandError::InconsistentHistory("only a part has a shape"));
+            };
+            if let Some(mesh) = removed {
+                document.geometry.insert_with_key(*previous, (**mesh).clone());
+            }
+            let part = document.tree.get_mut(*node)?;
+            part.kind = NodeKind::Part { mesh: *previous };
+            part.shape = *spec;
+            if current != *previous && !mesh_in_use(document, current) {
+                document.geometry.retain_keys(&|key| key != current);
+            }
+            Ok(())
+        }
         Undo::Name(node, name) => {
             document.tree.get_mut(*node)?.name = name.clone();
             Ok(())
@@ -4303,6 +4357,11 @@ pub fn reserve_texture_ids(
     (0..count)
         .map(|i| tequila_materials::graph::TextureId(base + i as u32))
         .collect()
+}
+
+/// Whether any part shows `mesh`.
+fn mesh_in_use(document: &SceneDocument, mesh: MeshKey) -> bool {
+    document.tree.iter().any(|n| n.mesh() == Some(mesh))
 }
 
 pub fn reserve_keys(

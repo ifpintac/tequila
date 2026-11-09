@@ -37,6 +37,7 @@ CATALOG = (
     'uv.place_islands',
     'uv.set_pins',
     'scene.rename',
+    'scene.set_shape',
     'scene.set_transform',
     'scene.set_visibility',
     'scene.set_layer_visibility',
@@ -262,6 +263,13 @@ class SceneCommands(_Commands):
         { "command": "scene.rename", "name": "Renamed", "node": 2 }
         """
         return self._apply('scene.rename', {'name': name, 'node': node})
+
+    def set_shape(self, *, mesh=_UNSET, node=_UNSET, shape=_UNSET):
+        r"""`scene.set_shape`: A shape from Add › Shape given new dimensions: its mesh built again from them (`shape`: what it is, `width`, `depth`, `height` and a backdrop's curve `radius`, in metres) under the mesh key given.
+
+        { "command": "scene.set_shape", "mesh": 12, "node": 2, "shape": { "depth": 0.9, "height": 0.63, "radius": 0.135, "shape": "backdrop", "width": 2.7 } }
+        """
+        return self._apply('scene.set_shape', {'mesh': mesh, 'node': node, 'shape': shape})
 
     def set_transform(self, *, transforms=_UNSET):
         r"""`scene.set_transform`: Takes a transform per node rather than one node, because moving a selection of six parts is one action and has to be one undo step. A shared transform would be meaningless — each part has its own place — so the pairs are explicit.

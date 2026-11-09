@@ -181,10 +181,15 @@ class Client:
             fields.update(path=str(Path(path).resolve()), role=role)
         return self.apply('material.set_texture', **fields)
 
-    def import_model(self, path, *, parent=None):
+    def import_model(self, path, *, parent=None, up=None):
+        """Import a model. `up` says which way up the file was drawn: 'z'
+        for a CAD file drawn Z up, or 'file', 'y', 'x', '-y', '-z', '-x';
+        without it, File > Up axis of imports decides."""
         fields = {'path': str(Path(path).resolve())}
         if parent is not None:
             fields['parent'] = parent
+        if up is not None:
+            fields['up'] = up
         return self.request('import', **fields)
 
     def reimport(self, node=None, path=None):

@@ -1,7 +1,11 @@
 //! Simple shapes to add to a scene (Scene tab › Add › Shape): a plane, a
 //! cube, a cylinder, a sphere and a disc to stand a product on or beside,
-//! and a backdrop - a sweep that curves from the floor up into a wall behind
-//! the product, as a studio's paper does.
+//! and backdrops - a sweep that curves from the floor up into a wall behind
+//! the product, as a studio's paper does, or a plain back wall.
+//!
+//! A shape keeps its dimensions on its part ([`ShapeSpec`], in
+//! `SceneNode::shape`), and the Shape section under the Scene tab's tree
+//! sets them by number: `Command::SetShape` builds the mesh again from them.
 //!
 //! Each is a part like any other: its own mesh, with normals and a UV layout
 //! (so a texture lies on it as expected), and a material of its own to change.
@@ -26,10 +30,12 @@ pub enum Shape {
     Disc,
     /// A floor that curves up into a wall behind the product.
     Backdrop,
+    /// A flat wall behind the product, standing on the floor.
+    Wall,
 }
 
 impl Shape {
-    pub const ALL: [Shape; 6] = [Shape::Plane, Shape::Cube, Shape::Cylinder, Shape::Sphere, Shape::Disc, Shape::Backdrop];
+    pub const ALL: [Shape; 7] = [Shape::Plane, Shape::Cube, Shape::Cylinder, Shape::Sphere, Shape::Disc, Shape::Backdrop, Shape::Wall];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -39,23 +45,124 @@ impl Shape {
             Shape::Sphere => "Sphere",
             Shape::Disc => "Disc",
             Shape::Backdrop => "Backdrop",
+            Shape::Wall => "Wall",
         }
     }
 
-    /// The shape's mesh, `size` across (a cylinder's and a sphere's
-    /// diameter, a cube's side), standing on y = 0 and centred on x and z,
-    /// Y up. A backdrop is `size` deep, its wall at the back (−z), three
-    /// times as wide, so a three-quarter view still has wall behind the
-    /// product to its edges, and seven tenths as tall.
-    pub fn mesh(self, size: f32) -> Mesh {
-        let s = size.max(1e-4);
+    /// Its name in a project file and a script.
+    pub fn key(self) -> &'static str {
         match self {
-            Shape::Plane => plane(s),
-            Shape::Cube => cube(s),
-            Shape::Cylinder => cylinder(s * 0.5, s, 64),
-            Shape::Sphere => sphere(s * 0.5, 64, 32),
-            Shape::Disc => disc(s * 0.5, 64),
-            Shape::Backdrop => sweep(s * 3.0, s, s * 0.7, s * 0.15, 24),
+            Shape::Plane => "plane",
+            Shape::Cube => "cube",
+            Shape::Cylinder => "cylinder",
+            Shape::Sphere => "sphere",
+            Shape::Disc => "disc",
+            Shape::Backdrop => "backdrop",
+            Shape::Wall => "wall",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Shape> {
+        Shape::ALL.into_iter().find(|s| s.key() == key)
+    }
+
+    /// A backdrop or a wall: behind the product rather than beside it.
+    pub fn is_backdrop(self) -> bool {
+        matches!(self, Shape::Backdrop | Shape::Wall)
+    }
+
+    /// The shape's mesh at `size` ([`ShapeSpec::of`]).
+    pub fn mesh(self, size: f32) -> Mesh {
+        ShapeSpec::of(self, size).mesh()
+    }
+}
+
+/// A dimension a shape is set by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dimension {
+    Width,
+    Depth,
+    Height,
+    /// A backdrop's curve from floor to wall.
+    Radius,
+}
+
+/// A shape and its dimensions, kept on its part so they can be set again.
+/// Standing on y = 0, Y up. A plane, a cube, a cylinder, a sphere and a
+/// disc are centred on x and z (`width` a cylinder's, a sphere's and a
+/// disc's diameter). A backdrop and a wall stand at z = 0 and face +z, the
+/// way the product is: a backdrop's floor comes forward `depth` from the
+/// foot of its wall, so a deeper floor reaches further toward the camera
+/// and the wall stays where it was.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeSpec {
+    pub shape: Shape,
+    pub width: f32,
+    pub depth: f32,
+    pub height: f32,
+    pub radius: f32,
+}
+
+impl ShapeSpec {
+    /// `shape` at `size`: that across (a cube's side, a cylinder's, sphere's
+    /// and disc's diameter). A backdrop is `size` deep, three times as wide,
+    /// so a three-quarter view still has wall behind the product to its
+    /// edges, and seven tenths as tall; a wall the same.
+    pub fn of(shape: Shape, size: f32) -> ShapeSpec {
+        let s = size.max(1e-4);
+        let (width, depth, height, radius) = match shape {
+            Shape::Backdrop => (s * 3.0, s, s * 0.7, s * 0.15),
+            Shape::Wall => (s * 3.0, 0.0, s * 0.7, 0.0),
+            _ => (s, s, s, 0.0),
+        };
+        ShapeSpec { shape, width, depth, height, radius }
+    }
+
+    /// The dimensions this shape is set by, with their names.
+    pub fn dimensions(&self) -> &'static [(Dimension, &'static str)] {
+        use Dimension::*;
+        match self.shape {
+            Shape::Plane => &[(Width, "Width"), (Depth, "Depth")],
+            Shape::Cube => &[(Width, "Width"), (Depth, "Depth"), (Height, "Height")],
+            Shape::Cylinder => &[(Width, "Diameter"), (Height, "Height")],
+            Shape::Sphere | Shape::Disc => &[(Width, "Diameter")],
+            Shape::Backdrop => &[(Width, "Width"), (Depth, "Floor depth"), (Height, "Wall height"), (Radius, "Curve")],
+            Shape::Wall => &[(Width, "Width"), (Height, "Height")],
+        }
+    }
+
+    pub fn get(&self, dimension: Dimension) -> f32 {
+        match dimension {
+            Dimension::Width => self.width,
+            Dimension::Depth => self.depth,
+            Dimension::Height => self.height,
+            Dimension::Radius => self.radius,
+        }
+    }
+
+    /// Set a dimension: a size no smaller than a tenth of a millimetre, a
+    /// curve from none (a sharp corner) to as big as the floor and the wall
+    /// allow.
+    pub fn set(&mut self, dimension: Dimension, value: f32) {
+        let value = if value.is_finite() { value } else { return };
+        match dimension {
+            Dimension::Width => self.width = value.max(1e-4),
+            Dimension::Depth => self.depth = value.max(1e-4),
+            Dimension::Height => self.height = value.max(1e-4),
+            Dimension::Radius => self.radius = value.max(0.0),
+        }
+    }
+
+    pub fn mesh(&self) -> Mesh {
+        let (w, d, h) = (self.width.max(1e-4), self.depth.max(1e-4), self.height.max(1e-4));
+        match self.shape {
+            Shape::Plane => plane(w, d),
+            Shape::Cube => cuboid(w, h, d),
+            Shape::Cylinder => cylinder(w * 0.5, h, 64),
+            Shape::Sphere => sphere(w * 0.5, 64, 32),
+            Shape::Disc => disc(w * 0.5, 64),
+            Shape::Backdrop => sweep(w, d, h, self.radius.max(0.0).min(h).min(d), 24),
+            Shape::Wall => wall(w, h),
         }
     }
 }
@@ -81,12 +188,12 @@ pub fn add(document: &SceneDocument, shape: Shape, parent: Option<NodeId>) -> (I
     };
     let lift = extent * 1e-3;
     let (size, place) = match shape {
-        _ if empty && shape != Shape::Backdrop => (extent, vec3(0.0, lift, 0.0)),
-        Shape::Backdrop => {
+        _ if empty && !shape.is_backdrop() => (extent, vec3(0.0, lift, 0.0)),
+        Shape::Backdrop | Shape::Wall => {
             let size = extent * 4.5;
-            // The wall a little behind the product, the floor under it and
-            // well out in front.
-            (size, vec3(centre.x, base + lift, back - extent * 0.4 + size * 0.5))
+            // The wall a little behind the product, a backdrop's floor
+            // under it and well out in front.
+            (size, vec3(centre.x, base + lift, back - extent * 0.4))
         }
         _ => {
             let size = extent * 0.5;
@@ -98,8 +205,10 @@ pub fn add(document: &SceneDocument, shape: Shape, parent: Option<NodeId>) -> (I
     node.parent = parent;
     node.transform = Transform::translation(place);
     node.material = Some(materials[0]);
+    let spec = ShapeSpec::of(shape, size);
+    node.shape = Some(spec);
     let payload = ImportPayload {
-        meshes: vec![(meshes[0], shape.mesh(size))],
+        meshes: vec![(meshes[0], spec.mesh())],
         textures: Vec::new(),
         materials: vec![(materials[0], MaterialDefinition::plastic(format!("{} material", shape.label())))],
         nodes: vec![node],
@@ -137,21 +246,35 @@ impl Builder {
     }
 }
 
-fn plane(s: f32) -> Mesh {
+fn plane(width: f32, depth: f32) -> Mesh {
     let mut b = Builder::default();
-    let h = s * 0.5;
+    let (x, z) = (width * 0.5, depth * 0.5);
     let up = Vec3::Y;
-    let a = b.vertex(vec3(-h, 0.0, h), up, 0.0, 0.0);
-    let c = b.vertex(vec3(h, 0.0, h), up, 1.0, 0.0);
-    let d = b.vertex(vec3(h, 0.0, -h), up, 1.0, 1.0);
-    let e = b.vertex(vec3(-h, 0.0, -h), up, 0.0, 1.0);
+    let a = b.vertex(vec3(-x, 0.0, z), up, 0.0, 0.0);
+    let c = b.vertex(vec3(x, 0.0, z), up, 1.0, 0.0);
+    let d = b.vertex(vec3(x, 0.0, -z), up, 1.0, 1.0);
+    let e = b.vertex(vec3(-x, 0.0, -z), up, 0.0, 1.0);
     b.quad(a, c, d, e);
     b.mesh()
 }
 
-fn cube(s: f32) -> Mesh {
+/// A wall `width` wide and `height` tall, its foot along z = 0, facing +z.
+fn wall(width: f32, height: f32) -> Mesh {
     let mut b = Builder::default();
-    let h = s * 0.5;
+    let x = width * 0.5;
+    let a = b.vertex(vec3(-x, 0.0, 0.0), Vec3::Z, 0.0, 0.0);
+    let c = b.vertex(vec3(x, 0.0, 0.0), Vec3::Z, 1.0, 0.0);
+    let d = b.vertex(vec3(x, height, 0.0), Vec3::Z, 1.0, 1.0);
+    let e = b.vertex(vec3(-x, height, 0.0), Vec3::Z, 0.0, 1.0);
+    b.quad(a, c, d, e);
+    b.mesh()
+}
+
+/// A box `width` by `height` by `depth`.
+fn cuboid(width: f32, height: f32, depth: f32) -> Mesh {
+    let mut b = Builder::default();
+    let half = vec3(width * 0.5, height * 0.5, depth * 0.5);
+    let along = |axis: Vec3| axis.x.abs() * half.x + axis.y.abs() * half.y + axis.z.abs() * half.z;
     // Each face: its normal and two axes along it, so (u, v) runs across it
     // counter-clockwise seen from outside.
     let faces = [
@@ -163,8 +286,8 @@ fn cube(s: f32) -> Mesh {
         (-Vec3::Z, -Vec3::X, Vec3::Y),
     ];
     for (n, u, v) in faces {
-        let centre = vec3(0.0, h, 0.0) + n * h;
-        let corner = |su: f32, sv: f32| centre + u * (su * h) + v * (sv * h);
+        let centre = vec3(0.0, half.y, 0.0) + n * along(n);
+        let corner = |su: f32, sv: f32| centre + u * (su * along(u)) + v * (sv * along(v));
         let a = b.vertex(corner(-1.0, -1.0), n, 0.0, 0.0);
         let c = b.vertex(corner(1.0, -1.0), n, 1.0, 0.0);
         let d = b.vertex(corner(1.0, 1.0), n, 1.0, 1.0);
@@ -257,14 +380,14 @@ fn sphere(r: f32, segments: usize, rings: usize) -> Mesh {
 }
 
 /// A backdrop: a floor `depth` deep coming forward (+z) from the wall's
-/// foot, curving up with `radius` into a wall `height` tall, `width` wide,
-/// facing the product.
+/// foot at z = 0, curving up with `radius` into a wall `height` tall,
+/// `width` wide, facing the product.
 fn sweep(width: f32, depth: f32, height: f32, radius: f32, steps: usize) -> Mesh {
     // The profile in (z, y), from the front of the floor round to the top of
     // the wall, with the way each point faces.
     let r = radius.min(height).min(depth);
-    let wall_z = -depth * 0.5;
-    let mut profile: Vec<(f32, f32, Vec3)> = vec![(depth * 0.5, 0.0, Vec3::Y)];
+    let wall_z = 0.0;
+    let mut profile: Vec<(f32, f32, Vec3)> = vec![(depth, 0.0, Vec3::Y)];
     for k in 0..=steps {
         // A quarter turn about (wall_z + r, r), from straight down to
         // straight back.
@@ -296,7 +419,7 @@ fn sweep(width: f32, depth: f32, height: f32, radius: f32, steps: usize) -> Mesh
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::Command;
+    use crate::command::{reserve_keys, Command};
     use crate::CommandBus;
 
     /// Every shape is a closed-enough, well-formed mesh: its triangles face
@@ -313,7 +436,7 @@ mod tests {
             assert!(mesh.normals.iter().all(|n| (n.length() - 1.0).abs() < 1e-3), "{shape:?}: a normal not of unit length");
             let bounds = mesh.bounds();
             assert!(bounds.min.y.abs() < 1e-4, "{shape:?} does not stand on the floor: {:?}", bounds.min.y);
-            if shape != Shape::Backdrop {
+            if !shape.is_backdrop() {
                 let d = bounds.diagonal();
                 assert!((d.x - 2.0).abs() < 1e-3, "{shape:?} is {d:?} across, not 2");
             }
@@ -362,5 +485,85 @@ mod tests {
 
         bus.undo(&mut document).unwrap();
         assert!(!document.tree.contains(backdrop));
+    }
+
+    /// A backdrop's floor made deeper reaches further forward and the wall
+    /// stays where it was; the mesh it had is let go, and one undo puts it
+    /// back with its dimensions, however many changes a drag merged.
+    #[test]
+    fn a_backdrop_set_by_number_keeps_its_wall_and_undoes() {
+        let mut document = SceneDocument::new();
+        let mut bus = CommandBus::new();
+        let (product, _) = add(&document, Shape::Cube, None);
+        bus.apply(&mut document, Command::Import { payload: Box::new(product) }).unwrap();
+        let (payload, backdrop) = add(&document, Shape::Backdrop, None);
+        bus.apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+        bus.end_interaction();
+        let node = document.tree.get(backdrop).unwrap().clone();
+        let start = node.shape.expect("a shape keeps its dimensions");
+        let before = crate::snapshot::visible_bounds_under(&document, &[backdrop]);
+        let meshes = document.geometry.len();
+
+        let mut deeper = start;
+        for depth in [1.1, 1.3, 1.6] {
+            deeper.set(Dimension::Depth, start.depth * depth);
+            let (keys, _, _) = reserve_keys(&document, 1, 0, 0);
+            bus.apply(&mut document, Command::SetShape { node: backdrop, shape: deeper, mesh: keys[0] }).unwrap();
+        }
+        let after = crate::snapshot::visible_bounds_under(&document, &[backdrop]);
+        assert!((after.min.z - before.min.z).abs() < 1e-4, "the wall stayed: {before:?} -> {after:?}");
+        assert!((after.max.z - before.max.z - start.depth * 0.6).abs() < 1e-3, "the floor came forward");
+        assert_eq!(document.geometry.len(), meshes, "the old meshes let go");
+        assert_eq!(document.tree.get(backdrop).unwrap().shape, Some(deeper));
+
+        bus.undo(&mut document).unwrap();
+        assert_eq!(document.tree.get(backdrop).unwrap().shape, Some(start), "one undo, as it was");
+        assert_eq!(document.tree.get(backdrop).unwrap().mesh(), node.mesh());
+        assert_eq!(document.geometry.len(), meshes);
+        let back = crate::snapshot::visible_bounds_under(&document, &[backdrop]);
+        assert!((back.max.z - before.max.z).abs() < 1e-5);
+        bus.redo(&mut document).unwrap();
+        assert_eq!(document.tree.get(backdrop).unwrap().shape, Some(deeper), "redone");
+    }
+
+    /// A shape duplicated shares its mesh: resizing one leaves the other's
+    /// mesh in place.
+    #[test]
+    fn resizing_a_duplicated_shape_leaves_the_other_alone() {
+        let mut document = SceneDocument::new();
+        let mut bus = CommandBus::new();
+        let (payload, cube) = add(&document, Shape::Cube, None);
+        bus.apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+        let (twin, roots) = crate::duplicate::payload(&document, &[cube]).unwrap();
+        bus.apply(&mut document, Command::Import { payload: Box::new(twin) }).unwrap();
+        let shared = document.tree.get(cube).unwrap().mesh();
+        let mut wide = document.tree.get(cube).unwrap().shape.unwrap();
+        wide.set(Dimension::Width, wide.width * 2.0);
+        let (keys, _, _) = reserve_keys(&document, 1, 0, 0);
+        bus.apply(&mut document, Command::SetShape { node: cube, shape: wide, mesh: keys[0] }).unwrap();
+        assert_eq!(document.tree.get(roots[0]).unwrap().mesh(), shared, "the copy keeps its mesh");
+        assert!(document.geometry.get(shared.unwrap()).is_some(), "and the mesh stays");
+        let d = crate::snapshot::visible_bounds_under(&document, &[cube]).diagonal();
+        assert!((d.x - wide.width).abs() < 1e-4 && (d.y - wide.height).abs() < 1e-4, "{d:?}");
+    }
+
+    /// Every shape's dimensions build its mesh at those sizes, and a wall
+    /// stands at z = 0 facing the product.
+    #[test]
+    fn dimensions_are_the_sizes_the_mesh_has() {
+        for shape in Shape::ALL {
+            let mut spec = ShapeSpec::of(shape, 1.0);
+            for &(dimension, _) in spec.dimensions() {
+                let v = spec.get(dimension) * 1.5;
+                spec.set(dimension, v);
+            }
+            let d = spec.mesh().bounds().diagonal();
+            assert!((d.x - spec.width).abs() < 1e-4, "{shape:?} width {d:?}");
+            if spec.dimensions().iter().any(|(k, _)| *k == Dimension::Height) {
+                assert!((d.y - spec.height).abs() < 1e-4, "{shape:?} height {d:?}");
+            }
+        }
+        let wall = ShapeSpec::of(Shape::Wall, 1.0).mesh();
+        assert!(wall.bounds().diagonal().z.abs() < 1e-6 && wall.normals.iter().all(|n| *n == Vec3::Z));
     }
 }
