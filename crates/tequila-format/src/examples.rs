@@ -440,6 +440,11 @@ pub fn commands() -> Vec<Command> {
             parent: None,
             index: None,
         },
+        Command::SetShape {
+            node: ids[1],
+            shape: tequila_scene::shapes::ShapeSpec { shape: tequila_scene::shapes::Shape::Backdrop, width: 2.7, depth: 0.9, height: 0.63, radius: 0.135 },
+            mesh: tequila_scene::tree::MeshKey(12),
+        },
         Command::set_pivot(ids[1], Some(tequila_core::math::vec3(0.5, -1.25, 2.0))),
         // Clearing is a different record from setting: an absent point
         // means "no pivot", not "a pivot at the origin".

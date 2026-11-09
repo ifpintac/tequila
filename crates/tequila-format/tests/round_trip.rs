@@ -131,6 +131,13 @@ fn imported_and_reorganized() -> SceneDocument {
     ] {
         bus.apply(&mut document, command).unwrap();
     }
+    // A backdrop given a curve of its own: its dimensions are saved with it.
+    let (payload, backdrop) = tequila_scene::shapes::add(&document, tequila_scene::shapes::Shape::Backdrop, None);
+    bus.apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+    let mut spec = document.tree.get(backdrop).unwrap().shape.unwrap();
+    spec.set(tequila_scene::shapes::Dimension::Radius, 0.05);
+    let (keys, _, _) = tequila_scene::command::reserve_keys(&document, 1, 0, 0);
+    bus.apply(&mut document, Command::SetShape { node: backdrop, shape: spec, mesh: keys[0] }).unwrap();
 
     document.validate().unwrap();
     document
