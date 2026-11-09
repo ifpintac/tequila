@@ -65,6 +65,7 @@ mod render_frame;
 mod render_window;
 mod scene_tab;
 mod self_test;
+mod shape_panel;
 mod spacemouse;
 mod procedural_gpu;
 mod solid_gpu;
@@ -5897,6 +5898,13 @@ impl TequilaApp {
                 let mut tab = std::mem::take(&mut self.scene_tab);
                 tab.show(ui, &mut self.project);
                 tab.rays_panel(ui, &mut self.project);
+                // A shape's dimensions, under the tree, where it was picked.
+                if let Some(node) = self.project.selection.active().filter(|n| self.project.document().tree.get(*n).is_some_and(|n| n.shape.is_some())) {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    theme::section(ui, "Shape");
+                    shape_panel::panel(ui, &mut self.project, node);
+                }
                 ui.add_space(4.0);
                 ui.separator();
                 theme::section(ui, "Metadata");

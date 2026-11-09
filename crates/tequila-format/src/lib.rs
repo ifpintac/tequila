@@ -650,6 +650,10 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if let Some(pivot) = node.pivot {
         object.set("pivot", vec![pivot.x, pivot.y, pivot.z]);
     }
+    // A shape's dimensions, on a part from Add › Shape alone.
+    if let Some(shape) = &node.shape {
+        object.set("shape", shape_to_json(shape));
+    }
     // Written only on a part that has some, so every project without them
     // reads, and writes back, as it always did.
     if !node.uv_guides.is_empty() {
@@ -664,6 +668,31 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     };
     out.extend(known);
     Value::Object(out)
+}
+
+/// A shape and its dimensions, as the project and the journal write them:
+/// `{"shape": "backdrop", "width": 2.7, "depth": 0.9, "height": 0.63,
+/// "radius": 0.135}`, in metres.
+pub(crate) fn shape_to_json(spec: &tequila_scene::shapes::ShapeSpec) -> Value {
+    let mut object = Object::new();
+    object
+        .set("shape", spec.shape.key())
+        .set("width", spec.width)
+        .set("depth", spec.depth)
+        .set("height", spec.height)
+        .set("radius", spec.radius);
+    object.build()
+}
+
+/// A shape read back; [`shape_to_json`] says the shape of it.
+pub(crate) fn read_shape(value: &Value) -> Result<tequila_scene::shapes::ShapeSpec, FormatError> {
+    let shape = value
+        .get("shape")
+        .and_then(|v| v.as_str())
+        .and_then(tequila_scene::shapes::Shape::from_key)
+        .ok_or_else(|| FormatError::Invalid("a shape is one of plane, cube, cylinder, sphere, disc, backdrop or wall".into()))?;
+    let number = |key: &str| value.get(key).and_then(|v| v.as_f32()).filter(|x| x.is_finite() && *x >= 0.0).unwrap_or(0.0);
+    Ok(tequila_scene::shapes::ShapeSpec { shape, width: number("width"), depth: number("depth"), height: number("height"), radius: number("radius") })
 }
 
 /// A part's UV guides, as the project and the journal write them: one
@@ -3445,6 +3474,11 @@ fn read_tree(
             .and_then(|v| v.as_f32_array())
             .filter(|v| v.len() == 3)
             .map(|v| tequila_core::math::vec3(v[0], v[1], v[2]));
+        node.shape = value
+            .get("shape")
+            .map(read_shape)
+            .transpose()
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         if let Some(Value::Object(map)) = value.get("metadata") {
             for (key, item) in map {
                 if let Some(text) = item.as_str() {
@@ -3475,7 +3509,7 @@ fn read_tree(
             let unknown: BTreeMap<String, Value> = map
                 .iter()
                 .filter(|(k, _)| {
-                    !matches!(k.as_str(), "path_key" | "pivot")
+                    !matches!(k.as_str(), "path_key" | "pivot" | "shape")
                         && !KNOWN_NODE_FIELDS.contains(&k.as_str())
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))
