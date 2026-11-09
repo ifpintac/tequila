@@ -57,14 +57,56 @@ fn offset_seconds() -> i64 {
     round_to_quarter_hour(seconds(&local) - seconds(&utc))
 }
 
-/// Elsewhere, UTC. The application is built and used on Windows; other
-/// platforms keep working, with times in UTC as they always were.
-#[cfg(not(windows))]
+/// On a Mac and on Linux: the C library's own reckoning of local time, which
+/// reads the system's time zone (and `TZ`), daylight saving included. Until
+/// November 9 this was UTC off Windows, so on a Mac in Manila every time
+/// Tequila showed or wrote was eight hours behind: the console, the activity
+/// log, and `{date}` and `{time}` in a render's filename.
+#[cfg(unix)]
+fn offset_seconds() -> i64 {
+    /// `struct tm`, field for field, as macOS, glibc and musl lay it out.
+    #[repr(C)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: std::ffi::c_long,
+        zone: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn tzset();
+        fn time(out: *mut i64) -> i64;
+        fn localtime_r(time: *const i64, result: *mut Tm) -> *mut Tm;
+    }
+    // SAFETY: `tzset` reads the time zone into the C library's own state;
+    // `localtime_r` writes one `struct tm` through the pointer it is given
+    // and keeps nothing, and the pointer is to a live, exclusively borrowed
+    // struct with the C layout. `time_t` is 64-bit on every platform this
+    // builds for.
+    unsafe {
+        tzset();
+        let now = time(std::ptr::null_mut());
+        let mut tm: Tm = std::mem::zeroed();
+        if localtime_r(&now, &mut tm).is_null() {
+            return 0;
+        }
+        tm.gmtoff as i64
+    }
+}
+
+/// Anywhere else, UTC.
+#[cfg(not(any(windows, unix)))]
 fn offset_seconds() -> i64 {
     0
 }
 
-// Used by the Windows offset and its test; elsewhere the offset is UTC's.
+// Used by the Windows offset and its test.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn round_to_quarter_hour(seconds: i64) -> i64 {
     (seconds as f64 / 900.0).round() as i64 * 900
@@ -158,13 +200,27 @@ mod tests {
         assert_eq!(round_to_quarter_hour(-(4 * 3600) + 1), -(4 * 3600));
     }
 
-    /// On Windows the offset is the machine's, which is whatever it is; it
-    /// must at least be a real one.
+    /// The offset is the machine's, which is whatever it is; it must at
+    /// least be a real one.
     #[test]
     fn the_offset_is_a_real_time_zone() {
         let offset = offset_seconds();
         assert!(offset.abs() <= 14 * 3600, "{offset}");
         assert_eq!(offset % 900, 0);
+    }
+
+    /// On a Mac and on Linux the offset is the one the system's own `date`
+    /// gives (`+0800` in Manila). It was UTC's, whatever the time zone.
+    #[cfg(unix)]
+    #[test]
+    fn the_offset_is_the_systems() {
+        let out = std::process::Command::new("date").arg("+%z").output().expect("date runs");
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let sign = if text.starts_with('-') { -1 } else { 1 };
+        let digits = text.trim_start_matches(['+', '-']);
+        let hours: i64 = digits[..2].parse().expect("hours");
+        let minutes: i64 = digits[2..4].parse().expect("minutes");
+        assert_eq!(offset_seconds(), sign * (hours * 3600 + minutes * 60), "date says {text}");
     }
 
     #[test]

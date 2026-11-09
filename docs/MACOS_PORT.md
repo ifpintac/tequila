@@ -140,10 +140,14 @@ a Mac.
 
 ## Works, but not Mac-like
 
-- **Times** are UTC outside Windows (`app/src/clock.rs`). Use
-  `localtime_r`/`tm_gmtoff`.
-- **API keys** are stored as plain base64 off Windows
-  (`crates/tequila-ai/src/secret.rs`). Use the Keychain.
+- *Done 2026-11-09.* **Times** are local on a Mac and on Linux too
+  (`crates/tequila-core/src/clock.rs`, `localtime_r`'s `tm_gmtoff`): they
+  were UTC off Windows, eight hours behind in Manila, in the console, the
+  activity log and `{date}`/`{time}` in render filenames
+  (`the_offset_is_the_systems`).
+- *Done.* **API keys** are kept in the login Keychain on a Mac
+  (`crates/tequila-ai/src/secret.rs`); on Linux, with no keyring linked, they
+  are stored encoded and the settings say so.
 - *Done 2026-10-16.* **Storage** in `~/Library/Application Support` and
   `~/Library/Caches`; `~/.tequila` keeps the journal and `channel.json`.
 - **Graphics:** eframe's OpenGL backend and the Solid view's GLSL 330 run on
