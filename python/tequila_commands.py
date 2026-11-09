@@ -44,6 +44,7 @@ CATALOG = (
     'scene.set_locked',
     'scene.set_rays',
     'scene.set_pivot',
+    'scene.set_pattern',
     'scene.reparent',
     'scene.group',
     'scene.ungroup',
@@ -311,6 +312,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_pivot", "pivots": [ { "at": [0.5, -1.25, 2], "node": 2 } ] }
         """
         return self._apply('scene.set_pivot', {'pivots': pivots})
+
+    def set_pattern(self, *, group=_UNSET, pattern=_UNSET):
+        r"""`scene.set_pattern`: A group made a pattern: one of its parts repeated along a line (`step` between copies) or around a circle (`centre`, `axis`, `angle` in radians), by copies that share its mesh and material. The copies it had are taken away and laid out again from the part as it is, under the ids given; without a pattern, they are taken away and the group and the part stay.
+
+        { "command": "scene.set_pattern", "group": 1, "pattern": { "copies": [40, 41], "count": 3, "kind": "line", "source": 2, "step": [0.03, 0, 0] } }
+        """
+        return self._apply('scene.set_pattern', {'group': group, 'pattern': pattern})
 
     def reparent(self, *, index=_UNSET, node=_UNSET, parent=_UNSET):
         r"""`scene.reparent`: A node moved under another parent (or to the top), at `index` among its siblings or last.

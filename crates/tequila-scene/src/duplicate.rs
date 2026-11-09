@@ -55,6 +55,11 @@ pub fn payload(document: &SceneDocument, nodes: &[NodeId]) -> Option<(ImportPayl
             // Not the file's part: an updated CAD file is matched to the
             // original alone (`crate::reimport`).
             node.path_key = None;
+            // A pattern copied whole keeps being one, over its own copies.
+            if let Some(pattern) = node.pattern.as_mut() {
+                pattern.source = copy_of.get(&pattern.source).copied().unwrap_or(pattern.source);
+                pattern.copies = pattern.copies.iter().filter_map(|c| copy_of.get(c).copied()).collect();
+            }
             if roots.contains(old) {
                 node.name = copy_name(&node.name);
             }

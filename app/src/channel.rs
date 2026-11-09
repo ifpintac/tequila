@@ -614,6 +614,20 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if reveal {
         app.reveal_configurator();
     }
+    match &change.place_texture {
+        Some(Some((material, param))) => {
+            let Some(param) = tequila_materials::material_type::Param::from_key(param) else {
+                return Reply::Failed(format!("no parameter called {param}"));
+            };
+            let target = crate::mapping_gizmo::Target { material: tequila_scene::tree::MaterialKey(*material), param };
+            if app.mapping_gizmo.armed() != Some(target) {
+                app.label_gizmo.disarm();
+                app.mapping_gizmo.toggle(target);
+            }
+        }
+        Some(None) => app.mapping_gizmo.disarm(),
+        None => {}
+    }
     match change.studio_drag {
         Some(Some([from, slot])) => {
             app.studio_tab.stage_drag(Some((from, slot)));
