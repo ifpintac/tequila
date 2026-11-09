@@ -56,6 +56,7 @@ mod pin_panel;
 mod sky_panel;
 mod orchestrator;
 mod orient;
+mod pattern_panel;
 mod profile;
 mod project;
 mod recent;
@@ -2482,6 +2483,7 @@ impl TequilaApp {
             self.duplicate_selection();
             ui.close_menu();
         }
+        ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
         let count = selected.len();
         if ui
             .button(if count > 1 {
@@ -3482,6 +3484,7 @@ impl TequilaApp {
                         self.duplicate_selection();
                         ui.close_menu();
                     }
+                    ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
                     ui.separator();
                     if ui.button("Preferences…").on_hover_text("The 3D mouse: speed, dead zone, axes and buttons").clicked() {
                         self.spacemouse.preferences_open = true;
@@ -5877,6 +5880,14 @@ impl TequilaApp {
                 let mut tab = std::mem::take(&mut self.scene_tab);
                 tab.show(ui, &mut self.project);
                 tab.rays_panel(ui, &mut self.project);
+                // A pattern's settings, for the group, the original or a
+                // copy: under the tree, where what was just picked is.
+                if let Some(group) = self.project.selection.active().and_then(|n| tequila_scene::pattern::pattern_of(self.project.document(), n)) {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    theme::section(ui, "Pattern");
+                    pattern_panel::panel(ui, &mut self.project, group);
+                }
                 ui.add_space(4.0);
                 ui.separator();
                 theme::section(ui, "Metadata");

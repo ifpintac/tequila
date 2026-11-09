@@ -209,6 +209,9 @@ impl SceneTab {
                     }
                 }
             }
+            ui.menu_button("Pattern", |ui| crate::pattern_panel::menu_items(ui, project))
+                .response
+                .on_hover_text("Copies of a part along a line or around a circle");
             if ui
                 .add_enabled(selected.len() >= 2, egui::Button::new("Group"))
                 .on_hover_text(crate::theme::keys("Ctrl+G"))

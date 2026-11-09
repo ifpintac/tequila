@@ -177,6 +177,9 @@ pub struct SceneNode {
     /// Pins on the part's UV layouts (`crate::uv::pins`), set by set, put
     /// down in the UV editor. Empty for every part nobody has pinned.
     pub uv_pins: crate::uv::UvPins,
+    /// On a group: the pattern it is (`crate::pattern`), its part repeated
+    /// along a line or around a circle by the copies beside it.
+    pub pattern: Option<crate::pattern::Pattern>,
 }
 
 impl SceneNode {
@@ -203,6 +206,7 @@ impl SceneNode {
             path_key: None,
             uv_guides: Vec::new(),
             uv_pins: crate::uv::UvPins::new(),
+            pattern: None,
         }
     }
 

@@ -291,6 +291,13 @@ pub enum Command {
     /// modes. Points are in each node's own local space, so a pivot travels
     /// with the part.
     SetPivot { pivots: Vec<(NodeId, Option<Vec3>)> },
+    /// `scene.set_pattern` — a group made a pattern: one of its parts
+    /// repeated along a line (`step` between copies) or around a circle
+    /// (`centre`, `axis`, `angle` in radians), by copies that share its mesh
+    /// and material. The copies it had are taken away and laid out again
+    /// from the part as it is, under the ids given; without a pattern, they
+    /// are taken away and the group and the part stay.
+    SetPattern { group: NodeId, pattern: Option<Box<crate::pattern::Pattern>> },
     /// `scene.reparent` — a node moved under another parent (or to the
     /// top), at `index` among its siblings or last.
     Reparent {
@@ -1169,6 +1176,7 @@ impl Command {
             Command::SetLocked { .. } => "scene.set_locked",
             Command::SetRays { .. } => "scene.set_rays",
             Command::SetPivot { .. } => "scene.set_pivot",
+            Command::SetPattern { .. } => "scene.set_pattern",
             Command::Reparent { .. } => "scene.reparent",
             Command::Group { .. } => "scene.group",
             Command::Ungroup { .. } => "scene.ungroup",
@@ -1221,7 +1229,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 74] = [
+    pub const CATALOG: [&'static str; 75] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1251,6 +1259,7 @@ impl Command {
         "scene.set_locked",
         "scene.set_rays",
         "scene.set_pivot",
+        "scene.set_pattern",
         "scene.reparent",
         "scene.group",
         "scene.ungroup",
@@ -1307,6 +1316,7 @@ impl Command {
             | Command::ApplyStudioPreset { .. }
             | Command::DeleteNodes { .. }
             | Command::Group { .. }
+            | Command::SetPattern { .. }
             | Command::SplitIntoParts { .. }
             | Command::UnwrapUvs { .. }
             // A layout is what every texture and label on the part is
@@ -1448,6 +1458,9 @@ impl Command {
             (Command::SetCamera { index: a, .. }, Command::SetCamera { index: b, .. }) => a == b,
             (Command::SetLight { node: a, .. }, Command::SetLight { node: b, .. }) => a == b,
             (Command::SetCutaway { node: a, .. }, Command::SetCutaway { node: b, .. }) => a == b,
+            // A count or a spacing dragged, one per frame: the undo record
+            // restores the copies as they were before the first.
+            (Command::SetPattern { group: a, .. }, Command::SetPattern { group: b, .. }) => a == b,
             // A drag issues one of these per frame; they merge into a single
             // undo step only while the *same* parts are being moved. Merging
             // across different selections would fold two deliberate edits into
@@ -1503,6 +1516,10 @@ enum Undo {
     },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
+    /// A pattern as it was, and the copies its change took away. Undoing
+    /// takes away whatever copies the pattern has by then - edits merged
+    /// into one step replace them several times over - and puts these back.
+    Pattern { group: NodeId, previous: Option<Box<crate::pattern::Pattern>>, removed: Vec<(SceneNode, usize)> },
     Name(NodeId, String),
     Transforms(Vec<(NodeId, Transform)>),
     Visibility(Vec<(NodeId, bool)>),
@@ -2712,6 +2729,32 @@ fn execute(
             })
         }
 
+        Command::SetPattern { group, pattern } => {
+            check_unlocked(document, *group)?;
+            // Everything checked before anything changes.
+            let made = match pattern {
+                Some(pattern) => crate::pattern::copies(document, *group, pattern)?,
+                None => {
+                    document.tree.try_get(*group)?;
+                    Vec::new()
+                }
+            };
+            let previous = document.tree.try_get(*group)?.pattern.clone().map(Box::new);
+            let mut removed = Vec::new();
+            for copy in crate::pattern::current_copies(document, *group) {
+                let index = document.tree.sibling_index(copy).unwrap_or(0);
+                for n in document.tree.remove_subtree(copy)? {
+                    let at = if n.id == copy { index } else { usize::MAX };
+                    removed.push((n, at));
+                }
+            }
+            for node in made {
+                document.tree.reinsert(node, usize::MAX)?;
+            }
+            document.tree.get_mut(*group)?.pattern = pattern.as_deref().cloned();
+            Ok(Undo::Pattern { group: *group, previous, removed })
+        }
+
         Command::Group { nodes, name } => {
             if nodes.is_empty() {
                 return Err(CommandError::InconsistentHistory("grouping nothing"));
@@ -3471,6 +3514,16 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::Pattern { group, previous, removed } => {
+            for copy in crate::pattern::current_copies(document, *group) {
+                document.tree.remove_subtree(copy)?;
+            }
+            for (node, index) in removed.iter().rev() {
+                document.tree.reinsert(node.clone(), *index)?;
+            }
+            document.tree.get_mut(*group)?.pattern = previous.as_deref().cloned();
+            Ok(())
+        }
         Undo::RemovedNodes(removed) => {
             // Removal produced deepest-first order, so restoring in reverse
             // always finds each node's parent already present.

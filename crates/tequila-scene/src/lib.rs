@@ -37,6 +37,7 @@ pub mod metadata;
 pub mod occlusion;
 pub mod orbit;
 pub mod paths;
+pub mod pattern;
 pub mod preset;
 pub mod refine;
 pub mod reimport;

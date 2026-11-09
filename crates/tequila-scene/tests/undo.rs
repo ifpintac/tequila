@@ -555,6 +555,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetLocked { .. }
         | Command::SetRays { .. }
         | Command::SetPivot { .. }
+        | Command::SetPattern { .. }
         | Command::Reparent { .. }
         | Command::Group { .. }
         | Command::Ungroup { .. }

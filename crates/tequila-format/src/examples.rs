@@ -444,6 +444,15 @@ pub fn commands() -> Vec<Command> {
         // Clearing is a different record from setting: an absent point
         // means "no pivot", not "a pivot at the origin".
         Command::set_pivot(ids[1], None),
+        Command::SetPattern {
+            group: ids[0],
+            pattern: Some(Box::new(tequila_scene::pattern::Pattern {
+                kind: tequila_scene::pattern::PatternKind::Line { step: tequila_core::math::vec3(0.03, 0.0, 0.0) },
+                count: 3,
+                source: ids[1],
+                copies: vec![tequila_scene::tree::NodeId(40), tequila_scene::tree::NodeId(41)],
+            })),
+        },
         Command::Group {
             nodes: vec![ids[1], ids[2]],
             name: "Fasteners".into(),

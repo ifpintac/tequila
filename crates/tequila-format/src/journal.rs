@@ -193,6 +193,12 @@ pub fn encode(command: &Command) -> String {
                 ),
             );
         }
+        Command::SetPattern { group, pattern } => {
+            out.set("group", group.0);
+            if let Some(pattern) = pattern {
+                out.set("pattern", crate::pattern_to_json(pattern));
+            }
+        }
         Command::SetPivot { pivots } => {
             out.set(
                 "pivots",
@@ -689,6 +695,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
             Command::SetPivot { pivots }
         }
+        "scene.set_pattern" => Command::SetPattern {
+            group: node("group")?,
+            pattern: value.get("pattern").map(crate::read_pattern).transpose()?.map(Box::new),
+        },
         "scene.reparent" => Command::Reparent {
             node: node("node")?,
             parent: optional_node("parent"),
