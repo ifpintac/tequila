@@ -2454,6 +2454,10 @@ impl TequilaApp {
             ui.close_menu();
         }
         ui.separator();
+        if ui.button("Duplicate").on_hover_text(theme::keys("Ctrl + D")).clicked() {
+            self.duplicate_selection();
+            ui.close_menu();
+        }
         let count = selected.len();
         if ui
             .button(if count > 1 {
@@ -2467,6 +2471,24 @@ impl TequilaApp {
                 let _ = self.project.apply(Command::DeleteNodes { nodes: selected });
             }
             ui.close_menu();
+        }
+    }
+
+    /// Edit › Duplicate (Ctrl+D): the selection copied in place, each copy
+    /// sharing its original's mesh and material (`tequila_scene::duplicate`),
+    /// in one step to undo, and selected, so the gizmo moves the copies off
+    /// the originals.
+    fn duplicate_selection(&mut self) {
+        let nodes: Vec<tequila_scene::tree::NodeId> = self.project.selection.nodes().collect();
+        let Some((payload, copies)) = tequila_scene::duplicate::payload(self.project.document(), &nodes) else {
+            return;
+        };
+        match self.project.apply(Command::Import { payload: Box::new(payload) }) {
+            Ok(()) => {
+                self.project.selection.select_many(copies.clone(), tequila_scene::selection::SelectionMode::Replace);
+                self.project.status = if copies.len() == 1 { "Duplicated: the copy is selected".to_string() } else { format!("Duplicated {}: the copies are selected", copies.len()) };
+            }
+            Err(error) => self.project.status = format!("Could not duplicate: {error}"),
         }
     }
 
@@ -3424,6 +3446,16 @@ impl TequilaApp {
                         .clicked()
                     {
                         self.redo();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    let any = self.project.selection.nodes().next().is_some();
+                    if ui
+                        .add_enabled(any, egui::Button::new("Duplicate").shortcut_text(theme::keys("Ctrl + D")))
+                        .on_hover_text("Copies of the selection, in place, sharing their meshes and materials")
+                        .clicked()
+                    {
+                        self.duplicate_selection();
                         ui.close_menu();
                     }
                     ui.separator();
@@ -4554,6 +4586,10 @@ impl TequilaApp {
         }
         if modifiers.command && modifiers.shift && pressed(egui::Key::A) {
             self.project.selection.clear();
+        }
+        // Ctrl+D (Cmd+D on a Mac): the selection copied in place.
+        if modifiers.command && !modifiers.shift && pressed(egui::Key::D) {
+            self.duplicate_selection();
         }
         if modifiers.command && pressed(egui::Key::G) {
             let nodes: Vec<_> = self.project.selection.nodes().collect();
@@ -6727,6 +6763,7 @@ impl TequilaApp {
                             ("Select the part's group", "Double-click"),
                             ("Select all", "Ctrl + A"),
                             ("Deselect all", "Esc / Ctrl + Shift + A"),
+                            ("Duplicate", "Ctrl + D"),
                             ("Group", "Ctrl + G"),
                             ("Hide / show everything", HIDE_KEYS),
                             ("Isolate", "/"),
@@ -6963,6 +7000,36 @@ mod undo_tests {
     use super::*;
     use tequila_core::units::LengthUnit;
     use tequila_scene::units::ConversionMode;
+
+    /// Ctrl+D copies the selected part in place: the copy shows the same
+    /// mesh in the same material, it is selected (so the gizmo moves it off
+    /// the original), and one undo takes it away.
+    #[test]
+    fn duplicating_selects_a_copy_that_shares_the_mesh() {
+        let mut app = TequilaApp::for_tests();
+        let part = app
+            .project
+            .document()
+            .tree
+            .iter()
+            .find(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. }))
+            .map(|n| n.id)
+            .expect("the starter scene has a part");
+        app.project.selection.select_many(vec![part], tequila_scene::selection::SelectionMode::Replace);
+        let parts_before = app.project.document().tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count();
+        let meshes_before = app.project.document().geometry.len();
+        app.duplicate_selection();
+        let selected: Vec<_> = app.project.selection.nodes().collect();
+        assert_eq!(selected.len(), 1);
+        let (copy, original) = (app.project.document().tree.get(selected[0]).unwrap().clone(), app.project.document().tree.get(part).unwrap().clone());
+        assert_ne!(copy.id, part, "the copy is selected, not the original");
+        assert_eq!((copy.kind, copy.material, copy.transform), (original.kind, original.material, original.transform));
+        assert_eq!(app.project.document().geometry.len(), meshes_before, "no mesh was added");
+        assert_eq!(app.project.document().tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count(), parts_before + 1);
+        app.undo();
+        assert!(!app.project.document().tree.contains(copy.id), "one undo takes the copy away");
+        assert!(app.project.document().tree.contains(part));
+    }
 
     /// Undoing a step that moved the camera takes the view back with it, and
     /// redo brings it forward again. The viewport writes its camera into the

@@ -199,6 +199,17 @@ impl SceneTab {
             }
 
             if ui
+                .add_enabled(any, egui::Button::new("Duplicate"))
+                .on_hover_text(crate::theme::keys("Ctrl+D"))
+                .clicked()
+            {
+                if let Some((payload, copies)) = tequila_scene::duplicate::payload(project.document(), &selected) {
+                    if project.apply(Command::Import { payload: Box::new(payload) }).is_ok() {
+                        project.selection.select_many(copies, tequila_scene::selection::SelectionMode::Replace);
+                    }
+                }
+            }
+            if ui
                 .add_enabled(selected.len() >= 2, egui::Button::new("Group"))
                 .on_hover_text(crate::theme::keys("Ctrl+G"))
                 .clicked()
@@ -778,6 +789,12 @@ impl SceneTab {
             ui.separator();
             if ui.button("Rename").clicked() {
                 self.renaming = Some((id, name.clone()));
+                ui.close_menu();
+            }
+            if ui.button("Duplicate").clicked() {
+                if let Some((payload, _)) = tequila_scene::duplicate::payload(project.document(), &[id]) {
+                    pending.push(Command::Import { payload: Box::new(payload) });
+                }
                 ui.close_menu();
             }
             if ui.button("Delete").clicked() {
