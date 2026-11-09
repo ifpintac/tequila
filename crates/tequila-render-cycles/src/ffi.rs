@@ -134,6 +134,7 @@ api! {
         fsc_curves_attribute: fn(*mut Session, Node, *const c_char, c_int, *const f32) -> c_int;
         fsc_create_watched: fn(*const c_char, c_int, *const c_char) -> *mut Session;
         fsc_render_preview: fn(*mut Session, c_int, c_int, *mut f32, c_int, *mut c_int, *mut c_int, *mut c_int, *mut u64) -> c_int;
+        fsc_live_set_moving: fn(*mut Session, c_int);
     }
 }
 

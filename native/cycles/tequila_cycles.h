@@ -295,6 +295,10 @@ FSC_API int fsc_live_frame(FscSession *session,
                            int *samples,
                            unsigned long long *generation);
 FSC_API void fsc_set_paused(FscSession *session, int paused);
+/* Whether a live view follows a moving camera (off unless told otherwise):
+ * its pictures then come without their albedo and normal guides, as they go
+ * up undenoised. */
+FSC_API void fsc_live_set_moving(FscSession *session, int moving);
 /* What the session says it is doing ("Rendering", "Updating Scene", ...),
  * or "error: " and why it stopped. Valid until the next call on this thread. */
 FSC_API const char *fsc_status(FscSession *session);

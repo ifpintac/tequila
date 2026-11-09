@@ -29,6 +29,7 @@
 #include "session/output_driver.h"
 #include "session/session.h"
 #include "util/log.h"
+#include "util/md5.h"
 #include "util/path.h"
 #include "util/string.h"
 #include "util/time.h"
@@ -333,6 +334,12 @@ class LiveDriver : public OutputDriver {
   /* When the latest change was asked for. A tile from a render that started
    * before it shows the view as it was, and is dropped. */
   double requested = 0.0;
+  /* Whether the camera is moving (`fsc_live_set_moving`). Its pictures go
+   * up undenoised, so their albedo and normal guides are not read back: at
+   * a view's size, reading every pass back took 26 ms a picture. (Pausing
+   * the session as each was kept, to spare the samples that follow it,
+   * cost more in waking it again than it saved.) */
+  std::atomic<bool> moving{false};
 
   void write_render_tile(const Tile &tile) override
   {
@@ -428,7 +435,7 @@ class LiveDriver : public OutputDriver {
     }
     tint_shadow(tile, tint, rows, fw, fh);
     std::vector<float> albedo_rows(size_t(w) * h * 3), normal_rows(size_t(w) * h * 3);
-    const bool guides = tile.get_pass_pixels("albedo", 3, albedo_rows.data()) &&
+    const bool guides = !moving.load() && tile.get_pass_pixels("albedo", 3, albedo_rows.data()) &&
                         tile.get_pass_pixels("normal", 3, normal_rows.data());
     std::vector<float> object_rows(size_t(w) * h, 0.0f);
     const bool objects = tile.get_pass_pixels("object", 1, object_rows.data());
@@ -566,6 +573,8 @@ struct FscSession {
   /* Between fsc_edit_begin and fsc_edit_end the scene mutex is already held
    * by the caller, so the calls in between must not take it again. */
   bool editing = false;
+  /* Each light's settings as last tagged (`fsc_edit_end`). */
+  std::map<const Geometry *, std::string> light_digests;
   /* Graphs being built, by shader, until committed. */
   std::map<Shader *, unique_ptr<ShaderGraph>> pending;
   /* The ground shadow's colour, and whether the pass it needs is there. */
@@ -1506,7 +1515,10 @@ static FscSession *create(const char *device, int threads, const char *kernel_di
   s->session_params.threads = threads;
   s->session_params.use_auto_tile = false;
   s->session_params.tile_size = 0;
-  s->session_params.use_resolution_divider = live;
+  /* Not for a live view: Tequila sizes the pictures of a moving camera or a
+   * scene being edited itself (`app/src/cycles_view.rs`), and Cycles
+   * dividing them again rendered as many samples as it divided by. */
+  s->session_params.use_resolution_divider = live && getenv("TEQUILA_CYCLES_DIVIDER") != nullptr;
   s->scene_params.shadingsystem = SHADINGSYSTEM_SVM;
 #ifdef __APPLE__
   if (live) {
@@ -1546,16 +1558,31 @@ void fsc_edit_end(FscSession *s, int width, int height, int samples)
         object->tag_update(scene);
       }
     }
+    std::map<const Geometry *, std::string> lights;
     for (Geometry *geometry : scene->geometry) {
-      if (geometry->is_modified()) {
-        if (geometry->is_light()) {
+      if (geometry->is_light()) {
+        /* A light's modified mark is cleared only when the geometry
+         * manager runs, and a light change runs the light manager alone:
+         * tagged again at every edit, a light kept its mark, and every
+         * camera move rebuilt the lights and the light tree and synced the
+         * whole scene. Tagged now only when its settings changed. */
+        MD5Hash md5;
+        geometry->hash(md5);
+        std::string digest = md5.get_hex();
+        const auto known = s->light_digests.find(geometry);
+        if (geometry->is_modified() && (known == s->light_digests.end() || known->second != digest)) {
           static_cast<Light *>(geometry)->tag_update(scene);
         }
-        else {
-          geometry->tag_update(scene, true);
-        }
+        lights[geometry] = std::move(digest);
+        continue;
+      }
+      if (geometry->is_modified()) {
+        geometry->tag_update(scene, true);
       }
     }
+    /* Only the lights there are now: a deleted light's address may be
+     * another's later, which a scene's new node tags anyway. */
+    s->light_digests = std::move(lights);
     s->editing = false;
     s->scene()->mutex.unlock();
   }
@@ -1587,6 +1614,7 @@ void fsc_clear_scene(FscSession *s)
 {
   const EditLock lock(s);
   Scene *scene = s->scene();
+  s->light_digests.clear();
   /* The volume manager remembers each object it built a volume octree for,
    * by pointer, and Cycles' bulk delete_nodes - unlike delete_node - never
    * tells it. Those objects, freed below, were read again at the next octree
@@ -1665,6 +1693,13 @@ const char *fsc_status(FscSession *s)
   s->session->progress.get_status(status, substatus);
   text = substatus.empty() ? status : status + ": " + substatus;
   return text.c_str();
+}
+
+void fsc_live_set_moving(FscSession *s, int moving)
+{
+  if (s->live) {
+    s->live->moving = moving != 0;
+  }
 }
 
 void fsc_set_paused(FscSession *s, int paused)

@@ -799,6 +799,15 @@ impl Session {
         unsafe { (self.api.fsc_set_paused)(self.raw, paused as c_int) }
     }
 
+    /// Whether a live view follows a moving camera: its pictures then come
+    /// without their denoising guides, which they do not use. A library
+    /// from before the switch carries on as for a still view.
+    pub fn set_moving(&mut self, moving: bool) {
+        if let Some(set) = self.api.fsc_live_set_moving {
+            unsafe { set(self.raw, moving as c_int) }
+        }
+    }
+
     /// Drop everything added, to build a different scene.
     pub fn clear(&mut self) {
         unsafe { (self.api.fsc_clear)(self.raw) }
