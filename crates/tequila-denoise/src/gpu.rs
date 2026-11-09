@@ -7,9 +7,51 @@
 //! viewport-sized image, where the CPU took well over a second.
 
 use crate::oidn_sys as sys;
-use crate::{check_error, DenoiseSettings, DenoisedImage, RawDevice};
+use crate::{check_error, DenoiseSettings, DenoisedImage, Quality, RawDevice};
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, OnceLock};
+
+/// The most working memory, in megabytes, each filter is asked to keep on a
+/// Mac: each of the two that filter the guides, and the one that denoises
+/// the picture. Over it OIDN denoises in tiles, which overlap enough that
+/// the picture comes out the same to the bit.
+///
+/// OIDN's Metal device keeps several times what it counts: it makes an
+/// MPSGraph for each layer of the network, and each keeps buffers of its
+/// own the size of the image, beside the memory the filters share. Without
+/// a limit the Rendered view's denoiser grew with the viewport, in the
+/// computer's own memory, a Mac's graphics card having none of its own:
+/// measured on an M3 Max, 3.0 GB at 1528x858 (a 1440x900 window), 7.9 GB
+/// at 2560x1440 and 9.9 GB at 3840x2160, held as long as the view showed.
+/// With these limits (and the guides at Balanced, see [`guide_quality`]),
+/// 1.85, 1.9 and 2.4 GB. The guides are filtered on fewer frames than the
+/// picture - by default those of fewer than 32 samples, as the view settles
+/// - so they are held tighter. The frames that filter them take about as
+/// long as they did (123 ms instead of 132 at 1528x858, 386 instead of 364
+/// at 2560x1440, 1.2 s instead of 1.6 at 3840x2160); the picture's alone
+/// take as long as before at 1528x858, an eighth longer at 2560x1440 and a
+/// third at 3840x2160, where OIDN cuts it into tiles.
+///
+/// Not on CUDA or HIP: there the memory is the card's own, and what OIDN
+/// counts is what it takes.
+const GUIDE_MEMORY_MB: i32 = 192;
+/// See [`GUIDE_MEMORY_MB`].
+const BEAUTY_MEMORY_MB: i32 = 256;
+
+/// The quality the guides are filtered at: the picture's, as Cycles filters
+/// them, but no lower than Balanced, OIDN having no faster filter for
+/// guides. Left at OIDN's default, High, under the viewport's Fast and
+/// Balanced pictures, they took 0.65 GB more and most of the time of the
+/// frames that filter them (132 ms where Balanced guides take 72, 1528x858
+/// on an M3 Max), for no more detail: a texture of one-pixel checks and
+/// lines with grainy guides kept the same detail and error either way,
+/// within 3%.
+fn guide_quality(quality: Quality) -> i32 {
+    match quality {
+        Quality::High => sys::OIDN_QUALITY_HIGH,
+        Quality::Fast | Quality::Balanced => sys::OIDN_QUALITY_BALANCED,
+    }
+}
 
 /// Buffers and filters bound to one image size and configuration.
 struct Bound {
@@ -121,7 +163,10 @@ impl GpuDenoiser {
 
     /// Let go of what the last image size held on the graphics card: the
     /// buffers bound to it, and the working memory OIDN's filters keep for
-    /// it, which a Retina viewport's size makes hundreds of megabytes. The
+    /// it, about 2 GB on a Mac however large the viewport (see
+    /// [`GUIDE_MEMORY_MB`]). Metal frees it within a second or two of this;
+    /// about a tenth of a gigabyte stays, the device's and Metal's own
+    /// (test `the_viewport_denoiser_holds_little_and_gives_it_back`). The
     /// filters are made again, empty; the next frame binds and commits them
     /// at its own size, as the first did.
     pub fn release(&self) {
@@ -186,12 +231,21 @@ impl GpuDenoiser {
                     let name = CString::new(name).unwrap();
                     sys::oidnSetFilterImage(filter, name.as_ptr(), buffer, sys::OIDN_FORMAT_FLOAT3, width, height, 0, 0, 0);
                 };
+                let set_int = |filter, name: &str, value: i32| {
+                    let name = CString::new(name).unwrap();
+                    sys::oidnSetFilterInt(filter, name.as_ptr(), value);
+                };
+                let limits = (self.kind == "Metal").then_some((GUIDE_MEMORY_MB, BEAUTY_MEMORY_MB));
                 // The guides are filtered in place, so the beauty filter reads
                 // them clean.
                 // Bound as what they are; see `run_guide_filter`.
                 for (filter, buffer, guide) in [(state.albedo, bound.albedo, "albedo"), (state.normal, bound.normal, "normal")] {
                     image(filter, guide, buffer);
                     image(filter, "output", buffer);
+                    set_int(filter, "quality", guide_quality(settings.quality));
+                    if let Some((guides, _)) = limits {
+                        set_int(filter, "maxMemoryMB", guides);
+                    }
                     sys::oidnCommitFilter(filter);
                 }
                 image(state.beauty, "color", bound.color);
@@ -205,8 +259,10 @@ impl GpuDenoiser {
                 set_bool("hdr", true);
                 // Clean either way; see `DenoiseSettings::prefilter_guides`.
                 set_bool("cleanAux", true);
-                let q = CString::new("quality").unwrap();
-                sys::oidnSetFilterInt(state.beauty, q.as_ptr(), quality);
+                set_int(state.beauty, "quality", quality);
+                if let Some((_, beauty)) = limits {
+                    set_int(state.beauty, "maxMemoryMB", beauty);
+                }
                 sys::oidnCommitFilter(state.beauty);
                 check_error(device)?;
                 state.bound = Some(bound);
