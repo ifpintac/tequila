@@ -15,9 +15,22 @@ use tequila_scene::demo::{demo_scene, DemoMaterial};
 
 const WIDTH: usize = 320;
 const HEIGHT: usize = 240;
+/// The timing test's size: four times the work of the others' a pass.
+const TIMED_WIDTH: usize = 640;
+const TIMED_HEIGHT: usize = 480;
+
+/// The tests here one at a time. The timing test measures alone, which it
+/// could not while the others rendered beside it on a three-core runner;
+/// the rest take a fraction of a second each.
+static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn solid_remains_sharp_when_the_render_camera_has_depth_of_field() {
+    let _alone = alone();
     let (intersector, mut context) = setup();
     let mut pinhole = Framebuffer::new(64, 48);
     preview_pass(&intersector, &mut pinhole, &context, 1);
@@ -86,9 +99,44 @@ fn setup() -> (EmbreeIntersector, RenderContext) {
 /// regress, including the two that already have — rebuilding the studio rig
 /// per pixel, and losing the early-out around the specular `powf` — because
 /// each of those costs about a factor of three on its own.
+///
+/// # On a shared runner (November 9)
+///
+/// GitHub's Mac runners, three cores in a virtual machine, still failed it
+/// now and then: once at 47 ms of preview against 108 ms of path tracing a
+/// pass, where this scene measures 2.3 ms against 14 ms on an M3 Max, 6.3x,
+/// and 6.5x on three of its threads with every test here running. Those
+/// numbers fit a machine five times slower plus some 35 ms on every pass, a
+/// stall of the same size on both sides: the diagnosis above, at a size it
+/// did not foresee. So the test now measures alone (`alone`, which every
+/// test here takes), at 640 x 480, four times the work a pass and a quarter
+/// the weight of any stall, and tries three times before it fails. The bound
+/// stays three.
 #[test]
 fn the_preview_is_far_cheaper_than_a_path_traced_pass() {
+    let _alone = alone();
     let (intersector, context) = setup();
+    // Tried again before failing: a regression fails every try, a moment
+    // the runner gave to something else does not come three times.
+    let mut tries = Vec::new();
+    for _ in 0..3 {
+        let (fast, traced) = time_both(&intersector, &context);
+        println!("best of six, per pass: preview {:.2} ms, path traced {:.2} ms, {:.1}x", fast * 1e3, traced * 1e3, traced / fast);
+        if traced > fast * 3.0 {
+            return;
+        }
+        tries.push(format!("{:.1} ms against {:.1} ms ({:.1}x)", fast * 1e3, traced * 1e3, traced / fast));
+    }
+    panic!(
+        "the preview was not three times faster than the path tracer in three tries: {}; \
+         a mode that is not dramatically faster is not worth the confusion of having it",
+        tries.join(", ")
+    );
+}
+
+/// The preview's and the path tracer's time for a pass, at `TIMED_WIDTH` by
+/// `TIMED_HEIGHT`, the best of six rounds after a warm-up.
+fn time_both(intersector: &EmbreeIntersector, context: &RenderContext) -> (f64, f64) {
     let schedule = ProgressiveSchedule::default();
 
     // Allocated once. A fresh framebuffer per round would pay for its page
@@ -98,8 +146,8 @@ fn the_preview_is_far_cheaper_than_a_path_traced_pass() {
     // the first version of this fix measured 3.9x instead of 7.3x for that
     // reason alone. Clearing happens outside the timing and touches memory
     // that is already resident.
-    let mut fast_buffer = Framebuffer::new(WIDTH, HEIGHT);
-    let mut traced_buffer = Framebuffer::new(WIDTH, HEIGHT);
+    let mut fast_buffer = Framebuffer::new(TIMED_WIDTH, TIMED_HEIGHT);
+    let mut traced_buffer = Framebuffer::new(TIMED_WIDTH, TIMED_HEIGHT);
 
     // Chosen so the two measurements take about the same wall time.
     const FAST_PASSES: usize = 16;
@@ -112,7 +160,7 @@ fn the_preview_is_far_cheaper_than_a_path_traced_pass() {
         let fb = &mut fast_buffer;
         let start = std::time::Instant::now();
         for _ in 0..FAST_PASSES {
-            preview_pass(&intersector, fb, &context, 1);
+            preview_pass(intersector, fb, context, 1);
         }
         let elapsed = start.elapsed().as_secs_f64() / FAST_PASSES as f64;
         // The first round is the warm-up for both and is not counted.
@@ -124,29 +172,14 @@ fn the_preview_is_far_cheaper_than_a_path_traced_pass() {
         let fb = &mut traced_buffer;
         let start = std::time::Instant::now();
         for _ in 0..TRACED_PASSES {
-            render_pass(&intersector, fb, &context, &schedule, 1);
+            render_pass(intersector, fb, context, &schedule, 1);
         }
         let elapsed = start.elapsed().as_secs_f64() / TRACED_PASSES as f64;
         if round > 0 {
             traced = traced.min(elapsed);
         }
     }
-
-    println!(
-        "best of six, per pass: preview {:.2} ms, path traced {:.2} ms, {:.1}x",
-        fast * 1e3,
-        traced * 1e3,
-        traced / fast
-    );
-    assert!(
-        traced > fast * 3.0,
-        "the preview took {:.1} ms against the path tracer's {:.1} ms, a factor \
-         of {:.1}; a mode that is not dramatically faster is not worth the \
-         confusion of having it",
-        fast * 1e3,
-        traced * 1e3,
-        traced / fast
-    );
+    (fast, traced)
 }
 
 /// No pixel on the product is ever black, whatever the scene's lights do —
@@ -154,6 +187,7 @@ fn the_preview_is_far_cheaper_than_a_path_traced_pass() {
 /// fail at the one job it has.
 #[test]
 fn the_preview_leaves_nothing_unreadable() {
+    let _alone = alone();
     let (intersector, context) = setup();
     let mut fb = Framebuffer::new(WIDTH, HEIGHT);
     preview_pass(&intersector, &mut fb, &context, 4);
@@ -183,6 +217,7 @@ fn the_preview_leaves_nothing_unreadable() {
 /// a camera aimed in preview is a camera that has to be aimed twice.
 #[test]
 fn the_preview_frames_what_the_render_frames() {
+    let _alone = alone();
     let (intersector, context) = setup();
     let schedule = ProgressiveSchedule::default();
 
@@ -225,6 +260,7 @@ fn the_preview_frames_what_the_render_frames() {
 /// and to be concentrated at edges rather than spread across a surface.
 #[test]
 fn one_sample_is_already_the_finished_frame() {
+    let _alone = alone();
     let (intersector, context) = setup();
 
     let mut one = Framebuffer::new(WIDTH, HEIGHT);
@@ -318,6 +354,7 @@ fn polished_floor() -> (EmbreeIntersector, RenderContext) {
 
 #[test]
 fn a_polished_floor_does_not_have_to_settle() {
+    let _alone = alone();
     let (intersector, context) = polished_floor();
 
     let mut one = Framebuffer::new(WIDTH, HEIGHT);
@@ -360,6 +397,7 @@ fn a_polished_floor_does_not_have_to_settle() {
 /// floor is exactly what the grain was reported on.
 #[test]
 fn the_scene_the_app_opens_with_does_not_have_to_settle() {
+    let _alone = alone();
     let document =
         tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
     let mut cache = Default::default();
@@ -455,6 +493,7 @@ fn the_scene_the_app_opens_with_does_not_have_to_settle() {
 /// handed beside it; and nowhere else.
 #[test]
 fn the_checker_is_drawn_through_the_set_it_is_given() {
+    let _alone = alone();
     use tequila_core::math::{vec2, vec3, Vec2};
     use tequila_core::spectrum::Spectrum;
     use tequila_render_core::preview::PreviewChecker;
