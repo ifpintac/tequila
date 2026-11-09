@@ -45,6 +45,7 @@ mod lighting_tab;
 mod material_tab;
 mod measure_tool;
 mod improve_model;
+mod import_settings;
 mod model_units;
 mod metadata_panel;
 mod network_panel;
@@ -1498,7 +1499,7 @@ impl eframe::App for TequilaApp {
                     match &request.operation {
                         // Read on another thread, answered when it has
                         // arrived: the window goes on drawing meanwhile.
-                        Operation::Import { path, parent } => channel::begin_import(self, request, path, *parent, responder, ctx),
+                        Operation::Import { path, parent, .. } => channel::begin_import(self, request, path, *parent, responder, ctx),
                         _ => responder.answer(&channel::handle(self, request)),
                     }
                 }
@@ -3233,6 +3234,14 @@ impl TequilaApp {
                         ui.close_menu();
                         self.ask_for_file(Action::Import);
                     }
+                    ui.menu_button("Up axis of imports", |ui| {
+                        ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
+                        if let Some(said) = import_settings::menu(ui) {
+                            self.project.status = said;
+                        }
+                    })
+                    .response
+                    .on_hover_text("A model drawn Z up comes in lying on its back unless this says Z up");
                     ui.menu_button("Import texture pack", |ui| {
                         if let Some(folder) = texture_pack::menu(ui) {
                             self.pick_texture_pack(folder);
@@ -5408,8 +5417,11 @@ impl TequilaApp {
                         .extension()
                         .and_then(|e| e.to_str())
                         .is_some_and(|e| ["step", "stp", "iges", "igs"].iter().any(|c| e.eq_ignore_ascii_case(c)));
-                    if cad && report.warnings.is_empty() {
-                        self.project.status.push_str(". Lying on its back? Right-click it in the Scene tab: Turn, Upright");
+                    let up = import_settings::up_axis();
+                    if up != tequila_import::UpAxis::AsFile && report.warnings.is_empty() {
+                        self.project.status.push_str(&format!(", stood up from {}", up.label()));
+                    } else if cad && report.warnings.is_empty() {
+                        self.project.status.push_str(". Lying on its back? Right-click it in the Scene tab: Turn, Upright; or File › Up axis of imports");
                     }
                     if units.is_some() {
                         self.model_units = units;

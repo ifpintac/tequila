@@ -43,7 +43,9 @@ pub enum Operation {
     /// it carries the whole mesh inlined, which is the right shape for a
     /// journal and an absurd one for a request — so this names the file and
     /// lets the application read it, then applies the very same command.
-    Import { path: String, parent: Option<u64> },
+    /// `up`: which way up the file was drawn (`file`, `y`, `z`, `x`, `-y`,
+    /// `-z`, `-x`), over the setting File › Up axis of imports keeps.
+    Import { path: String, parent: Option<u64>, up: Option<String> },
     /// Make materials from a PBR texture pack — a folder, a ZIP, or one of
     /// its maps — and put the first on `nodes` (the selection when empty).
     TextureSet { path: String, nodes: Vec<u64> },
@@ -995,6 +997,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
         "import" => Operation::Import {
             path: string(value, "path")?,
             parent: value.get("parent").and_then(|v| v.as_index()).map(|i| i as u64),
+            up: opt_string(value, "up")?,
         },
         "reimport" => Operation::Reimport {
             node: value.get("node").and_then(|v| v.as_index()).map(|i| i as u64),
@@ -1728,7 +1731,7 @@ mod tests {
             .expect("parses");
         assert!(matches!(
             import.operation,
-            Operation::Import { ref path, parent: None } if path == "C:/models/part.gltf"
+            Operation::Import { ref path, parent: None, .. } if path == "C:/models/part.gltf"
         ));
 
         // Save without a path means "where it came from", which is what a

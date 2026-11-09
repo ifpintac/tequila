@@ -633,6 +633,19 @@
    "properties": {
     "path": {
      "type": "string"
+    },
+    "up": {
+     "type": "string",
+     "enum": [
+      "file",
+      "y",
+      "z",
+      "x",
+      "-y",
+      "-z",
+      "-x"
+     ],
+     "description": "Which way up the file was drawn: z for a CAD model drawn Z up, which otherwise comes in lying on its back. Without it, the setting File > Up axis of imports decides."
     }
    },
    "required": [

@@ -60,6 +60,9 @@ pub struct Project {
     document: SceneDocument,
     bus: CommandBus,
     pub selection: Selection,
+    /// A script's choice of up axis for the import it is finishing, over
+    /// the one kept in the settings (`import_settings`).
+    pub import_up_override: Option<tequila_import::UpAxis>,
 
     /// Builds the renderer's environment from the document's description, and
     /// keeps the expensive part of it across edits.
@@ -146,6 +149,7 @@ impl Project {
         let view = tequila_scene::snapshot::ViewOverrides::default();
         let (scene, mapping) = build_scene(&document, &mut environment, &mut meshes, &view);
         Project {
+            import_up_override: None,
             view,
             document,
             bus: CommandBus::new(),
@@ -634,6 +638,17 @@ impl Project {
     ///
     /// The group's edges go into the crash journal too: a batch undone after
     /// recovery must come off as one step, as it did before the crash.
+    /// The options an import or an update of a model is built with: stood
+    /// up as the settings, or a script, say, and set on the floor when
+    /// `ground` (an update leaves the model where the person put it).
+    fn import_options(&self, ground: bool) -> tequila_import::ImportOptions {
+        tequila_import::ImportOptions {
+            place_on_ground: ground,
+            up_axis: self.import_up_override.unwrap_or_else(crate::import_settings::up_axis),
+            ..Default::default()
+        }
+    }
+
     pub fn begin_group(&mut self) {
         self.bus.begin_group();
         self.journal_marker(tequila_format::journal::Marker::BeginGroup);
@@ -1102,7 +1117,7 @@ impl Project {
             self.document.sources.insert(id.clone(), bytes.clone());
         }
         let name = prepared.name().to_string();
-        let options = tequila_import::ImportOptions::default();
+        let options = self.import_options(true);
         let (command, report) = prepared.finish(&self.document, parent, &options).map_err(|e| e.to_string())?;
         if let Command::Import { payload } = &command {
             for ((key, _), converted) in payload.meshes.iter().zip(converted) {
@@ -1176,7 +1191,7 @@ impl Project {
         self.keep_source(&model);
         let parent = self.document.tree.get(roots[0]).and_then(|n| n.parent);
         // Where the model stands is the user's: an update does not lift it.
-        let options = tequila_import::ImportOptions { place_on_ground: false, ..Default::default() };
+        let options = self.import_options(false);
         let (command, _) = tequila_import::build_read(&self.document, parent, model, &options)
             .map_err(|e| e.to_string())?;
         let tequila_scene::Command::Import { payload } = command else {
