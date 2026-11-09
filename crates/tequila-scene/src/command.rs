@@ -147,6 +147,11 @@ pub enum Command {
     DeleteNodes { nodes: Vec<NodeId> },
     /// `scene.rename` — a node's name.
     Rename { node: NodeId, name: String },
+    /// `scene.set_shape` — a shape from Add › Shape given new dimensions:
+    /// its mesh built again from them (`shape`: what it is, `width`,
+    /// `depth`, `height` and a backdrop's curve `radius`, in metres) under
+    /// the mesh key given.
+    SetShape { node: NodeId, shape: crate::shapes::ShapeSpec, mesh: MeshKey },
     /// `scene.set_transform`
     ///
     /// Takes a transform per node rather than one node, because moving a
@@ -291,6 +296,13 @@ pub enum Command {
     /// modes. Points are in each node's own local space, so a pivot travels
     /// with the part.
     SetPivot { pivots: Vec<(NodeId, Option<Vec3>)> },
+    /// `scene.set_pattern` — a group made a pattern: one of its parts
+    /// repeated along a line (`step` between copies) or around a circle
+    /// (`centre`, `axis`, `angle` in radians), by copies that share its mesh
+    /// and material. The copies it had are taken away and laid out again
+    /// from the part as it is, under the ids given; without a pattern, they
+    /// are taken away and the group and the part stay.
+    SetPattern { group: NodeId, pattern: Option<Box<crate::pattern::Pattern>> },
     /// `scene.reparent` — a node moved under another parent (or to the
     /// top), at `index` among its siblings or last.
     Reparent {
@@ -1163,12 +1175,14 @@ impl Command {
             Command::PlaceUvIslands { .. } => "uv.place_islands",
             Command::SetUvPins { .. } => "uv.set_pins",
             Command::Rename { .. } => "scene.rename",
+            Command::SetShape { .. } => "scene.set_shape",
             Command::SetTransform { .. } => "scene.set_transform",
             Command::SetVisibility { .. } => "scene.set_visibility",
             Command::SetLayerVisibility { .. } => "scene.set_layer_visibility",
             Command::SetLocked { .. } => "scene.set_locked",
             Command::SetRays { .. } => "scene.set_rays",
             Command::SetPivot { .. } => "scene.set_pivot",
+            Command::SetPattern { .. } => "scene.set_pattern",
             Command::Reparent { .. } => "scene.reparent",
             Command::Group { .. } => "scene.group",
             Command::Ungroup { .. } => "scene.ungroup",
@@ -1221,7 +1235,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 74] = [
+    pub const CATALOG: [&'static str; 76] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1245,12 +1259,14 @@ impl Command {
         "uv.place_islands",
         "uv.set_pins",
         "scene.rename",
+        "scene.set_shape",
         "scene.set_transform",
         "scene.set_visibility",
         "scene.set_layer_visibility",
         "scene.set_locked",
         "scene.set_rays",
         "scene.set_pivot",
+        "scene.set_pattern",
         "scene.reparent",
         "scene.group",
         "scene.ungroup",
@@ -1307,7 +1323,9 @@ impl Command {
             | Command::ApplyStudioPreset { .. }
             | Command::DeleteNodes { .. }
             | Command::Group { .. }
+            | Command::SetPattern { .. }
             | Command::SplitIntoParts { .. }
+            | Command::SetShape { .. }
             | Command::UnwrapUvs { .. }
             // A layout is what every texture and label on the part is
             // sampled by.
@@ -1447,7 +1465,19 @@ impl Command {
             (Command::SetRenderSettings { .. }, Command::SetRenderSettings { .. }) => true,
             (Command::SetCamera { index: a, .. }, Command::SetCamera { index: b, .. }) => a == b,
             (Command::SetLight { node: a, .. }, Command::SetLight { node: b, .. }) => a == b,
+            // A texture dragged across the part in the viewport, one per
+            // frame: one step to undo.
+            (
+                Command::SetTextureMapping { material: a, param: pa, .. },
+                Command::SetTextureMapping { material: b, param: pb, .. },
+            ) => a == b && pa == pb,
+            // A dimension dragged, one per frame: the undo record holds the
+            // mesh from before the first.
+            (Command::SetShape { node: a, .. }, Command::SetShape { node: b, .. }) => a == b,
             (Command::SetCutaway { node: a, .. }, Command::SetCutaway { node: b, .. }) => a == b,
+            // A count or a spacing dragged, one per frame: the undo record
+            // restores the copies as they were before the first.
+            (Command::SetPattern { group: a, .. }, Command::SetPattern { group: b, .. }) => a == b,
             // A drag issues one of these per frame; they merge into a single
             // undo step only while the *same* parts are being moved. Merging
             // across different selections would fold two deliberate edits into
@@ -1490,6 +1520,11 @@ enum Undo {
     /// and the one it was given; and its pins as they were, where the
     /// unwrap carried them to new numbers.
     Unwrapped { node: NodeId, previous: MeshKey, unwrapped: MeshKey, pins: Option<crate::uv::UvPins> },
+    /// A shape as it was: its mesh key and dimensions, and its mesh where
+    /// the change took it out of the store, no other part using it.
+    /// Undoing drops whatever mesh the part has by then - edits merged into
+    /// one step replace it several times over - unless another uses it.
+    Shape { node: NodeId, previous: MeshKey, spec: Option<crate::shapes::ShapeSpec>, removed: Option<Box<crate::geometry::Mesh>> },
     /// A part given a mesh with its UV layout edited, as `Unwrapped`; and
     /// the materials whose mappings followed its sets, as they were.
     UvEdited {
@@ -1503,6 +1538,10 @@ enum Undo {
     },
     /// Removed nodes, deepest first, each with the sibling index it occupied.
     RemovedNodes(Vec<(SceneNode, usize)>),
+    /// A pattern as it was, and the copies its change took away. Undoing
+    /// takes away whatever copies the pattern has by then - edits merged
+    /// into one step replace them several times over - and puts these back.
+    Pattern { group: NodeId, previous: Option<Box<crate::pattern::Pattern>>, removed: Vec<(SceneNode, usize)> },
     Name(NodeId, String),
     Transforms(Vec<(NodeId, Transform)>),
     Visibility(Vec<(NodeId, bool)>),
@@ -2439,6 +2478,29 @@ fn execute(
             Ok(Undo::RemovedNodes(removed))
         }
 
+        Command::SetShape { node, shape, mesh } => {
+            check_unlocked(document, *node)?;
+            let NodeKind::Part { mesh: previous } = document.tree.try_get(*node)?.kind else {
+                return Err(CommandError::InconsistentHistory("only a part has a shape"));
+            };
+            if *mesh != previous && document.geometry.get(*mesh).is_some() {
+                return Err(CommandError::InconsistentHistory("the shape's mesh key is taken"));
+            }
+            let spec = document.tree.try_get(*node)?.shape;
+            document.geometry.insert_with_key(*mesh, shape.mesh());
+            let part = document.tree.get_mut(*node)?;
+            part.kind = NodeKind::Part { mesh: *mesh };
+            part.shape = Some(*shape);
+            let removed = if *mesh != previous && !mesh_in_use(document, previous) {
+                let old = document.geometry.get(previous).cloned().map(Box::new);
+                document.geometry.retain_keys(&|key| key != previous);
+                old
+            } else {
+                None
+            };
+            Ok(Undo::Shape { node: *node, previous, spec, removed })
+        }
+
         Command::UnwrapUvs { node, options } => {
             check_unlocked(document, *node)?;
             let source = document.tree.get(*node).ok_or(CommandError::InconsistentHistory("no such node"))?;
@@ -2710,6 +2772,32 @@ fn execute(
                 parent: previous_parent,
                 index: previous_index,
             })
+        }
+
+        Command::SetPattern { group, pattern } => {
+            check_unlocked(document, *group)?;
+            // Everything checked before anything changes.
+            let made = match pattern {
+                Some(pattern) => crate::pattern::copies(document, *group, pattern)?,
+                None => {
+                    document.tree.try_get(*group)?;
+                    Vec::new()
+                }
+            };
+            let previous = document.tree.try_get(*group)?.pattern.clone().map(Box::new);
+            let mut removed = Vec::new();
+            for copy in crate::pattern::current_copies(document, *group) {
+                let index = document.tree.sibling_index(copy).unwrap_or(0);
+                for n in document.tree.remove_subtree(copy)? {
+                    let at = if n.id == copy { index } else { usize::MAX };
+                    removed.push((n, at));
+                }
+            }
+            for node in made {
+                document.tree.reinsert(node, usize::MAX)?;
+            }
+            document.tree.get_mut(*group)?.pattern = pattern.as_deref().cloned();
+            Ok(Undo::Pattern { group: *group, previous, removed })
         }
 
         Command::Group { nodes, name } => {
@@ -3471,6 +3559,16 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::Pattern { group, previous, removed } => {
+            for copy in crate::pattern::current_copies(document, *group) {
+                document.tree.remove_subtree(copy)?;
+            }
+            for (node, index) in removed.iter().rev() {
+                document.tree.reinsert(node.clone(), *index)?;
+            }
+            document.tree.get_mut(*group)?.pattern = previous.as_deref().cloned();
+            Ok(())
+        }
         Undo::RemovedNodes(removed) => {
             // Removal produced deepest-first order, so restoring in reverse
             // always finds each node's parent already present.
@@ -3485,6 +3583,21 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
             Ok(())
         }
 
+        Undo::Shape { node, previous, spec, removed } => {
+            let NodeKind::Part { mesh: current } = document.tree.try_get(*node)?.kind else {
+                return Err(CommandError::InconsistentHistory("only a part has a shape"));
+            };
+            if let Some(mesh) = removed {
+                document.geometry.insert_with_key(*previous, (**mesh).clone());
+            }
+            let part = document.tree.get_mut(*node)?;
+            part.kind = NodeKind::Part { mesh: *previous };
+            part.shape = *spec;
+            if current != *previous && !mesh_in_use(document, current) {
+                document.geometry.retain_keys(&|key| key != current);
+            }
+            Ok(())
+        }
         Undo::Name(node, name) => {
             document.tree.get_mut(*node)?.name = name.clone();
             Ok(())
@@ -4250,6 +4363,11 @@ pub fn reserve_texture_ids(
     (0..count)
         .map(|i| tequila_materials::graph::TextureId(base + i as u32))
         .collect()
+}
+
+/// Whether any part shows `mesh`.
+fn mesh_in_use(document: &SceneDocument, mesh: MeshKey) -> bool {
+    document.tree.iter().any(|n| n.mesh() == Some(mesh))
 }
 
 pub fn reserve_keys(

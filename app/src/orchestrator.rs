@@ -134,7 +134,10 @@ impl RenderRequest {
         if sharp && !self.interacting && self.shading == Shading::Rendered {
             return (self.width.max(1), self.height.max(1));
         }
-        let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).max(1);
+        // Never more than the pixels asked for: a preview held to the
+        // final render's pixels (`preview_pixels` in `main.rs`) has fewer of
+        // them than points.
+        let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).clamp(1, n.max(1));
         (points(self.width), points(self.height))
     }
 

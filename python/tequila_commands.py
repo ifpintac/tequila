@@ -37,12 +37,14 @@ CATALOG = (
     'uv.place_islands',
     'uv.set_pins',
     'scene.rename',
+    'scene.set_shape',
     'scene.set_transform',
     'scene.set_visibility',
     'scene.set_layer_visibility',
     'scene.set_locked',
     'scene.set_rays',
     'scene.set_pivot',
+    'scene.set_pattern',
     'scene.reparent',
     'scene.group',
     'scene.ungroup',
@@ -262,6 +264,13 @@ class SceneCommands(_Commands):
         """
         return self._apply('scene.rename', {'name': name, 'node': node})
 
+    def set_shape(self, *, mesh=_UNSET, node=_UNSET, shape=_UNSET):
+        r"""`scene.set_shape`: A shape from Add › Shape given new dimensions: its mesh built again from them (`shape`: what it is, `width`, `depth`, `height` and a backdrop's curve `radius`, in metres) under the mesh key given.
+
+        { "command": "scene.set_shape", "mesh": 12, "node": 2, "shape": { "depth": 0.9, "height": 0.63, "radius": 0.135, "shape": "backdrop", "width": 2.7 } }
+        """
+        return self._apply('scene.set_shape', {'mesh': mesh, 'node': node, 'shape': shape})
+
     def set_transform(self, *, transforms=_UNSET):
         r"""`scene.set_transform`: Takes a transform per node rather than one node, because moving a selection of six parts is one action and has to be one undo step. A shared transform would be meaningless — each part has its own place — so the pairs are explicit.
 
@@ -303,6 +312,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_pivot", "pivots": [ { "at": [0.5, -1.25, 2], "node": 2 } ] }
         """
         return self._apply('scene.set_pivot', {'pivots': pivots})
+
+    def set_pattern(self, *, group=_UNSET, pattern=_UNSET):
+        r"""`scene.set_pattern`: A group made a pattern: one of its parts repeated along a line (`step` between copies) or around a circle (`centre`, `axis`, `angle` in radians), by copies that share its mesh and material. The copies it had are taken away and laid out again from the part as it is, under the ids given; without a pattern, they are taken away and the group and the part stay.
+
+        { "command": "scene.set_pattern", "group": 1, "pattern": { "copies": [40, 41], "count": 3, "kind": "line", "source": 2, "step": [0.03, 0, 0] } }
+        """
+        return self._apply('scene.set_pattern', {'group': group, 'pattern': pattern})
 
     def reparent(self, *, index=_UNSET, node=_UNSET, parent=_UNSET):
         r"""`scene.reparent`: A node moved under another parent (or to the top), at `index` among its siblings or last.

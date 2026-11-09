@@ -210,7 +210,7 @@ impl Session {
             }
             Operation::Query(Query::Ui | Query::Jobs) => Reply::Failed("there is no window, and so no panels or background renders, in a headless session".into()),
             Operation::Query(query) => Reply::Value(self.answer(*query)),
-            Operation::Import { path, parent } => self.import(path, *parent),
+            Operation::Import { path, parent, .. } => self.import(path, *parent),
             Operation::Reimport { node, path, tessellation } => self.reimport(*node, path.as_deref(), tessellation.as_deref()),
             Operation::Save { path } => self.save(path.as_deref()),
             Operation::Frame { all } => self.frame(*all),

@@ -106,7 +106,18 @@ fn imported_and_reorganized() -> SceneDocument {
     .unwrap();
 
     let housing = by_name(&document, "Housing");
+    // A pattern: its settings on the group, and copies under the ids it
+    // gave them, all to come back as they were.
+    let fasteners = by_name(&document, "Fasteners");
+    let pattern = tequila_scene::pattern::Pattern {
+        kind: tequila_scene::pattern::PatternKind::Circle { centre: vec3(0.0, 0.0, 0.0), axis: vec3(0.0, 1.0, 0.0), angle: 1.5 },
+        count: 3,
+        source: a,
+        copies: Vec::new(),
+    }
+    .with_ids(&document, Some(fasteners));
     for command in [
+        Command::SetPattern { group: fasteners, pattern: Some(Box::new(pattern)) },
         Command::Rename {
             node: housing,
             name: "Housing, upper".into(),
@@ -131,6 +142,13 @@ fn imported_and_reorganized() -> SceneDocument {
     ] {
         bus.apply(&mut document, command).unwrap();
     }
+    // A backdrop given a curve of its own: its dimensions are saved with it.
+    let (payload, backdrop) = tequila_scene::shapes::add(&document, tequila_scene::shapes::Shape::Backdrop, None);
+    bus.apply(&mut document, Command::Import { payload: Box::new(payload) }).unwrap();
+    let mut spec = document.tree.get(backdrop).unwrap().shape.unwrap();
+    spec.set(tequila_scene::shapes::Dimension::Radius, 0.05);
+    let (keys, _, _) = tequila_scene::command::reserve_keys(&document, 1, 0, 0);
+    bus.apply(&mut document, Command::SetShape { node: backdrop, shape: spec, mesh: keys[0] }).unwrap();
 
     document.validate().unwrap();
     document
@@ -215,8 +233,11 @@ fn every_part_of_the_scene_survives_the_round_trip() {
             .unwrap()
             .children
             .len(),
-        2
+        4,
+        "the two screws and the pattern's two copies"
     );
+    let pattern = node("Fasteners").pattern.as_ref().expect("the pattern did not survive the file");
+    assert_eq!((pattern.count, pattern.source, pattern.copies.len()), (3, node("Screw A").id, 2));
 
     // A non-uniform scale composed with a rotation is exactly the transform a
     // TRS decomposition would round off.

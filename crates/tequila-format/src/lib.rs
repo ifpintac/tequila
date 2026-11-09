@@ -650,6 +650,10 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if let Some(pivot) = node.pivot {
         object.set("pivot", vec![pivot.x, pivot.y, pivot.z]);
     }
+    // A shape's dimensions, on a part from Add › Shape alone.
+    if let Some(shape) = &node.shape {
+        object.set("shape", shape_to_json(shape));
+    }
     // Written only on a part that has some, so every project without them
     // reads, and writes back, as it always did.
     if !node.uv_guides.is_empty() {
@@ -658,12 +662,103 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
     if !node.uv_pins.is_empty() {
         object.set("uv_pins", uv_pins_to_json(&node.uv_pins));
     }
+    // A pattern's settings, on its group; nothing on any other node.
+    if let Some(pattern) = &node.pattern {
+        object.set("pattern", pattern_to_json(pattern));
+    }
 
     let Value::Object(known) = object.build() else {
         unreachable!()
     };
     out.extend(known);
     Value::Object(out)
+}
+
+/// A pattern, as the project and the journal write it:
+/// `{"kind": "line", "step": [0.03, 0, 0], "count": 5, "source": 4,
+/// "copies": [9, 10, 11, 12]}`, or a circle with `centre`, `axis` and
+/// `angle` (radians) in place of `step`.
+pub(crate) fn pattern_to_json(pattern: &tequila_scene::pattern::Pattern) -> Value {
+    use tequila_scene::pattern::PatternKind;
+    let mut object = Object::new();
+    match pattern.kind {
+        PatternKind::Line { step } => {
+            object.set("kind", "line").set("step", vec![step.x, step.y, step.z]);
+        }
+        PatternKind::Circle { centre, axis, angle } => {
+            object
+                .set("kind", "circle")
+                .set("centre", vec![centre.x, centre.y, centre.z])
+                .set("axis", vec![axis.x, axis.y, axis.z])
+                .set("angle", angle);
+        }
+    }
+    object
+        .set("count", pattern.count as f64)
+        .set("source", pattern.source.0)
+        .set("copies", Value::Array(pattern.copies.iter().map(|c| Value::from(c.0 as f64)).collect()));
+    object.build()
+}
+
+/// A pattern read back; [`pattern_to_json`] says the shape.
+pub(crate) fn read_pattern(value: &Value) -> Result<tequila_scene::pattern::Pattern, FormatError> {
+    use tequila_scene::pattern::{Pattern, PatternKind};
+    let vector = |key: &str| -> Result<tequila_core::math::Vec3, FormatError> {
+        value
+            .get(key)
+            .and_then(|v| v.as_f32_array())
+            .filter(|v| v.len() == 3 && v.iter().all(|x| x.is_finite()))
+            .map(|v| tequila_core::math::vec3(v[0], v[1], v[2]))
+            .ok_or_else(|| FormatError::Invalid(format!("a pattern's `{key}` is three numbers")))
+    };
+    let kind = match value.get("kind").and_then(|v| v.as_str()) {
+        Some("line") => PatternKind::Line { step: vector("step")? },
+        Some("circle") => PatternKind::Circle {
+            centre: vector("centre")?,
+            axis: vector("axis")?,
+            angle: value
+                .get("angle")
+                .and_then(|v| v.as_f32())
+                .filter(|a| a.is_finite())
+                .ok_or_else(|| FormatError::Invalid("a circle pattern's `angle` is a number of radians".into()))?,
+        },
+        _ => return Err(FormatError::Invalid("a pattern's `kind` is \"line\" or \"circle\"".into())),
+    };
+    let count = value
+        .get("count")
+        .and_then(|v| v.as_index())
+        .ok_or_else(|| FormatError::Invalid("a pattern has a `count`".into()))? as u32;
+    let source = value
+        .get("source")
+        .and_then(|v| v.as_index())
+        .ok_or_else(|| FormatError::Invalid("a pattern names its `source` part".into()))?;
+    let copies = value.get("copies").map(|v| v.as_array()).unwrap_or(&[]).iter().filter_map(|c| c.as_index()).map(|c| NodeId(c as u64)).collect();
+    Ok(Pattern { kind, count, source: NodeId(source as u64), copies })
+}
+
+/// A shape and its dimensions, as the project and the journal write them:
+/// `{"shape": "backdrop", "width": 2.7, "depth": 0.9, "height": 0.63,
+/// "radius": 0.135}`, in metres.
+pub(crate) fn shape_to_json(spec: &tequila_scene::shapes::ShapeSpec) -> Value {
+    let mut object = Object::new();
+    object
+        .set("shape", spec.shape.key())
+        .set("width", spec.width)
+        .set("depth", spec.depth)
+        .set("height", spec.height)
+        .set("radius", spec.radius);
+    object.build()
+}
+
+/// A shape read back; [`shape_to_json`] says the shape of it.
+pub(crate) fn read_shape(value: &Value) -> Result<tequila_scene::shapes::ShapeSpec, FormatError> {
+    let shape = value
+        .get("shape")
+        .and_then(|v| v.as_str())
+        .and_then(tequila_scene::shapes::Shape::from_key)
+        .ok_or_else(|| FormatError::Invalid("a shape is one of plane, cube, cylinder, sphere, disc, backdrop or wall".into()))?;
+    let number = |key: &str| value.get(key).and_then(|v| v.as_f32()).filter(|x| x.is_finite() && *x >= 0.0).unwrap_or(0.0);
+    Ok(tequila_scene::shapes::ShapeSpec { shape, width: number("width"), depth: number("depth"), height: number("height"), radius: number("radius") })
 }
 
 /// A part's UV guides, as the project and the journal write them: one
@@ -3445,6 +3540,11 @@ fn read_tree(
             .and_then(|v| v.as_f32_array())
             .filter(|v| v.len() == 3)
             .map(|v| tequila_core::math::vec3(v[0], v[1], v[2]));
+        node.shape = value
+            .get("shape")
+            .map(read_shape)
+            .transpose()
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         if let Some(Value::Object(map)) = value.get("metadata") {
             for (key, item) in map {
                 if let Some(text) = item.as_str() {
@@ -3456,6 +3556,11 @@ fn read_tree(
         node.uv_guides = read_uv_guides(value.get("uv_guides"))
             .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         node.uv_pins = read_uv_pins(value.get("uv_pins"))
+            .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
+        node.pattern = value
+            .get("pattern")
+            .map(read_pattern)
+            .transpose()
             .map_err(|e| FormatError::Invalid(format!("node {id}: {e}")))?;
         // A project saved before layers had a field of their own kept them
         // in a metadata field, `Layer`, joined with commas: moved across, so
@@ -3475,7 +3580,7 @@ fn read_tree(
             let unknown: BTreeMap<String, Value> = map
                 .iter()
                 .filter(|(k, _)| {
-                    !matches!(k.as_str(), "path_key" | "pivot")
+                    !matches!(k.as_str(), "path_key" | "pivot" | "pattern" | "shape")
                         && !KNOWN_NODE_FIELDS.contains(&k.as_str())
                 })
                 .map(|(k, v)| (k.clone(), v.clone()))

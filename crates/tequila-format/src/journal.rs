@@ -193,6 +193,15 @@ pub fn encode(command: &Command) -> String {
                 ),
             );
         }
+        Command::SetPattern { group, pattern } => {
+            out.set("group", group.0);
+            if let Some(pattern) = pattern {
+                out.set("pattern", crate::pattern_to_json(pattern));
+            }
+        }
+        Command::SetShape { node, shape, mesh } => {
+            out.set("node", node.0).set("mesh", mesh.0).set("shape", crate::shape_to_json(shape));
+        }
         Command::SetPivot { pivots } => {
             out.set(
                 "pivots",
@@ -668,6 +677,13 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
             Command::SetRays { states }
         }
+        "scene.set_shape" => Command::SetShape {
+            node: node("node")?,
+            mesh: tequila_scene::tree::MeshKey(
+                value.get("mesh").and_then(|v| v.as_index()).ok_or_else(|| FormatError::Invalid("`scene.set_shape` names the mesh key it builds".into()))? as u64,
+            ),
+            shape: crate::read_shape(value.get("shape").ok_or_else(|| FormatError::Invalid("`scene.set_shape` has no shape".into()))?)?,
+        },
         "scene.set_pivot" => {
             let mut pivots = Vec::new();
             for entry in value.get("pivots").map(|p| p.as_array()).unwrap_or(&[]) {
@@ -689,6 +705,10 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
             }
             Command::SetPivot { pivots }
         }
+        "scene.set_pattern" => Command::SetPattern {
+            group: node("group")?,
+            pattern: value.get("pattern").map(crate::read_pattern).transpose()?.map(Box::new),
+        },
         "scene.reparent" => Command::Reparent {
             node: node("node")?,
             parent: optional_node("parent"),
