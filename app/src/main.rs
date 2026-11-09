@@ -2300,7 +2300,6 @@ impl TequilaApp {
         }
         if !presenting {
             self.viewport_overlays(ui, area);
-            self.welcome_card(ui, area);
             if self.show_hud {
                 self.hud(ui, area);
             }
@@ -3552,12 +3551,6 @@ impl TequilaApp {
                         self.start_screen.open = true;
                         ui.close_menu();
                     }
-                    if ui.button("Show the welcome card").clicked() {
-                        let mut appearance = theme::appearance();
-                        appearance.welcome_seen = false;
-                        theme::set_appearance(ui.ctx(), appearance, true);
-                        ui.close_menu();
-                    }
                     ui.menu_button("Guides", |ui| {
                         for (title, packaged, docs, about) in GUIDES {
                             let file = shipped_file(packaged, &format!("docs/{docs}"));
@@ -4050,82 +4043,6 @@ impl TequilaApp {
                 self.snapping_controls(ui);
             },
         );
-    }
-
-    /// Three steps to a first picture, over the bottom of the viewport until
-    /// they are put away: bring in a model, dress it, render it.
-    fn welcome_card(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        if theme::appearance().welcome_seen || self.start_screen.open || rect.width() < 520.0 || rect.height() < 380.0 {
-            return;
-        }
-        let p = theme::p();
-        let size = egui::vec2(560.0_f32.min(rect.width() - 48.0), 178.0);
-        let card = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.bottom() - 28.0 - size.y * 0.5), size);
-        let painter = ui.painter().clone();
-        painter.add(egui::epaint::Shadow { offset: egui::vec2(0.0, 10.0), blur: 34.0, spread: 0.0, color: egui::Color32::from_black_alpha(if p.dark { 120 } else { 50 }) }.as_shape(card, 16.0));
-        painter.rect(card, 16.0, p.raised, egui::Stroke::new(1.0_f32, p.line));
-        // The card's own clicks and drags, so none of them turns the camera.
-        let _ = ui.interact(card, ui.id().with("welcome"), egui::Sense::click_and_drag());
-
-        let mut dismiss = false;
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card.shrink2(egui::vec2(20.0, 16.0))), |ui| {
-            ui.horizontal(|ui| {
-                let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
-                icons::paint(ui.painter(), mark, icons::Icon::Aperture, p.accent);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(egui::RichText::new("Welcome to Tequila").font(theme::strong(16.0)).color(p.text));
-                    ui.label(egui::RichText::new("Three steps to your first picture").size(12.0).color(p.text_dim));
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    if icons::button(ui, icons::Icon::Close, false, 26.0, egui::Sense::click()).on_hover_text("Put this away").clicked() {
-                        dismiss = true;
-                    }
-                });
-            });
-            ui.add_space(12.0);
-            let gap = 12.0;
-            let each = (ui.available_width() - gap * 2.0) / 3.0;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                let steps: [(theme::Hue, &str, &str, icons::Icon, &str); 3] = [
-                    (theme::Hue::Blue, "Bring in a model", "OBJ, STL, glTF, STEP and more", icons::Icon::Import, "Import"),
-                    (theme::Hue::Pink, "Dress it", "Drag a material onto any part", icons::Icon::Library, "Library"),
-                    (theme::Hue::Amber, "Take the shot", "Size, quality and file", icons::Icon::Aperture, "Render"),
-                ];
-                for (number, (hue, title, detail, icon, action)) in steps.into_iter().enumerate() {
-                    ui.allocate_ui_with_layout(egui::vec2(each, 96.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                        ui.set_width(each);
-                        let colour = theme::hue(hue);
-                        ui.horizontal(|ui| {
-                            let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot.center(), 11.0, colour.gamma_multiply(if p.dark { 0.22 } else { 0.16 }));
-                            ui.painter().text(dot.center(), egui::Align2::CENTER_CENTER, format!("{}", number + 1), theme::strong(12.0), colour);
-                            ui.label(egui::RichText::new(title).font(theme::strong(13.0)).color(p.text));
-                        });
-                        ui.label(egui::RichText::new(detail).size(11.5).color(p.text_dim));
-                        ui.add_space(2.0);
-                        if icons::labelled(ui, icon, action, number == 2).clicked() {
-                            match number {
-                                0 => self.ask_for_file(Action::Import),
-                                1 => {
-                                    self.show_library = true;
-                                    if ui.ctx().screen_rect().width() < 1100.0 {
-                                        self.show_project = false;
-                                    }
-                                }
-                                _ => self.render_window.open = true,
-                            }
-                        }
-                    });
-                }
-            });
-        });
-        if dismiss {
-            let mut appearance = theme::appearance();
-            appearance.welcome_seen = true;
-            theme::set_appearance(ui.ctx(), appearance, true);
-        }
     }
 
     /// Grid, angle and vertex snapping for the transform gizmo.
