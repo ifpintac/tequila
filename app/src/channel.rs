@@ -585,6 +585,13 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         }
         other => other.map(|_| None),
     };
+    // The composition guides as asked for, every name checked before
+    // anything changes.
+    let guides = match change.guides.as_ref().map(|asked| guides_from_script(&app.guides, asked)) {
+        Some(Err(error)) => return Reply::Failed(error),
+        Some(Ok(guides)) => Some(guides),
+        None => None,
+    };
 
     match graph {
         Some(Some(key)) => app.graph_editor.open_for(key),
@@ -721,6 +728,17 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some([width, height]) = change.window_size {
         app.pending_window_size = Some(egui::vec2(width, height));
     }
+    // Kept, as the menu keeps them.
+    if let Some(guides) = guides {
+        app.guides = guides;
+        if let Err(error) = app.keep_guides() {
+            return Reply::Failed(format!("the composition guides could not be kept: {error}"));
+        }
+    }
+    if let Some(open) = change.guides.as_ref().and_then(|g| g.menu) {
+        app.start_screen.open &= !open;
+        app.open_guides_menu = Some(open);
+    }
     if change.mode.is_some() || change.theme.is_some() {
         let mut look = app.pending_look.unwrap_or_else(crate::theme::appearance);
         if let Some(mode) = &change.mode {
@@ -817,6 +835,65 @@ fn ui_state(app: &TequilaApp) -> Value {
                 Value::Number(app.viewport_size.1 as f64),
             ]),
         );
+    out.set("guides", guides_state(&app.guides));
+    out.build()
+}
+
+/// The guides a script asks for, from those there are: every name read,
+/// or why one could not be.
+fn guides_from_script(current: &crate::composition::Guides, asked: &tequila_scripting::protocol::GuidesChange) -> Result<crate::composition::Guides, String> {
+    use crate::composition::{Corner, Guide, Slope};
+    let mut guides = current.clone();
+    if let Some(names) = &asked.show {
+        let mut chosen = Vec::new();
+        for name in names {
+            match Guide::from_key(name) {
+                Some(guide) => chosen.push(guide),
+                None => {
+                    let known: Vec<&str> = Guide::ALL.iter().map(|g| g.key()).collect();
+                    return Err(format!("`{name}` is not a composition guide; there are {}", known.join(", ")));
+                }
+            }
+        }
+        guides.choose_only(&chosen);
+    }
+    if let Some(on) = asked.on {
+        guides.on = on;
+    }
+    if let Some(corner) = &asked.spiral {
+        guides.spiral = Corner::from_key(corner).ok_or_else(|| format!("the spiral winds to `top_left`, `top_right`, `bottom_right` or `bottom_left`, not `{corner}`"))?;
+    }
+    if let Some(flip) = asked.spiral_flip {
+        guides.spiral_flip = flip;
+    }
+    let slope = |key: &str| Slope::from_key(key).ok_or_else(|| format!("a triangle's diagonal is `rising` or `falling`, not `{key}`"));
+    if let Some(key) = &asked.golden_triangle {
+        guides.triangle = slope(key)?;
+    }
+    if let Some(key) = &asked.harmonious_triangles {
+        guides.harmony = slope(key)?;
+    }
+    if let Some(key) = &asked.pyramid {
+        guides.pyramid_down = match key.trim().to_ascii_lowercase().as_str() {
+            "up" => false,
+            "down" => true,
+            _ => return Err(format!("the pyramid points `up` or `down`, not `{key}`")),
+        };
+    }
+    Ok(guides)
+}
+
+/// The composition guides as the viewport has them.
+fn guides_state(guides: &crate::composition::Guides) -> Value {
+    let mut out = Object::new();
+    out.set("on", guides.on)
+        .set("shown", guides.visible())
+        .set("show", guides.chosen().map(|g| Value::from(g.key())).collect::<Vec<_>>())
+        .set("spiral", guides.spiral.key())
+        .set("spiral_flip", guides.spiral_flip)
+        .set("golden_triangle", guides.triangle.key())
+        .set("harmonious_triangles", guides.harmony.key())
+        .set("pyramid", if guides.pyramid_down { "down" } else { "up" });
     out.build()
 }
 
@@ -2649,6 +2726,37 @@ mod handler_tests {
         assert_eq!(state.get("library_section").and_then(|t| t.as_str()), Some("studios"));
         let message = failure(&mut app, r#"{"op":"ui","library_section":"snapshots"}"#);
         assert!(message.contains("`studios`"), "the refusal names the Library's sections: {message}");
+    }
+
+    /// The composition guides from a script: a list shows just those, the
+    /// one-sided ones turn by name, false hides them and keeps the choice,
+    /// and a name that is no guide changes nothing.
+    #[test]
+    fn a_script_shows_turns_and_hides_the_composition_guides() {
+        use crate::composition::{Corner, Guide, Slope};
+        let mut app = TequilaApp::for_tests();
+        let state = value(&mut app, r#"{"op":"ui","guides":["thirds","Golden spiral"]}"#);
+        let guides = state.get("guides").expect("the guides, in the state");
+        assert_eq!(guides.get("shown").and_then(|v| v.as_bool()), Some(true));
+        let shown: Vec<&str> = guides.get("show").map(|v| v.as_array().iter().filter_map(|n| n.as_str()).collect()).unwrap_or_default();
+        assert_eq!(shown, ["thirds", "golden_spiral"]);
+
+        value(&mut app, r#"{"op":"ui","guides":{"spiral":"top_left","spiral_flip":true,"golden_triangle":"falling","pyramid":"down"}}"#);
+        assert_eq!((app.guides.spiral, app.guides.spiral_flip, app.guides.triangle, app.guides.pyramid_down), (Corner::TopLeft, true, Slope::Falling, true));
+        assert!(app.guides.is_chosen(Guide::GoldenSpiral), "turning them left the choice alone");
+
+        let message = failure(&mut app, r#"{"op":"ui","guides":{"show":["thirds","wobbly"],"spiral":"bottom_left"}}"#);
+        assert!(message.contains("golden_spiral"), "the refusal lists the guides: {message}");
+        assert_eq!(app.guides.spiral, Corner::TopLeft, "a refused request changed nothing");
+        assert!(failure(&mut app, r#"{"op":"ui","guides":{"pyramid":"sideways"}}"#).contains("`up` or `down`"));
+
+        value(&mut app, r#"{"op":"ui","guides":false}"#);
+        assert!(!app.guides.visible() && app.guides.is_chosen(Guide::Thirds), "hidden, still chosen");
+        value(&mut app, r#"{"op":"ui","guides":[]}"#);
+        assert_eq!(app.guides.chosen().count(), 0);
+
+        value(&mut app, r#"{"op":"ui","guides":{"menu":true}}"#);
+        assert_eq!(app.open_guides_menu, Some(true), "the toolbar's menu, to open on the next frame");
     }
 
     /// A screenshot asked of a minimized window waits for it to come back,
