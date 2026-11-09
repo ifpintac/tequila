@@ -513,6 +513,14 @@ Two regimes, switched by whether the user is actively manipulating the view:
 
 **Hard requirement:** first pixels on screen within **100 ms** of any scene change, on the reference benchmark scene (§05 §4). If a change requires a BVH rebuild that exceeds this, render the previous BVH's result with the changed shading until the rebuild lands (§9.4).
 
+*As built, November 10: the Rendered view on Cycles while the camera moves.* Measured through the scripting channel on an M3 Max (Cycles on Metal, a 3D-mouse orbit of four seconds; `TEQUILA_PROFILE` and the bridge's `TEQUILA_CYCLES_TRACE`), Cycles gave a picture every 85-90 ms after each camera move - ten a second - whatever the model: the Headphones sample, a 195 MB STEP file of 923 parts and a 236 MB one of 1.07 million triangles alike. Its own log (`TEQUILA_CYCLES_LOG=debug`) shows where that went: a full-size sample started straight after each moving picture and thrown away by the next move (37 ms at 1448x814), every pass of the picture read back to the processor (26 ms at that size), and the moving picture itself (27 ms for two samples at half size). Now (`app/src/cycles_view.rs`, `Navigation`):
+
+- **A smaller picture while the camera moves.** Cycles is asked for the view's size divided by a factor chosen from how long moving pictures take, aiming at 33 ms each, never so coarse that the long side falls under 480 pixels; still for 150 ms, the view asks for its full size again. Coarser bought nothing: below that, a picture's time is Cycles' fixed cost of a restart and of launching a sample's kernels (100x56 pixels took the same 42 ms as 362x203), and Cycles divides further on its own as it settles.
+- **The next picture looked for every 3 ms while one is due**, not 15, so the thrown-away sample is cancelled within microseconds rather than tens of milliseconds.
+- **Denoised from the first full-size picture once the camera stops**, rather than from eight samples; its guides are cleaned below four (`tequila_denoise::prefilter_guides`).
+
+Orbiting went from 9.2 to 22 pictures a second on the Headphones sample and from 10.8 to 19.5 on the 1.07-million-triangle STEP model, and the first clean picture after stopping from about 1.4 s to about 0.6 s. Still to do, in the Cycles bridge (each needs the library rebuilt): every camera move sets off a full scene sync with the lights and light tree built again; the guides and object id are read back for moving pictures that use neither; and Cycles renders two samples for a moving picture it divides by two. Hardware ray tracing (MetalRT) is already on: forced off, orbiting fell to 5.5 pictures a second.
+
 ### 9.3 Dirty-state taxonomy — what invalidates what
 
 This table is the heart of feeling fast. Naively restarting accumulation on every change makes the app feel worse than KeyShot regardless of raw ray throughput.
