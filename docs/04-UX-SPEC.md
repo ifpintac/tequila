@@ -197,6 +197,8 @@ The current selection level is shown in the status bar. Selection is synchronize
 
 Standard tree conventions: expand/collapse, `Shift` range-select, drag-to-reparent (with a clear insertion indicator), rename in place (`F2`), and a search box that filters live and highlights matches while keeping ancestors visible. Per-row: visibility eye, lock, material swatch (drag from here to reassign). Right-click: Isolate, Hide Others, Group (`Ctrl+G`), Ungroup, Create Model Set from Selection, Select Similar, Delete.
 
+The toolbar's Add menu adds a shape, a light or a cutaway. **Add › Shape** is a plane, cube, cylinder, sphere, disc or backdrop (a floor sweeping up into a wall), each a part with a plastic material of its own, selected once added, for staging a product or standing in for a missing part (`crates/tequila-scene/src/shapes.rs`). A shape comes in at half the scene's size, beside it on the same floor. A backdrop is 4.5 times the scene's size, the floor under the product and well out in front, the wall a little behind it and three times as wide as it is deep, so a three-quarter view has wall behind the product to the frame's edges. An empty scene gets a 20 cm shape at the origin. Shapes are lifted a thousandth of the scene's size off the floor, so a flat one doesn't fight the ground plane for pixels. They are added at the root, since they are placed in the scene's own coordinates.
+
 ---
 
 ## 5. Transform gizmo and pivots

@@ -161,7 +161,16 @@ impl SceneTab {
             // place in the hierarchy, and a row here like everything else.
             let mut add_light = None;
             let mut add_cutaway = None;
+            let mut add_shape = None;
             ui.menu_button("Add", |ui| {
+            ui.menu_button("Shape", |ui| {
+                for shape in tequila_scene::shapes::Shape::ALL {
+                    if ui.button(shape.label()).clicked() {
+                        add_shape = Some(shape);
+                        ui.close_menu();
+                    }
+                }
+            });
             ui.menu_button("Light", |ui| {
                 // Under the selected group when one is selected, so a light
                 // added while a subassembly is open lands inside it rather
@@ -190,7 +199,10 @@ impl SceneTab {
             });
             })
             .response
-            .on_hover_text("Add a light or a cutaway to the scene");
+            .on_hover_text("Add a shape, a light or a cutaway to the scene");
+            if let Some(shape) = add_shape {
+                add_shape_to(project, shape);
+            }
             if let Some(command) = add_light {
                 let _ = project.apply(command);
             }
@@ -1094,6 +1106,30 @@ mod tests {
         assert!(fresh.layer_rows.is_empty(), "a scene without layers has no list");
     }
 
+    /// Add › Shape adds a part with a material of its own beside the
+    /// product, selects it, and one undo takes it away again.
+    #[test]
+    fn an_added_shape_is_selected_and_undone_in_one_step() {
+        let mut h = Harness::new();
+        let before = h.project.document().tree.iter().count();
+        let materials = h.project.document().materials.len();
+        add_shape_to(&mut h.project, tequila_scene::shapes::Shape::Sphere);
+        let document = h.project.document();
+        assert_eq!(document.tree.iter().count(), before + 1, "one part added");
+        let added = h.project.selection.nodes().collect::<Vec<NodeId>>();
+        assert_eq!(added.len(), 1, "and selected");
+        let node = document.tree.get(added[0]).expect("in the tree");
+        assert_eq!(node.name, "Sphere");
+        assert_eq!(node.parent, None, "at the root");
+        assert_eq!(document.materials.len(), materials + 1, "with a material of its own");
+        h.frame(Vec::new());
+        assert!(h.tab.rows.iter().any(|(n, _)| *n == added[0]), "and a row in the tree");
+
+        h.project.undo();
+        assert_eq!(h.project.document().tree.iter().count(), before, "one undo takes it away");
+        assert_eq!(h.project.document().materials.len(), materials, "material and all");
+    }
+
     /// The eye on a row hides the part, without selecting it.
     #[test]
     fn the_eye_hides_without_selecting() {
@@ -1114,5 +1150,21 @@ mod tests {
         h.frame(Vec::new());
         assert!(!h.project.document().tree.get(part).unwrap().visible, "hidden");
         assert!(!h.project.selection.contains(part), "and not selected by the click");
+    }
+}
+
+/// Add › Shape: a plane, cube, sphere, backdrop... at the root, beside or
+/// behind what is in the scene, with a material of its own, and selected so
+/// it can be moved or given a material at once. At the root because it is
+/// placed in the scene's own coordinates, which a group's transform would
+/// shift.
+pub(crate) fn add_shape_to(project: &mut Project, shape: tequila_scene::shapes::Shape) {
+    let (payload, id) = tequila_scene::shapes::add(project.document(), shape, None);
+    match project.apply(Command::Import { payload: Box::new(payload) }) {
+        Ok(()) => {
+            project.selection.select_many([id], SelectionMode::Replace);
+            project.status = format!("Added a {}", shape.label().to_lowercase());
+        }
+        Err(error) => project.status = format!("Could not add the {}: {error}", shape.label().to_lowercase()),
     }
 }

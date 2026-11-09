@@ -42,6 +42,7 @@ pub mod refine;
 pub mod reimport;
 pub mod render;
 pub mod selection;
+pub mod shapes;
 pub mod snapshot;
 pub mod split;
 pub mod studio;
