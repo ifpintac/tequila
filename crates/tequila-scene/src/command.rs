@@ -1447,6 +1447,12 @@ impl Command {
             (Command::SetRenderSettings { .. }, Command::SetRenderSettings { .. }) => true,
             (Command::SetCamera { index: a, .. }, Command::SetCamera { index: b, .. }) => a == b,
             (Command::SetLight { node: a, .. }, Command::SetLight { node: b, .. }) => a == b,
+            // A texture dragged across the part in the viewport, one per
+            // frame: one step to undo.
+            (
+                Command::SetTextureMapping { material: a, param: pa, .. },
+                Command::SetTextureMapping { material: b, param: pb, .. },
+            ) => a == b && pa == pb,
             (Command::SetCutaway { node: a, .. }, Command::SetCutaway { node: b, .. }) => a == b,
             // A drag issues one of these per frame; they merge into a single
             // undo step only while the *same* parts are being moved. Merging

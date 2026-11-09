@@ -385,65 +385,145 @@ fn scale_factors(mapping: &Mapping) -> (f32, f32) {
     }
 }
 
-/// The artwork's border, in the part's object space, as a closed polyline.
-///
-/// This is the projection run backwards: the four edges of the artwork are
-/// walked in texture space and each sample is carried back through the offset,
-/// the rotation and the scale to a point on the part. Drawn in the viewport it
-/// is the frame that says where the label is, how big it is and which way up.
-///
-/// A polyline rather than four corners, because a wrapped label's edges are
-/// arcs. `segments` is how many samples each edge gets; four corners is the
-/// degenerate case and looks like a rectangle cutting through the bottle.
-///
-/// `None` for UV placement, which has no frame in space to draw — the artwork
-/// is wherever the mesh's coordinates put it, which can be several disjoint
-/// patches — and for tri-planar, which has three frames rather than one.
-///
-/// `viewer`, in object space, decides which side of the part a flat frame is
-/// drawn on. Given one, the frame sits on the face turned towards it rather
-/// than on the plane through the middle of the part — where it is half buried
-/// in the geometry and reads as unrelated to the artwork on the surface.
+/// Where texture coordinates `(u, v)` lie on `mapping`'s projection around a
+/// part with object-space `bounds`, in object space: on the projector's
+/// plane for a flat projection (at the near face, as seen from `viewer`),
+/// on its cylinder for a wrapped one, on its sphere for a spherical one,
+/// and on the face turned toward the viewer for one from three sides. What
+/// the viewport draws a texture's frame and handles with. `None` for a UV
+/// mapping, which has no shape in space.
+pub fn frame_point(mapping: &Mapping, bounds: Aabb, viewer: Option<Vec3>, u: f32, v: f32) -> Option<Vec3> {
+    let shape = Frame::of(mapping, bounds, viewer)?;
+    let (a, b) = unfinish(mapping, u, v);
+    let p = shape.point(a, b);
+    p.is_finite().then_some(p)
+}
+
+/// The texture coordinates where `mapping`'s projection faces `viewer`
+/// through the part: the part's middle on a flat projection (and on the
+/// face toward the viewer from three sides), and the side of a cylinder or
+/// sphere turned toward the viewer. Where the viewport anchors a texture's
+/// handles, so they are on the part in view however big the repeat is.
+pub fn facing_coords(mapping: &Mapping, bounds: Aabb, viewer: Vec3) -> Option<(f32, f32)> {
+    let shape = Frame::of(mapping, bounds, Some(viewer))?;
+    let centre = (bounds.min + bounds.max) * 0.5;
+    let (a, b) = match shape.projection {
+        Projection::Planar => shape.axis.across(centre),
+        // Round the axis through the part's origin, toward the viewer, at
+        // the part's middle along it.
+        Projection::Cylindrical => {
+            let (x, y) = shape.axis.across(viewer);
+            (y.atan2(x) / std::f32::consts::TAU + 0.5, shape.axis.of(centre))
+        }
+        _ => {
+            let d = viewer.try_normalize()?;
+            (d.z.atan2(d.x) / std::f32::consts::TAU + 0.5, d.y.clamp(-1.0, 1.0).acos() / std::f32::consts::PI)
+        }
+    };
+    let (u, v) = mapping.apply_to(a, b);
+    (u.is_finite() && v.is_finite()).then_some((u, v))
+}
+
+/// The shape a projection's frame points are on, measured from the part.
+struct Frame {
+    projection: Projection,
+    axis: Axis,
+    depth: f32,
+    radius: f32,
+}
+
+impl Frame {
+    fn of(mapping: &Mapping, bounds: Aabb, viewer: Option<Vec3>) -> Option<Frame> {
+        let extent = bounds.max - bounds.min;
+        if !extent.x.is_finite() || !extent.y.is_finite() || !extent.z.is_finite() {
+            return None;
+        }
+        let centre = (bounds.min + bounds.max) * 0.5;
+        let (projection, axis) = match mapping.projection {
+            Projection::Uv => return None,
+            // Three flat projections; the frame on the one facing the viewer.
+            Projection::TriPlanar => (Projection::Planar, viewer.map_or(Axis::Y, |v| axis_facing(v - centre))),
+            other => (other, mapping.axis),
+        };
+        // Where along the third dimension the frame is drawn. For a flat
+        // projection that is a depth — the middle of the part, so the frame
+        // reads as sitting in it rather than floating beside it — and for a
+        // wrapped one it is a radius.
+        let (eu, ev) = axis.across(extent);
+        let radius = match projection {
+            // Round the projection's own centre, the part's origin: far
+            // enough out to hold the whole part.
+            Projection::Spherical => [bounds.min, bounds.max]
+                .iter()
+                .flat_map(|a| [bounds.min, bounds.max].map(move |b| (*a, b)))
+                .flat_map(|(a, b)| [vec3(a.x, a.y, b.z), vec3(a.x, b.y, a.z), vec3(b.x, a.y, a.z), vec3(a.x, a.y, a.z)])
+                .map(|p| p.length())
+                .fold(0.0f32, f32::max)
+                .max(1e-4),
+            _ => ((eu + ev) * 0.25).max(1e-4),
+        };
+        let depth = match viewer {
+            // The near face, plus a hair of clearance so the frame is not
+            // coplanar with the surface it describes.
+            Some(viewer) => {
+                let (near, far) = (axis.of(bounds.min), axis.of(bounds.max));
+                let clearance = axis.of(extent).abs().max(1e-3) * 0.01;
+                if axis.of(viewer) >= axis.of(centre) {
+                    far + clearance
+                } else {
+                    near - clearance
+                }
+            }
+            None => axis.of(centre),
+        };
+        Some(Frame { projection, axis, depth, radius })
+    }
+
+    /// The point for projected coordinates `(a, b)`: what `raw_coords`
+    /// produces, going the other way.
+    fn point(&self, a: f32, b: f32) -> Vec3 {
+        match self.projection {
+            Projection::Planar => self.axis.compose(a, b, self.depth),
+            // `a` the normalized angle and `b` the distance along the axis.
+            Projection::Cylindrical => {
+                let angle = (a - 0.5) * std::f32::consts::TAU;
+                let (sin, cos) = angle.sin_cos();
+                self.axis.compose(self.radius * cos, self.radius * sin, b)
+            }
+            // `a` the longitude, `b` from the top pole down.
+            _ => {
+                let (phi, theta) = ((a - 0.5) * std::f32::consts::TAU, b * std::f32::consts::PI);
+                vec3(theta.sin() * phi.cos(), theta.cos(), theta.sin() * phi.sin()) * self.radius
+            }
+        }
+    }
+}
+
+/// A label's artwork outlined on the part, in object space: `segments`
+/// points along each edge. Only a flat or a wrapped projection has one
+/// place for a piece of artwork; `None` for the rest.
 pub fn outline(
     mapping: &Mapping,
     bounds: Aabb,
     viewer: Option<Vec3>,
     segments: usize,
 ) -> Option<Vec<Vec3>> {
-    if !matches!(
-        mapping.projection,
-        Projection::Planar | Projection::Cylindrical
-    ) {
+    if !matches!(mapping.projection, Projection::Planar | Projection::Cylindrical) {
         return None;
     }
-    let extent = bounds.max - bounds.min;
-    if !extent.x.is_finite() || !extent.y.is_finite() || !extent.z.is_finite() {
-        return None;
-    }
+    tile_outline(mapping, bounds, viewer, segments)
+}
 
-    let axis = mapping.axis;
-    let centre = (bounds.min + bounds.max) * 0.5;
-    // Where along the third dimension the frame is drawn. For a flat
-    // projection that is a depth — the middle of the part, so the frame reads
-    // as sitting in it rather than floating beside it — and for a wrapped one
-    // it is a radius.
-    let (eu, ev) = axis.across(extent);
-    let radius = ((eu + ev) * 0.25).max(1e-4);
-    let depth = match viewer {
-        // The near face, plus a hair of clearance so the frame is not coplanar
-        // with the surface it describes.
-        Some(viewer) => {
-            let (near, far) = (axis.of(bounds.min), axis.of(bounds.max));
-            let clearance = axis.of(extent).abs().max(1e-3) * 0.01;
-            if axis.of(viewer) >= axis.of(centre) {
-                far + clearance
-            } else {
-                near - clearance
-            }
-        }
-        None => axis.of(centre),
-    };
-
+/// One repeat of a texture outlined on its projection, in object space,
+/// for any projection with a shape in space - on the face toward the
+/// viewer, for one from three sides. `None` for a UV mapping.
+pub fn tile_outline(
+    mapping: &Mapping,
+    bounds: Aabb,
+    viewer: Option<Vec3>,
+    segments: usize,
+) -> Option<Vec<Vec3>> {
+    let shape = Frame::of(mapping, bounds, viewer)?;
     let segments = segments.max(1);
     let mut points = Vec::with_capacity(segments * 4);
     for (u0, v0, u1, v1) in [
@@ -456,20 +536,57 @@ pub fn outline(
             let t = step as f32 / segments as f32;
             let (u, v) = (u0 + (u1 - u0) * t, v0 + (v1 - v0) * t);
             let (a, b) = unfinish(mapping, u, v);
-            points.push(match mapping.projection {
-                Projection::Planar => axis.compose(a, b, depth),
-                // `a` came back as the normalized angle and `b` as the
-                // distance along the axis, which is what `raw_coords` produced
-                // going the other way.
-                _ => {
-                    let angle = (a - 0.5) * std::f32::consts::TAU;
-                    let (sin, cos) = angle.sin_cos();
-                    axis.compose(radius * cos, radius * sin, b)
-                }
-            });
+            points.push(shape.point(a, b));
         }
     }
     points.iter().all(|p| p.is_finite()).then_some(points)
+}
+
+/// The projection itself, as lines in object space: the projector's plane
+/// across the part for a flat one, its cylinder (two rings, upright lines
+/// and the seam first) for a wrapped one, its sphere (equator, two
+/// meridians and the seam first) for a spherical one, and the part's box
+/// for one from three sides. What shows how a texture is laid on.
+pub fn projection_lines(mapping: &Mapping, bounds: Aabb, viewer: Option<Vec3>) -> Vec<Vec<Vec3>> {
+    let Some(shape) = Frame::of(mapping, bounds, viewer) else { return Vec::new() };
+    let ring = |points: usize, at: &dyn Fn(f32) -> Vec3| -> Vec<Vec3> { (0..=points).map(|i| at(i as f32 / points as f32)).collect() };
+    let axis = shape.axis;
+    match mapping.projection {
+        Projection::Planar => {
+            let pad = 0.05;
+            let (lo, hi) = (axis.across(bounds.min), axis.across(bounds.max));
+            let (ea, eb) = ((hi.0 - lo.0) * pad, (hi.1 - lo.1) * pad);
+            let (a0, a1, b0, b1) = (lo.0 - ea, hi.0 + ea, lo.1 - eb, hi.1 + eb);
+            vec![[(a0, b0), (a1, b0), (a1, b1), (a0, b1), (a0, b0)].iter().map(|&(a, b)| axis.compose(a, b, shape.depth)).collect()]
+        }
+        Projection::Cylindrical => {
+            let (low, high) = (axis.of(bounds.min), axis.of(bounds.max));
+            // The seam, where the wrap begins and ends, first.
+            let mut lines = vec![vec![shape.point(0.0, low), shape.point(0.0, high)]];
+            for h in [low, high] {
+                lines.push(ring(48, &|t| shape.point(t, h)));
+            }
+            for k in 1..8 {
+                let a = k as f32 / 8.0;
+                lines.push(vec![shape.point(a, low), shape.point(a, high)]);
+            }
+            lines
+        }
+        Projection::Spherical => {
+            let mut lines = vec![ring(32, &|t| shape.point(0.0, t))];
+            lines.push(ring(48, &|t| shape.point(t, 0.5)));
+            for a in [0.25, 0.5, 0.75] {
+                lines.push(ring(32, &|t| shape.point(a, t)));
+            }
+            lines
+        }
+        Projection::TriPlanar => {
+            let (n, x) = (bounds.min, bounds.max);
+            let c = [vec3(n.x, n.y, n.z), vec3(x.x, n.y, n.z), vec3(x.x, x.y, n.z), vec3(n.x, x.y, n.z), vec3(n.x, n.y, x.z), vec3(x.x, n.y, x.z), vec3(x.x, x.y, x.z), vec3(n.x, x.y, x.z)];
+            [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)].iter().map(|&(i, j)| vec![c[i], c[j]]).collect()
+        }
+        Projection::Uv => Vec::new(),
+    }
 }
 
 /// Undo [`Mapping`]'s scale, rotation, offset and flips, returning the
@@ -486,6 +603,21 @@ fn unfinish(mapping: &Mapping, u: f32, v: f32) -> (f32, f32) {
 mod tests {
     use super::*;
     use tequila_texture::projection::SurfacePoint;
+
+    fn point_at(position: tequila_core::math::Vec3) -> SurfacePoint {
+        SurfacePoint {
+            position,
+            normal: tequila_core::math::Vec3::Y,
+            uv: vec2(0.0, 0.0),
+            footprint: 0.0,
+            scale: 1.0,
+            uv_footprint: None,
+            curvature: 0.0,
+            occlusion: 0.0,
+            vertex_color: tequila_core::spectrum::Spectrum::ONE,
+            world: Default::default(),
+        }
+    }
 
     fn coords(mapping: &Mapping, position: tequila_core::math::Vec3) -> (f32, f32) {
         let contributions = mapping.project(&SurfacePoint {
@@ -916,6 +1048,45 @@ mod tests {
             }
             }
         }
+    }
+
+    /// A texture's frame point projects back to the coordinates it was
+    /// made for, on every projection with a shape - flat, wrapped,
+    /// spherical, and from three sides on the face toward the viewer -
+    /// whatever its scale, turn and offset.
+    #[test]
+    fn a_frame_point_projects_back_to_its_coordinates() {
+        let bounds = Aabb { min: vec3(-0.4, 0.0, -0.3), max: vec3(0.5, 1.2, 0.2) };
+        let viewer = vec3(0.3, 0.6, 5.0);
+        for projection in [Projection::Planar, Projection::Cylindrical, Projection::Spherical, Projection::TriPlanar] {
+            let mapping = Mapping {
+                projection,
+                axis: Axis::Y,
+                scale: vec3(2.5, 1.5, 1.0),
+                rotation: 0.1,
+                offset: vec2(0.3, -0.2),
+                ..Default::default()
+            };
+            for (u, v) in [(0.5, 0.5), (0.2, 0.7), (0.9, 0.1)] {
+                let p = frame_point(&mapping, bounds, Some(viewer), u, v).unwrap_or_else(|| panic!("{projection:?} has a frame"));
+                // The face toward the viewer here is +Z: from three sides,
+                // the flat projection down Z.
+                let reading = if projection == Projection::TriPlanar { Mapping { projection: Projection::Planar, axis: Axis::Z, ..mapping } } else { mapping };
+                // Compared in the projection's own coordinates, where a wrap's
+                // angle a whole turn round is the same place.
+                let want = mapping.unapply(u, v);
+                let got = reading.raw_coords(&SurfacePoint { position: p, ..point_at(p) }).unwrap();
+                let wraps = matches!(projection, Projection::Cylindrical | Projection::Spherical);
+                let da = if wraps { (got.0 - want.0) - (got.0 - want.0).round() } else { got.0 - want.0 };
+                if projection == Projection::Spherical && !(0.0..=1.0).contains(&want.1) {
+                    continue; // past a pole: no point on the sphere
+                }
+                assert!(da.abs() < 1e-3 && (got.1 - want.1).abs() < 1e-3, "{projection:?} ({u}, {v}): {got:?}, not {want:?}");
+            }
+            assert!(!projection_lines(&mapping, bounds, Some(viewer)).is_empty(), "{projection:?} draws its shape");
+            assert!(tile_outline(&mapping, bounds, Some(viewer), 4).is_some());
+        }
+        assert!(frame_point(&Mapping::default(), bounds, Some(viewer), 0.5, 0.5).is_none(), "UV has no shape in space");
     }
 
     /// A frame is drawn only where there is one frame to draw.

@@ -30,6 +30,7 @@ mod camera_tab;
 mod environment_tab;
 mod gizmo_ui;
 mod label_gizmo;
+mod mapping_gizmo;
 mod graph_editor;
 mod view_mode;
 mod grid;
@@ -469,6 +470,7 @@ struct TequilaApp {
     screenshot_requested: bool,
     gizmo: gizmo_ui::GizmoUi,
     label_gizmo: label_gizmo::LabelGizmo,
+    mapping_gizmo: mapping_gizmo::MappingGizmo,
     pin_gizmo: pin_gizmo::PinGizmo,
     measure: measure_tool::MeasureTool,
     studio_tab: studio_tab::StudioTab,
@@ -1038,6 +1040,7 @@ impl TequilaApp {
             screenshot_requested: false,
             gizmo: gizmo_ui::GizmoUi::default(),
             label_gizmo: label_gizmo::LabelGizmo::default(),
+            mapping_gizmo: mapping_gizmo::MappingGizmo::default(),
             pin_gizmo: pin_gizmo::PinGizmo::default(),
             measure: measure_tool::MeasureTool::default(),
             studio_tab: studio_tab::StudioTab::default(),
@@ -1990,9 +1993,12 @@ impl TequilaApp {
             &response,
         );
         self.label_gizmo = label_gizmo;
+        let mut mapping_gizmo = std::mem::take(&mut self.mapping_gizmo);
+        let placing_mapping = mapping_gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &self.orchestrator, &response);
+        self.mapping_gizmo = mapping_gizmo;
 
         let mut gizmo = std::mem::take(&mut self.gizmo);
-        let taken = placing_label || aiming_pin || measuring;
+        let taken = placing_label || placing_mapping || aiming_pin || measuring;
         let over_gizmo = taken
             || gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &response);
         let gizmo_dragging = taken || gizmo.is_dragging();
@@ -2061,7 +2067,7 @@ impl TequilaApp {
 
         // A trackpad's swipes and pinches (`orbit::Gestures`): a MacBook's
         // only way to pan and zoom.
-        let gestures = if !dropping && response.hovered() && !self.label_gizmo.takes_scroll(modifiers) {
+        let gestures = if !dropping && response.hovered() && !self.label_gizmo.takes_scroll(modifiers) && !self.mapping_gizmo.takes_scroll(modifiers) {
             ui.input(|i| orbit::Gestures::read(&i.events))
         } else {
             orbit::Gestures::default()
@@ -2085,7 +2091,7 @@ impl TequilaApp {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             // A label being placed takes Ctrl and Shift + scroll for its
             // size and turn.
-            if scroll != 0.0 && !self.label_gizmo.takes_scroll(modifiers) {
+            if scroll != 0.0 && !self.label_gizmo.takes_scroll(modifiers) && !self.mapping_gizmo.takes_scroll(modifiers) {
                 // Alt + scroll changes focal length rather than distance —
                 // the binding from §1.7.
                 if modifiers.alt {
@@ -2257,6 +2263,7 @@ impl TequilaApp {
             self.measure.draw(ui, rect, &self.camera.camera, &self.project);
             self.gizmo.draw(ui, rect, &self.camera.camera);
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
+            self.mapping_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
             // What the UV editor points at, lit on the part; what the part
             // itself or another part hides found again only when that or
@@ -5947,6 +5954,7 @@ impl TequilaApp {
                         .label_gizmo
                         .armed()
                         .map(|target| (target.material, target.index));
+                    tab.placing_mapping = self.mapping_gizmo.armed().map(|t| (t.material, t.param));
                     tab.substance = std::mem::take(&mut self.substance);
                     tab.show(ui, &mut self.project);
                     self.substance = std::mem::take(&mut tab.substance);
@@ -5958,8 +5966,13 @@ impl TequilaApp {
                         self.graph_editor.open_for(material);
                     }
                     if let Some((material, index)) = tab.place_label_request.take() {
+                        self.mapping_gizmo.disarm();
                         self.label_gizmo
                             .toggle(label_gizmo::Target { material, index });
+                    }
+                    if let Some((material, param)) = tab.place_mapping_request.take() {
+                        self.label_gizmo.disarm();
+                        self.mapping_gizmo.toggle(mapping_gizmo::Target { material, param });
                     }
                     if let Some(message) = tab.take_saved() {
                         // The browser re-reads so the new entry is on the
