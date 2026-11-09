@@ -23,6 +23,7 @@ pub mod decal_fit;
 pub mod demo;
 pub mod displacement;
 pub mod document;
+pub mod duplicate;
 pub mod environment;
 pub mod geometry;
 pub mod gizmo;
