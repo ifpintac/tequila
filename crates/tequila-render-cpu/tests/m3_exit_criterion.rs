@@ -35,6 +35,15 @@ use std::sync::Arc;
 
 const SIZE: usize = 96;
 
+/// The tests here one at a time. The re-develop test times a pass, which it
+/// could not do fairly while the others path traced beside it on a
+/// three-core runner.
+static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn alone() -> std::sync::MutexGuard<'static, ()> {
+    ALONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// A product: a smooth sphere, the shape that shows a lighting environment most
 /// completely because every direction in the upper hemisphere appears somewhere
 /// on it.
@@ -145,6 +154,7 @@ fn render_scene(scene: SceneSnapshot, samples: u32) -> Framebuffer {
 
 #[test]
 fn a_product_lit_only_by_an_hdri_holds_its_highlights_and_its_shadows() {
+    let _alone = alone();
     use tequila_color::{DisplayTransform, ImageStyle};
 
     // Without the catcher, so a fully opaque pixel is the product and nothing
@@ -255,6 +265,7 @@ fn a_product_lit_only_by_an_hdri_holds_its_highlights_and_its_shadows() {
 /// The ground is what puts the product in the room rather than above it.
 #[test]
 fn the_product_casts_a_contact_shadow_onto_the_ground() {
+    let _alone = alone();
     let image = render(192);
 
     let mut partial = 0usize;
@@ -276,6 +287,7 @@ fn the_product_casts_a_contact_shadow_onto_the_ground() {
 /// Noise is the other giveaway, and it has to be falling.
 #[test]
 fn the_image_converges() {
+    let _alone = alone();
     let coarse = render(32);
     let fine = render(256);
 
@@ -338,8 +350,15 @@ fn the_image_converges() {
 /// - `exp2` of the exposure evaluated per pixel rather than once.
 ///
 /// The absolute number is printed, so it is visible when it matters.
+///
+/// On GitHub's Mac runners, three cores in a virtual machine, the bare pass
+/// once took 87.7 ms against its 60 ms ceiling while the other tests here
+/// path traced beside it (November 9; 1.7 to 2 ms on an M3 Max). So the
+/// tests here run one at a time (`alone`), and the measurement is tried
+/// three times before it fails. The bounds stay.
 #[test]
 fn re_developing_a_1080p_frame_is_fast_enough_to_drag_a_slider() {
+    let _alone = alone();
     use tequila_color::{DisplayPipeline, DisplayTransform, ImageStyle};
 
     let (width, height) = (1920usize, 1080usize);
@@ -373,19 +392,8 @@ fn re_developing_a_1080p_frame_is_fast_enough_to_drag_a_slider() {
         best
     };
 
-    // Raw is the floor: the same read, the same write, the same parallel
-    // structure, and no tone curve at all.
-    let floor = best(DisplayTransform::Raw);
-    // AgX is the default and the most expensive of the five.
-    let agx = best(DisplayTransform::AgX);
-
-    println!(
-        "1080p re-develop: {:.1} ms with AgX, {:.1} ms with no tone curve \
-         (60 fps is 16.6 ms)",
-        agx * 1000.0,
-        floor * 1000.0
-    );
-
+    // Tried again before failing: a regression fails every try, a moment
+    // the runner gave to something else does not come three times.
     // Six times was measured on x86. Apple silicon's memory runs the bare
     // pass at a fraction of that cost - 1.7 to 2 ms against AgX's 14 on an
     // M3 Max - so the same AgX is seven to eight times it there (6.9 to 11.3
@@ -393,20 +401,31 @@ fn re_developing_a_1080p_frame_is_fast_enough_to_drag_a_slider() {
     // code unchanged), and the test failed on every Mac with nothing wrong.
     // Fourteen still catches a serial pass, at twenty-four.
     let limit = if cfg!(target_arch = "aarch64") { 14.0 } else { 6.0 };
-    assert!(
-        agx < floor * limit,
-        "the AgX pass costs {:.1} ms against {:.1} ms for the same pass with no \
-         tone curve, which is far more than tone mapping should add",
-        agx * 1000.0,
-        floor * 1000.0
-    );
-    // And an absurd-value ceiling, generous enough to survive any plausible
-    // machine and tight enough to catch a pass that has stopped being parallel
-    // at all.
-    assert!(
-        floor < 0.060,
-        "the bare pass over 1080p took {:.1} ms, which is not a pass that can \
-         run once a frame on any machine",
-        floor * 1000.0
+    let mut tries = Vec::new();
+    for _ in 0..3 {
+        // Raw is the floor: the same read, the same write, the same parallel
+        // structure, and no tone curve at all.
+        let floor = best(DisplayTransform::Raw);
+        // AgX is the default and the most expensive of the five.
+        let agx = best(DisplayTransform::AgX);
+        println!(
+            "1080p re-develop: {:.1} ms with AgX, {:.1} ms with no tone curve \
+             (60 fps is 16.6 ms)",
+            agx * 1000.0,
+            floor * 1000.0
+        );
+        // The ratio, and an absurd-value ceiling, generous enough to survive
+        // any plausible machine and tight enough to catch a pass that has
+        // stopped being parallel at all.
+        if agx < floor * limit && floor < 0.060 {
+            return;
+        }
+        tries.push(format!("AgX {:.1} ms against {:.1} ms with no tone curve", agx * 1000.0, floor * 1000.0));
+    }
+    panic!(
+        "in three tries the re-develop was too slow: {}. AgX should cost under {limit} times the \
+         pass with no tone curve, and that pass under 60 ms over 1080p, or it is not a pass that \
+         can run once a frame on any machine",
+        tries.join("; ")
     );
 }
