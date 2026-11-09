@@ -674,7 +674,7 @@ The main image also has **Silhouette**, a cut along the product's outline, as a 
 
 *As built, November 9: what a long session kept.* Measured by driving the application through the scripting channel (`TEQUILA_PROFILE` and `footprint`, an M-series Mac with 48 GB): a STEP model of 446 parts and 1.13 million triangles, the 24 largest wearing eight 4K colour maps and eight 4K roughness maps, through Solid, Material Preview and Rendered (Cycles on Metal), then deleted and imported again. Three things held memory long after they were used:
 
-- **The Cycles view**, kept paused when the viewport left Rendered, with everything it had on the graphics card: Cycles 5.0's path states (on a Mac four million of them, eight where memory allows: about 9 GB here, some 4.5 GB on a 16 GB Mac, whatever the scene), the scene, the textures and the film. Tequila stayed at 17.4 GB in Solid, and did with the model deleted. The view is now let go 10 seconds after the viewport stops showing it (`CYCLES_KEPT`, `orchestrator.rs`), with the floor reflection laid over its frames and the graphics card's denoiser's buffers and working memory (`GpuDenoiser::release`). A look at Solid and back within the 10 seconds keeps the view; coming back later starts Cycles again, its kernels cached and the scene sent again (2 to 3 seconds for this model).
+- **The Cycles view**, kept paused when the viewport left Rendered, with everything it had on the graphics card: Cycles 5.0's path states (on a Mac four million of them, eight where memory allows, whatever the scene: 3 to 4 GB of what the view held, as measured below), the scene, the textures and the film. Tequila stayed at 17.4 GB in Solid, and did with the model deleted. The view is now let go 10 seconds after the viewport stops showing it (`CYCLES_KEPT`, `orchestrator.rs`), with the floor reflection laid over its frames and the graphics card's denoiser's buffers and working memory (`GpuDenoiser::release`). A look at Solid and back within the 10 seconds keeps the view; coming back later starts Cycles again, its kernels cached and the scene sent again (2 to 3 seconds for this model).
 - **Decoded pictures**, kept by the snapshot's cache for as long as Tequila ran, whether a material still used them or not: each import of the model and its maps added 2.4 GB that never came back (7.1 GB with the scene empty after the first, 9.5 GB after the second). Now only what the scene's materials ask for is kept, as meshes already were (`MeshCache::keep_textures`), and an undone delete reads its pictures again. Test: `a_picture_no_material_asks_for_is_let_go`.
 - **An opaque alpha channel**, kept with every 8-bit picture, which is decoded to four channels: a quarter of each picture as floats with its mipmaps, 357 MB for a 4K map, now 268 MB (`Image::without_opaque_alpha`, test `an_opaque_alpha_is_dropped_and_a_real_one_kept`). A picture with any pixel less than opaque keeps it; Cycles' copy of an opaque one is a quarter smaller too.
 
@@ -690,7 +690,44 @@ A 4K colour map's pyramid is 67 MB, a 4K roughness map's 28 MB; the session's si
 
 What renders show, before and after, at a fixed seed (128 samples, 640 x 480, the starting ball wearing a brick pack on its UVs; the same pictures twice from one build differ in no pixel on the processor and in 1 to 5 by one level on Metal): with 4K 8-bit colour, roughness and height maps, Cycles on the processor is the same to the pixel and on Metal within its own run-to-run difference, since Cycles is sent the full-size level and that is exact; Tequila's renderer, which reads the mip levels, differs in 6.9% of pixels, by one level of 255 in all but 182 and by 8 at most, where a path took another turn on a texel one rounding step away. Averaged over 4 x 4 squares no difference reaches half a level, and the picture's mean moves by 0.002 of a level: the noise is reshuffled, the picture is not changed. With 32-bit float colour and roughness EXRs and an 8-bit normal map, both engines see the half floats: 1.0 to 1.5% of pixels differ, by 5 levels at most and less than 0.4 over a 4 x 4 square. The self-test's pictures (`--self-test --cpu-only`) are the same to the pixel.
 
-Not done: while the Rendered view shows Cycles on a Mac, its path states take the gigabytes above, which Cycles after 5.0 grows and shrinks to what a scene needs. Cycles keeps its own copy of each picture, as bytes or floats in three or four channels, a grey map's included. And a picture is still decoded to floats before its pyramid is built: about 0.6 GB passes through for a 4K colour map with alpha, which macOS's allocator keeps for the next.
+Not done: Cycles keeps its own copy of each picture, as bytes or floats in three or four channels, a grey map's included. And a picture is still decoded to floats before its pyramid is built: about 0.6 GB passes through for a 4K colour map with alpha, which macOS's allocator keeps for the next.
+
+*As built, November 9, later: what the Rendered view holds.* Measured the same way on two of Tequila's own samples, the Headphones and the palma P8, in a 1440 by 900 window (Cycles' picture 1528 by 858), on an M3 Max with a 40-core graphics card and 48 GB: entering the Rendered view added 9.3 GB and 11.0 GB to Tequila's footprint (`proc_pid_rusage`, once Cycles had 256 samples). The path states were a third of it. One is a third of a kilobyte for the Headphones and half a kilobyte for the palma (Cycles' own log of what it allocates, `TEQUILA_CYCLES_LOG=debug`: 354 MB for 1,048,576), not the kilobyte and more assumed above, so Cycles' eight million came to 2.9 and 4.2 GB. Turning one thing off at a time, the Headphones' 9.3 GB were:
+
+- **The path states**, 2.9 GB.
+- **The viewport's denoiser** (Open Image Denoise on the graphics card), about 2.7 GB, which stays after the Cycles view is let go: `GpuDenoiser::release` returns its buffers, not its filters' working memory.
+- **Cycles' kernels and the rest of its device memory**, about 2 GB, most of it let go with the view. The compiled kernels stay for the process, which is what makes coming back to Rendered quick.
+- **The window's surfaces and the frames' copies**, about 1.5 GB, more while the window is on screen.
+
+The path states are now fewer for a live view, and each session's own, through a patch the build script applies to Cycles on a Mac (`native/cycles/session-states.patch`, used by `limit_live_states` in `tequila_cycles.cpp`):
+
+- **A number for each of the graphics card's cores**: 131,072, so 5,242,880 on this M3 Max and 1,310,720 on a 10-core Mac mini, where Cycles gives every card four million, eight where memory allows. Fewer cost speed: each step of Cycles' loop runs one kernel and then waits for the card, and fewer paths at a time is more steps. Final renders at 1920 by 1080 and 256 samples on this Mac, in Cycles' own time:
+
+  | Path states | 8,388,608 (Cycles') | 4,194,304 | 2,097,152 | 1,048,576 | 524,288 |
+  |---|---|---|---|---|---|
+  | Headphones | 6.3 s | 6.7 s | 7.8 s | 10.0 s | 15 s |
+  | palma P8 | 19.9 s | 21.0 s | 24.3 s | 28.9 s | 40.7 s |
+
+  The times fit a fixed amount of work plus 4.3 s (Headphones) or 10 s (palma) divided by the millions of states. A card with fewer cores takes proportionally longer over each step, so the same number for each core keeps the waiting's share the same: a 10-core Mac mini keeps a quarter of this Mac's states at the same cost. That part is reasoned, not measured: no smaller Mac was to hand. A flat million would have made this Mac's view take twice as long to settle. `TEQUILA_CYCLES_LIVE_STATES` sets a number in all, 0 for Cycles' own.
+- **Each session its own number.** Cycles chose it once a process, by whichever session came first (a function-level `static` in `MetalDeviceQueue::num_concurrent_states`).
+- **No wrap-round.** Cycles' test for doubling them subtracted unsigned sizes, so when the doubled states did not fit beside what was already allocated, the difference wrapped round to a huge number and they were doubled anyway, on exactly the Macs without the memory. It adds up now.
+
+A final render keeps Cycles' own number. Before and after on this Mac, two runs of each:
+
+| | Headphones, before | after | palma P8, before | after |
+|---|---|---|---|---|
+| The Rendered view, over Solid | 9.3 GB | 8.2 GB | 11.0 GB | 9.5 GB |
+| The same with a 10-core Mac's 1,310,720 states | | 6.9 GB | | 7.5 GB |
+| Its first picture | 0.5 s | 0.5 s | 0.7 s | 0.7 s |
+| To 1,000 samples, the view still | 12.3, 16.6 s | 12.3, 15.5 s | 31.6, 34.3 s | 31.7, 33.0 s |
+| Cycles' frames a second, turned with the 3D mouse | 9.7, 4.7 | 9.8, 6.7 | 1.3, 1.3 | 1.3, 2.2 |
+| A final render, 1920 by 1080, 256 samples (Cycles' time, floor reflection off) | 6.3 s | 6.3 s | 19.7 to 22.1 s | 19.7 to 22.4 s |
+
+Frames a second while turning follow the window more than Cycles, a covered window's being fewer; they did not change. Test: `a_live_view_on_a_mac_keeps_fewer_path_states_and_each_its_own` (with `TEQUILA_TEST_CYCLES_GPU`), which fails on Cycles unpatched.
+
+Cycles' later growing and shrinking of the states (Blender commit `5c328388f3`, with `62bb50ffb5` and `584bfa79c9`) was weighed and not ported: on Metal it keeps four million as its starting point and grows them to as many as sixteen million where memory allows, more on a big Mac rather than fewer, shrinking them only when they would not fit at all.
+
+Not done: the denoiser's 2.7 GB, kept for the session; and the paused Cycles view is let go only when the viewport's render loop runs, which an idle Solid view does not make it do (a scripted `look` did not either; turning the view did).
 
 ---
 

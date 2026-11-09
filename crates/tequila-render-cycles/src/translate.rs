@@ -1000,6 +1000,13 @@ fn same_stage(old: &SceneSnapshot, new: &SceneSnapshot, moves: bool) -> bool {
 
 /// Whether `new` differs from `old` only in where its instances are. Such a
 /// change - a part dragged with the gizmo - needs only [`move_objects`].
+/// Whether parts came or went between `old` and `new`: a model imported or
+/// deleted, as against a change to the parts there are (a material, a light,
+/// a displacement tuned, a part moved).
+pub fn parts_came_or_went(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
+    old.instances.len() != new.instances.len() || old.meshes.len() != new.meshes.len()
+}
+
 pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
     same_stage(old, new, true) && changed_materials_of(old, new).is_some_and(|changed| changed.is_empty())
 }

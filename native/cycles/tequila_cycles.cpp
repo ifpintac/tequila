@@ -522,6 +522,39 @@ bool device_from_name(const char *name, int threads, bool background, DeviceInfo
   return false;
 }
 
+#ifdef __APPLE__
+/* How many paths a live view on a Mac keeps going at once, for each of the
+ * graphics card's cores. Cycles 5.0 gives every session on Metal 4,194,304
+ * path states, twice that where memory allows - a third to half a kilobyte
+ * each, so 1.5 to 4 GB for as long as the Rendered view showed - whatever
+ * the graphics card. Fewer cost speed: each step of Cycles' loop waits for
+ * the card, and fewer paths at a time is more steps. A smaller card takes
+ * longer over each step, so it needs fewer to keep busy: a number for each
+ * core keeps the share of waiting the same, and gives a 10-core Mac mini a
+ * quarter of what a 40-core M3 Max keeps (docs/01-RENDERER-CORE.md §14,
+ * where it was measured). A final render keeps Cycles' own count. */
+constexpr int LIVE_STATES_PER_CORE = 131072;
+
+/* A live view's devices, and each of several rendering together, keep no
+ * more path states than LIVE_STATES_PER_CORE says, or than
+ * TEQUILA_CYCLES_LIVE_STATES says in all (0 for Cycles' own number). Needs
+ * the build script's patch to Cycles (session-states.patch). */
+void limit_live_states(DeviceInfo &info)
+{
+  int states = 0, per_core = LIVE_STATES_PER_CORE;
+  if (const char *all = getenv("TEQUILA_CYCLES_LIVE_STATES")) {
+    states = std::max(atoi(all), 0);
+    per_core = 0;
+  }
+  info.max_concurrent_states = states;
+  info.concurrent_states_per_core = per_core;
+  for (DeviceInfo &each : info.multi_devices) {
+    each.max_concurrent_states = states;
+    each.concurrent_states_per_core = per_core;
+  }
+}
+#endif
+
 }  // namespace
 
 struct FscSession {
@@ -1475,6 +1508,11 @@ static FscSession *create(const char *device, int threads, const char *kernel_di
   s->session_params.tile_size = 0;
   s->session_params.use_resolution_divider = live;
   s->scene_params.shadingsystem = SHADINGSYSTEM_SVM;
+#ifdef __APPLE__
+  if (live) {
+    limit_live_states(s->session_params.device);
+  }
+#endif
   if (!start_session(s.get())) {
     return nullptr;
   }

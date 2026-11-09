@@ -67,6 +67,17 @@ pub struct CyclesView {
     restarted: std::time::Instant,
     /// How many times the whole scene has been translated.
     translations: u64,
+    /// Whether parts imported or deleted go into a session made afresh
+    /// (`renews_for_new_parts`), and how many times one was.
+    pub(crate) renew_on_new_parts: bool,
+    renewals: u64,
+}
+
+/// Whether imported or deleted parts go into a session made afresh: on a
+/// graphics card with memory of its own, where Cycles' rebuild in place
+/// failed (see `CyclesView::sync`). Not on a Mac, and not on the processor.
+fn renews_for_new_parts(engine: RenderEngine) -> bool {
+    engine == RenderEngine::CyclesGpu && !cfg!(target_os = "macos")
 }
 
 impl CyclesView {
@@ -94,7 +105,23 @@ impl CyclesView {
             answered: true,
             restarted: std::time::Instant::now(),
             translations: 0,
+            renew_on_new_parts: renews_for_new_parts(engine),
+            renewals: 0,
         })
+    }
+
+    /// This view again on a new session, the old session ended first so the
+    /// two never hold the graphics card at once (an RTX 2060 has 6 GB, and
+    /// a session's path states take a good share of it). Everything sent
+    /// to the old one - meshes, shaders, pictures - is sent again.
+    fn renew(&mut self) -> Result<(), String> {
+        let (engine, translations, renew, renewals) = (self.engine, self.translations, self.renew_on_new_parts, self.renewals);
+        self.session.close();
+        *self = CyclesView::new(engine)?;
+        self.translations = translations;
+        self.renew_on_new_parts = renew;
+        self.renewals = renewals + 1;
+        Ok(())
     }
 
     pub fn engine(&self) -> RenderEngine {
@@ -106,6 +133,11 @@ impl CyclesView {
     #[cfg(test)]
     pub fn translations(&self) -> u64 {
         self.translations
+    }
+
+    /// How many times a fresh session took parts imported or deleted.
+    pub fn renewals(&self) -> u64 {
+        self.renewals
     }
 
     /// Whether frames need Tequila's floor reflection laid over them.
@@ -148,6 +180,17 @@ impl CyclesView {
         // The caller asks again, so the newest change is the one that goes in.
         if !self.answered && self.restarted.elapsed() < HELD_AT_MOST {
             return Ok(false);
+        }
+        // Parts imported or deleted, on a graphics card with memory of its
+        // own (NVIDIA's CUDA and OptiX, AMD's HIP): a session made afresh,
+        // the old one ended first, rather than the scene cleared and built
+        // again inside the running one. On CUDA that rebuild, done while the
+        // view rendered, ended in an illegal-address error and the view fell
+        // back to the processor; a fresh session is what entering the
+        // Rendered view makes, which works. A Mac's Metal keeps the rebuild
+        // in place, which works there and is quicker.
+        if rescene && self.renew_on_new_parts && self.scene.as_ref().is_some_and(|scene| translate::parts_came_or_went(scene, &request.scene)) {
+            self.renew()?;
         }
         let view = translate::View {
             camera: request.camera,

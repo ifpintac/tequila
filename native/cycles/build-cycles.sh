@@ -99,6 +99,17 @@ for d, _, fs in os.walk(B):
             shutil.copyfile(src, dst)
 PYTHON
 
+# 3b. On a Mac, Tequila's patch to Cycles' Metal device (session-states.patch):
+#     each session decides its own number of path states, rather than the
+#     first one in the process for all; a live view asks for far fewer than
+#     the four to eight million (4.5 to 9 GB) Cycles 5.0 always takes; and the
+#     test for doubling them no longer wraps round on a Mac short of memory.
+#     The step above has just put back Blender 5.0.1's copies of the files it
+#     changes, so it is applied afresh on every run.
+if [ "$platform" = macos_arm64 ]; then
+    git -C cycles apply "$shim/session-states.patch"
+fi
+
 # 4. The shim target, once (the same block build-cycles.ps1 adds).
 app=cycles/src/app/CMakeLists.txt
 if ! grep -q tequila_cycles "$app"; then

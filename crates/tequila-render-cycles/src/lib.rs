@@ -805,9 +805,21 @@ impl Session {
     }
 }
 
+impl Session {
+    /// End the session now, before another is made: Cycles stops rendering,
+    /// and lets go of the device and everything on it. Nothing else may be
+    /// asked of it afterwards; only dropping it.
+    pub fn close(&mut self) {
+        if !self.raw.is_null() {
+            unsafe { (self.api.fsc_destroy)(self.raw) };
+            self.raw = std::ptr::null_mut();
+        }
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
-        unsafe { (self.api.fsc_destroy)(self.raw) }
+        self.close();
     }
 }
 
