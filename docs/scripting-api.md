@@ -105,7 +105,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-75 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+76 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -435,6 +435,20 @@ The point a node rotates and scales about.
 
 ```json
 { "command": "scene.set_pivot", "pivots": [ { "at": [0.5, -1.25, 2], "node": 2 } ] }
+```
+
+#### `scene.set_pattern`
+
+A group made a pattern: one of its parts repeated along a line (`step`
+between copies) or around a circle (`centre`, `axis`, `angle` in radians),
+by copies that share its mesh and material. The copies it had are taken away
+and laid out again from the part as it is, under the ids given; without a
+pattern, they are taken away and the group and the part stay.
+
+`fs.commands.scene.set_pattern(group=..., pattern=...)`
+
+```json
+{ "command": "scene.set_pattern", "group": 1, "pattern": { "copies": [40, 41], "count": 3, "kind": "line", "source": 2, "step": [0.03, 0, 0] } }
 ```
 
 #### `scene.reparent`

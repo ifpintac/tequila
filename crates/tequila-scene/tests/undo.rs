@@ -556,6 +556,7 @@ fn every_variant_must_be_sampled(command: &Command) {
         | Command::SetLocked { .. }
         | Command::SetRays { .. }
         | Command::SetPivot { .. }
+        | Command::SetPattern { .. }
         | Command::Reparent { .. }
         | Command::Group { .. }
         | Command::Ungroup { .. }
@@ -695,6 +696,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             material: MaterialKey(1),
         },
         Command::set_pivot(NodeId(1), Some(vec3(0.0, 1.0, 0.0))),
+        Command::SetPattern { group: NodeId(1), pattern: None },
         Command::SetShape {
             node: NodeId(1),
             shape: tequila_scene::shapes::ShapeSpec::of(tequila_scene::shapes::Shape::Wall, 1.0),
