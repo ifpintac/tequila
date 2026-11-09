@@ -38,12 +38,23 @@ use tequila_scripting::document::{APP_LIMITS as LIMITS, APP_OPERATIONS as OPERAT
 pub fn handle(app: &mut TequilaApp, request: &Request) -> Reply {
     let summary = request.operation.summary();
     let reply = perform(app, &request.operation);
-    let origin = if request.peer.is_empty() {
+    let steps: Vec<String> = match &request.operation {
+        Operation::Batch { operations, .. } => operations.iter().map(Operation::summary).collect(),
+        _ => Vec::new(),
+    };
+    log_reply(app, &request.peer, summary, &steps, &reply);
+    reply
+}
+
+/// Write down a request's outcome: in the console, for a request from
+/// outside, and in the activity log. `steps` spells out a batch.
+fn log_reply(app: &mut TequilaApp, peer: &str, summary: String, steps: &[String], reply: &Reply) {
+    let origin = if peer.is_empty() {
         "console".to_string()
     } else {
-        request.peer.clone()
+        peer.to_string()
     };
-    let (outcome, detail) = match &reply {
+    let (outcome, detail) = match reply {
         Reply::Failed(message) => (crate::scripting_tab::Outcome::Failed, message.clone()),
         _ => (crate::scripting_tab::Outcome::Ok, String::new()),
     };
@@ -52,17 +63,104 @@ pub fn handle(app: &mut TequilaApp, request: &Request) -> Reply {
     // console's own requests are not echoed, having been typed there. A batch
     // is spelled out step by step, or "batch of 30" is all anyone would see
     // of thirty changes to their scene.
-    if !request.peer.is_empty() {
+    if !peer.is_empty() {
         let failure = (outcome == crate::scripting_tab::Outcome::Failed).then_some(detail.as_str());
-        let steps: Vec<String> = match &request.operation {
-            Operation::Batch { operations, .. } => operations.iter().map(Operation::summary).collect(),
-            _ => Vec::new(),
-        };
         app.console
-            .remote(&crate::scripting_tab::clock(), &origin, &summary, &steps, failure);
+            .remote(&crate::scripting_tab::clock(), &origin, &summary, steps, failure);
     }
     app.activity.record(&origin, summary, outcome, detail);
-    reply
+}
+
+/// A scripted import whose model is being read on another thread
+/// ([`begin_import`]), answered when it has arrived ([`poll_imports`]).
+pub struct PendingImport {
+    path: std::path::PathBuf,
+    parent: Option<NodeId>,
+    peer: String,
+    summary: String,
+    responder: tequila_scripting::server::Responder,
+    receiver: std::sync::mpsc::Receiver<Result<tequila_import::ReadModel, String>>,
+    document_epoch: u64,
+    started: std::time::Instant,
+}
+
+/// Serve a scripted import from outside: its model read, and a CAD file's
+/// surfaces divided, on a thread of its own, as the File menu's import is,
+/// and put into the scene and answered on a later frame. Read on the
+/// window's thread, as it was, the window stood still while it read: 22 s
+/// for a 79 MB STEP file of 446 parts, every frame of it one, while an AI
+/// app or a script imported. The client waits for the answer as before;
+/// other clients are answered meanwhile. Inside a batch an import is still
+/// read where it stands, so the batch stays one step.
+pub fn begin_import(app: &mut TequilaApp, request: &Request, path: &str, parent: Option<u64>, responder: tequila_scripting::server::Responder, ctx: &egui::Context) {
+    let path = std::path::PathBuf::from(path);
+    if !path.is_file() {
+        let reply = Reply::Failed(format!("{} is not a file", path.display()));
+        log_reply(app, &request.peer, request.operation.summary(), &[], &reply);
+        responder.answer(&reply);
+        return;
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let reading = path.clone();
+    let waking = ctx.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(tequila_import::read_file(&reading).map_err(|e| e.to_string()));
+        waking.request_repaint();
+    });
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    app.project.status = format!("Importing {name}\u{2026}");
+    app.script_imports.push(PendingImport {
+        path,
+        parent: parent.map(NodeId),
+        peer: request.peer.clone(),
+        summary: request.operation.summary(),
+        responder,
+        receiver,
+        document_epoch: app.project.document_epoch(),
+        started: std::time::Instant::now(),
+    });
+}
+
+/// Put the scripted imports whose models have arrived into the scene, and
+/// answer them. Once a frame; true when one was put in.
+pub fn poll_imports(app: &mut TequilaApp) -> bool {
+    let mut arrived = false;
+    let mut index = 0;
+    while index < app.script_imports.len() {
+        let result = match app.script_imports[index].receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                let pending = &app.script_imports[index];
+                let name = pending.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                app.project.status = format!("Importing {name}\u{2026} {} s", pending.started.elapsed().as_secs());
+                index += 1;
+                continue;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the import stopped before it finished".to_string()),
+        };
+        let pending = app.script_imports.remove(index);
+        let reply = if pending.document_epoch != app.project.document_epoch() {
+            // Another project opened, or a new one started, while it read.
+            Reply::Failed("the project changed while the model was read, so nothing was imported".into())
+        } else {
+            match result {
+                Ok(model) => {
+                    arrived = true;
+                    finish_import(app, &pending.path, pending.parent, model)
+                }
+                Err(error) => Reply::Failed(error),
+            }
+        };
+        if let Reply::Failed(error) = &reply {
+            app.project.status = error.clone();
+        } else {
+            let name = pending.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            app.project.status = format!("Imported {name}");
+        }
+        log_reply(app, &pending.peer, pending.summary, &[], &reply);
+        pending.responder.answer(&reply);
+    }
+    arrived
 }
 
 /// Keep the viewport's camera in step with the document's after something
@@ -1692,11 +1790,16 @@ fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>) -> Reply {
     if !path.is_file() {
         return Reply::Failed(format!("{} is not a file", path.display()));
     }
-    let parent = parent.map(NodeId);
     let model = match tequila_import::read_file(&path) {
         Ok(model) => model,
         Err(error) => return Reply::Failed(error.to_string()),
     };
+    finish_import(app, &path, parent.map(NodeId), model)
+}
+
+/// Put a model read from `path` into the scene, under `parent`, and say what
+/// came in.
+fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<NodeId>, model: tequila_import::ReadModel) -> Reply {
     // As the File menu imports: the CAD file's bytes kept, so the model
     // divides again without its file, and a guessed unit applied in the
     // same undo step.
@@ -1720,7 +1823,7 @@ fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>) -> Reply {
         Ok((report, _)) => report,
         Err(error) => return Reply::Failed(error),
     };
-    app.plugin_imported(&path, &before);
+    app.plugin_imported(path, &before);
 
     let mut out = Object::new();
     out.set("path", path.display().to_string())
@@ -2070,6 +2173,64 @@ mod handler_tests {
     fn ask(app: &mut TequilaApp, line: &str) -> Reply {
         let request = parse_request(line).unwrap_or_else(|e| panic!("{line}: {e}"));
         handle(app, &request)
+    }
+
+    /// An import a script asks for over the channel is read on another
+    /// thread and answered on a later frame, the window drawing meanwhile;
+    /// the client gets the import's report, and the parts are in the scene.
+    /// Read on the window's thread, it stood still for the whole read: 22 s
+    /// for a 79 MB STEP assembly. Driven here over a real socket, the frames
+    /// standing in for the window's.
+    #[test]
+    fn a_scripted_import_is_read_while_the_window_draws() {
+        use std::io::{BufRead, Write};
+        let mut app = TequilaApp::for_tests();
+        let folder = std::env::temp_dir().join(format!("tequila-scripted-import-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let open = tequila_scripting::server::Channel::start_at(&folder.join("channel.json")).expect("a channel");
+        let record = tequila_format::json::parse(&std::fs::read(folder.join("channel.json")).unwrap()).unwrap();
+        let port = record.get("port").and_then(Value::as_f64).unwrap() as u16;
+        let token = record.get("token").and_then(Value::as_str).unwrap().to_string();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../crates/tequila-import/tests/data/two_bodies.step").replace('\\', "/");
+        let client = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).expect("connects");
+            writeln!(stream, r#"{{"id":5,"token":"{token}","op":"import","path":"{path}"}}"#).unwrap();
+            stream.flush().unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(stream).read_line(&mut line).expect("an answer");
+            line
+        });
+        let ctx = egui::Context::default();
+        let (mut frames, mut asked) = (0, false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !client.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "the import was never answered");
+            open.drain_with_responders(|arrived, responder| match arrived {
+                tequila_scripting::server::Arrived::Request(request) => match &request.operation {
+                    Operation::Import { path, parent } => {
+                        asked = true;
+                        begin_import(&mut app, request, path, *parent, responder, &ctx);
+                    }
+                    _ => responder.answer(&handle(&mut app, request)),
+                },
+                tequila_scripting::server::Arrived::Own(_) => responder.answer(&Reply::Done),
+            });
+            poll_imports(&mut app);
+            if asked {
+                frames += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let line = client.join().unwrap();
+        let reply = tequila_format::json::parse(line.trim().as_bytes()).unwrap();
+        assert_eq!(reply.get("ok").and_then(Value::as_bool), Some(true), "{line}");
+        assert!(reply.get("result").and_then(|r| r.get("nodes")).and_then(Value::as_f64).unwrap_or(0.0) > 0.0, "{line}");
+        assert!(frames > 1, "answered on the frame it was asked, so read on the window's thread");
+        let parts = app.project.document().tree.iter().filter(|n| matches!(n.kind, tequila_scene::NodeKind::Part { .. })).count();
+        assert!(parts >= 2, "the two bodies are not in the scene ({parts} parts)");
+        assert!(app.script_imports.is_empty());
+        drop(open);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[track_caller]

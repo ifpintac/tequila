@@ -379,6 +379,9 @@ struct TequilaApp {
     /// STEP assembly takes seconds to mesh, and the window stayed frozen
     /// for all of them while it was read here.
     imports: Vec<PendingImport>,
+    /// Imports a script or an AI app asked for over the scripting channel,
+    /// read on other threads as `imports` are (`channel::begin_import`).
+    script_imports: Vec<channel::PendingImport>,
     /// What the last model update found, shown until dismissed.
     update_report: Option<tequila_scene::reimport::ReimportReport>,
     /// The Model units window, when it is open.
@@ -974,6 +977,7 @@ impl TequilaApp {
             project_tab: ProjectTab::Scene,
             pending_unit: None,
             imports: Vec::new(),
+            script_imports: Vec::new(),
             update_report: None,
             model_units: None,
             improve_model: None,
@@ -1421,6 +1425,9 @@ impl eframe::App for TequilaApp {
         if self.poll_imports() {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
+        if channel::poll_imports(self) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         // Substance materials' maps: renders that finished, and renders to
         // start now that settings have settled.
         for message in self.substance.poll(&mut self.project) {
@@ -1456,7 +1463,7 @@ impl eframe::App for TequilaApp {
                 open.set_waker(move || waking.request_repaint());
                 self.channel_wakes = true;
             }
-            open.drain_with(|arrived| match arrived {
+            open.drain_with_responders(|arrived, responder| match arrived {
                 tequila_scripting::server::Arrived::Request(request) => {
                     // A script that changes something wants the window, not
                     // the start screen; one that only looks leaves it be.
@@ -1464,17 +1471,22 @@ impl eframe::App for TequilaApp {
                     if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
                         self.start_screen.open = false;
                     }
-                    channel::handle(self, request)
+                    match &request.operation {
+                        // Read on another thread, answered when it has
+                        // arrived: the window goes on drawing meanwhile.
+                        Operation::Import { path, parent } => channel::begin_import(self, request, path, *parent, responder, ctx),
+                        _ => responder.answer(&channel::handle(self, request)),
+                    }
                 }
                 // The application's own operations: a part's UV layout
                 // written as a picture.
-                tequila_scripting::server::Arrived::Own(value) => match value.get("op").and_then(|v| v.as_str()) {
+                tequila_scripting::server::Arrived::Own(value) => responder.answer(&match value.get("op").and_then(|v| v.as_str()) {
                     Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), value) {
                         Ok(written) => tequila_scripting::protocol::Reply::Value(written),
                         Err(error) => tequila_scripting::protocol::Reply::Failed(error),
                     },
                     other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
-                },
+                }),
             });
             self.channel = Some(open);
         }
