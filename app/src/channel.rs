@@ -642,6 +642,12 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(edges) = change.edges {
         app.show_model_edges = edges;
     }
+    if let Some(outline) = change.selection_outline {
+        app.set_selection_outline(outline);
+    }
+    if let Some(gizmo) = change.gizmo {
+        app.show_gizmo = gizmo;
+    }
     if let Some(frame) = change.frame {
         app.show_render_frame = frame;
     }
@@ -776,6 +782,8 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("full_viewport", app.full_viewport)
         .set("present", app.presenting.is_some())
         .set("edges", app.show_model_edges)
+        .set("selection_outline", app.show_selection_outline)
+        .set("gizmo", app.show_gizmo)
         .set("frame", app.show_render_frame)
         .set("help", app.show_help)
         .set("about", app.show_about)
@@ -2377,6 +2385,22 @@ mod handler_tests {
 
     fn rename(id: u64, name: &str) -> String {
         format!(r#"{{"op":"apply","command":{{"command":"scene.rename","node":{id},"name":"{name}"}}}}"#)
+    }
+
+    /// A script hides and shows the selection's outline and the gizmo, as
+    /// Shift+H and Shift+G do, and reads back which are shown.
+    #[test]
+    fn a_script_hides_the_outline_and_the_gizmo() {
+        let mut app = TequilaApp::for_tests();
+        let state = value(&mut app, r#"{"op":"ui"}"#);
+        assert_eq!(state.get("selection_outline").and_then(Value::as_bool), Some(true));
+        assert_eq!(state.get("gizmo").and_then(Value::as_bool), Some(true));
+        let state = value(&mut app, r#"{"op":"ui","selection_outline":false,"gizmo":false}"#);
+        assert_eq!(state.get("selection_outline").and_then(Value::as_bool), Some(false));
+        assert_eq!(state.get("gizmo").and_then(Value::as_bool), Some(false));
+        assert!(!app.show_selection_outline && !app.show_gizmo);
+        value(&mut app, r#"{"op":"ui","selection_outline":true,"gizmo":true}"#);
+        assert!(app.show_selection_outline && app.show_gizmo);
     }
 
     /// A script imports a model, works on it, and reloads it after the file

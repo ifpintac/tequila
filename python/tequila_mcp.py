@@ -161,6 +161,8 @@ TOOLS = [
          {'render_window': {'type': 'boolean'}, 'console': {'type': 'boolean'}, 'inspector': {'type': 'boolean'},
           'library': {'type': 'boolean'}, 'full_viewport': {'type': 'boolean'}, 'help': {'type': 'boolean'},
           'frame': {'type': 'boolean', 'description': "Show the viewport at the render's size and shape (on by default)."},
+          'selection_outline': {'type': 'boolean', 'description': "The selection's outline in the viewport (Shift+H); hiding it keeps the selection."},
+          'gizmo': {'type': 'boolean', 'description': 'The move, turn and scale gizmo on the selection (Shift+G).'},
           'start_screen': {'type': 'boolean', 'description': 'The start screen, with recent projects and the sample scenes.'},
           'updates': {'type': 'boolean', 'description': 'Help > Check for updates. Opening it asks GitHub for the latest release.'},
           'graph': {'type': ['integer', 'boolean'],
