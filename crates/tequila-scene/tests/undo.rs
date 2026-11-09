@@ -695,6 +695,7 @@ fn the_catalog_lists_every_command_exactly_once() {
             material: MaterialKey(1),
         },
         Command::set_pivot(NodeId(1), Some(vec3(0.0, 1.0, 0.0))),
+        Command::SetPattern { group: NodeId(1), pattern: None },
         Command::UnlinkMaterial { node: NodeId(1) },
         Command::SetMaterialParameter {
             material: MaterialKey(1),
