@@ -118,12 +118,22 @@ pub struct RenderRequest {
 }
 
 impl RenderRequest {
-    /// The size Tequila's own renderer traces: a pixel per point, as it
-    /// always has, stretched over a Retina viewport. The screen's own pixels
-    /// there were three and a half times the samples and the denoise, and
-    /// the processor's denoiser took 1.7 s over each picture, during which
-    /// the view could not begin to move (`retina_viewport_benchmark`).
-    fn traced_size(&self) -> (usize, usize) {
+    /// The size Tequila's own renderer traces. A pixel per point while the
+    /// view moves, stretched over a Retina viewport (or a screen set above
+    /// 100%), as it always was: the screen's own pixels are three and a half
+    /// times the samples, and the frames that matter then are the quick
+    /// ones. Once the view is still, the Rendered view traces the screen's
+    /// own pixels when `sharp`, the graphics card denoising them
+    /// (`GpuDenoiser`): stretched, the picture was soft beside the panels
+    /// around it, and fine print and texture went with it. Without a
+    /// graphics card to denoise on, the processor's denoiser took 1.7 s over
+    /// each picture at a Retina viewport's size, during which the view could
+    /// not begin to move (`retina_viewport_benchmark`), so it stays at a
+    /// pixel per point.
+    fn traced_size(&self, sharp: bool) -> (usize, usize) {
+        if sharp && !self.interacting && self.shading == Shading::Rendered {
+            return (self.width.max(1), self.height.max(1));
+        }
         let points = |n: usize| ((n as f32 / self.pixels_per_point).round() as usize).max(1);
         (points(self.width), points(self.height))
     }
@@ -432,6 +442,7 @@ impl Orchestrator {
 
     /// Whether a Cycles view is kept, showing or paused: let go
     /// `CYCLES_KEPT` after the viewport stops showing it.
+    #[cfg(test)]
     pub fn keeps_cycles(&self) -> bool {
         self.shared.keeps_cycles.load(Ordering::Acquire)
     }
@@ -494,6 +505,9 @@ impl Default for Orchestrator {
 /// Everything the render loop rebuilds only when it has to.
 struct Built {
     request: RenderRequest,
+    /// Whether a still Rendered view traces the screen's own pixels
+    /// (`RenderRequest::traced_size`).
+    sharp: bool,
     intersector: Arc<EmbreeIntersector>,
     framebuffer: Framebuffer,
     schedule: ProgressiveSchedule,
@@ -651,7 +665,15 @@ fn render_loop(shared: Arc<Shared>) {
             // there is nothing on screen to pick anyway.
             shared.intersector.lock().unwrap().take();
 
-            let state = crate::profile::time("render: rebuild", || rebuild(built.take(), request, &device));
+            // Tequila's renderer in the Rendered view: the graphics card's
+            // denoiser, made the first time such a view is asked for, denoises
+            // its frames, and lets a still view be traced at the screen's own
+            // pixels (`RenderRequest::traced_size`).
+            if request.shading == Shading::Rendered && request.engine == tequila_scene::render::RenderEngine::Tequila && gpu_denoiser.is_none() {
+                gpu_denoiser = tequila_denoise::GpuDenoiser::shared().ok();
+            }
+            let sharp = gpu_denoiser.is_some();
+            let state = crate::profile::time("render: rebuild", || rebuild(built.take(), request, &device, sharp));
 
             // Publish the BVH the UI picks against, so a click can only ever
             // hit geometry that is actually on screen.
@@ -843,29 +865,40 @@ fn render_loop(shared: Arc<Shared>) {
         if let Some(view) = cycles.as_mut() {
             // Not showing, so not using the graphics card either.
             view.set_paused(true);
-            // And let go, once the viewport has stayed away from Cycles for
-            // a while: paused, it still held everything it had on the
-            // graphics card - its path states (four to eight million of
-            // them on a Mac, several gigabytes whatever the scene), the
-            // scene, the textures and the film. Measured on a 446-part model
-            // wearing sixteen 4K maps, Tequila kept 17 GB after leaving the
-            // Rendered view, and still did once the model was deleted. A
-            // quick look at Solid and back keeps the view, and its picture.
+        }
+        // And let go, once the viewport has stayed away for a while: the
+        // Cycles view while it shows anything else, and the graphics card's
+        // denoiser while it shows no Rendered view. Paused, the Cycles view
+        // still held everything it had on the graphics card - its path
+        // states (four to eight million of them on a Mac, several gigabytes
+        // whatever the scene), the scene, the textures and the film.
+        // Measured on a 446-part model wearing sixteen 4K maps, Tequila kept
+        // 17 GB after leaving the Rendered view, and still did once the
+        // model was deleted. A quick look at Solid and back keeps both, and
+        // the picture.
+        let rendered = state.request.shading == Shading::Rendered;
+        if cycles.is_some() || (gpu_denoiser.is_some() && !rendered) {
             let away = *cycles_away.get_or_insert_with(Instant::now);
             if away.elapsed() >= CYCLES_KEPT {
-                cycles = None;
-                shared.keeps_cycles.store(false, Ordering::Release);
-                cycles_frames = 0;
-                cycles_clean = false;
                 cycles_away = None;
-                // The floor reflection laid over Cycles' frames, at their size.
-                reflection = None;
+                if cycles.take().is_some() {
+                    shared.keeps_cycles.store(false, Ordering::Release);
+                    cycles_frames = 0;
+                    cycles_clean = false;
+                    // The floor reflection laid over Cycles' frames, at their size.
+                    reflection = None;
+                }
                 // The graphics card's denoiser, its buffers and its filters'
-                // working memory, at the Rendered view's size.
-                if let Some(gpu) = gpu_denoiser.take() {
-                    gpu.release();
+                // working memory, at the Rendered view's size; kept while
+                // Tequila's renderer shows a Rendered view with it.
+                if !rendered {
+                    if let Some(gpu) = gpu_denoiser.take() {
+                        gpu.release();
+                    }
                 }
             }
+        } else {
+            cycles_away = None;
         }
 
         // Interactive frames render at reduced resolution with one sample; a
@@ -895,7 +928,7 @@ fn render_loop(shared: Arc<Shared>) {
             // nothing to climb: full resolution as soon as the pointer stops,
             // and half while it is moving, which is the only place the frame
             // rate is felt.
-            let (width, height) = state.request.traced_size();
+            let (width, height) = state.request.traced_size(false);
             let divisor = solid_divisor(width, height, state.request.interacting);
             if state.schedule.resolution_divisor != divisor {
                 state.schedule.resolution_divisor = divisor;
@@ -953,13 +986,20 @@ fn render_loop(shared: Arc<Shared>) {
                 state.framebuffer.min_samples(),
                 state.request.denoise_cadence,
             );
+            // On the graphics card where it can: at a Retina viewport's size
+            // 71 ms a frame against 311 ms on the processor (Balanced, an M3
+            // Max), and the processor's cores left to the path tracer.
+            let view_denoiser = match &gpu_denoiser {
+                Some(gpu) if state.request.shading == Shading::Rendered => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
+                _ => cpu_denoiser,
+            };
             publish(
                 &shared,
                 state,
                 style,
                 &display,
                 &selection,
-                cpu_denoiser,
+                view_denoiser,
                 denoise,
             );
         }
@@ -976,7 +1016,7 @@ fn render_loop(shared: Arc<Shared>) {
             if state.schedule.resolution_divisor != previous {
                 // A resolution step restarts accumulation, which §9.2 notes is
                 // cheap: only a few samples are lost.
-                let (width, height) = state.request.traced_size();
+                let (width, height) = state.request.traced_size(state.sharp);
                 let (w, h) = state.schedule.render_resolution(width, height);
                 state.framebuffer.resize(w, h);
                 state.framebuffer.clear();
@@ -1042,7 +1082,7 @@ impl Drop for Timer {
     }
 }
 
-fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Device>) -> Built {
+fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Device>, sharp: bool) -> Built {
     let mut framebuffer = previous.as_mut().map(|p| std::mem::replace(&mut p.framebuffer, Framebuffer::new(0, 0)));
     let scene_changed = previous
         .as_ref()
@@ -1079,7 +1119,7 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
     if !request.interacting {
         schedule.update(0);
     }
-    let (width, height) = request.traced_size();
+    let (width, height) = request.traced_size(sharp);
     if request.shading == Shading::Fast {
         schedule.resolution_divisor = solid_divisor(width, height, request.interacting);
     }
@@ -1103,6 +1143,7 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
         started: Instant::now(),
         first_pixel_ms: None,
         request,
+        sharp,
         intersector,
     }
 }
@@ -1443,10 +1484,10 @@ mod tests {
         let device = Device::shared().unwrap();
         let mut req = request();
         req.shading = Shading::Fast;
-        let first = rebuild(None, req.clone(), &device);
+        let first = rebuild(None, req.clone(), &device, false);
         let storage = first.framebuffer.pixels().as_ptr();
         req.camera = Camera::look_at(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y);
-        let second = rebuild(Some(first), req, &device);
+        let second = rebuild(Some(first), req, &device, false);
         assert_eq!(storage, second.framebuffer.pixels().as_ptr());
         assert_eq!(second.framebuffer.min_samples(), 0);
     }
@@ -1612,7 +1653,7 @@ mod tests {
                 let mut seen = 0u64;
                 let mut req = RenderRequest { width, height, engine, pixels_per_point, ..base.clone() };
                 // What comes back: Tequila traces the points, Cycles the pixels.
-                let (full, tall) = if engine == RenderEngine::Tequila { req.traced_size() } else { (width, height) };
+                let (full, tall) = if engine == RenderEngine::Tequila { req.traced_size(tequila_denoise::GpuDenoiser::shared().is_ok()) } else { (width, height) };
                 orchestrator.submit(req.clone());
                 // Cycles starting, the denoiser made and the BVH built are
                 // the same at either size: paid here, not measured.
@@ -1719,6 +1760,7 @@ mod tests {
             None,
             RenderRequest { reject_fireflies: false, clamp_sample: Some(4.0), ..request() },
             &device,
+            false,
         );
         assert!(!built.context.reject_fireflies, "fireflies rejected though the document says not to");
         assert_eq!(built.context.clamp_sample, Some(4.0), "the document's clamp was ignored");
@@ -1964,6 +2006,46 @@ mod tests {
         let ringed = redraw(vec![0]);
         let changed = ringed.pixels.chunks_exact(4).zip(plain.pixels.chunks_exact(4)).filter(|(a, b)| a != b).count();
         assert!(changed > 20, "selecting the sphere drew no outline ({changed} pixels changed)");
+    }
+
+    /// Tequila's renderer in the Rendered view on a Retina screen (two pixels
+    /// a point here): a pixel per point while the view moves, and the
+    /// screen's own pixels once it is still, where the graphics card can
+    /// denoise them; a pixel per point throughout where it cannot. Stretched
+    /// at rest, the picture was soft beside the panels around it.
+    #[test]
+    fn a_still_rendered_view_traces_the_screens_own_pixels() {
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        req.width = 128;
+        req.height = 96;
+        req.pixels_per_point = 2.0;
+        req.shading = Shading::Rendered;
+        req.engine = tequila_scene::render::RenderEngine::Tequila;
+        let sharp = tequila_denoise::GpuDenoiser::shared().is_ok();
+        let mut seen = 0;
+        // The full width a picture stands for: interactive ones come a step
+        // or two smaller still.
+        let mut widths = |renderer: &Orchestrator, want: usize| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            loop {
+                if let Some(image) = renderer.take_image(&mut seen) {
+                    if image.width * image.resolution_divisor as usize == want {
+                        return;
+                    }
+                }
+                assert!(Instant::now() < deadline, "no picture {want} wide came back");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        req.interacting = true;
+        renderer.submit(req.clone());
+        widths(&renderer, 64);
+        req.interacting = false;
+        renderer.submit(req.clone());
+        widths(&renderer, if sharp { 128 } else { 64 });
+        assert_eq!(req.traced_size(sharp), if sharp { (128, 96) } else { (64, 48) });
+        assert_eq!(RenderRequest { shading: Shading::Fast, ..req.clone() }.traced_size(sharp), (64, 48), "Solid stays a pixel per point");
     }
 
     /// The Cycles view is kept while the viewport shows something else for
@@ -2557,7 +2639,7 @@ mod tests {
     fn moving_an_instance_updates_the_bvh_rather_than_rebuilding_it() {
         let device = Device::shared().expect("Embree");
         let first = request();
-        let built = rebuild(None, first.clone(), &device);
+        let built = rebuild(None, first.clone(), &device, false);
         let original = Arc::as_ptr(&built.intersector);
 
         let mut moved_scene = (*first.scene).clone();
@@ -2570,7 +2652,7 @@ mod tests {
             ..first.clone()
         };
 
-        let after = rebuild(Some(built), moved, &device);
+        let after = rebuild(Some(built), moved, &device, false);
         assert_eq!(
             Arc::as_ptr(&after.intersector),
             original,
@@ -2584,7 +2666,7 @@ mod tests {
     fn changing_the_geometry_still_rebuilds() {
         let device = Device::shared().expect("Embree");
         let first = request();
-        let built = rebuild(None, first.clone(), &device);
+        let built = rebuild(None, first.clone(), &device, false);
         let original = Arc::as_ptr(&built.intersector);
 
         // One fewer instance is structural.
@@ -2596,7 +2678,7 @@ mod tests {
             ..first.clone()
         };
 
-        let after = rebuild(Some(built), changed, &device);
+        let after = rebuild(Some(built), changed, &device, false);
         assert_ne!(
             Arc::as_ptr(&after.intersector),
             original,

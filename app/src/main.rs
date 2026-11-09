@@ -7178,8 +7178,9 @@ mod undo_tests {
     /// pixels, which Cycles renders. It asked for a pixel per point, which
     /// there is a picture half the viewport's size, stretched over it. A
     /// screen of one pixel per point still asks for a pixel per point,
-    /// whatever the text size; and Tequila's own renderer, on the
-    /// processor, traces a pixel per point on either.
+    /// whatever the text size. Tequila's own renderer, once the view is
+    /// still, traces the screen's own pixels too where the graphics card can
+    /// denoise them, and a pixel per point where it cannot.
     #[test]
     fn a_retina_viewport_asks_for_the_screens_own_pixels() {
         // The screen's pixels per point, the text size's zoom, and the
@@ -7214,13 +7215,15 @@ mod undo_tests {
             let expected = ((200.0 * scale).round() as usize, (150.0 * scale).round() as usize);
             assert_eq!((request.width, request.height), expected, "at {native} pixels a point and a zoom of {zoom}");
             assert!((request.pixels_per_point - scale).abs() < 1e-5, "{} at {native} and {zoom}", request.pixels_per_point);
-            // Tequila's own renderer still traces the points.
+            // Tequila's own renderer: the screen's own pixels at rest where
+            // the graphics card denoises, a pixel per point where not.
+            let traced = if tequila_denoise::GpuDenoiser::shared().is_ok() { expected } else { (200, 150) };
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
             let mut seen = 0;
             loop {
                 if let Some(image) = app.orchestrator.take_image(&mut seen) {
                     if image.resolution_divisor == 1 {
-                        assert_eq!((image.width, image.height), (200, 150), "traced at {native} pixels a point");
+                        assert_eq!((image.width, image.height), traced, "traced at {native} pixels a point");
                         break;
                     }
                 }

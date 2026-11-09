@@ -154,7 +154,21 @@ a Mac.
   renderer still traces the points: at a Retina screen's pixels its denoiser
   took 1.7 s a picture, during which the view could not begin to move
   (`retina_viewport_benchmark`). Still slow: at that size the viewport's GPU
-  denoiser roughly halves Cycles' samples a second. *Done 2026-10-20:* the
+  denoiser roughly halves Cycles' samples a second. *Done 2026-11-09:*
+  Tequila's own renderer traces the screen's own pixels too once the view is
+  still, where the graphics card can denoise them, and denoises its Rendered
+  frames there; it still traces the points while the view moves
+  (`RenderRequest::traced_size`). The guides are prefiltered at the picture's
+  quality, no lower than Balanced, where OIDN ran them at its highest: a
+  Retina frame's prefiltering took 1.6 to 3.2 s on the processor, now 0.8 to
+  0.9 s, and on the graphics card a frame takes 71 ms against 311 ms on the
+  processor. `retina_viewport_benchmark` on the starter scene, before and
+  after, at a MacBook's 1636 x 1671 pixels: traced at rest 889 x 908, now
+  1636 x 1671; clean after a move 1.6 s, now 1.4 s; orbiting 6.3 pictures a
+  second, now 22; clean after letting go 3.0 s, now 2.9 s. At a pixel a
+  point the same: clean after a move 2.4 s, now 0.4 s; orbiting 5.6, now 47.
+  A Mac without Metal denoising (an Intel Mac) traces the points as before.
+  Test: `a_still_rendered_view_traces_the_screens_own_pixels`. *Done 2026-10-20:* the
   library's tiles, the Material tab's sphere and the graph editor's swatch are
   rendered at the screen's density (`thumbnail::density`).
 - *Done 2026-10-17.* **Orbiting on Cycles** shows pictures as it goes: the

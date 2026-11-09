@@ -287,8 +287,10 @@ impl Denoiser {
             if settings.prefilter_guides {
                 // §13: noise in the guides propagates into the result, so at
                 // low sample counts the guides get denoised first.
-                run_guide_filter(filters.albedo, "albedo", width, height, &mut albedo_buf)?;
-                run_guide_filter(filters.normal, "normal", width, height, &mut normal_buf)?;
+                // At the beauty filter's quality, as OIDN asks of guides
+                // filtered for it (`guide_quality`).
+                run_guide_filter(filters.albedo, "albedo", width, height, &mut albedo_buf, guide_quality(settings.quality))?;
+                run_guide_filter(filters.normal, "normal", width, height, &mut normal_buf, guide_quality(settings.quality))?;
             }
 
             let beauty = filters.beauty;
@@ -419,12 +421,37 @@ unsafe fn run_guide_filter(
     width: usize,
     height: usize,
     data: &mut [f32],
+    quality: Quality,
 ) -> Result<(), String> {
     set_image(filter, guide, width, height, data.as_mut_ptr());
     set_image(filter, "output", width, height, data.as_mut_ptr());
+    set_quality(filter, quality);
     sys::oidnCommitFilter(filter);
     sys::oidnExecuteFilter(filter);
     Ok(())
+}
+
+/// The quality the guides are filtered at on the processor: the picture's,
+/// as OIDN asks of guides filtered for it, and no lower than Balanced, OIDN
+/// having no faster filter for guides. Left at its default, High, under the
+/// viewport's Fast and Balanced pictures, prefiltering a Retina viewport's
+/// frame (1636 x 1671) took 1.6 to 3.2 s on an M3 Max, four to nine times
+/// the denoise it was for; at Balanced 0.8 to 0.9 s. A texture of one-pixel
+/// checks and lines kept the same detail within a few per cent.
+fn guide_quality(quality: Quality) -> Quality {
+    match quality {
+        Quality::High => Quality::High,
+        Quality::Fast | Quality::Balanced => Quality::Balanced,
+    }
+}
+
+/// Set a filter's quality.
+///
+/// # Safety
+/// `filter` must be a live filter handle.
+unsafe fn set_quality(filter: sys::OIDNFilter, quality: Quality) {
+    let name = CString::new("quality").unwrap();
+    sys::oidnSetFilterInt(filter, name.as_ptr(), quality.raw());
 }
 
 /// # Safety
@@ -606,7 +633,7 @@ mod tests {
         let mut normal: Vec<f32> = (0..width * height).flat_map(|_| [-1.0, 0.0, 0.0]).collect();
         let filters = denoiser.filters.lock().unwrap();
         // SAFETY: `normal` holds width * height * 3 floats and outlives the call.
-        unsafe { run_guide_filter(filters.normal, "normal", width, height, &mut normal).unwrap() };
+        unsafe { run_guide_filter(filters.normal, "normal", width, height, &mut normal, Quality::High).unwrap() };
         let mean_x = normal.chunks(3).map(|n| n[0]).sum::<f32>() / (width * height) as f32;
         assert!(mean_x < -0.9, "the guide's -X became {mean_x}");
     }
