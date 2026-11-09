@@ -2197,7 +2197,7 @@ mod tests {
     /// (`TEQUILA_CYCLES`).
     /// While the camera moves, Cycles is asked for a smaller picture, sized
     /// to how long pictures take; still a moment, its full size again,
-    /// without anything new being asked.
+    /// without anything new being asked. A material edited, the same.
     #[test]
     fn a_moving_camera_gets_a_smaller_picture_and_a_still_one_its_full_size() {
         if let Err(why) = tequila_render_cycles::available() {
@@ -2212,14 +2212,14 @@ mod tests {
         let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(1000, 750);
         let deadline = Instant::now() + Duration::from_secs(120);
         // Synced, then the first picture after it.
-        let mut picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| {
+        let picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest, framebuffer: &mut tequila_render_core::framebuffer::Framebuffer| {
             while !view.sync(req).expect("synced") {
                 assert!(Instant::now() < deadline, "Cycles never took the change");
-                view.take_frame(&mut framebuffer);
+                view.take_frame(framebuffer);
                 std::thread::sleep(Duration::from_millis(5));
             }
             loop {
-                if let Some(frame) = view.take_frame(&mut framebuffer) {
+                if let Some(frame) = view.take_frame(framebuffer) {
                     return frame;
                 }
                 assert!(Instant::now() < deadline, "Cycles never drew the change");
@@ -2228,7 +2228,7 @@ mod tests {
         };
         // Cycles' own first picture after a restart may be coarser; the
         // view asks it for its full size.
-        picture(&mut view, &req);
+        picture(&mut view, &req, &mut framebuffer);
         assert_eq!(view.traced_size(), (1000, 750), "a still view renders at its size");
         assert!(!view.navigating());
 
@@ -2238,7 +2238,7 @@ mod tests {
         for step in 1..=4 {
             let a = step as f32 * 0.15;
             req.camera = Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
-            let moving = picture(&mut view, &req);
+            let moving = picture(&mut view, &req, &mut framebuffer);
             assert!(view.navigating(), "step {step}: moving");
             let (w, h) = view.traced_size();
             if step == 1 {
@@ -2249,7 +2249,7 @@ mod tests {
 
         // Still a moment: the view's own size again, without a new request.
         std::thread::sleep(Duration::from_millis(250));
-        let settled = picture(&mut view, &req);
+        let settled = picture(&mut view, &req, &mut framebuffer);
         let mut last = settled;
         while last.width != 1000 {
             assert!(Instant::now() < deadline, "the still view never went back to its size");
@@ -2260,6 +2260,31 @@ mod tests {
         }
         assert!(!view.navigating(), "still, it is not following a camera");
         assert_eq!(view.traced_size(), (1000, 750), "and asks for its full size");
+
+        // A material edited, as a slider dragged edits it: a smaller picture
+        // too, now that Cycles no longer makes one of its own after every
+        // change, and the view's size again a moment later.
+        let mut painted = (*req.scene).clone();
+        let material = painted.instances[0].material.index();
+        painted.materials[material].base_color = tequila_core::spectrum::Spectrum { r: 0.8, g: 0.02, b: 0.02 };
+        painted.lights = Arc::new((*painted.lights).clone());
+        painted.textures = Arc::new((*painted.textures).clone());
+        req.scene = Arc::new(painted);
+        req.scene_generation += 1;
+        picture(&mut view, &req, &mut framebuffer);
+        assert!(view.navigating(), "an edit is followed like a moving camera");
+        let (w, h) = view.traced_size();
+        assert!(w < 1000 && h < 750, "an edit asks for a smaller picture, not {w}x{h}");
+        std::thread::sleep(Duration::from_millis(250));
+        let mut last = picture(&mut view, &req, &mut framebuffer);
+        while last.width != 1000 {
+            assert!(Instant::now() < deadline, "the edited view never went back to its size");
+            std::thread::sleep(Duration::from_millis(5));
+            if let Some(frame) = view.take_frame(&mut framebuffer) {
+                last = frame;
+            }
+        }
+        assert_eq!(view.traced_size(), (1000, 750), "and asks for its full size again");
     }
 
     #[test]

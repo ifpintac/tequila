@@ -76,9 +76,14 @@ pub fn adjusted_divider(divider: f32, took: std::time::Duration, long_side: usiz
     (divider * 0.5 + wanted * 0.5).clamp(1.0, most)
 }
 
-/// `full` divided by `divider` on each side.
+/// `full` divided by `divider` on each side, the long side never under
+/// [`NAVIGATION_SMALLEST`]: a view smaller than that is not divided at all.
+/// The divider is held to that only once a moving picture has come back
+/// ([`adjusted_divider`]), and a small view's first one was divided anyway.
 pub fn divided(full: (usize, usize), divider: f32) -> (usize, usize) {
-    let side = |n: usize| ((n as f32 / divider.max(1.0)).round() as usize).max(1);
+    let most = (full.0.max(full.1) as f32 / NAVIGATION_SMALLEST as f32).max(1.0);
+    let divider = divider.clamp(1.0, most);
+    let side = |n: usize| ((n as f32 / divider).round() as usize).max(1);
     (side(full.0), side(full.1))
 }
 
@@ -211,15 +216,6 @@ impl CyclesView {
     /// shows has changed. `true` when it restarted.
     pub fn sync(&mut self, request: &RenderRequest) -> Result<bool, String> {
         let full = (request.width.max(1), request.height.max(1));
-        // The camera moved, and nothing else about the view: an orbit, a
-        // pan, a zoom, a 3D mouse. A part dragged with the gizmo is the
-        // mouse held down, `interacting`.
-        let now = std::time::Instant::now();
-        if self.camera.is_some_and(|camera| camera != request.camera) && self.full == full {
-            self.navigation.moved_at = Some(now);
-        }
-        let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
-        let size = if navigating { divided(full, self.navigation.divider) } else { full };
         let same = self.scene.as_ref().is_some_and(|scene| std::sync::Arc::ptr_eq(scene, &request.scene));
         // A part dragged with the gizmo changes where instances are and
         // nothing else: Cycles' objects move, and nothing is translated.
@@ -240,6 +236,17 @@ impl CyclesView {
         let mut rescene = (!same && !moved && repainted.is_none()) || relit;
         let moved = moved && !relit;
         let repainted = repainted.filter(|_| !relit);
+        // The camera moved (an orbit, a pan, a zoom, a 3D mouse) or the scene
+        // was edited (a material slider, a part dragged with the gizmo): a
+        // smaller picture while it goes on, since Cycles no longer divides
+        // it itself. A resized view is neither, and starts at its size.
+        let now = std::time::Instant::now();
+        let changed = self.camera.is_some_and(|camera| camera != request.camera) || rescene || moved || repainted.is_some();
+        if changed && self.camera.is_some() && self.full == full {
+            self.navigation.moved_at = Some(now);
+        }
+        let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
+        let size = if navigating { divided(full, self.navigation.divider) } else { full };
         let recamera = self.camera != Some(request.camera) || self.size != size;
         if !rescene && !moved && repainted.is_none() && !recamera {
             return Ok(false);
@@ -316,6 +323,8 @@ impl CyclesView {
             };
             placed.and_then(|()| translate::set_camera(&mut self.session, &request.scene, &view).map(|_| ()))
         };
+        // A moving picture is not denoised, so its guides stay behind.
+        self.session.set_moving(size != full);
         // Ended whatever happened, so the scene lock is never left held.
         self.session.end_edit(size.0, size.1, VIEW_SAMPLES);
         self.answered = false;
@@ -434,7 +443,7 @@ mod navigation_tests {
 
     /// Too slow a picture makes the next one smaller, a quick one larger,
     /// half a step at a time; never finer than the view, never so coarse
-    /// that the long side falls under 200 pixels.
+    /// that the long side falls under 480 pixels.
     #[test]
     fn the_moving_picture_is_sized_to_its_time() {
         let slow = adjusted_divider(2.0, Duration::from_millis(90), 1920);
@@ -456,6 +465,7 @@ mod navigation_tests {
         }
         assert!((d - 2.0).abs() < 0.05, "settled at {d}");
         assert_eq!(divided((1920, 1080), 3.0), (640, 360));
-        assert_eq!(divided((7, 5), 10.0), (1, 1));
+        assert_eq!(divided((1920, 1080), 8.0), (480, 270), "never under 480 pixels across");
+        assert_eq!(divided((64, 48), 2.0), (64, 48), "a view smaller than that is not divided");
     }
 }
