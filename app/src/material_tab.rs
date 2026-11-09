@@ -50,6 +50,11 @@ pub struct MaterialTab {
     /// happens — and passing a whole app handle down into a material panel to
     /// let it do so would be a far worse trade than one field.
     pub place_label_request: Option<(MaterialKey, usize)>,
+    /// A texture's Place button pressed: its material and parameter, to
+    /// show and move in the viewport (`mapping_gizmo`).
+    pub place_mapping_request: Option<(MaterialKey, Param)>,
+    /// The texture being placed in the viewport, so its button shows held.
+    pub placing_mapping: Option<(MaterialKey, Param)>,
     /// The material whose graph the person asked to open. Drained by the
     /// app, which owns the editor window.
     pub open_graph: Option<MaterialKey>,
@@ -672,6 +677,17 @@ impl MaterialTab {
                                 mapping: Box::new(next),
                             });
                             commit = true;
+                        }
+                        // Laid on flat, wrapped or from three sides: shown on
+                        // the part, and moved, sized and turned there.
+                        if current.projection != tequila_texture::projection::Projection::Uv {
+                            let placing = self.placing_mapping == Some((key, param));
+                            let button = ui
+                                .add(egui::Button::new(if placing { "Placing in view" } else { "Place in view" }).selected(placing))
+                                .on_hover_text("Show how the texture is laid on the part, and move, size and turn it there");
+                            if button.clicked() {
+                                self.place_mapping_request = Some((key, param));
+                            }
                         }
                     }
                     continue;

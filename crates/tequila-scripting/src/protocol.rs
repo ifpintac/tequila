@@ -422,6 +422,10 @@ pub struct UiChange {
     /// screenshot: the Studio, and the slot it would land in (0 above the
     /// first). `Some(None)` (from `false`) lets it go; nothing moves.
     pub studio_drag: Option<Option<[usize; 2]>>,
+    /// A texture shown and placed in the viewport, as its Place button
+    /// does: the material's number and the parameter (`base_color`, ...).
+    /// `Some(None)` (from `false`) ends it.
+    pub place_texture: Option<Option<(u64, String)>>,
     /// The Preferences window (the 3D mouse's settings), open.
     pub preferences: Option<bool>,
     /// A 3D mouse's input, made up: reports as a device would send them.
@@ -1350,6 +1354,14 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 Some(v) => Some(Some(v.as_index().ok_or_else(|| {
                     ProtocolError("`graph` must be a material number, or false to close the editor".into())
                 })? as u64)),
+            },
+            place_texture: match value.get("place_texture") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(false)) => Some(None),
+                Some(v) => match (v.get("material").and_then(|m| m.as_index()), v.get("param").and_then(|p| p.as_str())) {
+                    (Some(material), Some(param)) => Some(Some((material as u64, param.to_string()))),
+                    _ => return Err(ProtocolError("`place_texture` is {\"material\": n, \"param\": \"base_color\"}, or false".into())),
+                },
             },
             studio_drag: match value.get("studio_drag") {
                 None | Some(Value::Null) => None,
