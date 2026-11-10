@@ -70,6 +70,7 @@ mod render_window;
 mod scene_tab;
 mod self_test;
 mod shape_panel;
+mod shortcuts;
 mod spacemouse;
 mod procedural_gpu;
 mod solid_gpu;
@@ -411,6 +412,8 @@ struct TequilaApp {
     /// Tequila's own settings (`preferences`), the file they are kept in,
     /// and their window.
     prefs: preferences::Prefs,
+    /// Which keys give which commands (Preferences › Keyboard).
+    shortcuts: shortcuts::Shortcuts,
     prefs_file: Option<std::path::PathBuf>,
     preferences: preferences::Window,
     /// The appearance picker opened or closed from the scripting channel.
@@ -718,7 +721,6 @@ fn journal_directory() -> std::path::PathBuf {
 
 /// Hide the selection, and show everything again. A Mac's Cmd+H hides the
 /// application, and never reaches Tequila: there it is Control+H.
-const HIDE_KEYS: &str = if cfg!(target_os = "macos") { "Control + H / Alt + H" } else { "Ctrl + H / Alt + H" };
 
 /// What of the render settings the viewport's request reads: its denoise
 /// switch and the denoiser's settings, the clamps, the engine.
@@ -1051,6 +1053,7 @@ impl TequilaApp {
             pending_look: None,
             keep_pending_look: false,
             prefs: preferences::Prefs::default(),
+            shortcuts: shortcuts::Shortcuts::default(),
             prefs_file: None,
             preferences: preferences::Window::default(),
             open_look: None,
@@ -2154,27 +2157,6 @@ impl TequilaApp {
             }
         }
 
-        // Standard views on Ctrl+Alt+1..7.
-        if modifiers.command && modifiers.alt {
-            let digits = [
-                egui::Key::Num1,
-                egui::Key::Num2,
-                egui::Key::Num3,
-                egui::Key::Num4,
-                egui::Key::Num5,
-                egui::Key::Num6,
-                egui::Key::Num7,
-            ];
-            for (index, key) in digits.iter().enumerate() {
-                if ui.input(|i| i.key_pressed(*key)) {
-                    if let Some(view) = StandardView::from_digit(index as u32 + 1) {
-                        self.camera.set_standard_view(view);
-                        moved = true;
-                    }
-                }
-            }
-        }
-
         // §2.3's context menu. A right-click, not a right-drag: the drag is
         // already Alt+dolly, and a menu that appeared at the end of a dolly
         // would be a menu nobody asked for.
@@ -2348,26 +2330,6 @@ impl TequilaApp {
             }
         }
 
-        // Bare `H` only: `Ctrl+H` hides the selection and `Alt+H` unhides
-        // everything, and toggling the HUD as well would make both look like
-        // they had done two things.
-        // And not while a text field has focus, or typing a name with an "h"
-        // in it flips the HUD.
-        let typing = ui.ctx().memory(|m| m.focused().is_some());
-        if !typing && ui.input(|i| i.key_pressed(egui::Key::H) && !i.modifiers.any()) {
-            self.show_hud = !self.show_hud;
-        }
-        // O shows and hides the composition guides and Shift+O turns the
-        // one-sided ones, as a photo editor's crop overlay does.
-        if !typing && !presenting {
-            let (show, turn) = ui.input(|i| (i.key_pressed(egui::Key::O) && !i.modifiers.any(), i.key_pressed(egui::Key::O) && i.modifiers.shift_only()));
-            if show {
-                self.guides.toggle();
-                self.guides_changed();
-            } else if turn && self.guides.turn() {
-                self.guides_changed();
-            }
-        }
         if !presenting {
             self.viewport_overlays(ui, area);
             if self.show_hud {
@@ -2504,11 +2466,11 @@ impl TequilaApp {
             ui.close_menu();
         }
         ui.separator();
-        if ui.button("Hide").on_hover_text(theme::keys(HIDE_KEYS)).clicked() {
+        if ui.button("Hide").on_hover_text(self.key_text(shortcuts::Action::HideSelection)).clicked() {
             self.hide_selection();
             ui.close_menu();
         }
-        if ui.button("Isolate").on_hover_text("/").clicked() {
+        if ui.button("Isolate").on_hover_text(self.key_text(shortcuts::Action::Isolate)).clicked() {
             self.isolate_selection();
             ui.close_menu();
         }
@@ -2548,7 +2510,7 @@ impl TequilaApp {
             ui.close_menu();
         }
         ui.separator();
-        if ui.button("Duplicate").on_hover_text(theme::keys("Ctrl + D")).clicked() {
+        if ui.button("Duplicate").on_hover_text(self.key_text(shortcuts::Action::Duplicate)).clicked() {
             self.duplicate_selection();
             ui.close_menu();
         }
@@ -2589,11 +2551,11 @@ impl TequilaApp {
 
     /// And for a right-click on empty space.
     fn background_context_items(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Frame all").on_hover_text("Shift+F").clicked() {
+        if ui.button("Frame all").on_hover_text(self.key_text(shortcuts::Action::FrameAll)).clicked() {
             self.frame(true);
             ui.close_menu();
         }
-        if ui.button("Deselect all").on_hover_text(theme::keys("Esc / Ctrl + Shift + A")).clicked() {
+        if ui.button("Deselect all").on_hover_text(self.key_text(shortcuts::Action::DeselectAll)).clicked() {
             self.project.selection.clear();
             ui.close_menu();
         }
@@ -3385,11 +3347,11 @@ impl TequilaApp {
                             self.update_model(node, false);
                         }
                     }
-                    if ui.button("New project").on_hover_text(theme::keys("Ctrl+N")).clicked() {
+                    if ui.button("New project").on_hover_text(self.key_text(shortcuts::Action::NewProject)).clicked() {
                         ui.close_menu();
                         self.new_project();
                     }
-                    if ui.button("Open project...").on_hover_text(theme::keys("Ctrl+O")).clicked() {
+                    if ui.button("Open project...").on_hover_text(self.key_text(shortcuts::Action::OpenProject)).clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::Open);
                     }
@@ -3416,14 +3378,14 @@ impl TequilaApp {
                     if clear {
                         self.forget_recent(None);
                     }
-                    if ui.button("Save").on_hover_text(theme::keys("Ctrl+S")).clicked() {
+                    if ui.button("Save").on_hover_text(self.key_text(shortcuts::Action::Save)).clicked() {
                         match self.project.path.clone() {
                             Some(path) => self.save_to(&path),
                             None => self.ask_for_file(Action::SaveAs),
                         }
                         ui.close_menu();
                     }
-                    if ui.button("Save as...").on_hover_text(theme::keys("Ctrl+Shift+S")).clicked() {
+                    if ui.button("Save as...").on_hover_text(self.key_text(shortcuts::Action::SaveAs)).clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::SaveAs);
                     }
@@ -3489,28 +3451,28 @@ impl TequilaApp {
                     }
                     if ui
                         .button("Toggle material library")
-                        .on_hover_text("M")
+                        .on_hover_text(self.key_text(shortcuts::Action::Library))
                         .clicked()
                     {
                         self.toggle_library(ui.ctx().screen_rect().width());
                     }
                     ui.add(crate::field::Checkbox::new(&mut self.show_project, "Inspector"))
-                        .on_hover_text("Space");
+                        .on_hover_text(self.key_text(shortcuts::Action::Inspector));
                     ui.add(crate::field::Checkbox::new(&mut self.full_viewport, "Full viewport"))
-                        .on_hover_text("Tab");
+                        .on_hover_text(self.key_text(shortcuts::Action::FullViewport));
                     ui.separator();
                     ui.add(crate::field::Checkbox::new(&mut self.show_hud, "Render statistics"))
-                        .on_hover_text("H");
+                        .on_hover_text(self.key_text(shortcuts::Action::Statistics));
                     let mut outline = self.show_selection_outline;
                     if ui
                         .add(crate::field::Checkbox::new(&mut outline, "Selection outline"))
-                        .on_hover_text("Shift+H. Hide it to see a selected part as it is, still selected")
+                        .on_hover_text(format!("{}. Hide it to see a selected part as it is, still selected", self.key_text(shortcuts::Action::SelectionOutline)))
                         .changed()
                     {
                         self.set_selection_outline(outline);
                     }
                     ui.add(crate::field::Checkbox::new(&mut self.show_gizmo, "Gizmo"))
-                        .on_hover_text("Shift+G. The move, turn and scale handles on the selection");
+                        .on_hover_text(format!("{}. The move, turn and scale handles on the selection", self.key_text(shortcuts::Action::Gizmo)));
                     ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
                         .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
@@ -3527,7 +3489,7 @@ impl TequilaApp {
                         for view in StandardView::ALL {
                             if ui
                                 .button(view.label())
-                                .on_hover_text(theme::keys(&format!("Ctrl + Alt + {}", view.digit())))
+                                .on_hover_text(self.key_text(shortcuts::ACTIONS.iter().filter(|info| info.group == shortcuts::Group::Camera).nth(1 + view.digit() as usize).map_or(shortcuts::Action::ViewFront, |info| info.action)))
                                 .clicked()
                             {
                                 self.camera.set_standard_view(view);
@@ -3537,11 +3499,11 @@ impl TequilaApp {
                         }
                     });
                     ui.separator();
-                    if ui.button("Frame selection").on_hover_text("F").clicked() {
+                    if ui.button("Frame selection").on_hover_text(self.key_text(shortcuts::Action::FrameSelection)).clicked() {
                         self.frame(false);
                         ui.close_menu();
                     }
-                    if ui.button("Frame all").on_hover_text("Shift+F").clicked() {
+                    if ui.button("Frame all").on_hover_text(self.key_text(shortcuts::Action::FrameAll)).clicked() {
                         self.frame(true);
                         ui.close_menu();
                     }
@@ -3606,7 +3568,7 @@ impl TequilaApp {
                     ui.separator();
                     let any = self.project.selection.nodes().next().is_some();
                     if ui
-                        .add_enabled(any, egui::Button::new("Duplicate").shortcut_text(theme::keys("Ctrl + D")))
+                        .add_enabled(any, egui::Button::new("Duplicate").shortcut_text(self.key_text(shortcuts::Action::Duplicate)))
                         .on_hover_text("Copies of the selection, in place, sharing their meshes and materials")
                         .clicked()
                     {
@@ -3615,7 +3577,7 @@ impl TequilaApp {
                     }
                     ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
                     ui.separator();
-                    if ui.button("Preferences…").on_hover_text(theme::keys("Ctrl + ,")).clicked() {
+                    if ui.button("Preferences…").on_hover_text(self.key_text(shortcuts::Action::Preferences)).clicked() {
                         self.preferences.show();
                         ui.close_menu();
                     }
@@ -3722,12 +3684,12 @@ impl TequilaApp {
                 .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     self.render_button(ui);
-                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, FBX, OBJ, STL, 3MF, PLY, USD and IFC", "Ctrl + I")
+                    if icons::tip(icons::labelled(ui, icons::Icon::Import, "Import", false), "Import a model", "STEP, IGES, Rhino, glTF, FBX, OBJ, STL, 3MF, PLY, USD and IFC", &self.key(shortcuts::Action::Import))
                         .clicked()
                     {
                         self.ask_for_file(Action::Import);
                     }
-                    if icons::tip(icons::button(ui, icons::Icon::Save, false, 30.0, egui::Sense::click()), "Save the project", "", "Ctrl + S")
+                    if icons::tip(icons::button(ui, icons::Icon::Save, false, 30.0, egui::Sense::click()), "Save the project", "", &self.key(shortcuts::Action::Save))
                         .clicked()
                     {
                         match self.project.path.clone() {
@@ -3774,7 +3736,7 @@ impl TequilaApp {
                         icons::toggle(ui, icons::Icon::Console, "Console", self.console.open, named),
                         "Console",
                         "Type commands at the scene, and watch scripts act on it",
-                        "`",
+                        &self.key(shortcuts::Action::Console),
                     )
                     .clicked()
                     {
@@ -3786,7 +3748,7 @@ impl TequilaApp {
                         icons::toggle(ui, icons::Icon::Library, "Library", library_visible, named),
                         "Material library",
                         "Drag a finish onto any part of the model",
-                        "M",
+                        &self.key(shortcuts::Action::Library),
                     )
                     .clicked()
                     {
@@ -3861,7 +3823,7 @@ impl TequilaApp {
         let response = if progress.is_some() {
             icons::tip(response, "Rendering", "Show the render's live preview and progress", "")
         } else {
-            icons::tip(response, "Render an image", "Output size, quality and file format", "Ctrl + R")
+            icons::tip(response, "Render an image", "Output size, quality and file format", &self.key(shortcuts::Action::RenderWindow))
         };
         if response.clicked() {
             if progress.is_some() {
@@ -4032,7 +3994,7 @@ impl TequilaApp {
             *x += TOOL;
             at
         };
-        if icons::tip(button(ui, next(&mut x), "frame-all", Icon::FrameAll, false, true), "Frame all", "Fit the whole scene in the view", "Shift + F")
+        if icons::tip(button(ui, next(&mut x), "frame-all", Icon::FrameAll, false, true), "Frame all", "Fit the whole scene in the view", &self.key(shortcuts::Action::FrameAll))
             .clicked()
         {
             self.frame(true);
@@ -4042,7 +4004,7 @@ impl TequilaApp {
             response,
             "Frame the selection",
             if has_selection { "Fit the selected parts in the view" } else { "Select a part first" },
-            "F",
+            &self.key(shortcuts::Action::FrameSelection),
         );
         if response.clicked() && has_selection {
             self.frame(false);
@@ -4109,7 +4071,7 @@ impl TequilaApp {
             button(ui, next(&mut x), "pause", if paused { Icon::Play } else { Icon::Pause }, paused, true),
             if paused { "Resume" } else { "Pause" },
             if paused { "Carry on rendering the viewport" } else { "Stop rendering the viewport, keeping the samples so far" },
-            "Shift + P",
+            &self.key(shortcuts::Action::PauseViewport),
         )
         .clicked()
         {
@@ -4121,7 +4083,7 @@ impl TequilaApp {
             button(ui, next(&mut x), "screenshot", Icon::Screenshot, false, true),
             "Screenshot",
             "Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics. View › Screenshot folder… chooses where.",
-            "P",
+            &self.key(shortcuts::Action::Screenshot),
         )
         .clicked()
         {
@@ -4156,7 +4118,12 @@ impl TequilaApp {
                     (true, GizmoMode::Universal) => "Arrows move, rings turn, cubes scale",
                     (true, _) => "Drag a handle in the viewport",
                 },
-                &mode.hotkey().to_string(),
+                &self.key(match mode {
+                    GizmoMode::Universal => shortcuts::Action::GizmoAll,
+                    GizmoMode::Move => shortcuts::Action::GizmoMove,
+                    GizmoMode::Rotate => shortcuts::Action::GizmoRotate,
+                    GizmoMode::Scale => shortcuts::Action::GizmoScale,
+                }),
             );
             if response.clicked() && has_selection {
                 self.gizmo.mode = mode;
@@ -4399,7 +4366,7 @@ impl TequilaApp {
                 ui.label(small(format!("{engine} · {width} × {height}"), theme::p().text_faint)),
                 "Rendering statistics",
                 "Samples, timings and memory, over the viewport",
-                "H",
+                &self.key(shortcuts::Action::Statistics),
             );
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
@@ -4608,7 +4575,10 @@ impl TequilaApp {
     fn global_hotkeys(&mut self, ctx: &egui::Context) {
         // Undo, redo and save pressed in a window of its own: they mean the
         // same there as here, and only here is there a project to save.
-        for key in windows::take_keys(ctx) {
+        // But not the press that chose a shortcut's key in Preferences.
+        let passed_on = windows::take_keys(ctx);
+        let swallowed = self.preferences.swallows_keys();
+        for key in passed_on.into_iter().filter(|_| !swallowed) {
             match key {
                 windows::Shared::Undo => self.undo(),
                 windows::Shared::Redo => self.redo(),
@@ -4623,196 +4593,105 @@ impl TequilaApp {
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
-        let modifiers = ctx.input(|i| i.modifiers);
-        let pressed = |key| ctx.input(|i| i.key_pressed(key));
-        // F5 presents, as it does a slide show.
-        if pressed(egui::Key::F5) && !modifiers.any() && self.presenting.is_none() {
-            self.start_presentation();
+        // A key being chosen in Preferences › Keyboard is that key, not
+        // what it does.
+        if self.preferences.choosing_key() {
+            return;
         }
         // Over the graph editor or the UV editor, their own keys mean a node
         // or a label, not a part: only undo, redo and save reach through,
         // which mean the same everywhere. Undo stopped working altogether
         // over the graph editor before this.
-        if self.graph_editor.hovered || self.uv_editor.hovered {
-            if modifiers.command && pressed(egui::Key::Z) {
-                if modifiers.shift {
-                    self.redo();
-                } else {
-                    self.undo();
+        let elsewhere = self.graph_editor.hovered || self.uv_editor.hovered;
+        // The actions this frame's keys give, as Preferences › Keyboard has
+        // them (`shortcuts`).
+        let mut actions = self.shortcuts.pressed(ctx);
+        // §6.2 records this conflict and its resolution: one key is both
+        // Rotate and "background = Environment" (`E`, unless changed). The
+        // gizmo wins when there is something to rotate, because that is
+        // what the key was pressed for in every case where both are possible.
+        if actions.contains(&shortcuts::Action::GizmoRotate) && actions.contains(&shortcuts::Action::BackgroundEnvironment) {
+            let loser = if self.project.selection.active().is_some() { shortcuts::Action::BackgroundEnvironment } else { shortcuts::Action::GizmoRotate };
+            actions.retain(|action| *action != loser);
+        }
+        for action in actions {
+            if !elsewhere || action.info().everywhere {
+                self.perform(ctx, action);
+            }
+        }
+    }
+
+    /// An action's keys as they are now, for a tooltip's key caps.
+    pub(crate) fn key(&self, action: shortcuts::Action) -> String {
+        self.shortcuts.shown(action)
+    }
+
+    /// The same in this computer's words, for a line of text.
+    pub(crate) fn key_text(&self, action: shortcuts::Action) -> String {
+        theme::keys(&self.shortcuts.shown(action))
+    }
+
+    /// Carry out what a key asked for.
+    pub(crate) fn perform(&mut self, ctx: &egui::Context, action: shortcuts::Action) {
+        use shortcuts::Action as Key;
+        match action {
+            Key::Undo => self.undo(),
+            Key::Redo => self.redo(),
+            // Ctrl+A selects everything and Ctrl+Shift+A nothing, as in
+            // Photoshop and Illustrator; Esc deselects too.
+            Key::SelectAll => {
+                let mut selection = std::mem::take(&mut self.project.selection);
+                selection.select_all(self.project.document());
+                self.project.selection = selection;
+            }
+            Key::DeselectAll => self.project.selection.clear(),
+            Key::Duplicate => self.duplicate_selection(),
+            Key::Group => {
+                let nodes: Vec<_> = self.project.selection.nodes().collect();
+                if nodes.len() >= 2 {
+                    let _ = self.project.apply(Command::Group { nodes, name: "Group".into() });
                 }
             }
-            if modifiers.command && pressed(egui::Key::Y) {
-                self.redo();
-            }
-            if modifiers.command && pressed(egui::Key::S) {
-                match self.project.path.clone() {
-                    Some(path) => self.save_to(&path),
-                    None => self.ask_for_file(Action::SaveAs),
+            Key::Delete => {
+                let nodes: Vec<_> = self.project.selection.nodes().collect();
+                if !nodes.is_empty() {
+                    let _ = self.project.apply(Command::DeleteNodes { nodes });
                 }
             }
-            return;
-        }
-
-        // P saves what the viewport shows, as KeyShot's P does; Shift+P
-        // pauses it, which P did before.
-        if modifiers.is_none() && pressed(egui::Key::P) {
-            self.take_screenshot();
-        }
-        if modifiers.shift_only() && pressed(egui::Key::P) {
-            self.viewport_paused = !self.viewport_paused;
-        }
-
-        // The key every game and most editors open their console with.
-        if modifiers.is_none() && pressed(egui::Key::Backtick) {
-            self.console.toggle();
-        }
-
-        if modifiers.command && pressed(egui::Key::Z) {
-            if modifiers.shift {
-                self.redo();
-            } else {
-                self.undo();
+            // On a Mac, Cmd+H is the system's: it hides the application
+            // before Tequila sees it, so the default there is Control+H.
+            Key::HideSelection => self.hide_selection(),
+            Key::UnhideAll => self.unhide_all(),
+            Key::Isolate => self.isolate_selection(),
+            Key::GizmoAll => self.gizmo.mode = GizmoMode::Universal,
+            Key::GizmoMove => self.gizmo.mode = GizmoMode::Move,
+            Key::GizmoRotate => self.gizmo.mode = GizmoMode::Rotate,
+            Key::GizmoScale => self.gizmo.mode = GizmoMode::Scale,
+            Key::FrameSelection => self.frame(false),
+            Key::FrameAll => self.frame(true),
+            Key::ViewFront | Key::ViewBack | Key::ViewLeft | Key::ViewRight | Key::ViewTop | Key::ViewBottom | Key::ViewIsometric => {
+                let view = match action {
+                    Key::ViewFront => StandardView::Front,
+                    Key::ViewBack => StandardView::Back,
+                    Key::ViewLeft => StandardView::Left,
+                    Key::ViewRight => StandardView::Right,
+                    Key::ViewTop => StandardView::Top,
+                    Key::ViewBottom => StandardView::Bottom,
+                    _ => StandardView::Isometric,
+                };
+                self.camera.set_standard_view(view);
+                self.submit();
             }
-        }
-        if modifiers.command && pressed(egui::Key::Y) {
-            self.redo();
-        }
-        // Ctrl+A selects everything and Ctrl+Shift+A nothing, as in
-        // Photoshop and Illustrator; Esc deselects too. Select all asks for
-        // no Shift, or the two would both fire on the second chord.
-        if modifiers.command && !modifiers.shift && pressed(egui::Key::A) {
-            let mut selection = std::mem::take(&mut self.project.selection);
-            selection.select_all(self.project.document());
-            self.project.selection = selection;
-        }
-        if modifiers.command && modifiers.shift && pressed(egui::Key::A) {
-            self.project.selection.clear();
-        }
-        // Ctrl+D (Cmd+D on a Mac): the selection copied in place.
-        if modifiers.command && !modifiers.shift && pressed(egui::Key::D) {
-            self.duplicate_selection();
-        }
-        if modifiers.command && pressed(egui::Key::G) {
-            let nodes: Vec<_> = self.project.selection.nodes().collect();
-            if nodes.len() >= 2 {
-                let _ = self.project.apply(Command::Group {
-                    nodes,
-                    name: "Group".into(),
-                });
-            }
-        }
-        if modifiers.command && pressed(egui::Key::S) {
-            match (modifiers.shift, self.project.path.clone()) {
-                (false, Some(path)) => self.save_to(&path),
-                _ => self.ask_for_file(Action::SaveAs),
-            }
-        }
-        if modifiers.command && !modifiers.shift && pressed(egui::Key::N) {
-            self.new_project();
-        }
-        if modifiers.command && !modifiers.shift && pressed(egui::Key::O) {
-            self.ask_for_file(Action::Open);
-        }
-        if pressed(egui::Key::Escape) {
-            self.project.selection.clear();
-        }
-        if pressed(egui::Key::Delete) || pressed(egui::Key::Backspace) {
-            let nodes: Vec<_> = self.project.selection.nodes().collect();
-            if !nodes.is_empty() {
-                let _ = self.project.apply(Command::DeleteNodes { nodes });
-            }
-        }
-        // §6.2's editing bindings that take a modifier. On a Mac, Cmd+H is
-        // the system's: it hides the application before Tequila sees it.
-        if pressed(egui::Key::H) && (modifiers.command || (cfg!(target_os = "macos") && modifiers.ctrl)) {
-            self.hide_selection();
-        }
-        if modifiers.alt && pressed(egui::Key::H) {
-            self.unhide_all();
-        }
-        if modifiers.command && pressed(egui::Key::R) {
-            self.render_window.open = true;
-        }
-        // Ctrl+, (Cmd+, on a Mac): Preferences, where every application
-        // on either keeps them.
-        if modifiers.command && pressed(egui::Key::Comma) {
-            self.preferences.show();
-        }
-        if modifiers.command && pressed(egui::Key::I) {
-            self.ask_for_file(Action::Import);
-        }
-        if modifiers.shift && pressed(egui::Key::F) {
-            self.frame(true);
-        }
-        // Shift+H the selection's outline and Shift+G the gizmo, shown or
-        // hidden, to see a selected part as it is. Ctrl+Alt+H was asked for,
-        // but Ctrl+H hides parts and Alt+H shows them all, and on a Mac
-        // Cmd+Option+H is the system's Hide Others; Ctrl+Alt+G would group.
-        // A notice says so, as nothing else on screen would say why the
-        // gizmo has gone.
-        if modifiers.shift_only() && pressed(egui::Key::H) {
-            let on = !self.show_selection_outline;
-            self.set_selection_outline(on);
-            self.toasts.info(if on { "Selection outline shown" } else { "Selection outline hidden: Shift+H shows it again" });
-        }
-        if modifiers.shift_only() && pressed(egui::Key::G) {
-            let on = !self.show_gizmo;
-            self.show_gizmo = on;
-            self.toasts.info(if on { "Gizmo shown" } else { "Gizmo hidden: Shift+G shows it again" });
-        }
-
-        if !modifiers.any() {
-            if pressed(egui::Key::Q) {
-                self.gizmo.mode = GizmoMode::Universal;
-            }
-            if pressed(egui::Key::W) {
-                self.gizmo.mode = GizmoMode::Move;
-            }
-            // §6.2 records this conflict and its resolution: `E` is both
-            // Rotate and "background = Environment". The gizmo wins when there
-            // is something to rotate, because that is what the key was pressed
-            // for in every case where both are possible.
-            if pressed(egui::Key::E) {
-                if self.project.selection.active().is_some() {
-                    self.gizmo.mode = GizmoMode::Rotate;
-                } else {
-                    self.set_background(tequila_scene::document::BackgroundMode::Environment);
-                }
-            }
-            if pressed(egui::Key::R) {
-                self.gizmo.mode = GizmoMode::Scale;
-            }
-            if pressed(egui::Key::C) {
-                self.set_background(tequila_scene::document::BackgroundMode::Color);
-            }
-            if pressed(egui::Key::B) {
-                self.set_background(tequila_scene::document::BackgroundMode::Backplate);
-            }
-            if pressed(egui::Key::F) {
-                self.frame(false);
-            }
-            if pressed(egui::Key::Slash) {
-                self.isolate_selection();
-            }
-            if pressed(egui::Key::Space) {
-                self.show_project = !self.show_project;
-            }
-            if pressed(egui::Key::Tab) {
-                self.full_viewport = !self.full_viewport;
-            }
-            if pressed(egui::Key::M) {
-                self.toggle_library(ctx.screen_rect().width());
-            }
-            // §6's binding for Studios.
-            if pressed(egui::Key::U) {
-                self.project_tab = ProjectTab::Studios;
-                self.show_project = true;
+            // Z steps through the four views, as Blender's pie offers them.
+            Key::NextShading => {
+                let next = self.view_mode.next();
+                self.set_view_mode(next);
             }
             // D for display mode. Toggling rather than cycling: there are two,
             // and one key that goes back where it came from is what makes it
             // usable as a glance — hold the scene still, tap D, see the real
             // thing, tap D again.
-            if pressed(egui::Key::D) {
+            Key::RenderedAndBack => {
                 let back = self.last_preview_mode;
                 if self.view_mode == view_mode::ViewMode::Rendered {
                     self.set_view_mode(back);
@@ -4821,11 +4700,68 @@ impl TequilaApp {
                     self.set_view_mode(view_mode::ViewMode::Rendered);
                 }
             }
-            // Z steps through the four views, as Blender's pie offers them.
-            if pressed(egui::Key::Z) {
-                let next = self.view_mode.next();
-                self.set_view_mode(next);
+            Key::Statistics => self.show_hud = !self.show_hud,
+            // The selection's outline and the gizmo, shown or hidden, to see
+            // a selected part as it is. A notice says so, as nothing else on
+            // screen would say why the gizmo has gone.
+            Key::SelectionOutline => {
+                let on = !self.show_selection_outline;
+                self.set_selection_outline(on);
+                let keys = theme::keys(&self.shortcuts.shown(action));
+                self.toasts.info(if on { "Selection outline shown".to_string() } else { format!("Selection outline hidden: {keys} shows it again") });
             }
+            Key::Gizmo => {
+                let on = !self.show_gizmo;
+                self.show_gizmo = on;
+                let keys = theme::keys(&self.shortcuts.shown(action));
+                self.toasts.info(if on { "Gizmo shown".to_string() } else { format!("Gizmo hidden: {keys} shows it again") });
+            }
+            // O shows and hides the composition guides and Shift+O turns the
+            // one-sided ones, as a photo editor's crop overlay does.
+            Key::Guides => {
+                if self.presenting.is_none() {
+                    self.guides.toggle();
+                    self.guides_changed();
+                }
+            }
+            Key::TurnGuides => {
+                if self.presenting.is_none() && self.guides.turn() {
+                    self.guides_changed();
+                }
+            }
+            Key::FullViewport => self.full_viewport = !self.full_viewport,
+            // P saves what the viewport shows, as KeyShot's P does; Shift+P
+            // pauses it, which P did before.
+            Key::PauseViewport => self.viewport_paused = !self.viewport_paused,
+            Key::Screenshot => self.take_screenshot(),
+            // F5 presents, as it does a slide show.
+            Key::Present => {
+                if self.presenting.is_none() {
+                    self.start_presentation();
+                }
+            }
+            Key::BackgroundEnvironment => self.set_background(tequila_scene::document::BackgroundMode::Environment),
+            Key::BackgroundColour => self.set_background(tequila_scene::document::BackgroundMode::Color),
+            Key::BackgroundBackplate => self.set_background(tequila_scene::document::BackgroundMode::Backplate),
+            Key::Inspector => self.show_project = !self.show_project,
+            Key::Library => self.toggle_library(ctx.screen_rect().width()),
+            // §6's binding for Studios.
+            Key::Snapshots => {
+                self.project_tab = ProjectTab::Studios;
+                self.show_project = true;
+            }
+            // The key every game and most editors open their console with.
+            Key::Console => self.console.toggle(),
+            Key::RenderWindow => self.render_window.open = true,
+            Key::Preferences => self.preferences.show(),
+            Key::NewProject => self.new_project(),
+            Key::OpenProject => self.ask_for_file(Action::Open),
+            Key::Save => match self.project.path.clone() {
+                Some(path) => self.save_to(&path),
+                None => self.ask_for_file(Action::SaveAs),
+            },
+            Key::SaveAs => self.ask_for_file(Action::SaveAs),
+            Key::Import => self.ask_for_file(Action::Import),
         }
     }
 
@@ -6926,6 +6862,8 @@ impl TequilaApp {
     /// Every binding, grouped by what it is for, with the keys drawn as keys.
     fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
+        let shortcuts = self.shortcuts.clone();
+        let mut change = false;
         let spec = windows::Spec {
             kind: windows::Kind::Shortcuts,
             title: "Shortcuts".into(),
@@ -6947,8 +6885,7 @@ impl TequilaApp {
                         ("Zoom", "Pinch / Ctrl + Swipe / Scroll"),
                         ("Focal length", "Alt + Swipe / Alt + Scroll"),
                         ("Dolly", "Alt + Right drag"),
-                        ("Standard views", "Ctrl + Alt + 1-7"),
-                        ("Frame selection / all", "F / Shift + F"),
+                        ("Select the part's group", "Double-click"),
                     ]
                 } else {
                     &[
@@ -6957,63 +6894,41 @@ impl TequilaApp {
                         ("Zoom", "Scroll"),
                         ("Focal length", "Alt + Scroll"),
                         ("Dolly", "Alt + Right drag"),
-                        ("Standard views", "Ctrl + Alt + 1-7"),
-                        ("Frame selection / all", "F / Shift + F"),
+                        ("Select the part's group", "Double-click"),
                     ]
                 };
-                let groups: [(&str, &[(&str, &str)]); 4] = [
-                    ("Navigate", navigate),
-                    (
-                        "View",
-                        &[
-                            ("Step through the shadings", "Z"),
-                            ("Rendered, and back", "D"),
-                            ("Screenshot of the viewport", "P"),
-                            ("Pause the viewport", "Shift + P"),
-                            ("Render statistics", "H"),
-                            ("Selection outline / gizmo", "Shift + H / Shift + G"),
-                            ("Full viewport", "Tab"),
-                            ("Composition guides / turn them", "O / Shift + O"),
-                            ("Preferences", "Ctrl + ,"),
-                        ],
-                    ),
-                    (
-                        "Edit",
-                        &[
-                            ("Move, turn and scale at once", "Q"),
-                            ("Move / rotate / scale", "W / E / R"),
-                            ("Select the part's group", "Double-click"),
-                            ("Select all", "Ctrl + A"),
-                            ("Deselect all", "Esc / Ctrl + Shift + A"),
-                            ("Duplicate", "Ctrl + D"),
-                            ("Group", "Ctrl + G"),
-                            ("Hide / show everything", HIDE_KEYS),
-                            ("Isolate", "/"),
-                            ("Delete", "Delete"),
-                            ("Undo / redo", "Ctrl + Z / Ctrl + Y"),
-                        ],
-                    ),
-                    (
-                        "Panels and files",
-                        &[
-                            ("Inspector", "Space"),
-                            ("Material library", "M"),
-                            ("Snapshots", "U"),
-                            ("Console", "`"),
-                            ("Render", "Ctrl + R"),
-                            ("Import / save", "Ctrl + I / Ctrl + S"),
-                            ("New / open project", "Ctrl + N / Ctrl + O"),
-                            ("Save as", "Ctrl + Shift + S"),
-                        ],
-                    ),
-                ];
+                // The mouse, which is fixed, then every key as it is now
+                // (`shortcuts`; Preferences › Keyboard changes them). An
+                // action left without a key is not listed.
+                let mut groups: Vec<(&str, Vec<(String, String)>)> = vec![("Mouse", navigate.iter().map(|(action, binding)| (action.to_string(), binding.to_string())).collect())];
+                for group in shortcuts::Group::ALL {
+                    let rows: Vec<(String, String)> = shortcuts::ACTIONS
+                        .iter()
+                        .filter(|info| info.group == group && !shortcuts.of(info.action).is_empty())
+                        .map(|info| (info.label.to_string(), shortcuts.shown(info.action)))
+                        .collect();
+                    if !rows.is_empty() {
+                        groups.push((group.label(), rows));
+                    }
+                }
+                // Two columns of about the same height.
+                let half = groups.iter().map(|(_, rows)| rows.len() + 2).sum::<usize>() / 2;
+                let mut seen = 0;
+                let column_of: Vec<usize> = groups
+                    .iter()
+                    .map(|(_, rows)| {
+                        let column = usize::from(seen >= half);
+                        seen += rows.len() + 2;
+                        column
+                    })
+                    .collect();
                 ui.columns(2, |columns| {
                     for (index, (title, rows)) in groups.iter().enumerate() {
-                        let ui = &mut columns[index / 2];
+                        let ui = &mut columns[column_of[index]];
                         theme::section(ui, title);
                         egui::Grid::new(("bindings", index)).num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
                             for (action, binding) in rows.iter() {
-                                ui.label(egui::RichText::new(*action).color(theme::p().text));
+                                ui.label(egui::RichText::new(action).color(theme::p().text));
                                 theme::key_caps(ui, binding);
                                 ui.end_row();
                             }
@@ -7021,9 +6936,18 @@ impl TequilaApp {
                         ui.add_space(6.0);
                     }
                 });
+                ui.add_space(4.0);
+                if ui.button("Change the keys…").on_hover_text("Preferences › Keyboard: give any of these another key").clicked() {
+                    change = true;
+                }
             });
         });
         self.show_help = open;
+        if change {
+            self.preferences.show();
+            self.preferences.page = preferences::Page::Keyboard;
+            self.preferences.search.clear();
+        }
     }
 
     /// Whether window `kind` is open, wherever it is drawn.

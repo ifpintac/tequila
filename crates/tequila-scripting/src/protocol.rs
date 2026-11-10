@@ -442,7 +442,7 @@ pub struct UiChange {
     /// The Preferences window, open.
     pub preferences: Option<bool>,
     /// The Preferences window's page, by name (`general`, `interface`,
-    /// `viewport`, `navigation`, `import`, `folders`, `updates`,
+    /// `viewport`, `navigation`, `keyboard`, `import`, `folders`, `updates`,
     /// `advanced`); showing a page opens the window.
     pub preferences_page: Option<String>,
     /// What is typed in the Preferences window's search, which opens it.

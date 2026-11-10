@@ -638,13 +638,13 @@
  },
  {
   "name": "tequila_preferences",
-  "description": "Tequila's own settings, as Edit > Preferences shows them: with no arguments, every setting with its value, its default and what it takes. They are the person's own and kept between sessions: change one only when asked to.",
+  "description": "Tequila's own settings, as Edit > Preferences shows them: with no arguments, every setting with its value, its default and what it takes, and every keyboard shortcut with its keys. They are the person's own and kept between sessions: change one only when asked to.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "set": {
      "type": "object",
-     "description": "Settings to change, by name: {\"viewport.gizmo_size\": 150, \"navigation.invert_zoom\": true}. All are checked before any is taken."
+     "description": "Settings to change, by name: {\"viewport.gizmo_size\": 150, \"navigation.invert_zoom\": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {\"shortcut.view.screenshot\": \"F12\"}, a list of two keys, or \"\" for none."
     },
     "reset": {
      "type": [
@@ -654,7 +654,7 @@
      "items": {
       "type": "string"
      },
-     "description": "\"all\", a page (general, interface, viewport, navigation, import, folders, updates), a setting, or a list of settings, put back to their defaults."
+     "description": "\"all\", a page (general, interface, viewport, navigation, keyboard, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults."
     }
    },
    "required": [],

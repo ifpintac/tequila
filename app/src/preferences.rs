@@ -15,6 +15,7 @@
 //! and sets them through it, so they are in the window, the export and
 //! scripts all the same.
 
+use crate::shortcuts::{Action, Chord, Shortcuts};
 use crate::view_mode::ViewMode;
 use crate::TequilaApp;
 use eframe::egui;
@@ -72,6 +73,7 @@ pub enum Page {
     Interface,
     Viewport,
     Navigation,
+    Keyboard,
     Import,
     Folders,
     Updates,
@@ -79,8 +81,8 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 8] =
-        [Page::General, Page::Interface, Page::Viewport, Page::Navigation, Page::Import, Page::Folders, Page::Updates, Page::Advanced];
+    pub const ALL: [Page; 9] =
+        [Page::General, Page::Interface, Page::Viewport, Page::Navigation, Page::Keyboard, Page::Import, Page::Folders, Page::Updates, Page::Advanced];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -88,6 +90,7 @@ impl Page {
             Page::Interface => "Interface",
             Page::Viewport => "Viewport",
             Page::Navigation => "Navigation",
+            Page::Keyboard => "Keyboard",
             Page::Import => "Import",
             Page::Folders => "Folders",
             Page::Updates => "Updates",
@@ -102,6 +105,7 @@ impl Page {
             Page::Interface => "interface",
             Page::Viewport => "viewport",
             Page::Navigation => "navigation",
+            Page::Keyboard => "keyboard",
             Page::Import => "import",
             Page::Folders => "folders",
             Page::Updates => "updates",
@@ -119,6 +123,7 @@ impl Page {
             Page::Interface => "How Tequila looks.",
             Page::Viewport => "What the view shows, and how the Rendered view draws.",
             Page::Navigation => "How the mouse, a trackpad and a 3D mouse move the view.",
+            Page::Keyboard => "Which keys do what. Click a key, then press the one you want.",
             Page::Import => "How model files are read.",
             Page::Folders => "Where Tequila keeps things.",
             Page::Updates => "New versions of Tequila.",
@@ -133,6 +138,7 @@ impl Page {
             Page::Interface => Icon::Palette,
             Page::Viewport => Icon::Eye,
             Page::Navigation => Icon::Camera,
+            Page::Keyboard => Icon::Keyboard,
             Page::Import => Icon::Import,
             Page::Folders => Icon::FolderOpen,
             Page::Updates => Icon::Download,
@@ -858,8 +864,12 @@ const MOUSE_3D: &str = "3D mouse";
 const OWN_FOLDERS: &str = "Tequila's folders";
 const EVERYTHING: &str = "All settings";
 const RECENT: &str = "Recent projects";
+const KEYS: &str = "Keyboard shortcuts";
+/// The prefix of a shortcut's line in the settings file and a script.
+pub const SHORTCUT_PREFIX: &str = "shortcut.";
 
 const EXTRAS: &[Extra] = &[
+    Extra { page: Page::Keyboard, title: KEYS, words: "keyboard shortcuts keys hotkeys bindings" },
     Extra { page: Page::General, title: RECENT, words: "recent projects clear list forget open recent" },
     Extra { page: Page::Navigation, title: MOUSE_3D, words: "3d mouse spacemouse space mouse 3dconnexion speed dead zone axes invert buttons navigation" },
     Extra { page: Page::Folders, title: OWN_FOLDERS, words: "tequila's folders settings library materials open folder storage" },
@@ -876,11 +886,29 @@ pub struct Window {
     pub search: String,
     /// The search field takes the keys when the window opens.
     focus: bool,
+    /// The shortcut whose key is being chosen: the action and which of
+    /// its places. The next key pressed is it.
+    choosing: Option<(Action, usize)>,
+    /// A key chosen that another action has, waiting to be told which
+    /// keeps it.
+    clash: Option<Clash>,
+    /// Frames for which keys passed on from the window are dropped: the
+    /// press that chose Ctrl+Z is not also an undo.
+    swallow: u8,
+}
+
+/// A key chosen for one action that another has.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clash {
+    action: Action,
+    slot: usize,
+    chord: Chord,
+    other: Action,
 }
 
 impl Default for Window {
     fn default() -> Window {
-        Window { open: false, page: Page::General, search: String::new(), focus: false }
+        Window { open: false, page: Page::General, search: String::new(), focus: false, choosing: None, clash: None, swallow: 0 }
     }
 }
 
@@ -891,10 +919,35 @@ impl Window {
         }
         self.open = true;
     }
+
+    /// Whether a key is being chosen in Preferences › Keyboard: a key
+    /// pressed now is the choice, not a command.
+    pub fn choosing_key(&self) -> bool {
+        self.choosing.is_some()
+    }
+
+    /// Whether keys passed on from the window this frame are dropped,
+    /// counting the frame.
+    pub fn swallows_keys(&mut self) -> bool {
+        if self.choosing.is_some() {
+            return true;
+        }
+        let swallowing = self.swallow > 0;
+        self.swallow = self.swallow.saturating_sub(1);
+        swallowing
+    }
 }
 
 /// What a click in the window asks for, done once the window is drawn.
 enum Act {
+    /// Start choosing a shortcut's key, or stop.
+    Choose(Option<(Action, usize)>),
+    /// A key for a shortcut's place, or none.
+    Key(Action, usize, Option<Chord>),
+    /// The clash settled: the key goes to the action that asked.
+    TakeKey,
+    LeaveKey,
+    ResetKey(Action),
     Set(usize, Value),
     Reset(usize),
     ResetPage(Page),
@@ -926,6 +979,10 @@ impl TequilaApp {
                 (setting.set)(self, (setting.default)())?;
             }
         }
+        if page.is_none_or(|p| p == Page::Keyboard) {
+            self.shortcuts = Shortcuts::default();
+            self.preferences.clash = None;
+        }
         if page.is_none_or(|p| p == Page::Navigation) {
             let keep = self.prefs_file.is_some();
             self.spacemouse.set_settings(crate::spacemouse::navigate::Settings::default(), keep);
@@ -936,7 +993,12 @@ impl TequilaApp {
 
     /// Tequila's own choices as the file holds them: a line each.
     fn own_preferences_text(&self) -> String {
-        SETTINGS.iter().filter(|s| s.own).map(|s| format!("{}={}\n", s.key, (s.get)(self).to_text())).collect()
+        let mut out: String = SETTINGS.iter().filter(|s| s.own).map(|s| format!("{}={}\n", s.key, (s.get)(self).to_text())).collect();
+        // The shortcuts that are not their defaults.
+        for (name, keys) in self.shortcuts.changed_lines() {
+            out.push_str(&format!("{SHORTCUT_PREFIX}{name}={keys}\n"));
+        }
+        out
     }
 
     /// Write Tequila's own choices to their file, where there is one: an
@@ -979,6 +1041,13 @@ impl TequilaApp {
                 mouse.push_str(&format!("{rest}={value}\n"));
                 continue;
             }
+            if let Some(name) = key.trim().strip_prefix(SHORTCUT_PREFIX) {
+                match self.shortcuts.read_line(name, value) {
+                    Ok(()) => taken += 1,
+                    Err(error) => wrong.push(error),
+                }
+                continue;
+            }
             match setting(key).filter(|s| s.own || !own_only) {
                 Some(setting) => match setting.parse(value).and_then(|value| (setting.set)(self, value)) {
                     Ok(()) => taken += 1,
@@ -1004,6 +1073,9 @@ impl TequilaApp {
         }
         for line in crate::spacemouse::settings_to_text(&self.spacemouse.settings).lines() {
             out.push_str(&format!("{MOUSE_PREFIX}{line}\n"));
+        }
+        for (name, keys) in self.shortcuts.all_lines() {
+            out.push_str(&format!("{SHORTCUT_PREFIX}{name}={keys}\n"));
         }
         out
     }
@@ -1043,6 +1115,9 @@ impl TequilaApp {
         let mut page = self.preferences.page;
         let mut search = std::mem::take(&mut self.preferences.search);
         let focus = std::mem::take(&mut self.preferences.focus);
+        let shortcuts = self.shortcuts.clone();
+        let choosing = self.preferences.choosing;
+        let clash = self.preferences.clash;
         let mut acts: Vec<Act> = Vec::new();
 
         let spec = crate::windows::Spec {
@@ -1055,6 +1130,24 @@ impl TequilaApp {
         };
         crate::windows::show(ctx, spec, &mut open, |window| window.resizable(false), |ui| {
             let p = crate::theme::p();
+            // A key being chosen: the next one pressed in this window, with
+            // what was held. Nothing else has the keyboard meanwhile.
+            if let Some((action, slot)) = choosing {
+                ui.memory_mut(|memory| {
+                    if let Some(focused) = memory.focused() {
+                        memory.surrender_focus(focused);
+                    }
+                });
+                let pressed = ui.input(|input| {
+                    input.events.iter().find_map(|event| match event {
+                        egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => Some(Chord::pressed(*key, modifiers)),
+                        _ => None,
+                    })
+                });
+                if let Some(chord) = pressed {
+                    acts.push(Act::Key(action, slot, Some(chord)));
+                }
+            }
             egui::SidePanel::left("preferences-pages")
                 .resizable(false)
                 .exact_width(190.0)
@@ -1079,7 +1172,7 @@ impl TequilaApp {
             egui::CentralPanel::default().frame(egui::Frame::none().fill(p.panel).inner_margin(egui::Margin::same(18.0))).show_inside(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let words: Vec<String> = search.to_lowercase().split_whitespace().map(str::to_string).collect();
-                    let mut blocks = Blocks { mouse: &mut mouse, ctx, recent, own_folders: &own_folders, acts: &mut acts };
+                    let mut blocks = Blocks { mouse: &mut mouse, ctx, recent, own_folders: &own_folders, shortcuts: &shortcuts, choosing, clash, words: &words, acts: &mut acts };
                     if words.is_empty() {
                         heading(ui, page.label(), page.blurb());
                         let rows: Vec<usize> = (0..SETTINGS.len()).filter(|&i| SETTINGS[i].page == page).collect();
@@ -1097,7 +1190,11 @@ impl TequilaApp {
                             let rows: Vec<usize> = (0..SETTINGS.len()).filter(|&i| SETTINGS[i].page == candidate && SETTINGS[i].matches(&words)).collect();
                             let extras: Vec<&Extra> = EXTRAS
                                 .iter()
-                                .filter(|e| e.page == candidate && words.iter().all(|w| e.words.contains(w.as_str()) || e.title.to_lowercase().contains(w.as_str())))
+                                .filter(|e| {
+                                    e.page == candidate
+                                        && (words.iter().all(|w| e.words.contains(w.as_str()) || e.title.to_lowercase().contains(w.as_str()))
+                                            || (e.title == KEYS && crate::shortcuts::ACTIONS.iter().any(|info| shortcut_matches(info, &shortcuts, &words))))
+                                })
                                 .collect();
                             if rows.is_empty() && extras.is_empty() {
                                 continue;
@@ -1128,6 +1225,41 @@ impl TequilaApp {
 
     fn preferences_act(&mut self, act: Act) {
         let said = match act {
+            Act::Choose(which) => {
+                self.preferences.choosing = which;
+                self.preferences.clash = None;
+                None
+            }
+            Act::Key(action, slot, chord) => {
+                self.preferences.choosing = None;
+                self.preferences.swallow = 3;
+                match chord.and_then(|chord| self.shortcuts.owner(chord, action).map(|other| (chord, other))) {
+                    // Another action's key: asked about, not taken.
+                    Some((chord, other)) => self.preferences.clash = Some(Clash { action, slot, chord, other }),
+                    None => {
+                        self.shortcuts.set(action, slot, chord);
+                        self.keep_preferences();
+                    }
+                }
+                None
+            }
+            Act::TakeKey => {
+                if let Some(clash) = self.preferences.clash.take() {
+                    self.shortcuts.set(clash.action, clash.slot, Some(clash.chord));
+                    self.keep_preferences();
+                }
+                None
+            }
+            Act::LeaveKey => {
+                self.preferences.clash = None;
+                None
+            }
+            Act::ResetKey(action) => {
+                self.shortcuts.reset(action);
+                self.preferences.clash = None;
+                self.keep_preferences();
+                None
+            }
             Act::Set(index, value) => self.set_preference(SETTINGS[index].key, value).err(),
             Act::Reset(index) => self.set_preference(SETTINGS[index].key, (SETTINGS[index].default)()).err(),
             Act::ResetPage(page) => self.reset_preferences(Some(page)).err(),
@@ -1212,6 +1344,11 @@ struct Blocks<'a> {
     ctx: &'a egui::Context,
     recent: usize,
     own_folders: &'a [(&'static str, PathBuf)],
+    shortcuts: &'a Shortcuts,
+    choosing: Option<(Action, usize)>,
+    clash: Option<Clash>,
+    /// What is searched for, each word in lower case; none on a page.
+    words: &'a [String],
     acts: &'a mut Vec<Act>,
 }
 
@@ -1250,7 +1387,7 @@ fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Val
     for extra in extras {
         // The recent projects' button goes under their own heading, which
         // the row above has already drawn.
-        if extra.title != group {
+        if extra.title != group && extra.title != KEYS {
             crate::theme::section(ui, extra.title);
         }
         match extra.title {
@@ -1265,6 +1402,7 @@ fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Val
                 });
             }
             MOUSE_3D => inset(ui, |ui| blocks.mouse.settings_ui(ui, blocks.ctx)),
+            KEYS => shortcut_rows(ui, blocks),
             OWN_FOLDERS => {
                 for (name, folder) in blocks.own_folders {
                     ui.horizontal(|ui| {
@@ -1297,6 +1435,102 @@ fn page_body(ui: &mut egui::Ui, rows: &[usize], extras: &[&Extra], values: &[Val
         }
     }
 }
+
+/// Whether every word searched for is in a shortcut's words or its keys.
+fn shortcut_matches(info: &crate::shortcuts::Info, shortcuts: &Shortcuts, words: &[String]) -> bool {
+    let hay = format!("{} {} {} {} shortcut key", info.label, info.group.label(), info.key, crate::theme::keys(&shortcuts.shown(info.action))).to_lowercase();
+    words.iter().all(|word| hay.contains(word.as_str()))
+}
+
+/// Preferences › Keyboard: every action under its heading with its keys,
+/// each a button that takes the next key pressed; the ones searched for,
+/// when something is.
+fn shortcut_rows(ui: &mut egui::Ui, blocks: &mut Blocks) {
+    let p = crate::theme::p();
+    let mut any_changed = false;
+    for group in crate::shortcuts::Group::ALL {
+        let rows: Vec<&crate::shortcuts::Info> = crate::shortcuts::ACTIONS
+            .iter()
+            .filter(|info| info.group == group && (blocks.words.is_empty() || shortcut_matches(info, blocks.shortcuts, blocks.words)))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        crate::theme::section(ui, group.label());
+        for info in rows {
+            let action = info.action;
+            let keys = blocks.shortcuts.of(action);
+            let changed = blocks.shortcuts.changed(action);
+            any_changed |= changed;
+            ui.horizontal(|ui| {
+                let (mark, _) = ui.allocate_exact_size(egui::vec2(GUTTER - 4.0, 22.0), egui::Sense::hover());
+                if changed {
+                    let response = ui.interact(mark, ui.id().with(("reset-key", info.key)), egui::Sense::click());
+                    crate::icons::paint(ui.painter(), mark.shrink2(egui::vec2(3.0, 4.0)), crate::icons::Icon::History, if response.hovered() { p.text } else { p.accent_text });
+                    let default = Shortcuts::default().shown(action);
+                    let default = if default.is_empty() { "no key".to_string() } else { crate::theme::keys(&default) };
+                    if response.on_hover_text(format!("Back to the default: {default}")).clicked() {
+                        blocks.acts.push(Act::ResetKey(action));
+                    }
+                }
+                ui.allocate_ui_with_layout(egui::vec2(KEY_LABELS, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.set_width(KEY_LABELS);
+                    ui.label(info.label);
+                });
+                for slot in 0..crate::shortcuts::SLOTS {
+                    // The second place shows once the first has a key.
+                    if slot > keys.len() {
+                        break;
+                    }
+                    let choosing = blocks.choosing == Some((action, slot));
+                    let text = match (choosing, keys.get(slot)) {
+                        (true, _) => egui::RichText::new("Press a key…").color(p.accent_text),
+                        (false, Some(chord)) => egui::RichText::new(crate::theme::keys(&chord.shown())),
+                        (false, None) if slot == 0 => egui::RichText::new("No key").color(crate::theme::dim()),
+                        (false, None) => egui::RichText::new("Add another").color(crate::theme::dim()),
+                    };
+                    let button = ui.add(egui::Button::new(text).min_size(egui::vec2(132.0, 24.0)).selected(choosing));
+                    let button = button.on_hover_text(if choosing { "The next key pressed, with Ctrl, Shift or Alt held, is this shortcut's. Click again to leave it as it was." } else { "Click, then press the key for this" });
+                    if button.clicked() {
+                        blocks.acts.push(Act::Choose((!choosing).then_some((action, slot))));
+                    }
+                    if choosing && keys.get(slot).is_some() && ui.small_button("Remove").on_hover_text("Leave this place without a key").clicked() {
+                        blocks.acts.push(Act::Key(action, slot, None));
+                    }
+                }
+            });
+            // The key chosen is another action's: which keeps it.
+            if let Some(clash) = blocks.clash.filter(|clash| clash.action == action) {
+                ui.horizontal(|ui| {
+                    ui.add_space(GUTTER);
+                    let key = crate::theme::keys(&clash.chord.shown());
+                    ui.label(egui::RichText::new(format!("{key} is already {}.", clash.other.info().label)).color(p.busy));
+                    if ui.button(format!("Use it for {}", info.label)).on_hover_text(format!("{} is left without that key", clash.other.info().label)).clicked() {
+                        blocks.acts.push(Act::TakeKey);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        blocks.acts.push(Act::LeaveKey);
+                    }
+                });
+            }
+        }
+    }
+    if blocks.words.is_empty() {
+        ui.add_space(8.0);
+        inset(ui, |ui| {
+            ui.add(egui::Label::new(egui::RichText::new("Rotate and the environment background share a key by design: it turns the selection when there is one, and sets the background when there is not. The Material Graph editor's and the UV editor's own keys are not here.").small().color(crate::theme::dim())).wrap());
+        });
+        if any_changed {
+            ui.add_space(10.0);
+            if ui.button("Restore the default keys").clicked() {
+                blocks.acts.push(Act::ResetPage(Page::Keyboard));
+            }
+        }
+    }
+}
+
+/// The width the actions' names share on the Keyboard page.
+const KEY_LABELS: f32 = 230.0;
 
 /// Room at the left of every row for the mark that puts a changed setting
 /// back.
@@ -1403,21 +1637,50 @@ pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Re
             return Err("`set` is an object of settings by name: {\"viewport.gizmo_size\": 150}".into());
         };
         let mut checked = Vec::new();
+        let mut keys = Vec::new();
         for (key, value) in asked {
+            // A shortcut: its keys as one written out, a list of them, or
+            // "" for none.
+            if let Some(name) = key.strip_prefix(SHORTCUT_PREFIX) {
+                let action = Action::named(name).ok_or_else(|| format!("there is no shortcut `{key}`; ask for `preferences` with nothing else to list them"))?;
+                let chords = match value {
+                    Json::String(one) if one.trim().is_empty() => Vec::new(),
+                    Json::String(one) => vec![Chord::parse(one)?],
+                    Json::Array(several) => several.iter().map(|k| k.as_str().ok_or_else(|| format!("`{key}` lists keys as words")).and_then(Chord::parse)).collect::<Result<_, _>>()?,
+                    _ => return Err(format!("`{key}` takes a key written out (\"Ctrl + G\"), a list of them, or \"\" for none")),
+                };
+                if chords.len() > crate::shortcuts::SLOTS {
+                    return Err(format!("`{key}` has room for {} keys", crate::shortcuts::SLOTS));
+                }
+                keys.push((action, chords));
+                continue;
+            }
             let setting = setting(key).ok_or_else(|| format!("there is no setting `{key}`; ask for `preferences` with nothing else to list them"))?;
             checked.push((setting, setting.from_json(value)?));
         }
         for (setting, value) in checked {
             app.set_preference(setting.key, value)?;
         }
+        if !keys.is_empty() {
+            // A key given to one action is taken from the one that had it,
+            // as in the window once it has asked.
+            for (action, chords) in keys {
+                app.shortcuts.bind(action, &chords);
+            }
+            app.keep_preferences();
+        }
     }
     match request.get("reset") {
         None | Some(Json::Null) => {}
         Some(Json::String(what)) if what.eq_ignore_ascii_case("all") => app.reset_preferences(None)?,
-        Some(Json::String(what)) => match (Page::from_key(what), setting(what)) {
-            (Some(page), _) => app.reset_preferences(Some(page))?,
-            (None, Some(setting)) => app.set_preference(setting.key, (setting.default)())?,
-            (None, None) => return Err(format!("`{what}` is not \"all\", a page or a setting")),
+        Some(Json::String(what)) => match (Page::from_key(what), setting(what), what.strip_prefix(SHORTCUT_PREFIX).and_then(Action::named)) {
+            (Some(page), _, _) => app.reset_preferences(Some(page))?,
+            (None, Some(setting), _) => app.set_preference(setting.key, (setting.default)())?,
+            (None, None, Some(action)) => {
+                app.shortcuts.reset(action);
+                app.keep_preferences();
+            }
+            (None, None, None) => return Err(format!("`{what}` is not \"all\", a page, a setting or a shortcut")),
         },
         Some(Json::Array(keys)) => {
             let mut settings = Vec::new();
@@ -1454,8 +1717,19 @@ pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Re
             out.build()
         })
         .collect();
+    let shortcuts: Vec<Json> = crate::shortcuts::ACTIONS
+        .iter()
+        .map(|info| {
+            let written = |chords: &[Chord]| chords.iter().map(|chord| Json::String(chord.shown())).collect::<Vec<_>>();
+            let mut out = Object::new();
+            out.set("key", format!("{SHORTCUT_PREFIX}{}", info.key)).set("group", info.group.label()).set("label", info.label);
+            out.set("keys", written(app.shortcuts.of(info.action))).set("default", written(Shortcuts::default().of(info.action)));
+            out.build()
+        })
+        .collect();
     let mut out = Object::new();
     out.set("settings", settings);
+    out.set("shortcuts", shortcuts);
     out.set_some("file", app.prefs_file.as_ref().map(|f| f.display().to_string()));
     Ok(out.build())
 }
@@ -1582,6 +1856,7 @@ mod tests {
             assert!(exported.contains(&format!("\n{}=", setting.key)), "{} is not in the export", setting.key);
         }
         assert!(exported.contains("3d_mouse.speed=2.5"), "{exported}");
+        assert!(exported.contains("\nshortcut.edit.undo=Ctrl + Z\n") && exported.contains("\nshortcut.panels.preferences=Ctrl + Comma\n"), "{exported}");
         // Only Tequila's own and the 3D mouse's are read back here: the
         // others write to the person's settings folder as they are set.
         let own: String = exported.lines().filter(|l| l.starts_with('#') || l.starts_with(MOUSE_PREFIX) || setting(l.split('=').next().unwrap()).is_some_and(|s| s.own)).map(|l| format!("{l}\n")).collect();
@@ -1607,6 +1882,160 @@ mod tests {
         assert_eq!(find("z up"), vec!["import.up_axis"], "a choice is found by its options");
         assert!(find("xyzzy").is_empty());
         assert!(EXTRAS.iter().any(|e| e.words.contains("spacemouse")));
+    }
+
+    fn press(app: &mut TequilaApp, ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
+        let input = egui::RawInput { modifiers, events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }], ..Default::default() };
+        let _ = ctx.run(input, |ctx| app.global_hotkeys(ctx));
+    }
+
+    /// A shortcut given another key answers to it and no longer to the old
+    /// one; the change is kept, starts the next session, and is put back
+    /// with the page.
+    #[test]
+    fn a_shortcut_given_another_key_answers_to_it_and_is_kept() {
+        let folder = std::env::temp_dir().join(format!("tequila-shortcuts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let file = folder.join("preferences.txt");
+        let ctx = egui::Context::default();
+        let mut app = TequilaApp::for_tests();
+        app.load_preferences(file.clone());
+        press(&mut app, &ctx, egui::Key::H, egui::Modifiers::NONE);
+        assert!(app.show_hud, "H shows the statistics by default");
+
+        // Statistics on F9, as the window sets it.
+        app.preferences_act(Act::Choose(Some((Action::Statistics, 0))));
+        assert!(app.preferences.choosing_key());
+        // While a key is being chosen, keys are not commands.
+        press(&mut app, &ctx, egui::Key::H, egui::Modifiers::NONE);
+        assert!(app.show_hud, "a key pressed while choosing was taken as a command");
+        app.preferences_act(Act::Key(Action::Statistics, 0, Some(Chord::plain(egui::Key::F9))));
+        assert!(!app.preferences.choosing_key());
+        assert_eq!(app.key(Action::Statistics), "F9");
+        press(&mut app, &ctx, egui::Key::H, egui::Modifiers::NONE);
+        assert!(app.show_hud, "the old key still answers");
+        press(&mut app, &ctx, egui::Key::F9, egui::Modifiers::NONE);
+        assert!(!app.show_hud, "the new key does not answer");
+
+        let kept = std::fs::read_to_string(&file).unwrap();
+        assert!(kept.contains("shortcut.view.statistics=F9\n"), "{kept}");
+        assert!(!kept.contains("shortcut.edit.undo"), "an unchanged shortcut was kept: {kept}");
+        let mut next = TequilaApp::for_tests();
+        next.load_preferences(file.clone());
+        assert_eq!(next.shortcuts, app.shortcuts);
+
+        next.reset_preferences(Some(Page::Keyboard)).unwrap();
+        assert_eq!(next.shortcuts, Shortcuts::default());
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("shortcut."));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// In the window itself: a key clicked to change takes the next key
+    /// pressed there, with what was held.
+    #[test]
+    fn the_window_takes_the_next_key_pressed() {
+        let mut app = TequilaApp::for_tests();
+        let ctx = egui::Context::default();
+        app.preferences.open = true;
+        app.preferences.page = Page::Keyboard;
+        app.preferences_act(Act::Choose(Some((Action::Screenshot, 0))));
+        let modifiers = egui::Modifiers::SHIFT;
+        let input = egui::RawInput { modifiers, events: vec![egui::Event::Key { key: egui::Key::F8, physical_key: None, pressed: true, repeat: false, modifiers }], ..Default::default() };
+        let _ = ctx.run(input, |ctx| app.preferences_window(ctx));
+        assert_eq!(app.key(Action::Screenshot), "Shift + F8");
+        assert!(!app.preferences.choosing_key());
+        // And nothing more is taken once it has one.
+        let input = egui::RawInput { events: vec![egui::Event::Key { key: egui::Key::F7, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }], ..Default::default() };
+        let _ = ctx.run(input, |ctx| app.preferences_window(ctx));
+        assert_eq!(app.key(Action::Screenshot), "Shift + F8");
+    }
+
+    /// A key another action has is asked about before it is taken, and
+    /// either answer is honoured; a key no action has is taken at once.
+    #[test]
+    fn a_key_in_use_is_asked_about_before_it_moves() {
+        let mut app = TequilaApp::for_tests();
+        let g = Chord::parse("Ctrl + G").unwrap();
+        app.preferences_act(Act::Key(Action::Duplicate, 1, Some(g)));
+        assert_eq!(app.preferences.clash, Some(Clash { action: Action::Duplicate, slot: 1, chord: g, other: Action::Group }));
+        assert_eq!(app.shortcuts, Shortcuts::default(), "the key moved before the answer");
+        app.preferences_act(Act::LeaveKey);
+        assert!(app.preferences.clash.is_none() && app.shortcuts == Shortcuts::default());
+
+        app.preferences_act(Act::Key(Action::Duplicate, 1, Some(g)));
+        app.preferences_act(Act::TakeKey);
+        assert_eq!(app.key(Action::Duplicate), "Ctrl + D / Ctrl + G");
+        assert!(app.key(Action::Group).is_empty());
+        // Rotate's E is also the environment's, by design: no question.
+        app.preferences_act(Act::Key(Action::GizmoRotate, 1, Some(Chord::plain(egui::Key::E))));
+        assert!(app.preferences.clash.is_none());
+        // One action's key put back takes it back.
+        app.preferences_act(Act::ResetKey(Action::Group));
+        assert_eq!(app.key(Action::Group), "Ctrl + G");
+        assert_eq!(app.key(Action::Duplicate), "Ctrl + D");
+        // A place emptied.
+        app.preferences_act(Act::Key(Action::Console, 0, None));
+        assert!(app.key(Action::Console).is_empty());
+    }
+
+    /// The press that chooses a key in the window is not also the undo or
+    /// save that window passes on.
+    #[test]
+    fn the_press_that_chooses_a_key_is_not_passed_on() {
+        let mut app = TequilaApp::for_tests();
+        app.preferences_act(Act::Choose(Some((Action::Statistics, 0))));
+        assert!(app.preferences.swallows_keys());
+        app.preferences_act(Act::Key(Action::Statistics, 0, Some(Chord::parse("Ctrl + Z").unwrap())));
+        assert!(app.preferences.clash.is_some(), "Ctrl+Z is Undo's");
+        assert!(app.preferences.swallows_keys(), "the frame after choosing");
+        for _ in 0..3 {
+            app.preferences.swallows_keys();
+        }
+        assert!(!app.preferences.swallows_keys(), "keys are passed on again");
+    }
+
+    /// A script lists the shortcuts, gives one other keys, and puts it
+    /// back; a key that is not one is refused.
+    #[test]
+    fn a_script_reads_and_changes_shortcuts() {
+        use tequila_format::json::Value as Json;
+        let ask = |app: &mut TequilaApp, text: &str| script(app, &tequila_format::json::parse(text.as_bytes()).unwrap());
+        let keys_of = |reply: &Json, key: &str| -> Vec<String> {
+            let all = reply.get("shortcuts").unwrap().as_array();
+            let one = all.iter().find(|s| s.get("key").and_then(Json::as_str) == Some(key)).unwrap();
+            one.get("keys").unwrap().as_array().iter().map(|k| k.as_str().unwrap().to_string()).collect()
+        };
+        let mut app = TequilaApp::for_tests();
+        let listed = ask(&mut app, "{}").unwrap();
+        assert_eq!(listed.get("shortcuts").unwrap().as_array().len(), crate::shortcuts::ACTIONS.len());
+        assert_eq!(keys_of(&listed, "shortcut.edit.redo"), vec!["Ctrl + Y", "Ctrl + Shift + Z"]);
+
+        let reply = ask(&mut app, r#"{"set":{"shortcut.view.screenshot":["F12","Ctrl + Shift + ,"],"shortcut.panels.console":""}}"#).unwrap();
+        assert_eq!(keys_of(&reply, "shortcut.view.screenshot"), vec!["F12", "Ctrl + Shift + ,"]);
+        assert!(keys_of(&reply, "shortcut.panels.console").is_empty());
+        assert!(ask(&mut app, r#"{"set":{"shortcut.view.screenshot":"Ctrl + Banana"}}"#).unwrap_err().contains("not a key"));
+        assert!(ask(&mut app, r#"{"set":{"shortcut.view.nothing":"A"}}"#).unwrap_err().contains("no shortcut"));
+        assert!(ask(&mut app, r#"{"set":{"shortcut.edit.redo":["A","B","C"]}}"#).unwrap_err().contains("room for 2"));
+        assert_eq!(app.key(Action::Screenshot), "F12 / Ctrl + Shift + ,");
+
+        ask(&mut app, r#"{"reset":"shortcut.view.screenshot"}"#).unwrap();
+        assert_eq!(app.key(Action::Screenshot), "P");
+        assert!(app.key(Action::Console).is_empty());
+        ask(&mut app, r#"{"reset":"keyboard"}"#).unwrap();
+        assert_eq!(app.shortcuts, Shortcuts::default());
+    }
+
+    /// The search finds a shortcut by what it does and by its key.
+    #[test]
+    fn the_search_finds_shortcuts() {
+        let keys = Shortcuts::default();
+        let find = |query: &str| -> Vec<&str> {
+            let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_string).collect();
+            crate::shortcuts::ACTIONS.iter().filter(|info| shortcut_matches(info, &keys, &words)).map(|info| info.key).collect()
+        };
+        assert_eq!(find("screenshot"), vec!["view.screenshot"]);
+        assert!(find("shift").contains(&"view.gizmo") && find("shift").contains(&"camera.frame_all"));
+        assert_eq!(find("isometric"), vec!["camera.isometric"]);
     }
 
     /// A script lists the settings, sets several at once or none when one

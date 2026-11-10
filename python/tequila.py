@@ -332,13 +332,23 @@ class Client:
         set by name - a dotted name needs a dict:
         `fs.preferences(**{'viewport.gizmo_size': 150})` - all checked
         before any is taken. `reset` puts back 'all', a page ('viewport'),
-        a setting, or a list of settings. Returns every setting afterwards."""
+        a setting, or a list of settings. Returns every setting afterwards.
+        Keyboard shortcuts are set the same way, by `shortcut.` and the
+        action's name, from a key written out, a list of two, or '' for
+        none: `fs.preferences(**{'shortcut.view.screenshot': 'F12'})`;
+        `fs.shortcuts()` lists them."""
         fields = {}
         if settings:
             fields['set'] = settings
         if reset is not None:
             fields['reset'] = reset
         return self.request('preferences', **fields)['settings']
+
+    def shortcuts(self):
+        """Every keyboard shortcut of the main window: its `key`
+        ('shortcut.edit.undo'), `group`, `label`, the `keys` it has now
+        and its `default`. Change one with `preferences`."""
+        return self.request('preferences')['shortcuts']
 
     def ui(self, **changes):
         """Open or close panels: render_window, console, inspector, library,
