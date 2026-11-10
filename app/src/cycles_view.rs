@@ -23,10 +23,76 @@ use tequila_scene::render::RenderEngine;
 /// before this; the limit is for the few that never converge.
 const VIEW_SAMPLES: u32 = 1024;
 
+/// Samples a moving view's picture is asked for: one, which is all it shows.
+/// Asked for more, Cycles went on from its one-sample picture to four more
+/// samples of a view the next move threw away - 18 ms at 480x270 on the
+/// Headphones, which a restart does not cut short - and only then started
+/// the next picture.
+const MOVING_SAMPLES: u32 = 1;
+
 /// The longest a change waits for Cycles' picture of the one before
 /// (`CyclesView::sync`): long enough for a heavy scene's first picture, short
 /// enough that a view whose picture never came still follows the mouse.
 const HELD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// How long the camera has to be still before the view goes back to its
+/// full size: long enough that a pause between two strokes of an orbit does
+/// not cost a full-size restart, short enough to feel immediate.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// How long a picture should take while the camera moves: about thirty a
+/// second, which is what an orbit needs to follow the hand.
+const NAVIGATION_TARGET: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// The coarsest picture while moving: its long side no shorter than this.
+/// Coarser buys nothing: below it, a picture's time is Cycles' fixed cost
+/// of a restart and of launching a sample's kernels - 100x56 pixels took
+/// the same 42 ms as 362x203 - and Cycles divides further on its own while
+/// it settles on a size.
+const NAVIGATION_SMALLEST: usize = 480;
+
+/// A smaller picture while the camera moves, as Blender's and every quick
+/// viewport do: Cycles took about 90 ms for each picture after a camera move
+/// at the view's size, whatever the model - ten a second, an orbit that
+/// stutters - and a quarter of the pixels took 42 ms. The divider is chosen
+/// from how long pictures actually take, so a heavy model on a small Mac
+/// drops further and a light one stays sharper; when the camera stops, the
+/// view goes back to its full size and refines.
+#[derive(Clone, Copy, Debug)]
+struct Navigation {
+    /// The view's size divided by this, on each side, while moving.
+    divider: f32,
+    /// When the camera last moved.
+    moved_at: Option<std::time::Instant>,
+}
+
+impl Default for Navigation {
+    fn default() -> Self {
+        Navigation { divider: 2.0, moved_at: None }
+    }
+}
+
+/// The divider after a moving picture at `divider` took `took`: half a step
+/// toward the one that would take [`NAVIGATION_TARGET`] - a picture's pixels
+/// go as the divider squared - and never so coarse that the long side of a
+/// view `long_side` pixels wide falls below [`NAVIGATION_SMALLEST`].
+pub fn adjusted_divider(divider: f32, took: std::time::Duration, long_side: usize) -> f32 {
+    let ratio = (took.as_secs_f32() / NAVIGATION_TARGET.as_secs_f32()).clamp(0.1, 10.0);
+    let wanted = divider * ratio.sqrt();
+    let most = (long_side as f32 / NAVIGATION_SMALLEST as f32).max(1.0);
+    (divider * 0.5 + wanted * 0.5).clamp(1.0, most)
+}
+
+/// `full` divided by `divider` on each side, the long side never under
+/// [`NAVIGATION_SMALLEST`]: a view smaller than that is not divided at all.
+/// The divider is held to that only once a moving picture has come back
+/// ([`adjusted_divider`]), and a small view's first one was divided anyway.
+pub fn divided(full: (usize, usize), divider: f32) -> (usize, usize) {
+    let most = (full.0.max(full.1) as f32 / NAVIGATION_SMALLEST as f32).max(1.0);
+    let divider = divider.clamp(1.0, most);
+    let side = |n: usize| ((n as f32 / divider).round() as usize).max(1);
+    (side(full.0), side(full.1))
+}
 
 pub struct CyclesView {
     session: Session,
@@ -36,7 +102,15 @@ pub struct CyclesView {
     /// the scene, and must move Cycles' camera rather than translate again.
     scene: Option<std::sync::Arc<tequila_render_core::scene::SceneSnapshot>>,
     camera: Option<Camera>,
+    /// The size Cycles renders now: `full`, or smaller while the camera
+    /// moves.
     size: (usize, usize),
+    /// The size the view asked for.
+    full: (usize, usize),
+    /// The samples Cycles was asked for: [`VIEW_SAMPLES`], or
+    /// [`MOVING_SAMPLES`] while the view moves.
+    samples: u32,
+    navigation: Navigation,
     frame: tequila_render_cycles::FrameBuffers,
     seen: u64,
     paused: bool,
@@ -91,6 +165,9 @@ impl CyclesView {
             scene: None,
             camera: None,
             size: (0, 0),
+            full: (0, 0),
+            samples: 0,
+            navigation: Navigation::default(),
             frame: Default::default(),
             seen: 0,
             paused: false,
@@ -149,7 +226,7 @@ impl CyclesView {
     /// Bring Cycles up to `request`, restarting its image if anything it
     /// shows has changed. `true` when it restarted.
     pub fn sync(&mut self, request: &RenderRequest) -> Result<bool, String> {
-        let size = (request.width.max(1), request.height.max(1));
+        let full = (request.width.max(1), request.height.max(1));
         let same = self.scene.as_ref().is_some_and(|scene| std::sync::Arc::ptr_eq(scene, &request.scene));
         // A part dragged with the gizmo changes where instances are and
         // nothing else: Cycles' objects move, and nothing is translated.
@@ -170,7 +247,21 @@ impl CyclesView {
         let mut rescene = (!same && !moved && repainted.is_none()) || relit;
         let moved = moved && !relit;
         let repainted = repainted.filter(|_| !relit);
-        let recamera = self.camera != Some(request.camera) || self.size != size;
+        // The camera moved (an orbit, a pan, a zoom, a 3D mouse) or the scene
+        // was edited (a material slider, a part dragged with the gizmo): a
+        // smaller picture while it goes on, since Cycles no longer divides
+        // it itself. A resized view is neither, and starts at its size.
+        let now = std::time::Instant::now();
+        let changed = self.camera.is_some_and(|camera| camera != request.camera) || rescene || moved || repainted.is_some();
+        if changed && self.camera.is_some() && self.full == full {
+            self.navigation.moved_at = Some(now);
+        }
+        let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
+        let size = if navigating { divided(full, self.navigation.divider) } else { full };
+        // Still again at the same size - a small view, never divided - goes
+        // on from one sample to a still view's.
+        let samples = if navigating { MOVING_SAMPLES } else { VIEW_SAMPLES };
+        let recamera = self.camera != Some(request.camera) || self.size != size || self.samples != samples;
         if !rescene && !moved && repainted.is_none() && !recamera {
             return Ok(false);
         }
@@ -246,17 +337,29 @@ impl CyclesView {
             };
             placed.and_then(|()| translate::set_camera(&mut self.session, &request.scene, &view).map(|_| ()))
         };
+        // A moving picture is not denoised, so its guides stay behind.
+        self.session.set_moving(size != full);
         // Ended whatever happened, so the scene lock is never left held.
-        self.session.end_edit(size.0, size.1, VIEW_SAMPLES);
+        self.session.end_edit(size.0, size.1, samples);
         self.answered = false;
         self.restarted = std::time::Instant::now();
         result?;
         self.scene = Some(request.scene.clone());
         self.lighting = lighting;
-        // Whatever moved, the background behind it is measured again.
-        self.under_size = (0, 0);
         self.camera = Some(request.camera);
         self.size = size;
+        self.full = full;
+        self.samples = samples;
+        // Whatever moved, the background behind it is measured again: now,
+        // at the size asked for, while Cycles renders, rather than once its
+        // picture is in and the next camera waits for it. A first picture
+        // of another size (a library whose Cycles still divides it) has it
+        // measured again then.
+        self.under_size = (0, 0);
+        if self.background_under {
+            self.under = crate::profile::time("render: background under", || translate::background(&request.scene, &request.camera, size.0, size.1));
+            self.under_size = size;
+        }
         if self.paused {
             self.session.set_paused(true);
         }
@@ -268,6 +371,12 @@ impl CyclesView {
     /// is nothing new.
     pub fn take_frame(&mut self, framebuffer: &mut Framebuffer) -> Option<tequila_render_cycles::Frame> {
         let frame = self.session.latest_frame(&mut self.frame, self.size, &mut self.seen)?;
+        // The first picture of a smaller restart: how long it took decides
+        // the next one's size.
+        if !self.answered && self.size != self.full {
+            let long_side = self.full.0.max(self.full.1);
+            self.navigation.divider = adjusted_divider(self.navigation.divider, self.restarted.elapsed(), long_side);
+        }
         self.answered = true;
         if framebuffer.width != frame.width || framebuffer.height != frame.height {
             framebuffer.resize(frame.width, frame.height);
@@ -278,7 +387,7 @@ impl CyclesView {
         // refines it after a change.
         if self.background_under && self.under_size != (frame.width, frame.height) {
             if let (Some(scene), Some(camera)) = (&self.scene, &self.camera) {
-                self.under = translate::background(scene, camera, frame.width, frame.height);
+                self.under = crate::profile::time("render: background under", || translate::background(scene, camera, frame.width, frame.height));
                 self.under_size = (frame.width, frame.height);
             }
         }
@@ -313,6 +422,40 @@ impl CyclesView {
         Some(frame)
     }
 
+    /// The camera Cycles renders from now.
+    pub fn camera(&self) -> Option<Camera> {
+        self.camera
+    }
+
+    /// Whether the view is following a moving camera: a smaller picture, or
+    /// the camera moved a moment ago. Its pictures go up as they are.
+    pub fn navigating(&self) -> bool {
+        self.size != self.full || self.navigation.moved_at.is_some_and(|at| at.elapsed() < SETTLE)
+    }
+
+    /// Whether a picture of the last restart is still to come: the render
+    /// loop then looks for it often.
+    pub fn awaiting_frame(&self) -> bool {
+        !self.answered
+    }
+
+    /// The size the view asked for.
+    pub fn full_size(&self) -> (usize, usize) {
+        self.full
+    }
+
+    /// The size Cycles is asked to render now.
+    #[cfg(test)]
+    pub fn traced_size(&self) -> (usize, usize) {
+        self.size
+    }
+
+    /// The samples Cycles is asked for now.
+    #[cfg(test)]
+    pub fn traced_samples(&self) -> u32 {
+        self.samples
+    }
+
     /// What Cycles says it is doing, or why it stopped.
     pub fn status(&self) -> Result<String, String> {
         self.session.status()
@@ -324,5 +467,39 @@ impl CyclesView {
             self.paused = paused;
             self.session.set_paused(paused);
         }
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Too slow a picture makes the next one smaller, a quick one larger,
+    /// half a step at a time; never finer than the view, never so coarse
+    /// that the long side falls under 480 pixels.
+    #[test]
+    fn the_moving_picture_is_sized_to_its_time() {
+        let slow = adjusted_divider(2.0, Duration::from_millis(90), 1920);
+        assert!(slow > 2.0, "90 ms at 1/2 asks for a smaller picture: {slow}");
+        let quick = adjusted_divider(4.0, Duration::from_millis(10), 1920);
+        assert!(quick < 4.0, "10 ms at 1/4 can afford a larger one: {quick}");
+        assert_eq!(adjusted_divider(1.0, Duration::from_millis(1), 1920), 1.0, "never finer than the view");
+        let mut d = 2.0;
+        for _ in 0..40 {
+            d = adjusted_divider(d, Duration::from_millis(500), 1920);
+        }
+        assert!((d - 4.0).abs() < 1e-3, "the coarsest is 480 pixels across 1920: {d}");
+        // A picture whose time goes as its pixels settles where it takes
+        // the target: 132 ms at full size, so 33 ms at half.
+        let mut d = 1.0f32;
+        for _ in 0..30 {
+            let took = Duration::from_secs_f32(0.132 / (d * d));
+            d = adjusted_divider(d, took, 1920);
+        }
+        assert!((d - 2.0).abs() < 0.05, "settled at {d}");
+        assert_eq!(divided((1920, 1080), 3.0), (640, 360));
+        assert_eq!(divided((1920, 1080), 8.0), (480, 270), "never under 480 pixels across");
+        assert_eq!(divided((64, 48), 2.0), (64, 48), "a view smaller than that is not divided");
     }
 }

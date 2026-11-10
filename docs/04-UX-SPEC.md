@@ -99,6 +99,7 @@ Top-right, semi-transparent, toggleable (`H`):
 - Active backend (CPU/GPU) and device name.
 - Resolution and whether the view is at reduced interactive resolution.
 - Memory: geometry / textures / BVH / buffers.
+- *As built, November 9:* the device line names what made the picture: Tequila or Cycles, on the processor (by name, "Apple M3 Max") or the graphics card; a Cycles that would not start and fell back says Tequila (`DisplayImage::engine`). Cycles' frames show their samples without a converged share, which Cycles doesn't count. Solid, Wireframe and Material Preview, which the graphics card draws, show the view, the triangles and the card as OpenGL names it, with no samples to count. Under every view, the speed and the memory (`app/src/readout.rs`): the frames drawn in the last second and the slowest of them while the view moves (dragged, scrolled, the 3D mouse, a camera move), "idle" while it is still, since a still window draws only when asked and a few frames a second then read as a slow computer; and the memory Tequila holds of what the computer has, as its own monitor counts it - the footprint Activity Monitor shows on a Mac, private bytes on Windows, the resident set on Linux - read every half second. While shown, the statistics are drawn again once a second, so the memory stays current. Scripts show them with `{"op":"ui","statistics":true}`. Memory by kind (geometry, textures, BVH, buffers) is not broken out yet.
 
 ### 2.2 Overlays
 

@@ -147,6 +147,15 @@ impl RenderRequest {
     fn differs_only_in_denoise(&self, other: &RenderRequest) -> bool {
         self.denoise != other.denoise && *self == RenderRequest { denoise: self.denoise, ..other.clone() }
     }
+
+    /// Whether `other` asks for this picture from another camera alone: an
+    /// orbit, a pan, a zoom. The scene is the same snapshot - a camera move
+    /// bumps the document's generation and keeps the scene.
+    fn differs_only_in_camera(&self, other: &RenderRequest) -> bool {
+        self.camera != other.camera
+            && Arc::ptr_eq(&self.scene, &other.scene)
+            && *self == RenderRequest { camera: self.camera, scene_generation: self.scene_generation, ..other.clone() }
+    }
 }
 
 /// The geometry on screen, to pick against: see [`Orchestrator::picker`].
@@ -203,6 +212,10 @@ pub struct DisplayImage {
     /// the image rather than from the app's own setting so it can never
     /// describe a frame that was made before the mode changed.
     pub shading: Shading,
+    /// The engine that made it: Cycles, or Tequila's own renderer, which
+    /// is also what a Cycles that would not start falls back to. The
+    /// statistics name it.
+    pub engine: tequila_scene::render::RenderEngine,
     /// What the selection's outline drew over: each pixel's index and its
     /// colour before, for a Screenshot of the picture without it. A few
     /// thousand at most, where a copy of the picture would be megabytes on
@@ -305,6 +318,10 @@ struct Shared {
     parked: AtomicBool,
     wakeup: Condvar,
     wakeup_lock: Mutex<()>,
+    /// How many times the next camera went to Cycles before a picture was
+    /// put up (see the render thread's loop).
+    #[cfg(test)]
+    handed_early: AtomicU64,
 }
 
 /// Owns the render thread.
@@ -339,6 +356,8 @@ impl Orchestrator {
             parked: AtomicBool::new(false),
             wakeup: Condvar::new(),
             wakeup_lock: Mutex::new(()),
+            #[cfg(test)]
+            handed_early: AtomicU64::new(0),
         });
 
         let worker = shared.clone();
@@ -464,6 +483,13 @@ impl Orchestrator {
     #[cfg(test)]
     pub fn request(&self) -> Option<RenderRequest> {
         self.shared.request.lock().unwrap().clone()
+    }
+
+    /// How many times a moved camera went to Cycles before the picture in
+    /// hand was put up.
+    #[cfg(test)]
+    pub fn handed_early(&self) -> u64 {
+        self.shared.handed_early.load(Ordering::Acquire)
     }
 }
 
@@ -594,6 +620,7 @@ fn render_loop(shared: Arc<Shared>) {
             // this is the `Dirty::Display` row of §9.3, and it is what makes
             // dragging an exposure slider instant regardless of scene size.
             if let Some(built) = built.as_mut() {
+                let engine = made_by(&built.request, cycles.is_some());
                 publish(
                     &shared,
                     built,
@@ -602,6 +629,7 @@ fn render_loop(shared: Arc<Shared>) {
                     &selection,
                     cpu_denoiser,
                     false,
+                    engine,
                 );
             }
             if cycles.is_some() && cycles_clean {
@@ -652,7 +680,7 @@ fn render_loop(shared: Arc<Shared>) {
                     (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) if on_cycles => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                     _ => cpu_denoiser,
                 };
-                publish(&shared, state, style, &display, &selection, view_denoiser, denoise);
+                publish(&shared, state, style, &display, &selection, view_denoiser, denoise, made_by(&state.request, on_cycles));
                 cycles_clean = denoise && on_cycles;
                 if denoise {
                     cycles_denoised_at = Instant::now();
@@ -746,7 +774,7 @@ fn render_loop(shared: Arc<Shared>) {
                         (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                         _ => cpu_denoiser,
                     };
-                    publish(&shared, state, style, &display, &selection, view_denoiser, true);
+                    publish(&shared, state, style, &display, &selection, view_denoiser, true, engine);
                     cycles_denoised_at = Instant::now();
                 }
             }
@@ -782,25 +810,49 @@ fn render_loop(shared: Arc<Shared>) {
                 Ok(doing) if cycles_frames == 0 => say(Some(EngineNote::Preparing(doing))),
                 Ok(_) => {}
             }
-            match view.take_frame(&mut state.framebuffer) {
+            match crate::profile::time("render: cycles frame", || view.take_frame(&mut state.framebuffer)) {
                 Some(frame) => {
                     if cycles_frames == 0 {
                         say(None);
                     }
                     cycles_frames += 1;
+                    // The camera this picture is of, before the next goes in.
+                    let frame_camera = view.camera().unwrap_or(state.request.camera);
+                    // The change Cycles was held from while it made this
+                    // picture goes in now - the newest camera, if the mouse
+                    // has moved on since - so Cycles renders the next picture
+                    // while this one gets Tequila's floor reflection and is
+                    // put up, rather than after. That took 15 ms of a moving
+                    // picture's 50 on the Headphones, with Cycles idle. A
+                    // newer camera alone; anything else goes through the
+                    // rebuild at the top of the loop first. Synced again
+                    // there, it is already in, and an error here is that
+                    // sync's to report.
+                    let newer = (shared.request_generation.load(Ordering::Acquire) != seen_request)
+                        .then(|| shared.request.lock().unwrap().clone())
+                        .flatten()
+                        .filter(|newer| state.request.differs_only_in_camera(newer));
+                    if let Ok(true) = crate::profile::time("render: sync cycles", || view.sync(newer.as_ref().unwrap_or(&state.request))) {
+                        cycles_clean = false;
+                        #[cfg(test)]
+                        shared.handed_early.fetch_add(1, Ordering::AcqRel);
+                    }
                     // The floor's reflection, Tequila's, laid over: Cycles
-                    // draws none (`tequila_render_cpu::floor`).
+                    // draws none (`tequila_render_cpu::floor`). Of the
+                    // picture's own camera, which may be older than the
+                    // newest asked for.
                     if view.floor_reflection() {
-                        let key = (Arc::as_ptr(&state.request.scene) as usize, state.request.camera, frame.width, frame.height);
+                        let key = (Arc::as_ptr(&state.request.scene) as usize, frame_camera, frame.width, frame.height);
                         if reflection.as_ref().is_none_or(|(_, of)| *of != key) {
                             reflection = Some((Framebuffer::new(frame.width, frame.height), key));
                         }
                         let (layer, _) = reflection.as_mut().expect("made above");
                         if layer.pixels().first().map_or(0, |p| p.samples) < 256 {
+                            let _timer = Timer::start("render: floor reflection");
                             tequila_render_cpu::floor::render_floor_reflection(
                                 state.intersector.as_ref(),
                                 layer,
-                                state.request.camera,
+                                frame_camera,
                                 &state.request.config,
                                 1,
                             );
@@ -836,11 +888,18 @@ fn render_loop(shared: Arc<Shared>) {
                     // image settles, the careful one now and then. In between,
                     // the denoised picture already showing stays, rather than
                     // flickering to a noisy one.
-                    let early = frame.samples < 32 || state.request.interacting;
-                    // The first frames after a change go up as they are: a
+                    // While the camera moves, pictures go up as they are: a
                     // view that answers the mouse at once matters more than a
-                    // smooth one a moment later.
-                    let denoise = state.request.denoise && frame.samples >= 8 && !state.request.interacting;
+                    // smooth one a moment later. Once it stops, the first
+                    // picture at the view's full size is denoised, from its
+                    // first samples: waiting for eight left a big model
+                    // grainy for nearly two seconds after every move, and
+                    // the guides are cleaned below four samples
+                    // (`tequila_denoise::prefilter_guides`).
+                    let moving = view.navigating() || state.request.interacting;
+                    let early = frame.samples < 32 || moving;
+                    let at_full_size = (frame.width, frame.height) == view.full_size();
+                    let denoise = state.request.denoise && !moving && at_full_size;
                     cycles_wait = Duration::from_millis(if early { 150 } else { 1000 });
                     if early {
                         state.schedule.interrupt();
@@ -855,13 +914,16 @@ fn render_loop(shared: Arc<Shared>) {
                         (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                         _ => cpu_denoiser,
                     };
-                    publish(&shared, state, style, &display, &selection, view_denoiser, denoise);
+                    publish(&shared, state, style, &display, &selection, view_denoiser, denoise, engine);
                     if denoise {
                         cycles_denoised_at = Instant::now();
                         cycles_clean = true;
                     }
                 }
-                None => wait_for_news(&shared, seen_request, seen_style, Duration::from_millis(15)),
+                // A picture of the last restart is due: looked for often, as
+                // each millisecond of a moving picture's wait is one the hand
+                // feels. Otherwise now and then.
+                None => wait_for_news(&shared, seen_request, seen_style, Duration::from_millis(if view.awaiting_frame() { 3 } else { 15 })),
             }
             continue;
         }
@@ -974,6 +1036,7 @@ fn render_loop(shared: Arc<Shared>) {
                 &selection,
                 cpu_denoiser,
                 false,
+                tequila_scene::render::RenderEngine::Tequila,
             );
             continue;
         } else {
@@ -1004,6 +1067,7 @@ fn render_loop(shared: Arc<Shared>) {
                 &selection,
                 view_denoiser,
                 denoise,
+                tequila_scene::render::RenderEngine::Tequila,
             );
         }
 
@@ -1239,6 +1303,17 @@ fn outline_selection(
 }
 
 /// Tone-map the accumulation buffer and hand it to the UI.
+/// The engine a frame for `request` is made by: the one asked for when it
+/// is Cycles and Cycles is running, otherwise Tequila's own renderer.
+fn made_by(request: &RenderRequest, on_cycles: bool) -> tequila_scene::render::RenderEngine {
+    if on_cycles && request.shading == Shading::Rendered && request.engine.is_cycles() {
+        request.engine
+    } else {
+        tequila_scene::render::RenderEngine::Tequila
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn publish(
     shared: &Arc<Shared>,
     state: &mut Built,
@@ -1247,6 +1322,7 @@ fn publish(
     selection: &[u32],
     denoiser: Option<&dyn tequila_denoise::Denoise>,
     denoise: bool,
+    engine: tequila_scene::render::RenderEngine,
 ) {
     let fb = &state.framebuffer;
     let (width, height) = (fb.width, fb.height);
@@ -1365,6 +1441,7 @@ fn publish(
         elapsed_seconds: elapsed,
         resolution_divisor: state.schedule.resolution_divisor,
         shading: state.request.shading,
+        engine,
         under_outline,
     };
     drop(slot);
@@ -2137,6 +2214,10 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             loop {
+                // Asked again while waiting, as the render thread asks: a
+                // view still after an edit goes on from its one-sample
+                // picture.
+                view.sync(req).expect("synced");
                 if let Some(frame) = view.take_frame(&mut framebuffer) {
                     if frame.samples >= 8 && frame.width == 64 {
                         let pixels = framebuffer.pixels();
@@ -2184,6 +2265,175 @@ mod tests {
     /// the processor. Driven here on the processor, the renewal forced, as
     /// no NVIDIA card is at hand. Skipped where Cycles is not installed
     /// (`TEQUILA_CYCLES`).
+    /// While the camera moves, Cycles is asked for a smaller picture, sized
+    /// to how long pictures take; still a moment, its full size again,
+    /// without anything new being asked.
+    #[test]
+    fn a_moving_camera_gets_a_smaller_picture_and_a_still_one_its_full_size() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        let mut req = request();
+        req.width = 1000;
+        req.height = 750;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(1000, 750);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        // Synced, then the first picture after it.
+        let picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest, framebuffer: &mut tequila_render_core::framebuffer::Framebuffer| {
+            while !view.sync(req).expect("synced") {
+                assert!(Instant::now() < deadline, "Cycles never took the change");
+                view.take_frame(framebuffer);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            loop {
+                if let Some(frame) = view.take_frame(framebuffer) {
+                    return frame;
+                }
+                assert!(Instant::now() < deadline, "Cycles never drew the change");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        // Cycles' own first picture after a restart may be coarser; the
+        // view asks it for its full size.
+        picture(&mut view, &req, &mut framebuffer);
+        assert_eq!(view.traced_size(), (1000, 750), "a still view renders at its size");
+        assert!(!view.navigating());
+
+        // Orbiting: the first move asks for a smaller picture; later ones
+        // are sized to how long pictures take, which on this tiny scene can
+        // be its full size again.
+        for step in 1..=4 {
+            let a = step as f32 * 0.15;
+            req.camera = Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+            let moving = picture(&mut view, &req, &mut framebuffer);
+            assert!(view.navigating(), "step {step}: moving");
+            assert_eq!(view.traced_samples(), 1, "step {step}: a moving picture is one sample");
+            let (w, h) = view.traced_size();
+            if step == 1 {
+                assert!(w < 1000 && h < 750, "a moving view asks for a smaller picture, not {w}x{h}");
+            }
+            assert!(w <= 1000 && h <= 750 && moving.width <= w && moving.height <= h);
+        }
+
+        // Still a moment: the view's own size again, without a new request.
+        std::thread::sleep(Duration::from_millis(250));
+        let settled = picture(&mut view, &req, &mut framebuffer);
+        let mut last = settled;
+        while last.width != 1000 {
+            assert!(Instant::now() < deadline, "the still view never went back to its size");
+            std::thread::sleep(Duration::from_millis(5));
+            if let Some(frame) = view.take_frame(&mut framebuffer) {
+                last = frame;
+            }
+        }
+        assert!(!view.navigating(), "still, it is not following a camera");
+        assert_eq!(view.traced_size(), (1000, 750), "and asks for its full size");
+        assert!(view.traced_samples() > 1, "and goes on sampling");
+    }
+
+    /// A material edited, as a slider dragged edits it, is followed like a
+    /// moving camera: a smaller picture of one sample, now that Cycles no
+    /// longer makes one of its own after every change, and the view's size
+    /// again a moment later. Skipped where Cycles is not installed
+    /// (`TEQUILA_CYCLES`).
+    #[test]
+    fn an_edit_gets_a_smaller_picture_and_its_full_size_again() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        let mut req = request();
+        req.width = 1000;
+        req.height = 750;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(1000, 750);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| loop {
+            if view.sync(req).expect("synced") {
+                loop {
+                    if let Some(frame) = view.take_frame(&mut framebuffer) {
+                        return frame;
+                    }
+                    assert!(Instant::now() < deadline, "Cycles never drew the change");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            assert!(Instant::now() < deadline, "Cycles never took the change");
+            view.take_frame(&mut framebuffer);
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        picture(&mut view, &req);
+        assert!(!view.navigating());
+
+        let mut painted = (*req.scene).clone();
+        let material = painted.instances[0].material.index();
+        painted.materials[material].base_color = tequila_core::spectrum::Spectrum { r: 0.8, g: 0.02, b: 0.02 };
+        painted.lights = Arc::new((*painted.lights).clone());
+        painted.textures = Arc::new((*painted.textures).clone());
+        req.scene = Arc::new(painted);
+        req.scene_generation += 1;
+        picture(&mut view, &req);
+        assert!(view.navigating(), "an edit is followed like a moving camera");
+        let (w, h) = view.traced_size();
+        assert!(w < 1000 && h < 750, "an edit asks for a smaller picture, not {w}x{h}");
+        assert_eq!(view.traced_samples(), 1, "of one sample");
+
+        // Still a moment: the view's size again, and on from one sample.
+        std::thread::sleep(Duration::from_millis(250));
+        picture(&mut view, &req);
+        assert_eq!(view.traced_size(), (1000, 750), "the edited view goes back to its size");
+        assert!(view.traced_samples() > 1, "and goes on sampling");
+    }
+
+    /// A view too small to be divided still moves with one-sample pictures,
+    /// and once still goes on to a still view's samples at the same size:
+    /// nothing about the picture changed but how far Cycles takes it.
+    /// Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn a_small_moving_view_is_one_sample_and_goes_on_once_still() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(64, 48);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| loop {
+            if view.sync(req).expect("synced") {
+                loop {
+                    if let Some(frame) = view.take_frame(&mut framebuffer) {
+                        return frame;
+                    }
+                    assert!(Instant::now() < deadline, "Cycles never drew the change");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            assert!(Instant::now() < deadline, "Cycles never took the change");
+            view.take_frame(&mut framebuffer);
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        picture(&mut view, &req);
+        req.camera = Camera::look_at(Vec3 { x: 4.0, y: 3.0, z: 3.0 }, Vec3::ZERO, Vec3::Y);
+        picture(&mut view, &req);
+        assert!(view.navigating());
+        assert_eq!(view.traced_size(), (64, 48), "too small to be divided");
+        assert_eq!(view.traced_samples(), 1, "a moving picture is one sample");
+        // Still a moment: Cycles goes on, at the same size, without anything
+        // new being asked.
+        std::thread::sleep(Duration::from_millis(250));
+        picture(&mut view, &req);
+        assert_eq!(view.traced_size(), (64, 48));
+        assert!(view.traced_samples() > 1, "a still view goes on sampling");
+    }
+
     #[test]
     fn parts_imported_or_deleted_go_into_a_fresh_cycles_session() {
         if let Err(why) = tequila_render_cycles::available() {
@@ -2206,6 +2456,8 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             loop {
+                // Asked again while waiting, as the render thread asks.
+                view.sync(req).expect("synced");
                 if view.take_frame(&mut framebuffer).is_some_and(|frame| frame.samples >= 4 && frame.width == 64) {
                     return;
                 }
@@ -2298,6 +2550,9 @@ mod tests {
             }
         }
         assert!(shown.len() >= 5, "{} pictures in three seconds of orbiting", shown.len());
+        // Each next camera went to Cycles as a picture came in, before the
+        // picture was put up: Cycles rendered while Tequila drew.
+        assert!(renderer.handed_early() > 0, "no camera went to Cycles before the picture in hand was put up");
 
         // Each a picture of the view at its own size, not a smaller picture
         // read as a larger one: block by block, near a settled one of where
@@ -2589,6 +2844,27 @@ mod tests {
         orchestrator.submit(request());
         std::thread::sleep(Duration::from_millis(50));
         drop(orchestrator); // joins; would hang if the loop ignored `running`
+    }
+
+    /// Only a new camera on the same scene is a camera move: a scene edit, a
+    /// resized view or another setting with it is not.
+    #[test]
+    fn a_camera_move_is_told_from_other_changes() {
+        let req = request();
+        let mut moved = req.clone();
+        moved.camera = Camera::look_at(Vec3 { x: 4.0, y: 3.0, z: 3.0 }, Vec3::ZERO, Vec3::Y);
+        moved.scene_generation += 1;
+        assert!(req.differs_only_in_camera(&moved), "a new camera, the document's generation bumped with it");
+        assert!(!req.differs_only_in_camera(&req.clone()), "nothing changed");
+        let mut resized = moved.clone();
+        resized.width += 1;
+        assert!(!req.differs_only_in_camera(&resized), "and resized");
+        let mut edited = moved.clone();
+        edited.scene = Arc::new((*req.scene).clone());
+        assert!(!req.differs_only_in_camera(&edited), "and the scene edited");
+        let mut denoised = moved;
+        denoised.denoise = !req.denoise;
+        assert!(!req.differs_only_in_camera(&denoised), "and the denoiser switched");
     }
 
     #[test]

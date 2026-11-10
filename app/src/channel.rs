@@ -653,6 +653,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(full) = change.full_viewport {
         app.full_viewport = full;
     }
+    if let Some(shown) = change.statistics {
+        app.show_hud = shown;
+    }
     if let Some(edges) = change.edges {
         app.show_model_edges = edges;
     }
@@ -794,6 +797,7 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("viewport_samples", app.image.samples as f64)
         .set("viewport_preparing", matches!(app.engine_note, Some(crate::orchestrator::EngineNote::Preparing(_))))
         .set("full_viewport", app.full_viewport)
+        .set("statistics", app.show_hud)
         .set("present", app.presenting.is_some())
         .set("edges", app.show_model_edges)
         .set("selection_outline", app.show_selection_outline)
