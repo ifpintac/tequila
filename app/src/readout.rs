@@ -1,6 +1,6 @@
-//! The statistics overlay's speed and memory (`docs/04` §2.1): how many
-//! frames the window drew in the last second, the slowest of them, and how
-//! much memory Tequila holds, as the computer's own monitor counts it.
+//! The statistics overlay's speed and memory (`docs/04` §2.1): how fast the
+//! window drew while the view last moved, the slowest of those frames, and
+//! how much memory Tequila holds, as the computer's own monitor counts it.
 //!
 //! Read from the system directly, as `tequila-cli`'s self-test reads its
 //! facts: `proc_pid_rusage` on a Mac, `K32GetProcessMemoryInfo` on Windows,
@@ -13,6 +13,11 @@ use std::time::{Duration, Instant};
 /// not a system call every frame.
 const MEMORY_EVERY: Duration = Duration::from_millis(500);
 
+/// A move that follows the last by more than this is a new one.
+const PAUSE: Duration = Duration::from_millis(250);
+/// A frame starts this long, at most, before its move is reported.
+const SLACK: Duration = Duration::from_millis(5);
+
 /// The overlay's running measurements, kept by the window.
 #[derive(Default)]
 pub struct Readout {
@@ -20,6 +25,8 @@ pub struct Readout {
     frames: VecDeque<Instant>,
     /// When the view last moved: dragged, scrolled, or the camera changed.
     moved: Option<Instant>,
+    /// When the move it is part of began: the first after a pause.
+    moving_since: Option<Instant>,
     memory: Option<u64>,
     memory_read: Option<Instant>,
     installed: Option<Option<u64>>,
@@ -35,24 +42,47 @@ impl Readout {
         }
     }
 
-    /// The view moved at `now`.
+    /// The view moved at `now`: called at every frame of a move.
     pub fn moved(&mut self, now: Instant) {
+        if self.moved.is_none_or(|at| now.saturating_duration_since(at) > PAUSE) {
+            self.moving_since = Some(now);
+        }
         self.moved = Some(now);
     }
 
-    /// The frames drawn in the last second, while the view has moved in it
-    /// - the speed an orbit or a drag feels - or `None` while it is still.
-    /// A still window draws only when something asks, a few times a second,
-    /// and "7 fps" then read as a slow computer when it was an idle one.
-    pub fn frames_per_second(&self) -> Option<usize> {
-        let last = *self.frames.back()?;
-        self.moved.filter(|&at| last.saturating_duration_since(at) <= Duration::from_secs(1)).map(|_| self.frames.len())
+    /// The frames of the move in hand, or of the one that ended within the
+    /// last second: those from when it began, or a second before it last
+    /// moved, to when it last moved. The still frames either side are not
+    /// its frames: a still window draws a few times a second, and counted
+    /// with a move's they made the first moments of every orbit read
+    /// "13 fps, slowest 185 ms" on a view drawing 120 a second.
+    fn moving_frames(&self) -> Vec<Instant> {
+        let (Some(&last), Some(moved), Some(since)) = (self.frames.back(), self.moved, self.moving_since) else {
+            return Vec::new();
+        };
+        if last.saturating_duration_since(moved) > Duration::from_secs(1) {
+            return Vec::new();
+        }
+        let from = since.max(moved.checked_sub(Duration::from_secs(1)).unwrap_or(since));
+        // The frame a move is reported in started just before the report.
+        let to = moved + SLACK;
+        self.frames.iter().copied().filter(|&t| t + SLACK >= from && t <= to).collect()
     }
 
-    /// The longest gap between two frames in the last second: a hitch shows
-    /// here when the frame rate hides it.
+    /// How many frames a second the window drew while the view moved - the
+    /// speed an orbit or a drag feels - or `None` while it is still, or
+    /// before a move has frames enough to tell.
+    pub fn frames_per_second(&self) -> Option<usize> {
+        let frames = self.moving_frames();
+        let span = frames.last()?.saturating_duration_since(*frames.first()?).as_secs_f64();
+        (frames.len() >= 3 && span > 0.0).then(|| ((frames.len() - 1) as f64 / span).round() as usize)
+    }
+
+    /// The longest gap between two frames of the move: a hitch shows here
+    /// when the frame rate hides it.
     pub fn slowest_frame(&self) -> Option<Duration> {
-        self.frames.iter().zip(self.frames.iter().skip(1)).map(|(a, b)| b.duration_since(*a)).max()
+        let frames = self.moving_frames();
+        frames.iter().zip(frames.iter().skip(1)).map(|(a, b)| b.duration_since(*a)).max()
     }
 
     /// Tequila's memory in bytes, read again every half second.
@@ -267,22 +297,52 @@ fn processor_name() -> Option<String> {
 mod tests {
     use super::*;
 
-    /// The frame rate is the frames of the last second; the slowest frame
-    /// is the longest gap between two of them.
+    /// The frame rate is that of the frames drawn while the view moved,
+    /// and the slowest frame the longest gap between two of them: the
+    /// still frames before a move and after it are not counted.
     #[test]
-    fn the_frame_rate_counts_the_last_second() {
+    fn the_frame_rate_is_the_moving_frames_alone() {
         let mut readout = Readout::default();
         let start = Instant::now();
-        for i in 0..120u64 {
-            readout.frame(start + Duration::from_millis(i * 10));
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        // Still: a frame every 180 ms.
+        for i in 0..6u64 {
+            readout.frame(at(i * 180));
         }
         assert_eq!(readout.frames_per_second(), None, "nothing has moved: idle");
-        readout.moved(start + Duration::from_millis(1000));
-        assert_eq!(readout.frames_per_second(), Some(101), "the frames of the last second only");
-        readout.frame(start + Duration::from_millis(1290 + 100));
-        assert_eq!(readout.slowest_frame(), Some(Duration::from_millis(200)), "the hitch shows");
-        readout.frame(start + Duration::from_millis(2100));
+        // An orbit begins: a frame every 10 ms, each reporting the move.
+        let mut now = 1000;
+        for _ in 0..12 {
+            readout.frame(at(now));
+            readout.moved(at(now + 1));
+            now += 10;
+        }
+        // A tenth of a second in. It read 17 fps, slowest 180 ms.
+        assert_eq!(readout.frames_per_second(), Some(100), "the idle frames before it were counted");
+        assert_eq!(readout.slowest_frame(), Some(Duration::from_millis(10)));
+        // On for two seconds, with one hitch.
+        for i in 0..200 {
+            now += if i == 150 { 60 } else { 10 };
+            readout.frame(at(now));
+            readout.moved(at(now + 1));
+        }
+        assert_eq!(readout.frames_per_second(), Some(95), "the last second of the move");
+        assert_eq!(readout.slowest_frame(), Some(Duration::from_millis(60)), "the hitch shows");
+        // Stopped: the reading stays the move's while still frames follow,
+        // and goes after a second.
+        readout.frame(at(now + 300));
+        readout.frame(at(now + 600));
+        assert_eq!(readout.frames_per_second(), Some(100), "the still frames after the move were counted with its last ones");
+        readout.frame(at(now + 1200));
         assert_eq!(readout.frames_per_second(), None, "still again after a second");
+        // A second move is measured from its own start.
+        let mut now = now + 2000;
+        for _ in 0..5 {
+            readout.frame(at(now));
+            readout.moved(at(now + 1));
+            now += 20;
+        }
+        assert_eq!(readout.frames_per_second(), Some(50));
     }
 
     /// Tequila's own memory and the computer's are read, and the first is

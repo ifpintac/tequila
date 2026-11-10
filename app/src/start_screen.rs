@@ -84,6 +84,34 @@ pub struct StartScreen {
 const RADIUS: f32 = 18.0;
 const PAD: f32 = 30.0;
 const GAP: f32 = 14.0;
+/// The card's parts, top to bottom: the space above the three actions,
+/// the actions, the space above the lists, and the footer.
+const ABOVE_ACTIONS: f32 = 22.0;
+const ACTIONS: f32 = 74.0;
+const ABOVE_BODY: f32 = 24.0;
+const FOOTER: f32 = 54.0;
+/// A list's heading, a sample's smallest row and the space under it.
+const HEADING: f32 = 30.0;
+const SAMPLE_SMALLEST: f32 = 48.0;
+const SAMPLE_GAP: f32 = 10.0;
+
+/// How deep the banner is on a card of `size`: as deep as the picture is
+/// for its width, so little of it is cut away, never most of the card -
+/// and never so deep that the three samples under it do not fit. On a
+/// 1024x640 window it was, and the last sample ran over the footer.
+fn hero_height(size: Vec2) -> f32 {
+    let wanted = (size.x / 3.6).clamp(170.0, 300.0).min(size.y * 0.4);
+    let lists = HEADING + SAMPLES.len() as f32 * (SAMPLE_SMALLEST + SAMPLE_GAP);
+    let room = size.y - ABOVE_ACTIONS - ACTIONS - ABOVE_BODY - FOOTER - lists;
+    // The title, its line and the version still need their height.
+    wanted.min(room).max(150.0)
+}
+
+/// The height the lists have under a banner on a card of `size`.
+#[cfg(test)]
+fn body_height(size: Vec2) -> f32 {
+    size.y - hero_height(size) - ABOVE_ACTIONS - ACTIONS - ABOVE_BODY - FOOTER
+}
 
 impl StartScreen {
     /// Draw it while it is open: the choice made, if one was. Choosing
@@ -136,25 +164,23 @@ impl StartScreen {
                 // Clicks on the card stay on it.
                 let _ = ui.allocate_rect(card, egui::Sense::click());
 
-                // As deep as the banner is for its width, so little of the
-                // picture is cut away, and never most of the card.
-                let hero_height = (card.width() / 3.6).clamp(170.0, 300.0).min(card.height() * 0.4);
+                let hero_height = hero_height(card.size());
                 let hero = Rect::from_min_size(card.min, egui::vec2(card.width(), hero_height));
                 if hero_section(ui, hero, banner.as_ref()) {
                     dismiss = true;
                 }
 
-                let footer_height = 54.0;
+                let footer_height = FOOTER;
                 let inner = Rect::from_min_max(
-                    egui::pos2(card.left() + PAD, hero.bottom() + 22.0),
+                    egui::pos2(card.left() + PAD, hero.bottom() + ABOVE_ACTIONS),
                     egui::pos2(card.right() - PAD, card.bottom() - footer_height),
                 );
-                let actions = Rect::from_min_size(inner.min, egui::vec2(inner.width(), 74.0));
+                let actions = Rect::from_min_size(inner.min, egui::vec2(inner.width(), ACTIONS));
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(actions), |ui| {
                     choice = choice.take().or(action_cards(ui));
                 });
 
-                let body = Rect::from_min_max(egui::pos2(inner.left(), actions.bottom() + 24.0), inner.max);
+                let body = Rect::from_min_max(egui::pos2(inner.left(), actions.bottom() + ABOVE_BODY), inner.max);
                 let samples_width = (body.width() * 0.34).clamp(250.0, 330.0);
                 let recent_area = Rect::from_min_max(body.min, egui::pos2(body.right() - samples_width - PAD, body.bottom()));
                 let samples_area = Rect::from_min_max(egui::pos2(body.right() - samples_width, body.top()), body.max);
@@ -237,18 +263,23 @@ impl StartScreen {
         // As tall as there is room for: on a small window the rows share the
         // column rather than running on under the footer.
         let shown = samples.iter().filter(|(_, path)| path.is_some()).count().max(1) as f32;
-        let row = ((ui.available_height() - 10.0 * shown) / shown).clamp(48.0, 78.0);
-        for (sample, path) in samples {
-            let Some(path) = path else { continue };
-            let picture = match self.pictures.get(path) {
-                Some(Picture::Shown(texture)) => Some(texture.clone()),
-                _ => None,
-            };
-            if sample_row(ui, sample, picture.as_ref(), row).clicked() {
-                choice = Some(Choice::Sample(path.clone()));
+        let row = ((ui.available_height() - SAMPLE_GAP * shown) / shown).clamp(SAMPLE_SMALLEST, 78.0);
+        // And scrolled where even the smallest rows are too many, on a
+        // window shorter than the card was drawn for: they ran on over the
+        // footer's links and the version.
+        egui::ScrollArea::vertical().id_salt("start-samples").auto_shrink([false, false]).show(ui, |ui| {
+            for (sample, path) in samples {
+                let Some(path) = path else { continue };
+                let picture = match self.pictures.get(path) {
+                    Some(Picture::Shown(texture)) => Some(texture.clone()),
+                    _ => None,
+                };
+                if sample_row(ui, sample, picture.as_ref(), row).clicked() {
+                    choice = Some(Choice::Sample(path.clone()));
+                }
+                ui.add_space(SAMPLE_GAP);
             }
-            ui.add_space(10.0);
-        }
+        });
         if samples.iter().all(|(_, path)| path.is_none()) {
             ui.label(egui::RichText::new("The samples are not beside this Tequila.").size(12.0).color(theme::p().text_faint));
         }
@@ -703,6 +734,20 @@ mod tests {
     }
 
     /// Time in words, at each boundary.
+    /// The three samples fit under the banner on the smallest window the
+    /// card is drawn whole in, and the banner is as deep as ever on a
+    /// large one.
+    #[test]
+    fn the_samples_fit_under_the_banner_on_a_small_window() {
+        let needed = HEADING + SAMPLES.len() as f32 * (SAMPLE_SMALLEST + SAMPLE_GAP);
+        for (window, name) in [((1024.0, 640.0), "a small laptop's"), ((1280.0, 720.0), "720p"), ((1440.0, 900.0), "a MacBook's"), ((2560.0, 1440.0), "a large monitor's")] {
+            let card = egui::vec2((window.0 - 48.0f32).clamp(640.0, 1080.0), (window.1 - 48.0f32).clamp(480.0, 720.0));
+            assert!(body_height(card) >= needed, "{name} window: {} for the lists, {needed} needed", body_height(card));
+            assert!(hero_height(card) >= 150.0);
+        }
+        assert_eq!(hero_height(egui::vec2(1080.0, 720.0)), 288.0, "a large card's banner is as it was");
+    }
+
     #[test]
     fn how_long_ago_in_words() {
         assert_eq!(ago(5), "Just now");

@@ -550,6 +550,8 @@ struct TequilaApp {
     show_gizmo: bool,
     /// The statistics' frame rate and memory, measured as frames go by.
     readout: readout::Readout,
+    /// When the frame before this one started (`frame_pause`).
+    frame_before: Option<std::time::Instant>,
     /// The graphics card the window draws on, as its OpenGL names it, for
     /// the statistics in the views it draws.
     graphics_card: String,
@@ -1119,6 +1121,7 @@ impl TequilaApp {
             show_selection_outline: true,
             show_gizmo: true,
             readout: readout::Readout::default(),
+            frame_before: None,
             graphics_card: String::new(),
             viewport_paused: false,
             window_title: String::new(),
@@ -1465,7 +1468,16 @@ impl eframe::App for TequilaApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // A window the desktop is not showing - covered by another, or on
+        // another space - is not held to the screen's rate, and a view kept
+        // moving there was drawn as fast as the processor went: 518 frames
+        // a second orbiting a large model, one and a half cores for a
+        // picture nobody saw. No screen shows more than a frame every 4 ms.
+        if let Some(pause) = frame_pause(self.frame_before.map(|before| before.elapsed())) {
+            std::thread::sleep(pause);
+        }
         let frame_started = std::time::Instant::now();
+        self.frame_before = Some(frame_started);
         self.readout.frame(frame_started);
         struct FrameTimer(std::time::Instant);
         impl Drop for FrameTimer {
@@ -3918,6 +3930,14 @@ impl TequilaApp {
         };
         let title = painter.layout_no_wrap(title.to_string(), theme::strong(12.0), theme::p().text);
         let detail = painter.layout_no_wrap(detail, egui::FontId::proportional(12.0), theme::p().text_dim);
+        // Without its second half where the tools at the other end leave no
+        // room for it: in a narrow view, or a large interface, it ran on
+        // under them.
+        let detail = if chip_has_room(rect.width(), title.size().x, detail.size().x, rendered) {
+            detail
+        } else {
+            painter.layout_no_wrap(String::new(), egui::FontId::proportional(12.0), theme::p().text_dim)
+        };
         let chip = egui::Rect::from_min_size(
             rect.min + egui::Vec2::splat(OVERLAY_INSET),
             // Room at the end, in the Rendered view, for the arrow that says
@@ -3993,7 +4013,7 @@ impl TequilaApp {
 
         // ---- Framing and guides, shading, denoise and pause, Screenshot: top right
         let (pad, gap) = (4.0, 9.0);
-        let width = pad * 2.0 + TOOL * 10.0 + gap * 3.0;
+        let width = SHADING_ISLAND;
         let island = egui::Rect::from_min_size(
             egui::pos2(rect.right() - OVERLAY_INSET - width, rect.top() + OVERLAY_INSET),
             egui::vec2(width, ISLAND),
@@ -6972,6 +6992,29 @@ impl TequilaApp {
     }
 }
 
+/// The least time from one frame's start to the next: 250 frames a second,
+/// faster than any screen shows them.
+const SHORTEST_FRAME: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// How long to wait before starting a frame, the last having started
+/// `since_last` ago: nothing at a screen's rate, the rest of
+/// [`SHORTEST_FRAME`] when frames come faster than any screen takes them.
+fn frame_pause(since_last: Option<std::time::Duration>) -> Option<std::time::Duration> {
+    since_last.and_then(|since| SHORTEST_FRAME.checked_sub(since)).filter(|pause| !pause.is_zero())
+}
+
+/// The width of the island of tools at the top right of the viewport: ten
+/// tools, three dividers and its padding.
+const SHADING_ISLAND: f32 = 4.0 * 2.0 + TOOL * 10.0 + 9.0 * 3.0;
+
+/// Whether the viewport's chip has room for its second half - what lights
+/// the view, or the engine - beside the island of tools at the other end,
+/// in a view `view` points wide, the two halves `title` and `detail` wide.
+fn chip_has_room(view: f32, title: f32, detail: f32, rendered: bool) -> bool {
+    let chip = 28.0 + title + 8.0 + detail + 12.0 + if rendered { 12.0 } else { 0.0 };
+    OVERLAY_INSET + chip + 8.0 <= view - OVERLAY_INSET - SHADING_ISLAND
+}
+
 /// How far the viewport's islands sit in from its edges.
 const OVERLAY_INSET: f32 = 12.0;
 /// An island's thickness: a tool and its padding.
@@ -7714,6 +7757,32 @@ mod selection_and_screenshot_tests {
         assert_eq!(app.project.selection.nodes().count(), everything);
     }
 
+    /// Frames are not started faster than a screen can show them, and a
+    /// frame at a screen's rate waits for nothing.
+    #[test]
+    fn frames_no_screen_shows_are_not_drawn() {
+        use std::time::Duration;
+        assert_eq!(frame_pause(None), None, "the first frame");
+        assert_eq!(frame_pause(Some(Duration::from_micros(1930))), Some(Duration::from_micros(2070)), "518 a second is held to 250");
+        assert_eq!(frame_pause(Some(Duration::from_micros(4167))), None, "a 240 Hz screen's frames are not held");
+        assert_eq!(frame_pause(Some(Duration::from_micros(8333))), None);
+        assert_eq!(frame_pause(Some(Duration::from_millis(4))), None);
+    }
+
+    /// The viewport's chip gives up its second half rather than run under
+    /// the tools beside it.
+    #[test]
+    fn the_chip_is_cut_short_where_the_tools_leave_no_room() {
+        // "Material Preview" and "environment light, no shadows", about.
+        let (title, detail) = (100.0, 170.0);
+        assert!(chip_has_room(900.0, title, detail, false), "a wide view shows both");
+        assert!(!chip_has_room(520.0, title, detail, false), "a narrow one ran the detail under the tools");
+        // The edge: one point either side.
+        let edge = OVERLAY_INSET * 2.0 + SHADING_ISLAND + 8.0 + 28.0 + title + 8.0 + detail + 12.0;
+        assert!(chip_has_room(edge, title, detail, false) && !chip_has_room(edge - 1.0, title, detail, false));
+        assert!(!chip_has_room(edge, title, detail, true), "the Rendered view's arrow takes room too");
+    }
+
     /// Ctrl+, (Cmd+, on a Mac) opens Preferences, and the navigation
     /// settings are what the view's own moves read.
     #[test]
@@ -7793,15 +7862,15 @@ mod selection_and_screenshot_tests {
         let mut app = TequilaApp::for_tests();
         app.shading = orchestrator::Shading::Rendered;
         let start = std::time::Instant::now();
-        app.readout.moved(start);
         for i in 0..30u64 {
-            app.readout.frame(start + std::time::Duration::from_millis(i * 16));
+            app.readout.frame(start + std::time::Duration::from_millis(i * 20));
+            app.readout.moved(start + std::time::Duration::from_millis(i * 20 + 1));
         }
         app.image = orchestrator::DisplayImage { engine: RenderEngine::CyclesGpu, samples: 64, denoised: true, ..Default::default() };
         let lines = app.hud_lines(start);
         assert!(lines.iter().any(|l| l.starts_with("Cycles · graphics card") && l.ends_with("denoised")), "{lines:?}");
         assert!(lines.iter().any(|l| l == "64 spp"), "Cycles has no convergence to show: {lines:?}");
-        assert!(lines.iter().any(|l| l.starts_with("30 fps   slowest 16 ms")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.starts_with("50 fps   slowest 20 ms")), "{lines:?}");
         let memory = lines.last().expect("lines");
         assert!(memory.starts_with("memory ") && memory.contains(" of "), "{lines:?}");
 
