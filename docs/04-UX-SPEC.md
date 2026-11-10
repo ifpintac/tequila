@@ -482,9 +482,110 @@ Unlimited by default (configurable), with a visible history panel listing named 
 
 *As built, November 6:* in a portable copy, one with a `portable.txt` beside the program, every one of these files is in its `data` folder instead of the person's settings folder (`docs/05-ROADMAP-AND-TESTING.md` §5). Help > About says the copy is portable and opens that folder.
 
-The other sections below are not built yet.
+The rest is specified below and not built yet (planned November 10). The aim is that a person can make every choice Tequila makes for them, in one window: today's few settings are spread over the appearance picker, the File and View menus, the Material tab and this window, and much of the rest is fixed in the code.
 
-Sections: **General** (language, autosave interval, undo depth, startup scene) · **Interface** (theme light/dark, UI scale, panel layout presets, tooltips) · **Navigation** (application preset, invert axes, sensitivity) · **Hotkeys** (§6.3) · **Colour Management** (OCIO config path, display transform, view transform per output) · **Units** (default scene unit, display precision) · **Rendering** (default backend, GPU device selection, CPU thread count, texture cache size, default lighting preset) · **Folders** (library, output, temp, autosave) · **Advanced** (developer overlays, shading-language cache, telemetry off by default and opt-in only).
+### 12.1 How the window works
+
+- **One window, opened the usual way:** Edit › Preferences, `Ctrl+,` on Windows and Linux, and Tequila › Settings… with `⌘,` on a Mac. A page list down the side, in the order of §12.2.
+- **Search** across every page by a setting's name and its explanation; matches are lit and their pages listed.
+- **Applied at once,** with no OK or Apply button. Each setting can be put back to its default on its own (a reset mark appears beside a changed one), and each page has *Restore defaults*.
+- **Tequila's own choices and a new project's defaults are told apart.** A page or group that sets defaults for new projects says so; an open project's own settings stay in the Inspector and the Render window, and are not changed by changing a default. Where a setting has both, the project's wins.
+- **Every setting explains itself** in its tooltip, and says what it costs where it trades speed or memory for quality.
+- **Export and import** all settings as one file, to move to another computer or to give a team one standard; *Reset everything* asks first.
+- **A portable copy** keeps them in its `data` folder, as today (§5 of `docs/05`).
+- **Scripts and the assistant** read and change every setting through the scripting channel (a `preferences` operation, with its names in `docs/SCRIPTING.md`), as they do every command (§8).
+- **One settings file.** Today's are many small ones beside the library: `appearance.txt`, `import.txt`, `guides.txt`, `screenshots.txt`, `3d-mouse.txt`, `substance.txt`, `updates.txt`, `farm.txt`, `assistant.json` and others. They become one readable file, read from the old ones once, on the first start after the change.
+
+### 12.2 Pages
+
+Marked *(built)*: a setting that exists today, which moves here from where it is.
+
+**General**
+- On start: the start screen *(built: appearance)*, the last project, an empty scene, or a chosen scene.
+- Autosave on or off, how often (fixed at five minutes today, `project.rs`), and how many earlier versions to keep.
+- How many steps undo keeps. How many recent files the start screen and File › Open recent list, with *Clear*.
+- Ask before closing with unsaved changes, and before deleting parts.
+- Default units (mm, cm, m, in, ft) and how many decimals fields show.
+- Language, once Tequila is translated.
+
+**Interface**
+- Light, dark or automatic, and the colour theme *(built: appearance)*.
+- Interface size *(built: appearance)* and text size.
+- Tooltips on or off, their delay, and whether they show the shortcut.
+- Panel layout presets, and *Reset layout*.
+- Fewer animations.
+
+**Viewport**
+- The shading a project opens in: Solid, Material Preview or Rendered.
+- While the view moves, smooth or sharp: *Smooth*, *Balanced*, *Sharp*, the picture time the Rendered view aims at (33 ms today, `cycles_view.rs`).
+- The Rendered view's sample limit (1024 today) and time limit.
+- The viewport's denoising: on, off, or only once the view is still.
+- Shown when a project opens: ground grid, axis legend, render frame, statistics, model edges, composition guides with their colour and opacity.
+- The selection's outline: shown or hidden (`Shift+H`), its colour and its width.
+- The gizmo: shown or hidden (`Shift+G`), its size (90 points today, `gizmo_ui.rs`), and the mode it starts in (`Q`, `W`, `E` or `R`).
+- Power: pause the viewport while Tequila is in the background, and lighter viewport settings on battery.
+
+**Navigation and input**
+- The mouse's navigation preset: KeyShot (the default, §6.1), Blender, Maya, SolidWorks, Rhino, Fusion 360, Cinema 4D, or Custom, which shows each binding to change.
+- Orbit, pan and zoom speed (fixed today, `orbit.rs`), and the wheel's zoom turned round.
+- Zoom toward the pointer or the view's centre; orbit about the selection, the point under the pointer or the view's centre; keep the horizon level or orbit freely.
+- On a Mac's trackpad: whether two fingers pan or orbit, and pinch to zoom.
+- The 3D mouse: everything in this window today *(built)*.
+
+**Keyboard shortcuts** (the hotkey editor of §6.3)
+- Every command, found by its name or by its key, given any key.
+- A conflict said plainly as it is made ("Ctrl+G is already Group"), and the choice to swap or cancel.
+- Presets (Tequila, KeyShot, Blender), import and export, and reset.
+
+**Rendering** (a new project's defaults)
+- Engine: Cycles on the graphics card, Cycles on the processor, or Tequila's own; which graphics card or cards; how many processor threads.
+- Resolution, samples or time limit, denoising and its strength.
+- Output: format (PNG, JPEG, TIFF, EXR), bit depth, transparent background, the file name pattern (for example `{project}_{view}_{date}`) and the folder.
+- When a render finishes: open the image, a sound, a notification.
+- The network render farm *(built: Render window)*.
+
+**Performance and memory**
+- How much of the graphics card's memory Cycles and the denoiser may take (capped in the code today; `docs/01` says how).
+- Texture memory and texture compression.
+- How long the Cycles view is kept after the viewport leaves Rendered (ten seconds today).
+- A low-power mode, and how many threads background work may use.
+- Caches: where they are, how big, and *Clear* for each.
+
+**Import**
+- The up axis of imports *(built: File › Up axis of imports)*, the units of a file that names none, and setting models on the floor.
+- How finely STEP and IGES surfaces are cut into triangles.
+- Parts divided by body, colour or layer.
+- Materials made from CAD colours, and the CAD file kept in the project.
+
+**Colour management**
+- The OCIO configuration, the display, the view transform (Standard, Filmic, AgX, ACES), and the output transform for each file format.
+
+**Materials and library**
+- The library's folders, a shared network folder among them, and favourites.
+- Where Adobe's Substance tools are *(built: Material tab)*.
+- Thumbnails' size and quality.
+- What a material dropped on a part does by default: that part alone, or every part sharing its material (§3.2).
+- The material imported parts wear.
+
+**Folders and storage**
+- Library, renders, screenshots *(built: View › Screenshot folder)*, autosaves and caches, each with its size, *Open* and *Clear*.
+
+**Assistant**
+- Provider and model: Claude, OpenAI, Ollama or a local model *(built: the Assistant)*, keys kept in the system's keychain.
+- Whether the assistant asks before changing the scene, and whether it may look at screenshots.
+- Connect an AI *(built)*.
+
+**Plugins and scripting**
+- Plugins on or off *(built)*, where Python is, the plugins folder.
+- Whether other applications and AI tools may drive Tequila at all (the scripting channel and the MCP server), and whether each new one is asked about first.
+
+**Updates and privacy**
+- Look for updates daily *(built: daily, Help › Check for updates)*, weekly or never; stable or beta releases.
+- Crash reports only when the person agrees; no telemetry.
+
+**Advanced**
+- Developer overlays and logs: the profile (`TEQUILA_PROFILE`), the Cycles trace (`TEQUILA_CYCLES_TRACE`).
+- Open the settings folder; reset everything.
 
 ---
 
