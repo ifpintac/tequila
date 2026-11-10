@@ -331,7 +331,9 @@ class Client:
         start_screen, updates (Help > Check for
         updates, which asks GitHub), connect (Connect an AI: AI apps and
         providers), frame (the render's shape in the viewport), self_test
-        (Help > Test this computer, started) (bools), tab='material', graph=<material> or
+        (Help > Test this computer, started), selection_outline and gizmo
+        (the selection's outline and gizmo, shown or hidden, keeping the
+        selection) (bools), tab='material', graph=<material> or
         False, viewport='wireframe'|'solid'|'material'|'rendered',
         mode='light'|'dark'|'auto', theme='graphite'|'ocean'|'orchid'|'ember'|
         'meadow'|'rose', studio_drag=[studio, slot] (a Studio held part-way

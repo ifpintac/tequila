@@ -387,6 +387,11 @@ pub struct UiChange {
     pub present: Option<bool>,
     /// Draw the parts' own edges in Solid and Material Preview.
     pub edges: Option<bool>,
+    /// The selection's outline in the viewport (Shift+H), shown or hidden;
+    /// the selection stays.
+    pub selection_outline: Option<bool>,
+    /// The move, turn and scale gizmo on the selection (Shift+G).
+    pub gizmo: Option<bool>,
     /// Show the viewport at the render's shape, the rest left empty, so
     /// what is in the view is what the render will hold.
     pub frame: Option<bool>,
@@ -1339,6 +1344,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             statistics: opt_bool(value, "statistics")?,
             present: opt_bool(value, "present")?,
             edges: opt_bool(value, "edges")?,
+            selection_outline: opt_bool(value, "selection_outline")?,
+            gizmo: opt_bool(value, "gizmo")?,
             frame: opt_bool(value, "frame")?,
             help: opt_bool(value, "help")?,
             mode: opt_string(value, "mode")?,

@@ -527,6 +527,14 @@ struct TequilaApp {
     /// The status line last noted for a crash report.
     noted_status: String,
     show_hud: bool,
+    /// The selection's outline in the view (View › Selection outline,
+    /// Shift+H). Hidden, a selected part shows as it is while its material
+    /// is edited: deselecting it to see it also put its material away. For
+    /// the session only, so a new one starts with it shown.
+    show_selection_outline: bool,
+    /// The move, turn and scale gizmo on the selection (View › Gizmo,
+    /// Shift+G). For the session only, as the outline.
+    show_gizmo: bool,
     /// The statistics' frame rate and memory, measured as frames go by.
     readout: readout::Readout,
     /// The graphics card the window draws on, as its OpenGL names it, for
@@ -1089,6 +1097,8 @@ impl TequilaApp {
             self_test: self_test::SelfTest::default(),
             noted_status: String::new(),
             show_hud: false,
+            show_selection_outline: true,
+            show_gizmo: true,
             readout: readout::Readout::default(),
             graphics_card: String::new(),
             viewport_paused: false,
@@ -1838,34 +1848,7 @@ impl eframe::App for TequilaApp {
             self.published_style = style;
             self.orchestrator.set_style(style);
         }
-        // The outline follows the selection, and a selection change must not
-        // restart the render — so it rides the same display-only channel the
-        // image style does. Selecting a group outlines every part under it,
-        // because the group is not itself anything the camera can see.
-        if self.dragging.is_some() {
-            // A drag in progress outlines what the drop would affect instead
-            // of what is selected. Showing both at once would put two rings on
-            // screen with no way to tell which one the mouse button is about
-            // to act on.
-            self.outline_key = None;
-            self.outlined = self.drag_highlight.clone();
-            self.orchestrator.set_selection(self.outlined.clone());
-        } else {
-            // Worked out when the selection or the scene changes, not every
-            // frame: a selected group walked every part under it each time.
-            let key = (self.project.selection.nodes().collect::<Vec<_>>(), self.project.rebuilds());
-            if self.outline_key.as_ref() != Some(&key) {
-                self.outlined = key
-                    .0
-                    .iter()
-                    .flat_map(|&node| self.project.document().tree.descendants_and_self(node))
-                    .filter_map(|node| self.project.mapping().instance_of(node))
-                    .map(|instance| instance.0)
-                    .collect();
-                self.orchestrator.set_selection(self.outlined.clone());
-                self.outline_key = Some(key);
-            }
-        }
+        self.refresh_outline();
         // A GPU failure hands Solid back to the CPU: tell the renderer, once.
         if self.gpu_solid_submitted && !self.gpu_solid() {
             if let Some(error) = self.solid.error() {
@@ -2026,8 +2009,12 @@ impl TequilaApp {
 
         let mut gizmo = std::mem::take(&mut self.gizmo);
         let taken = placing_label || placing_mapping || aiming_pin || measuring;
+        // Hidden (Shift+G), the gizmo takes no drag either: a click where
+        // a handle would be selects or turns the view, as anywhere else. A
+        // drag under way as it was hidden is let finish.
+        let gizmo_shown = self.show_gizmo || gizmo.is_dragging();
         let over_gizmo = taken
-            || gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &response);
+            || (gizmo_shown && gizmo.interact(ui, rect, &self.camera.camera, &mut self.project, &response));
         let gizmo_dragging = taken || gizmo.is_dragging();
         self.gizmo = gizmo;
 
@@ -2306,7 +2293,9 @@ impl TequilaApp {
         if !presenting {
             cutaway_panel::draw_outlines(ui, rect, &self.camera.camera, &self.project);
             self.measure.draw(ui, rect, &self.camera.camera, &self.project);
-            self.gizmo.draw(ui, rect, &self.camera.camera);
+            if self.show_gizmo || self.gizmo.is_dragging() {
+                self.gizmo.draw(ui, rect, &self.camera.camera);
+            }
             self.label_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.mapping_gizmo.draw(ui, rect, &self.camera.camera, &self.project);
             self.pin_gizmo.draw(ui, rect, &self.project);
@@ -3492,6 +3481,16 @@ impl TequilaApp {
                     ui.separator();
                     ui.add(crate::field::Checkbox::new(&mut self.show_hud, "Render statistics"))
                         .on_hover_text("H");
+                    let mut outline = self.show_selection_outline;
+                    if ui
+                        .add(crate::field::Checkbox::new(&mut outline, "Selection outline"))
+                        .on_hover_text("Shift+H. Hide it to see a selected part as it is, still selected")
+                        .changed()
+                    {
+                        self.set_selection_outline(outline);
+                    }
+                    ui.add(crate::field::Checkbox::new(&mut self.show_gizmo, "Gizmo"))
+                        .on_hover_text("Shift+G. The move, turn and scale handles on the selection");
                     ui.add(crate::field::Checkbox::new(&mut self.show_render_frame, "Render frame"))
                         .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
@@ -4720,6 +4719,22 @@ impl TequilaApp {
         if modifiers.shift && pressed(egui::Key::F) {
             self.frame(true);
         }
+        // Shift+H the selection's outline and Shift+G the gizmo, shown or
+        // hidden, to see a selected part as it is. Ctrl+Alt+H was asked for,
+        // but Ctrl+H hides parts and Alt+H shows them all, and on a Mac
+        // Cmd+Option+H is the system's Hide Others; Ctrl+Alt+G would group.
+        // A notice says so, as nothing else on screen would say why the
+        // gizmo has gone.
+        if modifiers.shift_only() && pressed(egui::Key::H) {
+            let on = !self.show_selection_outline;
+            self.set_selection_outline(on);
+            self.toasts.info(if on { "Selection outline shown" } else { "Selection outline hidden: Shift+H shows it again" });
+        }
+        if modifiers.shift_only() && pressed(egui::Key::G) {
+            let on = !self.show_gizmo;
+            self.show_gizmo = on;
+            self.toasts.info(if on { "Gizmo shown" } else { "Gizmo hidden: Shift+G shows it again" });
+        }
 
         if !modifiers.any() {
             if pressed(egui::Key::Q) {
@@ -4787,6 +4802,54 @@ impl TequilaApp {
                 self.set_view_mode(next);
             }
         }
+    }
+
+    /// The outline the viewport rings, as the selection or a material being
+    /// dragged in asks, told to the renderer when it changes.
+    fn refresh_outline(&mut self) {
+        // The outline follows the selection, and a selection change must not
+        // restart the render — so it rides the same display-only channel the
+        // image style does. Selecting a group outlines every part under it,
+        // because the group is not itself anything the camera can see.
+        if self.dragging.is_some() {
+            // A drag in progress outlines what the drop would affect instead
+            // of what is selected. Showing both at once would put two rings on
+            // screen with no way to tell which one the mouse button is about
+            // to act on.
+            self.outline_key = None;
+            self.outlined = self.drag_highlight.clone();
+            self.orchestrator.set_selection(self.outlined.clone());
+        } else {
+            // Worked out when the selection or the scene changes, not every
+            // frame: a selected group walked every part under it each time.
+            let key = (self.project.selection.nodes().collect::<Vec<_>>(), self.project.rebuilds());
+            if self.outline_key.as_ref() != Some(&key) {
+                // Hidden (Shift+H), nothing is ringed, and the selection
+                // stays. A material being dragged in, above, is still
+                // outlined where it would land: that is the drop's, not the
+                // selection's.
+                self.outlined = if self.show_selection_outline {
+                    key.0
+                        .iter()
+                        .flat_map(|&node| self.project.document().tree.descendants_and_self(node))
+                        .filter_map(|node| self.project.mapping().instance_of(node))
+                        .map(|instance| instance.0)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                self.orchestrator.set_selection(self.outlined.clone());
+                self.outline_key = Some(key);
+            }
+        }
+    }
+
+    /// The selection's outline shown or hidden (Shift+H, View › Selection
+    /// outline). The selection stays, and with it the material panel.
+    pub(crate) fn set_selection_outline(&mut self, on: bool) {
+        self.show_selection_outline = on;
+        // Worked out again at the next frame.
+        self.outline_key = None;
     }
 
     /// The viewport's own denoising on or off (its toolbar's switch): saved
@@ -6883,6 +6946,7 @@ impl TequilaApp {
                             ("Screenshot of the viewport", "P"),
                             ("Pause the viewport", "Shift + P"),
                             ("Render statistics", "H"),
+                            ("Selection outline / gizmo", "Shift + H / Shift + G"),
                             ("Full viewport", "Tab"),
                             ("Composition guides / turn them", "O / Shift + O"),
                         ],
@@ -7688,6 +7752,49 @@ mod selection_and_screenshot_tests {
         assert_eq!(app.project.selection.nodes().count(), 0, "Ctrl+Shift+A left a selection");
         press(&mut app, command);
         assert_eq!(app.project.selection.nodes().count(), everything);
+    }
+
+    /// Shift+H hides the selection's outline and Shift+G the gizmo, and each
+    /// shows it again; the selection stays, so its material stays in the
+    /// panel. Ctrl+H still hides the selected parts rather than the outline.
+    #[test]
+    fn shift_h_hides_the_outline_and_shift_g_the_gizmo_keeping_the_selection() {
+        let mut app = TequilaApp::for_tests();
+        let ctx = egui::Context::default();
+        let press = |app: &mut TequilaApp, key: egui::Key, modifiers: egui::Modifiers| {
+            let input = egui::RawInput {
+                modifiers,
+                events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }],
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.global_hotkeys(ctx));
+        };
+        let mut selection = std::mem::take(&mut app.project.selection);
+        selection.select_all(app.project.document());
+        app.project.selection = selection;
+        let selected = app.project.selection.nodes().count();
+        app.refresh_outline();
+        assert!(!app.outlined.is_empty(), "the selection is outlined");
+
+        press(&mut app, egui::Key::H, egui::Modifiers::SHIFT);
+        assert!(!app.show_selection_outline);
+        app.refresh_outline();
+        assert!(app.outlined.is_empty(), "Shift+H left the outline");
+        assert_eq!(app.project.selection.nodes().count(), selected, "and the selection stays");
+        press(&mut app, egui::Key::H, egui::Modifiers::SHIFT);
+        app.refresh_outline();
+        assert!(app.show_selection_outline && !app.outlined.is_empty(), "Shift+H again shows it");
+
+        press(&mut app, egui::Key::G, egui::Modifiers::SHIFT);
+        assert!(!app.show_gizmo, "Shift+G hides the gizmo");
+        assert_eq!(app.project.selection.nodes().count(), selected);
+        press(&mut app, egui::Key::G, egui::Modifiers::SHIFT);
+        assert!(app.show_gizmo, "Shift+G again shows it");
+
+        // Ctrl+H (Ctrl on a Mac too, whose Cmd+H the system takes) hides the
+        // selected parts, and leaves the outline as it was.
+        press(&mut app, egui::Key::H, egui::Modifiers::CTRL);
+        assert!(app.show_selection_outline, "Ctrl+H hid the outline");
     }
 
     /// The statistics say which engine made the picture and on what, and
