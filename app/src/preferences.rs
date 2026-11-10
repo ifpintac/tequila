@@ -309,6 +309,10 @@ pub struct Prefs {
     /// A trackpad's two-finger swipe orbits and Shift pans, rather than
     /// the other way about.
     pub trackpad_orbits: bool,
+    /// Whose way the mouse moves the view, and the person's own three
+    /// drags, used when that is Custom (`navigation`).
+    pub nav_preset: crate::navigation::Preset,
+    pub nav_custom: crate::navigation::Scheme,
 }
 
 impl Default for Prefs {
@@ -336,6 +340,8 @@ impl Default for Prefs {
             zoom_speed: 1.0,
             invert_zoom: false,
             trackpad_orbits: false,
+            nav_preset: crate::navigation::Preset::default(),
+            nav_custom: crate::navigation::Preset::default().scheme().expect("Tequila's own has drags"),
         }
     }
 }
@@ -344,6 +350,11 @@ impl Prefs {
     /// How often the recovery copy is made, or never.
     pub fn autosave_every(&self) -> Option<std::time::Duration> {
         self.autosave.then(|| std::time::Duration::from_secs_f32(self.autosave_minutes.clamp(1.0, 60.0) * 60.0))
+    }
+
+    /// Which drags orbit, pan and zoom: the preset's, or the person's own.
+    pub fn navigation(&self) -> crate::navigation::Scheme {
+        self.nav_preset.scheme().unwrap_or(self.nav_custom)
     }
 
     /// What a wheel notch or a pinch is multiplied by.
@@ -368,6 +379,17 @@ const SIZES: &[(&str, &str)] = &[("compact", "Compact"), ("regular", "Regular"),
 const SHADINGS: &[(&str, &str)] = &[("wireframe", "Wireframe"), ("solid", "Solid"), ("material", "Material Preview"), ("rendered", "Rendered")];
 const GIZMO_MODES: &[(&str, &str)] = &[("all", "All at once"), ("move", "Move"), ("rotate", "Rotate"), ("scale", "Scale")];
 const MOVING: &[(&str, &str)] = &[("smooth", "Smooth"), ("balanced", "Balanced"), ("sharp", "Sharp")];
+const PRESETS: &[(&str, &str)] = &[
+    ("keyshot", "Tequila (as KeyShot)"),
+    ("blender", "Blender"),
+    ("maya", "Maya"),
+    ("cinema4d", "Cinema 4D"),
+    ("3dsmax", "3ds Max"),
+    ("solidworks", "SolidWorks"),
+    ("rhino", "Rhino"),
+    ("fusion360", "Fusion 360"),
+    ("custom", "Custom"),
+];
 const TRACKPAD: &[(&str, &str)] = &[("pan", "Pans the view"), ("orbit", "Orbits the view")];
 const UP_AXES: &[(&str, &str)] = &[
     ("file", "As the file says"),
@@ -400,6 +422,38 @@ fn text(value: Value) -> String {
         other => other.to_text(),
     }
 }
+
+/// The drag that makes one of the view's moves, as a setting: read from
+/// the preset in use, and set into a scheme of the person's own.
+macro_rules! own_drag {
+    ($key:literal, $label:literal, $help:literal, $what:ident) => {
+        Setting {
+            key: $key,
+            page: Page::Navigation,
+            group: BUTTONS,
+            label: $label,
+            help: $help,
+            kind: Kind::Choice(crate::navigation::DRAGS),
+            own: true,
+            default: || Value::Text(Prefs::default().navigation().drag(crate::navigation::Move::$what).key()),
+            get: |app| Value::Text(app.prefs.navigation().drag(crate::navigation::Move::$what).key()),
+            set: |app, value| {
+                let what = crate::navigation::Move::$what;
+                let mut scheme = app.prefs.navigation();
+                // The drag it has already - the preset's own, read back
+                // from the file - changes nothing, and is not Custom.
+                if let Some(drag) = crate::navigation::Drag::from_key(&text(value)).filter(|drag| *drag != scheme.drag(what)) {
+                    scheme.set(what, drag);
+                    app.prefs.nav_custom = scheme;
+                    app.prefs.nav_preset = crate::navigation::Preset::Custom;
+                }
+                Ok(())
+            },
+        }
+    };
+}
+
+const BUTTONS: &str = "Mouse buttons";
 
 /// One of Tequila's own on-or-off choices: a field of [`Prefs`], and what
 /// changing it does to the session.
@@ -723,6 +777,30 @@ pub static SETTINGS: &[Setting] = &[
         true
     ),
     // ---- Navigation ------------------------------------------------------
+    Setting {
+        key: "navigation.preset",
+        page: Page::Navigation,
+        group: BUTTONS,
+        label: "Move the view as in",
+        help: "Which mouse buttons orbit, pan and zoom: Tequila's own, which are KeyShot's, or those of the program your hands know. Changing a drag below makes it Custom. The wheel zooms in all of them.",
+        kind: Kind::Choice(PRESETS),
+        own: true,
+        default: || Value::Text(crate::navigation::Preset::default().key().to_string()),
+        get: |app| Value::Text(app.prefs.nav_preset.key().to_string()),
+        set: |app, value| {
+            if let Some(preset) = crate::navigation::Preset::from_key(&text(value)) {
+                // Custom starts from the drags in use.
+                if preset == crate::navigation::Preset::Custom && app.prefs.nav_preset != preset {
+                    app.prefs.nav_custom = app.prefs.navigation();
+                }
+                app.prefs.nav_preset = preset;
+            }
+            Ok(())
+        },
+    },
+    own_drag!("navigation.orbit_drag", "Orbit", "The drag that turns the view about what it looks at.", Orbit),
+    own_drag!("navigation.pan_drag", "Pan", "The drag that slides the view.", Pan),
+    own_drag!("navigation.zoom_drag", "Zoom", "The drag that moves the view closer and further, up and down. The wheel always zooms too.", Zoom),
     own_number!(
         "navigation.orbit_speed",
         Navigation,
@@ -1763,6 +1841,7 @@ mod tests {
         assert_eq!(SIZES.iter().map(|(k, l)| (*k, *l)).collect::<Vec<_>>(), crate::theme::Size::ALL.iter().map(|s| (s.key(), s.label())).collect::<Vec<_>>());
         assert_eq!(SHADINGS.iter().map(|(k, l)| (*k, *l)).collect::<Vec<_>>(), ViewMode::ALL.iter().map(|m| (m.key(), m.label())).collect::<Vec<_>>());
         assert_eq!(MOVING.iter().map(|(k, _)| *k).collect::<Vec<_>>(), MovingPicture::ALL.iter().map(|m| m.key()).collect::<Vec<_>>());
+        assert_eq!(PRESETS.iter().map(|(k, _)| *k).collect::<Vec<_>>(), crate::navigation::Preset::ALL.iter().map(|p| p.key()).collect::<Vec<_>>());
         assert_eq!(GIZMO_MODES.iter().map(|(k, _)| *k).collect::<Vec<_>>(), GizmoMode::ALL.iter().map(|m| gizmo_key(*m)).collect::<Vec<_>>());
     }
 
@@ -1830,6 +1909,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&folder);
     }
 
+    /// A preset is its program's three drags; a drag changed by hand makes
+    /// it Custom, swapping with the move that had that drag; both are kept
+    /// and start the next session as they were.
+    #[test]
+    fn a_navigation_preset_and_a_custom_drag_are_kept() {
+        use crate::navigation::{Drag, Preset};
+        let folder = std::env::temp_dir().join(format!("tequila-navigation-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let file = folder.join("preferences.txt");
+        let mut app = TequilaApp::for_tests();
+        app.load_preferences(file.clone());
+        assert_eq!(app.prefs.navigation(), Preset::KeyShot.scheme().unwrap());
+
+        app.set_preference("navigation.preset", Value::Text("blender".into())).unwrap();
+        assert_eq!(app.prefs.navigation(), Preset::Blender.scheme().unwrap());
+        let value = |app: &TequilaApp, key: &str| (setting(key).unwrap().get)(app);
+        assert_eq!(value(&app, "navigation.orbit_drag"), Value::Text("middle".into()));
+        assert_eq!(value(&app, "navigation.pan_drag"), Value::Text("shift+middle".into()));
+        // The next session is Blender's still, not a Custom that looks like it.
+        let mut next = TequilaApp::for_tests();
+        next.load_preferences(file.clone());
+        assert_eq!(next.prefs.nav_preset, Preset::Blender);
+
+        // Orbit given pan's drag: Custom, and pan has orbit's.
+        app.set_preference("navigation.orbit_drag", Value::Text("shift+middle".into())).unwrap();
+        assert_eq!(app.prefs.nav_preset, Preset::Custom);
+        assert_eq!(value(&app, "navigation.pan_drag"), Value::Text("middle".into()));
+        app.set_preference("navigation.zoom_drag", Value::Text("alt+left".into())).unwrap();
+        let custom = app.prefs.navigation();
+        assert_eq!((custom.orbit, custom.pan, custom.zoom), (Drag::from_key("shift+middle").unwrap(), Drag::from_key("middle").unwrap(), Drag::from_key("alt+left").unwrap()));
+        let mut next = TequilaApp::for_tests();
+        next.load_preferences(file.clone());
+        assert_eq!(next.prefs.nav_preset, Preset::Custom);
+        assert_eq!(next.prefs.navigation(), custom);
+        assert!(app.set_preference("navigation.orbit_drag", Value::Text("fourth button".into())).is_err());
+
+        // Another preset leaves the custom drags aside; Custom brings back
+        // the drags in use, to change from.
+        next.set_preference("navigation.preset", Value::Text("rhino".into())).unwrap();
+        assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
+        next.set_preference("navigation.preset", Value::Text("custom".into())).unwrap();
+        assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
+        next.reset_preferences(Some(Page::Navigation)).unwrap();
+        assert_eq!(next.prefs.nav_preset, Preset::KeyShot);
+        assert_eq!(next.prefs.navigation(), Preset::KeyShot.scheme().unwrap());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     /// A file that is half nonsense still gives what it can, and a line of
     /// another setting's has no place in Tequila's own file.
     #[test]
@@ -1879,7 +2006,8 @@ mod tests {
         assert_eq!(find("gizmo size"), vec!["viewport.gizmo_size"]);
         assert!(find("gizmo").len() >= 3);
         assert!(find("zoom").contains(&"navigation.zoom_speed") && find("zoom").contains(&"navigation.invert_zoom"));
-        assert_eq!(find("z up"), vec!["import.up_axis"], "a choice is found by its options");
+        assert_eq!(find("upside down"), vec!["import.up_axis"], "a choice is found by its options");
+        assert_eq!(find("blender"), vec!["navigation.preset"]);
         assert!(find("xyzzy").is_empty());
         assert!(EXTRAS.iter().any(|e| e.words.contains("spacemouse")));
     }

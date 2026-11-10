@@ -46,6 +46,7 @@ mod mac;
 mod lighting_tab;
 mod material_tab;
 mod measure_tool;
+mod navigation;
 mod improve_model;
 mod import_settings;
 mod model_units;
@@ -2079,23 +2080,35 @@ impl TequilaApp {
             }
         }
 
-        if !dropping
-            && !over_legend
-            && !gizmo_dragging
-            && response.dragged_by(egui::PointerButton::Primary)
-        {
-            let d = response.drag_delta() * self.prefs.orbit_speed;
-            self.camera.orbit((d.x, d.y), height);
-            moved = true;
-        }
-        if !dropping && response.dragged_by(egui::PointerButton::Middle) {
-            let d = response.drag_delta() * self.prefs.pan_speed;
-            self.camera.pan((d.x, d.y), height, aspect);
-            moved = true;
-        }
-        if !dropping && response.dragged_by(egui::PointerButton::Secondary) && modifiers.alt {
-            self.camera.dolly(response.drag_delta().y * self.prefs.zoom_speed);
-            moved = true;
+        // Which button orbits, pans and zooms is the person's choice
+        // (`navigation`; Preferences › Navigation): KeyShot's unless they
+        // chose another. The left button is the gizmo's and the axis
+        // legend's first, whatever it does here.
+        let scheme = self.prefs.navigation();
+        for button in navigation::Button::ALL {
+            if dropping || !response.dragged_by(button.pointer()) {
+                continue;
+            }
+            if button == navigation::Button::Left && (over_legend || gizmo_dragging) {
+                continue;
+            }
+            match scheme.move_for(button, &modifiers) {
+                Some(navigation::Move::Orbit) => {
+                    let d = response.drag_delta() * self.prefs.orbit_speed;
+                    self.camera.orbit((d.x, d.y), height);
+                    moved = true;
+                }
+                Some(navigation::Move::Pan) => {
+                    let d = response.drag_delta() * self.prefs.pan_speed;
+                    self.camera.pan((d.x, d.y), height, aspect);
+                    moved = true;
+                }
+                Some(navigation::Move::Zoom) => {
+                    self.camera.dolly(response.drag_delta().y * self.prefs.zoom_speed);
+                    moved = true;
+                }
+                None => {}
+            }
         }
 
         // A trackpad's swipes and pinches (`orbit::Gestures`): a MacBook's
@@ -6878,29 +6891,25 @@ impl TequilaApp {
             egui::ScrollArea::vertical().auto_shrink([true, true]).show(ui, |ui| {
                 // A Mac's trackpad first (`orbit::Gestures`): a MacBook has
                 // no middle button and no wheel.
-                let navigate: &[(&str, &str)] = if cfg!(target_os = "macos") {
-                    &[
-                        ("Orbit", "Left drag / Shift + Swipe"),
-                        ("Pan", "Two-finger swipe / Middle drag"),
-                        ("Zoom", "Pinch / Ctrl + Swipe / Scroll"),
-                        ("Focal length", "Alt + Swipe / Alt + Scroll"),
-                        ("Dolly", "Alt + Right drag"),
-                        ("Select the part's group", "Double-click"),
-                    ]
-                } else {
-                    &[
-                        ("Orbit", "Left drag"),
-                        ("Pan", "Middle drag"),
-                        ("Zoom", "Scroll"),
-                        ("Focal length", "Alt + Scroll"),
-                        ("Dolly", "Alt + Right drag"),
-                        ("Select the part's group", "Double-click"),
-                    ]
-                };
-                // The mouse, which is fixed, then every key as it is now
-                // (`shortcuts`; Preferences › Keyboard changes them). An
-                // action left without a key is not listed.
-                let mut groups: Vec<(&str, Vec<(String, String)>)> = vec![("Mouse", navigate.iter().map(|(action, binding)| (action.to_string(), binding.to_string())).collect())];
+                // How the mouse moves the view, as the person has it
+                // (`navigation`), and a Mac's trackpad beside it
+                // (`orbit::Gestures`): a MacBook has no middle button and
+                // no wheel.
+                let scheme = self.prefs.navigation();
+                let (swipe, shift_swipe) = if self.prefs.trackpad_orbits { ("Shift + Swipe", "Two-finger swipe") } else { ("Two-finger swipe", "Shift + Swipe") };
+                let mac = cfg!(target_os = "macos");
+                let navigate: Vec<(&str, String)> = vec![
+                    ("Orbit", if mac { format!("{} / {shift_swipe}", scheme.orbit.shown()) } else { scheme.orbit.shown() }),
+                    ("Pan", if mac { format!("{swipe} / {}", scheme.pan.shown()) } else { scheme.pan.shown() }),
+                    ("Zoom", if mac { "Pinch / Ctrl + Swipe / Scroll".to_string() } else { "Scroll".to_string() }),
+                    ("Zoom by dragging", scheme.zoom.shown()),
+                    ("Focal length", if mac { "Alt + Swipe / Alt + Scroll".to_string() } else { "Alt + Scroll".to_string() }),
+                    ("Select the part's group", "Double-click".to_string()),
+                ];
+                // Then every key as it is now (`shortcuts`; Preferences ›
+                // Keyboard changes them). An action left without a key is
+                // not listed.
+                let mut groups: Vec<(&str, Vec<(String, String)>)> = vec![("Mouse", navigate.into_iter().map(|(action, binding)| (action.to_string(), binding)).collect())];
                 for group in shortcuts::Group::ALL {
                     let rows: Vec<(String, String)> = shortcuts::ACTIONS
                         .iter()
