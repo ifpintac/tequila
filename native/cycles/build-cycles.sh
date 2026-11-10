@@ -106,8 +106,14 @@ PYTHON
 #     test for doubling them no longer wraps round on a Mac short of memory.
 #     The step above has just put back Blender 5.0.1's copies of the files it
 #     changes, so it is applied afresh on every run.
+#     And metal-kernel-checksum.patch: the checksum that picks a kernel set
+#     is made again only when what it is made from changed. Made at every
+#     copy of the scene's constants - every camera move in a live view - it
+#     hashed the whole kernel source twice and took 8-18 ms of each moving
+#     picture.
 if [ "$platform" = macos_arm64 ]; then
     git -C cycles apply "$shim/session-states.patch"
+    git -C cycles apply "$shim/metal-kernel-checksum.patch"
 fi
 
 # 4. The shim target, once (the same block build-cycles.ps1 adds).

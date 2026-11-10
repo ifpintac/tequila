@@ -657,6 +657,28 @@ static bool start_session(FscSession *s)
     live->tint = &s->tint;
     s->live = live.get();
     s->session->set_output_driver(std::move(live));
+    /* With the trace on, what Cycles is doing after each change and when:
+     * where a moving picture's time goes outside its samples. */
+    if (getenv("TEQUILA_CYCLES_TRACE") != nullptr) {
+      LiveDriver *driver = s->live;
+      Progress *progress = &s->session->progress;
+      progress->set_update_callback([driver, progress] {
+        string status, substatus;
+        progress->get_status(status, substatus);
+        static string last;
+        if (status + substatus == last) {
+          return;
+        }
+        last = status + substatus;
+        double requested;
+        {
+          const std::lock_guard<std::mutex> lock(driver->mutex);
+          requested = driver->requested;
+        }
+        fprintf(stderr, "live: %.1f ms after the change: %s%s%s\n", (time_dt() - requested) * 1000.0,
+                status.c_str(), substatus.empty() ? "" : " | ", substatus.c_str());
+      });
+    }
   }
 
   /* Denoised mode (Cycles' default for a pass, made explicit): reading it

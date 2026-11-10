@@ -1,0 +1,53 @@
+--- a/src/device/metal/device_impl.h
++++ b/src/device/metal/device_impl.h
+@@ -29,6 +29,9 @@
+   id<MTLCounterSampleBuffer> mtlCounterSampleBuffer = nil;
+   string source[PSO_NUM];
+   string kernels_md5[PSO_NUM];
++  /* What each kernels_md5 was made from, besides its source: the same values from the same
++   * source make the same checksum, without hashing the source again. */
++  string kernels_md5_from[PSO_NUM];
+   string global_defines_md5[PSO_NUM];
+ 
+   bool capture_enabled = false;
+--- a/src/device/metal/device_impl.mm
++++ b/src/device/metal/device_impl.mm
+@@ -391,8 +391,10 @@
+   string defines_md5 = preprocess_source(pso_type, kernel_features);
+ 
+   /* Rebuild the source string if the injected block of #defines has changed. */
++  bool remade = false;
+   if (global_defines_md5[pso_type] != defines_md5) {
+     make_source(pso_type, kernel_features);
++    remade = true;
+   }
+ 
+   string constant_values;
+@@ -418,13 +420,26 @@
+ #  undef KERNEL_STRUCT_MEMBER_DONT_SPECIALIZE
+   }
+ 
++  /* Every KernelData copy - every camera move in a viewport - comes here, and hashing the whole
++   * kernel source again for each specialization level took 8-18 ms of each moving picture. The
++   * same constants from the same source make the same checksum. */
++  const string metalrt_features = use_metalrt ? string_printf("metalrt_features=%d",
++                                                              kernel_features &
++                                                                  METALRT_FEATURE_MASK) :
++                                                string();
++  const string from = constant_values + "\n" + metalrt_features;
++  if (!remade && !kernels_md5[pso_type].empty() && kernels_md5_from[pso_type] == from) {
++    return;
++  }
++
+   MD5Hash md5;
+   md5.append(constant_values);
+   md5.append(source[pso_type]);
+   if (use_metalrt) {
+-    md5.append(string_printf("metalrt_features=%d", kernel_features & METALRT_FEATURE_MASK));
++    md5.append(metalrt_features);
+   }
+   kernels_md5[pso_type] = md5.get_hex();
++  kernels_md5_from[pso_type] = from;
+ }
+ 
+ void MetalDevice::compile_and_load(const int device_id, MetalPipelineType pso_type)

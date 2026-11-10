@@ -23,6 +23,13 @@ use tequila_scene::render::RenderEngine;
 /// before this; the limit is for the few that never converge.
 const VIEW_SAMPLES: u32 = 1024;
 
+/// Samples a moving view's picture is asked for: one, which is all it shows.
+/// Asked for more, Cycles went on from its one-sample picture to four more
+/// samples of a view the next move threw away - 18 ms at 480x270 on the
+/// Headphones, which a restart does not cut short - and only then started
+/// the next picture.
+const MOVING_SAMPLES: u32 = 1;
+
 /// The longest a change waits for Cycles' picture of the one before
 /// (`CyclesView::sync`): long enough for a heavy scene's first picture, short
 /// enough that a view whose picture never came still follows the mouse.
@@ -100,6 +107,9 @@ pub struct CyclesView {
     size: (usize, usize),
     /// The size the view asked for.
     full: (usize, usize),
+    /// The samples Cycles was asked for: [`VIEW_SAMPLES`], or
+    /// [`MOVING_SAMPLES`] while the view moves.
+    samples: u32,
     navigation: Navigation,
     frame: tequila_render_cycles::FrameBuffers,
     seen: u64,
@@ -156,6 +166,7 @@ impl CyclesView {
             camera: None,
             size: (0, 0),
             full: (0, 0),
+            samples: 0,
             navigation: Navigation::default(),
             frame: Default::default(),
             seen: 0,
@@ -247,7 +258,10 @@ impl CyclesView {
         }
         let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
         let size = if navigating { divided(full, self.navigation.divider) } else { full };
-        let recamera = self.camera != Some(request.camera) || self.size != size;
+        // Still again at the same size - a small view, never divided - goes
+        // on from one sample to a still view's.
+        let samples = if navigating { MOVING_SAMPLES } else { VIEW_SAMPLES };
+        let recamera = self.camera != Some(request.camera) || self.size != size || self.samples != samples;
         if !rescene && !moved && repainted.is_none() && !recamera {
             return Ok(false);
         }
@@ -326,17 +340,26 @@ impl CyclesView {
         // A moving picture is not denoised, so its guides stay behind.
         self.session.set_moving(size != full);
         // Ended whatever happened, so the scene lock is never left held.
-        self.session.end_edit(size.0, size.1, VIEW_SAMPLES);
+        self.session.end_edit(size.0, size.1, samples);
         self.answered = false;
         self.restarted = std::time::Instant::now();
         result?;
         self.scene = Some(request.scene.clone());
         self.lighting = lighting;
-        // Whatever moved, the background behind it is measured again.
-        self.under_size = (0, 0);
         self.camera = Some(request.camera);
         self.size = size;
         self.full = full;
+        self.samples = samples;
+        // Whatever moved, the background behind it is measured again: now,
+        // at the size asked for, while Cycles renders, rather than once its
+        // picture is in and the next camera waits for it. A first picture
+        // of another size (a library whose Cycles still divides it) has it
+        // measured again then.
+        self.under_size = (0, 0);
+        if self.background_under {
+            self.under = crate::profile::time("render: background under", || translate::background(&request.scene, &request.camera, size.0, size.1));
+            self.under_size = size;
+        }
         if self.paused {
             self.session.set_paused(true);
         }
@@ -399,6 +422,11 @@ impl CyclesView {
         Some(frame)
     }
 
+    /// The camera Cycles renders from now.
+    pub fn camera(&self) -> Option<Camera> {
+        self.camera
+    }
+
     /// Whether the view is following a moving camera: a smaller picture, or
     /// the camera moved a moment ago. Its pictures go up as they are.
     pub fn navigating(&self) -> bool {
@@ -420,6 +448,12 @@ impl CyclesView {
     #[cfg(test)]
     pub fn traced_size(&self) -> (usize, usize) {
         self.size
+    }
+
+    /// The samples Cycles is asked for now.
+    #[cfg(test)]
+    pub fn traced_samples(&self) -> u32 {
+        self.samples
     }
 
     /// What Cycles says it is doing, or why it stopped.
