@@ -56,6 +56,7 @@ mod numeric;
 mod orbit;
 mod pin_gizmo;
 mod pin_panel;
+mod preferences;
 mod sky_panel;
 mod orchestrator;
 mod orient;
@@ -404,6 +405,14 @@ struct TequilaApp {
     /// A light, dark or theme change from the scripting channel, for the
     /// next frame to apply.
     pending_look: Option<theme::Appearance>,
+    /// The pending look is the person's own choice, from Preferences, and
+    /// is kept; a script's is for the session.
+    keep_pending_look: bool,
+    /// Tequila's own settings (`preferences`), the file they are kept in,
+    /// and their window.
+    prefs: preferences::Prefs,
+    prefs_file: Option<std::path::PathBuf>,
+    preferences: preferences::Window,
     /// The appearance picker opened or closed from the scripting channel.
     open_look: Option<bool>,
     /// The fast view D goes back to from Rendered.
@@ -949,6 +958,8 @@ impl TequilaApp {
         let guides_file = composition::Guides::file();
         app.guides = composition::Guides::load(&guides_file);
         app.guides_file = Some(guides_file);
+        // The session starts as the person's settings say.
+        app.load_preferences(preferences::file());
         // Renders from earlier sessions, beside the queue and the journal.
         app.render_window.remember_in(&directory);
         // The AI providers the person has connected, beside the other state.
@@ -1038,6 +1049,10 @@ impl TequilaApp {
             shading: orchestrator::Shading::default(),
             view_mode: view_mode::ViewMode::default(),
             pending_look: None,
+            keep_pending_look: false,
+            prefs: preferences::Prefs::default(),
+            prefs_file: None,
+            preferences: preferences::Window::default(),
             open_look: None,
             last_preview_mode: view_mode::ViewMode::default(),
             channel: None,
@@ -1460,8 +1475,9 @@ impl eframe::App for TequilaApp {
         // context is, and not kept: a script trying themes should not
         // change the person's own choice.
         if let Some(look) = self.pending_look.take() {
-            theme::set_appearance(ctx, look, false);
+            theme::set_appearance(ctx, look, std::mem::take(&mut self.keep_pending_look));
         }
+        self.apply_preferences(ctx);
         // What was chosen in a Mac's own menu bar since the last frame.
         for command in mac::take_commands() {
             self.menu_command(ctx, command);
@@ -1780,7 +1796,7 @@ impl eframe::App for TequilaApp {
         }
         // A 3D mouse is read from the first frame, and set up here.
         self.spacemouse.start(ctx);
-        self.spacemouse.preferences(ctx);
+        self.preferences_window(ctx);
         // A label's UV editor button, from the Labels tab.
         let request = ctx.data_mut(|d| {
             let id = egui::Id::new(uv_editor::OPEN);
@@ -2065,27 +2081,30 @@ impl TequilaApp {
             && !gizmo_dragging
             && response.dragged_by(egui::PointerButton::Primary)
         {
-            let d = response.drag_delta();
+            let d = response.drag_delta() * self.prefs.orbit_speed;
             self.camera.orbit((d.x, d.y), height);
             moved = true;
         }
         if !dropping && response.dragged_by(egui::PointerButton::Middle) {
-            let d = response.drag_delta();
+            let d = response.drag_delta() * self.prefs.pan_speed;
             self.camera.pan((d.x, d.y), height, aspect);
             moved = true;
         }
         if !dropping && response.dragged_by(egui::PointerButton::Secondary) && modifiers.alt {
-            self.camera.dolly(response.drag_delta().y);
+            self.camera.dolly(response.drag_delta().y * self.prefs.zoom_speed);
             moved = true;
         }
 
         // A trackpad's swipes and pinches (`orbit::Gestures`): a MacBook's
         // only way to pan and zoom.
-        let gestures = if !dropping && response.hovered() && !self.label_gizmo.takes_scroll(modifiers) && !self.mapping_gizmo.takes_scroll(modifiers) {
+        let mut gestures = if !dropping && response.hovered() && !self.label_gizmo.takes_scroll(modifiers) && !self.mapping_gizmo.takes_scroll(modifiers) {
             ui.input(|i| orbit::Gestures::read(&i.events))
         } else {
             orbit::Gestures::default()
         };
+        // The person's own speeds, zoom direction and what a swipe does
+        // (Preferences › Navigation).
+        gestures.tuned(&self.prefs);
         if gestures.moves() {
             if gestures.pan != egui::Vec2::ZERO {
                 self.camera.pan((gestures.pan.x, gestures.pan.y), height, aspect);
@@ -2111,7 +2130,7 @@ impl TequilaApp {
                 if modifiers.alt {
                     self.camera.change_focal_length(scroll / orbit::POINTS_PER_NOTCH);
                 } else {
-                    self.camera.zoom(scroll / orbit::POINTS_PER_NOTCH);
+                    self.camera.zoom(scroll / orbit::POINTS_PER_NOTCH * self.prefs.zoom_factor());
                 }
                 moved = true;
             }
@@ -3290,6 +3309,7 @@ impl TequilaApp {
             MenuCommand::Import => self.ask_for_file(Action::Import),
             MenuCommand::Undo => self.undo(),
             MenuCommand::Redo => self.redo(),
+            MenuCommand::Preferences => self.preferences.show(),
             MenuCommand::Inspector => self.show_project = !self.show_project,
             MenuCommand::Library => self.toggle_library(ctx.screen_rect().width()),
             MenuCommand::FullViewport => self.full_viewport = !self.full_viewport,
@@ -3595,8 +3615,8 @@ impl TequilaApp {
                     }
                     ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
                     ui.separator();
-                    if ui.button("Preferences…").on_hover_text("The 3D mouse: speed, dead zone, axes and buttons").clicked() {
-                        self.spacemouse.preferences_open = true;
+                    if ui.button("Preferences…").on_hover_text(theme::keys("Ctrl + ,")).clicked() {
+                        self.preferences.show();
                         ui.close_menu();
                     }
                 });
@@ -4713,6 +4733,11 @@ impl TequilaApp {
         if modifiers.command && pressed(egui::Key::R) {
             self.render_window.open = true;
         }
+        // Ctrl+, (Cmd+, on a Mac): Preferences, where every application
+        // on either keeps them.
+        if modifiers.command && pressed(egui::Key::Comma) {
+            self.preferences.show();
+        }
         if modifiers.command && pressed(egui::Key::I) {
             self.ask_for_file(Action::Import);
         }
@@ -4972,7 +4997,7 @@ impl TequilaApp {
     /// Put `path` first in File → Open recent.
     fn remember_recent(&mut self, path: &std::path::Path) {
         let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        self.recent = recent::with(&self.recent, &path);
+        self.recent = recent::with(&self.recent, &path, self.prefs.recent_projects);
         if let Some(file) = &self.recent_file {
             recent::write(file, &self.recent);
         }
@@ -6949,6 +6974,7 @@ impl TequilaApp {
                             ("Selection outline / gizmo", "Shift + H / Shift + G"),
                             ("Full viewport", "Tab"),
                             ("Composition guides / turn them", "O / Shift + O"),
+                            ("Preferences", "Ctrl + ,"),
                         ],
                     ),
                     (
@@ -7008,6 +7034,7 @@ impl TequilaApp {
             windows::Kind::Shortcuts => self.show_help,
             windows::Kind::Connect => self.assistant.providers_open(),
             windows::Kind::Uv => self.uv_editor.open,
+            windows::Kind::Preferences => self.preferences.open,
         }
     }
 }
@@ -7752,6 +7779,34 @@ mod selection_and_screenshot_tests {
         assert_eq!(app.project.selection.nodes().count(), 0, "Ctrl+Shift+A left a selection");
         press(&mut app, command);
         assert_eq!(app.project.selection.nodes().count(), everything);
+    }
+
+    /// Ctrl+, (Cmd+, on a Mac) opens Preferences, and the navigation
+    /// settings are what the view's own moves read.
+    #[test]
+    fn ctrl_comma_opens_preferences() {
+        let mut app = TequilaApp::for_tests();
+        let ctx = egui::Context::default();
+        let command = egui::Modifiers { ctrl: !cfg!(target_os = "macos"), mac_cmd: cfg!(target_os = "macos"), command: true, ..Default::default() };
+        let input = egui::RawInput {
+            modifiers: command,
+            events: vec![egui::Event::Key { key: egui::Key::Comma, physical_key: None, pressed: true, repeat: false, modifiers: command }],
+            ..Default::default()
+        };
+        assert!(!app.preferences.open);
+        let _ = ctx.run(input, |ctx| app.global_hotkeys(ctx));
+        assert!(app.preferences.open, "Ctrl+, did not open Preferences");
+        // And the window draws, every page of it and a search, without a
+        // setting changing under it.
+        let before = app.prefs.clone();
+        for page in preferences::Page::ALL {
+            app.preferences.page = page;
+            let _ = ctx.run(egui::RawInput::default(), |ctx| app.preferences_window(ctx));
+        }
+        app.preferences.search = "gizmo".into();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.preferences_window(ctx));
+        assert_eq!(app.prefs, before);
+        assert!(app.preferences.open);
     }
 
     /// Shift+H hides the selection's outline and Shift+G the gizmo, and each

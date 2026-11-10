@@ -3,8 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// How many are kept.
-const KEEP: usize = 10;
 
 /// Where the list is kept.
 pub fn file() -> PathBuf {
@@ -30,11 +28,12 @@ fn same(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// `list` with `project` first, once, cut to the most kept.
-pub fn with(list: &[PathBuf], project: &Path) -> Vec<PathBuf> {
+/// `list` with `project` first, once, cut to `keep`, the most kept
+/// (Preferences › General).
+pub fn with(list: &[PathBuf], project: &Path, keep: usize) -> Vec<PathBuf> {
     let mut out = vec![project.to_path_buf()];
     out.extend(list.iter().filter(|p| !same(p, project)).cloned());
-    out.truncate(KEEP);
+    out.truncate(keep);
     out
 }
 
@@ -74,15 +73,15 @@ mod tests {
     fn the_list_keeps_the_latest_ten_once_each() {
         let mut list = Vec::new();
         for i in 0..12 {
-            list = with(&list, Path::new(&format!("C:/work/p{i}.tequila")));
+            list = with(&list, Path::new(&format!("C:/work/p{i}.tequila")), 10);
         }
-        assert_eq!(list.len(), KEEP);
+        assert_eq!(list.len(), 10);
         assert_eq!(list[0], PathBuf::from("C:/work/p11.tequila"));
-        list = with(&list, Path::new("C:/work/p5.tequila"));
+        list = with(&list, Path::new("C:/work/p5.tequila"), 10);
         assert_eq!(list[0], PathBuf::from("C:/work/p5.tequila"));
         assert_eq!(list.iter().filter(|p| p.ends_with("p5.tequila")).count(), 1);
         if cfg!(windows) {
-            list = with(&list, Path::new("C:/WORK/P5.tequila"));
+            list = with(&list, Path::new("C:/WORK/P5.tequila"), 10);
             assert_eq!(list.iter().filter(|p| p.to_string_lossy().to_lowercase().ends_with("p5.tequila")).count(), 1);
         }
         list = without(&list, Path::new("C:/work/p11.tequila"));

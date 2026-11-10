@@ -114,8 +114,6 @@ pub struct SpaceMouse {
     held: Option<Held>,
     /// Buttons as they were last frame.
     buttons: u32,
-    /// The preferences window, open.
-    pub preferences_open: bool,
 }
 
 impl Default for SpaceMouse {
@@ -130,7 +128,6 @@ impl Default for SpaceMouse {
             pivot: None,
             held: None,
             buttons: 0,
-            preferences_open: false,
         }
     }
 }
@@ -265,19 +262,23 @@ impl SpaceMouse {
         out
     }
 
-    /// The preferences window: the 3D mouse's settings, with what the
-    /// device is doing shown live. Saved as they change.
-    pub fn preferences(&mut self, ctx: &egui::Context) {
-        if !self.preferences_open {
-            return;
+    /// Take `settings`, kept when `keep`, and start reading if they say to
+    /// at the next frame.
+    pub fn set_settings(&mut self, settings: Settings, keep: bool) {
+        self.settings = settings;
+        if keep {
+            save_settings(&self.settings);
         }
-        let mut open = true;
+    }
+
+    /// The 3D mouse's settings in the Preferences window (`preferences`),
+    /// with what the device is doing shown live. Saved as they change.
+    pub fn settings_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let before = self.settings;
         let device = self.device();
         let problem = self.problem();
         let axes = self.axes();
-        egui::Window::new("Preferences").open(&mut open).collapsible(false).resizable(false).default_width(360.0).show(ctx, |ui| {
-            crate::theme::section(ui, "3D mouse");
+        ui.vertical(|ui| {
             let p = crate::theme::p();
             match (&device, &problem, self.settings.enabled) {
                 (_, _, false) => {
@@ -367,13 +368,10 @@ impl SpaceMouse {
                 });
             });
             ui.add_space(6.0);
-            if ui.button("Defaults").clicked() {
+            if ui.button("The 3D mouse's defaults").clicked() {
                 self.settings = Settings { enabled: self.settings.enabled, ..Settings::default() };
             }
         });
-        if !open {
-            self.preferences_open = false;
-        }
         if self.settings != before {
             save_settings(&self.settings);
             if self.settings.enabled {

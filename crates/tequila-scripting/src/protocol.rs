@@ -161,6 +161,11 @@ pub enum Operation {
     /// of its maps, `wait` for them, `tools` to say where Adobe's are.
     /// Carried as sent; the application reads its fields.
     Substance(Value),
+    /// `preferences`: the application's settings (`docs/04` §12) - every
+    /// one listed with its value, default and what it takes; `set` an
+    /// object of them by name; `reset` `"all"`, a page, a setting or a
+    /// list of settings. Carried as sent; the application reads its fields.
+    Preferences(Value),
     /// The material library: putting presets on parts, and adding to the
     /// user's own - what a script or a plugin does with materials beyond
     /// the document. See [`LibraryRequest`].
@@ -434,8 +439,14 @@ pub struct UiChange {
     /// does: the material's number and the parameter (`base_color`, ...).
     /// `Some(None)` (from `false`) ends it.
     pub place_texture: Option<Option<(u64, String)>>,
-    /// The Preferences window (the 3D mouse's settings), open.
+    /// The Preferences window, open.
     pub preferences: Option<bool>,
+    /// The Preferences window's page, by name (`general`, `interface`,
+    /// `viewport`, `navigation`, `import`, `folders`, `updates`,
+    /// `advanced`); showing a page opens the window.
+    pub preferences_page: Option<String>,
+    /// What is typed in the Preferences window's search, which opens it.
+    pub preferences_search: Option<String>,
     /// A 3D mouse's input, made up: reports as a device would send them.
     pub spacemouse: Option<SpaceMouseInput>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
@@ -1106,6 +1117,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             opt_bool(value, "open")?;
             Operation::Assistant(value.clone())
         }
+        "preferences" => Operation::Preferences(value.clone()),
         "substance" => {
             let action = string(value, "action")?.to_ascii_lowercase();
             if !SUBSTANCE_ACTIONS.contains(&action.as_str()) {
@@ -1386,6 +1398,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 },
             },
             preferences: opt_bool(value, "preferences")?,
+            preferences_page: opt_string(value, "preferences_page")?,
+            preferences_search: opt_string(value, "preferences_search")?,
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,
@@ -1491,6 +1505,11 @@ impl Operation {
                 Some(text) => format!("ask the Assistant: {}", text.chars().take(60).collect::<String>()),
                 None if request.get("stop").and_then(Value::as_bool) == Some(true) => "stop the Assistant".into(),
                 None => "the Assistant".into(),
+            },
+            Operation::Preferences(request) => match (request.get("set"), request.get("reset")) {
+                (Some(Value::Object(set)), _) => format!("set preferences {}", set.keys().cloned().collect::<Vec<_>>().join(", ")),
+                (_, Some(_)) => "reset preferences".into(),
+                _ => "read the preferences".into(),
             },
             Operation::Substance(request) => match request.get("path").and_then(|p| p.as_str()) {
                 Some(path) => format!("substance {} {path}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),

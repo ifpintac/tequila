@@ -44,6 +44,28 @@ const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 /// second, which is what an orbit needs to follow the hand.
 const NAVIGATION_TARGET: std::time::Duration = std::time::Duration::from_millis(33);
 
+/// The person's own tuning of the two above (Preferences › Viewport): the
+/// milliseconds a moving picture is given, and the samples a still view
+/// refines to. Read by the render thread, set by the window's.
+static TARGET_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(NAVIGATION_TARGET.as_millis() as u32);
+static SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(VIEW_SAMPLES);
+
+/// Set how long a moving picture may take and how far a still view
+/// refines. A still view at another limit starts again toward the new one.
+pub fn set_tuning(target_ms: u32, samples: u32) {
+    use std::sync::atomic::Ordering;
+    TARGET_MS.store(target_ms.clamp(8, 200), Ordering::Relaxed);
+    SAMPLES.store(samples.clamp(1, 1 << 20), Ordering::Relaxed);
+}
+
+fn navigation_target() -> std::time::Duration {
+    std::time::Duration::from_millis(u64::from(TARGET_MS.load(std::sync::atomic::Ordering::Relaxed)))
+}
+
+fn view_samples() -> u32 {
+    SAMPLES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The coarsest picture while moving: its long side no shorter than this.
 /// Coarser buys nothing: below it, a picture's time is Cycles' fixed cost
 /// of a restart and of launching a sample's kernels - 100x56 pixels took
@@ -77,7 +99,7 @@ impl Default for Navigation {
 /// go as the divider squared - and never so coarse that the long side of a
 /// view `long_side` pixels wide falls below [`NAVIGATION_SMALLEST`].
 pub fn adjusted_divider(divider: f32, took: std::time::Duration, long_side: usize) -> f32 {
-    let ratio = (took.as_secs_f32() / NAVIGATION_TARGET.as_secs_f32()).clamp(0.1, 10.0);
+    let ratio = (took.as_secs_f32() / navigation_target().as_secs_f32()).clamp(0.1, 10.0);
     let wanted = divider * ratio.sqrt();
     let most = (long_side as f32 / NAVIGATION_SMALLEST as f32).max(1.0);
     (divider * 0.5 + wanted * 0.5).clamp(1.0, most)
@@ -260,7 +282,7 @@ impl CyclesView {
         let size = if navigating { divided(full, self.navigation.divider) } else { full };
         // Still again at the same size - a small view, never divided - goes
         // on from one sample to a still view's.
-        let samples = if navigating { MOVING_SAMPLES } else { VIEW_SAMPLES };
+        let samples = if navigating { MOVING_SAMPLES } else { view_samples() };
         let recamera = self.camera != Some(request.camera) || self.size != size || self.samples != samples;
         if !rescene && !moved && repainted.is_none() && !recamera {
             return Ok(false);

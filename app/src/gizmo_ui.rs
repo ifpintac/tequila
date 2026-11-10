@@ -61,6 +61,8 @@ pub fn world_length_of_points(camera: &Camera, aspect: f32, height: f32, depth: 
 #[derive(Debug)]
 pub struct GizmoUi {
     pub mode: GizmoMode,
+    /// How large it is drawn, 1 its usual size (Preferences › Viewport).
+    pub scale: f32,
     pub pivot_mode: PivotMode,
     pub snapping: Snapping,
     /// World space when false. §5's world/local toggle.
@@ -106,6 +108,7 @@ impl Default for GizmoUi {
     fn default() -> Self {
         GizmoUi {
             mode: GizmoMode::Universal,
+            scale: 1.0,
             pivot_mode: PivotMode::BoundingBoxCenter,
             snapping: Snapping {
                 grid: None,
@@ -175,7 +178,7 @@ impl GizmoUi {
         // screen.
         let aspect = rect.width().max(1.0) / rect.height().max(1.0);
         let depth = (pivot - camera.position()).dot(view);
-        let handle_length = world_length_of_points(camera, aspect, rect.height(), depth, arm_points(self.mode));
+        let handle_length = world_length_of_points(camera, aspect, rect.height(), depth, arm_points(self.mode) * self.scale);
 
         // Local space follows the first selected node's orientation. With
         // several selected there is no single "local", and picking one is less
@@ -408,11 +411,11 @@ impl GizmoUi {
                     }
                     // The scale cube, on the axis inside the rings.
                     if let Some(cube) = at(frame.pivot + d * length * SCALE_AT) {
-                        let side = SCALE_HALF * 2.0 * UNIVERSAL_POINTS;
+                        let side = SCALE_HALF * 2.0 * UNIVERSAL_POINTS * self.scale;
                         block(egui::Rect::from_center_size(cube, egui::vec2(side, side)), colour(Some(axis), GizmoMode::Scale, Handle::Axis(axis)));
                     }
                 }
-                screen(UNIVERSAL_POINTS * SCREEN * 0.85, GizmoMode::Move);
+                screen(UNIVERSAL_POINTS * self.scale * SCREEN * 0.85, GizmoMode::Move);
             }
             _ => {
                 for axis in Axis::ALL {

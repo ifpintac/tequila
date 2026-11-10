@@ -30,10 +30,11 @@ pub enum Kind {
     Shortcuts,
     Connect,
     Uv,
+    Preferences,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect, Kind::Uv];
+    pub const ALL: [Kind; 6] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect, Kind::Uv, Kind::Preferences];
 
     /// Its name on the scripting channel.
     pub fn key(self) -> &'static str {
@@ -43,6 +44,7 @@ impl Kind {
             Kind::Shortcuts => "shortcuts",
             Kind::Connect => "connect",
             Kind::Uv => "uv",
+            Kind::Preferences => "preferences",
         }
     }
 

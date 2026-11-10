@@ -41,9 +41,10 @@ tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugi
 Every command is undoable, and the person watching sees each request in Tequila's console.";
 
 /// Tools that reach outside the open scene: gone when restricted.
-const UNRESTRICTED_ONLY: [&str; 10] = [
+const UNRESTRICTED_ONLY: [&str; 11] = [
     "tequila_request",
     "tequila_import",
+    "tequila_preferences",
     "tequila_material_save",
     "tequila_studio_preset_save",
     "tequila_plugin_guide",
@@ -328,6 +329,7 @@ impl Bridge {
             "tequila_studio_render_all" => self.request("studio_preset", vec![("action", "render_all".into())]).map(|v| text_value(&v)),
             "tequila_stop" => self.request("stop", vec![]).map(|v| text_value(&v)),
             "tequila_ui" => self.request("ui", fields_of(arguments)).map(|v| text_value(&v)),
+            "tequila_preferences" => self.request("preferences", fields_of(arguments)).map(|v| text_value(&v)),
             "tequila_import" => {
                 let path = get("path").and_then(|v| v.as_str().map(absolute)).ok_or("tequila_import needs `path`")?;
                 self.request("import", vec![("path", path.into())]).map(|v| text_value(&v))
@@ -610,7 +612,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 36);
+        assert_eq!(tools.len(), 37);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.

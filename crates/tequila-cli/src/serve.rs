@@ -233,6 +233,7 @@ impl Session {
             | Operation::TextureSet { .. }
             | Operation::LiveLink(_)
             | Operation::Plugin(_)
+            | Operation::Preferences(_)
             | Operation::Assistant(_) => {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }

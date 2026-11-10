@@ -111,6 +111,9 @@ pub struct Project {
     /// snapshot instead.
     journal_redos: usize,
     last_autosave: std::time::Instant,
+    /// How often the recovery copy is made, or never (Preferences ›
+    /// General).
+    autosave_every: Option<std::time::Duration>,
     /// An auto-save being written on another thread.
     autosave: Option<PendingAutosave>,
     /// See [`Project::rebuilds`].
@@ -170,6 +173,7 @@ impl Project {
             journal_depth: 0,
             journal_redos: 0,
             last_autosave: std::time::Instant::now(),
+            autosave_every: Some(AUTOSAVE_INTERVAL),
             autosave: None,
             rebuilds: 0,
             scene_edits: 0,
@@ -912,6 +916,12 @@ impl Project {
         self.document.cameras.active()
     }
 
+    /// How often the periodic snapshot is made; `None` for never, when only
+    /// a snapshot something asks for is made.
+    pub fn set_autosave_every(&mut self, every: Option<std::time::Duration>) {
+        self.autosave_every = every;
+    }
+
     /// §4.5's periodic snapshot. Called every frame; fires on its own schedule.
     ///
     /// Written on another thread from a copy: writing a big model here held
@@ -920,7 +930,8 @@ impl Project {
     /// once it is written whole - see [`Project::poll_autosave`].
     pub fn maybe_autosave(&mut self) {
         self.poll_autosave();
-        if self.autosave.is_some() || (!self.snapshot_soon && self.last_autosave.elapsed() < AUTOSAVE_INTERVAL) {
+        let due = self.autosave_every.is_some_and(|every| self.last_autosave.elapsed() >= every);
+        if self.autosave.is_some() || (!self.snapshot_soon && !due) {
             return;
         }
         // Not part way through a batch: recovery replays what follows the
