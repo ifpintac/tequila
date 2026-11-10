@@ -603,4 +603,77 @@ mod tests {
         bus.undo(&mut document).unwrap();
         assert_eq!(document.tree.get(housing).unwrap().layers, ["Outer"]);
     }
+    /// An update that brings a mesh, a material or a node under a key the
+    /// scene already uses is refused, and the scene is left as it was.
+    /// Taken, it put its mesh in place of the one there, and undoing it
+    /// then took the key away altogether: the part that had the first mesh
+    /// was left with none, and the project it was saved in would not open.
+    /// Tequila's own updates reserve their keys; a script's need not.
+    #[test]
+    fn an_update_under_a_key_in_use_is_refused() {
+        use crate::command::{Command, ImportPayload};
+        use crate::geometry::Mesh;
+        use crate::tree::{NodeKind, SceneNode};
+        use tequila_core::math::{vec3, Vec3};
+        let mut document = SceneDocument::new();
+        let mut bus = CommandBus::new();
+        let triangle = |z: f32| Mesh::new(vec![vec3(0.0, 0.0, z), vec3(1.0, 0.0, z), vec3(0.0, 1.0, z)], vec![0, 1, 2]);
+        let (meshes, materials, ids) = reserve_keys(&document, 1, 1, 1);
+        let mut part = SceneNode::new(ids[0], "Housing", NodeKind::Part { mesh: meshes[0] });
+        part.material = Some(materials[0]);
+        let first = ImportPayload {
+            meshes: vec![(meshes[0], triangle(0.0))],
+            textures: Vec::new(),
+            materials: vec![(materials[0], crate::material::MaterialDefinition::plastic("Steel"))],
+            nodes: vec![part],
+            roots: vec![ids[0]],
+        };
+        bus.apply(&mut document, Command::Import { payload: Box::new(first) }).unwrap();
+        document.validate().unwrap();
+        let before = document.clone();
+
+        // A script's update: a new part, its mesh under the key in use.
+        let (_, _, fresh) = reserve_keys(&document, 0, 0, 1);
+        let lid = SceneNode::new(fresh[0], "Lid", NodeKind::Part { mesh: meshes[0] });
+        let colliding = |payload: ImportPayload| Command::Reimport { payload: Box::new(ReimportPayload { added: payload, updates: Vec::new(), hidden: Vec::new() }) };
+        let with_mesh = ImportPayload { meshes: vec![(meshes[0], triangle(5.0))], textures: Vec::new(), materials: Vec::new(), nodes: vec![lid.clone()], roots: vec![fresh[0]] };
+        match bus.apply(&mut document, colliding(with_mesh)) {
+            Err(_) => {}
+            Ok(_) => {
+                // What it did when it was taken.
+                bus.undo(&mut document).unwrap();
+                panic!("an update under a mesh key in use was taken; undone, the scene says: {:?}", document.validate());
+            }
+        }
+        assert!(document == before, "a refused update changed the scene");
+        document.validate().unwrap();
+
+        // The same for a material's key and a node's id, and for a plain
+        // import.
+        let with_material = ImportPayload {
+            meshes: Vec::new(),
+            textures: Vec::new(),
+            materials: vec![(materials[0], crate::material::MaterialDefinition::plastic("Brass"))],
+            nodes: vec![lid.clone()],
+            roots: vec![fresh[0]],
+        };
+        assert!(bus.apply(&mut document, colliding(with_material)).is_err(), "a material's key in use was taken");
+        let mut twin = lid.clone();
+        twin.id = ids[0];
+        let with_node = ImportPayload { meshes: Vec::new(), textures: Vec::new(), materials: Vec::new(), nodes: vec![twin], roots: vec![ids[0]] };
+        assert!(bus.apply(&mut document, Command::Import { payload: Box::new(with_node) }).is_err(), "a node's id in use was taken");
+        assert!(document == before, "a refused import changed the scene");
+
+        // A new part showing the mesh already there brings no mesh, and is
+        // taken: that is what a copy is.
+        let copy = ImportPayload { meshes: Vec::new(), textures: Vec::new(), materials: Vec::new(), nodes: vec![lid], roots: vec![fresh[0]] };
+        bus.apply(&mut document, colliding(copy)).unwrap();
+        document.validate().unwrap();
+        assert_eq!(document.tree.len(), 2);
+        bus.undo(&mut document).unwrap();
+        document.validate().unwrap();
+        assert_eq!(document.tree.len(), 1, "the copy was not taken away");
+        assert!(document.geometry.get(meshes[0]).is_some(), "undoing a copy took the mesh it shared");
+    }
+
 }
