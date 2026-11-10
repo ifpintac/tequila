@@ -212,6 +212,10 @@ pub struct DisplayImage {
     /// the image rather than from the app's own setting so it can never
     /// describe a frame that was made before the mode changed.
     pub shading: Shading,
+    /// The engine that made it: Cycles, or Tequila's own renderer, which
+    /// is also what a Cycles that would not start falls back to. The
+    /// statistics name it.
+    pub engine: tequila_scene::render::RenderEngine,
     /// What the selection's outline drew over: each pixel's index and its
     /// colour before, for a Screenshot of the picture without it. A few
     /// thousand at most, where a copy of the picture would be megabytes on
@@ -616,6 +620,7 @@ fn render_loop(shared: Arc<Shared>) {
             // this is the `Dirty::Display` row of §9.3, and it is what makes
             // dragging an exposure slider instant regardless of scene size.
             if let Some(built) = built.as_mut() {
+                let engine = made_by(&built.request, cycles.is_some());
                 publish(
                     &shared,
                     built,
@@ -624,6 +629,7 @@ fn render_loop(shared: Arc<Shared>) {
                     &selection,
                     cpu_denoiser,
                     false,
+                    engine,
                 );
             }
             if cycles.is_some() && cycles_clean {
@@ -674,7 +680,7 @@ fn render_loop(shared: Arc<Shared>) {
                     (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) if on_cycles => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                     _ => cpu_denoiser,
                 };
-                publish(&shared, state, style, &display, &selection, view_denoiser, denoise);
+                publish(&shared, state, style, &display, &selection, view_denoiser, denoise, made_by(&state.request, on_cycles));
                 cycles_clean = denoise && on_cycles;
                 if denoise {
                     cycles_denoised_at = Instant::now();
@@ -768,7 +774,7 @@ fn render_loop(shared: Arc<Shared>) {
                         (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                         _ => cpu_denoiser,
                     };
-                    publish(&shared, state, style, &display, &selection, view_denoiser, true);
+                    publish(&shared, state, style, &display, &selection, view_denoiser, true, engine);
                     cycles_denoised_at = Instant::now();
                 }
             }
@@ -908,7 +914,7 @@ fn render_loop(shared: Arc<Shared>) {
                         (Some(gpu), tequila_scene::render::RenderEngine::CyclesGpu) => Some(gpu.as_ref() as &dyn tequila_denoise::Denoise),
                         _ => cpu_denoiser,
                     };
-                    publish(&shared, state, style, &display, &selection, view_denoiser, denoise);
+                    publish(&shared, state, style, &display, &selection, view_denoiser, denoise, engine);
                     if denoise {
                         cycles_denoised_at = Instant::now();
                         cycles_clean = true;
@@ -1030,6 +1036,7 @@ fn render_loop(shared: Arc<Shared>) {
                 &selection,
                 cpu_denoiser,
                 false,
+                tequila_scene::render::RenderEngine::Tequila,
             );
             continue;
         } else {
@@ -1060,6 +1067,7 @@ fn render_loop(shared: Arc<Shared>) {
                 &selection,
                 view_denoiser,
                 denoise,
+                tequila_scene::render::RenderEngine::Tequila,
             );
         }
 
@@ -1295,6 +1303,17 @@ fn outline_selection(
 }
 
 /// Tone-map the accumulation buffer and hand it to the UI.
+/// The engine a frame for `request` is made by: the one asked for when it
+/// is Cycles and Cycles is running, otherwise Tequila's own renderer.
+fn made_by(request: &RenderRequest, on_cycles: bool) -> tequila_scene::render::RenderEngine {
+    if on_cycles && request.shading == Shading::Rendered && request.engine.is_cycles() {
+        request.engine
+    } else {
+        tequila_scene::render::RenderEngine::Tequila
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn publish(
     shared: &Arc<Shared>,
     state: &mut Built,
@@ -1303,6 +1322,7 @@ fn publish(
     selection: &[u32],
     denoiser: Option<&dyn tequila_denoise::Denoise>,
     denoise: bool,
+    engine: tequila_scene::render::RenderEngine,
 ) {
     let fb = &state.framebuffer;
     let (width, height) = (fb.width, fb.height);
@@ -1421,6 +1441,7 @@ fn publish(
         elapsed_seconds: elapsed,
         resolution_divisor: state.schedule.resolution_divisor,
         shading: state.request.shading,
+        engine,
         under_outline,
     };
     drop(slot);

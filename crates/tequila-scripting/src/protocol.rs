@@ -380,6 +380,9 @@ pub struct UiChange {
     pub viewport: Option<String>,
     /// Hide everything but the viewport.
     pub full_viewport: Option<bool>,
+    /// The viewport's statistics, as H shows them: samples, engine, frame
+    /// rate and memory.
+    pub statistics: Option<bool>,
     /// Presentation mode: the configurator over the view, full screen.
     pub present: Option<bool>,
     /// Draw the parts' own edges in Solid and Material Preview.
@@ -1333,6 +1336,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             library_section: opt_string(value, "library_section")?,
             viewport: opt_string(value, "viewport")?,
             full_viewport: opt_bool(value, "full_viewport")?,
+            statistics: opt_bool(value, "statistics")?,
             present: opt_bool(value, "present")?,
             edges: opt_bool(value, "edges")?,
             frame: opt_bool(value, "frame")?,

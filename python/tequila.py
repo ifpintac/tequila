@@ -327,7 +327,8 @@ class Client:
 
     def ui(self, **changes):
         """Open or close panels: render_window, console, inspector, library,
-        full_viewport, help, start_screen, updates (Help > Check for
+        full_viewport, statistics (the viewport's, as H shows them), help,
+        start_screen, updates (Help > Check for
         updates, which asks GitHub), connect (Connect an AI: AI apps and
         providers), frame (the render's shape in the viewport), self_test
         (Help > Test this computer, started) (bools), tab='material', graph=<material> or

@@ -62,6 +62,7 @@ mod orient;
 mod pattern_panel;
 mod profile;
 mod project;
+mod readout;
 mod recent;
 mod render_frame;
 mod render_window;
@@ -281,6 +282,7 @@ fn main() -> eframe::Result<()> {
                         (gl.get_parameter_string(eframe::glow::RENDERER), gl.get_parameter_string(eframe::glow::VERSION))
                     };
                     crash::set_graphics(format!("{renderer} · OpenGL {version}"));
+                    app.graphics_card = readout::card_name(&renderer);
                 }
                 app.crash_window.show_after_crash(crashed);
                 // Picked up by the first frame's submit.
@@ -525,6 +527,11 @@ struct TequilaApp {
     /// The status line last noted for a crash report.
     noted_status: String,
     show_hud: bool,
+    /// The statistics' frame rate and memory, measured as frames go by.
+    readout: readout::Readout,
+    /// The graphics card the window draws on, as its OpenGL names it, for
+    /// the statistics in the views it draws.
+    graphics_card: String,
     viewport_paused: bool,
     window_title: String,
     /// What the viewport last said about its engine, and the fallback the
@@ -1082,6 +1089,8 @@ impl TequilaApp {
             self_test: self_test::SelfTest::default(),
             noted_status: String::new(),
             show_hud: false,
+            readout: readout::Readout::default(),
+            graphics_card: String::new(),
             viewport_paused: false,
             window_title: String::new(),
             engine_note: None,
@@ -1428,6 +1437,7 @@ impl eframe::App for TequilaApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let frame_started = std::time::Instant::now();
+        self.readout.frame(frame_started);
         struct FrameTimer(std::time::Instant);
         impl Drop for FrameTimer {
             fn drop(&mut self) {
@@ -2217,6 +2227,9 @@ impl TequilaApp {
         if dragging != self.interacting {
             self.interacting = dragging;
             moved = true;
+        }
+        if moved || dragging {
+            self.readout.moved(std::time::Instant::now());
         }
         if moved {
             self.submit();
@@ -3181,35 +3194,18 @@ impl TequilaApp {
     ///   it, a user who has just stopped dragging sees a soft image and has no
     ///   way to tell whether that is the renderer catching up or the render
     ///   itself.
-    fn hud(&self, ui: &egui::Ui, rect: egui::Rect) {
-        let image = &self.image;
-        let resolution = if image.resolution_divisor > 1 {
-            format!(
-                "{} x {} (1/{} interactive)",
-                image.width, image.height, image.resolution_divisor
-            )
-        } else {
-            format!("{} x {}", image.width, image.height)
-        };
-        let lines = [
-            format!(
-                "{:.0}% converged   {} spp",
-                image.converged_fraction * 100.0,
-                image.samples
-            ),
-            format!(
-                "{:.1} s   {:.1} Mspp/s",
-                image.elapsed_seconds,
-                image.samples_per_second / 1.0e6
-            ),
-            resolution,
-            format!("{} tris   {} instances", image.triangles, image.instances),
-            format!(
-                "CPU (Embree){}",
-                if image.denoised { " · denoised" } else { "" }
-            ),
-            format!("first pixels {:.0} ms", image.milliseconds_to_first_pixel),
-        ];
+    ///
+    /// Under them, the window's speed and Tequila's memory: frames drawn in
+    /// the last second and the slowest of them, and the memory Tequila holds
+    /// of what the computer has, as its own monitor counts it - what to
+    /// look at when a large model makes the computer slow. The views the
+    /// graphics card draws have no samples to count, so they say which card
+    /// draws them instead.
+    fn hud(&mut self, ui: &egui::Ui, rect: egui::Rect) {
+        let lines = self.hud_lines(std::time::Instant::now());
+        // Kept current while shown, even when nothing else asks for a frame:
+        // one a second, which is also what the frame rate then says.
+        ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
 
         // Top-right, per §2.1, under the shading island. One plate for the
         // lot rather than one per line: light text over a bright render is
@@ -3233,6 +3229,57 @@ impl TequilaApp {
             painter.galley(egui::pos2(plate.right() - 10.0 - galley.size().x, y), galley, egui::Color32::PLACEHOLDER);
             y += line_height;
         }
+    }
+
+    /// The statistics' lines, top to bottom.
+    fn hud_lines(&mut self, now: std::time::Instant) -> Vec<String> {
+        use tequila_scene::render::RenderEngine;
+        let mut lines = Vec::new();
+        if self.gpu_solid() {
+            let scene = self.project.scene();
+            lines.push(format!("{}   graphics card", self.view_mode.label()));
+            lines.push(format!("{} tris   {} instances", scene.triangle_count(), scene.instances.len()));
+            if !self.graphics_card.is_empty() {
+                lines.push(self.graphics_card.clone());
+            }
+        } else {
+            let image = &self.image;
+            let resolution = if image.resolution_divisor > 1 {
+                format!("{} x {} (1/{} interactive)", image.width, image.height, image.resolution_divisor)
+            } else {
+                format!("{} x {}", image.width, image.height)
+            };
+            let (engine, denoised) = (image.engine, image.denoised);
+            // Cycles counts its samples but not which pixels have settled.
+            lines.push(if engine.is_cycles() {
+                format!("{} spp", image.samples)
+            } else {
+                format!("{:.0}% converged   {} spp", image.converged_fraction * 100.0, image.samples)
+            });
+            lines.push(format!("{:.1} s   {:.1} Mspp/s", image.elapsed_seconds, image.samples_per_second / 1.0e6));
+            lines.push(resolution);
+            lines.push(format!("{} tris   {} instances", image.triangles, image.instances));
+            lines.push(format!("first pixels {:.0} ms", image.milliseconds_to_first_pixel));
+            let device = match engine {
+                RenderEngine::CyclesGpu if cfg!(target_os = "macos") => "graphics card (Metal)".to_string(),
+                RenderEngine::CyclesGpu => "graphics card".to_string(),
+                RenderEngine::Tequila | RenderEngine::CyclesCpu => self.readout.processor().to_string(),
+            };
+            let name = if engine.is_cycles() { "Cycles" } else { "Tequila" };
+            lines.push(format!("{name} · {device}{}", if denoised { " · denoised" } else { "" }));
+        }
+        lines.push(match self.readout.frames_per_second() {
+            Some(fps) => {
+                let slowest = self.readout.slowest_frame().map_or(String::new(), |d| format!("   slowest {:.0} ms", d.as_secs_f64() * 1000.0));
+                format!("{fps} fps{slowest}")
+            }
+            None => "idle".to_string(),
+        });
+        if let Some(held) = self.readout.memory(now) {
+            let of = self.readout.installed().map_or(String::new(), |all| format!(" of {}", readout::size(all)));
+            lines.push(format!("memory {}{of}", readout::size(held)));
+        }
+        lines
     }
 
     /// The bar across the top of the window: the mark and the menus on the
@@ -7641,6 +7688,32 @@ mod selection_and_screenshot_tests {
         assert_eq!(app.project.selection.nodes().count(), 0, "Ctrl+Shift+A left a selection");
         press(&mut app, command);
         assert_eq!(app.project.selection.nodes().count(), everything);
+    }
+
+    /// The statistics say which engine made the picture and on what, and
+    /// end with the window's frame rate and Tequila's memory.
+    #[test]
+    fn the_statistics_name_the_engine_and_show_speed_and_memory() {
+        use tequila_scene::render::RenderEngine;
+        let mut app = TequilaApp::for_tests();
+        app.shading = orchestrator::Shading::Rendered;
+        let start = std::time::Instant::now();
+        app.readout.moved(start);
+        for i in 0..30u64 {
+            app.readout.frame(start + std::time::Duration::from_millis(i * 16));
+        }
+        app.image = orchestrator::DisplayImage { engine: RenderEngine::CyclesGpu, samples: 64, denoised: true, ..Default::default() };
+        let lines = app.hud_lines(start);
+        assert!(lines.iter().any(|l| l.starts_with("Cycles · graphics card") && l.ends_with("denoised")), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "64 spp"), "Cycles has no convergence to show: {lines:?}");
+        assert!(lines.iter().any(|l| l.starts_with("30 fps   slowest 16 ms")), "{lines:?}");
+        let memory = lines.last().expect("lines");
+        assert!(memory.starts_with("memory ") && memory.contains(" of "), "{lines:?}");
+
+        // A Cycles that would not start fell back: the frame says so.
+        app.image.engine = RenderEngine::Tequila;
+        let lines = app.hud_lines(start);
+        assert!(lines.iter().any(|l| l.starts_with("Tequila · ")), "{lines:?}");
     }
 
     /// P's Screenshot is the picture as it shows, without the selection's
