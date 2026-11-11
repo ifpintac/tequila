@@ -1116,10 +1116,15 @@ fn render_loop(shared: Arc<Shared>) {
             );
             continue;
         } else {
-            // Given up as soon as anything else is asked for: a still view's
-            // pass at the screen's own pixels took a good part of a second on
-            // a big model, and the first picture of a move waited for it.
-            let given_up = || news(&shared, seen_request) || shared.style_generation.load(Ordering::Acquire) != seen_style;
+            // A still view's pass is given up as soon as anything else is
+            // asked for: at the screen's own pixels it took a good part of a
+            // second on a big model, and the first picture of a move waited
+            // for it. A moving view's never is: the window asks for a new
+            // camera every frame, and a pass longer than a frame - any, on a
+            // busy computer - was given up for the next, and the next, and
+            // the view showed nothing until the mouse stopped.
+            let still = !state.schedule.is_interactive();
+            let given_up = || still && (news(&shared, seen_request) || shared.style_generation.load(Ordering::Acquire) != seen_style);
             let whole = crate::profile::time("render: trace", || render_pass_until(
                 state.intersector.as_ref(),
                 &mut state.framebuffer,
@@ -2134,6 +2139,40 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    /// Tequila's renderer, the camera moving faster than it can trace a
+    /// picture - a new one every millisecond, as a busy computer sees a
+    /// mouse - still shows pictures of the move as it goes: a moving view's
+    /// pass is never given up for the next camera.
+    #[test]
+    fn a_moving_view_shows_pictures_however_fast_the_camera_moves() {
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        req.width = 1280;
+        req.height = 960;
+        // The passes alone, not the denoiser getting ready.
+        req.denoise = false;
+        req.interacting = true;
+        let mut seen = 0;
+        renderer.submit(req.clone());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while renderer.take_image(&mut seen).is_none() {
+            assert!(Instant::now() < deadline, "the view never drew");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (started, mut moves, mut shown) = (Instant::now(), 0u32, 0u32);
+        while started.elapsed() < Duration::from_secs(2) {
+            moves += 1;
+            let a = moves as f32 * 0.002;
+            req.camera = Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+            renderer.submit(req.clone());
+            if renderer.take_image(&mut seen).is_some_and(|image| image.width > 0) {
+                shown += 1;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(shown >= 5, "{shown} pictures in two seconds of a camera moving every millisecond ({moves} moves)");
     }
 
     /// The denoising thread gives a denoise up as soon as it is told to,
