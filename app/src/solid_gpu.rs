@@ -1805,7 +1805,9 @@ impl Gpu {
         let location = |name: &str| gl.get_uniform_location(program, name);
 
         let selected: std::collections::HashSet<u32> = frame.selected.iter().copied().collect();
-        let drawable = |i: &&tequila_render_core::scene::Instance| i.visible_to_camera && i.shadow_catcher.is_none();
+        // (A part made a shadow catcher is drawn as the part it is: it has to
+        // be seen to be worked on.)
+        let drawable = |i: &&tequila_render_core::scene::Instance| i.visible_to_camera && i.shadow_catcher.is_none_or(|c| c.part);
         // The UV editor's checker, on the unit the backdrop's picture was
         // on, which is drawn by now.
         let checked: std::collections::HashSet<u32> = frame.checker.as_ref().map(|c| c.instances.iter().copied().collect()).unwrap_or_default();
@@ -2811,14 +2813,14 @@ fn shadow_source(scene: &SceneSnapshot) -> u64 {
 /// Whether a part darkens the ground: what the camera sees and what casts
 /// shadows in the render, and not the floor itself.
 fn casts_ground_shadow(instance: &tequila_render_core::scene::Instance) -> bool {
-    instance.visible_to_camera && instance.casts_shadows && instance.shadow_catcher.is_none() && !instance.light_proxy
+    instance.visible_to_camera && instance.casts_shadows && instance.shadow_catcher.is_none_or(|c| c.part) && !instance.light_proxy
 }
 
 /// Where the ground shadow lies for `scene`: under the parts that cast one,
 /// on the floor the render catches shadows on. None without a floor, with a
 /// floor that catches none, or with nothing near enough to it to darken it.
 fn shadow_footprint(scene: &SceneSnapshot) -> Option<ShadowFootprint> {
-    let floor = scene.instances.iter().find(|i| i.shadow_catcher.is_some_and(|c| c.shadows))?;
+    let floor = scene.instances.iter().find(|i| i.shadow_catcher.is_some_and(|c| c.shadows && !c.part))?;
     let plane = scene.mesh(floor.mesh).bounds().transformed(&floor.transform).max.y;
     let mut model = tequila_core::math::Aabb::EMPTY;
     for instance in scene.instances.iter().filter(|i| casts_ground_shadow(i)) {

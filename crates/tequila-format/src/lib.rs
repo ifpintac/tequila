@@ -1666,6 +1666,10 @@ pub(crate) fn rays_to_json(rays: &tequila_scene::tree::Rays) -> Value {
         .set("transmission", rays.transmission)
         .set("shadow", rays.shadow)
         .set("holdout", rays.holdout);
+    // Written only where it is so: a file with no catcher reads as it did.
+    if rays.catcher {
+        out.set("catcher", true);
+    }
     out.build()
 }
 
@@ -1681,6 +1685,7 @@ pub(crate) fn read_rays(value: Option<&Value>) -> tequila_scene::tree::Rays {
         transmission: flag("transmission", default.transmission),
         shadow: flag("shadow", default.shadow),
         holdout: flag("holdout", default.holdout),
+        catcher: flag("catcher", default.catcher),
     }
 }
 
@@ -4056,6 +4061,11 @@ mod rays_tests {
     fn a_nodes_rays_survive_and_default_ones_write_nothing() {
         let rays = Rays { camera: false, transmission: false, holdout: true, ..Rays::default() };
         assert_eq!(read_rays(Some(&rays_to_json(&rays))), rays);
+        // A shadow catcher is kept, and said only where a part is one: a
+        // file with none reads as it did before there were any.
+        let catcher = Rays { catcher: true, ..Rays::default() };
+        assert_eq!(read_rays(Some(&rays_to_json(&catcher))), catcher);
+        assert!(rays_to_json(&rays).get("catcher").is_none());
         assert_eq!(read_rays(None), Rays::default());
         let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
         let plain = json_write::to_string(&node_to_json(document.tree.iter().next().unwrap(), &Preserved::default()));

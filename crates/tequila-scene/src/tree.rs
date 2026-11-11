@@ -101,11 +101,16 @@ pub struct Rays {
     pub transmission: bool,
     pub shadow: bool,
     pub holdout: bool,
+    /// A shadow catcher, as the floor is: the camera sees the shadows that
+    /// fall on the part and nothing else of it, the background showing
+    /// where it is. A product on a photographed table, the table modelled
+    /// to catch its shadow (V-Ray's matte object).
+    pub catcher: bool,
 }
 
 impl Default for Rays {
     fn default() -> Self {
-        Rays { camera: true, diffuse: true, glossy: true, transmission: true, shadow: true, holdout: false }
+        Rays { camera: true, diffuse: true, glossy: true, transmission: true, shadow: true, holdout: false, catcher: false }
     }
 }
 
@@ -115,7 +120,7 @@ impl Rays {
     }
 
     /// A node's own under its parent's: seen only by what sees both, held
-    /// out if either is.
+    /// out if either is, a catcher if either is.
     pub fn under(self, parent: Rays) -> Rays {
         Rays {
             camera: self.camera && parent.camera,
@@ -124,6 +129,7 @@ impl Rays {
             transmission: self.transmission && parent.transmission,
             shadow: self.shadow && parent.shadow,
             holdout: self.holdout || parent.holdout,
+            catcher: self.catcher || parent.catcher,
         }
     }
 }
