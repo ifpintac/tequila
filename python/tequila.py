@@ -375,7 +375,8 @@ class Client:
         Material Graph editor's browser, which shows it),
         graph_bring={'library': '<name>'} or {'material': n} (that
         material brought into the open graph whole, as a Shader with its
-        nodes)."""
+        nodes) or {'setup': 'blend'|'two_sided'|'composite'} (that
+        setup's nodes added, wired)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

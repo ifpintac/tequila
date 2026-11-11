@@ -12,7 +12,10 @@
 //! made with one opens in a later Tequila with the group as that version
 //! builds it.
 
+mod blend_stack;
 mod fdm_layer_lines;
+
+pub use blend_stack::COATS as BLEND_COATS;
 
 use crate::graph::{Link, MaterialGraph, Node, NodeId, NodeKind, Socket, SocketType, Value};
 use std::collections::BTreeMap;
@@ -25,6 +28,9 @@ pub enum NodeGroup {
     /// seam, the raster lines on the top and bottom skins. From the "3DP
     /// Layer Lines" group of the PLA 3D Print materials.
     FdmLayerLines,
+    /// The mix factors that make coats nested on one another's Layer a
+    /// stack, each over everything under it (`blend_stack`).
+    BlendStack,
 }
 
 /// One of a group's inputs. Every one is a number.
@@ -47,12 +53,19 @@ pub struct GroupOutput {
 }
 
 impl NodeGroup {
-    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines];
+    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack];
+
+    /// Whether it is a pattern over a surface, for where it is listed: the
+    /// others work on numbers.
+    pub fn is_pattern(self) -> bool {
+        matches!(self, NodeGroup::FdmLayerLines)
+    }
 
     /// Its stable name, in files and scripts.
     pub fn key(self) -> &'static str {
         match self {
             NodeGroup::FdmLayerLines => "fdm_layer_lines",
+            NodeGroup::BlendStack => "blend_stack",
         }
     }
 
@@ -63,6 +76,7 @@ impl NodeGroup {
     pub fn label(self) -> &'static str {
         match self {
             NodeGroup::FdmLayerLines => "FDM Layer Lines",
+            NodeGroup::BlendStack => "Blend Stack",
         }
     }
 
@@ -74,6 +88,12 @@ impl NodeGroup {
                  and bottom. In millimetres, with the part's Y as the build direction. Wire Bump to Bump, and Tangent \
                  to Tangent for the sheen along the layers."
             }
+            NodeGroup::BlendStack => {
+                "Coats stacked on a material, each over everything under it by its own amount, as a blend material's \
+                 are. Each coat is a Shader brought in by a Mix Shader on the Layer of the one under it; wire Fac 1 to \
+                 the Mix Shader on the material's own Layer, Fac 2 to the one on the first coat's, and so on. A coat's \
+                 amount is a number or a mask."
+            }
         }
     }
 
@@ -81,26 +101,31 @@ impl NodeGroup {
     pub fn keywords(self) -> &'static str {
         match self {
             NodeGroup::FdmLayerLines => "3D print, 3D printed, FFF, PLA, PETG, layer lines, filament, extrusion",
+            NodeGroup::BlendStack => "blend material, VRayBlendMtl, coats, layers, layered, stack",
         }
     }
 
     pub fn inputs(self) -> &'static [GroupInput] {
         match self {
             NodeGroup::FdmLayerLines => fdm_layer_lines::INPUTS,
+            NodeGroup::BlendStack => blend_stack::INPUTS,
         }
     }
 
     pub fn outputs(self) -> &'static [GroupOutput] {
         match self {
             NodeGroup::FdmLayerLines => fdm_layer_lines::OUTPUTS,
+            NodeGroup::BlendStack => blend_stack::OUTPUTS,
         }
     }
 
     /// The nodes inside, built once.
     pub fn expansion(self) -> &'static Expansion {
         static FDM: OnceLock<Expansion> = OnceLock::new();
+        static BLEND: OnceLock<Expansion> = OnceLock::new();
         match self {
             NodeGroup::FdmLayerLines => FDM.get_or_init(fdm_layer_lines::build),
+            NodeGroup::BlendStack => BLEND.get_or_init(blend_stack::build),
         }
     }
 }
@@ -252,6 +277,63 @@ mod tests {
             for input in 0..group.inputs().len() {
                 assert!(inside.reads.iter().any(|r| r.0 == input), "{group:?} never reads {}", group.inputs()[input].name);
             }
+        }
+    }
+
+    /// The Blend Stack's factors make nested layers a stack: followed as a
+    /// path follows them (`shade::choose_layer`: into the next layer by its
+    /// factor, else stop), each coat is seen as often as it covers what is
+    /// under it and is left uncovered by those above.
+    #[test]
+    fn the_blend_stack_weighs_each_coat_as_a_stack_does() {
+        // Its arithmetic, node for node, on numbers.
+        fn factors(amounts: [f32; BLEND_COATS]) -> [f32; BLEND_COATS] {
+            use crate::nodes::ShaderNode;
+            let inside = NodeGroup::BlendStack.expansion();
+            let mut values: Vec<Option<f32>> = vec![None; inside.nodes.len()];
+            // The nodes are in an order each can be worked out in.
+            for (index, node) in inside.nodes.iter().enumerate() {
+                let NodeKind::Node(ShaderNode::Math { op, clamp }) = node.kind else { panic!("a node that is not Math") };
+                let input = |slot: u8| -> f32 {
+                    if let Some(&(from, _, _, _)) = inside.links.iter().find(|l| l.2 == index as u32 && l.3 == slot) {
+                        return values[from as usize].expect("worked out before it is read");
+                    }
+                    if let Some(&(group_input, _, _)) = inside.reads.iter().find(|r| r.1 == index as u32 && r.2 == slot) {
+                        return amounts[group_input];
+                    }
+                    node.literals.get(&Socket::Input(slot)).map_or(0.0, |v| v.as_float())
+                };
+                let value = op.apply(input(0), input(1), input(2));
+                values[index] = Some(if clamp { value.clamp(0.0, 1.0) } else { value });
+            }
+            std::array::from_fn(|coat| inside.writes[coat].map(|(node, _)| values[node as usize].unwrap()).unwrap())
+        }
+        for amounts in [[0.5, 0.0, 0.0, 0.0], [0.5, 0.25, 0.0, 0.0], [0.3, 0.6, 0.2, 0.9], [1.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], [0.0, 0.4, 0.0, 0.7]] {
+            let fac = factors(amounts);
+            // Seen as a path sees them: coat k when every factor up to its
+            // own let the path in and the next did not.
+            let mut reach = 1.0;
+            let mut seen = [0.0f32; BLEND_COATS];
+            let mut base = 1.0;
+            for coat in 0..BLEND_COATS {
+                if coat == 0 {
+                    base = 1.0 - fac[0];
+                }
+                reach *= fac[coat];
+                let next = if coat + 1 < BLEND_COATS { fac[coat + 1] } else { 0.0 };
+                seen[coat] = reach * (1.0 - next);
+            }
+            // As a stack: its own amount, left uncovered by those above.
+            let mut above = 1.0;
+            let mut wanted = [0.0f32; BLEND_COATS];
+            for coat in (0..BLEND_COATS).rev() {
+                wanted[coat] = amounts[coat] * above;
+                above *= 1.0 - amounts[coat];
+            }
+            for coat in 0..BLEND_COATS {
+                assert!((seen[coat] - wanted[coat]).abs() < 1e-5, "{amounts:?}: coat {} seen {} of the time, not {}", coat + 1, seen[coat], wanted[coat]);
+            }
+            assert!((base - above).abs() < 1e-5, "{amounts:?}: the material itself seen {base}, not {above}");
         }
     }
 
