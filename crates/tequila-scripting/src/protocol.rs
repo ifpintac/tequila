@@ -413,7 +413,7 @@ pub struct UiChange {
     /// Help > Test this computer, open and running: opening it starts the
     /// checks, unless they are running already.
     pub self_test: Option<bool>,
-    /// A menu of the menu bar, open: `file` or `view`. What the documentation shows
+    /// A menu of the menu bar, open: `file`, `edit` or `view`. What the documentation shows
     /// a menu with.
     pub menu: Option<String>,
     /// The start screen, open.

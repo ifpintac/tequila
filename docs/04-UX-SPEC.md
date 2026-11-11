@@ -44,6 +44,15 @@ Exact behavior of every interaction. This document exists because "drag a materi
   - Where a platform cannot open another window, they are drawn inside the main window instead.
   - Two short prompts stay inside the main window, as dialogs belonging to it: recovering unsaved work at start-up, and the report after a model is updated.
 
+*As built, November 11, from a design pass over the menus:*
+- **File, Edit, View**, the order every menu bar has them in; Edit came after View.
+- **File** begins with the project - New, Open, Open recent, Save, Save as - then what comes in (the model, its up axis and reloading it; then texture packs, Substance materials, material files and a new library material), then **Export**, a menu of its five. It began with six kinds of import, and New, Open and Save were half way down.
+- **Edit** has what the keys and the right-click menu did and no menu said: Group, Delete, Select all, Deselect all, Hide the selection, Isolate the selection, Show everything, beside Undo, Redo, Duplicate, Pattern and Preferences.
+- **View** ticks each panel that shows - Material library, Inspector, Console, Full viewport - then what is drawn over the view. The library's was a button among the tick boxes ("Toggle material library"), the console had none, and Model edges stood apart at the top.
+- **Keys are shown at the right of every command that has one**, from the table Preferences › Keyboard changes; some were in tooltips and two were written in ("P", "F5") and would not have followed a change.
+- **One place for each setting where the second was only a duplicate:** View › Screenshot folder… is gone, Preferences › Folders having it (the Screenshot's tooltip says where it saves and where to change that). File › Up axis of imports stays beside Import, where it is wanted, as well as in Preferences.
+- Removing a graph's hold on a parameter, and a gradient's colour, are "×" as everywhere else; they were the letter x.
+
 ### 1.2 Look and identity
 
 Tequila's look is its own, not KeyShot's or Blender's: friendly but professional, in light or dark, in the person's choice of theme (`app/src/theme.rs`).
@@ -100,6 +109,12 @@ Top-right, semi-transparent, toggleable (`H`):
 - Resolution and whether the view is at reduced interactive resolution.
 - Memory: geometry / textures / BVH / buffers.
 - *As built, November 9:* the device line names what made the picture: Tequila or Cycles, on the processor (by name, "Apple M3 Max") or the graphics card; a Cycles that would not start and fell back says Tequila (`DisplayImage::engine`). Cycles' frames show their samples without a converged share, which Cycles doesn't count. Solid, Wireframe and Material Preview, which the graphics card draws, show the view, the triangles and the card as OpenGL names it, with no samples to count. Under every view, the speed and the memory (`app/src/readout.rs`): the frames drawn in the last second and the slowest of them while the view moves (dragged, scrolled, the 3D mouse, a camera move), "idle" while it is still, since a still window draws only when asked and a few frames a second then read as a slow computer; and the memory Tequila holds of what the computer has, as its own monitor counts it - the footprint Activity Monitor shows on a Mac, private bytes on Windows, the resident set on Linux - read every half second. While shown, the statistics are drawn again once a second, so the memory stays current. Scripts show them with `{"op":"ui","statistics":true}`. Memory by kind (geometry, textures, BVH, buffers) is not broken out yet.
+
+*As built, November 11, from a pass over every screen and a measurement of each view idle and orbiting* (M3 Max; the Headphones sample and a 1.07-million-triangle STEP model): the window idles at 3-6 frames a second and 3-4% of a core in every view and with every tab, and orbits at the screen's 120 frames a second in Solid and Material Preview with frames of 0.2-0.6 ms. What was wrong was in what the screen said and drew:
+- **The frame rate counted still frames with a move's.** It was the frames of the last second, and for the first second of every orbit most of those were the still window's few: "13 fps, slowest 185 ms" on a view drawing 120. It is the rate of the move's own frames now, from when the move began (the first after a quarter-second pause) to when it last moved, and it stays the move's while still frames follow it (`readout.rs`, `the_frame_rate_is_the_moving_frames_alone`).
+- **A window the desktop was not showing drew as fast as it could.** Covered or on another space it is not held to the screen's rate, and an orbit kept up there ran at 518 frames a second, one and a half cores. A frame now starts no sooner than 4 ms after the last (`frame_pause`), which no screen's own rate reaches.
+- **The viewport's chip ran under the tools.** In a narrow view or the large interface its second half ("environment light, no shadows") was drawn under the island at the top right; it is left out where there is no room (`chip_has_room`).
+- **The start screen's samples ran over its footer** on a 1024x640 window: the banner kept its depth and the lists got what was left. The banner now leaves room for the three samples at their smallest, their rows are spaced exactly, and they scroll where a window is shorter still (`hero_height`, `the_samples_fit_under_the_banner_on_a_small_window`).
 
 ### 2.2 Overlays
 
@@ -458,6 +473,14 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - **Favorites**, **recently used**, and **used in this project** as virtual folders.
 - Right-click: Apply to Selection · Rename · Duplicate · Edit in Material Graph · Show in File Browser · Delete · Export.
 
+*As built, November 11: four ways to see the shelf* (`app/src/library_tab.rs`, `View`). Four small buttons beside the count choose it, each a drawing of what it gives, and Preferences › Interface › *Show materials as* is the same choice, kept between sessions (`interface.library_view`):
+- **Thumbnails**, as it was: pictures with their names, sized by the "…" menu's slider.
+- **Icons**: small pictures alone, four or more across, the name in the tooltip - the whole shelf at a glance.
+- **List**: a line each, a swatch and the name, with what the material is at the end where the shelf is wide enough. Three times and more the materials of thumbnails in the same height, for finding one by name.
+- **Cards**: a row each with the picture large, the name, its type and category, and whose it is (Tequila's, yours, a plugin's) with the words the search finds it by.
+
+Every view has the same star, the same dot for a material already in the project, the same right-click menu, double-click and drag, and asks previews only for what it shows and the next screenful, at the size it draws them (`the_shelf_is_shown_four_ways`). The shelf's five filters are each as wide as their word needs: in equal shares "Favorites" and "In project" ran into each other (`segment_widths` in `theme.rs`, which every such control uses).
+
 ---
 
 ## 10. Animation timeline
@@ -520,7 +543,7 @@ The pages and settings built:
 - **Navigation**: whose way the mouse moves the view, and the three drags of one's own (§6.1); orbit, pan and zoom speed (0.25× to 4×); the wheel's zoom reversed (a pinch keeps its direction); whether a trackpad's two-finger swipe pans or orbits, Shift doing the other; and the 3D mouse's settings, which were the whole window before.
 - **Keyboard**: every key of the main window, changed there (§6.3).
 - **Import**: the up axis of imports *(File › Up axis of imports, which stays)*.
-- **Folders**: the screenshot folder *(View › Screenshot folder…, which stays)*, and Tequila's settings and library folders, opened.
+- **Folders**: the screenshot folder *(it was View › Screenshot folder…)*, and Tequila's settings and library folders, opened.
 - **Updates**: the quiet look for a new version at launch.
 
 Tequila's newer choices are kept in `preferences.txt` beside the others, a `name=value` line each, and a line that is not understood keeps its default. The older ones - the look, the up axis, the screenshot folder, updates, the 3D mouse - are still kept in their own files by the code that owns them: **the one settings file of §12.1 is not built**, and nor is telling a project's defaults from the application's choices, since none of these settings is a project's. Not built either: the pages Rendering, Performance and memory, Colour management, Materials and library, Assistant, and Plugins and scripting; autosave versions, undo depth, units and language; the outline's colour and width; power settings; and, on a Mac, the item in the application menu (it is in Edit: the application menu is winit's). Held by the tests in `preferences.rs`, `ctrl_comma_opens_preferences`, `a_script_opens_preferences_and_changes_a_setting` and `a_swipe_follows_the_navigation_settings`.

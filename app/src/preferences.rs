@@ -287,6 +287,8 @@ pub struct Prefs {
     pub recent_projects: usize,
     pub tooltips: bool,
     pub tooltip_delay: f32,
+    /// How the material library shows its shelf.
+    pub library_view: crate::library_tab::View,
     /// What a session starts with: its shading and what the view shows.
     pub shading: ViewMode,
     pub show_grid: bool,
@@ -323,6 +325,7 @@ impl Default for Prefs {
             recent_projects: 10,
             tooltips: true,
             tooltip_delay: 0.5,
+            library_view: crate::library_tab::View::default(),
             shading: ViewMode::default(),
             show_grid: false,
             show_axis_legend: true,
@@ -376,6 +379,7 @@ const MODES: &[(&str, &str)] = &[("light", "Light"), ("dark", "Dark"), ("auto", 
 const THEMES: &[(&str, &str)] =
     &[("graphite", "Graphite"), ("ocean", "Ocean"), ("orchid", "Orchid"), ("ember", "Ember"), ("meadow", "Meadow"), ("rose", "Rose")];
 const SIZES: &[(&str, &str)] = &[("compact", "Compact"), ("regular", "Regular"), ("large", "Large")];
+const LIBRARY_VIEWS: &[(&str, &str)] = &[("thumbnails", "Thumbnails"), ("icons", "Icons"), ("list", "List"), ("cards", "Cards")];
 const SHADINGS: &[(&str, &str)] = &[("wireframe", "Wireframe"), ("solid", "Solid"), ("material", "Material Preview"), ("rendered", "Rendered")];
 const GIZMO_MODES: &[(&str, &str)] = &[("all", "All at once"), ("move", "Move"), ("rotate", "Rotate"), ("scale", "Scale")];
 const MOVING: &[(&str, &str)] = &[("smooth", "Smooth"), ("balanced", "Balanced"), ("sharp", "Sharp")];
@@ -646,6 +650,24 @@ pub static SETTINGS: &[Setting] = &[
         " s",
         false
     ),
+    Setting {
+        key: "interface.library_view",
+        page: Page::Interface,
+        group: "Material library",
+        label: "Show materials as",
+        help: "Thumbnails are pictures with their names; Icons are small pictures, many across; List is a line each, the most names on screen; Cards say what each material is and whose. The same choice as the four small buttons above the library's shelf.",
+        kind: Kind::Choice(LIBRARY_VIEWS),
+        own: true,
+        default: || Value::Text(crate::library_tab::View::default().key().to_string()),
+        get: |app| Value::Text(app.prefs.library_view.key().to_string()),
+        set: |app, value| {
+            if let Some(view) = crate::library_tab::View::from_key(&text(value)) {
+                app.prefs.library_view = view;
+                app.library.view = view;
+            }
+            Ok(())
+        },
+    },
     // ---- Viewport --------------------------------------------------------
     Setting {
         key: "viewport.shading",
@@ -1169,6 +1191,11 @@ impl TequilaApp {
     /// What the settings ask of the session at every frame: cheap, and
     /// right whichever way a setting was changed.
     pub(crate) fn apply_preferences(&mut self, ctx: &egui::Context) {
+        // The library's own buttons choose its view too: kept as chosen.
+        if self.library.view != self.prefs.library_view {
+            self.prefs.library_view = self.library.view;
+            self.keep_preferences();
+        }
         self.gizmo.scale = (self.prefs.gizmo_size / 100.0).clamp(0.25, 4.0);
         self.project.set_autosave_every(self.prefs.autosave_every());
         crate::cycles_view::set_tuning(self.prefs.moving_picture.target_ms(), self.prefs.view_samples);
@@ -1179,6 +1206,19 @@ impl TequilaApp {
         }
     }
 
+    /// What a setting's row is marked against: its default, but for the
+    /// three drags under a preset, which are the preset's and not a change
+    /// of the person's. Marked, Blender's drags each offered to go "back"
+    /// to Tequila's own, one at a time.
+    fn shown_default(&self, setting: &Setting) -> Value {
+        let preset = self.prefs.nav_preset != crate::navigation::Preset::Custom;
+        if preset && setting.key.ends_with("_drag") && setting.page == Page::Navigation {
+            (setting.get)(self)
+        } else {
+            (setting.default)()
+        }
+    }
+
     /// Edit › Preferences: the window.
     pub(crate) fn preferences_window(&mut self, ctx: &egui::Context) {
         if !self.preferences.open {
@@ -1186,7 +1226,7 @@ impl TequilaApp {
         }
         let mut open = true;
         let values: Vec<Value> = SETTINGS.iter().map(|s| (s.get)(self)).collect();
-        let defaults: Vec<Value> = SETTINGS.iter().map(|s| (s.default)()).collect();
+        let defaults: Vec<Value> = SETTINGS.iter().map(|s| self.shown_default(s)).collect();
         let recent = self.recent.len();
         let own_folders = [("Settings", tequila_format::library::settings_directory()), ("Material library", crate::library_tab::user_library_path())];
         let mut mouse = std::mem::take(&mut self.spacemouse);
@@ -1841,6 +1881,7 @@ mod tests {
         assert_eq!(SIZES.iter().map(|(k, l)| (*k, *l)).collect::<Vec<_>>(), crate::theme::Size::ALL.iter().map(|s| (s.key(), s.label())).collect::<Vec<_>>());
         assert_eq!(SHADINGS.iter().map(|(k, l)| (*k, *l)).collect::<Vec<_>>(), ViewMode::ALL.iter().map(|m| (m.key(), m.label())).collect::<Vec<_>>());
         assert_eq!(MOVING.iter().map(|(k, _)| *k).collect::<Vec<_>>(), MovingPicture::ALL.iter().map(|m| m.key()).collect::<Vec<_>>());
+        assert_eq!(LIBRARY_VIEWS.iter().map(|(k, l)| (*k, *l)).collect::<Vec<_>>(), crate::library_tab::View::ALL.iter().map(|v| (v.key(), v.label())).collect::<Vec<_>>());
         assert_eq!(PRESETS.iter().map(|(k, _)| *k).collect::<Vec<_>>(), crate::navigation::Preset::ALL.iter().map(|p| p.key()).collect::<Vec<_>>());
         assert_eq!(GIZMO_MODES.iter().map(|(k, _)| *k).collect::<Vec<_>>(), GizmoMode::ALL.iter().map(|m| gizmo_key(*m)).collect::<Vec<_>>());
     }
@@ -1945,10 +1986,15 @@ mod tests {
         assert_eq!(next.prefs.navigation(), custom);
         assert!(app.set_preference("navigation.orbit_drag", Value::Text("fourth button".into())).is_err());
 
+        // Under a preset the drags are not marked as changed; a drag of
+        // the person's own is.
+        let orbit = setting("navigation.orbit_drag").unwrap();
+        assert!(!(orbit.get)(&next).same(&next.shown_default(orbit)), "a custom drag is marked");
         // Another preset leaves the custom drags aside; Custom brings back
         // the drags in use, to change from.
         next.set_preference("navigation.preset", Value::Text("rhino".into())).unwrap();
         assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
+        assert!((orbit.get)(&next).same(&next.shown_default(orbit)), "Rhino's own drag was marked as a change");
         next.set_preference("navigation.preset", Value::Text("custom".into())).unwrap();
         assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
         next.reset_preferences(Some(Page::Navigation)).unwrap();

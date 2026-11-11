@@ -755,6 +755,24 @@ pub fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::R
     response
 }
 
+/// The widths of a segmented control's cells, `width` between them, for
+/// words `texts` wide: equal shares where each holds its word with room
+/// to spare, as a row of equals reads best; otherwise each its word and
+/// an equal part of what is left over.
+fn segment_widths(texts: &[f32], width: f32) -> Vec<f32> {
+    let n = texts.len().max(1) as f32;
+    let equal = width / n;
+    let widest = texts.iter().copied().fold(0.0, f32::max);
+    if widest + SEGMENT_ROOM <= equal {
+        return vec![equal; texts.len()];
+    }
+    let spare = (width - texts.iter().sum::<f32>()) / n;
+    texts.iter().map(|text| (text + spare).max(8.0)).collect()
+}
+
+/// The least room a segmented control's word has about it in an equal share.
+const SEGMENT_ROOM: f32 = 12.0;
+
 /// A row of mutually exclusive choices drawn as one control, the chosen one
 /// raised — for a handful of short options where a dropdown would hide them.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
@@ -766,12 +784,18 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, options:
     // one panel identified by the panel's shared their cells' clicks.
     let (rect, base) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     ui.painter().rect_filled(rect, 8.0, p.field);
-    let each = (rect.width() - 6.0) / options.len().max(1) as f32;
+    // Each cell as wide as its word needs where equal shares would not
+    // hold the longest: "Favorites" and "In project" ran into each other
+    // in the library's five, and "Material Preview" into its neighbours.
+    let texts: Vec<f32> = options
+        .iter()
+        .map(|(_, label)| ui.painter().layout_no_wrap(label.to_string(), strong(BODY - 1.0), p.text).size().x)
+        .collect();
+    let widths = segment_widths(&texts, rect.width() - 6.0);
+    let mut left = rect.left() + 3.0;
     for (i, (option, label)) in options.iter().enumerate() {
-        let cell = egui::Rect::from_min_size(
-            egui::pos2(rect.left() + 3.0 + i as f32 * each, rect.top() + 3.0),
-            egui::vec2(each, height - 6.0),
-        );
+        let cell = egui::Rect::from_min_size(egui::pos2(left, rect.top() + 3.0), egui::vec2(widths[i], height - 6.0));
+        left += widths[i];
         let response = ui.interact(cell, base.id.with(("segment", i)), egui::Sense::click());
         let on = *value == *option;
         if on {
@@ -1122,4 +1146,26 @@ mod tests {
             assert!(ctx.fonts(|f| f.has_glyph(&egui::FontId::new(14.0, family.clone()), '⚡')), "{family:?} lost its fallbacks");
         }
     }
+    /// A segmented control's cells are equal where each holds its word,
+    /// and as wide as their words need where they would not: the widths
+    /// always fill the control, and no word is wider than its cell while
+    /// there is room for them all.
+    #[test]
+    fn segmented_cells_fit_their_words() {
+        // Light, Dark, Auto: equal.
+        assert_eq!(segment_widths(&[30.0, 28.0, 30.0], 240.0), vec![80.0, 80.0, 80.0]);
+        // All, Mine, Favorites, Recent, In project in a library's width:
+        // equal shares of 50 would not hold 55.
+        let texts = [16.0, 28.0, 52.0, 40.0, 55.0];
+        let widths = segment_widths(&texts, 250.0);
+        assert!((widths.iter().sum::<f32>() - 250.0).abs() < 0.01, "{widths:?}");
+        for (text, cell) in texts.iter().zip(&widths) {
+            assert!(cell >= text, "a word {text} wide in a cell {cell} wide");
+        }
+        assert!(widths[4] > widths[0], "the longer word has the wider cell");
+        // No room for them all: shared out, never a cell of nothing.
+        let squeezed = segment_widths(&[60.0, 60.0, 60.0], 120.0);
+        assert!(squeezed.iter().all(|w| *w >= 8.0));
+    }
+
 }

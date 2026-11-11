@@ -1446,7 +1446,7 @@ fn connected_row(ui: &mut egui::Ui, param: Param, driver: &str, hidden: bool) ->
             "This parameter is driven by the material graph. Its value comes from there.",
         );
         if ui
-            .small_button("x")
+            .small_button("×")
             .on_hover_text("Go back to a plain value.")
             .clicked()
         {
@@ -1549,7 +1549,7 @@ pub(crate) fn gradient_controls(
                         next = next.with_stops(stops);
                         changed = true;
                     }
-                    if next.stops().len() > 2 && ui.small_button("x").clicked() {
+                    if next.stops().len() > 2 && ui.small_button("×").on_hover_text("Remove this colour").clicked() {
                         remove = Some(index);
                     }
                 });
