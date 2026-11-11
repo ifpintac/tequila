@@ -316,6 +316,10 @@ pub struct ShadowCatcher {
     /// like ambient occlusion over that distance, in scene units; 0 for not
     /// at all.
     pub bounce_falloff: f32,
+    /// A part made a catcher (`Rays::catcher`), not the floor: drawn in the
+    /// working views as the part it is, where the floor is not drawn at
+    /// all, and not what "the floor" means to them.
+    pub part: bool,
 }
 
 impl Default for ShadowCatcher {
@@ -333,6 +337,7 @@ impl Default for ShadowCatcher {
             reflection_fade_by_distance: false,
             bounce: None,
             bounce_falloff: 0.0,
+            part: false,
         }
     }
 }

@@ -300,7 +300,7 @@ class SceneCommands(_Commands):
         return self._apply('scene.set_locked', {'states': states})
 
     def set_rays(self, *, states=_UNSET):
-        r"""`scene.set_rays`: Which rays see each node (`Rays`): camera, diffuse, glossy, transmission and shadow, and holdout.
+        r"""`scene.set_rays`: Which rays see each node (`Rays`): camera, diffuse, glossy, transmission and shadow, and holdout; and `catcher`, which makes it a shadow catcher as the floor is.
 
         { "command": "scene.set_rays", "states": [ { "node": 2, "rays": { "camera": true, "diffuse": true, "glossy": false, "holdout": true, "shadow": true, "transmission": true } } ] }
         """

@@ -288,7 +288,8 @@ pub enum Command {
     /// under it, refuses edits until unlocked.
     SetLocked { states: Vec<(NodeId, bool)> },
     /// `scene.set_rays` — which rays see each node (`Rays`): camera,
-    /// diffuse, glossy, transmission and shadow, and holdout.
+    /// diffuse, glossy, transmission and shadow, and holdout; and `catcher`,
+    /// which makes it a shadow catcher as the floor is.
     SetRays { states: Vec<(NodeId, crate::tree::Rays)> },
     /// `scene.set_pivot` — the point a node rotates and scales about.
     ///

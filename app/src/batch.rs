@@ -5733,6 +5733,82 @@ mod tests {
         assert!((pa - pb).abs() < pa * 0.12 + 6.0, "unmarked, as bright in one as the other: {pa:.0} and {pb:.0}");
     }
 
+    /// A part made a shadow catcher shows, in both renderers, the shadow
+    /// that falls on it and nothing else: a slab under the ball, with no
+    /// floor, darkens the picture where the ball stands on it and leaves
+    /// the background as it was everywhere else. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn a_catcher_part_shows_only_its_shadow_in_both_renderers() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_render_core::camera::Camera;
+        use tequila_render_core::scene::{Instance, Mesh, ShadowCatcher};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let render = |name: &str, slab: bool| {
+            both_engines(name, move |scene| {
+                if slab {
+                    // Four metres square under the ball, facing up.
+                    let (a, y) = (4.0, 0.0);
+                    let quad = Mesh::new(vec![vec3(-a, y, -a), vec3(-a, y, a), vec3(a, y, a), vec3(a, y, -a)], vec![0, 1, 2, 0, 2, 3]);
+                    let mesh = MeshId(scene.meshes.len() as u32);
+                    scene.meshes.push(Arc::new(quad));
+                    let id = InstanceId(scene.instances.len() as u32);
+                    scene.instances.push(Instance::new(id, mesh, MaterialId(0)).with_shadow_catcher(ShadowCatcher { part: true, ..Default::default() }));
+                }
+            })
+        };
+        let with = render("catcher-part", true);
+        let without = render("catcher-none", false);
+        // A patch of the picture about a point of the scene.
+        let camera = Camera::look_at(vec3(2.0, 1.5, 3.0), vec3(0.0, 0.5, 0.0), Vec3::Y);
+        let patch = |image: &[u8], at: Vec3| {
+            let p = camera.project(at, 96.0 / 72.0).expect("in view");
+            let (cx, cy) = ((p.x * 96.0) as i32, (p.y * 72.0) as i32);
+            let mut sum = 0.0;
+            let mut count = 0.0;
+            for y in (cy - 2).max(0)..(cy + 3).min(72) {
+                for x in (cx - 2).max(0)..(cx + 3).min(96) {
+                    let at = ((y * 96 + x) * 4) as usize;
+                    sum += f64::from(image[at]) + f64::from(image[at + 1]) + f64::from(image[at + 2]);
+                    count += 1.0;
+                }
+            }
+            assert!(count > 0.0, "{at:?} is out of the picture");
+            sum / count
+        };
+        // The picture's bottom corner: the slab, nearest the camera and
+        // furthest from the ball.
+        let corner = |image: &[u8]| {
+            let mut sum = 0.0;
+            for y in 65..70 {
+                for x in 2..7 {
+                    let at = (y * 96 + x) * 4;
+                    sum += f64::from(image[at]) + f64::from(image[at + 1]) + f64::from(image[at + 2]);
+                }
+            }
+            sum / 25.0
+        };
+        // On the slab just in front of where the ball rests.
+        let under = vec3(0.35, 0.0, 0.75);
+        for (engine, (with, without)) in ["Tequila", "Cycles"].into_iter().zip(with.iter().zip(&without)) {
+            let (shadowed, open) = (patch(with, under), patch(without, under));
+            assert!(shadowed < open * 0.85, "{engine}: under the ball the slab is {shadowed:.0}, and with no slab it is {open:.0}");
+            // Away from the ball the shadow thins and the background shows
+            // through: lighter than under it, and no lighter than the
+            // background - a slab that showed as itself, a lit grey surface,
+            // would be.
+            let (slab, none) = (corner(with), corner(without));
+            assert!(slab > shadowed * 1.05 && slab <= none + 6.0, "{engine}: away from the ball the slab shows as {slab:.0}, under it {shadowed:.0}, and the background is {none:.0}");
+        }
+        // And the two renderers show the same shadow.
+        for (place, tequila, cycles) in [("under the ball", patch(&with[0], under), patch(&with[1], under)), ("in the corner", corner(&with[0]), corner(&with[1]))] {
+            assert!((tequila - cycles).abs() < tequila * 0.1 + 8.0, "{place}: Tequila {tequila:.0}, Cycles {cycles:.0}");
+        }
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.

@@ -326,6 +326,8 @@ impl SceneTab {
                 ui.add(crate::field::Checkbox::new(&mut rays.shadow, "Casts shadows"));
                 ui.add(crate::field::Checkbox::new(&mut rays.holdout, "Holdout"))
                     .on_hover_text("Cut out of the picture where the camera sees it: nothing there, with no alpha, for compositing something in its place.");
+                ui.add(crate::field::Checkbox::new(&mut rays.catcher, "Shadow catcher"))
+                    .on_hover_text("Shows only the shadows that fall on it, as the floor does: the rest of it is the background. For a product on a photographed table, the table modelled to catch its shadow. Seen as itself in every view but Rendered.");
                 if selected.len() > 1 {
                     ui.label(egui::RichText::new(format!("For all {} selected", selected.len())).small().color(crate::theme::dim()));
                 }

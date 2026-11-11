@@ -420,7 +420,8 @@ unlocked.
 #### `scene.set_rays`
 
 Which rays see each node (`Rays`): camera, diffuse, glossy, transmission and
-shadow, and holdout.
+shadow, and holdout; and `catcher`, which makes it a shadow catcher as the
+floor is.
 
 `fs.commands.scene.set_rays(states=...)`
 

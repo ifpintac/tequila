@@ -563,6 +563,15 @@ pub fn snapshot_with(
         instance.seen_by_glossy = rays.glossy;
         instance.seen_by_transmission = rays.transmission;
         instance.holdout = rays.holdout;
+        if rays.catcher {
+            // As the floor catches them, in the floor's shadow colour: one
+            // picture, one colour of shadow.
+            instance = instance.with_shadow_catcher(tequila_render_core::scene::ShadowCatcher {
+                shadow_color: document.environment.ground.shadow_color,
+                part: true,
+                ..Default::default()
+            });
+        }
         instances.push(instance);
         instance_meshes.push(Some(mesh));
         mapping.nodes.push(Some(node.id));
@@ -1181,6 +1190,7 @@ fn ground_catcher(ground: &crate::document::GroundSettings) -> Option<ShadowCatc
         reflection_fade_by_distance: ground.reflection_fade_by == crate::document::ReflectionFade::Distance,
         bounce: (ground.bounce && ground.bounce_strength > 0.0).then(|| ground.bounce_color * ground.bounce_strength),
         bounce_falloff: ground.bounce_contact_falloff.max(0.0),
+        part: false,
     })
 }
 
@@ -1898,6 +1908,39 @@ mod tests {
         snapshot(&document, environment, &mut cache);
         assert_eq!(cache.textures.len(), 1, "undone, the map is read again");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part made a shadow catcher is one to the renderers, as the floor
+    /// is, in the floor's shadow colour, and marked as a part; a group made
+    /// one makes every part under it one; and the floor is still the floor.
+    #[test]
+    fn a_part_made_a_shadow_catcher_is_one_to_the_renderers() {
+        use crate::tree::Rays;
+        let (mut document, mut bus, ids) = assembly(2);
+        document.environment.ground.shadow_color = tequila_core::spectrum::Spectrum { r: 0.1, g: 0.0, b: 0.2 };
+        let environment = Arc::new(Environment::uniform(tequila_core::spectrum::Spectrum::ONE));
+        let catchers = |document: &SceneDocument| {
+            let (scene, mapping) = snapshot(document, environment.clone(), &mut MeshCache::default());
+            let of = |node: NodeId| scene.instances[mapping.instance_of(node).unwrap().0 as usize].shadow_catcher.clone();
+            (of(ids[1]), of(ids[2]), scene.instances.iter().filter(|i| i.shadow_catcher.as_ref().is_some_and(|c| !c.part)).count())
+        };
+        let (first, second, floors) = catchers(&document);
+        assert!(first.is_none() && second.is_none());
+
+        bus.apply(&mut document, Command::set_rays(ids[1], Rays { catcher: true, ..Rays::default() })).unwrap();
+        let (first, second, _) = catchers(&document);
+        let first = first.expect("the part is a catcher");
+        assert!(first.part && first.shadows && first.reflections == 0.0);
+        assert_eq!(first.shadow_color, document.environment.ground.shadow_color);
+        assert!(second.is_none(), "its neighbour is not");
+        assert_eq!(catchers(&document).2, floors, "and the floor, where there is one, is still the only floor");
+
+        bus.undo(&mut document).unwrap();
+        assert!(catchers(&document).0.is_none());
+        // On the group above them: every part under it.
+        bus.apply(&mut document, Command::set_rays(ids[0], Rays { catcher: true, ..Rays::default() })).unwrap();
+        let (first, second, _) = catchers(&document);
+        assert!(first.is_some_and(|c| c.part) && second.is_some_and(|c| c.part));
     }
 
     /// Which rays see a part come from it and every group above it, and
