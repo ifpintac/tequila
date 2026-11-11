@@ -96,7 +96,8 @@ with `--cpu-only` to leave the graphics cards out.
 
 - **Import CAD and 3D models** - STEP (through OpenCASCADE), IGES, Rhino
   (`.3dm`, with its layers, materials and blocks), Blender (`.blend`, read
-  by your Blender, its materials node for node), glTF/GLB, FBX,
+  by your Blender, its materials node for node, and its lights if you
+  choose), glTF/GLB, FBX,
   OBJ (with ZBrush polypaint), STL, 3MF, PLY, USD and IFC, with assemblies,
   names, colours and units, and a CAD file's attributes and layers (shown and
   hidden as groups); very large models; re-tessellate and re-import that

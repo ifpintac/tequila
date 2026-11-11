@@ -398,6 +398,8 @@ const PRESETS: &[(&str, &str)] = &[
     ("custom", "Custom"),
 ];
 const TRACKPAD: &[(&str, &str)] = &[("pan", "Pans the view"), ("orbit", "Orbits the view")];
+const BLENDER_LIGHTS: &[(&str, &str)] = &[("ask", "Ask each time"), ("blender", "Use Blender's lighting"), ("tequila", "Keep Tequila's lighting")];
+
 const UP_AXES: &[(&str, &str)] = &[
     ("file", "As the file says"),
     ("y", "Y up"),
@@ -908,6 +910,21 @@ pub static SETTINGS: &[Setting] = &[
         get: |_| Value::Text(crate::import_settings::up_axis().key().to_string()),
         set: |_, value| match tequila_import::UpAxis::from_key(&text(value)) {
             Some(up) => crate::import_settings::set_up_axis(up),
+            None => Ok(()),
+        },
+    },
+    Setting {
+        key: "import.blender_lights",
+        page: Page::Import,
+        group: "Models",
+        label: "Lights in Blender files",
+        help: "What Tequila does with a Blender file's own lights, world and exposure: ask each time, light the model as Blender does, or keep the lighting you have.",
+        kind: Kind::Choice(BLENDER_LIGHTS),
+        own: false,
+        default: || Value::Text("ask".to_string()),
+        get: |_| Value::Text(crate::import_settings::blender_lights().key().to_string()),
+        set: |_, value| match crate::import_settings::BlenderLights::from_key(&text(value)) {
+            Some(choice) => crate::import_settings::set_blender_lights(choice),
             None => Ok(()),
         },
     },
@@ -2070,7 +2087,7 @@ mod tests {
         assert!(find("gizmo").len() >= 3);
         assert!(find("zoom").contains(&"navigation.zoom_speed") && find("zoom").contains(&"navigation.invert_zoom"));
         assert_eq!(find("upside down"), vec!["import.up_axis"], "a choice is found by its options");
-        assert_eq!(find("blender"), vec!["navigation.preset"]);
+        assert_eq!(find("blender"), vec!["navigation.preset", "import.blender_lights"]);
         assert!(find("xyzzy").is_empty());
         assert!(EXTRAS.iter().any(|e| e.words.contains("spacemouse")));
     }

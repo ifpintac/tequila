@@ -49,6 +49,7 @@ mod measure_tool;
 mod navigation;
 mod improve_model;
 mod import_settings;
+mod lighting_offer;
 mod model_units;
 mod metadata_panel;
 mod network_panel;
@@ -397,6 +398,8 @@ struct TequilaApp {
     update_report: Option<tequila_scene::reimport::ReimportReport>,
     /// The Model units window, when it is open.
     model_units: Option<model_units::ModelUnits>,
+    /// A Blender file's own lighting, offered once its model is in.
+    lighting_offer: Option<lighting_offer::LightingOffer>,
     /// The Improve model window, when it is open.
     improve_model: Option<improve_model::ImproveModel>,
     /// Path traced, or the fast preview. A view setting, not a document one:
@@ -1067,6 +1070,7 @@ impl TequilaApp {
             script_imports: Vec::new(),
             update_report: None,
             model_units: None,
+            lighting_offer: None,
             improve_model: None,
             shading: orchestrator::Shading::default(),
             view_mode: view_mode::ViewMode::default(),
@@ -1864,6 +1868,7 @@ impl eframe::App for TequilaApp {
         self.self_test.ui(ctx);
         self.update_report_window(ctx);
         self.model_units_window(ctx);
+        self.lighting_offer_window(ctx);
         self.improve_model_window(ctx);
         profile::time("ui: queue", || self.pump_queue(ctx));
         let mut window = std::mem::take(&mut self.render_window);
@@ -3396,6 +3401,14 @@ impl TequilaApp {
                     })
                     .response
                     .on_hover_text("A model drawn Z up comes in lying on its back unless this says Z up");
+                    ui.menu_button("Lights in Blender files", |ui| {
+                        ui.label(egui::RichText::new("What to do with a Blender file's own lights, world and exposure").weak().size(11.5));
+                        if let Some(said) = import_settings::blender_lights_menu(ui) {
+                            self.project.status = said;
+                        }
+                    })
+                    .response
+                    .on_hover_text("Light a Blender model as Blender does, or keep Tequila's lighting");
                     let selected = self.project.selection.active();
                     if ui
                         .add_enabled(selected.is_some(), egui::Button::new("Reload model from file"))
@@ -5635,6 +5648,7 @@ impl TequilaApp {
                     if units.is_some() {
                         self.model_units = units;
                     }
+                    self.file_lighting(&pending.name, &report, None);
                     self.frame_selection();
                 }
                 Err(error) => self.project.status = format!("{}: {error}", pending.name),
@@ -5906,6 +5920,79 @@ impl TequilaApp {
     }
 
     /// The Model units window: what a model's numbers are in.
+    /// What to do with the lighting a file brings - a Blender scene's
+    /// lights, world and exposure: `choice` where a script said, else the
+    /// setting, which may be to ask. Says what was done: "blender", "tequila"
+    /// or "asked", or `None` for a file with no lighting of its own.
+    pub(crate) fn file_lighting(&mut self, file: &str, report: &tequila_import::ImportReport, choice: Option<import_settings::BlenderLights>) -> Option<&'static str> {
+        let lighting = report.setup.as_ref().and_then(|s| s.lighting.clone())?;
+        Some(match choice.unwrap_or_else(import_settings::blender_lights) {
+            import_settings::BlenderLights::Blender => {
+                self.use_file_lighting(&lighting);
+                "blender"
+            }
+            import_settings::BlenderLights::Tequila => "tequila",
+            import_settings::BlenderLights::Ask => {
+                self.lighting_offer = Some(lighting_offer::LightingOffer::new(file.to_string(), lighting, self.project.document_epoch()));
+                "asked"
+            }
+        })
+    }
+
+    /// Light the scene as the file does, as one step to undo.
+    fn use_file_lighting(&mut self, lighting: &tequila_import::SceneLighting) {
+        let commands = lighting.commands(self.project.document());
+        if commands.is_empty() {
+            return;
+        }
+        self.project.begin_group();
+        let mut failed = None;
+        for command in commands {
+            if let Err(error) = self.project.apply(command) {
+                failed = Some(error.to_string());
+                break;
+            }
+        }
+        match failed {
+            None => {
+                self.project.end_group();
+                self.project.status = format!("Lit as in Blender: {}", lighting.summary());
+            }
+            Some(error) => {
+                self.project.abandon_group();
+                self.project.status = format!("Blender's lighting could not be put in: {error}");
+                self.toasts.warn(self.project.status.clone());
+            }
+        }
+    }
+
+    fn lighting_offer_window(&mut self, ctx: &egui::Context) {
+        let Some(mut offer) = self.lighting_offer.take() else { return };
+        // Asked about a project that has been closed since.
+        if offer.document_epoch != self.project.document_epoch() {
+            return;
+        }
+        let Some(answer) = offer.show(ctx) else {
+            self.lighting_offer = Some(offer);
+            return;
+        };
+        let (use_file, remember) = match answer {
+            lighting_offer::Answer::File { remember } => (true, remember),
+            lighting_offer::Answer::Keep { remember } => (false, remember),
+        };
+        if use_file {
+            self.use_file_lighting(&offer.lighting);
+        } else {
+            self.project.status = format!("Kept Tequila's lighting for {}", offer.file);
+        }
+        if remember {
+            let choice = if use_file { import_settings::BlenderLights::Blender } else { import_settings::BlenderLights::Tequila };
+            if let Err(error) = import_settings::set_blender_lights(choice) {
+                self.project.status = format!("Could not keep the setting: {error}");
+            }
+        }
+    }
+
     fn model_units_window(&mut self, ctx: &egui::Context) {
         let Some(mut units) = self.model_units.take() else { return };
         let (rescale, open) = units.show(ctx, self.project.document());

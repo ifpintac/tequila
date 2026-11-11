@@ -27,15 +27,18 @@
 //! - each material, its node tree translated node for node (`material`),
 //!   and its pictures, packed ones written out beside the model;
 //! - the scene's cameras, with its active one, and its render size and
-//!   view transform for a scene opened from it.
+//!   view transform for a scene opened from it;
+//! - its lights, its world and its exposure, as Tequila's lights, its
+//!   environment and its look: offered once the model is in, rather than
+//!   put in with it, since a model is usually lit with Tequila's studios
+//!   (`crate::SceneLighting`).
 //!
-//! Not: lights (Tequila lights a model with its studios), the world, the
-//! other scenes in the file, and anything Blender itself could not make
-//! into a mesh. Each is named in the import's warnings.
+//! Not: the other scenes in the file, and anything Blender itself could not
+//! make into a mesh. Each is named in the import's warnings.
 
 mod material;
 
-use crate::raw::{RawMesh, RawNode, RawScene, RawSetup, RawTexture};
+use crate::raw::{RawLight, RawMesh, RawNode, RawScene, RawSetup, RawTexture};
 use crate::ImportError;
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read as _;
@@ -46,6 +49,7 @@ use std::time::{Duration, Instant};
 use tequila_core::math::{vec2, vec3, vec4, Mat4, Transform, Vec2, Vec3, Vec4};
 use tequila_format::json::{self, Value as Json};
 use tequila_render_core::camera::{Aperture, Camera, Projection};
+use tequila_core::spectrum::Spectrum;
 use tequila_scene::lighting::SavedCamera;
 
 /// The script Blender runs.
@@ -526,11 +530,11 @@ pub(crate) fn scene_from(answer: &Json, bin: &[u8], packed: &dyn Fn(&str) -> Opt
     Ok(scene)
 }
 
-/// The scene's cameras, and its render size and look for a scene opened
-/// from it.
+/// The scene's cameras, its lights and world, and its render size and look.
 fn setup(answer: &Json, scene: &RawScene, notes: &mut Notes) -> Option<Box<RawSetup>> {
     let cameras = answer.get("cameras").map(Json::as_array).unwrap_or(&[]);
-    if cameras.is_empty() {
+    let lights = answer.get("lights").map(Json::as_array).unwrap_or(&[]);
+    if cameras.is_empty() && lights.is_empty() && answer.get("world").is_none_or(|w| matches!(w, Json::Null)) {
         return None;
     }
     let render = answer.get("render");
@@ -575,7 +579,142 @@ fn setup(answer: &Json, scene: &RawScene, notes: &mut Notes) -> Option<Box<RawSe
         notes.add("Blender's look (in Color Management) has no counterpart and was left out".into());
     }
     setup.image_style = Some(style);
+    // The file's own lighting, offered once the model is in.
+    let mut lighting = crate::raw::RawLighting { look: Some((style.display, style.exposure)), ..Default::default() };
+    for entry in lights {
+        if let Some(light) = light(entry, notes) {
+            lighting.lights.push(light);
+        }
+    }
+    if let Some(world) = answer.get("world").filter(|w| !matches!(w, Json::Null)) {
+        let cx = material::Context { trees: answer.get("trees").map(Json::as_array).unwrap_or(&[]), images: answer.get("images").map(Json::as_array).unwrap_or(&[]), packed: &|_| None, unit_scale: 1.0 };
+        lighting.environment = Some(environment(material::world(world, &cx, notes)));
+    }
+    if render.and_then(|r| r.get("transparent")).and_then(Json::as_bool) == Some(true) && !lighting.lights.is_empty() {
+        notes.add("Blender renders this scene on a transparent background; Tequila's background is left as it is".into());
+    }
+    let offered = !lighting.lights.is_empty() || lighting.environment.as_ref().is_some_and(|e| e.image.is_some());
+    if offered {
+        setup.lighting = Some(Box::new(lighting));
+    }
     Some(Box::new(setup))
+}
+
+/// Tequila's environment for a Blender world: an HDR picture turned as
+/// Blender turns it, or one colour all round - a pin over the whole sphere,
+/// so nothing of Tequila's own studio shows through.
+fn environment(world: material::Surroundings) -> tequila_scene::document::EnvironmentSettings {
+    use tequila_render_core::pins::{GradientStop, Pin, PinBlend, PinKind};
+    use tequila_scene::document::{BackgroundMode, EnvironmentSettings};
+    let mut e = EnvironmentSettings { background: BackgroundMode::Environment, ..EnvironmentSettings::default() };
+    match world {
+        material::Surroundings::Picture { path, strength, turn } => {
+            e.image = Some(path);
+            e.brightness = strength;
+            // Tequila's turn of r is Cycles' Mapping turn of -r - 90°
+            // (`tequila_render_cycles::environment_turn`), which is how
+            // Blender's world is turned.
+            e.rotation = -turn - std::f32::consts::FRAC_PI_2;
+        }
+        material::Surroundings::Colour { colour, strength } => {
+            e.image = None;
+            e.brightness = 1.0;
+            e.pins.push(Pin {
+                name: "Blender world".into(),
+                kind: PinKind::Gradient { stops: vec![GradientStop { t: 0.0, color: Spectrum::ONE }, GradientStop { t: 1.0, color: Spectrum::ONE }], radial: true },
+                direction: -Vec3::Y,
+                angular_size: Vec2 { x: std::f32::consts::TAU, y: std::f32::consts::TAU },
+                softness: 0.0,
+                intensity: strength,
+                color: colour,
+                show_in_background: true,
+                in_lighting: true,
+                blend: PinBlend::Over,
+                ..Pin::default()
+            });
+        }
+    }
+    e
+}
+
+/// A Blender light as Tequila's, at the same brightness.
+///
+/// Cycles takes a point or spot light's watts as an intensity of power / 4π
+/// and an area light's as a radiance of power / (π x area), and Tequila takes
+/// lumens the same two ways (`Intensity`, and the Cycles translation that
+/// inverts Cycles' own), with a nit as the unit of radiance both share: so
+/// the number carries over as it is, in lumens. A sun's watts a square metre
+/// are its irradiance, which is Tequila's lux. Placed where Blender has it,
+/// relative to the model's top node, which turns Blender's Z up to Y up.
+fn light(entry: &Json, notes: &mut Notes) -> Option<RawLight> {
+    use tequila_scene::lighting::{Intensity, LightSettings, LightShape};
+    let name = entry.get("name").and_then(Json::as_str).unwrap_or("Light").to_string();
+    let number = |key: &str| entry.get(key).and_then(Json::as_f32).filter(|v| v.is_finite());
+    let flag = |key: &str, default: bool| entry.get(key).and_then(Json::as_bool).unwrap_or(default);
+    let mut power = number("power").unwrap_or(0.0).max(0.0) * 2f32.powf(number("exposure").unwrap_or(0.0));
+    let mut matrix = matrix(entry.get("matrix"))?;
+    let kind = entry.get("type").and_then(Json::as_str).unwrap_or("POINT");
+    let (shape, intensity) = match kind {
+        "SUN" => (LightShape::Sun { angle_degrees: number("angle").unwrap_or(0.0).to_degrees() }, Intensity::Lux(power)),
+        "SPOT" => {
+            // Blender's cone is its whole angle; its blend the share of it
+            // that softens. Tequila's edge at its plain smoothstep softens
+            // between an inner and an outer half-angle, which Cycles' blend
+            // is the cosine-share of (`spot_blend` in the Cycles translation).
+            let outer = (number("spot_size").unwrap_or(std::f32::consts::FRAC_PI_4) * 0.5).clamp(1e-3, std::f32::consts::FRAC_PI_2);
+            let blend = number("spot_blend").unwrap_or(0.15).clamp(0.0, 1.0);
+            let cos_inner = outer.cos() + blend * (1.0 - outer.cos());
+            if number("radius").is_some_and(|r| r > 0.0) {
+                notes.add("spot lights came over with sharp shadows: Tequila's spot has no size to soften them".into());
+            }
+            (LightShape::Spot { inner_degrees: cos_inner.clamp(-1.0, 1.0).acos().to_degrees(), outer_degrees: outer.to_degrees(), falloff: 1.0 }, Intensity::Lumens(power))
+        }
+        "AREA" => {
+            let size = number("size").unwrap_or(1.0).max(1e-6);
+            let shape = entry.get("shape").and_then(Json::as_str).unwrap_or("SQUARE");
+            let height = if matches!(shape, "RECTANGLE" | "ELLIPSE") { number("size_y").unwrap_or(size).max(1e-6) } else { size };
+            let disc = matches!(shape, "DISK" | "ELLIPSE");
+            // Blender's "normalize" off: the power is a square metre's.
+            if !flag("normalize", true) {
+                power *= size * height * if disc { std::f32::consts::FRAC_PI_4 } else { 1.0 };
+            }
+            // Blender's panel faces its -Z, Tequila's its +Z: turned over
+            // about its width.
+            for row in matrix.m.iter_mut() {
+                row[1] = -row[1];
+                row[2] = -row[2];
+            }
+            (LightShape::Area { width: size, height, disc, two_sided: false }, Intensity::Lumens(power))
+        }
+        _ => (LightShape::Point { radius: number("radius").unwrap_or(0.0).max(0.0) }, Intensity::Lumens(power)),
+    };
+    let transform = Transform::from_matrix(matrix)?;
+    let mut settings = LightSettings {
+        shape,
+        color: entry.get("color").and_then(Json::as_f32_array).map(|c| Spectrum::from_linear_srgb(vec3(c[0].max(0.0), c.get(1).copied().unwrap_or(0.0).max(0.0), c.get(2).copied().unwrap_or(0.0).max(0.0)))).unwrap_or(Spectrum::ONE),
+        temperature: number("temperature").filter(|t| *t > 0.0),
+        intensity,
+        ..LightSettings::default()
+    };
+    if kind == "AREA" {
+        settings.spread_degrees = number("spread").unwrap_or(std::f32::consts::PI).to_degrees().clamp(1.0, 180.0);
+    }
+    settings.visibility.camera = flag("camera", true);
+    settings.visibility.diffuse = flag("diffuse", true);
+    settings.visibility.specular = flag("glossy", true);
+    settings.visibility.shadow = flag("shadow", true);
+    if flag("nodes", false) {
+        notes.add(format!("the light {name} is shaped by nodes, which came over as its plain colour and power"));
+    }
+    if flag("linked", false) {
+        notes.add(format!("the light {name} is linked to some objects only; it came over lighting everything"));
+    }
+    let mut metadata = BTreeMap::new();
+    metadata.insert("Blender object".to_string(), name.clone());
+    if let Some(c) = entry.get("collection").and_then(Json::as_str) {
+        metadata.insert("Blender collection".to_string(), c.to_string());
+    }
+    Some(RawLight { name, transform, settings, hidden: flag("hidden", false), metadata })
 }
 
 /// The middle of the scene's parts, in Tequila's world: what a camera
@@ -673,6 +812,51 @@ mod tests {
         let found: Vec<String> = newest_first(&folder, |n| n.starts_with("Blender") && n.ends_with(".app")).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
         let _ = std::fs::remove_dir_all(&folder);
         assert_eq!(found, ["Blender.app", "Blender 4.10.app", "Blender 4.2.app", "Blender 3.6.app"]);
+    }
+
+    /// A world lit by an HDR picture comes over as Tequila's environment
+    /// image, at its strength, turned as Blender's Mapping node turns it.
+    #[test]
+    fn an_hdri_world_is_turned_as_blender_turns_it() {
+        let tree = r#"{"nodes": [
+            {"name": "Out", "type": "ShaderNodeOutputWorld", "active": true, "settings": {"target": "ALL"}, "inputs": [{"id": "Surface", "name": "Surface", "type": "SHADER", "value": null}], "outputs": []},
+            {"name": "Bg", "type": "ShaderNodeBackground", "settings": {}, "inputs": [{"id": "Color", "name": "Color", "type": "RGBA", "value": [0.8, 0.8, 0.8, 1]}, {"id": "Strength", "name": "Strength", "type": "VALUE", "value": 2.5}], "outputs": [{"id": "Background", "name": "Background", "type": "SHADER"}]},
+            {"name": "Env", "type": "ShaderNodeTexEnvironment", "image": 0, "settings": {}, "inputs": [{"id": "Vector", "name": "Vector", "type": "VECTOR", "value": [0, 0, 0]}], "outputs": [{"id": "Color", "name": "Color", "type": "RGBA"}]},
+            {"name": "Map", "type": "ShaderNodeMapping", "settings": {"vector_type": "POINT"}, "inputs": [{"id": "Vector", "name": "Vector", "type": "VECTOR", "value": [0, 0, 0]}, {"id": "Location", "name": "Location", "type": "VECTOR", "value": [0, 0, 0]}, {"id": "Rotation", "name": "Rotation", "type": "VECTOR", "value": [0, 0, 0.5]}, {"id": "Scale", "name": "Scale", "type": "VECTOR", "value": [1, 1, 1]}], "outputs": [{"id": "Vector", "name": "Vector", "type": "VECTOR"}]}
+        ], "links": [[1, "Background", 0, "Surface"], [2, "Color", 1, "Color"], [3, "Vector", 2, "Vector"]]}"#;
+        let trees = vec![json::parse(tree.as_bytes()).unwrap()];
+        let images = vec![json::parse(br#"{"name": "studio.exr", "path": "/hdri/studio.exr", "file": null}"#).unwrap()];
+        let world = json::parse(br#"{"name": "World", "color": [0.05, 0.05, 0.05], "tree": 0}"#).unwrap();
+        let cx = material::Context { trees: &trees, images: &images, packed: &|_| None, unit_scale: 1.0 };
+        let mut notes = Notes::default();
+        let surroundings = material::world(&world, &cx, &mut notes);
+        assert_eq!(surroundings, material::Surroundings::Picture { path: "/hdri/studio.exr".into(), strength: 2.5, turn: 0.5 });
+        let e = environment(surroundings);
+        assert_eq!(e.image.as_deref(), Some("/hdri/studio.exr"));
+        assert_eq!(e.brightness, 2.5);
+        assert!((e.rotation - (-0.5 - std::f32::consts::FRAC_PI_2)).abs() < 1e-6);
+        assert!(e.pins.is_empty(), "Tequila's studio pins would light over the picture");
+        assert!(notes.0.is_empty(), "{:?}", notes.0);
+    }
+
+    /// A scene in millimetres keeps its lights' brightness when it comes into
+    /// metres: a panel the same radiance over its smaller area, a point the
+    /// same light at its nearer distance; a sun as it was.
+    #[test]
+    fn lights_keep_their_brightness_in_a_scene_of_other_units() {
+        use tequila_scene::lighting::{Intensity, LightShape};
+        let area = light(&json::parse(br#"{"name": "Panel", "type": "AREA", "shape": "SQUARE", "size": 400, "power": 50, "matrix": [1,0,0,100, 0,1,0,0, 0,0,1,500, 0,0,0,1]}"#).unwrap(), &mut Notes::default()).unwrap();
+        let sun = light(&json::parse(br#"{"name": "Sun", "type": "SUN", "power": 3, "angle": 0.01, "matrix": [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]}"#).unwrap(), &mut Notes::default()).unwrap();
+        let mut setup = RawSetup { lighting: Some(Box::new(crate::raw::RawLighting { lights: vec![area, sun], ..Default::default() })), ..RawSetup::default() };
+        setup.rescale(0.001);
+        let lights = &setup.lighting.as_ref().unwrap().lights;
+        assert_eq!(lights[0].settings.shape, LightShape::Area { width: 0.4, height: 0.4, disc: false, two_sided: false });
+        let Intensity::Lumens(lm) = lights[0].settings.intensity else { panic!() };
+        assert!((lm - 50e-6).abs() < 1e-9, "{lm}");
+        let radiance = |l: &crate::raw::RawLight| l.settings.intensity.radiance_for_area(l.settings.area());
+        assert!((radiance(&lights[0]) - 50.0 / (std::f32::consts::PI * 400.0 * 400.0)).abs() < 1e-9, "the panel's radiance changed");
+        assert!((lights[0].transform.matrix.transform_point(Vec3::ZERO) - vec3(0.1, 0.0, 0.5)).length() < 1e-6);
+        assert_eq!(lights[1].settings.intensity, Intensity::Lux(3.0));
     }
 
     #[test]

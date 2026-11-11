@@ -1087,7 +1087,10 @@ under M10's spectral item).
       instances, cameras; materials' node trees translated node for node
       onto Tequila's Cycles nodes, the Principled BSDF onto OpenPBR, images
       packed or not. Tests on a kept answer, and on Blender itself where
-      it is installed.
+      it is installed. Its lights, world and exposure offered once the
+      model is in (ask, or File › Lights in Blender files): the lights at
+      Blender's brightness under the model, the world as the environment
+      with Tequila's ground off, Blender's look; one undo step.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
       opened as a project of their own (File > Open, a drop, the start
       screen, `tequila -i`) or imported into one (File > Import, the

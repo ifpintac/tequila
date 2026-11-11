@@ -332,7 +332,15 @@ impl Bridge {
             "tequila_preferences" => self.request("preferences", fields_of(arguments)).map(|v| text_value(&v)),
             "tequila_import" => {
                 let path = get("path").and_then(|v| v.as_str().map(absolute)).ok_or("tequila_import needs `path`")?;
-                self.request("import", vec![("path", path.into())]).map(|v| text_value(&v))
+                // Which way up, and what to do with a Blender file's lights,
+                // as the tool says; left out, the app's settings decide.
+                let mut fields = vec![("path", path.into())];
+                for key in ["up", "lighting"] {
+                    if let Some(choice) = get(key).and_then(|v| v.as_str().map(str::to_string)) {
+                        fields.push((key, choice.into()));
+                    }
+                }
+                self.request("import", fields).map(|v| text_value(&v))
             }
             "tequila_save" => {
                 let fields = match get("path").and_then(|v| v.as_str().map(absolute)) {

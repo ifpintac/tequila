@@ -45,7 +45,10 @@ pub enum Operation {
     /// lets the application read it, then applies the very same command.
     /// `up`: which way up the file was drawn (`file`, `y`, `z`, `x`, `-y`,
     /// `-z`, `-x`), over the setting File › Up axis of imports keeps.
-    Import { path: String, parent: Option<u64>, up: Option<String> },
+    /// `lighting`: what to do with a Blender file's own lights, world and
+    /// exposure (`blender`, `tequila`, `ask`), over File › Lights in Blender
+    /// files.
+    Import { path: String, parent: Option<u64>, up: Option<String>, lighting: Option<String> },
     /// Make materials from a PBR texture pack — a folder, a ZIP, or one of
     /// its maps — and put the first on `nodes` (the selection when empty).
     TextureSet { path: String, nodes: Vec<u64> },
@@ -1122,6 +1125,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             path: string(value, "path")?,
             parent: value.get("parent").and_then(|v| v.as_index()).map(|i| i as u64),
             up: opt_string(value, "up")?,
+            lighting: opt_string(value, "lighting")?,
         },
         "reimport" => Operation::Reimport {
             node: value.get("node").and_then(|v| v.as_index()).map(|i| i as u64),
