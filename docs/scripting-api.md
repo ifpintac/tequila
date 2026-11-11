@@ -68,6 +68,7 @@ the document; what needs the window is refused by name.
 | `substance` | yes | yes |
 | `stop` | yes | - |
 | `ui` | yes | - |
+| `preferences` | yes | - |
 | `assistant` | yes | - |
 | `new` | yes | yes |
 | `open` | yes | yes |

@@ -169,6 +169,11 @@ TOOLS = [
                     'description': 'Open the Material Graph editor on this material number; false closes it.'},
           'tab': {'type': 'string', 'enum': ['scene', 'material', 'environment', 'lighting', 'camera', 'image', 'studios', 'scripting']},
           'viewport': {'type': 'string', 'enum': ['wireframe', 'solid', 'material', 'rendered']}}),
+    tool('tequila_preferences',
+         "Tequila's own settings, as Edit > Preferences shows them: with no arguments, every setting with its value, its default and what it takes, and every keyboard shortcut with its keys. They are the person's own and kept between sessions: change one only when asked to.",
+         {'set': {'type': 'object', 'description': 'Settings to change, by name: {"viewport.gizmo_size": 150, "navigation.invert_zoom": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {"shortcut.view.screenshot": "F12"}, a list of two keys, or "" for none.'},
+          'reset': {'type': ['string', 'array'], 'items': {'type': 'string'},
+                    'description': '"all", a page (general, interface, viewport, navigation, keyboard, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults.'}}),
     tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.',
          {'path': {'type': 'string'},
           'up': {'type': 'string', 'enum': ['file', 'y', 'z', 'x', '-y', '-z', '-x'],
@@ -207,7 +212,7 @@ TOOLS = [
 
 # Tools that reach outside the open scene: gone in restricted mode.
 UNRESTRICTED_ONLY = {
-    'tequila_request', 'tequila_import', 'tequila_material_save', 'tequila_studio_preset_save',
+    'tequila_request', 'tequila_import', 'tequila_preferences', 'tequila_material_save', 'tequila_studio_preset_save',
     'tequila_plugin_guide', 'tequila_plugin_list', 'tequila_plugin_write',
     'tequila_plugin_enable', 'tequila_plugin_run', 'tequila_plugin_log',
 }
@@ -448,6 +453,14 @@ class Bridge:
 
     def tool_ui(self, **changes):
         return text(self.request('ui', **changes))
+
+    def tool_preferences(self, set=None, reset=None):
+        fields = {}
+        if set is not None:
+            fields['set'] = set
+        if reset is not None:
+            fields['reset'] = reset
+        return text(self.request('preferences', **fields))
 
     def tool_import(self, path, up=None):
         return text(self.request('import', path=str(Path(path).resolve()), **({'up': up} if up else {})))

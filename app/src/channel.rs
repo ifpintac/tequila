@@ -262,6 +262,10 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::StudioPreset(request) => studio_preset(app, request),
         Operation::Assistant(request) => assistant(app, request),
         Operation::Substance(request) => substance(app, request),
+        Operation::Preferences(request) => match crate::preferences::script(app, request) {
+            Ok(settings) => Reply::Value(settings),
+            Err(error) => Reply::Failed(error),
+        },
         Operation::Material(request) => material(app, request),
         Operation::Plugin(request) => plugin(app, request),
         Operation::Project { action, save: saving, discard } => project(app, action, *saving, *discard),
@@ -538,6 +542,14 @@ fn tab_named(name: &str) -> Option<crate::ProjectTab> {
 fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> Reply {
     // Checked first, so a request with one bad field changes nothing at all
     // rather than everything up to the bad field.
+    let preferences_page = match change.preferences_page.as_deref().map(|name| (name, crate::preferences::Page::from_key(name))) {
+        Some((_, Some(page))) => Some(page),
+        Some((name, None)) => {
+            let pages: Vec<&str> = crate::preferences::Page::ALL.iter().map(|p| p.key()).collect();
+            return Reply::Failed(format!("`{name}` is not a page of Preferences; the pages are {}", pages.join(", ")));
+        }
+        None => None,
+    };
     // `configurator` is the Snapshots tab, scrolled to it.
     let reveal = change.tab.as_deref().is_some_and(|t| t.trim().eq_ignore_ascii_case("configurator"));
     let tab = match &change.tab {
@@ -734,7 +746,18 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     }
     if let Some(open) = change.preferences {
         app.start_screen.open &= !open;
-        app.spacemouse.preferences_open = open;
+        app.preferences.open = open;
+    }
+    if let Some(page) = preferences_page {
+        app.start_screen.open = false;
+        app.preferences.open = true;
+        app.preferences.page = page;
+        app.preferences.search.clear();
+    }
+    if let Some(search) = &change.preferences_search {
+        app.start_screen.open = false;
+        app.preferences.open = true;
+        app.preferences.search = search.clone();
     }
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
@@ -830,7 +853,8 @@ fn ui_state(app: &TequilaApp) -> Value {
             shot.build()
         })
         .set("preview_denoise", app.project.render_settings().preview_denoise)
-        .set("preferences", app.spacemouse.preferences_open)
+        .set("preferences", app.preferences.open)
+        .set("preferences_page", app.preferences.page.key())
         .set("spacemouse", {
             // The 3D mouse: the device read, if any, and the six axes as
             // the view takes them now, smoothed.
@@ -2403,6 +2427,29 @@ mod handler_tests {
 
     fn rename(id: u64, name: &str) -> String {
         format!(r#"{{"op":"apply","command":{{"command":"scene.rename","node":{id},"name":"{name}"}}}}"#)
+    }
+
+    /// A script opens Preferences at a page or a search, and reads and
+    /// changes settings through `preferences`.
+    #[test]
+    fn a_script_opens_preferences_and_changes_a_setting() {
+        let mut app = TequilaApp::for_tests();
+        let state = value(&mut app, r#"{"op":"ui","preferences_page":"navigation"}"#);
+        assert_eq!(state.get("preferences").and_then(Value::as_bool), Some(true));
+        assert_eq!(state.get("preferences_page").and_then(Value::as_str), Some("navigation"));
+        assert!(failure(&mut app, r#"{"op":"ui","preferences_page":"cellar"}"#).contains("general, interface, viewport"));
+        value(&mut app, r#"{"op":"ui","preferences_search":"zoom"}"#);
+        assert_eq!(app.preferences.search, "zoom");
+        value(&mut app, r#"{"op":"ui","preferences":false}"#);
+        assert!(!app.preferences.open);
+
+        let reply = value(&mut app, r#"{"op":"preferences","set":{"navigation.zoom_speed":2,"viewport.statistics":true}}"#);
+        assert!(reply.get("settings").is_some_and(|s| s.as_array().len() == crate::preferences::SETTINGS.len()));
+        assert_eq!(app.prefs.zoom_speed, 2.0);
+        assert!(app.show_hud);
+        assert!(failure(&mut app, r#"{"op":"preferences","set":{"navigation.zoom_speed":"fast"}}"#).contains("a number"));
+        value(&mut app, r#"{"op":"preferences","reset":"all"}"#);
+        assert_eq!(app.prefs, crate::preferences::Prefs::default());
     }
 
     /// A script hides and shows the selection's outline and the gizmo, as

@@ -221,7 +221,7 @@ impl Size {
         }
     }
 
-    fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         match self {
             Size::Compact => "compact",
             Size::Regular => "regular",

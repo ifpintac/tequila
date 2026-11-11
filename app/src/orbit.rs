@@ -60,6 +60,19 @@ impl Gestures {
         gestures
     }
 
+    /// As the person's settings have them (Preferences › Navigation): a
+    /// swipe that orbits where it panned, with Shift's the other, and each
+    /// at its own speed. A pinch keeps its direction whatever the wheel's
+    /// is: fingers apart is always closer.
+    pub fn tuned(&mut self, prefs: &crate::preferences::Prefs) {
+        if prefs.trackpad_orbits {
+            std::mem::swap(&mut self.pan, &mut self.orbit);
+        }
+        self.pan *= prefs.pan_speed;
+        self.orbit *= prefs.orbit_speed;
+        self.zoom *= prefs.zoom_speed;
+    }
+
     /// Whether they move the camera at all.
     pub fn moves(&self) -> bool {
         self.pan != egui::Vec2::ZERO || self.orbit != egui::Vec2::ZERO || self.zoom != 0.0 || self.focal_length != 0.0
@@ -85,6 +98,28 @@ mod tests {
         assert_eq!((zoom.zoom, zoom.pan), (0.5, egui::Vec2::ZERO));
         let focal = Gestures::read(&[swipe(0.0, -120.0, egui::Modifiers::ALT)]);
         assert_eq!((focal.focal_length, focal.zoom), (-1.0, 0.0));
+    }
+
+    /// The person's settings: a swipe that orbits, with Shift's panning;
+    /// each at its speed; a pinch never turned round.
+    #[test]
+    fn a_swipe_follows_the_navigation_settings() {
+        let mut prefs = crate::preferences::Prefs::default();
+        let read = || Gestures::read(&[swipe(4.0, 2.0, egui::Modifiers::NONE), swipe(1.0, 1.0, egui::Modifiers::SHIFT), egui::Event::Zoom(std::f32::consts::E.powf(ZOOM_PER_NOTCH))]);
+        let mut usual = read();
+        usual.tuned(&prefs);
+        assert_eq!(usual, read(), "the defaults change nothing");
+        prefs.trackpad_orbits = true;
+        prefs.pan_speed = 2.0;
+        prefs.orbit_speed = 0.5;
+        prefs.zoom_speed = 3.0;
+        prefs.invert_zoom = true;
+        let mut tuned = read();
+        tuned.tuned(&prefs);
+        assert_eq!(tuned.orbit, egui::vec2(2.0, 1.0), "the plain swipe orbits, at half speed");
+        assert_eq!(tuned.pan, egui::vec2(2.0, 2.0), "Shift's swipe pans, at twice");
+        assert!((tuned.zoom - 3.0).abs() < 1e-4, "a pinch is faster and not reversed: {}", tuned.zoom);
+        assert_eq!(prefs.zoom_factor(), -3.0, "the wheel is");
     }
 
     #[test]

@@ -232,6 +232,7 @@ pub enum MenuCommand {
     Import,
     Undo,
     Redo,
+    Preferences,
     Inspector,
     Library,
     FullViewport,
@@ -249,7 +250,7 @@ pub enum MenuCommand {
 impl MenuCommand {
     /// In menu order, each menu's commands together: an item's tag is its
     /// place here.
-    pub const ALL: [MenuCommand; 17] = [
+    pub const ALL: [MenuCommand; 18] = [
         MenuCommand::NewProject,
         MenuCommand::Open,
         MenuCommand::Save,
@@ -257,6 +258,7 @@ impl MenuCommand {
         MenuCommand::Import,
         MenuCommand::Undo,
         MenuCommand::Redo,
+        MenuCommand::Preferences,
         MenuCommand::Inspector,
         MenuCommand::Library,
         MenuCommand::FullViewport,
@@ -278,6 +280,7 @@ impl MenuCommand {
             MenuCommand::Import => "Import Model…",
             MenuCommand::Undo => "Undo",
             MenuCommand::Redo => "Redo",
+            MenuCommand::Preferences => "Settings…",
             MenuCommand::Inspector => "Inspector",
             MenuCommand::Library => "Material Library",
             MenuCommand::FullViewport => "Full Viewport",
@@ -295,7 +298,7 @@ impl MenuCommand {
     pub fn menu(self) -> &'static str {
         match self {
             MenuCommand::NewProject | MenuCommand::Open | MenuCommand::Save | MenuCommand::SaveAs | MenuCommand::Import => "File",
-            MenuCommand::Undo | MenuCommand::Redo => "Edit",
+            MenuCommand::Undo | MenuCommand::Redo | MenuCommand::Preferences => "Edit",
             MenuCommand::Inspector | MenuCommand::Library | MenuCommand::FullViewport | MenuCommand::FrameSelection | MenuCommand::FrameAll => "View",
             MenuCommand::RenderWindow => "Render",
             MenuCommand::Shortcuts | MenuCommand::StartScreen | MenuCommand::Updates | MenuCommand::About => "Help",

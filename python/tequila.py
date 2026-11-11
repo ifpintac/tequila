@@ -325,6 +325,31 @@ class Client:
         or an exact eye position `frm` looking at `at`. Undoable."""
         return self.request('look', **_look_fields(view, at, yaw, pitch, distance, frm, focal_length))
 
+    def preferences(self, reset=None, **settings):
+        """Tequila's own settings (Edit > Preferences), kept between
+        sessions. With nothing asked, every setting: its `key`, `value`,
+        `default`, `page`, `label`, `help` and what it takes. Settings are
+        set by name - a dotted name needs a dict:
+        `fs.preferences(**{'viewport.gizmo_size': 150})` - all checked
+        before any is taken. `reset` puts back 'all', a page ('viewport'),
+        a setting, or a list of settings. Returns every setting afterwards.
+        Keyboard shortcuts are set the same way, by `shortcut.` and the
+        action's name, from a key written out, a list of two, or '' for
+        none: `fs.preferences(**{'shortcut.view.screenshot': 'F12'})`;
+        `fs.shortcuts()` lists them."""
+        fields = {}
+        if settings:
+            fields['set'] = settings
+        if reset is not None:
+            fields['reset'] = reset
+        return self.request('preferences', **fields)['settings']
+
+    def shortcuts(self):
+        """Every keyboard shortcut of the main window: its `key`
+        ('shortcut.edit.undo'), `group`, `label`, the `keys` it has now
+        and its `default`. Change one with `preferences`."""
+        return self.request('preferences')['shortcuts']
+
     def ui(self, **changes):
         """Open or close panels: render_window, console, inspector, library,
         full_viewport, statistics (the viewport's, as H shows them), help,
@@ -344,7 +369,9 @@ class Client:
         save_screenshot=True (P's Screenshot of the viewport, into the
         screenshot folder), screenshot_folder='<folder>' (kept in the
         application's settings; '' for the default), window_size=[w, h]
-        (the window's inner size, in points)."""
+        (the window's inner size, in points), preferences_page='viewport'
+        and preferences_search='gizmo' (the Preferences window at a page,
+        or searching)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):
