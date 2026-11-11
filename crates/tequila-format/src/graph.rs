@@ -196,6 +196,9 @@ fn node_to_json(id: NodeId, node: &Node) -> Value {
         NodeKind::Occlusion { radius, contrast } => {
             object.set("radius", *radius).set("contrast", *contrast);
         }
+        NodeKind::Distance { radius } => {
+            object.set("radius", *radius);
+        }
         NodeKind::VertexColor => {}
         NodeKind::VolumeMap { volume } => {
             object.set("volume", volume.0 as f64);
@@ -529,6 +532,13 @@ fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
                 seed: value.get("seed").and_then(|v| v.as_index()).unwrap_or(0) as u32,
             }
         }
+        "distance" => NodeKind::Distance {
+            radius: value
+                .get("radius")
+                .and_then(|v| v.as_f32())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(tequila_materials::graph::DEFAULT_DISTANCE_RADIUS),
+        },
         "occlusion" => NodeKind::Occlusion {
             radius: value
                 .get("radius")
@@ -657,6 +667,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Curvature { .. } => "curvature",
         NodeKind::Reroute { .. } => "reroute",
         NodeKind::Occlusion { .. } => "occlusion",
+        NodeKind::Distance { .. } => "distance",
         NodeKind::VertexColor => "vertex_color",
         NodeKind::VolumeMap { .. } => "volume_map",
         NodeKind::Bubbles { .. } => "bubbles",

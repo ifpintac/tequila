@@ -1541,9 +1541,11 @@ impl Builder<'_> {
         // vertex (`Mesh::curvature`, `Mesh::occlusion`), for the nodes that
         // read them (`Builder::shape`): the same numbers in both renderers.
         let measured = |values: &[f32]| !values.is_empty() && values.len() == mesh.positions.len();
-        if (measured(&mesh.curvature) || measured(&mesh.occlusion)) && self.session.has_mesh_attributes() {
+        // And how close the nearest other part is (`Mesh::closeness`), for
+        // the Distance node, in the channel that was spare.
+        if (measured(&mesh.curvature) || measured(&mesh.occlusion) || measured(&mesh.closeness)) && self.session.has_mesh_attributes() {
             let at = |values: &[f32], i: usize| if measured(values) { values[i] } else { 0.0 };
-            let rgba: Vec<[f32; 4]> = (0..mesh.positions.len()).map(|i| [at(&mesh.curvature, i), at(&mesh.occlusion, i), 0.0, 1.0]).collect();
+            let rgba: Vec<[f32; 4]> = (0..mesh.positions.len()).map(|i| [at(&mesh.curvature, i), at(&mesh.occlusion, i), at(&mesh.closeness, i), 1.0]).collect();
             self.session.mesh_attribute(node, SHAPE_ATTRIBUTE, &rgba)?;
         }
         Ok(node)
@@ -2197,6 +2199,7 @@ impl Builder<'_> {
                 Instruction::VertexColor { dst } => (dst, self.vertex_colour(shader)?),
                 Instruction::Curvature { dst, mode, radius, contrast, .. } => (dst, self.curvature(shader, *mode, *radius, *contrast)?),
                 Instruction::Occlusion { dst, contrast, .. } => (dst, self.occlusion(shader, *contrast)?),
+                Instruction::Distance { dst } => (dst, self.distance(shader)?),
                 Instruction::Evaluate { dst, procedural, seed, mapping } => {
                     let slot = self.procedural(shader, procedural, *seed, mapping.as_deref())?;
                     (dst, slot.unwrap_or(Slot::Value(Value::Float(0.5))))
@@ -2398,6 +2401,16 @@ impl Builder<'_> {
         };
         let occluded = self.clamped(shader, "multiply_add", occluded, num(1.0), num(0.0))?;
         self.float_op(shader, "power", occluded, num(contrast.max(0.05)))
+    }
+
+    /// A Distance node as Tequila's renderer shades it: what is left of the
+    /// closeness it measured a vertex, 1 where nothing was near - which is
+    /// also what a mesh nothing measured reads as.
+    fn distance(&mut self, shader: Shader) -> Result<Slot, String> {
+        let Some(close) = self.shape(shader, "Blue")? else {
+            return Ok(Slot::Value(Value::Float(1.0)));
+        };
+        self.clamped(shader, "subtract", num(1.0), close, num(0.0))
     }
 
     fn vertex_colour(&mut self, shader: Shader) -> Result<Slot, String> {

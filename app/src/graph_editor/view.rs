@@ -104,7 +104,7 @@ pub fn family(kind: &NodeKind) -> Family {
         NodeKind::Gradient { .. } | NodeKind::Remap { .. } | NodeKind::Clamp { .. } | NodeKind::Channel { .. } => Family::Converter,
         NodeKind::Mix | NodeKind::Multiply | NodeKind::Add | NodeKind::Invert => Family::Color,
         NodeKind::Bump { .. } => Family::Vector,
-        NodeKind::Curvature { .. } | NodeKind::Occlusion { .. } | NodeKind::Bubbles { .. } | NodeKind::Fuzz { .. } => Family::Surface,
+        NodeKind::Curvature { .. } | NodeKind::Occlusion { .. } | NodeKind::Distance { .. } | NodeKind::Bubbles { .. } | NodeKind::Fuzz { .. } => Family::Surface,
         NodeKind::Reroute { .. } => Family::Layout,
     }
 }
@@ -328,7 +328,7 @@ fn note(node: &Node, texture_name: &dyn Fn(tequila_materials::graph::TextureId) 
         NodeKind::Mapping2d { mapping } => format!("{:?}", mapping.projection),
         NodeKind::Bump { depth } => format!("Depth {:.2} mm", depth * 1000.0),
         NodeKind::Curvature { mode, radius, .. } => format!("{} · {:.1} mm", mode.label(), radius * 1000.0),
-        NodeKind::Occlusion { radius, .. } => format!("Reach {:.1} mm", radius * 1000.0),
+        NodeKind::Occlusion { radius, .. } | NodeKind::Distance { radius } => format!("Reach {:.1} mm", radius * 1000.0),
         NodeKind::Bubbles { count, .. } => format!("{count} bubbles"),
         NodeKind::Fuzz { length, density, .. } => format!("{:.1} mm · {density:.0}/cm²", length * 1000.0),
         NodeKind::Remap { from, to } => format!("{:.2}–{:.2} to {:.2}–{:.2}", from.x, from.y, to.x, to.y),

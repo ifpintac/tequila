@@ -35,6 +35,7 @@ pub mod material;
 pub mod measure;
 pub mod metadata;
 pub mod occlusion;
+pub mod proximity;
 pub mod orbit;
 pub mod paths;
 pub mod pattern;

@@ -579,3 +579,75 @@ fn a_studio_without_views_leaves_lights_and_product_alone() {
         assert!(close(document.tree.get(id).unwrap().transform, *before));
     }
 }
+
+/// A Distance node has its parts measured against the others where they
+/// stand: close where another part is near, clear where none is, measured
+/// again when a part moves and not when nothing did; a part whose material
+/// has no such node pays nothing.
+#[test]
+fn a_distance_node_measures_how_near_the_other_parts_are() {
+    use tequila_core::math::{vec3, Transform};
+    use tequila_materials::graph::{Node, NodeKind as GraphKind, Socket};
+    use tequila_materials::material_type::Param;
+    use tequila_scene::command::{reserve_keys, ImportPayload};
+    use tequila_scene::material::MaterialDefinition;
+    use tequila_scene::tree::SceneNode;
+
+    // The demo's ball, a metre in radius, standing at (0, 1, 0); and
+    // another beside it, a twentieth of a metre off its side.
+    let (mut document, mut bus, part, material) = demo();
+    let (meshes, materials, ids) = reserve_keys(&document, 1, 1, 1);
+    let ball = tequila_scene::demo::uv_sphere(1.0, 48, 24);
+    let mut other = SceneNode::new(ids[0], "Other", NodeKind::Part { mesh: meshes[0] });
+    other.transform = Transform::translation(vec3(2.05, 1.0, 0.0));
+    other.material = Some(materials[0]);
+    let plain = document.materials.get(material).unwrap().clone();
+    bus.apply(
+        &mut document,
+        Command::Import {
+            payload: Box::new(ImportPayload {
+                meshes: vec![(meshes[0], tequila_scene::geometry::Mesh::new(ball.positions.clone(), ball.indices.clone()))],
+                textures: Vec::new(),
+                materials: vec![(materials[0], MaterialDefinition::new("Other", plain.material_type, plain.material().clone()))],
+                nodes: vec![other],
+                roots: vec![ids[0]],
+            }),
+        },
+    )
+    .expect("a second ball");
+
+    let mut graph = document.materials.get(material).unwrap().graph.clone();
+    let distance = graph.add_node(Node::new(GraphKind::Distance { radius: 0.5 }));
+    let output = graph.output();
+    graph.connect(distance, output, Socket::Param(Param::SpecularRoughness));
+    bus.apply(&mut document, Command::SetGraph { material, graph: Box::new(graph) }).unwrap();
+
+    let mut cache = MeshCache::default();
+    let mesh_of = |document: &SceneDocument, cache: &mut MeshCache, node: NodeId| {
+        let (scene, mapping) = snapshot(document, Arc::new(Environment::uniform(Spectrum::ONE)), cache);
+        let instance = mapping.instance_of(node).unwrap();
+        scene.meshes[scene.instances[instance.0 as usize].mesh.index()].clone()
+    };
+    let measured = mesh_of(&document, &mut cache, part);
+    assert_eq!(measured.closeness.len(), measured.positions.len());
+    // Nearest at the side that faces the other ball: a twentieth of a
+    // metre off, of a reach of a half. Clear over most of the rest.
+    let nearest = measured.closeness.iter().cloned().fold(0.0f32, f32::max);
+    assert!((nearest - 0.9).abs() < 0.06, "the nearest point is {nearest} close");
+    let facing = measured.positions.iter().zip(&measured.closeness).filter(|(p, _)| p.x > 0.97).map(|(_, c)| *c).fold(1.0f32, f32::min);
+    assert!(facing > 0.6, "the side that faces it is {facing} close at its least");
+    let clear = measured.closeness.iter().filter(|c| **c == 0.0).count();
+    assert!(clear * 2 > measured.closeness.len(), "only {clear} of {} vertices are clear", measured.closeness.len());
+    assert!(measured.positions.iter().zip(&measured.closeness).filter(|(p, _)| p.x < 0.0).all(|(_, c)| *c == 0.0), "the far side is marked");
+
+    // The other ball's material has no such node: nothing measured for it.
+    assert!(mesh_of(&document, &mut cache, ids[0]).closeness.is_empty());
+    // Nothing moved: the same mesh, not measured again.
+    assert!(Arc::ptr_eq(&measured, &mesh_of(&document, &mut cache, part)));
+
+    // The other ball taken away: measured again, and clear all over.
+    bus.apply(&mut document, Command::SetTransform { transforms: vec![(ids[0], Transform::translation(vec3(6.0, 1.0, 0.0)))] }).unwrap();
+    let apart = mesh_of(&document, &mut cache, part);
+    assert!(!Arc::ptr_eq(&measured, &apart));
+    assert!(apart.closeness.iter().all(|c| *c == 0.0));
+}

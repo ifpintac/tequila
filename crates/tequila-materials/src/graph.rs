@@ -375,6 +375,12 @@ pub enum NodeKind {
         /// 1 leaves it; higher gathers it into the deepest corners.
         contrast: f32,
     },
+    /// How far the nearest other part is, as a share of `radius` scene
+    /// units: 0 where another part touches, 1 where none is within reach.
+    /// Measured once per vertex of each part that uses it, against every
+    /// other part, as Occlusion is against the part itself. The wear where
+    /// two parts meet, the damp round a foot, the dust a lid keeps off.
+    Distance { radius: f32 },
     /// §6.2's Vertex Color: the colour a mesh carries per vertex, as a
     /// scanner, a sculpting tool or a glTF's COLOR_0 painted it. White on a
     /// mesh without.
@@ -429,6 +435,10 @@ pub fn occlusion_shape(occlusion: f32, contrast: f32) -> f32 {
 /// A new [`NodeKind::Occlusion`]'s radius: a centimetre in a scene in
 /// metres, which is the scale of the crevices it is for.
 pub const DEFAULT_OCCLUSION_RADIUS: f32 = 0.01;
+
+/// A new [`NodeKind::Distance`]'s reach: two centimetres in a scene in
+/// metres, the width of the mark one part leaves on the next.
+pub const DEFAULT_DISTANCE_RADIUS: f32 = 0.02;
 
 /// What a [`NodeKind::Curvature`] masks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -532,6 +542,7 @@ impl NodeKind {
             NodeKind::Bump { .. } => vec![(Socket::Input(0), SocketType::Float, "Height")],
             NodeKind::Curvature { .. }
             | NodeKind::Occlusion { .. }
+            | NodeKind::Distance { .. }
             | NodeKind::VertexColor
             | NodeKind::VolumeMap { .. }
             | NodeKind::Bubbles { .. }
@@ -639,7 +650,7 @@ impl NodeKind {
             NodeKind::ImageAlpha { .. } => Some(SocketType::Float),
             NodeKind::Bump { .. } => Some(SocketType::Float),
             NodeKind::Curvature { .. } => Some(SocketType::Float),
-            NodeKind::Occlusion { .. } => Some(SocketType::Float),
+            NodeKind::Occlusion { .. } | NodeKind::Distance { .. } => Some(SocketType::Float),
             NodeKind::VertexColor => Some(SocketType::Color),
             NodeKind::VolumeMap { .. } => Some(SocketType::Float),
             NodeKind::Reroute { ty } => Some(*ty),
@@ -672,6 +683,7 @@ impl NodeKind {
                 | NodeKind::ImageAlpha { .. }
                 | NodeKind::Curvature { .. }
                 | NodeKind::Occlusion { .. }
+                | NodeKind::Distance { .. }
                 | NodeKind::VertexColor
                 | NodeKind::VolumeMap { .. }
         )
@@ -699,6 +711,7 @@ impl NodeKind {
             NodeKind::Bump { .. } => "Bump",
             NodeKind::Curvature { .. } => "Curvature",
             NodeKind::Occlusion { .. } => "Occlusion",
+            NodeKind::Distance { .. } => "Distance",
             NodeKind::VertexColor => "Vertex Color",
             NodeKind::VolumeMap { .. } => "Volume Map",
             NodeKind::Bubbles { .. } => "Bubbles",
@@ -768,6 +781,8 @@ impl NodeKind {
             NodeKind::Reroute { ty } => get(0).convert(*ty).unwrap_or(get(0)),
             // Varying, so never folded; open is the honest guess.
             NodeKind::Occlusion { contrast, .. } => Value::Float(occlusion_shape(0.0, *contrast)),
+            // Varying too; nothing near is the honest guess.
+            NodeKind::Distance { .. } => Value::Float(1.0),
             NodeKind::VertexColor => Value::Color(Spectrum::ONE),
             NodeKind::VolumeMap { .. } => Value::Float(1.0),
             NodeKind::Bubbles { .. } | NodeKind::Fuzz { .. } => Value::Float(0.0),
@@ -1407,6 +1422,9 @@ pub enum Instruction {
     /// §6.2's Occlusion, read from the shading point, where the snapshot
     /// left the value it measured at the program's radius.
     Occlusion { dst: Register, contrast: f32 },
+    /// The Distance node, read from the shading point, where the snapshot
+    /// left how close the nearest other part is within the program's reach.
+    Distance { dst: Register },
     /// §6.2's Vertex Color, read from the shading point.
     VertexColor { dst: Register },
     /// A Volume Map's density at the surface, which is 1; see
@@ -1434,6 +1452,7 @@ impl Instruction {
             | Instruction::Evaluate { dst, .. }
             | Instruction::Curvature { dst, .. }
             | Instruction::Occlusion { dst, .. }
+            | Instruction::Distance { dst }
             | Instruction::VertexColor { dst }
             | Instruction::VolumeMap { dst, .. }
             | Instruction::Apply { dst, .. }
@@ -1464,6 +1483,10 @@ pub struct Requirements {
     /// Held as bits so the requirements stay comparable; read it through
     /// [`Requirements::occlusion_radius`].
     pub occlusion_radius_bits: Option<u32>,
+    /// The Distance node's reach, likewise: the parts wearing it need the
+    /// nearest other part found within it. Read it through
+    /// [`Requirements::distance_radius`].
+    pub distance_radius_bits: Option<u32>,
     /// What a Bubbles node asks for, when the graph has one.
     pub bubbles: Option<BubbleRequest>,
     /// What a Fuzz node asks for, when the graph has one.
@@ -1481,6 +1504,7 @@ impl Requirements {
         self.needs_medium |= other.needs_medium;
         self.time_varying |= other.time_varying;
         self.occlusion_radius_bits = self.occlusion_radius_bits.or(other.occlusion_radius_bits);
+        self.distance_radius_bits = self.distance_radius_bits.or(other.distance_radius_bits);
         self.bubbles = self.bubbles.or(other.bubbles);
         self.fuzz = self.fuzz.or(other.fuzz);
     }
@@ -1562,6 +1586,10 @@ impl BubbleRequest {
 impl Requirements {
     pub fn occlusion_radius(&self) -> Option<f32> {
         self.occlusion_radius_bits.map(f32::from_bits)
+    }
+
+    pub fn distance_radius(&self) -> Option<f32> {
+        self.distance_radius_bits.map(f32::from_bits)
     }
 }
 
@@ -1896,6 +1924,12 @@ impl MaterialGraph {
                     let widest = requirements.occlusion_radius().unwrap_or(0.0).max(*radius);
                     requirements.occlusion_radius_bits = Some(widest.to_bits());
                     instructions.push(Instruction::Occlusion { dst, contrast: *contrast });
+                }
+                NodeKind::Distance { radius } => {
+                    // One reach to a material: the widest asked for.
+                    let widest = requirements.distance_radius().unwrap_or(0.0).max(*radius);
+                    requirements.distance_radius_bits = Some(widest.to_bits());
+                    instructions.push(Instruction::Distance { dst });
                 }
                 NodeKind::Curvature { mode, radius, contrast } => {
                     instructions.push(Instruction::Curvature {

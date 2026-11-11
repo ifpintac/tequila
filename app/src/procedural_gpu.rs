@@ -319,6 +319,8 @@ pub fn generate(program: &CompiledGraph) -> Option<Generated> {
             Instruction::Input { input, .. } => point_input(*input),
             Instruction::Curvature { mode, radius, contrast, .. } => Some(value_lit(&Value::Float(mode.mask(0.0, *radius, *contrast)))),
             Instruction::Occlusion { contrast, .. } => Some(value_lit(&Value::Float(tequila_materials::graph::occlusion_shape(0.0, *contrast)))),
+            // Not measured for this view: nothing near.
+            Instruction::Distance { .. } => Some(value_lit(&Value::Float(1.0))),
             Instruction::VertexColor { .. } => Some(value_lit(&Value::Color(tequila_core::spectrum::Spectrum::ONE))),
             Instruction::VolumeMap { .. } => Some(value_lit(&Value::Float(1.0))),
             Instruction::Apply { kind, args, output, .. } => {
@@ -463,6 +465,7 @@ fn apply(kind: &NodeKind, a: &[Arg], output: u8, memo: &mut Memo) -> Option<(Str
         NodeKind::Gradient { gradient } => vec4_of(ramp(gradient, &f(0))),
         NodeKind::Curvature { mode, radius, contrast } => return Some(value_lit(&Value::Float(mode.mask(0.0, *radius, *contrast)))),
         NodeKind::Occlusion { contrast, .. } => return Some(value_lit(&Value::Float(tequila_materials::graph::occlusion_shape(0.0, *contrast)))),
+        NodeKind::Distance { .. } => return Some(value_lit(&Value::Float(1.0))),
         NodeKind::VertexColor => return Some(value_lit(&Value::Color(tequila_core::spectrum::Spectrum::ONE))),
         NodeKind::VolumeMap { .. } => return Some(value_lit(&Value::Float(1.0))),
         NodeKind::Node(node) => return shader_node(node, a, output, memo).map(|e| (e, ty)),

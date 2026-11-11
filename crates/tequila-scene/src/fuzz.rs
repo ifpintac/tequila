@@ -444,6 +444,7 @@ impl<'a> Paint<'a> {
                 generated: (root.at - centre) / tequila_core::math::vec3(size(half.x), size(half.y), size(half.z)) * 0.5 + Vec3::splat(0.5),
                 object_location: self.transform.point(Vec3::ZERO),
                 object_random: self.object_random,
+                closeness: 0.0,
                 ray: Default::default(),
             },
         };

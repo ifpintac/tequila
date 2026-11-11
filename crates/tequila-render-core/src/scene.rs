@@ -43,6 +43,10 @@ pub struct Mesh {
     /// Per-vertex occluded fraction at the radius an Occlusion node asked
     /// for (`tequila_scene::occlusion`). Empty when nothing asked.
     pub occlusion: Vec<f32>,
+    /// Per-vertex closeness of the nearest other part, within the reach a
+    /// Distance node asked for: 0 for none within it, 1 for one touching
+    /// (`tequila_scene::proximity`). Empty when nothing asked.
+    pub closeness: Vec<f32>,
     /// Per-vertex colours, linear RGBA. Empty when the mesh has none.
     pub colors: Vec<tequila_core::math::Vec4>,
     /// Triangle vertex indices, three per triangle.
@@ -168,6 +172,7 @@ impl Mesh {
             tangents: Vec::new(),
             curvature: Vec::new(),
             occlusion: Vec::new(),
+            closeness: Vec::new(),
             colors: Vec::new(),
             indices,
             edge_lines: Vec::new(),
@@ -1130,6 +1135,21 @@ impl SceneSnapshot {
         Spectrum::from_linear_srgb(tequila_core::math::vec3(mixed.x, mixed.y, mixed.z))
     }
 
+    /// How close the nearest other part is at a hit, interpolated across
+    /// the triangle. Zero - none within reach - for a mesh nothing measured.
+    pub fn closeness_at(&self, hit: &crate::intersect::Hit) -> f32 {
+        let Some(mesh) = self.instances.get(hit.instance.0 as usize).and_then(|instance| self.meshes.get(instance.mesh.index())) else {
+            return 0.0;
+        };
+        if mesh.closeness.len() != mesh.positions.len() {
+            return 0.0;
+        }
+        let Some(([a, b, c], [u, v, w])) = self.barycentrics(hit) else {
+            return 0.0;
+        };
+        u * mesh.closeness[a] + v * mesh.closeness[b] + w * mesh.closeness[c]
+    }
+
     /// The occluded fraction at a hit, interpolated across the triangle.
     /// Zero for a mesh nothing measured.
     pub fn occlusion_at(&self, hit: &crate::intersect::Hit) -> f32 {
@@ -1316,6 +1336,7 @@ impl SceneSnapshot {
                 generated: self.generated_at(hit, object),
                 object_location: transform.point(Vec3::ZERO),
                 object_random: Self::object_random(hit.instance.index()),
+                closeness: self.closeness_at(hit),
                 ray: Default::default(),
             },
             position: object,
