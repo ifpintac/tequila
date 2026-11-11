@@ -75,6 +75,22 @@ pub struct View {
     pub manifold_caustics: bool,
 }
 
+/// How many steps a channel of a part's colour is carried in.
+const COLOUR_STEPS: f32 = 4095.0;
+
+/// What a Cycles object's colour carries for an instance, since Cycles
+/// gives a shader three numbers of an object and Tequila has more to say:
+/// in red, the part's scale (scene units per unit of its own space), for a
+/// texture of a real-world size; in green and blue, the colour the part
+/// says of itself (Object Info's Color), its red and green packed twelve
+/// bits each into one number and its blue in the other
+/// (`Builder::object_scale`, `Builder::part_colour` read them back).
+fn object_colour(instance: &tequila_render_core::scene::Instance) -> [f32; 3] {
+    let scale = 1.0 / instance.transform.inv_length_scale();
+    let [r, g, b] = rgb(instance.colour).map(|c| (c.clamp(0.0, 1.0) * COLOUR_STEPS).round());
+    [scale, r * (COLOUR_STEPS + 1.0) + g, b]
+}
+
 /// A position or a direction from Cycles' Z-up world back into Tequila's.
 pub fn from_cycles(v: [f32; 3]) -> Vec3 {
     vec3(v[0], v[2], -v[1])
@@ -707,8 +723,10 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
         builder.session.set_int(object, "pass_id", pass_id)?;
         // Its scale, for a texture of a real-world size (`Builder::position`):
         // scene units per unit of the part's own space.
-        let scale = 1.0 / instance.transform.inv_length_scale();
-        builder.session.set_float3(object, "color", [scale, scale, scale])?;
+        builder.session.set_float3(object, "color", object_colour(instance))?;
+        // The number the part says of itself (Object Info's Number), in the
+        // object's alpha, which nothing else reads.
+        builder.session.set_float(object, "alpha", instance.number)?;
         // Object Info's Random, as Tequila's renderer draws it.
         let random_id = SceneSnapshot::object_random_id(instance.id.index());
         builder.session.set_int(object, "random_id", random_id as i32)?;
@@ -1104,8 +1122,7 @@ pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Opt
             // Its scale with it, which textures of a real-world size read: a
             // part scaled with the gizmo otherwise stretched them with it
             // until the next full translation.
-            let scale = 1.0 / instance.transform.inv_length_scale();
-            session.set_float3(*object, "color", [scale, scale, scale])?;
+            session.set_float3(*object, "color", object_colour(instance))?;
         }
     }
     Ok(())
@@ -1656,11 +1673,11 @@ impl Builder<'_> {
         if !mapping.real_world_units {
             return Ok((coords, "Object"));
         }
-        let info = self.session.node(shader, "object_info")?;
+        let scale = self.object_scale(shader)?;
         let scaled = self.session.node(shader, "vector_math")?;
         self.session.set_string(scaled, "math_type", "multiply")?;
         self.session.connect(shader, coords, "Object", scaled, "Vector1")?;
-        self.session.connect(shader, info, "Color", scaled, "Vector2")?;
+        self.session.connect(shader, scale.0, scale.1, scaled, "Vector2")?;
         Ok((scaled, "Vector"))
     }
 
@@ -1928,8 +1945,8 @@ impl Builder<'_> {
     fn flakes(&mut self, shader: Shader, m: &Material, body: (Node, &'static str)) -> Result<(Node, &'static str), String> {
         use std::f32::consts::{FRAC_PI_3, TAU};
         let coords = self.session.node(shader, "texture_coordinate")?;
-        let info = self.session.node(shader, "object_info")?;
-        let place = self.vector_op(shader, "multiply", (coords, "Object"), Some((info, "Color")), None)?;
+        let scale = self.object_scale(shader)?;
+        let place = self.vector_op(shader, "multiply", (coords, "Object"), Some(scale), None)?;
         let cells = self.session.node(shader, "voronoi_texture")?;
         self.session.connect(shader, place.0, place.1, cells, "Vector")?;
         // "scale", not "Scale": a texture node's own mapping has a Scale too.
@@ -2428,6 +2445,38 @@ impl Builder<'_> {
         Ok(Slot::Link(mix, "Color"))
     }
 
+    /// The part's scale as a vector, the same along each axis: the red of
+    /// the object's colour ([`object_colour`]), whose other two carry
+    /// something else.
+    fn object_scale(&mut self, shader: Shader) -> Result<(Node, &'static str), String> {
+        let info = self.session.node(shader, "object_info")?;
+        let split = self.session.node(shader, "separate_color")?;
+        self.session.connect(shader, info, "Color", split, "Color")?;
+        let scale = self.session.node(shader, "combine_xyz")?;
+        for axis in ["X", "Y", "Z"] {
+            self.session.connect(shader, split, "Red", scale, axis)?;
+        }
+        Ok((scale, "Vector"))
+    }
+
+    /// The colour the part says of itself (Object Info's Color), unpacked
+    /// from the green and blue of the object's colour ([`object_colour`]).
+    fn part_colour(&mut self, shader: Shader) -> Result<Slot, String> {
+        let info = self.session.node(shader, "object_info")?;
+        let split = self.session.node(shader, "separate_color")?;
+        self.session.connect(shader, info, "Color", split, "Color")?;
+        let (packed, blue) = (Slot::Link(split, "Green"), Slot::Link(split, "Blue"));
+        let high = self.float_op(shader, "divide", packed, num(COLOUR_STEPS + 1.0))?;
+        let red = self.float_op(shader, "floor", high, num(0.0))?;
+        let green = self.float_op(shader, "modulo", packed, num(COLOUR_STEPS + 1.0))?;
+        let colour = self.session.node(shader, "combine_color")?;
+        for (socket, steps) in [("Red", red), ("Green", green), ("Blue", blue)] {
+            let channel = self.float_op(shader, "divide", steps, num(COLOUR_STEPS))?;
+            self.feed(shader, colour, socket, channel, false)?;
+        }
+        Ok(Slot::Link(colour, "Color"))
+    }
+
     /// What the shading point says to a node that reads it, as Tequila's
     /// renderer has it (`shade::point_input`): world vectors turned to
     /// Tequila's Y up, object space in scene units, v up.
@@ -2441,8 +2490,8 @@ impl Builder<'_> {
         let slot = match input {
             PointInput::Object => {
                 let (coords, _) = read(self, "texture_coordinate", "Object")?;
-                let (info, _) = read(self, "object_info", "Color")?;
-                let scaled = self.vector_op(shader, "multiply", (coords, "Object"), Some((info, "Color")), None)?;
+                let scale = self.object_scale(shader)?;
+                let scaled = self.vector_op(shader, "multiply", (coords, "Object"), Some(scale), None)?;
                 Slot::Link(scaled.0, scaled.1)
             }
             PointInput::Generated => {
@@ -2487,6 +2536,11 @@ impl Builder<'_> {
             }
             PointInput::ObjectRandom => {
                 let (n, o) = read(self, "object_info", "Random")?;
+                Slot::Link(n, o)
+            }
+            PointInput::ObjectColor => self.part_colour(shader)?,
+            PointInput::ObjectNumber => {
+                let (n, o) = read(self, "object_info", "Alpha")?;
                 Slot::Link(n, o)
             }
             PointInput::IsCameraRay => Slot::Link(read(self, "light_path", "Is Camera Ray")?.0, "Is Camera Ray"),
@@ -3324,8 +3378,8 @@ impl Builder<'_> {
             None => {}
         }
         let coords = self.session.node(shader, "texture_coordinate")?;
-        let info = self.session.node(shader, "object_info")?;
-        self.vector_op(shader, "multiply", (coords, "Object"), Some((info, "Color")), None)
+        let scale = self.object_scale(shader)?;
+        self.vector_op(shader, "multiply", (coords, "Object"), Some(scale), None)
     }
 
     /// `position` scaled per axis and moved by the seed: the space a

@@ -376,6 +376,10 @@ pub struct Instance {
     /// The light layer of the light this stands in for (§5.5), so seeing it
     /// directly lands in that light's pass.
     pub light_layer: u8,
+    /// What the part says of itself to its material (`PartValues`): Object
+    /// Info's Color and Number. White and nought where it says nothing.
+    pub colour: Spectrum,
+    pub number: f32,
 }
 
 impl Instance {
@@ -394,6 +398,8 @@ impl Instance {
             shadow_catcher: None,
             light_proxy: false,
             light_layer: 0,
+            colour: Spectrum::ONE,
+            number: 0.0,
         }
     }
 
@@ -1342,6 +1348,8 @@ impl SceneSnapshot {
                 object_location: transform.point(Vec3::ZERO),
                 object_random: Self::object_random(hit.instance.index()),
                 closeness: self.closeness_at(hit),
+                object_color: self.instance(hit.instance).colour,
+                object_number: self.instance(hit.instance).number,
                 ray: Default::default(),
             },
             position: object,

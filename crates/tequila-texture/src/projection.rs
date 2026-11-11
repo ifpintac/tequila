@@ -332,6 +332,10 @@ pub struct PointWorld {
     /// material's Distance node asked for: 0 for none within it (and where
     /// nothing asked), 1 for one touching.
     pub closeness: f32,
+    /// The colour and the number the part says of itself (Object Info's
+    /// Color and Number): white and nought where it says nothing.
+    pub object_color: tequila_core::spectrum::Spectrum,
+    pub object_number: f32,
     /// The kind of ray that came to the point, for the Light Path node.
     pub ray: RayKind,
 }

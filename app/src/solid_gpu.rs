@@ -799,6 +799,8 @@ uniform int u_see_through;
 // bounding box for generated coordinates.
 uniform float u_object_scale;
 uniform float u_object_random;
+uniform vec3 u_object_color;
+uniform float u_object_number;
 uniform vec3 u_object_location;
 uniform vec3 u_generated_centre;
 uniform vec3 u_generated_half;
@@ -1122,6 +1124,8 @@ void main() {
     fs_in_backfacing = gl_FrontFacing ? 0.0 : 1.0;
     fs_in_object_location = u_object_location;
     fs_in_object_random = u_object_random;
+    fs_in_object_color = u_object_color;
+    fs_in_object_number = u_object_number;
     fs_material(fs_base, fs_metal, fs_rough, fs_height);
 #ifdef FS_HEIGHT
     // The renderer's N - grad h, with the gradient from how the height and
@@ -2027,6 +2031,9 @@ impl Gpu {
         let location = |name: &'static str| self.uniform(gl, program, name);
         gl.uniform_1_f32(location("u_object_scale").as_ref(), 1.0 / instance.transform.inv_length_scale());
         gl.uniform_1_f32(location("u_object_random").as_ref(), SceneSnapshot::object_random(instance.id.index()));
+        // What the part says of itself to its material (`PartValues`).
+        gl.uniform_3_f32(location("u_object_color").as_ref(), instance.colour.r, instance.colour.g, instance.colour.b);
+        gl.uniform_1_f32(location("u_object_number").as_ref(), instance.number);
         let at = instance.transform.point(Vec3::ZERO);
         gl.uniform_3_f32(location("u_object_location").as_ref(), at.x, at.y, at.z);
         let bounds = scene.meshes[instance.mesh.index()].bounds();

@@ -5809,6 +5809,73 @@ mod tests {
         }
     }
 
+    /// What a part says of itself reads the same in both renderers: its
+    /// colour as the material's colour, and its number as a grey. Cycles
+    /// is handed the colour packed into the object's own, beside the
+    /// part's scale. Skipped where Cycles is not installed.
+    #[test]
+    fn a_parts_colour_and_number_read_alike_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+        use tequila_materials::material_type::Param;
+        use tequila_materials::nodes::ShaderNode;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let matte = |colour: Spectrum| tequila_materials::openpbr::Material { base_color: colour, specular_weight: 0.0, ..Default::default() };
+        let outputs = ShaderNode::ObjectInfo.outputs();
+        let output = |name: &str| outputs.iter().position(|o| o.name == name).unwrap_or_else(|| panic!("no {name}")) as u8;
+        let channel = |image: &[u8], c: usize| {
+            let only: Vec<u8> = image.chunks_exact(4).flat_map(|p| [p[c], 0, 0, 255]).collect();
+            mean_and_spread(&inside_the_sphere(&only)).0
+        };
+        let colour = |image: &[u8]| -> [f64; 3] { std::array::from_fn(|c| channel(image, c)) };
+        let render = |name: &str, graph: MaterialGraph, said: Option<(Spectrum, f32)>| {
+            both_engines(name, move |scene| {
+                let program = graph.compile().ok().filter(|_| graph.len() > 1);
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![program.map(Arc::new)], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                if let Some((colour, number)) = said {
+                    scene.instances[0].colour = colour;
+                    scene.instances[0].number = number;
+                }
+            })
+        };
+        let reading = |name: &str| {
+            let mut graph = MaterialGraph::from_material(matte(Spectrum::splat(0.5)));
+            let info = graph.add_node(Node::new(NodeKind::Node(ShaderNode::ObjectInfo)));
+            let surface = graph.output();
+            graph.connect_output(info, output(name), surface, Socket::Param(Param::BaseColor));
+            graph
+        };
+        let close = |what: &str, a: [f64; 3], b: [f64; 3]| {
+            for c in 0..3 {
+                assert!((a[c] - b[c]).abs() < b[c] * 0.1 + 6.0, "{what}: {a:.0?} and {b:.0?}");
+            }
+        };
+        // Its colour: what one surface of that colour is, in each.
+        let orange = Spectrum { r: 0.8, g: 0.3, b: 0.05 };
+        let read = render("part-colour", reading("Color"), Some((orange, 0.0)));
+        let flat = render("part-colour-flat", MaterialGraph::from_material(matte(orange)), None);
+        for (engine, (read, flat)) in ["Tequila", "Cycles"].into_iter().zip(read.iter().zip(&flat)) {
+            close(&format!("{engine}: the part's colour and a surface of it"), colour(read), colour(flat));
+        }
+        // Its number: 0.6, as a grey of 0.6.
+        let read = render("part-number", reading("Number"), Some((Spectrum::ONE, 0.6)));
+        let flat = render("part-number-flat", MaterialGraph::from_material(matte(Spectrum::splat(0.6))), None);
+        for (engine, (read, flat)) in ["Tequila", "Cycles"].into_iter().zip(read.iter().zip(&flat)) {
+            close(&format!("{engine}: the part's number and a grey of it"), colour(read), colour(flat));
+        }
+        // Said nothing: white, and nought.
+        let read = render("part-colour-unsaid", reading("Color"), None);
+        let flat = render("part-white-flat", MaterialGraph::from_material(matte(Spectrum::ONE)), None);
+        for (engine, (read, flat)) in ["Tequila", "Cycles"].into_iter().zip(read.iter().zip(&flat)) {
+            close(&format!("{engine}: a part that says nothing, and white"), colour(read), colour(flat));
+        }
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.

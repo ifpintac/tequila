@@ -308,6 +308,8 @@ impl Part<'_> {
                 object_location: self.world.point(Vec3::ZERO),
                 object_random: 0.0,
                 closeness: 0.0,
+                object_color: tequila_core::spectrum::Spectrum::ONE,
+                object_number: 0.0,
                 ray: Default::default(),
             },
         }

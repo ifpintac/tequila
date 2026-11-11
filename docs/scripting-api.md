@@ -106,7 +106,7 @@ different places; there is no seam attribute to set.
 
 ## Commands
 
-76 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
+77 commands, each applied as `{"op":"apply","command":{"command":<name>, ...}}`, or from Python as
 `fs.commands.<group>.<verb>(field=...)`. Ids and keys in the examples are
 placeholders: read the real ones from the scene first.
 
@@ -427,6 +427,17 @@ floor is.
 
 ```json
 { "command": "scene.set_rays", "states": [ { "node": 2, "rays": { "camera": true, "diffuse": true, "glossy": false, "holdout": true, "shadow": true, "transmission": true } } ] }
+```
+
+#### `scene.set_values`
+
+The colour and the number each node says of itself to its material
+(`PartValues`), read in the graph by Object Info's Color and Number.
+
+`fs.commands.scene.set_values(states=...)`
+
+```json
+{ "command": "scene.set_values", "states": [ { "colour": [0.8, 0.1, 0.05], "node": 2, "number": 2 } ] }
 ```
 
 #### `scene.set_pivot`

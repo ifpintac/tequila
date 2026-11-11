@@ -178,6 +178,21 @@ pub fn encode(command: &Command) -> String {
         Command::SetLocked { states } => {
             out.set("states", flags(states));
         }
+        Command::SetValues { states } => {
+            out.set(
+                "states",
+                Value::Array(
+                    states
+                        .iter()
+                        .map(|(node, values)| {
+                            let mut entry = Object::new();
+                            entry.set("node", node.0).set("colour", crate::values_to_json(values).get("colour").cloned().unwrap_or(Value::Null)).set("number", values.number);
+                            entry.build()
+                        })
+                        .collect(),
+                ),
+            );
+        }
         Command::SetRays { states } => {
             out.set(
                 "states",
@@ -666,6 +681,17 @@ pub fn decode(line: &str) -> Result<Command, FormatError> {
         "scene.set_locked" => Command::SetLocked {
             states: read_flags(&value)?,
         },
+        "scene.set_values" => {
+            let mut states = Vec::new();
+            for entry in value.get("states").map(|s| s.as_array()).unwrap_or(&[]) {
+                let id = entry
+                    .get("node")
+                    .and_then(|v| v.as_index())
+                    .ok_or_else(|| FormatError::Invalid("a state names no node".into()))?;
+                states.push((NodeId(id as u64), crate::read_values(Some(entry))));
+            }
+            Command::SetValues { states }
+        }
         "scene.set_rays" => {
             let mut states = Vec::new();
             for entry in value.get("states").map(|s| s.as_array()).unwrap_or(&[]) {

@@ -563,6 +563,8 @@ pub fn snapshot_with(
         instance.seen_by_glossy = rays.glossy;
         instance.seen_by_transmission = rays.transmission;
         instance.holdout = rays.holdout;
+        instance.colour = node.values.colour;
+        instance.number = node.values.number;
         if rays.catcher {
             // As the floor catches them, in the floor's shadow colour: one
             // picture, one colour of shadow.
@@ -1908,6 +1910,35 @@ mod tests {
         snapshot(&document, environment, &mut cache);
         assert_eq!(cache.textures.len(), 1, "undone, the map is read again");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What a part says of itself reaches its instance, for its material
+    /// to read: its colour and its number, each part its own, undone as
+    /// one step; and a number that is not one is refused.
+    #[test]
+    fn a_parts_colour_and_number_reach_its_instance() {
+        use crate::tree::PartValues;
+        use tequila_core::spectrum::Spectrum;
+        let (mut document, mut bus, ids) = assembly(2);
+        let environment = Arc::new(Environment::uniform(Spectrum::ONE));
+        let said = |document: &SceneDocument| {
+            let (scene, mapping) = snapshot(document, environment.clone(), &mut MeshCache::default());
+            let of = |node: NodeId| {
+                let instance = &scene.instances[mapping.instance_of(node).unwrap().0 as usize];
+                (instance.colour, instance.number)
+            };
+            (of(ids[1]), of(ids[2]))
+        };
+        assert_eq!(said(&document), ((Spectrum::ONE, 0.0), (Spectrum::ONE, 0.0)), "white and nought until something is said");
+        let red = Spectrum { r: 0.8, g: 0.1, b: 0.05 };
+        bus.apply(&mut document, Command::set_values(ids[1], PartValues { colour: red, number: 3.0 })).unwrap();
+        assert_eq!(said(&document), ((red, 3.0), (Spectrum::ONE, 0.0)));
+        assert!(!document.tree.get(ids[1]).unwrap().values.is_default());
+        bus.undo(&mut document).unwrap();
+        assert!(document.tree.get(ids[1]).unwrap().values.is_default());
+        let nonsense = PartValues { colour: red, number: f32::NAN };
+        assert!(bus.apply(&mut document, Command::set_values(ids[1], nonsense)).is_err());
+        assert!(bus.apply(&mut document, Command::set_values(NodeId(987_654), PartValues::default())).is_err());
     }
 
     /// A part made a shadow catcher is one to the renderers, as the floor

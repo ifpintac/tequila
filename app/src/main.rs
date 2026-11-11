@@ -6051,6 +6051,7 @@ impl TequilaApp {
                 let mut tab = std::mem::take(&mut self.scene_tab);
                 tab.show(ui, &mut self.project);
                 tab.rays_panel(ui, &mut self.project);
+                tab.values_panel(ui, &mut self.project);
                 // A pattern's settings, for the group, the original or a
                 // copy: under the tree, where what was just picked is.
                 if let Some(group) = self.project.selection.active().and_then(|n| tequila_scene::pattern::pattern_of(self.project.document(), n)) {

@@ -602,6 +602,7 @@ fn node_to_json(node: &SceneNode, preserved: &Preserved) -> Value {
         .set("visible", node.visible)
         .set("locked", node.locked)
         .set_some("rays", (!node.rays.is_default()).then(|| rays_to_json(&node.rays)))
+        .set_some("values", (!node.values.is_default()).then(|| values_to_json(&node.values)))
         .set(
             "children",
             node.children
@@ -1671,6 +1672,28 @@ pub(crate) fn rays_to_json(rays: &tequila_scene::tree::Rays) -> Value {
         out.set("catcher", true);
     }
     out.build()
+}
+
+/// What a node says of itself to its material: its colour and its number.
+pub(crate) fn values_to_json(values: &tequila_scene::tree::PartValues) -> Value {
+    let mut out = Object::new();
+    out.set("colour", Value::Array(vec![Value::from(values.colour.r), Value::from(values.colour.g), Value::from(values.colour.b)])).set("number", values.number);
+    out.build()
+}
+
+/// The colour and number a node's `values` names; absent or not numbers,
+/// white and nought.
+pub(crate) fn read_values(value: Option<&Value>) -> tequila_scene::tree::PartValues {
+    let default = tequila_scene::tree::PartValues::default();
+    let Some(value) = value else { return default };
+    let colour = value.get("colour").or_else(|| value.get("color")).map(|c| c.as_array()).filter(|c| c.len() == 3).and_then(|c| {
+        let channel = |i: usize| c[i].as_f32().filter(|v| v.is_finite());
+        Some(tequila_core::spectrum::Spectrum { r: channel(0)?, g: channel(1)?, b: channel(2)? })
+    });
+    tequila_scene::tree::PartValues {
+        colour: colour.unwrap_or(default.colour),
+        number: value.get("number").and_then(|v| v.as_f32()).filter(|v| v.is_finite()).unwrap_or(default.number),
+    }
 }
 
 /// The rays a node's `rays` names; absent, every ray, no holdout.
@@ -3523,6 +3546,7 @@ fn read_tree(
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         node.rays = read_rays(value.get("rays"));
+        node.values = read_values(value.get("values"));
         node.material = value
             .get("material")
             .and_then(|v| v.as_str())
@@ -4061,6 +4085,12 @@ mod rays_tests {
     fn a_nodes_rays_survive_and_default_ones_write_nothing() {
         let rays = Rays { camera: false, transmission: false, holdout: true, ..Rays::default() };
         assert_eq!(read_rays(Some(&rays_to_json(&rays))), rays);
+        // What a part says of itself is kept, said only where it says
+        // something, and read as white and nought from anything else.
+        let said = tequila_scene::tree::PartValues { colour: tequila_core::spectrum::Spectrum { r: 0.8, g: 0.1, b: 0.05 }, number: -2.5 };
+        assert_eq!(read_values(Some(&values_to_json(&said))), said);
+        assert!(read_values(None).is_default());
+        assert!(read_values(Some(&json::parse(br#"{"colour": "red", "number": "three"}"#).unwrap())).is_default());
         // A shadow catcher is kept, and said only where a part is one: a
         // file with none reads as it did before there were any.
         let catcher = Rays { catcher: true, ..Rays::default() };

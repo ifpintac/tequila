@@ -151,7 +151,7 @@ vec3 fs_noise_color({T} p, int kind, float detail, float roughness, float lacuna
 
 /// What the shading point knows, as the generated function reads it; the
 /// surface shader fills these in before calling it.
-pub const INPUTS: &str = "vec3 fs_in_object; vec3 fs_in_generated; vec2 fs_in_uv; vec3 fs_in_object_normal; vec3 fs_in_position; vec3 fs_in_normal; vec3 fs_in_true_normal; vec3 fs_in_incoming; float fs_in_backfacing; vec3 fs_in_object_location; float fs_in_object_random;
+pub const INPUTS: &str = "vec3 fs_in_object; vec3 fs_in_generated; vec2 fs_in_uv; vec3 fs_in_object_normal; vec3 fs_in_position; vec3 fs_in_normal; vec3 fs_in_true_normal; vec3 fs_in_incoming; float fs_in_backfacing; vec3 fs_in_object_location; float fs_in_object_random; vec3 fs_in_object_color; float fs_in_object_number;
 ";
 
 /// A material's program as GLSL, and which of the view's parameters it
@@ -423,6 +423,8 @@ fn point_input(input: PointInput) -> Option<(String, Ty)> {
         PointInput::Backfacing => (float4("fs_in_backfacing".into()), Ty::Float),
         PointInput::ObjectLocation => (vec4_of("fs_in_object_location".into()), Ty::Vector),
         PointInput::ObjectRandom => (float4("fs_in_object_random".into()), Ty::Float),
+        PointInput::ObjectColor => (vec4_of("fs_in_object_color".into()), Ty::Color),
+        PointInput::ObjectNumber => (float4("fs_in_object_number".into()), Ty::Float),
         // The viewport's preview is what the camera sees, directly.
         PointInput::IsCameraRay => (float4("1.0".into()), Ty::Float),
         PointInput::IsShadowRay | PointInput::IsDiffuseRay | PointInput::IsGlossyRay | PointInput::IsTransmissionRay => (float4("0.0".into()), Ty::Float),
