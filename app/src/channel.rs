@@ -791,6 +791,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
     }
+    if let Some(drag) = &change.drag {
+        app.scripted_drag = Some(crate::view_timing::ScriptedDrag::new(drag));
+    }
     if let Some(folder) = &change.screenshot_folder {
         app.screenshots.folder = (!folder.trim().is_empty()).then(|| std::path::PathBuf::from(folder.trim()));
         if let Err(error) = app.screenshots.save() {

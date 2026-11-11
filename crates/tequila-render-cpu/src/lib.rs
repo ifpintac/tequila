@@ -23,4 +23,4 @@ pub use preview::{
     render_thumbnail, render_thumbnail_graph, render_thumbnail_in_steps, render_thumbnail_textured, PreviewSettings, PreviewShape, Thumbnail, PREVIEW_RADIUS,
 };
 pub use silhouette::Silhouette;
-pub use renderer::{build_caustics, preview_pass, preview_pass_checked, render_pass, render_pass_with_aovs, RenderContext};
+pub use renderer::{build_caustics, preview_pass, preview_pass_checked, render_pass, render_pass_until, render_pass_with_aovs, RenderContext};

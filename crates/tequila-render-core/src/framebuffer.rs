@@ -556,17 +556,26 @@ impl Framebuffer {
     /// The same, with the colour as an image with alpha carries it — the
     /// foreground alone — when `foreground` is set.
     pub fn to_denoiser_buffers_with(&self, foreground: bool) -> DenoiserBuffers {
+        // A row per task: a viewport's picture is a million pixels and more
+        // of 80 bytes each, and on one core this took 20 ms of each frame
+        // put up denoised.
+        use rayon::prelude::*;
         let n = self.pixels.len();
-        let mut color = Vec::with_capacity(n * 3);
-        let mut albedo = Vec::with_capacity(n * 3);
-        let mut normal = Vec::with_capacity(n * 3);
-        for p in &self.pixels {
-            let c = if foreground { p.mean_foreground() } else { p.mean() };
-            color.extend_from_slice(&c.to_array());
-            albedo.extend_from_slice(&p.mean_albedo().clamp(0.0, 1.0).to_array());
-            let nrm = p.mean_normal();
-            normal.extend_from_slice(&[nrm.x, nrm.y, nrm.z]);
-        }
+        let (mut color, mut albedo, mut normal) = (vec![0.0f32; n * 3], vec![0.0f32; n * 3], vec![0.0f32; n * 3]);
+        let row = self.width.max(1);
+        self.pixels
+            .par_chunks(row)
+            .zip(color.par_chunks_mut(row * 3))
+            .zip(albedo.par_chunks_mut(row * 3).zip(normal.par_chunks_mut(row * 3)))
+            .for_each(|((pixels, color), (albedo, normal))| {
+                for (i, p) in pixels.iter().enumerate() {
+                    let c = if foreground { p.mean_foreground() } else { p.mean() };
+                    color[i * 3..i * 3 + 3].copy_from_slice(&c.to_array());
+                    albedo[i * 3..i * 3 + 3].copy_from_slice(&p.mean_albedo().clamp(0.0, 1.0).to_array());
+                    let nrm = p.mean_normal();
+                    normal[i * 3..i * 3 + 3].copy_from_slice(&[nrm.x, nrm.y, nrm.z]);
+                }
+            });
         DenoiserBuffers {
             width: self.width,
             height: self.height,

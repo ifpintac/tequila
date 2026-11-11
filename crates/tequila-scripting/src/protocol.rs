@@ -469,6 +469,10 @@ pub struct UiChange {
     pub graph_bring: Option<GraphBring>,
     /// A 3D mouse's input, made up: reports as a device would send them.
     pub spacemouse: Option<SpaceMouseInput>,
+    /// A drag across the viewport, made up: pressed, moved and released as
+    /// a mouse would, so a script can time what an orbit, a pan or a zoom
+    /// with the mouse costs.
+    pub drag: Option<PointerDrag>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
     /// into the screenshot folder, with its notice.
     pub save_screenshot: Option<bool>,
@@ -515,6 +519,47 @@ pub struct GuidesChange {
 pub struct SpaceMouseInput {
     pub reports: Vec<Vec<u8>>,
     pub seconds: f32,
+}
+
+/// A made-up drag across the viewport: the button pressed at `from`, the
+/// pointer carried in a straight line to `to` over `seconds`, a frame at a
+/// time, and released there. Places are fractions of the viewport, 0 to 1
+/// from its top left. `button` is `left`, `right` or `middle`; `alt`, `shift`
+/// and `command` are held down through it, as the navigation scheme reads
+/// them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PointerDrag {
+    pub from: [f32; 2],
+    pub to: [f32; 2],
+    pub seconds: f32,
+    pub button: String,
+    pub alt: bool,
+    pub shift: bool,
+    pub command: bool,
+}
+
+/// `{"from": [x, y], "to": [x, y], "seconds": n, "button": "left"}`.
+fn pointer_drag(value: &Value) -> Result<PointerDrag, ProtocolError> {
+    let bad = || ProtocolError(r#"`drag` is {"from": [x, y], "to": [x, y], "seconds": n, "button": "left", "alt": false, "shift": false, "command": false}, places 0 to 1 across the viewport"#.into());
+    let place = |key: &str| match value.get(key).map(|v| v.as_array()) {
+        Some([x, y]) => Some([x.as_f32()?, y.as_f32()?]).filter(|p| p.iter().all(|v| v.is_finite())),
+        _ => None,
+    };
+    let (from, to) = (place("from").ok_or_else(bad)?, place("to").ok_or_else(bad)?);
+    let seconds = match value.get("seconds") {
+        None => 1.0,
+        Some(v) => v.as_f32().filter(|s| s.is_finite() && *s >= 0.0 && *s <= 600.0).ok_or_else(bad)?,
+    };
+    let button = match value.get("button") {
+        None => "left".to_string(),
+        Some(v) => v.as_str().filter(|b| matches!(*b, "left" | "right" | "middle")).ok_or_else(bad)?.to_string(),
+    };
+    let held = |key: &str| match value.get(key) {
+        None => Ok(false),
+        Some(Value::Bool(on)) => Ok(*on),
+        Some(_) => Err(bad()),
+    };
+    Ok(PointerDrag { from, to, seconds, button, alt: held("alt")?, shift: held("shift")?, command: held("command")? })
 }
 
 /// The UV editor, as a script asks for it. Absent fields are left alone.
@@ -1431,6 +1476,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 },
             },
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
+            drag: value.get("drag").filter(|v| !matches!(v, Value::Null)).map(pointer_drag).transpose()?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,
             window_size: optional(value, "window_size", "[width, height] in points", |v| match v.as_array() {
@@ -1879,6 +1925,22 @@ mod tests {
         assert_eq!(input.seconds, 0.5);
         assert!(parse_request(r#"{"id":6,"op":"ui","spacemouse":{"reports":[[1,300]]}}"#).is_err());
         assert!(parse_request(r#"{"id":7,"op":"ui","spacemouse":{"reports":[[]]}}"#).is_err());
+    }
+
+    /// A drag across the viewport, made up: where it starts and ends, how
+    /// long it takes and with which button; a place that is not two numbers
+    /// or a button that is not one is refused.
+    #[test]
+    fn a_made_up_drag_parses() {
+        let request = parse_request(r#"{"id":5,"op":"ui","drag":{"from":[0.5,0.5],"to":[0.8,0.4],"seconds":2,"button":"middle","shift":true}}"#).unwrap();
+        let Operation::Ui(UiChange { drag: Some(drag), .. }) = request.operation else { panic!("a ui change") };
+        assert_eq!((drag.from, drag.to, drag.seconds, drag.button.as_str()), ([0.5, 0.5], [0.8, 0.4], 2.0, "middle"));
+        assert!(drag.shift && !drag.alt && !drag.command);
+        let request = parse_request(r#"{"id":6,"op":"ui","drag":{"from":[0,0],"to":[1,1]}}"#).unwrap();
+        let Operation::Ui(UiChange { drag: Some(drag), .. }) = request.operation else { panic!("a ui change") };
+        assert_eq!((drag.seconds, drag.button.as_str()), (1.0, "left"), "a second with the left button unless asked");
+        assert!(parse_request(r#"{"id":7,"op":"ui","drag":{"from":[0.5],"to":[1,1]}}"#).is_err());
+        assert!(parse_request(r#"{"id":8,"op":"ui","drag":{"from":[0,0],"to":[1,1],"button":"thumb"}}"#).is_err());
     }
 
     #[test]
