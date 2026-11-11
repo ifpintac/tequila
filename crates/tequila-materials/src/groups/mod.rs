@@ -14,6 +14,7 @@
 
 mod blend_stack;
 mod fdm_layer_lines;
+mod tiles;
 
 pub use blend_stack::COATS as BLEND_COATS;
 
@@ -31,6 +32,10 @@ pub enum NodeGroup {
     /// The mix factors that make coats nested on one another's Layer a
     /// stack, each over everything under it (`blend_stack`).
     BlendStack,
+    /// Planks laid herringbone: each at right angles to the next (`tiles`).
+    Herringbone,
+    /// Blocks of planks, each block turned from its neighbours (`tiles`).
+    Basketweave,
 }
 
 /// One of a group's inputs. Every one is a number.
@@ -53,12 +58,12 @@ pub struct GroupOutput {
 }
 
 impl NodeGroup {
-    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack];
+    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack, NodeGroup::Herringbone, NodeGroup::Basketweave];
 
     /// Whether it is a pattern over a surface, for where it is listed: the
     /// others work on numbers.
     pub fn is_pattern(self) -> bool {
-        matches!(self, NodeGroup::FdmLayerLines)
+        !matches!(self, NodeGroup::BlendStack)
     }
 
     /// Its stable name, in files and scripts.
@@ -66,6 +71,8 @@ impl NodeGroup {
         match self {
             NodeGroup::FdmLayerLines => "fdm_layer_lines",
             NodeGroup::BlendStack => "blend_stack",
+            NodeGroup::Herringbone => "herringbone",
+            NodeGroup::Basketweave => "basketweave",
         }
     }
 
@@ -77,6 +84,8 @@ impl NodeGroup {
         match self {
             NodeGroup::FdmLayerLines => "FDM Layer Lines",
             NodeGroup::BlendStack => "Blend Stack",
+            NodeGroup::Herringbone => "Herringbone",
+            NodeGroup::Basketweave => "Basketweave",
         }
     }
 
@@ -94,6 +103,16 @@ impl NodeGroup {
                  the Mix Shader on the material's own Layer, Fac 2 to the one on the first coat's, and so on. A coat's \
                  amount is a number or a mask."
             }
+            NodeGroup::Herringbone => {
+                "Planks or pavers laid herringbone: each at right angles to the next, a whole number of widths long. \
+                 Tile is the mask of tile and joint; Random a number for each tile, for a Color Ramp; Tile Coordinates \
+                 run along each tile, for a wood's Vector."
+            }
+            NodeGroup::Basketweave => {
+                "Blocks of planks side by side, each block turned from its neighbours: parquet, brick paving. Tile is \
+                 the mask of tile and joint; Random a number for each tile; Tile Coordinates run along each tile, for a \
+                 wood's Vector."
+            }
         }
     }
 
@@ -102,6 +121,8 @@ impl NodeGroup {
         match self {
             NodeGroup::FdmLayerLines => "3D print, 3D printed, FFF, PLA, PETG, layer lines, filament, extrusion",
             NodeGroup::BlendStack => "blend material, VRayBlendMtl, coats, layers, layered, stack",
+            NodeGroup::Herringbone => "tiles, parquet, planks, floor, paving, chevron, VRayBerconTile, bricks",
+            NodeGroup::Basketweave => "tiles, parquet, planks, floor, paving, blocks, VRayBerconTile, bricks",
         }
     }
 
@@ -109,6 +130,7 @@ impl NodeGroup {
         match self {
             NodeGroup::FdmLayerLines => fdm_layer_lines::INPUTS,
             NodeGroup::BlendStack => blend_stack::INPUTS,
+            NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::INPUTS,
         }
     }
 
@@ -116,6 +138,7 @@ impl NodeGroup {
         match self {
             NodeGroup::FdmLayerLines => fdm_layer_lines::OUTPUTS,
             NodeGroup::BlendStack => blend_stack::OUTPUTS,
+            NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::OUTPUTS,
         }
     }
 
@@ -123,9 +146,13 @@ impl NodeGroup {
     pub fn expansion(self) -> &'static Expansion {
         static FDM: OnceLock<Expansion> = OnceLock::new();
         static BLEND: OnceLock<Expansion> = OnceLock::new();
+        static HERRINGBONE: OnceLock<Expansion> = OnceLock::new();
+        static BASKETWEAVE: OnceLock<Expansion> = OnceLock::new();
         match self {
             NodeGroup::FdmLayerLines => FDM.get_or_init(fdm_layer_lines::build),
             NodeGroup::BlendStack => BLEND.get_or_init(blend_stack::build),
+            NodeGroup::Herringbone => HERRINGBONE.get_or_init(|| tiles::build(tiles::Bond::Herringbone)),
+            NodeGroup::Basketweave => BASKETWEAVE.get_or_init(|| tiles::build(tiles::Bond::Basketweave)),
         }
     }
 }
