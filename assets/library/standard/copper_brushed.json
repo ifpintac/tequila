@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Copper with fine linear brush lines: a warm orange-pink satin with directional streaks, as on cookware, a splashback or decorative trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -408,7 +409,23 @@
   "tags": [
     "copper",
     "brushed",
-    "warm"
+    "warm",
+    "hairline",
+    "grain",
+    "orange",
+    "pink",
+    "reddish",
+    "satin",
+    "cookware",
+    "pan",
+    "splashback",
+    "trim",
+    "sheet",
+    "linear grain",
+    "kitchenware",
+    "interior",
+    "furniture",
+    "lighting"
   ],
   "type": "anisotropic"
 }

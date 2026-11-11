@@ -1,6 +1,7 @@
 {
   "base_color": [0.2426, 0.0332, 0.0167],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A strong solid red gloss under a clear coat, its reflections faintly rippled with orange peel, as on a car body or a scooter.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -139,7 +140,21 @@
     "car",
     "gloss",
     "clearcoat",
-    "red"
+    "red",
+    "red paint",
+    "solid colour",
+    "solid color",
+    "glossy",
+    "sprayed",
+    "baked",
+    "orange peel",
+    "scooter",
+    "car paint",
+    "vehicle paint",
+    "two-pack",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "paint"
 }

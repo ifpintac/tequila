@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Ash with a clear satin finish: pale cream with bold, open grain lines, for guitar bodies, furniture and tool handles.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1650,7 +1651,22 @@
     "ash",
     "furniture",
     "pale",
-    "open grain"
+    "open grain",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "swamp ash",
+    "light",
+    "cream",
+    "natural",
+    "satin",
+    "lacquered",
+    "table",
+    "guitar body",
+    "handle",
+    "musical instruments",
+    "tools",
+    "interior"
   ],
   "type": "generic"
 }

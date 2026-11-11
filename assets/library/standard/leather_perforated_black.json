@@ -1,7 +1,8 @@
 {
   "base_color": [0.008332455, 0.0080543915, 0.007578504],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black leather punched with a regular grid of small holes and a soft sheen, for car seats, sports seats and ventilated ear pads.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -3334,7 +3335,21 @@
     "seat",
     "ear pad",
     "headphone",
-    "black"
+    "black",
+    "perforation",
+    "holes",
+    "ventilated",
+    "breathable",
+    "car seat",
+    "steering wheel",
+    "sport seat",
+    "genuine leather",
+    "satin",
+    "dark",
+    "automotive",
+    "audio",
+    "furniture",
+    "accessories"
   ],
   "type": "generic"
 }

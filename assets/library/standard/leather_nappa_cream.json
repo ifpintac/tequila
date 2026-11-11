@@ -1,7 +1,8 @@
 {
   "base_color": [0.6894451, 0.654763, 0.54477316],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Soft cream nappa leather with a very fine, smooth grain and a gentle sheen, for seats, gloves and cushioned trim.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -560,7 +561,22 @@
     "soft",
     "smooth",
     "cream",
-    "white"
+    "white",
+    "supple",
+    "napa",
+    "nappa leather",
+    "lambskin",
+    "sheepskin",
+    "genuine leather",
+    "satin",
+    "off-white",
+    "ivory",
+    "seat",
+    "glove",
+    "automotive",
+    "apparel",
+    "accessories",
+    "furniture"
   ],
   "type": "generic"
 }

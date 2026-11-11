@@ -1,6 +1,7 @@
 {
   "base_color": [0.7, 0.68, 0.64],
   "category": "Metal",
+  "description": "Titanium printed layer by layer in a powder bed: a dull grey, slightly grainy surface with a fine sandy texture, as on an implant or bracket.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -260,7 +261,23 @@
     "3d print",
     "slm",
     "powder bed",
-    "additive"
+    "additive",
+    "additive manufacturing",
+    "dmls",
+    "powder bed fusion",
+    "laser sintered",
+    "3d printed metal",
+    "grainy",
+    "as printed",
+    "raw",
+    "grey",
+    "gray",
+    "matte",
+    "implant",
+    "medical",
+    "industrial",
+    "prototyping",
+    "automotive"
   ],
   "type": "metal"
 }

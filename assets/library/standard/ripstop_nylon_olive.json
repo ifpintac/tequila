@@ -1,6 +1,7 @@
 {
   "base_color": [0.073122725, 0.0800851, 0.039221756],
   "category": "Fabric",
+  "description": "A light olive nylon with a raised grid every few millimetres and a soft crinkled, slightly sheened face, for packs, tents and wind jackets.",
   "fuzz_color": [0.49167615, 0.49564433, 0.47235435],
   "fuzz_weight": 0.03,
   "graph": {
@@ -7397,7 +7398,22 @@
     "jacket",
     "parachute",
     "olive",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "woven",
+    "reinforced grid",
+    "lightweight",
+    "windbreaker",
+    "matte",
+    "sheen",
+    "rainproof",
+    "backpack",
+    "khaki green",
+    "bags",
+    "outdoor gear",
+    "apparel",
+    "sporting goods"
   ],
   "type": "real_cloth"
 }

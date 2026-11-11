@@ -1,6 +1,7 @@
 {
   "base_color": [0.49786198, 0.15613747, 0.037549235],
   "category": "Fabric",
+  "description": "A light orange nylon with a raised grid every few millimetres and a soft crinkled, slightly sheened face, for packs, tents and wind jackets.",
   "fuzz_color": [0.7337555, 0.53899026, 0.4714011],
   "fuzz_weight": 0.03,
   "graph": {
@@ -7396,7 +7397,22 @@
     "bag",
     "jacket",
     "parachute",
-    "orange"
+    "orange",
+    "textile",
+    "cloth",
+    "woven",
+    "reinforced grid",
+    "lightweight",
+    "windbreaker",
+    "matte",
+    "sheen",
+    "rainproof",
+    "backpack",
+    "synthetic",
+    "bags",
+    "outdoor gear",
+    "apparel",
+    "sporting goods"
   ],
   "type": "real_cloth"
 }

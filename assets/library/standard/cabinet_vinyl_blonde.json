@@ -1,7 +1,8 @@
 {
   "base_color": [0.5639965, 0.5189237, 0.3421172],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Cream vinyl covering with a fine leather-like grain and a soft sheen, used on vintage-style amplifier and speaker cabinets.",
   "graph": {
     "decals": [],
     "links": [
@@ -449,7 +450,20 @@
     "leatherette",
     "covering",
     "blonde",
-    "cream"
+    "cream",
+    "tolex",
+    "pvc covering",
+    "amp covering",
+    "speaker cover",
+    "guitar amp",
+    "faux leather",
+    "off-white",
+    "ivory",
+    "vintage",
+    "textured",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "generic"
 }

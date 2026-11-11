@@ -1,6 +1,7 @@
 {
   "base_color": [0.30513197, 0.23859781, 0.11884793],
   "category": "Fabric",
+  "description": "A coarse, open natural jute weave with a rough, fibrous, matte surface and slightly irregular threads, for sacks, wall coverings and rustic packaging.",
   "fuzz_color": [0.46772423, 0.3852754, 0.22163011],
   "fuzz_weight": 0.55,
   "graph": {
@@ -5268,7 +5269,21 @@
     "burlap",
     "jute",
     "sack",
-    "coarse"
+    "coarse",
+    "textile",
+    "cloth",
+    "rough",
+    "natural fibre",
+    "natural fiber",
+    "rustic",
+    "gunny",
+    "plain weave",
+    "brown",
+    "wall covering",
+    "beige",
+    "packaging",
+    "interior",
+    "bags"
   ],
   "type": "real_cloth"
 }

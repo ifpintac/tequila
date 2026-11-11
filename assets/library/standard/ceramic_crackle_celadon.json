@@ -1,7 +1,8 @@
 {
   "base_color": [0.54826105, 0.59665525, 0.51431996],
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
   "coat_weight": 1,
+  "description": "A pale grey-green glossy glaze covered in a fine net of hairline cracks, as on vases, bowls and tiles.",
   "graph": {
     "decals": [],
     "links": [
@@ -586,7 +587,22 @@
     "craquelure",
     "celadon",
     "glaze",
-    "green"
+    "green",
+    "crackle glaze",
+    "crazed",
+    "jade green",
+    "pale green",
+    "grey green",
+    "pottery",
+    "glazed",
+    "fired",
+    "tableware",
+    "vase",
+    "tile",
+    "glossy",
+    "kitchenware",
+    "interior",
+    "architecture"
   ],
   "type": "generic"
 }

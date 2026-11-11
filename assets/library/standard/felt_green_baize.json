@@ -1,6 +1,7 @@
 {
   "base_color": [0.04311608, 0.09407179, 0.042351276],
   "category": "Fabric",
+  "description": "A flat, matte green felted wool-style cloth with a faint fuzzy face, used on card tables, billiard tables and case linings.",
   "fuzz_color": [0.10208811, 0.22307064, 0.09810444],
   "fuzz_roughness": 0.75,
   "graph": {
@@ -477,7 +478,20 @@
     "lining",
     "case",
     "table",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "nonwoven",
+    "wool",
+    "billiard",
+    "pool table",
+    "card table",
+    "matte",
+    "fuzzy",
+    "gaming table",
+    "furniture",
+    "interior",
+    "accessories"
   ],
   "type": "velvet"
 }

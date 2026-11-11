@@ -1,6 +1,7 @@
 {
   "base_color": [0.47252354, 0.47858888, 0.48415318],
   "category": "Plastic",
+  "description": "A light grey plastic with a matte spark-eroded grain, matching VDI 3400 grade 36 mould texture on housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,23 @@
     "edm",
     "spark eroded",
     "matte",
-    "grey"
+    "grey",
+    "gray",
+    "vdi 3400",
+    "electrical discharge machining",
+    "spark erosion",
+    "mould texture",
+    "mold texture",
+    "etched",
+    "enclosure",
+    "housing",
+    "pale",
+    "injection moulded",
+    "dull",
+    "electronics",
+    "appliances",
+    "industrial",
+    "tools"
   ],
   "type": "plastic"
 }

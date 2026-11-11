@@ -2,6 +2,7 @@
   "base_color": [0.47740874, 0.15298145, 0.03831182],
   "base_diffuse_roughness": 0.5,
   "category": "Fabric",
+  "description": "A sailcloth-style orange laminate with crossing reinforcing yarns under a clear film, giving a diamond-grid pattern, for packs and bags.",
   "graph": {
     "decals": [],
     "links": [
@@ -6471,7 +6472,21 @@
     "bag",
     "pack",
     "technical",
-    "orange"
+    "orange",
+    "textile",
+    "bonded",
+    "film",
+    "reinforced",
+    "rainproof",
+    "diamond grid",
+    "yarn grid",
+    "dry bag",
+    "backpacking",
+    "sail",
+    "matte",
+    "bags",
+    "outdoor gear",
+    "sporting goods"
   ],
   "type": "generic"
 }

@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Mahogany under high-gloss lacquer: deep red-brown with ribbon stripes and a mirror-like shine, for guitar bodies, speakers and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1750,7 +1751,23 @@
     "lacquer",
     "guitar",
     "red",
-    "ribbon"
+    "ribbon",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "honduras mahogany",
+    "reddish brown",
+    "ribbon grain",
+    "striped",
+    "lacquered",
+    "high gloss",
+    "shiny",
+    "polished",
+    "piano finish",
+    "musical instruments",
+    "audio",
+    "furniture",
+    "interior"
   ],
   "type": "generic"
 }

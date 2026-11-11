@@ -1,12 +1,23 @@
 {
   "category": "Gem",
+  "description": "A transparent purple quartz, cut with bright facets, as set in rings, pendants and earrings.",
   "name": "Amethyst",
   "specular_ior": 1.544,
   "tags": [
     "amethyst",
     "quartz",
     "purple",
-    "jewellery"
+    "jewellery",
+    "violet",
+    "purple quartz",
+    "faceted",
+    "cut gemstone",
+    "semi-precious",
+    "birthstone",
+    "february",
+    "transparent",
+    "ring stone",
+    "accessories"
   ],
   "transmission_color": [0.51, 0.3285, 0.7846],
   "transmission_dispersion_abbe": 70,

@@ -1,6 +1,7 @@
 {
   "base_color": [0.10331699, 0.11486744, 0.058111414],
   "category": "Fabric",
+  "description": "An ultralight, semi-translucent olive film laminate with fine filaments laid in a grid, crinkled like paper, for tents and packs.",
   "geometry_thin_walled": true,
   "graph": {
     "decals": [],
@@ -2892,7 +2893,21 @@
     "pack",
     "technical",
     "olive",
-    "green"
+    "green",
+    "textile",
+    "nonwoven",
+    "sheer",
+    "crinkled",
+    "waterproof",
+    "grid",
+    "lightweight",
+    "backpacking",
+    "shelter",
+    "technical fabric",
+    "khaki green",
+    "outdoor gear",
+    "bags",
+    "sporting goods"
   ],
   "transmission_color": [0.5516585, 0.5574337, 0.5290557],
   "transmission_weight": 0.35,

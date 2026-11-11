@@ -1,5 +1,6 @@
 {
-  "category": "Glass",
+  "category": "Glass & Clear Plastic",
+  "description": "A clear glass with parallel vertical flutes that stretch and break up what is seen through it, for doors and panels.",
   "graph": {
     "decals": [],
     "links": [
@@ -51,7 +52,22 @@
     "reeded",
     "fluted",
     "ribbed",
-    "decorative"
+    "decorative",
+    "fluted glass",
+    "ribbed glass",
+    "transparent",
+    "textured",
+    "vertical grooves",
+    "privacy",
+    "panel",
+    "cabinet",
+    "door",
+    "patterned glass",
+    "rippled",
+    "interior",
+    "architecture",
+    "furniture",
+    "lighting"
   ],
   "transmission_color": [0.97, 0.985, 0.98],
   "transmission_depth": 0.05,

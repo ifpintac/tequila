@@ -1,6 +1,7 @@
 {
   "base_color": [0.019908518, 0.02414833, 0.05669079],
   "category": "Fabric",
+  "description": "A smooth navy cotton twill with fine diagonal ridges and a matte finish, used for chinos, work trousers and caps.",
   "fuzz_color": [0.12483294, 0.14300129, 0.26048625],
   "fuzz_weight": 0.25,
   "graph": {
@@ -5269,7 +5270,20 @@
     "chino",
     "apparel",
     "navy",
-    "blue"
+    "blue",
+    "textile",
+    "cloth",
+    "diagonal weave",
+    "matte",
+    "trousers",
+    "cap",
+    "pants",
+    "workwear",
+    "plain colour",
+    "pocket",
+    "dark blue",
+    "accessories",
+    "bags"
   ],
   "type": "real_cloth"
 }

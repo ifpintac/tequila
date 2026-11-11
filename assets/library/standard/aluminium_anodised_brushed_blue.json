@@ -1,6 +1,7 @@
 {
   "base_color": [0.07110197, 0.105536856, 0.38983703],
   "category": "Metal",
+  "description": "Blue anodised aluminium with fine linear brushing: a satin blue face with directional streaks, as on a control panel or accessory body.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,21 @@
     "anodised",
     "brushed",
     "blue",
-    "front panel"
+    "front panel",
+    "hairline",
+    "grain",
+    "linear grain",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "electronics",
+    "audio",
+    "accessories"
   ],
   "type": "anisotropic"
 }

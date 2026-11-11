@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.005],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A bright, even white lit LCD panel, as on a handheld device, thermostat or instrument screen.",
   "emission_color": [0.92, 0.95, 1],
   "emission_luminance": 0.6,
   "name": "Display LCD Backlit White",
@@ -12,7 +13,20 @@
     "screen",
     "backlit",
     "tft",
-    "white"
+    "white",
+    "white lcd",
+    "glowing screen",
+    "illuminated",
+    "tft screen",
+    "monitor",
+    "glow",
+    "backlight",
+    "small screen",
+    "handheld",
+    "cool white",
+    "electronics",
+    "appliances",
+    "audio"
   ],
   "type": "generic"
 }

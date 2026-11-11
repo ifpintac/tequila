@@ -2,6 +2,7 @@
   "base_color": [0.10633074, 0.06723019, 0.0371737],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Black walnut, oiled: chocolate brown with darker streaks and a soft sheen, for furniture, speaker cabinets and knobs.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1682,7 +1683,22 @@
     "walnut",
     "black walnut",
     "furniture",
-    "dark"
+    "dark",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "american walnut",
+    "dark brown",
+    "chocolate",
+    "oiled",
+    "satin",
+    "table",
+    "cabinet",
+    "knob",
+    "speaker cabinet",
+    "audio",
+    "interior",
+    "electronics"
   ],
   "type": "generic"
 }

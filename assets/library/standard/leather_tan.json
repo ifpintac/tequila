@@ -1,7 +1,8 @@
 {
   "base_color": [0.2560995, 0.15873365, 0.06619897],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Light tan leather with a fine natural grain and a soft satin sheen, for straps, bags and seats.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -692,7 +693,22 @@
     "leather",
     "grain",
     "upholstery",
-    "tan"
+    "tan",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "camel",
+    "light brown",
+    "satin",
+    "strap",
+    "bag",
+    "bags",
+    "accessories",
+    "furniture",
+    "automotive"
   ],
   "type": "generic"
 }

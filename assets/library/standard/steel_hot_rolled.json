@@ -2,6 +2,7 @@
   "base_color": [0.2, 0.2, 0.22],
   "base_metalness": 1,
   "category": "Metal",
+  "description": "Hot-rolled steel with its mill scale: a dark blue-grey, slightly rough and mottled surface, as on structural beams, plates or raw frames.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -340,7 +341,22 @@
     "hot rolled",
     "mill scale",
     "raw",
-    "industrial"
+    "industrial",
+    "hot rolled steel",
+    "hr steel",
+    "mild steel",
+    "raw steel",
+    "dark grey",
+    "blue grey",
+    "mottled",
+    "plate",
+    "beam",
+    "frame",
+    "structural",
+    "black steel",
+    "architecture",
+    "furniture",
+    "tools"
   ],
   "type": "generic"
 }

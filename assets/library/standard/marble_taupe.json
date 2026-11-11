@@ -1,6 +1,7 @@
 {
   "base_color": [0.2574238, 0.23687653, 0.20364588],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A honed, softly matte marble in warm beige-grey with faint veins, as on tabletops, floors and vanity tops.",
   "graph": {
     "decals": [],
     "links": [
@@ -2394,7 +2395,22 @@
     "honed",
     "beige",
     "greige",
-    "taupe"
+    "taupe",
+    "beige marble",
+    "warm grey",
+    "warm gray",
+    "honed stone",
+    "matte",
+    "natural stone",
+    "subtle veining",
+    "slab",
+    "tile",
+    "countertop",
+    "neutral",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

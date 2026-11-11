@@ -1,6 +1,7 @@
 {
   "base_color": [0.018638436, 0.04069648, 0.025021696],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A deep, dark green solid gloss under a clear coat, in the classic British sports-car colour.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -140,7 +141,21 @@
     "gloss",
     "clearcoat",
     "green",
-    "classic"
+    "classic",
+    "dark green",
+    "british racing green",
+    "solid colour",
+    "solid color",
+    "glossy",
+    "sprayed",
+    "baked",
+    "vintage",
+    "sports car",
+    "car paint",
+    "vehicle paint",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "paint"
 }

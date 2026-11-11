@@ -2,6 +2,7 @@
   "base_color": [0.4388821, 0.3253616, 0.16559766],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "White oak, oiled: light tan with a clear, open grain and a soft sheen, for flooring, cabinets, barrels and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1893,7 +1894,22 @@
     "oak",
     "white oak",
     "furniture",
-    "light"
+    "light",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "american white oak",
+    "pale",
+    "tan",
+    "natural",
+    "open pore",
+    "satin",
+    "oiled",
+    "flooring",
+    "cabinet",
+    "interior",
+    "architecture",
+    "food & drink"
   ],
   "type": "generic"
 }

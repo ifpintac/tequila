@@ -1,6 +1,7 @@
 {
   "base_color": [0.06898767, 0.069359384, 0.059976667],
   "category": "Metal",
+  "description": "Hard-anodised aluminium: a dark grey, tough, matte surface with a slightly sandy feel, as on a frying pan, cookware body or machined part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -177,7 +178,21 @@
     "hard anodised",
     "cookware",
     "matte",
-    "dark"
+    "dark",
+    "hard coat",
+    "hardcoat",
+    "anodized",
+    "dark grey",
+    "charcoal",
+    "frying pan",
+    "pan",
+    "non-stick look",
+    "aluminum",
+    "durable",
+    "kitchenware",
+    "industrial",
+    "tools",
+    "sporting goods"
   ],
   "type": "metal"
 }

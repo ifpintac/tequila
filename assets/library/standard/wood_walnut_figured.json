@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Figured walnut, lacquered: rich brown with wavy crotch swirls and a warm sheen, for veneers, hi-fi cabinets and fine furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1629,7 +1630,23 @@
     "swirl",
     "veneer",
     "hi-fi",
-    "luxury"
+    "luxury",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "crotch walnut",
+    "feather figure",
+    "brown",
+    "dark",
+    "lacquered",
+    "satin",
+    "polished",
+    "cabinet",
+    "desk",
+    "furniture",
+    "audio",
+    "interior",
+    "automotive"
   ],
   "type": "generic"
 }

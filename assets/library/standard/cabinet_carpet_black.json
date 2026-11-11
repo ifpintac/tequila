@@ -1,6 +1,7 @@
 {
   "base_color": [0.02, 0.02, 0.0215],
   "category": "Fabric",
+  "description": "A short, dense black carpet-like covering with a fine fuzzy pile and a flat matte look, glued onto amplifier and speaker cabinets.",
   "fuzz_color": [0.066, 0.066, 0.07040001],
   "fuzz_roughness": 0.8,
   "graph": {
@@ -478,7 +479,20 @@
     "pa",
     "speaker",
     "felt",
-    "black"
+    "black",
+    "textile",
+    "amp covering",
+    "flocked",
+    "matte",
+    "short pile",
+    "rough",
+    "amplifier",
+    "guitar amp",
+    "flight case",
+    "dark",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "velvet"
 }

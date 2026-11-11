@@ -1,6 +1,7 @@
 {
   "base_color": [0.05771999, 0.08689397, 0.37429374],
   "category": "Fabric",
+  "description": "A light blue nylon with a raised grid every few millimetres and a soft crinkled, slightly sheened face, for packs, tents and wind jackets.",
   "fuzz_color": [0.4828974, 0.49952504, 0.66332805],
   "fuzz_weight": 0.03,
   "graph": {
@@ -7397,7 +7398,22 @@
     "jacket",
     "parachute",
     "blue",
-    "royal"
+    "royal",
+    "textile",
+    "cloth",
+    "woven",
+    "reinforced grid",
+    "lightweight",
+    "windbreaker",
+    "matte",
+    "sheen",
+    "rainproof",
+    "backpack",
+    "synthetic",
+    "bags",
+    "outdoor gear",
+    "apparel",
+    "sporting goods"
   ],
   "type": "real_cloth"
 }

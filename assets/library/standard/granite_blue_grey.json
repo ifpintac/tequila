@@ -1,7 +1,8 @@
 {
   "base_color": [0.35695642, 0.33924368, 0.31770825],
   "base_diffuse_roughness": 0.2,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished blue-grey granite flecked with darker and paler grains, as on worktops, steps and cladding.",
   "graph": {
     "decals": [],
     "links": [
@@ -1341,7 +1342,22 @@
     "polished",
     "blue",
     "grey",
-    "countertop"
+    "countertop",
+    "blue gray",
+    "slate blue",
+    "grey granite",
+    "polished stone",
+    "speckled",
+    "glossy",
+    "natural stone",
+    "worktop",
+    "kitchen counter",
+    "slab",
+    "tile",
+    "architecture",
+    "interior",
+    "kitchenware",
+    "furniture"
   ],
   "type": "generic"
 }

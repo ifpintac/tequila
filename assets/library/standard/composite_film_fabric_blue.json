@@ -1,6 +1,7 @@
 {
   "base_color": [0.06734747, 0.10436646, 0.30962667],
   "category": "Fabric",
+  "description": "An ultralight, semi-translucent blue film laminate with fine filaments laid in a grid, crinkled like paper, for tents and packs.",
   "geometry_thin_walled": true,
   "graph": {
     "decals": [],
@@ -2891,7 +2892,20 @@
     "tent",
     "pack",
     "technical",
-    "blue"
+    "blue",
+    "textile",
+    "nonwoven",
+    "sheer",
+    "crinkled",
+    "waterproof",
+    "grid",
+    "lightweight",
+    "backpacking",
+    "shelter",
+    "technical fabric",
+    "outdoor gear",
+    "bags",
+    "sporting goods"
   ],
   "transmission_color": [0.53367376, 0.5521832, 0.65481335],
   "transmission_weight": 0.35,

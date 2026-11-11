@@ -2,6 +2,7 @@
   "base_color": [0.55, 0.55, 0.56],
   "base_metalness": 1,
   "category": "Metal",
+  "description": "Steel covered in orange-brown rust: a rough, mottled corroded surface with darker pits, as on an old tool, gate or weathered sheet.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -506,7 +507,23 @@
     "rust",
     "corroded",
     "aged",
-    "weathered"
+    "weathered",
+    "rusty",
+    "corrosion",
+    "oxidised",
+    "oxidized",
+    "orange",
+    "brown",
+    "decay",
+    "old",
+    "worn",
+    "iron oxide",
+    "pitted",
+    "weathered steel",
+    "industrial",
+    "architecture",
+    "prototyping",
+    "tools"
   ],
   "type": "generic"
 }

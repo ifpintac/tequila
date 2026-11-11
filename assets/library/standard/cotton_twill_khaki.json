@@ -1,6 +1,7 @@
 {
   "base_color": [0.3851098, 0.3339464, 0.19738966],
   "category": "Fabric",
+  "description": "A smooth khaki cotton twill with fine diagonal ridges and a matte finish, used for chinos, work trousers and caps.",
   "fuzz_color": [0.6465885, 0.6073609, 0.45795092],
   "fuzz_weight": 0.25,
   "graph": {
@@ -5269,7 +5270,20 @@
     "chino",
     "apparel",
     "khaki",
-    "beige"
+    "beige",
+    "textile",
+    "cloth",
+    "diagonal weave",
+    "matte",
+    "trousers",
+    "cap",
+    "pants",
+    "workwear",
+    "plain colour",
+    "pocket",
+    "sand",
+    "accessories",
+    "bags"
   ],
   "type": "real_cloth"
 }

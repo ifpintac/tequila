@@ -1,6 +1,7 @@
 {
   "base_color": [0.014, 0.014, 0.015],
   "category": "Plastic",
+  "description": "A flat, dark matte high-impact polystyrene, as in vacuum-formed trays and low-cost casings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,20 @@
     "housing",
     "tray",
     "matte",
-    "black"
+    "black",
+    "high impact polystyrene",
+    "flat black",
+    "vacuum formed",
+    "thermoformed",
+    "casing",
+    "injection moulded",
+    "molded",
+    "dark",
+    "plastic sheet",
+    "packaging",
+    "electronics",
+    "appliances",
+    "prototyping"
   ],
   "type": "plastic"
 }

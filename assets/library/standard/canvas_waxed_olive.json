@@ -1,6 +1,7 @@
 {
   "base_color": [0.059229583, 0.059510484, 0.028536197],
   "category": "Fabric",
+  "description": "A dense olive cotton canvas with a waxed, slightly uneven sheen and a visible plain weave, for bags and rugged jackets.",
   "fuzz_color": [0.24495316, 0.24502096, 0.13395853],
   "fuzz_weight": 0.04,
   "graph": {
@@ -5270,7 +5271,22 @@
     "bag",
     "jacket",
     "olive",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "cotton",
+    "plain weave",
+    "wax coated",
+    "water resistant",
+    "satchel",
+    "duffel",
+    "matte",
+    "sheen",
+    "heavy",
+    "khaki green",
+    "bags",
+    "apparel",
+    "outdoor gear"
   ],
   "type": "real_cloth"
 }

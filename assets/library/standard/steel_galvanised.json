@@ -1,6 +1,7 @@
 {
   "base_color": [0.75, 0.76, 0.77],
   "category": "Metal",
+  "description": "Hot-dip galvanised steel: a dull silver-grey zinc surface with a crystalline spangle pattern, as on a bucket, duct or lamp-post.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -151,7 +152,22 @@
     "galvanised",
     "zinc",
     "spangle",
-    "industrial"
+    "industrial",
+    "galvanized",
+    "hot dip",
+    "zinc coated",
+    "grey",
+    "gray",
+    "silver",
+    "bucket",
+    "duct",
+    "fence",
+    "lamp post",
+    "sheet",
+    "corrugated",
+    "architecture",
+    "outdoor gear",
+    "tools"
   ],
   "type": "metal"
 }

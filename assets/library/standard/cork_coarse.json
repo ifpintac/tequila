@@ -1,7 +1,8 @@
 {
   "base_color": [0.42800143, 0.26217943, 0.10092041],
   "base_diffuse_roughness": 0.65,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A honey-brown agglomerated cork with large visible chunks and a rough, dull surface, as on wall tiles and notice boards.",
   "graph": {
     "decals": [],
     "links": [
@@ -1376,7 +1377,22 @@
     "natural",
     "agglomerated",
     "wall",
-    "honey"
+    "honey",
+    "agglomerated cork",
+    "cork tile",
+    "wall covering",
+    "coarse granules",
+    "rough",
+    "brown",
+    "golden",
+    "matte",
+    "eco",
+    "noticeboard",
+    "flooring",
+    "interior",
+    "architecture",
+    "furniture",
+    "accessories"
   ],
   "type": "generic"
 }

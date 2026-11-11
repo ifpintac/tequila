@@ -1,7 +1,8 @@
 {
   "base_color": [0.011087238, 0.010411654, 0.0098268865],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black leather with a fine natural grain and a soft satin sheen, for seats, sofas, jackets and bags.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -692,7 +693,21 @@
     "leather",
     "grain",
     "upholstery",
-    "black"
+    "black",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "satin",
+    "dark",
+    "sofa",
+    "seat",
+    "furniture",
+    "automotive",
+    "bags",
+    "apparel"
   ],
   "type": "generic"
 }

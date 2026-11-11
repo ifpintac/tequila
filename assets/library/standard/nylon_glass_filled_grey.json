@@ -1,6 +1,7 @@
 {
   "base_color": [0.093784675, 0.09720842, 0.10356233],
   "category": "Plastic",
+  "description": "A matte grey glass-reinforced nylon moulded for brackets, housings and structural parts.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -215,7 +216,23 @@
     "gf30",
     "engineering",
     "bracket",
-    "grey"
+    "grey",
+    "gray",
+    "polyamide",
+    "pa",
+    "gf",
+    "glass fiber",
+    "glass fibre",
+    "reinforced",
+    "engineering plastic",
+    "matte",
+    "injection moulded",
+    "molded",
+    "structural",
+    "industrial",
+    "automotive",
+    "tools",
+    "electronics"
   ],
   "type": "generic"
 }

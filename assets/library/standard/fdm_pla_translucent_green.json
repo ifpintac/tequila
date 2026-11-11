@@ -1,5 +1,6 @@
 {
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A see-through green PLA print where layer lines catch the light, used for lamp shades and light-guide tests.",
   "graph": {
     "decals": [],
     "links": [
@@ -207,7 +208,21 @@
     "layer lines",
     "translucent",
     "transparent",
-    "green"
+    "green",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "green plastic",
+    "glowing",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "lamp shade",
+    "prototyping",
+    "lighting",
+    "toys",
+    "electronics"
   ],
   "transmission_color": [0.68559736, 0.7370227, 0.6662267],
   "transmission_depth": 0.001,

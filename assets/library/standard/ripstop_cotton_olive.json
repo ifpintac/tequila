@@ -1,6 +1,7 @@
 {
   "base_color": [0.097621225, 0.102150664, 0.05127807],
   "category": "Fabric",
+  "description": "An olive cotton cloth with a fine square grid of heavier threads every few millimetres and a matte finish, for field jackets and workwear.",
   "fuzz_color": [0.505639, 0.50822055, 0.47922584],
   "fuzz_weight": 0.25,
   "graph": {
@@ -7394,7 +7395,21 @@
     "military",
     "workwear",
     "olive",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "plain weave",
+    "matte",
+    "reinforced grid",
+    "jacket",
+    "trousers",
+    "army",
+    "cargo",
+    "woven",
+    "khaki green",
+    "apparel",
+    "outdoor gear",
+    "bags"
   ],
   "type": "real_cloth"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.10652994, 0.19910257, 0.097670436],
   "category": "Metal",
+  "description": "Aluminium anodised green: a smooth satin sheen with the colour sunk into the metal, as on a bike component, torch body or accent part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,21 @@
     "aluminium",
     "anodised",
     "green",
-    "colour"
+    "colour",
+    "olive",
+    "racing green",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "accessories",
+    "sporting goods",
+    "electronics"
   ],
   "type": "metal"
 }

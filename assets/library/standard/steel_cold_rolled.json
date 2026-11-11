@@ -1,6 +1,7 @@
 {
   "base_color": [0.9, 0.9, 0.91],
   "category": "Metal",
+  "description": "Bare cold-rolled steel sheet: a smooth, slightly dull grey surface with a faint sheen, as on an unpainted chassis, panel or bracket.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -256,7 +257,22 @@
     "spcc",
     "bare",
     "chassis",
-    "sheet"
+    "sheet",
+    "cold rolled steel",
+    "mild steel",
+    "bare steel",
+    "sheet metal",
+    "grey",
+    "gray",
+    "dull",
+    "matte",
+    "enclosure",
+    "panel",
+    "bracket",
+    "electronics",
+    "industrial",
+    "prototyping",
+    "appliances"
   ],
   "type": "metal"
 }

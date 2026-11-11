@@ -1,6 +1,7 @@
 {
   "base_color": [0.32774115, 0.23452765, 0.045029707],
   "category": "Fabric",
+  "description": "A hard-wearing mustard woven cloth with a small, even texture and a matte face, for sofas, chairs and cushions.",
   "fuzz_color": [0.5848993, 0.47829607, 0.15850171],
   "fuzz_weight": 0.5,
   "graph": {
@@ -5645,7 +5646,21 @@
     "upholstery",
     "woven",
     "sofa",
-    "yellow"
+    "yellow",
+    "textile",
+    "cloth",
+    "fabric",
+    "couch",
+    "armchair",
+    "cushion",
+    "matte",
+    "seat",
+    "chair",
+    "heavy",
+    "ochre",
+    "furniture",
+    "interior",
+    "automotive"
   ],
   "type": "real_cloth"
 }

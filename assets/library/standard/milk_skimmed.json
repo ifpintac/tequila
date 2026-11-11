@@ -1,12 +1,24 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A thin, bluish-white liquid that is slightly see-through, as in a glass or bottle.",
   "name": "Milk Skimmed",
   "specular_ior": 1.35,
   "tags": [
     "milk",
     "dairy",
     "drink",
-    "cloudy"
+    "cloudy",
+    "skim milk",
+    "low fat",
+    "beverage",
+    "white",
+    "bottle fill",
+    "glass fill",
+    "fluid",
+    "off-white",
+    "semi-skimmed",
+    "food & drink",
+    "packaging"
   ],
   "transmission_color": [0.9768, 0.9746, 0.8819],
   "transmission_depth": 0.01,

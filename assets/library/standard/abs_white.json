@@ -1,6 +1,7 @@
 {
   "base_color": [0.8535, 0.8546, 0.827],
   "category": "Plastic",
+  "description": "A clean white ABS with a gentle satin sheen, typical of appliance housings and consumer electronics.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -200,7 +201,21 @@
     "abs",
     "injection",
     "enclosure",
-    "white"
+    "white",
+    "acrylonitrile butadiene styrene",
+    "satin",
+    "off white",
+    "housing",
+    "case",
+    "moulded",
+    "molded",
+    "thermoplastic",
+    "casing",
+    "colorless",
+    "appliances",
+    "electronics",
+    "medical",
+    "prototyping"
   ],
   "type": "plastic"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.008332455, 0.0080543915, 0.007578504],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Soft black nappa leather with a very fine, smooth grain and a gentle sheen, used on headphone ear pads, headbands and seats.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -561,7 +562,21 @@
     "smooth",
     "headphone",
     "ear pad",
-    "black"
+    "black",
+    "supple",
+    "napa",
+    "nappa leather",
+    "lambskin",
+    "sheepskin",
+    "genuine leather",
+    "satin",
+    "cushion",
+    "headband",
+    "dark",
+    "audio",
+    "electronics",
+    "automotive",
+    "accessories"
   ],
   "type": "generic"
 }

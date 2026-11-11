@@ -1,6 +1,7 @@
 {
   "base_color": [0.06727308, 0.06967908, 0.034830026],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Olive green fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.37592417, 0.38397682, 0.25090334],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1250,7 +1251,22 @@
     "shoe",
     "footwear",
     "olive",
-    "green"
+    "green",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "khaki",
+    "military green",
+    "dark green",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

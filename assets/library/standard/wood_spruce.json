@@ -2,6 +2,7 @@
   "base_color": [0.74860257, 0.6736673, 0.4636879],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Spruce, left unfinished: pale cream with fine, straight grain lines, as on the tops and soundboards of guitars and violins.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1216,7 +1217,22 @@
     "spruce",
     "softwood",
     "pale",
-    "tonewood"
+    "tonewood",
+    "timber",
+    "conifer",
+    "soundboard",
+    "guitar top",
+    "violin",
+    "light",
+    "blonde",
+    "cream",
+    "straight grain",
+    "satin",
+    "natural",
+    "musical instruments",
+    "furniture",
+    "interior",
+    "audio"
   ],
   "type": "generic"
 }

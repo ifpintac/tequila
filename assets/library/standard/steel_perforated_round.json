@@ -1,7 +1,8 @@
 {
   "base_color": [0.86, 0.865, 0.87],
   "base_metalness": 1,
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Steel sheet punched with round holes in a regular grid: a grey perforated face, as on a guard, vent, speaker cover or filter.",
   "graph": {
     "decals": [],
     "links": [
@@ -3098,7 +3099,23 @@
     "perforated",
     "holes",
     "grille",
-    "sheet"
+    "sheet",
+    "round holes",
+    "punched",
+    "perforated sheet",
+    "perforated metal",
+    "vent",
+    "guard",
+    "speaker grill",
+    "grey",
+    "gray",
+    "screen",
+    "panel",
+    "filter",
+    "industrial",
+    "audio",
+    "appliances",
+    "architecture"
   ],
   "type": "generic"
 }

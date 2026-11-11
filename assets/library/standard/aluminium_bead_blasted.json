@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Aluminium blasted with fine glass beads: an even, soft matte grey-white surface with no direction, as on a machined enclosure or heatsink.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -139,7 +140,22 @@
     "aluminium",
     "aluminum",
     "blasted",
-    "matte"
+    "matte",
+    "bead blasted",
+    "sandblasted",
+    "satin",
+    "grey",
+    "gray",
+    "machined",
+    "cnc",
+    "enclosure",
+    "bezel",
+    "panel",
+    "sheet",
+    "electronics",
+    "industrial",
+    "prototyping",
+    "audio"
   ],
   "type": "metal"
 }

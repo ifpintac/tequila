@@ -1,6 +1,7 @@
 {
   "base_color": [0.016436987, 0.020096323, 0.047057334],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Navy blue fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.21259512, 0.23667328, 0.37051976],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1250,7 +1251,22 @@
     "shoe",
     "footwear",
     "navy",
-    "blue"
+    "blue",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "dark blue",
+    "midnight",
+    "indigo",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

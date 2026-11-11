@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Douglas fir: orange-brown with prominent growth rings and a straight grain, under a satin finish, for beams, frames and rustic furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1252,7 +1253,21 @@
     "fir",
     "douglas",
     "softwood",
-    "orange"
+    "orange",
+    "timber",
+    "conifer",
+    "orange brown",
+    "growth rings",
+    "beam",
+    "joinery",
+    "framing",
+    "rustic",
+    "matte",
+    "natural",
+    "architecture",
+    "furniture",
+    "interior",
+    "outdoor gear"
   ],
   "type": "generic"
 }

@@ -2,6 +2,7 @@
   "base_color": [0.3280375, 0.17820296, 0.08315694],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Western red cedar: soft reddish-brown with a straight, fine grain and a matt finish, for guitar tops, cladding and outdoor items.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1345,7 +1346,23 @@
     "cedar",
     "western red cedar",
     "softwood",
-    "red"
+    "red",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "redwood",
+    "aromatic",
+    "matte",
+    "straight grain",
+    "guitar top",
+    "cladding",
+    "decking",
+    "fence",
+    "chest",
+    "musical instruments",
+    "architecture",
+    "outdoor gear",
+    "furniture"
   ],
   "type": "generic"
 }

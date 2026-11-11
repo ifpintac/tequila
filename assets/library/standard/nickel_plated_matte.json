@@ -1,6 +1,7 @@
 {
   "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Matte nickel plating on die-cast metal: a soft grey-silver with a dull, even sheen, as on an XLR plug shell or connector body.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -133,7 +134,23 @@
     "connector shell",
     "xlr",
     "plug",
-    "satin"
+    "satin",
+    "satin nickel",
+    "dull",
+    "grey",
+    "gray",
+    "silver",
+    "electroplated",
+    "zinc die cast",
+    "connector",
+    "shell",
+    "cable",
+    "microphone",
+    "housing",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "metal"
 }

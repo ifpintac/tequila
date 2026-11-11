@@ -2,6 +2,7 @@
   "base_color": [0.26804164, 0.07813069, 0.03106469],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Padauk, oiled: vivid orange-red that darkens with age, with a medium-coarse grain, for turned parts, inlays and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1553,7 +1554,23 @@
     "padauk",
     "exotic",
     "orange",
-    "red"
+    "red",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "african padauk",
+    "padouk",
+    "vermilion",
+    "bright red",
+    "tonewood",
+    "oiled",
+    "satin",
+    "marimba",
+    "inlay",
+    "furniture",
+    "musical instruments",
+    "accessories",
+    "interior"
   ],
   "type": "generic"
 }

@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Bubinga under a gloss lacquer: warm red-brown with fine purple-pink streaks, for drum shells, instruments and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1685,7 +1686,23 @@
     "exotic",
     "red",
     "drum shell",
-    "instrument"
+    "instrument",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "african rosewood",
+    "kevazingo",
+    "reddish brown",
+    "tonewood",
+    "oiled",
+    "satin",
+    "streaked",
+    "guitar body",
+    "table",
+    "musical instruments",
+    "furniture",
+    "audio",
+    "interior"
   ],
   "type": "generic"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.7454775, 0.7316014, 0.6683791],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Off-white leather with a fine natural grain and a soft satin sheen, for modern seating, trainers and car interiors.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -693,7 +694,21 @@
     "grain",
     "upholstery",
     "white",
-    "cream"
+    "cream",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "ivory",
+    "satin",
+    "seat",
+    "trainer",
+    "furniture",
+    "automotive",
+    "shoes",
+    "interior"
   ],
   "type": "generic"
 }

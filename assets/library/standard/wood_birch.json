@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Birch: pale cream-yellow with a fine, faint grain and a satin finish, for plywood panels, furniture and small objects.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1588,7 +1589,23 @@
     "wood",
     "birch",
     "plywood",
-    "pale"
+    "pale",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "light",
+    "blonde",
+    "cream",
+    "natural",
+    "satin",
+    "scandinavian",
+    "panel",
+    "shelf",
+    "box",
+    "furniture",
+    "interior",
+    "toys",
+    "prototyping"
   ],
   "type": "generic"
 }

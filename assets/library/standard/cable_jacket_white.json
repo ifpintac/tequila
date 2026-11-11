@@ -1,7 +1,8 @@
 {
   "base_color": [0.78984004, 0.7908841, 0.7645309],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A matte white PVC cable sheath, as on charging leads, headphone cables and appliance cords.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,21 @@
     "pvc",
     "lead",
     "cord",
-    "white"
+    "white",
+    "power cord",
+    "pvc cable",
+    "sheath",
+    "matte",
+    "soft plastic",
+    "extruded",
+    "flexible",
+    "charging cable",
+    "insulation",
+    "headphone cable",
+    "electronics",
+    "audio",
+    "appliances",
+    "accessories"
   ],
   "type": "generic"
 }

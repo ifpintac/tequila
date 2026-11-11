@@ -1,6 +1,7 @@
 {
   "base_color": [0.4947884, 0.4806412, 0.43117437],
   "category": "Plastic",
+  "description": "A fine sandy-grained beige plastic with a matte textured surface, as on casings and handles.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -217,7 +218,23 @@
     "textured",
     "grained",
     "fine",
-    "beige"
+    "beige",
+    "tan",
+    "cream",
+    "fine grain",
+    "etched",
+    "matte",
+    "mould texture",
+    "mold texture",
+    "sandblasted",
+    "casing",
+    "housing",
+    "grainy",
+    "rough",
+    "appliances",
+    "electronics",
+    "tools",
+    "outdoor gear"
   ],
   "type": "plastic"
 }

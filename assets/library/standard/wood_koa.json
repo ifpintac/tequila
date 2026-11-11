@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Koa, lacquered: golden brown with shimmering curly figure and darker streaks, for ukuleles, guitars and fine accessories.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1757,7 +1758,23 @@
     "ukulele",
     "guitar",
     "golden",
-    "instrument"
+    "instrument",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "hawaiian koa",
+    "acacia koa",
+    "tonewood",
+    "chatoyant",
+    "curly",
+    "gold",
+    "amber",
+    "lacquered",
+    "gloss",
+    "musical instruments",
+    "accessories",
+    "furniture",
+    "interior"
   ],
   "type": "generic"
 }

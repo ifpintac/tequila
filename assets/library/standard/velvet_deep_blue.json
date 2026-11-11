@@ -1,6 +1,7 @@
 {
   "base_color": [0.009, 0.0105, 0.0431],
   "category": "Fabric",
+  "description": "A dense deep blue cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.2526, 0.3023, 0.6598],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -316,7 +317,21 @@
     "velvet",
     "sheen",
     "upholstery",
-    "blue"
+    "blue",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "lining",
+    "fabric",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

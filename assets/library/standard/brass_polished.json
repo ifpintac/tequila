@@ -1,6 +1,7 @@
 {
   "base_color": [0.9335, 0.8663, 0.6367],
   "category": "Metal",
+  "description": "Polished brass: a bright, warm yellow-gold mirror finish, as on an instrument, tap, door handle or ornamental fitting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
   "tags": [
     "brass",
     "gold",
-    "fitting"
+    "fitting",
+    "mirror",
+    "bright",
+    "shiny",
+    "yellow metal",
+    "tap",
+    "faucet",
+    "handle",
+    "trumpet",
+    "horn",
+    "buffed",
+    "lacquered",
+    "ornament",
+    "musical instruments",
+    "interior",
+    "furniture",
+    "accessories"
   ],
   "type": "metal"
 }

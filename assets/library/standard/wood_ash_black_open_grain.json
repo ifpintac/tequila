@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Ash stained black under a satin lacquer, its open pores left visible, giving a dark surface with textured grain, for guitars, speakers and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1653,7 +1654,22 @@
     "stained",
     "open grain",
     "guitar",
-    "furniture"
+    "furniture",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "ebonized",
+    "dyed black",
+    "open pore",
+    "matte",
+    "dark",
+    "grain filler",
+    "guitar body",
+    "speaker cabinet",
+    "table",
+    "musical instruments",
+    "audio",
+    "interior"
   ],
   "type": "generic"
 }

@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Curly maple, lacquered: pale gold with rippled, shimmering flame figure across the grain, for guitar and violin backs, necks and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -2035,7 +2036,23 @@
     "curly",
     "flame",
     "figured",
-    "instrument"
+    "instrument",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "flamed maple",
+    "tiger maple",
+    "figured maple",
+    "tonewood",
+    "blonde",
+    "light",
+    "gloss",
+    "lacquered",
+    "violin",
+    "musical instruments",
+    "furniture",
+    "interior",
+    "accessories"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.1647, 0.1679, 0.1737],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A mid-grey powder coat with a smooth satin sheen, as on machinery, cabinets and workshop furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -109,7 +110,21 @@
     "powder",
     "satin",
     "industrial",
-    "grey"
+    "grey",
+    "gray",
+    "powder coated",
+    "baked",
+    "cured",
+    "electrostatic",
+    "semi-gloss",
+    "metal finish",
+    "steel",
+    "cabinet",
+    "machinery",
+    "mid grey",
+    "appliances",
+    "furniture",
+    "tools"
   ],
   "type": "plastic"
 }

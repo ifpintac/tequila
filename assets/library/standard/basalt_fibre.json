@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A dark grey-bronze twill weave of basalt fibre under clear resin, with a dull volcanic sheen, as in bike parts and body panels.",
   "graph": {
     "decals": [],
     "links": [
@@ -4401,7 +4402,20 @@
     "weave",
     "twill",
     "bronze",
-    "dark"
+    "dark",
+    "basalt fiber",
+    "volcanic rock fibre",
+    "twill weave",
+    "dark grey",
+    "brown",
+    "resin",
+    "laminate",
+    "cfrp alternative",
+    "woven",
+    "gloss",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

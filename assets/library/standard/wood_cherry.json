@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Cherry, lightly finished: warm reddish-brown with a smooth, fine grain and a satin sheen, for furniture, cabinets and boxes.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1867,7 +1868,22 @@
     "wood",
     "cherry",
     "furniture",
-    "red"
+    "red",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "american cherry",
+    "black cherry",
+    "reddish brown",
+    "warm",
+    "natural",
+    "satin",
+    "oiled",
+    "table",
+    "cabinet",
+    "interior",
+    "kitchenware",
+    "musical instruments"
   ],
   "type": "generic"
 }

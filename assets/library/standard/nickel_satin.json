@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Satin nickel: a soft, slightly warm silver with a muted sheen, as on taps, door furniture and decorative hardware.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -231,7 +232,23 @@
   "tags": [
     "nickel",
     "plating",
-    "hardware"
+    "hardware",
+    "brushed nickel look",
+    "matte",
+    "dull",
+    "warm silver",
+    "plated",
+    "electroplated",
+    "tap",
+    "faucet",
+    "handle",
+    "knob",
+    "fitting",
+    "fixture",
+    "interior",
+    "furniture",
+    "kitchenware",
+    "lighting"
   ],
   "type": "metal"
 }

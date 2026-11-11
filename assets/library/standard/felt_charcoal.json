@@ -1,6 +1,7 @@
 {
   "base_color": [0.055, 0.0565, 0.060500003],
   "category": "Fabric",
+  "description": "A dense, matte charcoal felted cloth with a fuzzy, non-woven face and no visible weave, for linings, pads and acoustic panels.",
   "fuzz_color": [0.12750001, 0.1309, 0.1394],
   "fuzz_roughness": 0.75,
   "graph": {
@@ -476,7 +477,23 @@
     "acoustic",
     "soft",
     "charcoal",
-    "dark grey"
+    "dark grey",
+    "textile",
+    "cloth",
+    "nonwoven",
+    "wool felt",
+    "matte",
+    "fuzzy",
+    "fibre",
+    "fiber",
+    "craft",
+    "pad",
+    "gray",
+    "dark gray",
+    "interior",
+    "accessories",
+    "audio",
+    "furniture"
   ],
   "type": "velvet"
 }

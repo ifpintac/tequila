@@ -1,6 +1,7 @@
 {
   "base_color": [0.096783236, 0.052902456, 0.24254158],
   "category": "Metal",
+  "description": "Aluminium anodised purple: a smooth satin sheen with the violet colour in the metal, as on a bike component, knob or accessory.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,21 @@
     "aluminium",
     "anodised",
     "purple",
-    "colour"
+    "colour",
+    "violet",
+    "plum",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "accessories",
+    "sporting goods",
+    "electronics"
   ],
   "type": "metal"
 }

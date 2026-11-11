@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
   "category": "Metal",
+  "description": "Aluminium with fine circular tool marks from a face mill: a bright satin surface with faint swirl arcs, as on a machined plate or block.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -1953,7 +1954,22 @@
     "milled",
     "machined",
     "billet",
-    "fly cut"
+    "fly cut",
+    "fly cutter",
+    "swirl",
+    "tool marks",
+    "cnc",
+    "machining",
+    "machined finish",
+    "plate",
+    "panel",
+    "bezel",
+    "aluminum",
+    "satin",
+    "electronics",
+    "industrial",
+    "prototyping",
+    "tools"
   ],
   "type": "anisotropic"
 }

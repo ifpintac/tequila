@@ -446,6 +446,7 @@ fn material(document: &Document, shader: XmlNode, name: String) -> Result<Conver
         graph.connect(from, output, Socket::Param(param));
     }
     let entry = LibraryEntry {
+        description: String::new(),
         name,
         category: "Other".into(),
         tags: vec!["MaterialX".into()],

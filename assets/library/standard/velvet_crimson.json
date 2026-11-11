@@ -1,6 +1,7 @@
 {
   "base_color": [0.070036165, 0.010746256, 0.009618839],
   "category": "Fabric",
+  "description": "A dense crimson cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.4954299, 0.13953649, 0.1509286],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -316,7 +317,22 @@
     "velvet",
     "velour",
     "sheen",
-    "red"
+    "red",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "lining",
+    "fabric",
+    "deep red",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

@@ -155,7 +155,57 @@ fn edge_of(p: &Preset) -> f32 {
     }
 }
 
+/// What the library says of a preset beyond its recipe: the category it
+/// is listed under, a sentence on what it is and what it is for, the other
+/// words it is found by, and what it is used for (words from
+/// `library::USES`). Kept in `catalogue.json` beside this file, one entry a
+/// preset, so the words can be read and corrected together; it decides the
+/// category, over the one the recipe was written with.
+struct Listing {
+    category: String,
+    description: String,
+    tags: Vec<String>,
+    uses: Vec<String>,
+}
+
+fn catalogue() -> std::collections::BTreeMap<String, Listing> {
+    let text = include_str!("catalogue.json");
+    let value = tequila_format::json::parse(text.as_bytes()).expect("catalogue.json reads");
+    let words = |v: &tequila_format::json::Value, key: &str| -> Vec<String> {
+        v.get(key).map(|w| w.as_array()).unwrap_or(&[]).iter().filter_map(|w| w.as_str().map(str::to_string)).collect()
+    };
+    let mut listings = std::collections::BTreeMap::new();
+    for item in value.as_array() {
+        let name = item.get("name").and_then(|v| v.as_str()).expect("a listing names its preset").to_string();
+        let listing = Listing {
+            category: item.get("category").and_then(|v| v.as_str()).expect("a listing has a category").to_string(),
+            description: item.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            tags: words(item, "tags"),
+            uses: words(item, "uses"),
+        };
+        assert!(library::CATEGORIES.contains(&listing.category.as_str()), "{name}: `{}` is not one of the library's categories", listing.category);
+        for u in &listing.uses {
+            assert!(library::USES.contains(&u.as_str()), "{name}: `{u}` is not one of the uses");
+        }
+        assert!(listings.insert(name.clone(), listing).is_none(), "{name} is listed twice");
+    }
+    listings
+}
+
+/// The recipe's own words, then the listing's, then its uses, each once.
+fn words_of(own: &[&str], listing: &Listing) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for w in own.iter().map(|w| w.to_string()).chain(listing.tags.iter().cloned()).chain(listing.uses.iter().cloned()) {
+        let w = w.trim().to_lowercase();
+        if !w.is_empty() && !words.contains(&w) {
+            words.push(w);
+        }
+    }
+    words
+}
+
 fn main() {
+    let mut listings = catalogue();
     let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all(), leather::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
@@ -168,10 +218,13 @@ fn main() {
         p.recipe.graph.compile().unwrap_or_else(|e| panic!("{} does not compile: {e:?}", p.name));
         let material = p.recipe.graph.material().clone();
         assert_eq!(material.clone().sanitized(), material, "{} holds a value out of range", p.name);
+        let listing = listings.remove(p.name).unwrap_or_else(|| panic!("{} is not in catalogue.json", p.name));
+        assert!(!listing.description.is_empty() && !listing.uses.is_empty(), "{}: its listing wants a description and a use", p.name);
         let entry = LibraryEntry {
+            description: listing.description.clone(),
             name: p.name.to_string(),
-            category: p.category.to_string(),
-            tags: p.tags.iter().map(|t| t.to_string()).collect(),
+            category: listing.category.clone(),
+            tags: words_of(p.tags, &listing),
             material_type: p.ty,
             material,
             graph: p.recipe.graph,
@@ -184,6 +237,7 @@ fn main() {
         std::fs::write(folder.join(&file), library::write_entry(&entry)).expect("writable");
         written.push(file);
     }
+    assert!(listings.is_empty(), "catalogue.json lists presets that are not built: {:?}", listings.keys().collect::<Vec<_>>());
     // What is not built here any more goes.
     for old in std::fs::read_dir(&folder).expect("the library folder") {
         let path = old.expect("listable").path();

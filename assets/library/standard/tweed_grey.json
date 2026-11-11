@@ -1,6 +1,7 @@
 {
   "base_color": [0.15007022, 0.14983326, 0.15581465],
   "category": "Fabric",
+  "description": "A grey woollen cloth with a rough, flecked surface and a visible twill weave, for jackets, caps and sofas.",
   "fuzz_color": [0.3818116, 0.38146397, 0.3902386],
   "graph": {
     "decals": [],
@@ -5369,7 +5370,22 @@
     "wool",
     "woven",
     "upholstery",
-    "grey"
+    "grey",
+    "textile",
+    "cloth",
+    "twill",
+    "flecked",
+    "fibre",
+    "fiber",
+    "fuzzy",
+    "matte",
+    "jacket",
+    "cap",
+    "blazer",
+    "gray",
+    "apparel",
+    "furniture",
+    "interior"
   ],
   "type": "real_cloth"
 }

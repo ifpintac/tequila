@@ -2,6 +2,7 @@
   "base_color": [0.14093041, 0.096345365, 0.05157114],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Smoked oak: fumed to a deep brown and oiled, with open grain and a soft sheen, for flooring, tables and shelving.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1893,7 +1894,23 @@
     "oak",
     "smoked",
     "fumed",
-    "dark"
+    "dark",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "fumed oak",
+    "dark oak",
+    "heat treated",
+    "brown",
+    "black brown",
+    "matte",
+    "open pore",
+    "flooring",
+    "table",
+    "furniture",
+    "interior",
+    "architecture",
+    "audio"
   ],
   "type": "generic"
 }

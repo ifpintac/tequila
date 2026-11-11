@@ -1,6 +1,7 @@
 {
   "base_color": [0.49025434, 0.5227473, 0.66160095],
   "category": "Fabric",
+  "description": "A blue cotton shirting with a small basket weave and a soft matte face, for button-down shirts and light casual wear.",
   "fuzz_color": [0.6644978, 0.6980167, 0.8194227],
   "fuzz_weight": 0.2,
   "graph": {
@@ -5545,7 +5546,17 @@
     "cotton",
     "basket weave",
     "apparel",
-    "blue"
+    "blue",
+    "textile",
+    "shirt",
+    "button-down",
+    "dress shirt",
+    "soft",
+    "matte",
+    "plain",
+    "casual",
+    "woven",
+    "accessories"
   ],
   "type": "real_cloth"
 }

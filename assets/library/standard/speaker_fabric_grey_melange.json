@@ -1,6 +1,7 @@
 {
   "base_color": [0.13663161, 0.1392643, 0.14942503],
   "category": "Fabric",
+  "description": "A fine knitted grey flecked acoustic cloth with a soft textured surface and no visible holes, stretched over smart speakers and soundbars.",
   "fuzz_color": [0.5578428, 0.5640807, 0.5812954],
   "fuzz_weight": 0.35,
   "graph": {
@@ -5371,7 +5372,21 @@
     "melange",
     "wool blend",
     "smart speaker",
-    "grey"
+    "grey",
+    "textile",
+    "cloth",
+    "grille",
+    "knit",
+    "sound-permeable",
+    "soft",
+    "matte",
+    "wireless speaker",
+    "soundbar",
+    "home audio",
+    "gray",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "real_cloth"
 }

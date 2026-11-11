@@ -1,6 +1,7 @@
 {
   "base_color": [0.050494634, 0.013912063, 0.015134904],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Burgundy fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.34017536, 0.20548898, 0.21728851],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1251,7 +1252,22 @@
     "footwear",
     "burgundy",
     "red",
-    "wine"
+    "wine",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "maroon",
+    "claret",
+    "dark red",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

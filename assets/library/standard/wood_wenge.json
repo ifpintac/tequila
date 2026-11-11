@@ -2,6 +2,7 @@
   "base_color": [0.064062886, 0.044122376, 0.027826432],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Wenge: very dark brown with fine black streaks and a coarse, open grain, for furniture, flooring and bold accents.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1553,7 +1554,23 @@
     "wenge",
     "exotic",
     "dark",
-    "striped"
+    "striped",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "weng",
+    "dark brown",
+    "black brown",
+    "coarse grain",
+    "open pore",
+    "satin",
+    "oiled",
+    "table",
+    "flooring",
+    "furniture",
+    "interior",
+    "architecture",
+    "accessories"
   ],
   "type": "generic"
 }

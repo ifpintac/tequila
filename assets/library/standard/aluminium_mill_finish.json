@@ -1,6 +1,7 @@
 {
   "base_color": [0.86, 0.86, 0.86],
   "category": "Metal",
+  "description": "Aluminium as it leaves the rolling mill: a dull grey-silver surface with faint rolling streaks, as on raw sheet, tread or ducting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -346,7 +347,21 @@
     "mill finish",
     "raw",
     "sheet",
-    "rolled"
+    "rolled",
+    "raw aluminum",
+    "unfinished",
+    "bare",
+    "plate",
+    "grey",
+    "gray",
+    "dull",
+    "matte",
+    "panel",
+    "ducting",
+    "industrial",
+    "architecture",
+    "prototyping",
+    "automotive"
   ],
   "type": "anisotropic"
 }

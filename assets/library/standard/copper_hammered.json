@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Copper beaten with a hammer: a warm orange-red metal covered in small dimples, as on a mug, kettle, bowl or handmade lamp.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -141,7 +142,23 @@
     "copper",
     "hammered",
     "beaten",
-    "craft"
+    "craft",
+    "dimpled",
+    "planished",
+    "beaten copper",
+    "handmade",
+    "artisan",
+    "mug",
+    "kettle",
+    "bowl",
+    "pot",
+    "orange",
+    "reddish",
+    "textured",
+    "kitchenware",
+    "interior",
+    "lighting",
+    "food & drink"
   ],
   "type": "metal"
 }

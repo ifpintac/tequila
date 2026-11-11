@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Mahogany, satin finished: deep reddish-brown with fine ribbon stripes and a soft sheen, for furniture, guitar bodies and cabinets.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1782,7 +1783,22 @@
     "mahogany",
     "furniture",
     "red",
-    "ribbon"
+    "ribbon",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "honduras mahogany",
+    "reddish brown",
+    "ribbon grain",
+    "striped",
+    "satin",
+    "oiled",
+    "guitar body",
+    "table",
+    "cabinet",
+    "musical instruments",
+    "audio",
+    "interior"
   ],
   "type": "generic"
 }

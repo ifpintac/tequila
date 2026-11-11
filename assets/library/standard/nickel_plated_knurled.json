@@ -1,6 +1,7 @@
 {
   "base_color": [0.99, 0.975, 0.95],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Nickel-plated metal with a fine diamond knurl: a warm silver grip texture of tiny crossing ridges, as on a jack nut or thumbscrew.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -114,7 +115,22 @@
     "nut",
     "thumbscrew",
     "jack nut",
-    "hardware"
+    "hardware",
+    "diamond knurl",
+    "knurling",
+    "ridged",
+    "grip",
+    "electroplated",
+    "silver",
+    "thumb screw",
+    "collar",
+    "cap",
+    "turned",
+    "lathe",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "tools"
   ],
   "type": "metal"
 }

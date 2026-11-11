@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black powder-coated steel sheet punched with 6 mm hexagonal holes in a honeycomb pattern, as on a PA speaker front or equipment cover.",
   "graph": {
     "decals": [],
     "links": [
@@ -3268,7 +3269,23 @@
     "pa",
     "hexagon",
     "black",
-    "powder coat"
+    "powder coat",
+    "hexagonal",
+    "honeycomb",
+    "punched",
+    "perforated sheet",
+    "6mm",
+    "black grille",
+    "powder coated",
+    "matte black",
+    "grill",
+    "speaker grill",
+    "cabinet",
+    "steel",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

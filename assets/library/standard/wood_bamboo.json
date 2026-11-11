@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Natural bamboo made of pale laminated strips with occasional dark nodes and a satin finish, for boards, furniture and accessories.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1196,7 +1197,21 @@
     "nodes",
     "pale",
     "natural",
-    "sustainable"
+    "sustainable",
+    "timber",
+    "laminate",
+    "grass",
+    "light",
+    "blonde",
+    "eco",
+    "satin",
+    "cutting board",
+    "desk",
+    "panel",
+    "kitchenware",
+    "furniture",
+    "interior",
+    "accessories"
   ],
   "type": "generic"
 }

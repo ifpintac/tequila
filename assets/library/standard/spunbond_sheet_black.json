@@ -2,6 +2,7 @@
   "base_color": [0.010359685, 0.010338303, 0.010878041],
   "base_diffuse_roughness": 0.6,
   "category": "Fabric",
+  "description": "A papery, bonded black nonwoven sheet with fine random fibre texture and a soft matte, slightly crinkled face, for envelopes, wraps and tags.",
   "graph": {
     "decals": [],
     "links": [
@@ -749,7 +750,20 @@
     "coverall",
     "tag",
     "packaging",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "paper-like",
+    "fibre",
+    "fiber",
+    "tear resistant",
+    "waterproof",
+    "crinkled",
+    "mailer",
+    "matte",
+    "dark",
+    "apparel",
+    "architecture"
   ],
   "transmission_color": [0.010359685, 0.010338303, 0.010878041],
   "type": "generic"

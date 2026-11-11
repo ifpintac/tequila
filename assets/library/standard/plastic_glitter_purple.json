@@ -2,6 +2,7 @@
   "base_color": [0.034732893, 0.014453081, 0.09516344],
   "category": "Plastic",
   "coat_roughness": 0.04,
+  "description": "A purple moulded plastic with sparkling flakes embedded in it, as on toys, cases and cosmetic items.",
   "edge_radius": 0.00035,
   "flake_color": [0.9, 0.9, 0.92],
   "flake_roughness": 0.12,
@@ -69,7 +70,21 @@
     "sparkle",
     "purple",
     "toy",
-    "case"
+    "case",
+    "violet",
+    "glittery",
+    "metallic flake",
+    "shimmer",
+    "sparkly",
+    "flake",
+    "moulded",
+    "molded",
+    "phone case",
+    "lavender",
+    "toys",
+    "accessories",
+    "cosmetics",
+    "electronics"
   ],
   "type": "metallic_paint"
 }

@@ -2,6 +2,7 @@
   "base_color": [0.24671562, 0.19976714, 0.10819408],
   "base_diffuse_roughness": 0.5,
   "category": "Fabric",
+  "description": "A sailcloth-style coyote laminate with crossing reinforcing yarns under a clear film, giving a diamond-grid pattern, for packs and bags.",
   "graph": {
     "decals": [],
     "links": [
@@ -6473,7 +6474,21 @@
     "technical",
     "coyote",
     "tan",
-    "brown"
+    "brown",
+    "textile",
+    "bonded",
+    "film",
+    "reinforced",
+    "rainproof",
+    "diamond grid",
+    "yarn grid",
+    "dry bag",
+    "backpacking",
+    "sail",
+    "desert tan",
+    "bags",
+    "outdoor gear",
+    "sporting goods"
   ],
   "type": "generic"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.11566116, 0.116862245, 0.12141371],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Grey synthetic leather with a fine uniform grain and a soft sheen, for headphone ear pads, headbands and cushioned trim.",
   "graph": {
     "decals": [],
     "links": [
@@ -450,7 +451,21 @@
     "ear pad",
     "headband",
     "headphone",
-    "grey"
+    "grey",
+    "vegan leather",
+    "pleather",
+    "artificial leather",
+    "pu",
+    "vinyl",
+    "synthetic",
+    "embossed grain",
+    "cushion",
+    "satin",
+    "gray",
+    "audio",
+    "electronics",
+    "accessories",
+    "furniture"
   ],
   "type": "generic"
 }

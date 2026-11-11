@@ -1,7 +1,8 @@
 {
   "base_color": [0.16996387, 0.028627649, 0.018001193],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Strong red leather with a fine natural grain and a soft satin sheen, for seats, bags and accent trim.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -692,7 +693,21 @@
     "leather",
     "grain",
     "upholstery",
-    "red"
+    "red",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "crimson",
+    "satin",
+    "seat",
+    "accent",
+    "furniture",
+    "automotive",
+    "bags",
+    "accessories"
   ],
   "type": "generic"
 }

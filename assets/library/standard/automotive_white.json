@@ -1,6 +1,7 @@
 {
   "base_color": [0.9055, 0.9049, 0.9194],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A clean solid white gloss under a clear coat, slightly rippled with orange peel, as on vans, hatchbacks and white goods.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -139,7 +140,21 @@
     "car",
     "gloss",
     "clearcoat",
-    "white"
+    "white",
+    "white paint",
+    "solid colour",
+    "solid color",
+    "glossy",
+    "sprayed",
+    "baked",
+    "orange peel",
+    "white goods",
+    "car paint",
+    "vehicle paint",
+    "two-pack",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "paint"
 }

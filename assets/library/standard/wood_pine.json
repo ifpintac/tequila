@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Pine: yellow-tan with darker growth rings and occasional knots, under a satin finish, for shelves, crates, flooring and rustic furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1570,7 +1571,23 @@
     "pine",
     "softwood",
     "knots",
-    "yellow"
+    "yellow",
+    "timber",
+    "conifer",
+    "scots pine",
+    "knotty",
+    "light",
+    "blonde",
+    "rustic",
+    "matte",
+    "natural",
+    "crate",
+    "flooring",
+    "shelf",
+    "furniture",
+    "interior",
+    "architecture",
+    "packaging"
   ],
   "type": "generic"
 }

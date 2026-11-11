@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Hard maple, lightly finished: pale cream with a fine, faint grain and a satin sheen, for guitar necks, furniture and kitchenware.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1868,7 +1869,22 @@
     "maple",
     "hard maple",
     "furniture",
-    "pale"
+    "pale",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "rock maple",
+    "sugar maple",
+    "light",
+    "blonde",
+    "cream",
+    "natural",
+    "satin",
+    "neck",
+    "chopping block",
+    "musical instruments",
+    "kitchenware",
+    "interior"
   ],
   "type": "generic"
 }

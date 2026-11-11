@@ -118,7 +118,7 @@ fn five_materials_apply_to_a_product_model_within_the_budget() {
     // Five that differ in kind, not just in colour — a plastic, a metal, a
     // paint, a glass and a fabric — so the timing covers the range rather than
     // five variations of one thing.
-    let chosen: Vec<&library::LibraryEntry> = ["Plastic", "Metal", "Paint", "Glass", "Fabric"]
+    let chosen: Vec<&library::LibraryEntry> = ["Plastic", "Metal", "Paint & Coating", "Glass & Clear Plastic", "Fabric"]
         .iter()
         .map(|category| {
             library

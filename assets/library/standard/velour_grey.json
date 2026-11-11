@@ -1,6 +1,7 @@
 {
   "base_color": [0.070322536, 0.072112486, 0.07910691],
   "category": "Fabric",
+  "description": "A soft, dense grey cloth with a short, even cut pile that gives a plush, slightly sheened feel, for headphone ear pads and cushions.",
   "fuzz_color": [0.3966071, 0.4015339, 0.4202816],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -317,7 +318,22 @@
     "ear pad",
     "headphone",
     "cushion",
-    "grey"
+    "grey",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "soft",
+    "matte",
+    "sheen",
+    "ear cup",
+    "earpad",
+    "headphones",
+    "gray",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "velvet"
 }

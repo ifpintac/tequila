@@ -1,6 +1,7 @@
 {
   "base_color": [0.7912989, 0.7226894, 0.5386771],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Cream roughout suede with a coarse, hairy nap that looks dusty and matte, for boots, work gloves and rugged bags.",
   "fuzz_clump": 0.3,
   "fuzz_color": [0.8360882, 0.7812882, 0.6227667],
   "fuzz_color_variation": 0.4,
@@ -1839,7 +1840,21 @@
     "footwear",
     "cream",
     "beige",
-    "off-white"
+    "off-white",
+    "buff",
+    "rough side",
+    "reverse hide",
+    "napped leather",
+    "matte",
+    "ivory",
+    "work boot",
+    "glove",
+    "heavy duty",
+    "hide",
+    "shoes",
+    "apparel",
+    "bags",
+    "outdoor gear"
   ],
   "type": "velvet"
 }

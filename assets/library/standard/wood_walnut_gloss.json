@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Walnut under piano-style gloss lacquer: dark brown with a deep, mirror-like shine, for speaker cabinets, hi-fi and fine furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1686,7 +1687,23 @@
     "piano lacquer",
     "hi-fi",
     "speaker",
-    "dark"
+    "dark",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "black walnut",
+    "dark brown",
+    "chocolate",
+    "lacquered",
+    "high gloss",
+    "shiny",
+    "polished",
+    "piano finish",
+    "veneer",
+    "audio",
+    "furniture",
+    "interior",
+    "electronics"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.06075581, 0.06686556, 0.035105795],
   "category": "Fabric",
+  "description": "A rugged, textured olive nylon pack cloth with a slightly rough, matte face and a fine irregular weave, for backpacks, cases and gear bags.",
   "fuzz_color": [0.25706998, 0.27526796, 0.15620774],
   "fuzz_weight": 0.08,
   "graph": {
@@ -5271,7 +5272,22 @@
     "bag",
     "case",
     "olive",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "heavy duty",
+    "abrasion resistant",
+    "textured",
+    "matte",
+    "backpack",
+    "luggage",
+    "tough",
+    "rucksack",
+    "khaki green",
+    "bags",
+    "outdoor gear",
+    "accessories",
+    "musical instruments"
   ],
   "type": "real_cloth"
 }

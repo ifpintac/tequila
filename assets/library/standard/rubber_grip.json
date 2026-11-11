@@ -1,7 +1,8 @@
 {
   "base_color": [0.013052244, 0.0130026825, 0.014253668],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black rubber with a fine knurled, textured surface, as on handlebars, tool handles and grips.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -156,7 +157,23 @@
     "rubber",
     "grip",
     "knurled",
-    "handle"
+    "handle",
+    "handlebar",
+    "non slip",
+    "anti slip",
+    "textured",
+    "knurl",
+    "matte",
+    "soft",
+    "elastomer",
+    "moulded",
+    "molded",
+    "dark",
+    "rubberised",
+    "tools",
+    "sporting goods",
+    "outdoor gear",
+    "automotive"
   ],
   "type": "generic"
 }

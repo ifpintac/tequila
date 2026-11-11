@@ -1,6 +1,7 @@
 {
   "base_color": [0.2098513, 0.037399735, 0.024361465],
   "category": "Fabric",
+  "description": "A dense, matte red felted cloth with a fuzzy, non-woven face and no visible weave, for linings, pads and acoustic panels.",
   "fuzz_color": [0.491266, 0.091156304, 0.060707502],
   "fuzz_roughness": 0.75,
   "graph": {
@@ -476,7 +477,22 @@
     "lining",
     "case",
     "piano",
-    "red"
+    "red",
+    "textile",
+    "cloth",
+    "nonwoven",
+    "wool felt",
+    "matte",
+    "fuzzy",
+    "fibre",
+    "fiber",
+    "craft",
+    "pad",
+    "laptop sleeve",
+    "interior",
+    "accessories",
+    "audio",
+    "furniture"
   ],
   "type": "velvet"
 }

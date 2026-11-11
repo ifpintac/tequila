@@ -1,6 +1,7 @@
 {
   "base_color": [0.052500002, 0.053999998, 0.0575],
   "category": "Fabric",
+  "description": "A short, dense charcoal carpet-like covering with a fine fuzzy pile and a flat matte look, glued onto amplifier and speaker cabinets.",
   "fuzz_color": [0.165, 0.1694, 0.18040001],
   "fuzz_roughness": 0.8,
   "graph": {
@@ -479,7 +480,21 @@
     "speaker",
     "felt",
     "charcoal",
-    "grey"
+    "grey",
+    "textile",
+    "amp covering",
+    "flocked",
+    "matte",
+    "short pile",
+    "rough",
+    "amplifier",
+    "guitar amp",
+    "gray",
+    "dark gray",
+    "dark grey",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "velvet"
 }

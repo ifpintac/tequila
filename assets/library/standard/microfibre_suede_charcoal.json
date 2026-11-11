@@ -1,6 +1,7 @@
 {
   "base_color": [0.03322305, 0.03313835, 0.0352763],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Charcoal-grey synthetic suede with a fine even nap and a matt look, for car headliners, steering wheels and headphone pads.",
   "fuzz_color": [0.2713006, 0.2707258, 0.28523517],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1249,7 +1250,21 @@
     "headphone",
     "nap",
     "charcoal",
-    "grey"
+    "grey",
+    "microfiber",
+    "faux suede",
+    "vegan suede",
+    "polyester",
+    "brushed nap",
+    "matte",
+    "gray",
+    "dark grey",
+    "trim",
+    "artificial suede",
+    "automotive",
+    "audio",
+    "electronics",
+    "furniture"
   ],
   "type": "velvet"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.0117, 0.0116, 0.0128],
   "category": "Fabric",
+  "description": "A dense charcoal cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.3061, 0.3053, 0.3248],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -316,7 +317,22 @@
     "velvet",
     "sheen",
     "upholstery",
-    "charcoal"
+    "charcoal",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "lining",
+    "dark gray",
+    "dark grey",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

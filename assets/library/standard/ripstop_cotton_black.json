@@ -1,6 +1,7 @@
 {
   "base_color": [0.010606308, 0.010584956, 0.011123886],
   "category": "Fabric",
+  "description": "A black cotton cloth with a fine square grid of heavier threads every few millimetres and a matte finish, for field jackets and workwear.",
   "fuzz_color": [0.45604503, 0.45603287, 0.45634001],
   "fuzz_weight": 0.25,
   "graph": {
@@ -7392,7 +7393,21 @@
     "grid",
     "field jacket",
     "workwear",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "plain weave",
+    "matte",
+    "reinforced grid",
+    "jacket",
+    "trousers",
+    "army",
+    "cargo",
+    "woven",
+    "dark",
+    "apparel",
+    "outdoor gear",
+    "bags"
   ],
   "type": "real_cloth"
 }

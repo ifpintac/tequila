@@ -1,6 +1,7 @@
 {
   "base_color": [0.20779559, 0.21505663, 0.22850807],
   "category": "Fabric",
+  "description": "An ultralight, semi-translucent grey film laminate with fine filaments laid in a grid, crinkled like paper, for tents and packs.",
   "geometry_thin_walled": true,
   "graph": {
     "decals": [],
@@ -2891,7 +2892,21 @@
     "tent",
     "pack",
     "technical",
-    "grey"
+    "grey",
+    "textile",
+    "nonwoven",
+    "sheer",
+    "crinkled",
+    "waterproof",
+    "grid",
+    "lightweight",
+    "backpacking",
+    "shelter",
+    "technical fabric",
+    "gray",
+    "outdoor gear",
+    "bags",
+    "sporting goods"
   ],
   "transmission_color": [0.6038978, 0.6075283, 0.61425406],
   "transmission_weight": 0.4,

@@ -2,6 +2,7 @@
   "base_color": [0.2757606, 0.20530213, 0.10694284],
   "base_diffuse_roughness": 0.6,
   "category": "Wood",
+  "description": "Unfinished MDF in light brown, a flat, uniform, fine-grained panel with a matt surface, for speaker cabinets, models and shelving.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -151,7 +152,21 @@
     "raw",
     "cabinet",
     "speaker",
-    "brown"
+    "brown",
+    "medium density fibreboard",
+    "fiberboard",
+    "engineered wood",
+    "composite board",
+    "panel",
+    "matte",
+    "unfinished",
+    "smooth",
+    "sheet",
+    "prototype",
+    "audio",
+    "furniture",
+    "prototyping",
+    "interior"
   ],
   "type": "generic"
 }

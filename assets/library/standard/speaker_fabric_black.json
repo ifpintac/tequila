@@ -1,6 +1,7 @@
 {
   "base_color": [0.006837706, 0.0068209404, 0.0072441427],
   "category": "Fabric",
+  "description": "A fine knitted black acoustic cloth with a soft textured surface and no visible holes, stretched over smart speakers and soundbars.",
   "fuzz_color": [0.045327663, 0.04522637, 0.047783136],
   "fuzz_weight": 0.2,
   "graph": {
@@ -5268,7 +5269,21 @@
     "acoustic cloth",
     "grille cloth",
     "fine",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "grille",
+    "knit",
+    "sound-permeable",
+    "soft",
+    "matte",
+    "wireless speaker",
+    "soundbar",
+    "home audio",
+    "dark",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "real_cloth"
 }

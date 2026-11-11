@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Birdseye maple, lacquered: pale gold with small dark eye-like dots in the grain, for guitar tops, veneers and fine cabinets.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -2279,7 +2280,23 @@
     "eyes",
     "instrument",
     "veneer",
-    "pale"
+    "pale",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "bird eye",
+    "figured maple",
+    "tonewood",
+    "blonde",
+    "light",
+    "gloss",
+    "lacquered",
+    "guitar top",
+    "fingerboard",
+    "musical instruments",
+    "furniture",
+    "interior",
+    "accessories"
   ],
   "type": "generic"
 }

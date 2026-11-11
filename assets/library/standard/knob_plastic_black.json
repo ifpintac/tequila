@@ -1,6 +1,7 @@
 {
   "base_color": [0.011, 0.011, 0.0118],
   "category": "Plastic",
+  "description": "A fine-grained matte black ABS knob surface that resists fingerprints, as on amplifier and mixer dials.",
   "edge_radius": 0.0003,
   "fuzz_color": [0.55, 0.55, 0.56],
   "fuzz_roughness": 0.5,
@@ -233,7 +234,22 @@
     "fine grain",
     "textured",
     "black",
-    "moulded"
+    "moulded",
+    "dial",
+    "control knob",
+    "potentiometer",
+    "rotary",
+    "matte",
+    "etched",
+    "knobs",
+    "fingerprint resistant",
+    "injection moulded",
+    "molded",
+    "dark",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "appliances"
   ],
   "type": "generic"
 }

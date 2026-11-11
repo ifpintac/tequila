@@ -1,7 +1,8 @@
 {
   "base_color": [0.007304179, 0.0070307613, 0.0070057926],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black leather pressed with a fine cross-hatch pattern under a hard, slightly glossy finish, for wallets, cases and handbags.",
   "graph": {
     "decals": [],
     "links": [
@@ -1572,7 +1573,21 @@
     "embossed",
     "wallet",
     "case",
-    "black"
+    "black",
+    "crosshatch",
+    "textured",
+    "handbag",
+    "card holder",
+    "phone case",
+    "coated leather",
+    "scratch resistant",
+    "genuine leather",
+    "dark",
+    "stamped",
+    "bags",
+    "accessories",
+    "electronics",
+    "apparel"
   ],
   "type": "generic"
 }

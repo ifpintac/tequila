@@ -1,7 +1,8 @@
 {
   "base_color": [0.009, 0.009, 0.0095],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft black PVC boot that eases a cable where it meets a plug, with a slight satin sheen.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -219,7 +220,23 @@
     "plug",
     "pvc",
     "moulded",
-    "black"
+    "black",
+    "cable boot",
+    "plug cover",
+    "cable gland",
+    "flex relief",
+    "sleeve",
+    "strain reliever",
+    "satin",
+    "soft",
+    "flexible",
+    "dark",
+    "molded",
+    "cord protector",
+    "electronics",
+    "audio",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.84573203, 0.8465493, 0.82592165],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A clean white powder coat with a satin sheen, as on appliance panels, shelving and metal furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -109,7 +110,21 @@
     "powder",
     "satin",
     "industrial",
-    "white"
+    "white",
+    "powder coated",
+    "baked",
+    "cured",
+    "electrostatic",
+    "semi-gloss",
+    "metal finish",
+    "steel",
+    "off-white",
+    "shelving",
+    "panel",
+    "white goods",
+    "low sheen",
+    "appliances",
+    "furniture"
   ],
   "type": "plastic"
 }

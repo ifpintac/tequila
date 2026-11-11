@@ -1,6 +1,7 @@
 {
   "base_color": [0.15888555, 0.16177076, 0.17287889],
   "category": "Plastic",
+  "description": "A mid-grey PC/ABS blend with a smooth satin finish, as on equipment housings and device enclosures.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,20 @@
     "pc/abs",
     "housing",
     "satin",
-    "grey"
+    "grey",
+    "gray",
+    "blend",
+    "semi matte",
+    "injection moulded",
+    "molded",
+    "enclosure",
+    "casing",
+    "low gloss",
+    "smooth",
+    "electronics",
+    "appliances",
+    "industrial",
+    "medical"
   ],
   "type": "plastic"
 }

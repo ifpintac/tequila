@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Carbonised bamboo: caramel to coffee-brown laminated strips with darker nodes and a satin finish, for flooring, furniture and boards.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1196,7 +1197,21 @@
     "nodes",
     "carbonised",
     "caramel",
-    "brown"
+    "brown",
+    "timber",
+    "carbonized",
+    "heat treated",
+    "toasted",
+    "laminate",
+    "grass",
+    "amber",
+    "flooring",
+    "cutting board",
+    "panel",
+    "furniture",
+    "interior",
+    "kitchenware",
+    "architecture"
   ],
   "type": "generic"
 }

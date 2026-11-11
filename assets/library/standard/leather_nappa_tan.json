@@ -1,7 +1,8 @@
 {
   "base_color": [0.30243933, 0.18839644, 0.083575465],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Soft tan nappa leather with a very fine, smooth grain and a gentle sheen, for headphone pads, seats and bags.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -560,7 +561,21 @@
     "soft",
     "smooth",
     "headphone",
-    "tan"
+    "tan",
+    "supple",
+    "napa",
+    "nappa leather",
+    "lambskin",
+    "sheepskin",
+    "genuine leather",
+    "satin",
+    "camel",
+    "light brown",
+    "seat",
+    "audio",
+    "automotive",
+    "bags",
+    "accessories"
   ],
   "type": "generic"
 }

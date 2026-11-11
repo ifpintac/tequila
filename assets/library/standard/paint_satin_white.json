@@ -1,6 +1,7 @@
 {
   "base_color": [0.866278, 0.8631905, 0.82821083],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A clean white paint with a gentle satin sheen, as on interior walls, doors and trim.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -140,7 +141,21 @@
   "tags": [
     "satin",
     "wall",
-    "white"
+    "white",
+    "white paint",
+    "off-white",
+    "semi-gloss",
+    "low sheen",
+    "emulsion",
+    "brushed",
+    "rolled",
+    "sprayed",
+    "trim",
+    "painted wall",
+    "interior paint",
+    "interior",
+    "architecture",
+    "furniture"
   ],
   "type": "plastic"
 }

@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Aluminium polished to a bright, near-mirror finish: a light silvery reflection, slightly softer than chrome, as on a trim, wheel lip or decorative part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -230,7 +231,21 @@
   "tags": [
     "aluminium",
     "aluminum",
-    "mirror"
+    "mirror",
+    "bright",
+    "buffed",
+    "shiny",
+    "aluminium mirror",
+    "trim",
+    "wheel",
+    "bezel",
+    "sheet",
+    "reflective",
+    "silver",
+    "automotive",
+    "accessories",
+    "lighting",
+    "appliances"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.072161935, 0.041913874, 0.020064685],
   "category": "Fabric",
+  "description": "A long, shaggy camel pile with soft, fluffy fibres that catch light along the tips, for cushions, throws, toys and trims.",
   "fuzz_clump": 0.7,
   "fuzz_color": [0.15445755, 0.10365465, 0.05150789],
   "fuzz_color_variation": 0.5,
@@ -1171,7 +1172,22 @@
     "rug",
     "brown",
     "camel",
-    "tan"
+    "tan",
+    "textile",
+    "synthetic fur",
+    "acrylic",
+    "hairy",
+    "long pile",
+    "toy",
+    "collar",
+    "hood trim",
+    "blanket",
+    "fiber",
+    "sand",
+    "toys",
+    "apparel",
+    "interior",
+    "furniture"
   ],
   "type": "velvet"
 }

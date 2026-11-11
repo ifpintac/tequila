@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Platinum: a cool, slightly dark white-grey metal with a soft deep sheen, as on an engagement ring, wedding band or fine jewellery.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -231,7 +232,22 @@
   "tags": [
     "platinum",
     "jewellery",
-    "white metal"
+    "white metal",
+    "precious metal",
+    "silver",
+    "grey",
+    "gray",
+    "white",
+    "ring",
+    "band",
+    "wedding",
+    "diamond setting",
+    "jewelry",
+    "cool",
+    "polished",
+    "watches",
+    "accessories",
+    "eyewear"
   ],
   "type": "metal"
 }

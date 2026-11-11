@@ -1,6 +1,7 @@
 {
   "base_color": [0.016319284, 0.019435737, 0.044731475],
   "category": "Fabric",
+  "description": "A fine knitted navy flecked acoustic cloth with a soft textured surface and no visible holes, stretched over smart speakers and soundbars.",
   "fuzz_color": [0.15962608, 0.18006612, 0.32835752],
   "fuzz_weight": 0.35,
   "graph": {
@@ -5372,7 +5373,21 @@
     "wool blend",
     "smart speaker",
     "navy",
-    "blue"
+    "blue",
+    "textile",
+    "cloth",
+    "grille",
+    "knit",
+    "sound-permeable",
+    "soft",
+    "matte",
+    "wireless speaker",
+    "soundbar",
+    "home audio",
+    "dark blue",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "real_cloth"
 }

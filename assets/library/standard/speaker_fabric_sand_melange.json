@@ -1,6 +1,7 @@
 {
   "base_color": [0.4033776, 0.36627525, 0.2602836],
   "category": "Fabric",
+  "description": "A fine knitted sand acoustic cloth with a soft textured surface and no visible holes, stretched over smart speakers and soundbars.",
   "fuzz_color": [0.7770654, 0.748, 0.635165],
   "fuzz_weight": 0.35,
   "graph": {
@@ -5372,7 +5373,21 @@
     "wool blend",
     "smart speaker",
     "sand",
-    "beige"
+    "beige",
+    "textile",
+    "cloth",
+    "grille",
+    "knit",
+    "sound-permeable",
+    "soft",
+    "matte",
+    "wireless speaker",
+    "soundbar",
+    "home audio",
+    "mesh",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "real_cloth"
 }

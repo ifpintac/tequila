@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Maple under high-gloss lacquer: pale cream with a fine grain and a mirror-like shine, for drum shells, guitar bodies and speakers.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1835,7 +1836,23 @@
     "gloss",
     "lacquer",
     "drum shell",
-    "pale"
+    "pale",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "hard maple",
+    "light",
+    "blonde",
+    "cream",
+    "lacquered",
+    "high gloss",
+    "shiny",
+    "polished",
+    "piano finish",
+    "musical instruments",
+    "audio",
+    "furniture",
+    "interior"
   ],
   "type": "generic"
 }

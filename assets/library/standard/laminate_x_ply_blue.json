@@ -2,6 +2,7 @@
   "base_color": [0.057719506, 0.083167724, 0.28283438],
   "base_diffuse_roughness": 0.5,
   "category": "Fabric",
+  "description": "A sailcloth-style blue laminate with crossing reinforcing yarns under a clear film, giving a diamond-grid pattern, for packs and bags.",
   "graph": {
     "decals": [],
     "links": [
@@ -6471,7 +6472,21 @@
     "bag",
     "pack",
     "technical",
-    "blue"
+    "blue",
+    "textile",
+    "bonded",
+    "film",
+    "reinforced",
+    "rainproof",
+    "diamond grid",
+    "yarn grid",
+    "dry bag",
+    "backpacking",
+    "sail",
+    "matte",
+    "bags",
+    "outdoor gear",
+    "sporting goods"
   ],
   "type": "generic"
 }

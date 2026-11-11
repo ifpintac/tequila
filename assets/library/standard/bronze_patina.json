@@ -2,6 +2,7 @@
   "base_color": [0.62, 0.5, 0.32],
   "base_metalness": 0.5,
   "category": "Metal",
+  "description": "Bronze weathered to a dull brown with greenish-blue traces in the recesses: an aged cast look, as on a statue, plaque or old fitting.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -317,7 +318,22 @@
     "patina",
     "statuary",
     "aged",
-    "brown"
+    "brown",
+    "aged bronze",
+    "weathered",
+    "verdigris",
+    "green",
+    "antique",
+    "statue",
+    "sculpture",
+    "plaque",
+    "oxidised",
+    "oxidized",
+    "dull",
+    "interior",
+    "architecture",
+    "furniture",
+    "accessories"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.0059667863, 0.005951356, 0.0063408595],
   "category": "Fabric",
+  "description": "A heavy, coarse black nylon in a tight basket weave with a slightly rough, matte face, for luggage, cases and hard-wearing bags.",
   "fuzz_color": [0.04244762, 0.042350087, 0.04481195],
   "fuzz_weight": 0.03,
   "graph": {
@@ -5546,7 +5547,21 @@
     "case",
     "luggage",
     "basket weave",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "heavy duty",
+    "abrasion resistant",
+    "matte",
+    "coarse",
+    "tough",
+    "luggage cloth",
+    "backpack",
+    "suitcase",
+    "dark",
+    "bags",
+    "accessories",
+    "outdoor gear"
   ],
   "type": "real_cloth"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.67863667, 0.6858797, 0.6989316],
   "category": "Metal",
+  "description": "Clear anodised aluminium with fine linear brushing: a light silver satin face with directional streaks, as on a front panel or appliance trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,22 @@
     "anodised",
     "brushed",
     "silver",
-    "front panel"
+    "front panel",
+    "grey",
+    "gray",
+    "hairline",
+    "grain",
+    "linear grain",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "audio",
+    "electronics",
+    "appliances"
   ],
   "type": "anisotropic"
 }

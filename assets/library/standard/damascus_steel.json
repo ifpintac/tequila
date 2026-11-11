@@ -2,6 +2,7 @@
   "base_color": [0.5, 0.5, 0.52],
   "base_metalness": 1,
   "category": "Metal",
+  "description": "Pattern-welded steel etched to show flowing wavy grey and dark bands, as on a knife blade, pocket-knife handle or custom accessory.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -202,7 +203,21 @@
     "pattern welded",
     "steel",
     "knife",
-    "etched"
+    "etched",
+    "damascene",
+    "watered steel",
+    "layered",
+    "wavy",
+    "blade",
+    "forged",
+    "grey",
+    "gray",
+    "dark",
+    "bands",
+    "tools",
+    "kitchenware",
+    "accessories",
+    "outdoor gear"
   ],
   "type": "generic"
 }

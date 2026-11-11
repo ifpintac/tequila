@@ -1,7 +1,8 @@
 {
   "base_color": [0.17982787, 0.08080527, 0.026656486],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Warm cognac-brown leather with a fine natural grain and a soft satin sheen, for armchairs, bags and car seats.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -692,7 +693,22 @@
     "leather",
     "grain",
     "upholstery",
-    "brown"
+    "brown",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "amber",
+    "caramel",
+    "warm brown",
+    "satin",
+    "armchair",
+    "furniture",
+    "automotive",
+    "bags",
+    "accessories"
   ],
   "type": "generic"
 }

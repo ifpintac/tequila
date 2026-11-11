@@ -1,6 +1,7 @@
 {
   "base_color": [0.012419879, 0.012396216, 0.012993503],
   "category": "Fabric",
+  "description": "A sturdy black cotton duck cloth with a visible plain weave and a dry matte face, for tote bags, shoes and covers.",
   "fuzz_color": [0.06865793, 0.06852921, 0.07177798],
   "fuzz_weight": 0.3,
   "graph": {
@@ -5269,7 +5270,22 @@
     "bag",
     "cotton",
     "duck",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "plain weave",
+    "matte",
+    "tote",
+    "sneaker upper",
+    "heavy cotton",
+    "workwear",
+    "apron",
+    "cover",
+    "dark",
+    "bags",
+    "shoes",
+    "apparel",
+    "accessories"
   ],
   "type": "real_cloth"
 }

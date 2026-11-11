@@ -1,6 +1,7 @@
 {
   "base_color": [0.6497772, 0.62086946, 0.5032612],
   "category": "Fabric",
+  "description": "A dense, matte cream felted cloth with a fuzzy, non-woven face and no visible weave, for linings, pads and acoustic panels.",
   "fuzz_color": [1.2682252, 1.2206957, 1.0145607],
   "fuzz_roughness": 0.75,
   "graph": {
@@ -476,7 +477,23 @@
     "wool",
     "soft",
     "cream",
-    "natural"
+    "natural",
+    "textile",
+    "cloth",
+    "nonwoven",
+    "wool felt",
+    "matte",
+    "fuzzy",
+    "fibre",
+    "fiber",
+    "craft",
+    "pad",
+    "laptop sleeve",
+    "ivory",
+    "interior",
+    "accessories",
+    "audio",
+    "furniture"
   ],
   "type": "velvet"
 }

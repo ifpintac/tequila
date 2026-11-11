@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Red oak: light pinkish-brown with bold, open grain and a satin finish, for flooring, cabinets and furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1929,7 +1930,22 @@
     "oak",
     "red oak",
     "furniture",
-    "pink"
+    "pink",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "american red oak",
+    "reddish",
+    "pink brown",
+    "open pore",
+    "coarse grain",
+    "satin",
+    "flooring",
+    "cabinet",
+    "table",
+    "interior",
+    "architecture",
+    "audio"
   ],
   "type": "generic"
 }

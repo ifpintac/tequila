@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A glossy black 3K carbon in plain weave under clear resin, a fine checkerboard of over-and-under tow.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,19 @@
     "plain",
     "3k",
     "gloss",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "checkerboard",
+    "basket weave",
+    "black",
+    "woven",
+    "laminate",
+    "resin",
+    "clear coat",
+    "3k plain",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

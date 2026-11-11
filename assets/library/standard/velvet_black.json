@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.0045],
   "category": "Fabric",
+  "description": "A dense black cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.16, 0.16, 0.17],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -317,7 +318,21 @@
     "sheen",
     "lining",
     "case",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "fabric",
+    "dark",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

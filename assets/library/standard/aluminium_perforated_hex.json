@@ -1,7 +1,8 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
   "base_metalness": 1,
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Aluminium sheet punched with hexagonal holes in a honeycomb pattern: a light silver mesh face, as on a speaker front or vent panel.",
   "graph": {
     "decals": [],
     "links": [
@@ -3302,7 +3303,23 @@
     "perforated",
     "hexagon",
     "speaker",
-    "grille"
+    "grille",
+    "hexagonal",
+    "honeycomb",
+    "perforated sheet",
+    "punched",
+    "holes",
+    "vent",
+    "speaker grill",
+    "grill",
+    "aluminum",
+    "screen",
+    "panel",
+    "silver",
+    "audio",
+    "electronics",
+    "automotive",
+    "appliances"
   ],
   "type": "generic"
 }

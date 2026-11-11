@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Steamed beech: pale pinkish-tan with a fine, even grain and a satin finish, for bentwood chairs, toys and kitchen tools.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1868,7 +1869,22 @@
     "beech",
     "steamed",
     "furniture",
-    "pale"
+    "pale",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "european beech",
+    "light",
+    "pinkish",
+    "natural",
+    "satin",
+    "chair",
+    "toy",
+    "spoon",
+    "cutting board",
+    "toys",
+    "kitchenware",
+    "interior"
   ],
   "type": "generic"
 }

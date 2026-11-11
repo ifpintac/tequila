@@ -1,7 +1,8 @@
 {
   "base_color": [0.30579096, 0.18880968, 0.08687879],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Tan leather pressed with a fine cross-hatch pattern under a hard, slightly glossy finish, for wallets, cases and handbags.",
   "graph": {
     "decals": [],
     "links": [
@@ -1572,7 +1573,21 @@
     "embossed",
     "wallet",
     "case",
-    "tan"
+    "tan",
+    "crosshatch",
+    "textured",
+    "handbag",
+    "card holder",
+    "phone case",
+    "coated leather",
+    "scratch resistant",
+    "genuine leather",
+    "camel",
+    "stamped",
+    "bags",
+    "accessories",
+    "electronics",
+    "apparel"
   ],
   "type": "generic"
 }

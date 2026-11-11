@@ -1,6 +1,7 @@
 {
   "base_color": [0.35, 0.217, 0.105000004],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A warm yellow-orange glow behind a meter dial, lighting the scale and needle, as on vintage amplifiers and VU meters.",
   "edge_radius": 0.00025,
   "emission_color": [1, 0.62, 0.3],
   "emission_luminance": 0.8,
@@ -99,7 +100,22 @@
     "dial",
     "lit",
     "warm",
-    "lamp"
+    "lamp",
+    "vintage",
+    "analogue meter",
+    "analog meter",
+    "dial lamp",
+    "illuminated dial",
+    "glowing",
+    "amber glow",
+    "orange glow",
+    "gauge",
+    "needle meter",
+    "retro",
+    "hi-fi",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "generic"
 }

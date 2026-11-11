@@ -1,6 +1,7 @@
 {
   "base_color": [0.0104, 0.0103, 0.0114],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A flat black powder coat with almost no shine, as on metal frames, brackets and equipment housings.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -109,7 +110,22 @@
     "powder",
     "matte",
     "industrial",
-    "black"
+    "black",
+    "flat black",
+    "matt black",
+    "powder coated",
+    "baked",
+    "cured",
+    "electrostatic",
+    "metal finish",
+    "steel",
+    "frame",
+    "bracket",
+    "dull",
+    "dark",
+    "appliances",
+    "furniture",
+    "tools"
   ],
   "type": "plastic"
 }

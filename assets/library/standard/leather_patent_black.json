@@ -1,9 +1,10 @@
 {
   "base_color": [0.0035488405, 0.0033696974, 0.0033533382],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Black patent leather with a mirror-like lacquered coat, for dress shoes, handbags and belts.",
   "fuzz_roughness": 0.5,
   "graph": {
     "decals": [],
@@ -561,7 +562,20 @@
     "patent",
     "gloss",
     "lacquered",
-    "black"
+    "black",
+    "shiny",
+    "high gloss",
+    "glossy",
+    "dress shoe",
+    "handbag",
+    "belt",
+    "varnished",
+    "wet look",
+    "genuine leather",
+    "shoes",
+    "bags",
+    "apparel",
+    "accessories"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.25767627, 0.26179323, 0.26925722],
   "category": "Plastic",
+  "description": "A glossy mid-grey nylon or PBT connector body, as on sockets, plugs and terminal housings.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -97,7 +98,22 @@
     "pbt",
     "nylon",
     "grey",
-    "gloss"
+    "gloss",
+    "gray",
+    "jack housing",
+    "plug body",
+    "insulator",
+    "polybutylene terephthalate",
+    "glossy",
+    "shiny",
+    "moulded",
+    "molded",
+    "port",
+    "terminal",
+    "electronics",
+    "audio",
+    "industrial",
+    "appliances"
   ],
   "type": "plastic"
 }

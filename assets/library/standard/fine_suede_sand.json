@@ -1,6 +1,7 @@
 {
   "base_color": [0.19903043, 0.16039307, 0.106724605],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Sand beige fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.61647403, 0.5696784, 0.46269068],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1250,7 +1251,22 @@
     "shoe",
     "footwear",
     "sand",
-    "beige"
+    "beige",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "camel",
+    "stone",
+    "light brown",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.07483381, 0.11212637, 0.3537202],
   "category": "Metal",
+  "description": "Aluminium anodised a clear mid blue: a smooth satin sheen with the colour sunk into the metal, as on a bike part, torch body or bright accessory.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,21 @@
     "aluminium",
     "anodised",
     "blue",
-    "colour"
+    "colour",
+    "cobalt",
+    "royal blue",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "accessories",
+    "sporting goods",
+    "electronics"
   ],
   "type": "metal"
 }

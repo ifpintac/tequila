@@ -1,6 +1,7 @@
 {
   "base_color": [0.012, 0.012, 0.013],
   "category": "Fabric",
+  "description": "A thick, open black knit with a springy air-filled structure and a fine hexagonal mesh surface, for padding and breathable straps.",
   "fuzz_color": [0.259, 0.259, 0.25975],
   "fuzz_roughness": 0.7,
   "fuzz_weight": 0.5,
@@ -3163,7 +3164,22 @@
     "headband",
     "headphone",
     "padding",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "3d knit",
+    "breathable",
+    "cushioning",
+    "padded",
+    "ear cup",
+    "sneaker upper",
+    "backpack strap",
+    "perforated",
+    "dark",
+    "electronics",
+    "audio",
+    "shoes",
+    "bags"
   ],
   "type": "velvet"
 }

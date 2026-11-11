@@ -1,7 +1,8 @@
 {
   "base_color": [0.31614628, 0.31412783, 0.30238813],
   "base_diffuse_roughness": 0.6,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A smooth sealed grey concrete with faint aggregate showing and a low sheen, as on floors and countertops.",
   "graph": {
     "decals": [],
     "links": [
@@ -1841,7 +1842,19 @@
     "floor",
     "aggregate",
     "grey",
-    "sealed"
+    "sealed",
+    "cement",
+    "gray",
+    "ground",
+    "glossy",
+    "screed",
+    "countertop",
+    "smooth",
+    "honed",
+    "industrial floor",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

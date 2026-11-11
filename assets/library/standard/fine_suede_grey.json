@@ -1,6 +1,7 @@
 {
   "base_color": [0.10980646, 0.107303396, 0.102965415],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Mid-grey fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.5008702, 0.49196202, 0.47117716],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1249,7 +1250,22 @@
     "nap",
     "shoe",
     "footwear",
-    "grey"
+    "grey",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "gray",
+    "neutral",
+    "stone",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

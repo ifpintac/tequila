@@ -1,6 +1,7 @@
 {
   "base_color": [0.8643, 0.8559, 0.8412],
   "category": "Metal",
+  "description": "Titanium with a soft satin finish: a muted, slightly dark silver with a quiet sheen, as on a surgical part, watch case or camping tool.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,22 @@
   "tags": [
     "titanium",
     "medical",
-    "satin"
+    "satin",
+    "matte",
+    "grey",
+    "gray",
+    "silver",
+    "ti",
+    "grade 2",
+    "grade 5",
+    "surgical",
+    "implant",
+    "case",
+    "camping",
+    "cookware",
+    "watches",
+    "outdoor gear",
+    "tools"
   ],
   "type": "metal"
 }

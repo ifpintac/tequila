@@ -1,6 +1,7 @@
 {
   "base_color": [0.78, 0.78, 0.8],
   "category": "Metal",
+  "description": "Die-cast aluminium tumbled to a soft, slightly worn matte grey finish, as on a pedal housing, instrument enclosure or small chassis.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -120,7 +121,22 @@
     "tumbled",
     "vibratory",
     "enclosure",
-    "housing"
+    "housing",
+    "tumbled finish",
+    "die cast",
+    "casting",
+    "matte",
+    "grey",
+    "gray",
+    "pedal",
+    "pedal enclosure",
+    "chassis",
+    "case",
+    "aluminum",
+    "musical instruments",
+    "audio",
+    "electronics",
+    "industrial"
   ],
   "type": "metal"
 }

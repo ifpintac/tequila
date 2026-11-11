@@ -1,7 +1,8 @@
 {
   "base_color": [0.5892837, 0.6010701, 0.4852224],
   "base_diffuse_roughness": 0.6,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A warm off-white weathered concrete with a dull, lightly stained surface, as on walls, planters and furniture.",
   "graph": {
     "decals": [],
     "links": [
@@ -1109,7 +1110,20 @@
     "cast",
     "off-white",
     "warm",
-    "weathered"
+    "weathered",
+    "cement",
+    "beige",
+    "cream",
+    "sand",
+    "light concrete",
+    "aged",
+    "matte",
+    "rough",
+    "masonry",
+    "exposed concrete",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

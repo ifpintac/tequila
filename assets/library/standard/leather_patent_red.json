@@ -1,9 +1,10 @@
 {
   "base_color": [0.16292462, 0.023264358, 0.012952935],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Red patent leather with a mirror-like lacquered coat, for shoes, handbags and accent trim.",
   "fuzz_roughness": 0.5,
   "graph": {
     "decals": [],
@@ -561,7 +562,20 @@
     "patent",
     "gloss",
     "lacquered",
-    "red"
+    "red",
+    "shiny",
+    "high gloss",
+    "glossy",
+    "crimson",
+    "handbag",
+    "shoe",
+    "belt",
+    "varnished",
+    "wet look",
+    "shoes",
+    "bags",
+    "apparel",
+    "accessories"
   ],
   "type": "generic"
 }

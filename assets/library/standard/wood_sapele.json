@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Sapele under a gloss lacquer: reddish-brown with narrow ribbon stripes that shimmer as it turns, for veneers, doors, guitar parts and cabinets.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1748,7 +1749,23 @@
     "sapele",
     "ribbon",
     "red",
-    "veneer"
+    "veneer",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "sapelli",
+    "african mahogany",
+    "reddish brown",
+    "ribbon grain",
+    "striped",
+    "satin",
+    "door",
+    "guitar body",
+    "cabinet",
+    "furniture",
+    "musical instruments",
+    "interior",
+    "architecture"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.16439688, 0.11751824, 0.06818338],
   "category": "Fabric",
+  "description": "A soft tan suede-style cloth with a short, velvety nap that shows brush marks in the light, for shoes, bags and upholstery.",
   "fuzz_color": [0.40958524, 0.33206385, 0.22048546],
   "fuzz_roughness": 0.65,
   "fuzz_weight": 0.7,
@@ -685,7 +686,23 @@
     "nubuck",
     "leather",
     "soft",
-    "brown"
+    "brown",
+    "textile",
+    "cloth",
+    "microsuede",
+    "napped",
+    "matte",
+    "brushed",
+    "faux suede",
+    "velvety",
+    "sneaker upper",
+    "jacket",
+    "beige",
+    "light brown",
+    "shoes",
+    "bags",
+    "furniture",
+    "apparel"
   ],
   "type": "velvet"
 }

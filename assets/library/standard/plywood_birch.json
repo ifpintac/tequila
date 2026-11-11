@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.3,
   "coat_weight": 1,
+  "description": "Birch plywood with pale layered edges and a light, finely figured face, for cabinets, furniture and laser-cut parts.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -761,7 +762,19 @@
     "layers",
     "cabinet",
     "speaker",
-    "furniture"
+    "furniture",
+    "laminated wood",
+    "veneer",
+    "light wood",
+    "sheet",
+    "engineered wood",
+    "cnc",
+    "laser cut",
+    "timber",
+    "panel",
+    "audio",
+    "prototyping",
+    "interior"
   ],
   "type": "generic"
 }

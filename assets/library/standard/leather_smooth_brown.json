@@ -1,7 +1,8 @@
 {
   "base_color": [0.07502766, 0.03883843, 0.018433861],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Mid-brown full-grain calf leather, smooth with a gentle satin sheen, for shoes, belts, straps and cases.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -559,7 +560,21 @@
     "smooth",
     "full grain",
     "calf",
-    "brown"
+    "brown",
+    "cowhide",
+    "calfskin",
+    "hide",
+    "genuine leather",
+    "satin",
+    "chestnut",
+    "belt",
+    "shoe upper",
+    "case",
+    "fine grain",
+    "shoes",
+    "accessories",
+    "bags",
+    "apparel"
   ],
   "type": "generic"
 }

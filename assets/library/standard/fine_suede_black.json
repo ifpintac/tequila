@@ -1,6 +1,7 @@
 {
   "base_color": [0.012681592, 0.012326309, 0.011714381],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.1520761, 0.14753631, 0.13973412],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1249,7 +1250,21 @@
     "nap",
     "shoe",
     "footwear",
-    "black"
+    "black",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "charcoal",
+    "dark",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }

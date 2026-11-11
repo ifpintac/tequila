@@ -1,6 +1,7 @@
 {
   "base_color": [0.00804901, 0.008030523, 0.008497182],
   "category": "Fabric",
+  "description": "A smooth, slightly spongy black fabric-faced rubber with a fine knit texture and a soft matte look, for sleeves, cases and straps.",
   "fuzz_color": [0.25603676, 0.2560229, 0.2563729],
   "fuzz_weight": 0.35,
   "graph": {
@@ -3142,7 +3143,22 @@
     "sleeve",
     "case",
     "strap",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "foam",
+    "wetsuit",
+    "laptop sleeve",
+    "scuba",
+    "stretchy",
+    "padded",
+    "knit face",
+    "matte",
+    "rubber",
+    "dark",
+    "accessories",
+    "electronics",
+    "sporting goods"
   ],
   "type": "real_cloth"
 }

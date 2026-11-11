@@ -1,6 +1,7 @@
 {
   "base_color": [0.19103935, 0.15216494, 0.08085433],
   "category": "Fabric",
+  "description": "A rugged, textured coyote nylon pack cloth with a slightly rough, matte face and a fine irregular weave, for backpacks, cases and gear bags.",
   "fuzz_color": [0.46634832, 0.39872295, 0.24153],
   "fuzz_weight": 0.08,
   "graph": {
@@ -5272,7 +5273,22 @@
     "case",
     "coyote",
     "tan",
-    "brown"
+    "brown",
+    "textile",
+    "cloth",
+    "heavy duty",
+    "abrasion resistant",
+    "textured",
+    "matte",
+    "backpack",
+    "luggage",
+    "tough",
+    "rucksack",
+    "desert tan",
+    "bags",
+    "outdoor gear",
+    "accessories",
+    "musical instruments"
   ],
   "type": "real_cloth"
 }

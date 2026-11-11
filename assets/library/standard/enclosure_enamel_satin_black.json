@@ -1,6 +1,7 @@
 {
   "base_color": [0.0040420922, 0.0040296507, 0.0043436997],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A soft satin black enamel over a cast metal box, with a gentle sheen, as on guitar effects pedals and small instruments.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -204,7 +205,22 @@
     "enclosure",
     "black",
     "satin",
-    "paint"
+    "paint",
+    "black paint",
+    "semi-gloss",
+    "low gloss",
+    "painted metal",
+    "sprayed",
+    "baked",
+    "effects pedal",
+    "guitar pedal",
+    "cast aluminium",
+    "cast aluminum",
+    "box",
+    "hammond",
+    "musical instruments",
+    "audio",
+    "electronics"
   ],
   "type": "plastic"
 }

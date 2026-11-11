@@ -1,6 +1,7 @@
 {
   "base_color": [0.008, 0.008, 0.009],
   "category": "Fabric",
+  "description": "A soft, dense black cloth with a short, even cut pile that gives a plush, slightly sheened feel, for headphone ear pads and cushions.",
   "fuzz_color": [0.11, 0.11, 0.115],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -317,7 +318,22 @@
     "ear pad",
     "headphone",
     "cushion",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "soft",
+    "matte",
+    "sheen",
+    "ear cup",
+    "earpad",
+    "headphones",
+    "dark",
+    "audio",
+    "electronics",
+    "interior"
   ],
   "type": "velvet"
 }

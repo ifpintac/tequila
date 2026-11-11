@@ -2,6 +2,7 @@
   "base_color": [0.6461525, 0.6108742, 0.50132793],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Whitewashed oak: pale off-white with grain lines showing through and a matt, limed finish, for Scandinavian furniture and flooring.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1895,7 +1896,22 @@
     "limed",
     "pale",
     "scandinavian",
-    "furniture"
+    "furniture",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "white washed",
+    "pickled",
+    "bleached",
+    "light",
+    "grey white",
+    "matte",
+    "flooring",
+    "table",
+    "shelf",
+    "interior",
+    "architecture",
+    "lighting"
   ],
   "type": "generic"
 }

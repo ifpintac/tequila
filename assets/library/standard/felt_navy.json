@@ -1,6 +1,7 @@
 {
   "base_color": [0.019187134, 0.023193412, 0.061311252],
   "category": "Fabric",
+  "description": "A dense, matte navy felted cloth with a fuzzy, non-woven face and no visible weave, for linings, pads and acoustic panels.",
   "fuzz_color": [0.047882296, 0.058039285, 0.15137666],
   "fuzz_roughness": 0.75,
   "graph": {
@@ -476,7 +477,23 @@
     "lining",
     "soft",
     "navy",
-    "blue"
+    "blue",
+    "textile",
+    "cloth",
+    "nonwoven",
+    "wool felt",
+    "matte",
+    "fuzzy",
+    "fibre",
+    "fiber",
+    "craft",
+    "pad",
+    "laptop sleeve",
+    "dark blue",
+    "interior",
+    "accessories",
+    "audio",
+    "furniture"
   ],
   "type": "velvet"
 }

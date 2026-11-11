@@ -2,6 +2,7 @@
   "base_color": [0.5459878, 0.44149113, 0.26247925],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Olive wood, oiled: pale honey with swirling dark-brown figure and a smooth sheen, for kitchen boards, bowls and small gifts.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1624,7 +1625,23 @@
     "olive",
     "figured",
     "kitchen",
-    "swirl"
+    "swirl",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "olivewood",
+    "swirly",
+    "honey",
+    "oiled",
+    "satin",
+    "cutting board",
+    "bowl",
+    "spoon",
+    "chopping board",
+    "kitchenware",
+    "accessories",
+    "furniture",
+    "interior"
   ],
   "type": "generic"
 }

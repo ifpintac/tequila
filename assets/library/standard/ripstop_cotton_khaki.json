@@ -1,6 +1,7 @@
 {
   "base_color": [0.33528608, 0.2902645, 0.16007942],
   "category": "Fabric",
+  "description": "A khaki cotton cloth with a fine square grid of heavier threads every few millimetres and a matte finish, for field jackets and workwear.",
   "fuzz_color": [0.6410957, 0.6154357, 0.54123694],
   "fuzz_weight": 0.25,
   "graph": {
@@ -7394,7 +7395,21 @@
     "military",
     "workwear",
     "khaki",
-    "tan"
+    "tan",
+    "textile",
+    "cloth",
+    "plain weave",
+    "matte",
+    "reinforced grid",
+    "jacket",
+    "trousers",
+    "army",
+    "cargo",
+    "woven",
+    "sand",
+    "apparel",
+    "outdoor gear",
+    "bags"
   ],
   "type": "real_cloth"
 }

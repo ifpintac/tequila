@@ -1,6 +1,7 @@
 {
   "base_color": [0.3005, 0.3001, 0.3087],
   "category": "Metal",
+  "description": "Black chrome plating: a dark mirror-like smoky grey-black with a glossy reflection, as on automotive trim, a bezel or a decorative ring.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
   "tags": [
     "chrome",
     "black",
-    "trim"
+    "trim",
+    "black chromium",
+    "dark chrome",
+    "smoked chrome",
+    "gloss black metal",
+    "electroplated",
+    "mirror",
+    "shiny",
+    "bezel",
+    "ring",
+    "grille",
+    "badge",
+    "dark",
+    "automotive",
+    "electronics",
+    "accessories",
+    "audio"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.058638632, 0.058528524, 0.061307855],
   "category": "Fabric",
+  "description": "A black cotton twill with a visible diagonal weave and a faintly uneven, slightly rough face, for jeans, jackets and casual bags.",
   "fuzz_color": [0.09803443, 0.097714305, 0.10579471],
   "fuzz_weight": 0.3,
   "graph": {
@@ -5371,7 +5372,20 @@
     "apparel",
     "twill",
     "black",
-    "jeans"
+    "jeans",
+    "textile",
+    "cloth",
+    "cotton",
+    "jacket",
+    "casual",
+    "jean",
+    "workwear",
+    "matte",
+    "diagonal",
+    "bag",
+    "dark",
+    "bags",
+    "shoes"
   ],
   "type": "real_cloth"
 }

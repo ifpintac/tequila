@@ -1,6 +1,7 @@
 {
   "base_color": [0.48437876, 0.3731083, 0.11789666],
   "category": "Metal",
+  "description": "Aluminium anodised a warm gold: a smooth satin sheen with the colour in the metal, as on a phone frame, trim ring or decorative part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,21 @@
     "aluminium",
     "anodised",
     "gold",
-    "colour"
+    "colour",
+    "yellow",
+    "brass look",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "electronics",
+    "accessories",
+    "jewellery"
   ],
   "type": "metal"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.044791665, 0.011339879, 0.010123152],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Deep red-brown leather with a fine natural grain and a soft satin sheen, for shoes, bags and club chairs.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.06,
   "graph": {
@@ -693,7 +694,22 @@
     "grain",
     "upholstery",
     "red",
-    "burgundy"
+    "burgundy",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "dark red",
+    "maroon",
+    "wine",
+    "satin",
+    "club chair",
+    "furniture",
+    "shoes",
+    "bags",
+    "accessories"
   ],
   "type": "generic"
 }

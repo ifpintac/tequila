@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Walnut burl, polished: swirling dark and golden-brown figure full of small eyes and knots, for dashboards, hi-fi cabinets and veneers.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -2000,7 +2001,23 @@
     "veneer",
     "hi-fi",
     "dashboard",
-    "luxury"
+    "luxury",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "walnut burr",
+    "burr walnut",
+    "burl veneer",
+    "swirly",
+    "knots",
+    "polished",
+    "gloss",
+    "lacquered",
+    "brown",
+    "automotive",
+    "audio",
+    "furniture",
+    "interior"
   ],
   "type": "generic"
 }

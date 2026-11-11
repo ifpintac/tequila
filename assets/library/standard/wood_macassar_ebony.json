@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Macassar ebony: dark chocolate-brown with bold black stripes and a smooth sheen, for veneers, inlays and fine cabinetry.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1686,7 +1687,23 @@
     "exotic",
     "striped",
     "dark",
-    "veneer"
+    "veneer",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "striped ebony",
+    "calamander",
+    "streaked",
+    "brown black",
+    "inlay",
+    "polished",
+    "satin",
+    "cabinet",
+    "pen",
+    "furniture",
+    "interior",
+    "accessories",
+    "audio"
   ],
   "type": "generic"
 }

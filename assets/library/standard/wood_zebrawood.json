@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Zebrawood: pale gold with bold, dark-brown stripes and a smooth sheen, for veneers, inlays and accent furniture.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1588,7 +1589,23 @@
     "wood",
     "zebrawood",
     "exotic",
-    "striped"
+    "striped",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "zebrano",
+    "zebra wood",
+    "streaked",
+    "gold",
+    "light brown",
+    "polished",
+    "satin",
+    "veneer",
+    "inlay",
+    "furniture",
+    "interior",
+    "accessories",
+    "audio"
   ],
   "type": "generic"
 }

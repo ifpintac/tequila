@@ -1,6 +1,7 @@
 {
   "base_color": [0.009257429, 0.009237475, 0.009741149],
   "category": "Fabric",
+  "description": "A black ribbed cloth accordion-like ring with a matte, slightly stiff look, which joins a loudspeaker cone to its basket.",
   "fuzz_color": [0.023143573, 0.023093687, 0.024352873],
   "fuzz_weight": 0.05,
   "graph": {
@@ -5270,7 +5271,20 @@
     "cloth",
     "doped",
     "pa",
-    "black"
+    "black",
+    "textile",
+    "rolled edge",
+    "driver",
+    "loudspeaker",
+    "woofer",
+    "coated",
+    "stiff",
+    "matte",
+    "fabric surround",
+    "cone",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "real_cloth"
 }

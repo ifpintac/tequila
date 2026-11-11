@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.28,
   "coat_weight": 1,
+  "description": "Alder, lightly finished: pale reddish-tan with a subtle, plain grain, widely used for guitar bodies and cabinet parts.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1869,7 +1870,21 @@
     "guitar body",
     "plain",
     "pale",
-    "reddish"
+    "reddish",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "tonewood",
+    "light brown",
+    "blonde",
+    "natural",
+    "satin",
+    "lacquered",
+    "electric guitar",
+    "guitar blank",
+    "musical instruments",
+    "furniture",
+    "audio"
   ],
   "type": "generic"
 }

@@ -2,6 +2,7 @@
   "base_color": [0.26729324, 0.15363473, 0.05968698],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "Teak, oiled: golden brown with fine darker streaks and a slightly oily, satin sheen, for outdoor furniture, boat decks and worktops.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -1682,7 +1683,22 @@
     "teak",
     "outdoor",
     "boat",
-    "golden"
+    "golden",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "golden brown",
+    "oily",
+    "oiled",
+    "satin",
+    "garden furniture",
+    "deck",
+    "worktop",
+    "weatherproof",
+    "furniture",
+    "outdoor gear",
+    "interior",
+    "architecture"
   ],
   "type": "generic"
 }

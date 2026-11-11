@@ -1,6 +1,7 @@
 {
   "base_color": [0.9462, 0.955, 0.9708],
   "category": "Metal",
+  "description": "Polished stainless steel: a bright, cool mirror finish slightly darker than chrome, as on a kettle, cutlery, watch case or rail.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
   "tags": [
     "steel",
     "stainless",
-    "mirror"
+    "mirror",
+    "inox",
+    "ss304",
+    "ss316",
+    "stainless steel",
+    "bright",
+    "shiny",
+    "buffed",
+    "cutlery",
+    "kettle",
+    "watch case",
+    "rail",
+    "reflective",
+    "kitchenware",
+    "appliances",
+    "watches",
+    "architecture"
   ],
   "type": "metal"
 }

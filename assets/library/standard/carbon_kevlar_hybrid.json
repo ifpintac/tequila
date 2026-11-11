@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A twill weave that mixes black carbon with yellow aramid threads under clear resin, as in bike parts and cases.",
   "graph": {
     "decals": [],
     "links": [
@@ -4449,7 +4450,21 @@
     "composite",
     "twill",
     "yellow",
-    "black"
+    "black",
+    "carbon fiber",
+    "aramid fiber",
+    "hybrid weave",
+    "twill weave",
+    "yellow black",
+    "woven",
+    "laminate",
+    "resin",
+    "gloss",
+    "two-tone",
+    "cfrp",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

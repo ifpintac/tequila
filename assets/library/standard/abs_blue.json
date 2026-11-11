@@ -1,6 +1,7 @@
 {
   "base_color": [0.0441, 0.062, 0.3565],
   "category": "Plastic",
+  "description": "A solid mid-blue injection moulded ABS with a soft satin sheen, as on toy bricks and handheld housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -199,7 +200,19 @@
   "tags": [
     "abs",
     "blue",
-    "toy"
+    "toy",
+    "acrylonitrile butadiene styrene",
+    "satin",
+    "moulded",
+    "molded",
+    "injection moulded",
+    "blue plastic",
+    "housing",
+    "casing",
+    "toys",
+    "electronics",
+    "tools",
+    "prototyping"
   ],
   "type": "plastic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.33253077, 0.18728724, 0.19666904],
   "category": "Fabric",
+  "description": "A dense blush cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.7678508, 0.59936464, 0.5839785],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -316,7 +317,22 @@
     "velvet",
     "sheen",
     "upholstery",
-    "pink"
+    "pink",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "lining",
+    "fabric",
+    "pale pink",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

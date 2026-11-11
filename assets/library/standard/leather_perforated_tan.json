@@ -1,7 +1,8 @@
 {
   "base_color": [0.30243933, 0.18839644, 0.083575465],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Tan leather punched with a regular grid of small holes and a soft sheen, for car seats, sports seats and ventilated trim.",
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.05,
   "graph": {
@@ -3333,7 +3334,21 @@
     "punched",
     "seat",
     "headphone",
-    "tan"
+    "tan",
+    "perforation",
+    "holes",
+    "ventilated",
+    "breathable",
+    "car seat",
+    "steering wheel",
+    "camel",
+    "light brown",
+    "genuine leather",
+    "satin",
+    "automotive",
+    "audio",
+    "furniture",
+    "accessories"
   ],
   "type": "generic"
 }

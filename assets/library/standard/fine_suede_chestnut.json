@@ -1,6 +1,7 @@
 {
   "base_color": [0.106159665, 0.05592643, 0.025276713],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Chestnut brown fine suede with a short, even velvety nap that shifts tone when brushed, for shoe uppers, jackets, bags and soft trim.",
   "fuzz_color": [0.43867832, 0.32725155, 0.20863977],
   "fuzz_roughness": 0.62,
   "graph": {
@@ -1250,7 +1251,20 @@
     "shoe",
     "footwear",
     "chestnut",
-    "brown"
+    "brown",
+    "velvety",
+    "brushed nap",
+    "napped leather",
+    "soft",
+    "matte",
+    "natural leather",
+    "hide",
+    "calfskin",
+    "warm brown",
+    "shoes",
+    "apparel",
+    "bags",
+    "accessories"
   ],
   "type": "velvet"
 }
