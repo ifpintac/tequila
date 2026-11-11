@@ -44,6 +44,15 @@ Exact behavior of every interaction. This document exists because "drag a materi
   - Where a platform cannot open another window, they are drawn inside the main window instead.
   - Two short prompts stay inside the main window, as dialogs belonging to it: recovering unsaved work at start-up, and the report after a model is updated.
 
+*As built, November 11, from a design pass over the menus:*
+- **File, Edit, View**, the order every menu bar has them in; Edit came after View.
+- **File** begins with the project - New, Open, Open recent, Save, Save as - then what comes in (the model, its up axis and reloading it; then texture packs, Substance materials, material files and a new library material), then **Export**, a menu of its five. It began with six kinds of import, and New, Open and Save were half way down.
+- **Edit** has what the keys and the right-click menu did and no menu said: Group, Delete, Select all, Deselect all, Hide the selection, Isolate the selection, Show everything, beside Undo, Redo, Duplicate, Pattern and Preferences.
+- **View** ticks each panel that shows - Material library, Inspector, Console, Full viewport - then what is drawn over the view. The library's was a button among the tick boxes ("Toggle material library"), the console had none, and Model edges stood apart at the top.
+- **Keys are shown at the right of every command that has one**, from the table Preferences › Keyboard changes; some were in tooltips and two were written in ("P", "F5") and would not have followed a change.
+- **One place for each setting where the second was only a duplicate:** View › Screenshot folder… is gone, Preferences › Folders having it (the Screenshot's tooltip says where it saves and where to change that). File › Up axis of imports stays beside Import, where it is wanted, as well as in Preferences.
+- Removing a graph's hold on a parameter, and a gradient's colour, are "×" as everywhere else; they were the letter x.
+
 ### 1.2 Look and identity
 
 Tequila's look is its own, not KeyShot's or Blender's: friendly but professional, in light or dark, in the person's choice of theme (`app/src/theme.rs`).
@@ -461,6 +470,14 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - **Favorites**, **recently used**, and **used in this project** as virtual folders.
 - Right-click: Apply to Selection · Rename · Duplicate · Edit in Material Graph · Show in File Browser · Delete · Export.
 
+*As built, November 11: four ways to see the shelf* (`app/src/library_tab.rs`, `View`). Four small buttons beside the count choose it, each a drawing of what it gives, and Preferences › Interface › *Show materials as* is the same choice, kept between sessions (`interface.library_view`):
+- **Thumbnails**, as it was: pictures with their names, sized by the "…" menu's slider.
+- **Icons**: small pictures alone, four or more across, the name in the tooltip - the whole shelf at a glance.
+- **List**: a line each, a swatch and the name, with what the material is at the end where the shelf is wide enough. Three times and more the materials of thumbnails in the same height, for finding one by name.
+- **Cards**: a row each with the picture large, the name, its type and category, and whose it is (Tequila's, yours, a plugin's) with the words the search finds it by.
+
+Every view has the same star, the same dot for a material already in the project, the same right-click menu, double-click and drag, and asks previews only for what it shows and the next screenful, at the size it draws them (`the_shelf_is_shown_four_ways`). The shelf's five filters are each as wide as their word needs: in equal shares "Favorites" and "In project" ran into each other (`segment_widths` in `theme.rs`, which every such control uses).
+
 ---
 
 ## 10. Animation timeline
@@ -523,7 +540,7 @@ The pages and settings built:
 - **Navigation**: whose way the mouse moves the view, and the three drags of one's own (§6.1); orbit, pan and zoom speed (0.25× to 4×); the wheel's zoom reversed (a pinch keeps its direction); whether a trackpad's two-finger swipe pans or orbits, Shift doing the other; and the 3D mouse's settings, which were the whole window before.
 - **Keyboard**: every key of the main window, changed there (§6.3).
 - **Import**: the up axis of imports *(File › Up axis of imports, which stays)*.
-- **Folders**: the screenshot folder *(View › Screenshot folder…, which stays)*, and Tequila's settings and library folders, opened.
+- **Folders**: the screenshot folder *(it was View › Screenshot folder…)*, and Tequila's settings and library folders, opened.
 - **Updates**: the quiet look for a new version at launch.
 
 Tequila's newer choices are kept in `preferences.txt` beside the others, a `name=value` line each, and a line that is not understood keeps its default. The older ones - the look, the up axis, the screenshot folder, updates, the 3D mouse - are still kept in their own files by the code that owns them: **the one settings file of §12.1 is not built**, and nor is telling a project's defaults from the application's choices, since none of these settings is a project's. Not built either: the pages Rendering, Performance and memory, Colour management, Materials and library, Assistant, and Plugins and scripting; autosave versions, undo depth, units and language; the outline's colour and width; power settings; and, on a Mac, the item in the application menu (it is in Edit: the application menu is winit's). Held by the tests in `preferences.rs`, `ctrl_comma_opens_preferences`, `a_script_opens_preferences_and_changes_a_setting` and `a_swipe_follows_the_navigation_settings`.

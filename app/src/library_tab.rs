@@ -132,6 +132,97 @@ pub enum Section {
     Studios,
 }
 
+/// How the shelf shows its materials.
+///
+/// One size of thumbnail suited nobody all the time: three hundred
+/// materials are a long scroll two across, a name is what is looked for as
+/// often as a look, and choosing between two blues wants to know what
+/// each is made of.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum View {
+    /// A grid of pictures with their names: the look first.
+    #[default]
+    Thumbnails,
+    /// Small pictures alone, many across: the whole shelf at a glance,
+    /// each name in its tooltip.
+    Icons,
+    /// A line each - a swatch, the name, what it is: the name first.
+    List,
+    /// A row each with the picture large beside the name, what it is, its
+    /// category and whose it is.
+    Cards,
+}
+
+impl View {
+    pub const ALL: [View; 4] = [View::Thumbnails, View::Icons, View::List, View::Cards];
+
+    /// Its name in the settings and a script.
+    pub fn key(self) -> &'static str {
+        match self {
+            View::Thumbnails => "thumbnails",
+            View::Icons => "icons",
+            View::List => "list",
+            View::Cards => "cards",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            View::Thumbnails => "Thumbnails",
+            View::Icons => "Icons",
+            View::List => "List",
+            View::Cards => "Cards",
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            View::Thumbnails => "Pictures with their names",
+            View::Icons => "Small pictures, many across: the whole shelf at a glance",
+            View::List => "A line each: the most names on screen",
+            View::Cards => "A row each, with what the material is and whose",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<View> {
+        View::ALL.into_iter().find(|v| v.key().eq_ignore_ascii_case(key.trim()))
+    }
+
+    /// How many across, how wide each is and how tall a row, in a shelf
+    /// `width` wide whose thumbnails are set to `thumbnail` points.
+    fn layout(self, width: f32, thumbnail: f32, label: f32) -> Layout {
+        let grid = |each: f32, label: f32| {
+            let columns = columns_for(width, each);
+            let size = ((width - GAP * (columns as f32 - 1.0)) / columns as f32).floor().max(24.0);
+            Layout { columns, size, row: size + label, picture: size }
+        };
+        match self {
+            View::Thumbnails => grid(thumbnail, 4.0 + label),
+            View::Icons => grid(ICON, 0.0),
+            View::List => Layout { columns: 1, size: width, row: LIST_ROW, picture: LIST_ROW - 6.0 },
+            View::Cards => Layout { columns: 1, size: width, row: CARD_ROW, picture: CARD_ROW - 12.0 },
+        }
+    }
+}
+
+/// A view's measurements: tiles across, a tile's width, a row's height and
+/// the side of the picture in it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Layout {
+    columns: usize,
+    size: f32,
+    row: f32,
+    picture: f32,
+}
+
+/// The space between tiles, and between rows of them.
+const GAP: f32 = 8.0;
+/// An icon's side, about: the tiles share the width out.
+const ICON: f32 = 40.0;
+/// The height of a line of the list, and of a card.
+const LIST_ROW: f32 = 32.0;
+const CARD_ROW: f32 = 72.0;
+
 pub struct LibraryTab {
     entries: Vec<LibraryEntry>,
     /// Each entry's [`entry_key`], worked out when the entries are read.
@@ -178,6 +269,8 @@ pub struct LibraryTab {
     /// Thumbnails kept from earlier launches.
     disk: Arc<crate::thumbnail::DiskCache>,
     pub thumbnail_size: f32,
+    /// How the shelf is shown (Preferences keeps it).
+    pub view: View,
     new_material: crate::library_dialogs::NewMaterialDialog,
     details: crate::library_dialogs::DetailsDialog,
     confirm_delete: crate::library_dialogs::ConfirmDelete,
@@ -253,6 +346,7 @@ impl LibraryTab {
             environment,
             disk,
             thumbnail_size: 96.0,
+            view: View::default(),
             new_material: Default::default(),
             details: Default::default(),
             confirm_delete: Default::default(),
@@ -515,11 +609,14 @@ impl LibraryTab {
         });
 
         let visible = self.visible(in_project);
-        ui.label(
-            egui::RichText::new(format!("{} materials", visible.len()))
-                .size(11.0)
-                .color(crate::theme::p().text_faint),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{} materials", visible.len()))
+                    .size(11.0)
+                    .color(crate::theme::p().text_faint),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| view_switch(ui, &mut self.view));
+        });
         if visible.is_empty() {
             use crate::icons::Icon;
             use crate::theme::{hue, Hue};
@@ -545,23 +642,28 @@ impl LibraryTab {
         // window and the viewport has none left. Clamping here breaks it.
         let width = ui.available_width().min(MAX_WIDTH);
         ui.set_max_width(width);
-        let columns = columns_for(width, self.thumbnail_size);
         // The preview size picks how many fit across; the tiles then share
         // the width out between them, so the grid runs edge to edge rather
-        // than leaving a ragged strip down the right.
-        let gap = 8.0;
-        let size = ((width - gap * (columns as f32 - 1.0)) / columns as f32).floor().max(24.0);
-        self.tile_pixels = tile_pixels(size, ui.ctx().pixels_per_point());
+        // than leaving a ragged strip down the right. A list and the cards
+        // are one across, the width of the shelf.
+        let view = self.view;
+        let label_height = ui.fonts(|f| f.row_height(&egui::FontId::proportional(12.0)));
+        let Layout { columns, size, row: row_height, picture } = view.layout(width, self.thumbnail_size, label_height);
+        let gap = GAP;
+        self.tile_pixels = tile_pixels(picture, ui.ctx().pixels_per_point());
 
         let mut favourite_toggle: Option<String> = None;
         // Only the rows in view are laid out: every tile is a handful of
         // widgets, a tooltip and a context menu, and a library of a hundred
         // and fifty laid out in full every frame is time spent on tiles
         // nobody can see.
-        let label_height = ui.fonts(|f| f.row_height(&egui::FontId::proportional(12.0)));
-        let row_height = size + 4.0 + label_height;
         let rows = visible.len().div_ceil(columns);
-        ui.spacing_mut().item_spacing.y = 10.0;
+        ui.spacing_mut().item_spacing.y = match view {
+            View::Thumbnails => 10.0,
+            View::Icons => gap,
+            View::List => 0.0,
+            View::Cards => 6.0,
+        };
         // Which of `visible` are on screen, for the previews below.
         let mut in_view = 0..0;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, row_height, rows, |ui, range| {
@@ -575,7 +677,11 @@ impl LibraryTab {
                         let key = self.keys[index];
                         let starred = self.favorites.contains(&entry.name);
                         let used = in_project.contains(&entry.name);
-                        let response = ui
+                        // The tile as the view draws it, and where on it the
+                        // favourite star is.
+                        let (response, star) = match view {
+                            View::Thumbnails | View::Icons => {
+                                let response = ui
                             .vertical(|ui| {
                                 // `set_width` is a request, not a limit: a child
                                 // wider than it — a long material name — pushes
@@ -630,24 +736,31 @@ impl LibraryTab {
                                 // makes rows of different heights, and a name is
                                 // identifiable from its first words. The full one
                                 // is in the tooltip.
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&entry.name)
-                                            .size(12.0)
-                                            .color(if hovered { crate::theme::p().text } else { crate::theme::p().text_dim }),
-                                    )
-                                    .truncate(),
-                                );
+                                if view == View::Thumbnails {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&entry.name)
+                                                .size(12.0)
+                                                .color(if hovered { crate::theme::p().text } else { crate::theme::p().text_dim }),
+                                        )
+                                        .truncate(),
+                                    );
+                                }
                             })
                             .response
                             .interact(egui::Sense::click_and_drag());
+                                let star = star_rect(response.rect, size);
+                                (response, star)
+                            }
+                            View::List => list_row(ui, size, entry, self.thumbnails.get(&key), starred, used),
+                            View::Cards => card_row(ui, size, entry, self.thumbnails.get(&key), starred, used),
+                        };
 
                         // The star is claimed from the tile's own response rather
                         // than being a nested button, so it cannot steal the drag
                         // that starts a material assignment — which is the tile's
                         // primary gesture and must never be blocked by a target
                         // sitting on top of it.
-                        let star = star_rect(response.rect, size);
                         let on_star = response.hover_pos().is_some_and(|p| star.contains(p));
                         if on_star && response.clicked() {
                             favourite_toggle = Some(entry.name.clone());
@@ -872,6 +985,156 @@ fn shipped_folder() -> Option<std::path::PathBuf> {
 fn wanted(visible: &[usize], in_view: std::ops::Range<usize>) -> impl DoubleEndedIterator<Item = usize> + '_ {
     let end = (in_view.end + in_view.len()).min(visible.len());
     visible[in_view.start.min(end)..end].iter().copied()
+}
+
+/// The four views to choose from, each a small drawing of itself: a
+/// control of four words would not fit beside the count.
+fn view_switch(ui: &mut egui::Ui, view: &mut View) {
+    let p = crate::theme::p();
+    ui.spacing_mut().item_spacing.x = 2.0;
+    // Right to left, so the last is drawn first.
+    for candidate in View::ALL.into_iter().rev() {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 20.0), egui::Sense::click());
+        let chosen = *view == candidate;
+        if chosen || response.hovered() {
+            ui.painter().rect_filled(rect, 5.0, if chosen { p.pressed } else { p.hover });
+        }
+        let ink = if chosen { p.accent_text } else if response.hovered() { p.text } else { p.text_dim };
+        let glyph = egui::Rect::from_center_size(rect.center(), egui::vec2(12.0, 12.0));
+        let painter = ui.painter();
+        let block = |x: f32, y: f32, w: f32, h: f32| {
+            painter.rect_filled(egui::Rect::from_min_size(glyph.min + egui::vec2(x, y), egui::vec2(w, h)), 1.0, ink);
+        };
+        match candidate {
+            // Two by two.
+            View::Thumbnails => {
+                for (x, y) in [(0.0, 0.0), (7.0, 0.0), (0.0, 7.0), (7.0, 7.0)] {
+                    block(x, y, 5.0, 5.0);
+                }
+            }
+            // Three by three.
+            View::Icons => {
+                for i in 0..9 {
+                    block((i % 3) as f32 * 4.5, (i / 3) as f32 * 4.5, 3.0, 3.0);
+                }
+            }
+            // Three lines, each with its swatch.
+            View::List => {
+                for i in 0..3 {
+                    block(0.0, i as f32 * 4.5 + 0.5, 2.0, 2.0);
+                    block(4.0, i as f32 * 4.5 + 0.5, 8.0, 2.0);
+                }
+            }
+            // Two rows, a picture and its lines.
+            View::Cards => {
+                for i in 0..2 {
+                    block(0.0, i as f32 * 7.0, 5.0, 5.0);
+                    block(7.0, i as f32 * 7.0 + 0.5, 5.0, 1.5);
+                    block(7.0, i as f32 * 7.0 + 3.0, 3.5, 1.5);
+                }
+            }
+        }
+        if response.on_hover_text(format!("{}\n{}", candidate.label(), candidate.hint())).clicked() {
+            *view = candidate;
+        }
+    }
+}
+
+/// A line of text at `at`, cut short with an ellipsis where it is wider
+/// than `width`. Painted, not a label: a label takes the pointer for
+/// selecting its text, and a row is dragged by any part of it.
+fn line(ui: &egui::Ui, at: egui::Pos2, text: &str, font: egui::FontId, colour: egui::Color32, width: f32) {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, colour);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(8.0));
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(at, galley, colour);
+}
+
+/// A material's picture in `rect`, or the outline of the sphere to come.
+fn picture(ui: &egui::Ui, rect: egui::Rect, texture: Option<&egui::TextureHandle>, rounding: f32) {
+    match texture {
+        Some(texture) => egui::Image::new(texture).rounding(egui::Rounding::same(rounding)).paint_at(ui, rect),
+        None => {
+            ui.painter().rect_filled(rect, rounding, crate::theme::p().control);
+            ui.painter().circle_stroke(rect.center(), rect.width() * 0.3, egui::Stroke::new(1.0_f32, crate::theme::p().line_strong));
+        }
+    }
+}
+
+/// The favourite star at the end of a row: always when set, and under the
+/// pointer when not. Where it is, for the click.
+fn row_star(ui: &egui::Ui, row: egui::Rect, hovered: bool, starred: bool) -> egui::Rect {
+    let star = egui::Rect::from_center_size(egui::pos2(row.right() - 14.0, row.center().y), egui::Vec2::splat(18.0));
+    if starred || hovered {
+        let colour = if starred { crate::theme::p().accent } else { crate::theme::p().text_faint };
+        ui.painter().add(egui::Shape::convex_polygon(star_points(star.center(), 6.0), colour, egui::Stroke::NONE));
+    }
+    star
+}
+
+/// Whose a material is, in a word.
+fn whose(source: library::Source) -> &'static str {
+    match source {
+        library::Source::Standard => "Tequila's",
+        library::Source::User => "Yours",
+        library::Source::Plugin => "A plugin's",
+    }
+}
+
+/// A material as a line of the list: a swatch, its name, what it is, and
+/// the star. The row and where the star is.
+fn list_row(ui: &mut egui::Ui, width: f32, entry: &LibraryEntry, texture: Option<&egui::TextureHandle>, starred: bool, used: bool) -> (egui::Response, egui::Rect) {
+    let p = crate::theme::p();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, LIST_ROW), egui::Sense::click_and_drag());
+    let hovered = response.hovered();
+    if hovered {
+        ui.painter().rect_filled(rect, 6.0, p.hover);
+    }
+    let swatch = egui::Rect::from_min_size(egui::pos2(rect.left() + 3.0, rect.top() + 3.0), egui::Vec2::splat(LIST_ROW - 6.0));
+    picture(ui, swatch, texture, 5.0);
+    if used {
+        ui.painter().circle_filled(egui::pos2(swatch.right() - 3.0, swatch.bottom() - 3.0), 3.5, p.success);
+    }
+    let left = swatch.right() + 9.0;
+    // What it is, at the end, where there is room for it beside the name.
+    let kind = entry.material_type.label();
+    let kind_width = if width >= 240.0 { 74.0 } else { 0.0 };
+    let name_width = rect.right() - 28.0 - kind_width - left;
+    let name_font = egui::FontId::proportional(12.5);
+    let y = rect.center().y - ui.fonts(|f| f.row_height(&name_font)) * 0.5;
+    line(ui, egui::pos2(left, y), &entry.name, name_font, if hovered { p.text } else { p.text_dim }, name_width);
+    if kind_width > 0.0 {
+        line(ui, egui::pos2(rect.right() - 28.0 - kind_width + 6.0, y + 0.5), kind, egui::FontId::proportional(11.0), p.text_faint, kind_width - 6.0);
+    }
+    let star = row_star(ui, rect, hovered, starred);
+    (response, star)
+}
+
+/// A material as a card: its picture large, its name, what it is and its
+/// category, and whose it is with the words it is found by. The row and
+/// where the star is.
+fn card_row(ui: &mut egui::Ui, width: f32, entry: &LibraryEntry, texture: Option<&egui::TextureHandle>, starred: bool, used: bool) -> (egui::Response, egui::Rect) {
+    let p = crate::theme::p();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, CARD_ROW), egui::Sense::click_and_drag());
+    let hovered = response.hovered();
+    ui.painter().rect(rect, 9.0, if hovered { p.hover } else { p.card }, egui::Stroke::new(1.0_f32, if hovered { p.accent } else { p.line }));
+    let thumb = egui::Rect::from_min_size(rect.min + egui::Vec2::splat(6.0), egui::Vec2::splat(CARD_ROW - 12.0));
+    picture(ui, thumb, texture, 6.0);
+    if used {
+        ui.painter().circle_filled(egui::pos2(thumb.left() + 8.0, thumb.bottom() - 8.0), 3.5, p.success);
+    }
+    let left = thumb.right() + 11.0;
+    let room = rect.right() - 30.0 - left;
+    line(ui, egui::pos2(left, rect.top() + 9.0), &entry.name, crate::theme::strong(13.0), p.text, room);
+    line(ui, egui::pos2(left, rect.top() + 28.0), &format!("{} · {}", entry.material_type.label(), entry.category), egui::FontId::proportional(11.5), p.text_dim, room);
+    let mut last = whose(entry.source).to_string();
+    if !entry.tags.is_empty() {
+        last.push_str(" · ");
+        last.push_str(&entry.tags.join(", "));
+    }
+    line(ui, egui::pos2(left, rect.top() + 46.0), &last, egui::FontId::proportional(11.0), p.text_faint, room + 20.0);
+    let star = row_star(ui, egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + 32.0)), hovered, starred);
+    (response, star)
 }
 
 /// Where the favourite star sits on a tile.
@@ -1273,6 +1536,62 @@ mod tests {
             let rect = ctx.memory(|m| m.area_rect(egui::Id::new(title))).unwrap_or_else(|| panic!("`{title}` is not on screen"));
             assert!(screen.contains_rect(rect), "`{title}` runs off the screen: {rect:?}");
             assert!(rect.width() > 200.0, "`{title}` is squeezed: {rect:?}");
+        }
+    }
+
+    /// The four views: thumbnails and icons are grids that share the shelf's
+    /// width out, a list and cards are one across; a list holds several
+    /// times the materials of thumbnails in the same height, and each view
+    /// draws the whole shelf and asks previews only for what it shows.
+    #[test]
+    fn the_shelf_is_shown_four_ways() {
+        let width = 262.0;
+        let label = 15.0;
+        let thumbnails = View::Thumbnails.layout(width, 96.0, label);
+        let icons = View::Icons.layout(width, 96.0, label);
+        let list = View::List.layout(width, 96.0, label);
+        let cards = View::Cards.layout(width, 96.0, label);
+        assert_eq!(thumbnails.columns, 2);
+        assert!(icons.columns >= 4 && icons.size < thumbnails.size, "{icons:?}");
+        assert_eq!((list.columns, cards.columns), (1, 1));
+        assert_eq!((list.size, cards.size), (width, width), "a row is the shelf's width");
+        // Edge to edge: the tiles and the gaps between them fill the width.
+        for grid in [thumbnails, icons] {
+            let used = grid.size * grid.columns as f32 + GAP * (grid.columns as f32 - 1.0);
+            assert!(used <= width && used > width - grid.columns as f32, "{grid:?} leaves a strip: {used} of {width}");
+        }
+        // Materials in 600 points of shelf.
+        let held = |layout: Layout, spacing: f32| (600.0 / (layout.row + spacing)).floor() as usize * layout.columns;
+        assert!(held(list, 0.0) >= held(thumbnails, 10.0) * 3, "a list holds {} and thumbnails {}", held(list, 0.0), held(thumbnails, 10.0));
+        assert!(held(icons, GAP) > held(list, 0.0), "icons hold the most");
+        assert!(cards.picture > list.picture * 2.0, "a card's picture is the larger");
+        for view in View::ALL {
+            assert_eq!(View::from_key(view.key()), Some(view));
+        }
+        assert_eq!(View::from_key("LIST"), Some(View::List));
+        assert_eq!(View::from_key("mosaic"), None);
+
+        // Drawn, each of them, without a click doing anything.
+        let mut tab = tab();
+        tab.device = None;
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+        let in_project: BTreeSet<String> = ["ABS White".to_string()].into_iter().collect();
+        for view in View::ALL {
+            tab.view = view;
+            for _ in 0..3 {
+                let _ = ctx.run(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ctx| {
+                    egui::SidePanel::left("library").exact_width(PANEL_WIDTH).show(ctx, |ui| {
+                        let action = tab.show(ui, &in_project, None);
+                        assert!(action.is_none(), "{view:?}: {action:?} without a click");
+                    });
+                });
+            }
+            // Previews are asked for what is on screen and the next
+            // screenful, not the three hundred there are.
+            let asked = tab.queued.len();
+            assert!(asked > 0 && asked < tab.entries.len() / 2, "{view:?} asked for {asked} previews of {}", tab.entries.len());
         }
     }
 

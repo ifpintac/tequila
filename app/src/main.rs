@@ -3322,61 +3322,15 @@ impl TequilaApp {
                 ui.visuals_mut().widgets.inactive.fg_stroke.color = theme::p().text;
                 self.menu_buttons.clear();
                 let file = ui.menu_button("File", |ui| {
-                    if ui.button("Import model...").clicked() {
-                        ui.close_menu();
-                        self.ask_for_file(Action::Import);
-                    }
-                    ui.menu_button("Up axis of imports", |ui| {
-                        ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
-                        if let Some(said) = import_settings::menu(ui) {
-                            self.project.status = said;
-                        }
-                    })
-                    .response
-                    .on_hover_text("A model drawn Z up comes in lying on its back unless this says Z up");
-                    ui.menu_button("Import texture pack", |ui| {
-                        if let Some(folder) = texture_pack::menu(ui) {
-                            self.pick_texture_pack(folder);
-                        }
-                    });
-                    if ui
-                        .button("Import Substance material...")
-                        .on_hover_text("An Adobe Substance material (.sbsar, or Designer's .sbs) with its settings, on the selected parts")
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.pick_substance();
-                    }
-                    ui.separator();
-                    if ui.button("New library material...").on_hover_text("Make a material for your library: from a type, the selected part, a texture pack or a file").clicked() {
-                        ui.close_menu();
-                        let selected = self.selected_material().map(|(_, s)| s);
-                        self.library.new_material(selected.as_ref());
-                    }
-                    if ui.button("Import material file...").on_hover_text("A material package (.fsmat) or preset (.json) somebody shared, into your library").clicked() {
-                        ui.close_menu();
-                        if let Some(path) = library_dialogs::pick_material_file() {
-                            self.import_material_file(&path);
-                        }
-                    }
-                    ui.separator();
-                    let selected = self.project.selection.active();
-                    if ui
-                        .add_enabled(selected.is_some(), egui::Button::new("Reload model from file"))
-                        .on_hover_text("Update the selected part's model from its file, keeping materials, labels and names")
-                        .on_disabled_hover_text("Select a part of the model to reload")
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        if let Some(node) = selected {
-                            self.update_model(node, false);
-                        }
-                    }
-                    if ui.button("New project").on_hover_text(self.key_text(shortcuts::Action::NewProject)).clicked() {
+                    // The project first, as every File menu has it: new, open, save.
+                    // Then what comes in - the model, then materials - and what goes
+                    // out. It opened with six kinds of import, and New, Open and Save
+                    // were half way down.
+                    if ui.add(egui::Button::new("New project").shortcut_text(self.key_text(shortcuts::Action::NewProject))).clicked() {
                         ui.close_menu();
                         self.new_project();
                     }
-                    if ui.button("Open project...").on_hover_text(self.key_text(shortcuts::Action::OpenProject)).clicked() {
+                    if ui.add(egui::Button::new("Open project...").shortcut_text(self.key_text(shortcuts::Action::OpenProject))).clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::Open);
                     }
@@ -3403,89 +3357,230 @@ impl TequilaApp {
                     if clear {
                         self.forget_recent(None);
                     }
-                    if ui.button("Save").on_hover_text(self.key_text(shortcuts::Action::Save)).clicked() {
+                    if ui.add(egui::Button::new("Save").shortcut_text(self.key_text(shortcuts::Action::Save))).clicked() {
                         match self.project.path.clone() {
                             Some(path) => self.save_to(&path),
                             None => self.ask_for_file(Action::SaveAs),
                         }
                         ui.close_menu();
                     }
-                    if ui.button("Save as...").on_hover_text(self.key_text(shortcuts::Action::SaveAs)).clicked() {
+                    if ui.add(egui::Button::new("Save as...").shortcut_text(self.key_text(shortcuts::Action::SaveAs))).clicked() {
                         ui.close_menu();
                         self.ask_for_file(Action::SaveAs);
                     }
                     ui.separator();
-                    if ui.button("Export glTF (.glb)...").on_hover_text("What is shown, for other 3D software and the web: materials as glTF PBR, procedurals and labels baked").clicked() {
+                    if ui.add(egui::Button::new("Import model...").shortcut_text(self.key_text(shortcuts::Action::Import))).clicked() {
                         ui.close_menu();
-                        let name = format!("{}.glb", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
-                        if let Some(path) = rfd::FileDialog::new().add_filter("glTF binary", &["glb"]).set_file_name(&name).save_file() {
-                            self.project.status = match self.export_glb(&path) {
-                                Ok((bytes, warnings)) => format!(
-                                    "Exported {} ({:.1} MB){}",
-                                    path.display(),
-                                    bytes as f64 / 1e6,
-                                    if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
-                                ),
-                                Err(error) => error,
-                            };
+                        self.ask_for_file(Action::Import);
+                    }
+                    ui.menu_button("Up axis of imports", |ui| {
+                        ui.label(egui::RichText::new("Which way up your files are drawn: STEP, STL and OBJ do not say").weak().size(11.5));
+                        if let Some(said) = import_settings::menu(ui) {
+                            self.project.status = said;
+                        }
+                    })
+                    .response
+                    .on_hover_text("A model drawn Z up comes in lying on its back unless this says Z up");
+                    let selected = self.project.selection.active();
+                    if ui
+                        .add_enabled(selected.is_some(), egui::Button::new("Reload model from file"))
+                        .on_hover_text("Update the selected part's model from its file, keeping materials, labels and names")
+                        .on_disabled_hover_text("Select a part of the model to reload")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        if let Some(node) = selected {
+                            self.update_model(node, false);
                         }
                     }
-                    if ui.button("Export USD (.usda)...").on_hover_text("What is shown as a USD stage: a preview surface for every viewer, and the OpenPBR material whole for MaterialX renderers and Tequila").clicked() {
+                    ui.separator();
+                    ui.menu_button("Import texture pack", |ui| {
+                        if let Some(folder) = texture_pack::menu(ui) {
+                            self.pick_texture_pack(folder);
+                        }
+                    });
+                    if ui
+                        .button("Import Substance material...")
+                        .on_hover_text("An Adobe Substance material (.sbsar, or Designer's .sbs) with its settings, on the selected parts")
+                        .clicked()
+                    {
                         ui.close_menu();
-                        let name = format!("{}.usda", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
-                        if let Some(path) = rfd::FileDialog::new().add_filter("USD", &["usda"]).set_file_name(&name).save_file() {
-                            self.project.status = match std::fs::write(&path, tequila_format::usd::export(self.project.document())) {
-                                Ok(()) => format!("Exported {}", path.display()),
-                                Err(error) => format!("Could not write {}: {error}", path.display()),
-                            };
+                        self.pick_substance();
+                    }
+                    if ui.button("Import material file...").on_hover_text("A material package (.fsmat) or preset (.json) somebody shared, into your library").clicked() {
+                        ui.close_menu();
+                        if let Some(path) = library_dialogs::pick_material_file() {
+                            self.import_material_file(&path);
                         }
                     }
-                    if ui.button("Export USDZ for AR (.usdz)...").on_hover_text("What is shown as one file an iPhone, iPad or Vision Pro opens, to see the product at its real size: materials baked to preview surfaces, standing on the ground").clicked() {
+                    if ui.button("New library material...").on_hover_text("Make a material for your library: from a type, the selected part, a texture pack or a file").clicked() {
                         ui.close_menu();
-                        let name = format!("{}.usdz", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
-                        if let Some(path) = rfd::FileDialog::new().add_filter("USDZ", &["usdz"]).set_file_name(&name).save_file() {
-                            self.project.status = match self.export_usdz(&path) {
-                                Ok((bytes, warnings)) => format!(
-                                    "Exported {} ({:.1} MB){}",
-                                    path.display(),
-                                    bytes as f64 / 1e6,
-                                    if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
-                                ),
-                                Err(error) => error,
-                            };
+                        let selected = self.selected_material().map(|(_, s)| s);
+                        self.library.new_material(selected.as_ref());
+                    }
+                    ui.separator();
+                    ui.menu_button("Export", |ui| {
+                        if ui.button("glTF (.glb)...").on_hover_text("What is shown, for other 3D software and the web: materials as glTF PBR, procedurals and labels baked").clicked() {
+                            ui.close_menu();
+                            let name = format!("{}.glb", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
+                            if let Some(path) = rfd::FileDialog::new().add_filter("glTF binary", &["glb"]).set_file_name(&name).save_file() {
+                                self.project.status = match self.export_glb(&path) {
+                                    Ok((bytes, warnings)) => format!(
+                                        "Exported {} ({:.1} MB){}",
+                                        path.display(),
+                                        bytes as f64 / 1e6,
+                                        if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
+                                    ),
+                                    Err(error) => error,
+                                };
+                            }
                         }
-                    }
-                    if ui.button("Export for the web...").on_hover_text("The configurator as a web page: live 3D, photos of every combination, or both").clicked() {
-                        ui.close_menu();
-                        self.web_plan = Some(WebPlan { live: true, photos: false });
-                    }
-                    if ui.button("Export spin viewer...").on_hover_text("Renders all the way round the product, and a page to turn them with a finger - for a product page").clicked() {
-                        ui.close_menu();
-                        self.spin_plan = Some(SpinPlan { options: tequila_format::spin::SpinOptions::default(), transparent: false });
-                    }
+                        if ui.button("USD (.usda)...").on_hover_text("What is shown as a USD stage: a preview surface for every viewer, and the OpenPBR material whole for MaterialX renderers and Tequila").clicked() {
+                            ui.close_menu();
+                            let name = format!("{}.usda", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
+                            if let Some(path) = rfd::FileDialog::new().add_filter("USD", &["usda"]).set_file_name(&name).save_file() {
+                                self.project.status = match std::fs::write(&path, tequila_format::usd::export(self.project.document())) {
+                                    Ok(()) => format!("Exported {}", path.display()),
+                                    Err(error) => format!("Could not write {}: {error}", path.display()),
+                                };
+                            }
+                        }
+                        if ui.button("USDZ for AR (.usdz)...").on_hover_text("What is shown as one file an iPhone, iPad or Vision Pro opens, to see the product at its real size: materials baked to preview surfaces, standing on the ground").clicked() {
+                            ui.close_menu();
+                            let name = format!("{}.usdz", crate::render_window::project_name(&self.project.document().meta.name, self.project.path.as_deref()));
+                            if let Some(path) = rfd::FileDialog::new().add_filter("USDZ", &["usdz"]).set_file_name(&name).save_file() {
+                                self.project.status = match self.export_usdz(&path) {
+                                    Ok((bytes, warnings)) => format!(
+                                        "Exported {} ({:.1} MB){}",
+                                        path.display(),
+                                        bytes as f64 / 1e6,
+                                        if warnings.is_empty() { String::new() } else { format!(" - {}", warnings.join("; ")) }
+                                    ),
+                                    Err(error) => error,
+                                };
+                            }
+                        }
+                        if ui.button("For the web...").on_hover_text("The configurator as a web page: live 3D, photos of every combination, or both").clicked() {
+                            ui.close_menu();
+                            self.web_plan = Some(WebPlan { live: true, photos: false });
+                        }
+                        if ui.button("Spin viewer...").on_hover_text("Renders all the way round the product, and a page to turn them with a finger - for a product page").clicked() {
+                            ui.close_menu();
+                            self.spin_plan = Some(SpinPlan { options: tequila_format::spin::SpinOptions::default(), transparent: false });
+                        }
+                    });
                 });
                 self.menu_buttons.push(("file", file.response.rect));
 
-                let view = ui.menu_button("View", |ui| {
+                // File, Edit, View: the order every menu bar has them in. Edit
+                // came after View.
+                let edit = ui.menu_button("Edit", |ui| {
+                    let undo = self
+                        .project
+                        .bus()
+                        .undo_name()
+                        .map(|n| format!("Undo {n}"))
+                        .unwrap_or_else(|| "Undo".into());
                     if ui
-                        .add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
-                        .on_hover_text("Draw the parts' edges in Solid and Material Preview: a CAD part's own B-rep edges, or a mesh's creases and borders")
-                        .changed()
-                    {
-                        ui.close_menu();
-                    }
-                    if ui
-                        .button("Toggle material library")
-                        .on_hover_text(self.key_text(shortcuts::Action::Library))
+                        .add_enabled(self.project.can_undo(), egui::Button::new(undo).shortcut_text(self.key_text(shortcuts::Action::Undo)))
                         .clicked()
                     {
-                        self.toggle_library(ui.ctx().screen_rect().width());
+                        self.undo();
+                        ui.close_menu();
+                    }
+                    let redo = self
+                        .project
+                        .bus()
+                        .redo_name()
+                        .map(|n| format!("Redo {n}"))
+                        .unwrap_or_else(|| "Redo".into());
+                    if ui
+                        .add_enabled(self.project.can_redo(), egui::Button::new(redo).shortcut_text(self.key_text(shortcuts::Action::Redo)))
+                        .clicked()
+                    {
+                        self.redo();
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    let any = self.project.selection.nodes().next().is_some();
+                    if ui
+                        .add_enabled(any, egui::Button::new("Duplicate").shortcut_text(self.key_text(shortcuts::Action::Duplicate)))
+                        .on_hover_text("Copies of the selection, in place, sharing their meshes and materials")
+                        .clicked()
+                    {
+                        self.duplicate_selection();
+                        ui.close_menu();
+                    }
+                    ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
+                    // What the keys and the right-click menu did, and no
+                    // menu said: a command with a key is still looked for
+                    // in a menu first.
+                    let several = self.project.selection.nodes().count() >= 2;
+                    for (label, action, enabled) in [
+                        ("Group", shortcuts::Action::Group, several),
+                        ("Delete", shortcuts::Action::Delete, any),
+                    ] {
+                        if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(self.key_text(action))).clicked() {
+                            self.perform(ui.ctx(), action);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    for (label, action, enabled) in [
+                        ("Select all", shortcuts::Action::SelectAll, true),
+                        ("Deselect all", shortcuts::Action::DeselectAll, any),
+                    ] {
+                        if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(self.key_text(action))).clicked() {
+                            self.perform(ui.ctx(), action);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    for (label, action, enabled) in [
+                        ("Hide the selection", shortcuts::Action::HideSelection, any),
+                        ("Isolate the selection", shortcuts::Action::Isolate, any),
+                        ("Show everything", shortcuts::Action::UnhideAll, true),
+                    ] {
+                        if ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(self.key_text(action))).clicked() {
+                            self.perform(ui.ctx(), action);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui.add(egui::Button::new("Preferences…").shortcut_text(self.key_text(shortcuts::Action::Preferences))).clicked() {
+                        self.preferences.show();
+                        ui.close_menu();
+                    }
+                });
+                self.menu_buttons.push(("edit", edit.response.rect));
+
+                let view = ui.menu_button("View", |ui| {
+                    // The panels, each ticked while it shows. The library's
+                    // was a button, "Toggle material library", among the
+                    // tick boxes, and the console had none.
+                    let width = ui.ctx().screen_rect().width();
+                    let mut library = self.show_library && (width >= 1100.0 || !self.show_project);
+                    if ui
+                        .add(crate::field::Checkbox::new(&mut library, "Material library"))
+                        .on_hover_text(self.key_text(shortcuts::Action::Library))
+                        .changed()
+                    {
+                        self.toggle_library(width);
                     }
                     ui.add(crate::field::Checkbox::new(&mut self.show_project, "Inspector"))
                         .on_hover_text(self.key_text(shortcuts::Action::Inspector));
+                    let mut console = self.console.open;
+                    if ui
+                        .add(crate::field::Checkbox::new(&mut console, "Console"))
+                        .on_hover_text(self.key_text(shortcuts::Action::Console))
+                        .changed()
+                    {
+                        self.console.toggle();
+                    }
                     ui.add(crate::field::Checkbox::new(&mut self.full_viewport, "Full viewport"))
                         .on_hover_text(self.key_text(shortcuts::Action::FullViewport));
                     ui.separator();
+                    // What is drawn over the view.
                     ui.add(crate::field::Checkbox::new(&mut self.show_hud, "Render statistics"))
                         .on_hover_text(self.key_text(shortcuts::Action::Statistics));
                     let mut outline = self.show_selection_outline;
@@ -3502,6 +3597,8 @@ impl TequilaApp {
                         .on_hover_text("Show the view at the render's size and shape, so what you see is what renders. Set the size in the Render window.");
                     ui.add(crate::field::Checkbox::new(&mut self.show_axis_legend, "Axis legend"));
                     ui.add(crate::field::Checkbox::new(&mut self.camera_tab.show_grid, "Ground grid")).on_hover_text("XZ measurement guide at Y = 0. Does not appear in renders. Grid snapping is a separate transform option.");
+                    ui.add(crate::field::Checkbox::new(&mut self.show_model_edges, "Model edges"))
+                        .on_hover_text("Draw the parts' edges in Solid and Material Preview: a CAD part's own B-rep edges, or a mesh's creases and borders");
                     let aspect = self.render_aspect();
                     ui.menu_button("Composition guides", |ui| {
                         ui.set_min_width(230.0);
@@ -3524,30 +3621,25 @@ impl TequilaApp {
                         }
                     });
                     ui.separator();
-                    if ui.button("Frame selection").on_hover_text(self.key_text(shortcuts::Action::FrameSelection)).clicked() {
+                    if ui.add(egui::Button::new("Frame selection").shortcut_text(self.key_text(shortcuts::Action::FrameSelection))).clicked() {
                         self.frame(false);
                         ui.close_menu();
                     }
-                    if ui.button("Frame all").on_hover_text(self.key_text(shortcuts::Action::FrameAll)).clicked() {
+                    if ui.add(egui::Button::new("Frame all").shortcut_text(self.key_text(shortcuts::Action::FrameAll))).clicked() {
                         self.frame(true);
                         ui.close_menu();
                     }
                     ui.separator();
                     if ui
-                        .add(egui::Button::new("Screenshot").shortcut_text("P"))
-                        .on_hover_text("Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics")
+                        .add(egui::Button::new("Screenshot").shortcut_text(self.key_text(shortcuts::Action::Screenshot)))
+                        .on_hover_text(format!(
+                            "Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics. Into {} - Preferences › Folders chooses where.",
+                            self.screenshots.folder().display()
+                        ))
                         .clicked()
                     {
                         ui.close_menu();
                         self.take_screenshot();
-                    }
-                    if ui
-                        .button("Screenshot folder…")
-                        .on_hover_text(format!("Where screenshots go: {}", self.screenshots.folder().display()))
-                        .clicked()
-                    {
-                        ui.close_menu();
-                        self.choose_screenshot_folder();
                     }
                     ui.separator();
                     if ui
@@ -3560,53 +3652,8 @@ impl TequilaApp {
                     }
                 });
                 // For a script to open, as it opens File: View holds the
-                // Screenshot and its folder.
+                // Screenshot.
                 self.menu_buttons.push(("view", view.response.rect));
-
-                ui.menu_button("Edit", |ui| {
-                    let undo = self
-                        .project
-                        .bus()
-                        .undo_name()
-                        .map(|n| format!("Undo {n}"))
-                        .unwrap_or_else(|| "Undo".into());
-                    if ui
-                        .add_enabled(self.project.can_undo(), egui::Button::new(undo))
-                        .clicked()
-                    {
-                        self.undo();
-                        ui.close_menu();
-                    }
-                    let redo = self
-                        .project
-                        .bus()
-                        .redo_name()
-                        .map(|n| format!("Redo {n}"))
-                        .unwrap_or_else(|| "Redo".into());
-                    if ui
-                        .add_enabled(self.project.can_redo(), egui::Button::new(redo))
-                        .clicked()
-                    {
-                        self.redo();
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    let any = self.project.selection.nodes().next().is_some();
-                    if ui
-                        .add_enabled(any, egui::Button::new("Duplicate").shortcut_text(self.key_text(shortcuts::Action::Duplicate)))
-                        .on_hover_text("Copies of the selection, in place, sharing their meshes and materials")
-                        .clicked()
-                    {
-                        self.duplicate_selection();
-                        ui.close_menu();
-                    }
-                    ui.menu_button("Pattern", |ui| pattern_panel::menu_items(ui, &mut self.project));
-                    ui.separator();
-                    if ui.button("Preferences…").on_hover_text(self.key_text(shortcuts::Action::Preferences)).clicked() {
-                        self.preferences.show();
-                        ui.close_menu();
-                    }
-                });
 
                 ui.menu_button("Workspace", |ui| {
                     for (label, library, project, tab) in [
@@ -3644,7 +3691,7 @@ impl TequilaApp {
                         ui.close_menu();
                     }
                     if ui
-                        .add(egui::Button::new("Present").shortcut_text("F5"))
+                        .add(egui::Button::new("Present").shortcut_text(self.key_text(shortcuts::Action::Present)))
                         .on_hover_text("The configurator over the live view, full screen. Esc leaves.")
                         .clicked()
                     {
@@ -4115,7 +4162,7 @@ impl TequilaApp {
         if icons::tip(
             button(ui, next(&mut x), "screenshot", Icon::Screenshot, false, true),
             "Screenshot",
-            "Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics. View › Screenshot folder… chooses where.",
+            "Save the viewport's picture as a PNG, as it is now: no gizmos, outlines or statistics. Preferences › Folders chooses where.",
             &self.key(shortcuts::Action::Screenshot),
         )
         .clicked()
@@ -4930,22 +4977,6 @@ impl TequilaApp {
     fn render_aspect(&self) -> f32 {
         let settings = self.project.render_settings();
         settings.width.max(1) as f32 / settings.height.max(1) as f32
-    }
-
-    /// View › Screenshot folder…: where screenshots go, kept in the
-    /// application's settings.
-    fn choose_screenshot_folder(&mut self) {
-        let start = self.screenshots.folder();
-        let mut dialog = rfd::FileDialog::new().set_title("Screenshot folder");
-        if start.is_dir() {
-            dialog = dialog.set_directory(&start);
-        }
-        let Some(folder) = dialog.pick_folder() else { return };
-        self.screenshots.folder = Some(folder.clone());
-        match self.screenshots.save() {
-            Ok(()) => self.toasts.info(format!("Screenshots go to {}", folder.display())),
-            Err(error) => self.toasts.warn(format!("The screenshot folder could not be kept: {error}")),
-        }
     }
 
     fn save_to(&mut self, path: &std::path::Path) {
