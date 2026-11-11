@@ -114,8 +114,11 @@ fn catalogue_studio() -> StudioPreset {
         softbox("Key", -130.0, 38.0, 0.7, 0.5, 10.0),
         softbox("Overhead", 150.0, 68.0, 0.9, 0.7, 2.6),
         softbox("Fill", 118.0, 17.0, 1.0, 0.8, 3.0),
-        wide(softbox("Front", 180.0, 11.0, 1.2, 0.8, 1.5), 1.2, 0.45),
+        wide(softbox("Front", 180.0, 11.0, 1.2, 0.8, 2.5), 1.4, 0.5),
         wide(softbox("Back strip", 0.0, 20.0, 1.6, 0.4, 5.0), 1.6, 0.12),
+        // What a metal top has to reflect: large and dim, so a painted
+        // top is barely touched by it.
+        wide(softbox("High back", 0.0, 52.0, 1.5, 0.9, 0.6), 1.5, 0.7),
     ];
     let environment = EnvironmentSettings {
         image: None,
@@ -125,6 +128,11 @@ fn catalogue_studio() -> StudioPreset {
         ground: GroundSettings {
             enabled: true,
             shadows: false,
+            // The white floor lights what stands on it from below, as a
+            // sweep of white paper does: without it every upright face of
+            // a metal mirrors a black room.
+            bounce: true,
+            bounce_strength: 3.0,
             reflections: 0.3,
             reflection_blur: 0.02,
             reflection_fade_distance: 0.05,

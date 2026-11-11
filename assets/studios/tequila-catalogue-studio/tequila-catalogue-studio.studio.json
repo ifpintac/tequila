@@ -68,10 +68,10 @@
     "brightness": 1,
     "contrast": 1,
     "ground": {
-      "bounce": false,
+      "bounce": true,
       "bounce_color": [1, 1, 1],
       "bounce_contact_falloff": 0,
-      "bounce_strength": 1,
+      "bounce_strength": 3,
       "enabled": true,
       "flatten": false,
       "occlusion_shadows": false,
@@ -135,12 +135,12 @@
         "softness": 0.8
       },
       {
-        "angular_size": [1.2, 0.45],
+        "angular_size": [1.4, 0.5],
         "blend": "add",
         "color": [1, 1, 1],
         "direction": [-0.00000008581657, 0.190809, 0.98162717],
         "enabled": true,
-        "intensity": 1.5,
+        "intensity": 2.5,
         "kind": "light",
         "lighting": true,
         "name": "Front",
@@ -163,6 +163,21 @@
         "shape": "rectangle",
         "show_in_background": false,
         "softness": 0.4
+      },
+      {
+        "angular_size": [1.5, 0.7],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [0, 0.7880107, -0.6156615],
+        "enabled": true,
+        "intensity": 0.6,
+        "kind": "light",
+        "lighting": true,
+        "name": "High back",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.9
       }
     ],
     "rotation": 0,
