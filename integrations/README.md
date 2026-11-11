@@ -6,6 +6,10 @@
 | [SolidWorks](solidworks) | A **Send to Tequila** macro for a toolbar button | Beta: not yet run in SolidWorks |
 | [ZBrush](zbrush) | A **Send to Tequila** button, polypaint included (ZBrush 2026 and later) | Beta: not yet run in ZBrush |
 
+A `.blend` can also be opened in Tequila directly (Import, or drop it on the
+window): Tequila asks the Blender on your computer to read it, materials and
+all. The add-on is for working in both at once.
+
 Sending the same model again updates it in Tequila: its geometry changes,
 and the materials, labels and names you gave it there stay. Parts are
 matched by name, so a renamed part arrives as a new one.
