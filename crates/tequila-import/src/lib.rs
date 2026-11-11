@@ -36,6 +36,7 @@ pub mod hdf5;
 pub mod ifc;
 pub mod iges;
 pub mod keyshot;
+pub mod materialx;
 pub mod obj;
 mod occt;
 mod part21;

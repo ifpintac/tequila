@@ -295,8 +295,8 @@ pub fn classify_drop(path: &Path) -> Dropped {
         "ksp" | "bip" => Dropped::Scene,
         // A ZIP is a pack of maps unless it holds a material.
         "fsmat" | "json" | "zip" if tequila_format::library::is_material_file(path) => Dropped::Material,
-        // KeyShot's material packages.
-        "kmp" => Dropped::Material,
+        // KeyShot's material packages, and MaterialX documents.
+        "kmp" | "mtlx" => Dropped::Material,
         "sbsar" | "sbs" => Dropped::Substance,
         "zip" | "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" | "bmp" | "webp" | "dds" | "jxl" => Dropped::TexturePack,
         _ => Dropped::Unknown,
@@ -570,6 +570,8 @@ mod tests {
         let other = folder.join("package.json");
         std::fs::write(&other, "{\"dependencies\": {}}").unwrap();
         assert_eq!(classify_drop(&other), Dropped::Unknown);
+        // A MaterialX document, by its name.
+        assert_eq!(classify_drop(Path::new("C:/shared/wood_tiled.mtlx")), Dropped::Material);
         let _ = std::fs::remove_dir_all(&folder);
     }
 }

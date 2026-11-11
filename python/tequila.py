@@ -678,8 +678,8 @@ class Library:
 
     def import_(self, path, *, name=None, category=None, tags=(), size=None):
         """A material package (.fsmat), a preset's .json, a KeyShot material
-        package (.kmp; the reply's `notes` say what did not come across), or
-        a texture pack (folder, ZIP or one of its maps; `size` metres a
+        package (.kmp; the reply's `notes` say what did not come across), a
+        MaterialX document (.mtlx; every material in it), or a texture pack (folder, ZIP or one of its maps; `size` metres a
         repeat) into the user's library."""
         fields = {'action': 'import', 'path': str(Path(path).resolve()), 'tags': list(tags)}
         for key, value in (('name', name), ('category', category), ('size', size)):

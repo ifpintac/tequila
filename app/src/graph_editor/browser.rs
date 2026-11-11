@@ -260,7 +260,10 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
                         Some(parent) => format!("{parent} › {}", entry.label),
                         None => entry.label.clone(),
                     };
-                    let score = found(&label)? - if entry.search_only { 8 } else { 0 };
+                    // What is inside a node, or another word for it, is found
+                    // by its own name: found by its node's, it was that node
+                    // again on a row for every word it goes by.
+                    let score = if entry.search_only { found(&entry.label)? - 8 } else { found(&label)? };
                     Some((Row { label, family: Some(family), item: Item::Node(entry.kind.clone(), None), current: false }, score))
                 })
                 .collect();
@@ -591,6 +594,13 @@ mod tests {
 
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "multiply");
         assert!(labels(&found, Group::Utilities).iter().any(|l| l == "Math › Multiply"), "{:?}", labels(&found, Group::Utilities));
+
+        // A node found by its name is one row, not one for each other word
+        // it goes by; by one of those words, it is found as that.
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "basketweave");
+        assert_eq!(labels(&found, Group::Maps), ["Basketweave"]);
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "parquet");
+        assert!(labels(&found, Group::Maps).iter().any(|l| l == "Herringbone › parquet") && labels(&found, Group::Maps).iter().any(|l| l == "Basketweave › parquet"), "{:?}", labels(&found, Group::Maps));
 
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "felt");
         assert_eq!(labels(&found, Group::Scene), ["Felt Grey"]);

@@ -5635,6 +5635,52 @@ mod tests {
         }
     }
 
+    /// Herringbone and basketweave are laid on the same pixels by both
+    /// renderers, each tile the same grey of its own in both: the groups
+    /// are Math nodes and a White Noise, which each engine has. Skipped
+    /// where Cycles is not installed.
+    #[test]
+    fn tiles_are_laid_alike_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+        use tequila_materials::groups::NodeGroup;
+        use tequila_materials::material_type::Param;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        for group in [NodeGroup::Herringbone, NodeGroup::Basketweave] {
+            let mut graph = MaterialGraph::from_material(tequila_materials::openpbr::Material { specular_weight: 0.0, ..Default::default() });
+            // Tiles a fifth of the ball's radius wide, on a wall facing the
+            // camera's side, each its own grey.
+            let tiles = graph.add_node(
+                Node::new(NodeKind::Group(group))
+                    .with_literal(Socket::Input(0), Value::Float(200.0))
+                    .with_literal(Socket::Input(1), Value::Float(3.0))
+                    .with_literal(Socket::Input(2), Value::Float(0.0))
+                    .with_literal(Socket::Input(3), Value::Float(1.0)),
+            );
+            let surface = graph.output();
+            graph.connect_output(tiles, 1, surface, Socket::Param(Param::BaseColor));
+            let [tequila, cycles] = both_engines(&format!("tiles-{group:?}"), move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+            });
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, sa), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(&b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            let together = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+            assert!(sa > 20.0, "{group:?}: the tiles are all one grey in Tequila's renderer ({sa:.1})");
+            assert!(together > 0.8, "{group:?}: Tequila's tiles and Cycles' agree {together:.2} of the way");
+        }
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.
