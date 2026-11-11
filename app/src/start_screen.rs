@@ -268,6 +268,9 @@ impl StartScreen {
         // window shorter than the card was drawn for: they ran on over the
         // footer's links and the version.
         egui::ScrollArea::vertical().id_salt("start-samples").auto_shrink([false, false]).show(ui, |ui| {
+            // The rows and the space under each, and nothing between: the
+            // layout's own spacing on top of them took the third row's room.
+            ui.spacing_mut().item_spacing.y = 0.0;
             for (sample, path) in samples {
                 let Some(path) = path else { continue };
                 let picture = match self.pictures.get(path) {
