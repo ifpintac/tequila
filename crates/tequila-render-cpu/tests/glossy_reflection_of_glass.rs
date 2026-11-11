@@ -142,7 +142,7 @@ fn render(glass: Glass, lighting: Lighting, roughness: f32, samples: u32) -> (f3
     let instances = (0..meshes.len() as u32).map(|i| Instance::new(InstanceId(i), MeshId(i), MaterialId(i))).collect();
     let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::ZERO)));
     if lighting == Lighting::Lamp {
-        let lamp = AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(RADIANCE), disc: false, two_sided: false, spread: std::f32::consts::PI };
+        let lamp = AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(RADIANCE), disc: false, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 };
         scene = scene.with_lights(Arc::new(LightSet::new(vec![Light::new(LightKind::Area(lamp))])));
     }
     let device = Device::shared().expect("an Embree device");

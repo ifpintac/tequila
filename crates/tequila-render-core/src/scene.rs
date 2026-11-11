@@ -376,6 +376,10 @@ pub struct Instance {
     /// The light layer of the light this stands in for (§5.5), so seeing it
     /// directly lands in that light's pass.
     pub light_layer: u8,
+    /// The light this stands in for, by its place among the scene's lights,
+    /// so the camera sees its face lit as it lights: a softbox's falloff to
+    /// its edges (`AreaLight::face`) and not a panel glowing evenly.
+    pub light: Option<u32>,
     /// What the part says of itself to its material (`PartValues`): Object
     /// Info's Color and Number. White and nought where it says nothing.
     pub colour: Spectrum,
@@ -398,6 +402,7 @@ impl Instance {
             shadow_catcher: None,
             light_proxy: false,
             light_layer: 0,
+            light: None,
             colour: Spectrum::ONE,
             number: 0.0,
         }
@@ -416,6 +421,12 @@ impl Instance {
 
     pub fn with_light_layer(mut self, layer: u8) -> Self {
         self.light_layer = layer;
+        self
+    }
+
+    /// Say which of the scene's lights this stands in for ([`Instance::light`]).
+    pub fn standing_in_for(mut self, light: usize) -> Self {
+        self.light = Some(light as u32);
         self
     }
 

@@ -30,7 +30,7 @@ fn lamp(at: Vec3, facing: Vec3, half: f32, radiance: f32) -> Light {
     let across = if facing.y.abs() < 0.9 { Vec3::Y.cross(facing).normalize() } else { Vec3::X.cross(facing).normalize() };
     let up = facing.cross(across).normalize();
     let (half_u, half_v) = if across.cross(up).dot(facing) > 0.0 { (across * half, up * half) } else { (up * half, across * half) };
-    Light::new(LightKind::Area(AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI }))
+    Light::new(LightKind::Area(AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 }))
 }
 
 /// Where accent lamp `i` of `count` stands, and the patch of floor it

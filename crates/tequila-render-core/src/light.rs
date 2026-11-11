@@ -118,9 +118,79 @@ pub struct AreaLight {
     /// whole hemisphere, less a softbox behind a grid, which aims it. Its
     /// power stays the same, gathered into the narrower beam.
     pub spread: f32,
+    /// How much of its brightness is lost from its middle out to its
+    /// edges, 0 to 1: none is a bare panel, even all over, and 1 edges
+    /// that go dark. A softbox's front is brightest over its lamp and falls
+    /// off towards its frame, and that is what gloss paint or chrome shows
+    /// of it: a sheen that fades towards its edges, where an even panel
+    /// leaves a flat white shape with a hard edge. Its power stays the
+    /// same, the middle brighter for the edges' loss ([`AreaLight::face`]).
+    pub falloff: f32,
+    /// A fade along it, from its top edge (+v) to its bottom: the share of
+    /// its brightness lost at the far end, negative for a fade the other way,
+    /// as a graduated scrim fades the light behind a bottle. Its power stays
+    /// the same.
+    pub fade: f32,
 }
 
 impl AreaLight {
+    /// How bright its face is at `(su, sv)`, each -1 to 1 from one edge to
+    /// the other along `half_u` and `half_v`, against its average: one
+    /// everywhere for an even panel. The falloff is `1 - f x²` along each
+    /// axis (by the distance from the middle on a disc), the fade a straight
+    /// ramp from one end to the other, and the two together are divided by
+    /// their average over the face, so the light gives what its intensity
+    /// says. Cycles' area lights are given the same sum as a shader
+    /// (`tequila-render-cycles`' `translate`), so the two agree.
+    pub fn face(&self, su: f32, sv: f32) -> f32 {
+        if self.is_even() {
+            return 1.0;
+        }
+        let falloff = self.falloff.clamp(0.0, 1.0);
+        let fade = self.fade.clamp(-1.0, 1.0);
+        let (edge, edge_mean) = if self.disc {
+            (1.0 - falloff * (su * su + sv * sv).min(1.0), 1.0 - 0.5 * falloff)
+        } else {
+            let mean = 1.0 - falloff / 3.0;
+            ((1.0 - falloff * su * su) * (1.0 - falloff * sv * sv), mean * mean)
+        };
+        // Nought at the bright end, one at the dim.
+        let along = 0.5 * (1.0 - sv.clamp(-1.0, 1.0) * fade.signum());
+        let ramp = 1.0 - fade.abs() * along;
+        (edge * ramp / (edge_mean * (1.0 - 0.5 * fade.abs()))).max(0.0)
+    }
+
+    /// Whether its face is even all over: no falloff and no fade.
+    pub fn is_even(&self) -> bool {
+        self.falloff <= 0.0 && self.fade == 0.0
+    }
+
+    /// [`AreaLight::face`] at a point on its plane.
+    pub fn face_at(&self, point: Vec3) -> f32 {
+        if self.is_even() {
+            return 1.0;
+        }
+        let offset = point - self.position;
+        self.face(
+            offset.dot(self.half_u) / self.half_u.length_squared().max(1e-12),
+            offset.dot(self.half_v) / self.half_v.length_squared().max(1e-12),
+        )
+    }
+
+    /// The brightest [`AreaLight::face`] can be: no more than its peak
+    /// against its average, which is one over the average.
+    fn face_peak(&self) -> f32 {
+        if self.is_even() {
+            return 1.0;
+        }
+        // The falloff and the ramp are each at most one before dividing,
+        // so the bound is the divisor's inverse.
+        let falloff = self.falloff.clamp(0.0, 1.0);
+        let fade = self.fade.clamp(-1.0, 1.0).abs();
+        let edge_mean = if self.disc { 1.0 - 0.5 * falloff } else { (1.0 - falloff / 3.0).powi(2) };
+        1.0 / (edge_mean * (1.0 - 0.5 * fade)).max(1e-3)
+    }
+
     /// How much of its radiance leaves along a direction `cos_light` off
     /// its normal, for a spread below pi: Cycles' softbox grid, the share of
     /// the panel its slats leave uncovered at that angle, scaled so the
@@ -195,7 +265,7 @@ impl AreaLight {
                     return None;
                 }
                 let distance = self.distance_along(from, direction, normal)?;
-                let spread = self.spread_attenuation(cos_light);
+                let spread = self.spread_attenuation(cos_light) * self.face_at(from + direction * distance);
                 if spread <= 0.0 {
                     return None;
                 }
@@ -246,7 +316,7 @@ impl AreaLight {
         // Area density to solid angle. This is the conversion the spherical
         // rectangle exists to avoid, and it is used only on the fallback path.
         let pdf = distance_squared / (cos_light * self.area().max(1e-12));
-        let spread = self.spread_attenuation(cos_light);
+        let spread = self.spread_attenuation(cos_light) * self.face_at(point);
         if spread <= 0.0 {
             return None;
         }
@@ -293,7 +363,7 @@ impl AreaLight {
         if !inside || cos_light <= 1e-6 {
             return None;
         }
-        let spread = self.spread_attenuation(cos_light);
+        let spread = self.spread_attenuation(cos_light) * self.face(su, sv);
         (spread > 0.0).then_some((self.radiance * spread, t))
     }
 
@@ -939,8 +1009,9 @@ impl Light {
                 let (u, v) = (l.half_u.length(), l.half_v.length());
                 let reach = if l.disc { u.max(v) } else { (u * u + v * v).sqrt() };
                 let cosine = cone_cosine(normal, to_light / distance, reach / distance);
-                // A grid gathers the light into its beam, brightest straight out.
-                let radiance = l.radiance.luminance().max(0.0) * l.spread_peak();
+                // A grid gathers the light into its beam, brightest straight
+                // out, and a falloff or a fade into part of its face.
+                let radiance = l.radiance.luminance().max(0.0) * l.spread_peak() * l.face_peak();
                 if l.disc {
                     // Drawn by area: `cos_light · area / d²` per sample, and
                     // `cos_light / d²` is `h / d³` for a point `h` off the
@@ -1632,6 +1703,8 @@ mod tests {
                 disc: false,
                 two_sided: false,
                 spread: degrees.to_radians(),
+                falloff: 0.0,
+                fade: 0.0,
             };
             // ∫ a(θ) cosθ sinθ dθ over the hemisphere, against a plain
             // panel's 1/2.
@@ -1839,6 +1912,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }
     }
 
@@ -1851,7 +1926,14 @@ mod tests {
     /// density agrees with itself whatever it does.
     #[test]
     fn an_area_light_delivers_the_irradiance_it_should() {
-        let light = softbox();
+        // An even panel, and a softbox falling off to its edges and faded,
+        // whose face the reference weighs each point of the panel by.
+        for light in [softbox(), AreaLight { falloff: 0.7, fade: -0.5, ..softbox() }] {
+            area_light_delivers_its_irradiance(light);
+        }
+    }
+
+    fn area_light_delivers_its_irradiance(light: AreaLight) {
         let point = vec3(0.0, 0.0, 0.0);
         let normal = Vec3::Y;
 
@@ -1869,7 +1951,7 @@ mod tests {
                 let direction = offset / distance_squared.sqrt();
                 let cos_surface = direction.dot(normal).max(0.0);
                 let cos_light = (-direction).dot(light.normal()).max(0.0);
-                reference += (light.radiance.luminance() * cos_surface * cos_light
+                reference += (light.radiance.luminance() * light.face(su, sv) * cos_surface * cos_light
                     / distance_squared) as f64
                     * area_element;
             }
@@ -1900,6 +1982,62 @@ mod tests {
              ({:.1}% off)",
             error * 100.0
         );
+    }
+
+    /// A softbox's face averages one over the panel and over the disc, so it
+    /// gives the light an even panel gives, with its middle brighter than its
+    /// edges and, faded, its top brighter than its bottom, or the bottom
+    /// brighter for a fade the other way.
+    #[test]
+    fn a_softboxs_face_keeps_its_light_and_darkens_its_edges() {
+        for disc in [false, true] {
+            for (falloff, fade) in [(0.0, 0.0), (0.5, 0.0), (1.0, 0.0), (0.6, 0.8), (0.3, -1.0)] {
+                let light = AreaLight { disc, falloff, fade, ..softbox() };
+                const GRID: usize = 200;
+                let (mut sum, mut count) = (0.0f64, 0usize);
+                for i in 0..GRID {
+                    for j in 0..GRID {
+                        let su = 2.0 * (i as f32 + 0.5) / GRID as f32 - 1.0;
+                        let sv = 2.0 * (j as f32 + 0.5) / GRID as f32 - 1.0;
+                        if disc && su * su + sv * sv > 1.0 {
+                            continue;
+                        }
+                        sum += f64::from(light.face(su, sv));
+                        count += 1;
+                    }
+                }
+                let mean = sum / count as f64;
+                assert!((mean - 1.0).abs() < 2e-3, "disc {disc}, falloff {falloff}, fade {fade}: the face averages {mean:.4}");
+                let peak = light.face_peak();
+                for (su, sv) in [(0.0, 0.0), (0.0, 1.0), (0.0, -1.0), (0.7, 0.7)] {
+                    assert!(light.face(su, sv) <= peak + 1e-5, "disc {disc}: the face passes its bound at ({su}, {sv})");
+                }
+                if falloff > 0.0 {
+                    assert!(light.face(0.9, 0.0) < light.face(0.0, 0.0), "disc {disc}, falloff {falloff}: the edge is no darker");
+                }
+                if fade != 0.0 {
+                    let (top, bottom) = (light.face(0.0, 0.9), light.face(0.0, -0.9));
+                    assert!(if fade > 0.0 { top > bottom } else { bottom > top }, "fade {fade}: the top is {top}, the bottom {bottom}");
+                }
+            }
+        }
+    }
+
+    /// An even panel's face is one wherever it is met, and a softbox's what
+    /// [`AreaLight::face`] says where the ray meets it.
+    #[test]
+    fn a_ray_meets_a_softboxs_face_where_it_lands() {
+        let even = softbox();
+        let soft = AreaLight { falloff: 0.8, fade: 0.5, ..softbox() };
+        // From below, aimed at a quarter of the way across and three
+        // quarters up the panel (its v runs along world Z).
+        let from = vec3(0.0, 0.0, 0.0);
+        let target = soft.position + soft.half_u * 0.5 + soft.half_v * -0.5;
+        let direction = (target - from).normalize();
+        let (plain, _) = even.met_along(from, direction).expect("meets the even panel");
+        let (graded, _) = soft.met_along(from, direction).expect("meets the softbox");
+        let expected = soft.face(0.5, -0.5);
+        assert!((graded.luminance() / plain.luminance() - expected).abs() < 1e-3, "met at {}, face {expected}", graded.luminance() / plain.luminance());
     }
 
     /// A sample's reported density must match what `pdf` says about the same
@@ -2197,7 +2335,7 @@ mod tests {
             let across = if facing.y.abs() < 0.9 { Vec3::Y.cross(facing).normalize() } else { Vec3::X.cross(facing).normalize() };
             let up = facing.cross(across).normalize();
             let (half_u, half_v) = if across.cross(up).dot(facing) > 0.0 { (across * half, up * half) } else { (up * half, across * half) };
-            Light::new(LightKind::Area(AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: PI }))
+            Light::new(LightKind::Area(AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: PI, falloff: 0.0, fade: 0.0 }))
         };
         let mut lights = vec![lamp(vec3(0.0, 2.8, 1.2), vec3(0.0, -1.0, -0.4), 0.8, 6.0)];
         let mut patches = Vec::new();
