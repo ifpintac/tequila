@@ -586,6 +586,8 @@ fn render_loop(shared: Arc<Shared>) {
     // The view whose smaller sizes the graphics card's denoiser has been
     // made ready for (Tequila's renderer, below).
     let mut warmed: Option<(usize, usize, bool)> = None;
+    // Since when the view has been dragged, while it is.
+    let mut dragging_since: Option<Instant> = None;
 
     let mut built: Option<Built> = None;
     let mut seen_request = 0u64;
@@ -727,7 +729,14 @@ fn render_loop(shared: Arc<Shared>) {
                 gpu_denoiser = tequila_denoise::GpuDenoiser::shared().ok();
             }
             let sharp = gpu_denoiser.is_some();
-            let state = crate::profile::time("render: rebuild", || rebuild(built.take(), request, &device, sharp));
+            // A drag let go of: the picture refines at once, rather than
+            // after `INTERACTIVE_IDLE_MS` with the hand already off the
+            // mouse. A wheel's notch, a moment's drag, waits as before.
+            let now = Instant::now();
+            let let_go = !request.interacting && dragging_since.is_some_and(|since| now.duration_since(since) >= Duration::from_millis(100));
+            dragging_since = if request.interacting { dragging_since.or(Some(now)) } else { None };
+            let idle = if let_go { Duration::from_millis(tequila_render_core::scheduler::INTERACTIVE_IDLE_MS) } else { Duration::ZERO };
+            let state = crate::profile::time("render: rebuild", || rebuild(built.take(), request, &device, sharp, idle));
 
             // Publish the BVH the UI picks against, so a click can only ever
             // hit geometry that is actually on screen.
@@ -1264,7 +1273,9 @@ impl Drop for Timer {
     }
 }
 
-fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Device>, sharp: bool) -> Built {
+/// `idle` is how long the view counts as still already: none, unless a drag
+/// has just been let go of.
+fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Device>, sharp: bool, idle: Duration) -> Built {
     let mut framebuffer = previous.as_mut().map(|p| std::mem::replace(&mut p.framebuffer, Framebuffer::new(0, 0)));
     let scene_changed = previous
         .as_ref()
@@ -1299,7 +1310,7 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
 
     let mut schedule = ProgressiveSchedule::default();
     if !request.interacting {
-        schedule.update(0);
+        schedule.update(idle.as_millis() as u64);
     }
     let (width, height) = request.traced_size(sharp);
     if request.shading == Shading::Fast {
@@ -1322,7 +1333,7 @@ fn rebuild(mut previous: Option<Built>, request: RenderRequest, device: &Arc<Dev
         },
         framebuffer,
         schedule,
-        started: Instant::now(),
+        started: Instant::now() - idle,
         first_pixel_ms: None,
         asked: request.submitted,
         clean: false,
@@ -1790,10 +1801,10 @@ mod tests {
         let device = Device::shared().unwrap();
         let mut req = request();
         req.shading = Shading::Fast;
-        let first = rebuild(None, req.clone(), &device, false);
+        let first = rebuild(None, req.clone(), &device, false, Duration::ZERO);
         let storage = first.framebuffer.pixels().as_ptr();
         req.camera = Camera::look_at(Vec3::splat(5.0), Vec3::ZERO, Vec3::Y);
-        let second = rebuild(Some(first), req, &device, false);
+        let second = rebuild(Some(first), req, &device, false, Duration::ZERO);
         assert_eq!(storage, second.framebuffer.pixels().as_ptr());
         assert_eq!(second.framebuffer.min_samples(), 0);
     }
@@ -2068,6 +2079,7 @@ mod tests {
             RenderRequest { reject_fireflies: false, clamp_sample: Some(4.0), ..request() },
             &device,
             false,
+            Duration::ZERO,
         );
         assert!(!built.context.reject_fireflies, "fireflies rejected though the document says not to");
         assert_eq!(built.context.clamp_sample, Some(4.0), "the document's clamp was ignored");
@@ -3218,7 +3230,7 @@ mod tests {
     fn moving_an_instance_updates_the_bvh_rather_than_rebuilding_it() {
         let device = Device::shared().expect("Embree");
         let first = request();
-        let built = rebuild(None, first.clone(), &device, false);
+        let built = rebuild(None, first.clone(), &device, false, Duration::ZERO);
         let original = Arc::as_ptr(&built.intersector);
 
         let mut moved_scene = (*first.scene).clone();
@@ -3231,7 +3243,7 @@ mod tests {
             ..first.clone()
         };
 
-        let after = rebuild(Some(built), moved, &device, false);
+        let after = rebuild(Some(built), moved, &device, false, Duration::ZERO);
         assert_eq!(
             Arc::as_ptr(&after.intersector),
             original,
@@ -3245,7 +3257,7 @@ mod tests {
     fn changing_the_geometry_still_rebuilds() {
         let device = Device::shared().expect("Embree");
         let first = request();
-        let built = rebuild(None, first.clone(), &device, false);
+        let built = rebuild(None, first.clone(), &device, false, Duration::ZERO);
         let original = Arc::as_ptr(&built.intersector);
 
         // One fewer instance is structural.
@@ -3257,7 +3269,7 @@ mod tests {
             ..first.clone()
         };
 
-        let after = rebuild(Some(built), changed, &device, false);
+        let after = rebuild(Some(built), changed, &device, false, Duration::ZERO);
         assert_ne!(
             Arc::as_ptr(&after.intersector),
             original,

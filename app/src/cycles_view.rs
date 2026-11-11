@@ -40,6 +40,11 @@ const HELD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(3);
 /// not cost a full-size restart, short enough to feel immediate.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// How long the view has to have been dragged for its letting go to end the
+/// move there and then (`CyclesView::sync`): longer than a wheel's notch,
+/// which the window counts as a moment's drag.
+const DRAGGED_AT_LEAST: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// How long a picture should take while the camera moves: about thirty a
 /// second, which is what an orbit needs to follow the hand.
 const NAVIGATION_TARGET: std::time::Duration = std::time::Duration::from_millis(33);
@@ -86,11 +91,13 @@ struct Navigation {
     divider: f32,
     /// When the camera last moved.
     moved_at: Option<std::time::Instant>,
+    /// Since when the person has been dragging the view, while they are.
+    dragging_since: Option<std::time::Instant>,
 }
 
 impl Default for Navigation {
     fn default() -> Self {
-        Navigation { divider: 2.0, moved_at: None }
+        Navigation { divider: 2.0, moved_at: None, dragging_since: None }
     }
 }
 
@@ -280,6 +287,14 @@ impl CyclesView {
         let changed = self.camera.is_some_and(|camera| camera != request.camera) || rescene || moved || repainted.is_some();
         if changed && self.camera.is_some() && self.full == full {
             self.navigation.moved_at = Some(now);
+        }
+        // A drag let go of is over: the view goes back to its size then,
+        // rather than `SETTLE` after the last move - which kept the first
+        // clean picture 150 ms further from the hand letting go.
+        let let_go = !request.interacting && self.navigation.dragging_since.is_some_and(|since| now.duration_since(since) >= DRAGGED_AT_LEAST);
+        self.navigation.dragging_since = if request.interacting { self.navigation.dragging_since.or(Some(now)) } else { None };
+        if let_go {
+            self.navigation.moved_at = None;
         }
         let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
         let size = if navigating { divided(full, self.navigation.divider) } else { full };
@@ -787,6 +802,71 @@ mod floor_tests {
         assert_eq!(view.traced_samples(), MOVING_SAMPLES);
         req.camera = at(0.6);
         assert!(!view.sync(&req).expect("synced"), "the next waits for the moving picture");
+    }
+
+    /// A drag let go of puts the view back to its full size at once; a
+    /// wheel's notch, a moment's drag, waits for the camera to settle.
+    /// Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn letting_go_of_a_drag_goes_back_to_full_size_at_once() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = CyclesView::new(RenderEngine::CyclesCpu).expect("a Cycles session");
+        let at = |a: f32| Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+        let mut req = RenderRequest {
+            camera: at(0.0),
+            width: 1000,
+            height: 750,
+            config: tequila_render_core::settings::IntegratorConfig::product(),
+            scene: std::sync::Arc::new(tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2)),
+            scene_generation: 1,
+            denoise: false,
+            denoise_strength: 1.0,
+            denoise_cadence: 1,
+            prefilter_guides: None,
+            reject_fireflies: true,
+            clamp_sample: None,
+            interacting: false,
+            gpu_solid: false,
+            shading: crate::orchestrator::Shading::Rendered,
+            engine: RenderEngine::CyclesCpu,
+            pixels_per_point: 1.0,
+            checker: None,
+            submitted: std::time::Instant::now(),
+        };
+        let mut framebuffer = Framebuffer::new(1, 1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut settle = |view: &mut CyclesView, req: &RenderRequest| {
+            view.sync(req).expect("synced");
+            while view.awaiting_frame() {
+                assert!(std::time::Instant::now() < deadline, "Cycles never drew the change");
+                view.take_frame(&mut framebuffer);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                view.sync(req).expect("synced");
+            }
+        };
+        settle(&mut view, &req);
+        req.interacting = true;
+        req.camera = at(0.3);
+        settle(&mut view, &req);
+        assert!(view.size().0 < 1000, "moving, a smaller picture");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        req.interacting = false;
+        view.sync(&req).expect("synced");
+        assert!(!view.navigating(), "let go, the move is over");
+        assert_eq!(view.size(), (1000, 750), "and the view is at its size at once");
+
+        // A notch: moving, and a frame later not, still settling. (Not
+        // waiting for its picture, which on a busy processor takes longer
+        // than a notch.)
+        req.interacting = true;
+        req.camera = at(0.6);
+        view.sync(&req).expect("synced");
+        req.interacting = false;
+        view.sync(&req).expect("synced");
+        assert!(view.navigating(), "a moment's drag still settles");
     }
 }
 
