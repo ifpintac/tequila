@@ -1,6 +1,7 @@
 {
   "base_color": [0.7697375, 0.74633926, 0.7128345],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A white-cement terrazzo dotted with small black stone chips, ground smooth, as on floors and tabletops.",
   "graph": {
     "decals": [],
     "links": [
@@ -1749,7 +1750,22 @@
     "chips",
     "honed",
     "black",
-    "white"
+    "white",
+    "terrazzo flooring",
+    "stone chips",
+    "aggregate",
+    "marble chips",
+    "speckled",
+    "black and white",
+    "cement",
+    "smooth",
+    "flooring",
+    "tabletop",
+    "matte",
+    "monochrome",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

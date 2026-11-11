@@ -2,6 +2,7 @@
   "base_color": [0.7765764, 0.76188534, 0.7094724],
   "category": "Plastic",
   "coat_roughness": 0.04,
+  "description": "A white moulded plastic with a pearly sheen that shifts with the light, as on cosmetic cases and device shells.",
   "edge_radius": 0.00035,
   "flake_color": [0.8247127, 0.68890965, 0.5730019],
   "flake_roughness": 0.2,
@@ -68,7 +69,21 @@
     "pearlescent",
     "mica",
     "white",
-    "cosmetic"
+    "cosmetic",
+    "iridescent",
+    "shimmer",
+    "glossy",
+    "off white",
+    "moulded",
+    "molded",
+    "compact",
+    "casing",
+    "lustre",
+    "luster",
+    "cosmetics",
+    "electronics",
+    "appliances",
+    "accessories"
   ],
   "type": "metallic_paint"
 }

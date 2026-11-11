@@ -1,7 +1,8 @@
 {
   "base_color": [0.0075, 0.0075, 0.008],
   "base_diffuse_roughness": 0.6,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black rubber mat moulded with raised diamond shapes, for non-slip treads, pedals and floor mats.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -259,7 +260,23 @@
     "mat",
     "pedal",
     "non slip",
-    "black"
+    "black",
+    "diamond plate",
+    "checker",
+    "checkered",
+    "chequer",
+    "anti slip",
+    "patterned",
+    "textured",
+    "matte",
+    "floor mat",
+    "stair",
+    "moulded",
+    "molded",
+    "automotive",
+    "sporting goods",
+    "industrial",
+    "interior"
   ],
   "type": "generic"
 }

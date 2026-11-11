@@ -292,12 +292,10 @@ impl OpenPbrBsdf {
             )
         });
         if let Some(sheen) = fuzz {
-            push(
-                Lobe::Fuzz(sheen),
-                Depth::Fuzz,
-                Spectrum::ONE,
-                material.fuzz_weight,
-            );
+            // At a weight of one: the sheen carries its own weight, in what
+            // it returns and in what it lets through, and weighing the
+            // layer by it as well made a half a quarter.
+            push(Lobe::Fuzz(sheen), Depth::Fuzz, Spectrum::ONE, 1.0);
         }
 
         // --- coat --------------------------------------------------------
@@ -972,6 +970,30 @@ mod tests {
             }
         }
         (total / SAMPLES as f64) as f32
+    }
+
+    /// A fuzz at half its weight is half the fuzz: over a black base with
+    /// no reflection of its own, what it returns is in proportion to its
+    /// weight. The weight was once applied twice, by the sheen itself and
+    /// again by the layer it is, so a half was a quarter and a cloth came
+    /// out duller here than in Cycles, which applies it once.
+    #[test]
+    fn a_fuzz_at_half_weight_is_half_the_fuzz() {
+        let fuzz = |weight: f32| Material {
+            base_color: Spectrum::ZERO,
+            specular_weight: 0.0,
+            fuzz_weight: weight,
+            fuzz_color: Spectrum::ONE,
+            fuzz_roughness: 0.5,
+            ..Default::default()
+        };
+        for (out, into) in [(0.5, 0.3), (0.9, 0.2), (0.2, 0.7)] {
+            let (wo, wi) = (direction(out), direction(into));
+            let full = OpenPbrBsdf::new(&fuzz(1.0), 0.0).eval(wo, wi).luminance();
+            let half = OpenPbrBsdf::new(&fuzz(0.5), 0.0).eval(wo, wi).luminance();
+            assert!(full > 0.0, "a fuzz returns light");
+            assert!((half / full - 0.5).abs() < 0.01, "half the weight returned {} of it", half / full);
+        }
     }
 
     /// `sample_reflection` takes the sample `sample` does and says which

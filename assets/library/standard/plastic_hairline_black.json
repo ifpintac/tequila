@@ -1,6 +1,7 @@
 {
   "base_color": [0.004428875, 0.004402071, 0.005078661],
   "category": "Plastic",
+  "description": "A satin black plastic with fine straight brushed-looking lines, as on bezels and fascias.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -209,7 +210,22 @@
     "brushed look",
     "black",
     "electronics",
-    "bezel"
+    "bezel",
+    "brushed",
+    "brushed texture",
+    "faux metal",
+    "fascia",
+    "front panel",
+    "dark",
+    "etched",
+    "mould texture",
+    "mold texture",
+    "satin",
+    "linear grain",
+    "trim",
+    "audio",
+    "appliances",
+    "automotive"
   ],
   "type": "plastic"
 }

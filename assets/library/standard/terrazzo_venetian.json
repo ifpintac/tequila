@@ -1,6 +1,7 @@
 {
   "base_color": [0.7940297, 0.77145666, 0.7028817],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished terrazzo with larger multicoloured stone chips in cement, as on floors, counters and steps.",
   "graph": {
     "decals": [],
     "links": [
@@ -1773,7 +1774,22 @@
     "chips",
     "polished",
     "colour",
-    "venetian"
+    "venetian",
+    "terrazzo flooring",
+    "stone chips",
+    "aggregate",
+    "marble chips",
+    "speckled",
+    "multicolour",
+    "multicolor",
+    "cement",
+    "glossy",
+    "smooth",
+    "flooring",
+    "tabletop",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

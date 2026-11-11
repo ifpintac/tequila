@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A glossy black marbled surface of chopped carbon chips pressed in resin, with random swirls and flecks, as on car trim and watch cases.",
   "graph": {
     "decals": [],
     "links": [
@@ -984,7 +985,22 @@
     "chopped",
     "composite",
     "marbled",
-    "gloss"
+    "gloss",
+    "carbon fiber",
+    "cfrp",
+    "chopped carbon",
+    "forged composite",
+    "marble pattern",
+    "compression moulded",
+    "compression molded",
+    "black",
+    "resin",
+    "glossy",
+    "random",
+    "automotive",
+    "watches",
+    "electronics",
+    "sporting goods"
   ],
   "type": "generic"
 }

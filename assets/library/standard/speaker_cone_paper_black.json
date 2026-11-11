@@ -1,7 +1,8 @@
 {
   "base_color": [0.010990992, 0.010968867, 0.011527344],
   "base_diffuse_roughness": 0.8,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A dull black pressed-paper cone with a fine fibrous grain, as on woofers, car speakers and guitar amplifiers.",
   "fuzz_color": [0.021981984, 0.021937734, 0.023054687],
   "fuzz_roughness": 0.6,
   "fuzz_weight": 0.2,
@@ -289,7 +290,21 @@
     "pulp",
     "woofer",
     "driver",
-    "black"
+    "black",
+    "black cone",
+    "pulp cone",
+    "loudspeaker",
+    "matte",
+    "fibrous",
+    "paper pulp",
+    "diaphragm",
+    "amp speaker",
+    "car speaker",
+    "dark",
+    "audio",
+    "electronics",
+    "musical instruments",
+    "automotive"
   ],
   "type": "generic"
 }

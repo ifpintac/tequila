@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "Golden-yellow aramid cloth in plain weave under clear resin, with a glossy tight checker pattern, as in protective parts and helmets.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,20 @@
     "weave",
     "plain",
     "gold",
-    "yellow"
+    "yellow",
+    "aramid fiber",
+    "aramid fibre",
+    "golden",
+    "resin",
+    "laminate",
+    "woven",
+    "glossy",
+    "impact resistant",
+    "para-aramid",
+    "protective",
+    "sporting goods",
+    "industrial",
+    "prototyping"
   ],
   "type": "generic"
 }

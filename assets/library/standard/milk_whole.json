@@ -1,12 +1,24 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A creamy opaque white liquid with a slight yellow tint, as in a glass, jug or carton.",
   "name": "Milk Whole",
   "specular_ior": 1.35,
   "tags": [
     "milk",
     "dairy",
     "drink",
-    "cloudy"
+    "cloudy",
+    "full fat milk",
+    "beverage",
+    "creamy",
+    "white",
+    "bottle fill",
+    "glass fill",
+    "fluid",
+    "off-white",
+    "cream",
+    "food & drink",
+    "packaging"
   ],
   "transmission_color": [0.9791, 0.9757, 0.8835],
   "transmission_depth": 0.01,

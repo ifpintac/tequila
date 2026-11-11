@@ -1,7 +1,8 @@
 {
   "base_color": [0.0074990317, 0.0074990317, 0.0074990317],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black textured vinyl covering with a fine leather-like grain and a low sheen, wrapped round amplifier and speaker cabinets.",
   "graph": {
     "decals": [],
     "links": [
@@ -449,7 +450,20 @@
     "leatherette",
     "covering",
     "levant",
-    "black"
+    "black",
+    "tolex",
+    "pvc covering",
+    "amp covering",
+    "speaker cover",
+    "guitar amp",
+    "faux leather",
+    "black vinyl",
+    "textured",
+    "matte",
+    "wrapped",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "generic"
 }

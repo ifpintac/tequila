@@ -1,6 +1,7 @@
 {
   "base_color": [0.7710687, 0.76818275, 0.7355258],
   "category": "Plastic",
+  "description": "A flat, evenly blasted white plastic with no shine, as on appliance housings and product casings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -159,7 +160,21 @@
     "white",
     "blasted",
     "spi d",
-    "appliance"
+    "appliance",
+    "flat white",
+    "dull",
+    "housing",
+    "case",
+    "moulded",
+    "molded",
+    "casing",
+    "off white",
+    "injection moulded",
+    "smooth matte",
+    "appliances",
+    "electronics",
+    "medical",
+    "prototyping"
   ],
   "type": "plastic"
 }

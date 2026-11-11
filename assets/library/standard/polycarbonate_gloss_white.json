@@ -1,6 +1,7 @@
 {
   "base_color": [0.84573203, 0.8465493, 0.82592165],
   "category": "Plastic",
+  "description": "A glossy white polycarbonate with a smooth bright shine, as on device housings and appliance shells.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -95,7 +96,21 @@
     "pc",
     "gloss",
     "housing",
-    "white"
+    "white",
+    "glossy",
+    "shiny",
+    "high gloss",
+    "off white",
+    "injection moulded",
+    "molded",
+    "casing",
+    "shell",
+    "smooth",
+    "enclosure",
+    "electronics",
+    "appliances",
+    "medical",
+    "lighting"
   ],
   "type": "plastic"
 }

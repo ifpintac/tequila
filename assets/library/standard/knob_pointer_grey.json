@@ -1,6 +1,7 @@
 {
   "base_color": [0.27415138, 0.2784199, 0.28615516],
   "category": "Plastic",
+  "description": "A smooth satin grey plastic, as on pointer knobs where a moulded line marks the setting.",
   "edge_radius": 0.0003,
   "fuzz_color": [0.55, 0.55, 0.56],
   "fuzz_roughness": 0.5,
@@ -233,7 +234,22 @@
     "line",
     "indicator",
     "grey",
-    "moulded"
+    "moulded",
+    "gray",
+    "dial",
+    "control knob",
+    "potentiometer",
+    "rotary",
+    "indicator line",
+    "satin",
+    "knobs",
+    "injection moulded",
+    "molded",
+    "marker",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "appliances"
   ],
   "type": "generic"
 }

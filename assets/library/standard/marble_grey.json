@@ -1,6 +1,7 @@
 {
   "base_color": [0.4280409, 0.42906946, 0.47768795],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished grey marble with soft darker veining and a gentle gloss, as on tabletops, floors and basins.",
   "graph": {
     "decals": [],
     "links": [
@@ -2394,7 +2395,22 @@
     "polished",
     "grey",
     "veined",
-    "bardiglio"
+    "bardiglio",
+    "gray marble",
+    "grey stone",
+    "gray stone",
+    "polished stone",
+    "natural stone",
+    "veining",
+    "glossy",
+    "slab",
+    "tile",
+    "countertop",
+    "mid grey",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

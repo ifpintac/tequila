@@ -1,6 +1,7 @@
 {
   "base_color": [0.1588, 0.2868, 0.1459],
-  "category": "Translucent",
+  "category": "Stone & Ceramic",
+  "description": "A soft translucent green stone with a smooth waxy polish and a gentle inner glow, as in carvings, beads and bangles.",
   "graph": {
     "decals": [],
     "links": [
@@ -260,7 +261,22 @@
     "jade",
     "stone",
     "green",
-    "carving"
+    "carving",
+    "green gemstone",
+    "nephrite",
+    "jadeite",
+    "polished stone",
+    "waxy",
+    "carved",
+    "bangle",
+    "bead",
+    "pendant",
+    "translucent",
+    "chinese jade",
+    "semi-precious",
+    "jewellery",
+    "accessories",
+    "interior"
   ],
   "type": "translucent"
 }

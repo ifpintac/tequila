@@ -1,6 +1,7 @@
 {
   "base_color": [0.98, 0.98, 0.99],
   "category": "Metal",
+  "description": "Satin chrome plating over moulded plastic: a soft pearl-silver sheen with little mirror effect, as on a control ring, button or trim part.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -133,7 +134,23 @@
     "ring",
     "button",
     "satin",
-    "pearl chrome"
+    "pearl chrome",
+    "chromed plastic",
+    "satin chrome plastic",
+    "plastic chrome",
+    "matte chrome",
+    "vacuum metallised",
+    "vacuum metalized",
+    "vacuum metallized",
+    "pearl",
+    "abs",
+    "badge",
+    "emblem",
+    "bezel",
+    "electronics",
+    "appliances",
+    "automotive",
+    "audio"
   ],
   "type": "metal"
 }

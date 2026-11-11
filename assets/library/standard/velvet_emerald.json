@@ -1,6 +1,7 @@
 {
   "base_color": [0.01046304, 0.021607792, 0.012706396],
   "category": "Fabric",
+  "description": "A dense emerald cloth with a short, soft pile that glows with a deep sheen at grazing angles, for sofas, cushions and case linings.",
   "fuzz_color": [0.18902342, 0.36240107, 0.2254282],
   "fuzz_roughness": 0.4,
   "graph": {
@@ -118,13 +119,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.28
+              "float": 0.37
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.62
+              "float": 0.52
             }
           }
         ],
@@ -154,13 +155,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.8
+              "float": 0.92
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 1.25
+              "float": 1.1
             }
           }
         ],
@@ -316,7 +317,22 @@
     "velvet",
     "sheen",
     "upholstery",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "pile",
+    "plush",
+    "napped",
+    "sofa",
+    "cushion",
+    "drape",
+    "lining",
+    "fabric",
+    "jewel green",
+    "furniture",
+    "interior",
+    "accessories",
+    "apparel"
   ],
   "type": "velvet"
 }

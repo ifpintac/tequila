@@ -1,6 +1,7 @@
 {
   "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Satin nickel plating: a soft, warm silver with a gentle sheen and no sharp reflections, as on a jack sleeve or threaded hardware.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -144,7 +145,20 @@
     "sleeve",
     "thread",
     "hardware",
-    "satin"
+    "satin",
+    "matte",
+    "dull",
+    "warm silver",
+    "electroplated",
+    "ring",
+    "nut",
+    "collar",
+    "fastener",
+    "fitting",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "metal"
 }

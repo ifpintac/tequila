@@ -1,6 +1,7 @@
 {
   "base_color": [0.5017205, 0.46598923, 0.34727734],
   "category": "Fabric",
+  "description": "A natural flax cloth with a slubby, slightly uneven plain weave and a matte, dry surface, for shirts, cushions and curtains.",
   "fuzz_color": [0.6605244, 0.62707937, 0.50976896],
   "fuzz_weight": 0.28,
   "graph": {
@@ -5267,7 +5268,21 @@
     "linen",
     "woven",
     "upholstery",
-    "flax"
+    "flax",
+    "textile",
+    "cloth",
+    "plain weave",
+    "slub",
+    "natural fibre",
+    "natural fiber",
+    "matte",
+    "curtain",
+    "shirt",
+    "cushion",
+    "summer",
+    "apparel",
+    "interior",
+    "furniture"
   ],
   "type": "real_cloth"
 }

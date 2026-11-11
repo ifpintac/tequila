@@ -1,6 +1,7 @@
 {
   "base_color": [0.5723643, 0.40728384, 0.34581688],
   "category": "Metal",
+  "description": "Aluminium anodised a soft rose pink: a smooth satin sheen with a coppery pink tint, as on a laptop lid or phone frame.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -249,7 +250,21 @@
     "anodised",
     "rose",
     "pink",
-    "colour"
+    "colour",
+    "rose gold look",
+    "blush",
+    "laptop",
+    "phone",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "electronics",
+    "accessories",
+    "jewellery"
   ],
   "type": "metal"
 }

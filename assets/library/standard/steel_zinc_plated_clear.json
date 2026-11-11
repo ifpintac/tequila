@@ -1,6 +1,7 @@
 {
   "base_color": [0.59626216, 0.62158483, 0.7090653],
   "category": "Metal",
+  "description": "Steel with a clear zinc plating: a bright, slightly bluish silver with a thin sheen, as on bolts, nuts, washers and brackets.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -207,7 +208,23 @@
     "zinc",
     "plated",
     "blue",
-    "fastener"
+    "fastener",
+    "blue zinc",
+    "bright zinc",
+    "clear zinc",
+    "galvanized",
+    "galvanised",
+    "electroplated",
+    "silver",
+    "bolt",
+    "nut",
+    "washer",
+    "screw",
+    "bracket",
+    "industrial",
+    "tools",
+    "furniture",
+    "automotive"
   ],
   "type": "metal"
 }

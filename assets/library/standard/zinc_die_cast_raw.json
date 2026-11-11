@@ -1,6 +1,7 @@
 {
   "base_color": [0.72, 0.73, 0.75],
   "category": "Metal",
+  "description": "Raw die-cast zinc alloy: a dull, slightly bluish grey with a smooth cast skin and faint parting lines, as on a pedal box or small housing.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -121,7 +122,23 @@
     "die-cast",
     "raw",
     "pedal box",
-    "housing"
+    "housing",
+    "zinc alloy",
+    "die cast",
+    "diecast",
+    "casting",
+    "zinc die-cast",
+    "grey",
+    "gray",
+    "bluish",
+    "matte",
+    "parting line",
+    "unfinished",
+    "pedal enclosure",
+    "musical instruments",
+    "audio",
+    "electronics",
+    "industrial"
   ],
   "type": "metal"
 }

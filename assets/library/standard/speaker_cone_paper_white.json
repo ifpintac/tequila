@@ -1,7 +1,8 @@
 {
   "base_color": [0.7220317, 0.7159592, 0.66614133],
   "base_diffuse_roughness": 0.8,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A dull off-white pressed-paper cone with a fine fibrous grain, as on studio monitor and hi-fi woofers.",
   "fuzz_color": [1.4440634, 1.4319184, 1.3322827],
   "fuzz_roughness": 0.6,
   "fuzz_weight": 0.2,
@@ -289,7 +290,22 @@
     "pulp",
     "woofer",
     "monitor",
-    "white"
+    "white",
+    "white cone",
+    "pulp cone",
+    "driver",
+    "loudspeaker",
+    "matte",
+    "fibrous",
+    "paper pulp",
+    "diaphragm",
+    "hi-fi",
+    "off-white",
+    "cream",
+    "studio speaker",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "generic"
 }

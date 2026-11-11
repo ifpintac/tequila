@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.005],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A glowing white pixel screen on a black background, as on a small gadget, synth or fitness band.",
   "emission_color": [0.92, 0.95, 1],
   "emission_luminance": 0.8,
   "name": "Display OLED White",
@@ -12,7 +13,20 @@
     "screen",
     "pixels",
     "lit",
-    "white"
+    "white",
+    "oled screen",
+    "glowing",
+    "monochrome",
+    "pixel display",
+    "graphic display",
+    "glow",
+    "small screen",
+    "ssd1306",
+    "dot matrix",
+    "cool white",
+    "electronics",
+    "watches",
+    "audio"
   ],
   "type": "generic"
 }

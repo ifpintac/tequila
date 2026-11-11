@@ -1,6 +1,7 @@
 {
   "base_color": [0.7431891, 0.71805096, 0.63110965],
   "category": "Fabric",
+  "description": "A soft cream wool-style cloth with a looped, nubbly surface and no visible weave, for armchairs, cushions and jackets.",
   "fuzz_color": [0.8721645, 0.8564474, 0.800269],
   "fuzz_weight": 0.7,
   "graph": {
@@ -280,7 +281,22 @@
     "wool",
     "loop",
     "upholstery",
-    "cream"
+    "cream",
+    "textile",
+    "cloth",
+    "looped yarn",
+    "nubbly",
+    "textured",
+    "curly",
+    "soft",
+    "armchair",
+    "cushion",
+    "jacket",
+    "fabric",
+    "ivory",
+    "furniture",
+    "interior",
+    "apparel"
   ],
   "type": "real_cloth"
 }

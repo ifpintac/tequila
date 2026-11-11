@@ -1,12 +1,24 @@
 {
   "category": "Gem",
+  "description": "A bright lime-green transparent stone with a slightly oily sparkle, as set in rings and earrings.",
   "name": "Peridot",
   "specular_ior": 1.654,
   "tags": [
     "peridot",
     "olivine",
     "green",
-    "jewellery"
+    "jewellery",
+    "lime green",
+    "yellow green",
+    "olive green",
+    "green gem",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "august",
+    "transparent",
+    "semi-precious",
+    "accessories"
   ],
   "transmission_color": [0.6145, 0.7733, 0.2034],
   "type": "gem"

@@ -1,6 +1,7 @@
 {
   "base_color": [0.028354082, 0.029447615, 0.032596778],
   "category": "Plastic",
+  "description": "A dark charcoal plastic with a coarse spark-eroded grain, matching VDI 3400 grade 42 mould texture on rugged housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,23 @@
     "edm",
     "spark eroded",
     "coarse",
-    "charcoal"
+    "charcoal",
+    "dark grey",
+    "gray",
+    "vdi 3400",
+    "electrical discharge machining",
+    "spark erosion",
+    "mould texture",
+    "mold texture",
+    "etched",
+    "rough",
+    "enclosure",
+    "housing",
+    "injection moulded",
+    "tools",
+    "industrial",
+    "automotive",
+    "electronics"
   ],
   "type": "plastic"
 }

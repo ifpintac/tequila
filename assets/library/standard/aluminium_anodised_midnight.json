@@ -1,6 +1,7 @@
 {
   "base_color": [0.0435315, 0.050831165, 0.09941579],
   "category": "Metal",
+  "description": "Aluminium anodised a very dark blue, near black: a smooth satin sheen with a faint navy cast, as on a laptop or phone body.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -249,7 +250,21 @@
     "anodised",
     "blue",
     "midnight",
-    "dark"
+    "dark",
+    "navy",
+    "dark blue",
+    "ink",
+    "laptop",
+    "phone",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "electronics",
+    "accessories",
+    "audio"
   ],
   "type": "metal"
 }

@@ -4,6 +4,8 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Ebony, polished: near-black with faint dark-brown streaks and a smooth satin sheen, for fingerboards, piano keys and fine accents.",
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -579,7 +581,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -597,7 +599,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -1677,12 +1679,29 @@
   },
   "name": "Wood Ebony",
   "specular_roughness": 0.4,
+  "specular_weight": 0,
   "tags": [
     "wood",
     "ebony",
     "exotic",
     "black",
-    "instrument"
+    "instrument",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "black wood",
+    "dark",
+    "polished",
+    "satin",
+    "fingerboard",
+    "piano key",
+    "inlay",
+    "tonewood",
+    "handle",
+    "musical instruments",
+    "accessories",
+    "furniture",
+    "audio"
   ],
   "type": "generic"
 }

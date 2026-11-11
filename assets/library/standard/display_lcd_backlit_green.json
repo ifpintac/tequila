@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.005],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A lit LCD panel glowing yellow-green with dark characters, as on a character display or industrial control.",
   "emission_color": [0.36, 0.75, 0.01],
   "emission_luminance": 0.6,
   "name": "Display LCD Backlit Green",
@@ -13,7 +14,20 @@
     "backlit",
     "character display",
     "green",
-    "yellow green"
+    "yellow green",
+    "green lcd",
+    "glowing screen",
+    "illuminated",
+    "character lcd",
+    "16x2",
+    "monochrome",
+    "glow",
+    "backlight",
+    "small screen",
+    "hd44780",
+    "electronics",
+    "appliances",
+    "audio"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.0274, 0.0274, 0.0293],
   "category": "Metal",
+  "description": "Aluminium anodised black: a smooth, even matte-satin black with the colour in the metal, as on a camera body, amplifier panel or equipment case.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,22 @@
     "aluminium",
     "anodised",
     "matte",
-    "black"
+    "black",
+    "dark",
+    "jet black",
+    "noir",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "electronics",
+    "audio",
+    "accessories"
   ],
   "type": "metal"
 }

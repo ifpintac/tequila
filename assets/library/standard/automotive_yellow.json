@@ -1,6 +1,7 @@
 {
   "base_color": [0.7072677, 0.5015941, 0.0734643],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A bright solid yellow gloss under a clear coat, as on sports cars, taxis and warning vehicles.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -139,7 +140,21 @@
     "car",
     "gloss",
     "clearcoat",
-    "yellow"
+    "yellow",
+    "yellow paint",
+    "solid colour",
+    "solid color",
+    "glossy",
+    "sprayed",
+    "baked",
+    "orange peel",
+    "taxi",
+    "car paint",
+    "vehicle paint",
+    "two-pack",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "paint"
 }

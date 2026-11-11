@@ -1,7 +1,8 @@
 {
   "base_color": [0.4675135, 0.46770707, 0.46282],
   "base_diffuse_roughness": 0.6,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A medium grey cast concrete with a dull, slightly pitted surface, as on walls, planters and benches.",
   "graph": {
     "decals": [],
     "links": [
@@ -1107,7 +1108,21 @@
     "concrete",
     "architectural",
     "cast",
-    "grey"
+    "grey",
+    "gray",
+    "cement",
+    "raw concrete",
+    "exposed concrete",
+    "béton brut",
+    "matte",
+    "rough",
+    "pitted",
+    "pour",
+    "mid grey",
+    "masonry",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

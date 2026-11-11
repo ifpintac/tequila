@@ -1,6 +1,7 @@
 {
   "base_color": [0.9, 0.89, 0.85],
   "category": "Metal",
+  "description": "Bright tin-coated steel sheet: a smooth, slightly bluish silver with a soft sheen, as on a can, biscuit tin or a shielding can on a circuit board.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -255,7 +256,23 @@
     "shielding can",
     "rf shield",
     "circuit board",
-    "sheet"
+    "sheet",
+    "tin plated",
+    "tin coated",
+    "tin can",
+    "steel can",
+    "can",
+    "biscuit tin",
+    "rf can",
+    "emi shield",
+    "pcb",
+    "silver",
+    "bluish",
+    "shiny",
+    "electronics",
+    "packaging",
+    "food & drink",
+    "prototyping"
   ],
   "type": "metal"
 }

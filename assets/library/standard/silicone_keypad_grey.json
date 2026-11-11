@@ -1,7 +1,8 @@
 {
   "base_color": [0.18553834, 0.19063643, 0.2000013],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft matte grey silicone rubber, as on moulded keypads, remote buttons and calculator keys.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
     "button",
     "pad",
     "rubber",
-    "grey"
+    "grey",
+    "gray",
+    "rubber keys",
+    "buttons",
+    "membrane",
+    "elastomer",
+    "soft",
+    "matte",
+    "remote control",
+    "keyboard",
+    "moulded",
+    "molded",
+    "key mat",
+    "electronics",
+    "appliances",
+    "medical",
+    "industrial"
   ],
   "type": "generic"
 }

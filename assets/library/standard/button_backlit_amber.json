@@ -1,6 +1,7 @@
 {
   "base_color": [0.35, 0.094500005, 0],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A soft silicone key pad with a warm amber backlit symbol that glows through the surface, as on a remote, keypad or mixer control.",
   "edge_radius": 0.00025,
   "emission_color": [1, 0.27, 0],
   "emission_luminance": 0.8,
@@ -147,7 +148,21 @@
     "pad",
     "silicone",
     "amber",
-    "orange"
+    "orange",
+    "yellow",
+    "backlit button",
+    "illuminated button",
+    "lit legend",
+    "glowing icon",
+    "rubber key",
+    "keypad",
+    "remote control",
+    "soft touch",
+    "led backlight",
+    "translucent legend",
+    "electronics",
+    "audio",
+    "appliances"
   ],
   "type": "generic"
 }

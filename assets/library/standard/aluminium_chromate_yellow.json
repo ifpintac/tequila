@@ -1,6 +1,7 @@
 {
   "base_color": [0.44357443, 0.38637206, 0.15838726],
   "category": "Metal",
+  "description": "Aluminium with a yellow-gold chromate conversion coat: a thin, slightly iridescent golden film over bare metal, as on a chassis or bracket.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -245,7 +246,20 @@
     "iridite",
     "chassis",
     "yellow",
-    "gold"
+    "gold",
+    "chromate conversion",
+    "yellow chromate",
+    "iridescent",
+    "bracket",
+    "sheet",
+    "enclosure",
+    "protective coating",
+    "aluminum",
+    "aircraft",
+    "electronics",
+    "industrial",
+    "audio",
+    "automotive"
   ],
   "type": "metal"
 }

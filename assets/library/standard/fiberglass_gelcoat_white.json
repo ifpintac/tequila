@@ -3,6 +3,7 @@
   "category": "Composite",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "A smooth glossy white gelcoat over glass fibre, as on boat hulls, caravan panels and bath shells.",
   "graph": {
     "decals": [],
     "links": [
@@ -285,7 +286,22 @@
     "marine",
     "gloss",
     "white",
-    "grp"
+    "grp",
+    "glass fibre",
+    "glass fiber",
+    "gel coat",
+    "hull",
+    "caravan",
+    "bathtub",
+    "resin",
+    "moulded",
+    "molded",
+    "smooth",
+    "glossy",
+    "off-white",
+    "outdoor gear",
+    "industrial",
+    "appliances"
   ],
   "type": "generic"
 }

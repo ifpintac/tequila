@@ -1,12 +1,24 @@
 {
   "category": "Gem",
+  "description": "A pale sea-blue transparent beryl with clean facets, as set in rings, pendants and earrings.",
   "name": "Aquamarine",
   "specular_ior": 1.577,
   "tags": [
     "aquamarine",
     "beryl",
     "blue",
-    "jewellery"
+    "jewellery",
+    "light blue",
+    "cyan",
+    "pale blue",
+    "beryl gem",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "march",
+    "transparent",
+    "semi-precious",
+    "accessories"
   ],
   "transmission_color": [0.4669485, 0.63068616, 0.6883506],
   "transmission_dispersion_abbe": 70,

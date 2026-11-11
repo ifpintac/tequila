@@ -1,6 +1,7 @@
 {
   "base_color": [0.8032062, 0.7922328, 0.7453463],
   "category": "Fabric",
+  "description": "A flat flat white woven lace with fine lengthwise ribbing and a matte finish, threaded through sneaker and boot eyelets.",
   "fuzz_color": [0.86224437, 0.854563, 0.8217424],
   "fuzz_weight": 0.25,
   "graph": {
@@ -1730,7 +1731,21 @@
     "flat lace",
     "sneaker",
     "footwear",
-    "white"
+    "white",
+    "textile",
+    "cord",
+    "string",
+    "tape",
+    "cotton",
+    "polyester",
+    "trainer",
+    "boot",
+    "matte",
+    "flat braid",
+    "off-white",
+    "shoes",
+    "apparel",
+    "accessories"
   ],
   "type": "real_cloth"
 }

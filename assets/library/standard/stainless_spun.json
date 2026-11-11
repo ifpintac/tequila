@@ -1,6 +1,7 @@
 {
   "base_color": [0.88, 0.89, 0.9],
   "category": "Metal",
+  "description": "Stainless steel spun on a lathe: a cool satin grey with fine concentric circles, as on a pot lid, bowl, dial or lamp shade.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -155,7 +156,23 @@
     "stainless",
     "spun",
     "radial",
-    "concentric"
+    "concentric",
+    "inox",
+    "ss304",
+    "stainless steel",
+    "circular brushed",
+    "turned",
+    "lathe",
+    "spinning",
+    "satin",
+    "grey",
+    "gray",
+    "pot",
+    "bowl",
+    "kitchenware",
+    "appliances",
+    "lighting",
+    "audio"
   ],
   "type": "anisotropic"
 }

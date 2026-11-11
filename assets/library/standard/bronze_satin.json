@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.5, 0.42],
   "category": "Metal",
+  "description": "Bronze with a soft satin finish: a muted, dark reddish-brown gold with a gentle sheen, as on handles, taps and lamp fittings.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,23 @@
     "bronze",
     "warm",
     "satin",
-    "hardware"
+    "hardware",
+    "matte",
+    "brushed look",
+    "brown",
+    "reddish",
+    "dark gold",
+    "handle",
+    "tap",
+    "faucet",
+    "knob",
+    "fixture",
+    "trim",
+    "fitting",
+    "interior",
+    "lighting",
+    "furniture",
+    "kitchenware"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.014101053, 0.014423573, 0.016484385],
   "category": "Fabric",
+  "description": "A tough, flat black nylon strap with fine lengthwise ribs and a matte finish, for bag straps, tabs and sneaker pulls.",
   "fuzz_color": [0.2605758, 0.26081768, 0.26236328],
   "fuzz_weight": 0.08,
   "graph": {
@@ -1691,7 +1692,22 @@
     "nylon",
     "sneaker",
     "bag",
-    "black"
+    "black",
+    "textile",
+    "flat weave",
+    "belt",
+    "band",
+    "matte",
+    "pull loop",
+    "backpack strap",
+    "heel tab",
+    "fabric",
+    "synthetic",
+    "dark",
+    "bags",
+    "shoes",
+    "outdoor gear",
+    "accessories"
   ],
   "type": "real_cloth"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.008, 0.008, 0.0085],
   "category": "Plastic",
+  "description": "A polished glossy black plastic, as on pointer knobs and control dials with a mirror-like face.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -96,7 +97,23 @@
     "black",
     "pointer knob",
     "moulded",
-    "polished"
+    "polished",
+    "dial",
+    "control knob",
+    "potentiometer",
+    "rotary",
+    "shiny",
+    "glossy",
+    "knobs",
+    "injection moulded",
+    "molded",
+    "dark",
+    "piano black",
+    "high gloss",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "appliances"
   ],
   "type": "plastic"
 }

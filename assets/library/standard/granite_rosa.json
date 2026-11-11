@@ -1,7 +1,8 @@
 {
   "base_color": [0.3446396, 0.27843285, 0.21313432],
   "base_diffuse_roughness": 0.2,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished pink-salmon granite with dark speckles and a glossy finish, as on worktops, facades and tiles.",
   "graph": {
     "decals": [],
     "links": [
@@ -1342,7 +1343,22 @@
     "pink",
     "salmon",
     "rosa",
-    "countertop"
+    "countertop",
+    "pink granite",
+    "peach",
+    "pink grey",
+    "polished stone",
+    "speckled",
+    "glossy",
+    "natural stone",
+    "worktop",
+    "slab",
+    "tile",
+    "warm",
+    "architecture",
+    "interior",
+    "kitchenware",
+    "furniture"
   ],
   "type": "generic"
 }

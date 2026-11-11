@@ -1,6 +1,7 @@
 {
   "base_color": [0.86, 0.87, 0.88],
   "category": "Metal",
+  "description": "Aluminium of the kind pressed into speaker drivers: a smooth satin grey with faint turning lines, as on a tweeter dome or woofer cone.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -156,7 +157,23 @@
     "aluminium",
     "metal cone",
     "tweeter",
-    "woofer"
+    "woofer",
+    "driver",
+    "loudspeaker",
+    "diaphragm",
+    "stamped",
+    "pressed",
+    "spun",
+    "satin",
+    "grey",
+    "gray",
+    "aluminum",
+    "monitor",
+    "hi-fi",
+    "audio",
+    "electronics",
+    "automotive",
+    "musical instruments"
   ],
   "type": "anisotropic"
 }

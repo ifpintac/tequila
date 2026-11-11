@@ -1,6 +1,7 @@
 {
   "base_color": [0.6001363, 0.6325204, 0.5511497],
   "category": "Composite",
+  "description": "A coarse woven glass cloth showing through translucent resin, in a pale amber-grey, as in boat and tank laminates.",
   "graph": {
     "decals": [],
     "links": [
@@ -4064,7 +4065,21 @@
     "frp",
     "composite",
     "woven roving",
-    "translucent"
+    "translucent",
+    "glass fibre cloth",
+    "glass fiber cloth",
+    "woven cloth",
+    "weave",
+    "resin",
+    "laminate",
+    "hand lay-up",
+    "boat hull",
+    "tank",
+    "pale",
+    "amber",
+    "industrial",
+    "outdoor gear",
+    "prototyping"
   ],
   "type": "translucent"
 }

@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Silver beaten with a hammer: a bright white metal covered in small dimples that scatter the reflection, as on a bowl, cuff or handmade ring.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "hammered",
     "beaten",
     "tableware",
-    "jewellery"
+    "jewellery",
+    "dimpled",
+    "planished",
+    "beaten silver",
+    "handmade",
+    "artisan",
+    "sterling",
+    "bowl",
+    "cuff",
+    "ring",
+    "jewelry",
+    "white metal",
+    "textured",
+    "kitchenware",
+    "accessories",
+    "food & drink"
   ],
   "type": "metal"
 }

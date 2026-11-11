@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Aluminium with straight parallel knurl ridges cut around it: a bright grip surface with fine vertical lines, as on a control knob or handle.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -266,7 +267,22 @@
     "knurled",
     "straight",
     "grip",
-    "machined"
+    "machined",
+    "straight knurl",
+    "knurling",
+    "ridged",
+    "fluted",
+    "knob",
+    "handle",
+    "cap",
+    "turned",
+    "cnc",
+    "lathe",
+    "aluminum",
+    "audio",
+    "electronics",
+    "tools",
+    "musical instruments"
   ],
   "type": "metal"
 }

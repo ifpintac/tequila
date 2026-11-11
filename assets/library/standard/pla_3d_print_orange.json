@@ -1,6 +1,7 @@
 {
   "base_color": [0.53730637, 0.1688767, 0.0501578],
-  "category": "Plastic",
+  "category": "3D Print",
+  "description": "A matte orange PLA print with fine horizontal layer lines, as from a desktop filament printer.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -395,7 +396,21 @@
     "3d print",
     "fdm",
     "layer lines",
-    "orange"
+    "orange",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "orange plastic",
+    "matte",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "ridged",
+    "prototyping",
+    "toys",
+    "tools",
+    "industrial"
   ],
   "type": "plastic"
 }

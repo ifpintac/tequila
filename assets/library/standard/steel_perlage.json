@@ -1,6 +1,7 @@
 {
   "base_color": [0.92, 0.925, 0.93],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Steel decorated with overlapping small circles of graining: a shimmering silver surface of tiny scallops, as on a watch movement plate or dial.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -3863,7 +3864,21 @@
     "perlage",
     "circular graining",
     "watch",
-    "engine turned"
+    "engine turned",
+    "pearling",
+    "snailing",
+    "rotary",
+    "scalloped",
+    "movement",
+    "plate",
+    "dial",
+    "decorative",
+    "horology",
+    "stainless",
+    "watches",
+    "jewellery",
+    "accessories",
+    "prototyping"
   ],
   "type": "anisotropic"
 }

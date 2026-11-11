@@ -1,7 +1,8 @@
 {
   "base_color": [0.57756746, 0.5716085, 0.5438664],
   "base_diffuse_roughness": 0.2,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished grey granite with a salt-and-pepper speckle of black and white grains, as on worktops and paving.",
   "graph": {
     "decals": [],
     "links": [
@@ -1338,7 +1339,21 @@
     "speckled",
     "countertop",
     "salt and pepper",
-    "grey"
+    "grey",
+    "gray granite",
+    "polished stone",
+    "glossy",
+    "natural stone",
+    "flecked",
+    "worktop",
+    "kitchen counter",
+    "slab",
+    "tile",
+    "mid grey",
+    "architecture",
+    "interior",
+    "kitchenware",
+    "furniture"
   ],
   "type": "generic"
 }

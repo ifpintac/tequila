@@ -2,6 +2,7 @@
   "base_color": [0.06016735, 0.06274359, 0.06929594],
   "base_diffuse_roughness": 0.5,
   "category": "Plastic",
+  "description": "A grey mineral-filled polypropylene driver cone with a fine matte grain, as on woofers and midrange drivers.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,23 @@
     "pp",
     "mineral filled",
     "woofer",
-    "grey"
+    "grey",
+    "gray",
+    "woofer cone",
+    "loudspeaker",
+    "driver",
+    "diaphragm",
+    "matte",
+    "moulded",
+    "molded",
+    "speaker driver",
+    "subwoofer",
+    "fine texture",
+    "mica filled",
+    "audio",
+    "electronics",
+    "automotive",
+    "musical instruments"
   ],
   "type": "generic"
 }

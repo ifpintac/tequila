@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.0045],
   "category": "Plastic",
+  "description": "A glossy black nylon or PBT insulator, as seen around jack sockets and plug bodies.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -97,7 +98,22 @@
     "pbt",
     "nylon",
     "black",
-    "gloss"
+    "gloss",
+    "jack housing",
+    "plug body",
+    "insulator",
+    "polybutylene terephthalate",
+    "glossy",
+    "shiny",
+    "moulded",
+    "molded",
+    "xlr",
+    "port",
+    "dark",
+    "electronics",
+    "audio",
+    "musical instruments",
+    "industrial"
   ],
   "type": "plastic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.5, 0.42],
   "category": "Metal",
+  "description": "Polished bronze: a deep, warm reddish-gold mirror finish, as on a statue, bell, trophy or ornamental fitting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,22 @@
     "bronze",
     "warm",
     "statue",
-    "mirror"
+    "mirror",
+    "bright",
+    "shiny",
+    "reddish",
+    "gold",
+    "brown",
+    "sculpture",
+    "trophy",
+    "bell",
+    "buffed",
+    "fitting",
+    "ornament",
+    "interior",
+    "accessories",
+    "furniture",
+    "jewellery"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.039050765, 0.039605208, 0.043940187],
   "category": "Fabric",
+  "description": "A hard-wearing charcoal woven cloth with a small, even texture and a matte face, for sofas, chairs and cushions.",
   "fuzz_color": [0.11463497, 0.11683089, 0.13069482],
   "fuzz_weight": 0.5,
   "graph": {
@@ -5645,7 +5646,22 @@
     "upholstery",
     "woven",
     "sofa",
-    "charcoal"
+    "charcoal",
+    "textile",
+    "cloth",
+    "fabric",
+    "couch",
+    "armchair",
+    "cushion",
+    "matte",
+    "seat",
+    "chair",
+    "gray",
+    "dark gray",
+    "dark grey",
+    "furniture",
+    "interior",
+    "automotive"
   ],
   "type": "real_cloth"
 }

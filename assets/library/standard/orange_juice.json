@@ -1,12 +1,23 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A bright, cloudy orange liquid that lets some light through, as in a glass, bottle or carton.",
   "name": "Orange Juice",
   "specular_ior": 1.35,
   "tags": [
     "orange",
     "juice",
     "drink",
-    "cloudy"
+    "cloudy",
+    "beverage",
+    "citrus",
+    "fruit juice",
+    "glass fill",
+    "carton",
+    "fluid",
+    "fresh squeezed",
+    "pulp",
+    "food & drink",
+    "packaging"
   ],
   "transmission_color": [0.86, 0.43, 0.05],
   "transmission_depth": 0.01,

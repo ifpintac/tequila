@@ -1,6 +1,7 @@
 {
   "base_color": [0.10563581, 0.10912547, 0.12033957],
   "category": "Plastic",
+  "description": "A mid-grey plastic with a satin spark-eroded surface, matching VDI 3400 grade 24 mould texture on housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,22 @@
     "edm",
     "spark eroded",
     "satin",
-    "grey"
+    "grey",
+    "gray",
+    "vdi 3400",
+    "electrical discharge machining",
+    "spark erosion",
+    "mould texture",
+    "mold texture",
+    "etched",
+    "fine grain",
+    "enclosure",
+    "housing",
+    "injection moulded",
+    "electronics",
+    "appliances",
+    "industrial",
+    "automotive"
   ],
   "type": "plastic"
 }

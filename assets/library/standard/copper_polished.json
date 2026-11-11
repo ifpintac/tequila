@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Polished copper: a bright, reddish-orange mirror finish, as on a saucepan, kettle, still or decorative fitting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -230,7 +231,23 @@
   "specular_roughness": 0.05,
   "tags": [
     "copper",
-    "warm"
+    "warm",
+    "mirror",
+    "bright",
+    "shiny",
+    "orange",
+    "reddish",
+    "pot",
+    "pan",
+    "kettle",
+    "buffed",
+    "cookware",
+    "pipe",
+    "fitting",
+    "kitchenware",
+    "interior",
+    "lighting",
+    "food & drink"
   ],
   "type": "metal"
 }

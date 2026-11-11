@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A black powder coat with a rippled, wrinkled texture and low sheen, as on amplifier chassis and equipment housings.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -233,7 +234,23 @@
     "crackle finish",
     "chassis",
     "amplifier",
-    "black"
+    "black",
+    "wrinkle finish",
+    "wrinkle coat",
+    "crackle",
+    "textured",
+    "matte",
+    "powder coated",
+    "baked",
+    "cured",
+    "amp chassis",
+    "guitar amp",
+    "metal finish",
+    "rough",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

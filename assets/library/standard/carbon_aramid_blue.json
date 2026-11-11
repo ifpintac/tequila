@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A black carbon twill woven with blue aramid threads under clear resin, as in racing parts and bike frames.",
   "graph": {
     "decals": [],
     "links": [
@@ -4448,7 +4449,21 @@
     "composite",
     "twill",
     "blue",
-    "black"
+    "black",
+    "carbon fiber",
+    "aramid fiber",
+    "blue kevlar",
+    "hybrid weave",
+    "twill weave",
+    "woven",
+    "laminate",
+    "resin",
+    "gloss",
+    "two-tone",
+    "colored carbon",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

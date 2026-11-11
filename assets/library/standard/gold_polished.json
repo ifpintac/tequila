@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Polished yellow gold: a bright, warm mirror finish, as on a ring, necklace, watch case or fine jewellery piece.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -231,7 +232,22 @@
   "tags": [
     "gold",
     "jewellery",
-    "mirror"
+    "mirror",
+    "bright",
+    "shiny",
+    "yellow gold",
+    "18k",
+    "24k",
+    "precious metal",
+    "ring",
+    "necklace",
+    "chain",
+    "watch case",
+    "karat",
+    "buffed",
+    "watches",
+    "accessories",
+    "eyewear"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.735, 0.536, 0.0813],
   "category": "Plastic",
+  "description": "A bright solid yellow ABS with a satin finish, as on toys, power-tool housings and safety parts.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -199,7 +200,19 @@
   "tags": [
     "abs",
     "yellow",
-    "toy"
+    "toy",
+    "acrylonitrile butadiene styrene",
+    "satin",
+    "safety yellow",
+    "moulded",
+    "molded",
+    "injection moulded",
+    "housing",
+    "casing",
+    "toys",
+    "tools",
+    "industrial",
+    "prototyping"
   ],
   "type": "plastic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.09905084, 0.11436669, 0.05663547],
   "category": "Fabric",
+  "description": "An olive cotton cloth with fine parallel ribs of cut pile and a soft matte nap, for trousers, jackets and upholstery.",
   "fuzz_color": [0.37484378, 0.40664747, 0.24051137],
   "fuzz_roughness": 0.45,
   "graph": {
@@ -904,7 +905,21 @@
     "cord",
     "ribbed",
     "pile",
-    "green"
+    "green",
+    "textile",
+    "cloth",
+    "cotton",
+    "wale",
+    "ridged",
+    "napped",
+    "matte",
+    "trousers",
+    "jacket",
+    "sofa",
+    "khaki green",
+    "apparel",
+    "furniture",
+    "interior"
   ],
   "type": "velvet"
 }

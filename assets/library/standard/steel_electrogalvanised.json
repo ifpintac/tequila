@@ -1,6 +1,7 @@
 {
   "base_color": [0.72, 0.73, 0.75],
   "category": "Metal",
+  "description": "Electro-galvanised steel sheet: a smooth, bright, slightly bluish zinc-silver surface with fine sheen, as on a computer case or bracket.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -256,7 +257,23 @@
     "zinc",
     "chassis",
     "sheet",
-    "bracket"
+    "bracket",
+    "electrogalvanized",
+    "galvanized",
+    "zinc coated",
+    "zinc plated",
+    "electroplated",
+    "bluish",
+    "silver",
+    "sheet metal",
+    "pc case",
+    "computer case",
+    "enclosure",
+    "panel",
+    "electronics",
+    "industrial",
+    "appliances",
+    "prototyping"
   ],
   "type": "metal"
 }

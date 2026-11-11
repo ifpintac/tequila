@@ -1,6 +1,7 @@
 {
   "base_color": [0.38364875, 0.26425415, 0.12622268],
   "category": "Metal",
+  "description": "Titanium anodised to a warm bronze-gold: a smooth satin finish with the colour from a thin oxide film, as on a watch, pen or bicycle part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,21 @@
     "titanium",
     "anodised",
     "bronze",
-    "watch"
+    "watch",
+    "anodized",
+    "oxide film",
+    "gold",
+    "brown",
+    "satin",
+    "pen",
+    "bike",
+    "case",
+    "bezel",
+    "ti",
+    "watches",
+    "accessories",
+    "sporting goods",
+    "jewellery"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.5601, 0.5693, 0.6131],
   "category": "Metal",
+  "description": "Dark bluish-grey metal with a soft satin sheen: a cool, deep graphite tone, as on a watch case, firearm part or darkened hardware.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
   "tags": [
     "gunmetal",
     "dark",
-    "steel"
+    "steel",
+    "gun metal",
+    "dark grey",
+    "gray",
+    "graphite",
+    "blue grey",
+    "charcoal",
+    "satin",
+    "dark steel",
+    "hardware",
+    "case",
+    "bezel",
+    "trim",
+    "watches",
+    "accessories",
+    "tools",
+    "electronics"
   ],
   "type": "metal"
 }

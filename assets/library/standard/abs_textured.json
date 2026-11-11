@@ -1,6 +1,7 @@
 {
   "base_color": [0.0424, 0.0423, 0.0448],
   "category": "Plastic",
+  "description": "A dark ABS with a fine stippled, etched grain that hides scuffs, as on equipment enclosures and handles.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -163,7 +164,21 @@
     "abs",
     "grained",
     "stipple",
-    "enclosure"
+    "enclosure",
+    "acrylonitrile butadiene styrene",
+    "matte",
+    "etched",
+    "mould texture",
+    "mold texture",
+    "dark grey",
+    "gray",
+    "case",
+    "housing",
+    "injection moulded",
+    "electronics",
+    "industrial",
+    "tools",
+    "audio"
   ],
   "type": "plastic"
 }

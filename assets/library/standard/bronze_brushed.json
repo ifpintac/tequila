@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.5, 0.42],
   "category": "Metal",
+  "description": "Bronze with fine linear brush lines: a deep reddish-brown satin with directional streaks, as on a door handle, tap or architectural trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,23 @@
     "bronze",
     "brushed",
     "warm",
-    "hardware"
+    "hardware",
+    "hairline",
+    "grain",
+    "brown",
+    "reddish",
+    "satin",
+    "dark gold",
+    "tap",
+    "faucet",
+    "handle",
+    "trim",
+    "sheet",
+    "fixture",
+    "interior",
+    "architecture",
+    "furniture",
+    "lighting"
   ],
   "type": "anisotropic"
 }

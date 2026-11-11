@@ -1,6 +1,7 @@
 {
   "base_color": [0.7973, 0.7914, 0.7259],
   "category": "Plastic",
+  "description": "An uncoloured, cloudy off-white polypropylene that passes soft light, as on flexible hinged lids and containers.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -93,7 +94,23 @@
   "tags": [
     "pp",
     "translucent",
-    "living hinge"
+    "living hinge",
+    "uncoloured",
+    "uncolored",
+    "milky",
+    "waxy",
+    "frosted",
+    "satin",
+    "box",
+    "container",
+    "flip top",
+    "injection moulded",
+    "molded",
+    "semi clear",
+    "packaging",
+    "kitchenware",
+    "medical",
+    "industrial"
   ],
   "type": "plastic_cloudy"
 }

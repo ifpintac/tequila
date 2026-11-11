@@ -1,6 +1,7 @@
 {
   "base_color": [0.84, 0.84, 0.83],
   "category": "Plastic",
+  "description": "A mirror-polished white plastic with a deep shine, as on glossy consumer-product housings and trim.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -164,7 +165,22 @@
     "white",
     "mirror polish",
     "spi a",
-    "consumer"
+    "consumer",
+    "glossy white",
+    "shiny",
+    "mirror finish",
+    "polished",
+    "spi a1",
+    "high polish",
+    "housing",
+    "case",
+    "moulded",
+    "molded",
+    "smooth",
+    "appliances",
+    "electronics",
+    "cosmetics",
+    "medical"
   ],
   "type": "plastic"
 }

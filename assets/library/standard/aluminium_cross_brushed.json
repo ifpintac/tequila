@@ -1,6 +1,7 @@
 {
   "base_color": [0.95, 0.95, 0.95],
   "category": "Metal",
+  "description": "Aluminium brushed in two crossing directions: a soft satin silver with a fine woven-looking grain, as on a panel or trim piece.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -316,7 +317,22 @@
     "aluminium",
     "cross brushed",
     "crosshatch",
-    "satin"
+    "satin",
+    "cross hatch",
+    "cross grain",
+    "dual grain",
+    "hairline",
+    "sheet",
+    "panel",
+    "trim",
+    "bezel",
+    "aluminum",
+    "silver",
+    "satin finish",
+    "electronics",
+    "appliances",
+    "audio",
+    "interior"
   ],
   "type": "metal"
 }

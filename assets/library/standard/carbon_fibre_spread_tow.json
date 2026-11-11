@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A flat, thin carbon tape in plain weave under clear resin, with broad smooth strands and little gap between them.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,20 @@
     "plain",
     "tape",
     "gloss",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "spread tow tape",
+    "thin ply",
+    "ultralight",
+    "wide tow",
+    "flat weave",
+    "black",
+    "woven",
+    "laminate",
+    "resin",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

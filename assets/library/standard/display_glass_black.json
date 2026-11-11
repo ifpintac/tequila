@@ -1,6 +1,7 @@
 {
   "base_color": [0.003, 0.003, 0.0035],
-  "category": "Glass",
+  "category": "Light & Display",
+  "description": "A glossy black glass front with deep reflections, as on a switched-off phone, tablet or monitor.",
   "name": "Display Glass Black",
   "specular_ior": 1.52,
   "specular_roughness": 0.02,
@@ -10,7 +11,22 @@
     "oled",
     "off",
     "black glass",
-    "cover glass"
+    "cover glass",
+    "screen off",
+    "black screen",
+    "gorilla",
+    "touchscreen",
+    "dark glass",
+    "glossy",
+    "reflective",
+    "smoked glass",
+    "tv",
+    "monitor",
+    "panel",
+    "phone front",
+    "electronics",
+    "appliances",
+    "automotive"
   ],
   "type": "generic"
 }

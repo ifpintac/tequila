@@ -1,7 +1,8 @@
 {
   "base_color": [0.31638402, 0.13478117, 0.058360785],
   "base_diffuse_roughness": 0.75,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "An unglazed orange-brown fired clay with a dry, slightly rough surface, as on plant pots, roof tiles and floors.",
   "graph": {
     "decals": [],
     "links": [
@@ -202,7 +203,7 @@
           },
           {
             "at": 0.6,
-            "color": [0.3263639, 0.15195687, 0.06690377]
+            "color": [0.32636392, 0.15195687, 0.06690377]
           },
           {
             "at": 0.8,
@@ -696,7 +697,23 @@
     "terracotta",
     "clay",
     "pottery",
-    "fired"
+    "fired",
+    "terra cotta",
+    "unglazed",
+    "earthenware",
+    "orange",
+    "red clay",
+    "flower pot",
+    "planter",
+    "roof tile",
+    "floor tile",
+    "rustic",
+    "matte",
+    "brick red",
+    "architecture",
+    "interior",
+    "outdoor gear",
+    "furniture"
   ],
   "type": "generic"
 }
