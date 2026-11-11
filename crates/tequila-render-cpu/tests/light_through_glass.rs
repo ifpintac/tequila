@@ -106,6 +106,8 @@ fn render(lighting: Lighting, cover: Option<Material>, config: IntegratorConfig,
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         };
         scene = scene.with_lights(Arc::new(LightSet::new(vec![Light::new(LightKind::Area(lamp))])));
     }

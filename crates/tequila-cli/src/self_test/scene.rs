@@ -98,6 +98,8 @@ pub fn build() -> Reference {
         disc: false,
         two_sided: false,
         spread: std::f32::consts::PI,
+        falloff: 0.0,
+        fade: 0.0,
     }));
 
     let mut textures = TextureTable::new();

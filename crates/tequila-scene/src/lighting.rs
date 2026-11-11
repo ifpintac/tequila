@@ -215,6 +215,16 @@ pub struct LightSettings {
     /// less a softbox behind a grid, its light gathered into a beam that
     /// wide. Its power stays what it was.
     pub spread_degrees: f32,
+    /// An area or disc light's falloff, 0 to 1: how much darker its edges
+    /// are than its middle, as a softbox's front is. None is an even panel,
+    /// whose reflection in gloss paint or chrome is a flat white shape with
+    /// a hard edge; about half is a softbox, a sheen that fades towards its
+    /// edges. Its power stays what it was (`AreaLight::falloff`).
+    pub edge_falloff: f32,
+    /// A fade along an area light from its top edge to its bottom, as a
+    /// graduated scrim gives: the share of its brightness lost at the far
+    /// end, negative to fade it the other way. Its power stays what it was.
+    pub fade: f32,
 }
 
 /// What a light is kept to (light linking): the parts it lights, or the
@@ -252,6 +262,8 @@ impl Default for LightSettings {
             links: None,
             shadow_links: None,
             spread_degrees: 180.0,
+            edge_falloff: 0.0,
+            fade: 0.0,
         }
     }
 }
@@ -383,6 +395,8 @@ impl LightSettings {
                     disc,
                     two_sided,
                     spread: self.spread_degrees.clamp(1.0, 180.0).to_radians(),
+                    falloff: self.edge_falloff.clamp(0.0, 1.0),
+                    fade: self.fade.clamp(-1.0, 1.0),
                 };
                 light.radiance = color * self.intensity.radiance_for_area(light.area());
                 LightKind::Area(light)
