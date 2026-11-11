@@ -5599,6 +5599,42 @@ mod tests {
         }
     }
 
+    /// A part's random colour is the same colour in both renderers, and its
+    /// varied colour the same variation: both read the part's one random
+    /// number. Skipped where Cycles is not installed.
+    #[test]
+    fn a_parts_random_colour_is_the_same_in_both_renderers() {
+        use tequila_materials::graph::{NodeKind, Socket};
+        use tequila_materials::material_type::Param;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let channel = |image: &[u8], c: usize| {
+            let only: Vec<u8> = image.chunks_exact(4).flat_map(|p| [p[c], 0, 0, 255]).collect();
+            mean_and_spread(&inside_the_sphere(&only)).0
+        };
+        for setup in [crate::graph_editor::Setup::RandomColour, crate::graph_editor::Setup::VaryColour] {
+            // The setup's own graph, its colour wired into Color as it is
+            // for the layout.
+            let (graph, _) = crate::graph_editor::setup_graph(setup);
+            assert!(graph.links().iter().any(|l| l.to == graph.output() && l.to_socket == Socket::Param(Param::BaseColor)));
+            assert!(graph.nodes().any(|(_, n)| matches!(n.kind, NodeKind::Node(tequila_materials::nodes::ShaderNode::ObjectInfo))));
+            let [tequila, cycles] = both_engines(&format!("per-part-{setup:?}"), move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+            });
+            let (a, b): ([f64; 3], [f64; 3]) = (std::array::from_fn(|c| channel(&tequila, c)), std::array::from_fn(|c| channel(&cycles, c)));
+            for c in 0..3 {
+                assert!((a[c] - b[c]).abs() < a[c] * 0.12 + 6.0, "{setup:?}: Tequila's ball is {a:.0?}, Cycles' {b:.0?}");
+            }
+            // A colour, not the grey of a ramp read at nothing.
+            assert!(a.iter().cloned().fold(0.0, f64::max) > a.iter().cloned().fold(255.0, f64::min) * 1.3, "{setup:?}: {a:.0?} is grey");
+        }
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.

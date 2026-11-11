@@ -2434,7 +2434,7 @@ fn apart(graph: &mut MaterialGraph, moved: &[NodeId]) {
 /// feeding a stand-in surface, and the input of the real surface that what
 /// feeds the stand-in is wired to when it is free (`None`: left for the
 /// person to wire where they want it).
-fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socket>) {
+pub(crate) fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socket>) {
     use tequila_materials::graph::LAYER_INPUT;
     use tequila_materials::material_type::MaterialType;
     use tequila_materials::nodes::ShaderNode;
@@ -2489,8 +2489,77 @@ fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socket>) {
             graph.connect_output(under, 0, surface, Socket::Param(Param::BaseColor));
             (graph, None)
         }
+        browser::Setup::RandomColour => {
+            use tequila_core::spectrum::Spectrum;
+            use tequila_texture::gradient::{Gradient, Interpolation, Stop};
+            let info = graph.add_node(Node::new(NodeKind::Node(ShaderNode::ObjectInfo)));
+            // Four bands of the part's number, a colour each.
+            let colours = [Spectrum { r: 0.80, g: 0.12, b: 0.10 }, Spectrum { r: 0.90, g: 0.60, b: 0.08 }, Spectrum { r: 0.10, g: 0.45, b: 0.30 }, Spectrum { r: 0.08, g: 0.25, b: 0.65 }];
+            let stops = colours.into_iter().enumerate().map(|(index, color)| Stop { at: index as f32 * 0.25, color }).collect();
+            let ramp = graph.add_node(named(NodeKind::Gradient { gradient: Box::new(Gradient::new(stops).with_interpolation(Interpolation::Constant)) }, "Colours"));
+            graph.connect_output(info, RANDOM, ramp, Socket::Input(0));
+            graph.connect_output(ramp, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
+        browser::Setup::VaryColour => {
+            let info = graph.add_node(Node::new(NodeKind::Node(ShaderNode::ObjectInfo)));
+            let range = |graph: &mut MaterialGraph, name: &str, low: f32, high: f32| {
+                let node = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("map_range").expect("Map Range")), name));
+                // Value, From Min, From Max, To Min, To Max.
+                let found = graph.node_mut(node).expect("just added");
+                found.literals.insert(Socket::Input(3), Value::Float(low));
+                found.literals.insert(Socket::Input(4), Value::Float(high));
+                node
+            };
+            // Hue a twentieth either way of where it is, value a fifth.
+            let hue = range(&mut graph, "Hue shift", 0.45, 0.55);
+            let light = range(&mut graph, "Lightness", 0.8, 1.2);
+            let colour = graph.add_node(named(NodeKind::Constant(Value::Color(tequila_core::spectrum::Spectrum { r: 0.75, g: 0.2, b: 0.15 })), "Colour"));
+            // Hue, Saturation, Value, Fac, Color.
+            let shifted = graph.add_node(Node::new(NodeKind::Node(ShaderNode::HueSaturationValue)));
+            graph.connect_output(info, RANDOM, hue, Socket::Input(0));
+            graph.connect_output(info, RANDOM, light, Socket::Input(0));
+            graph.connect_output(hue, 0, shifted, Socket::Input(0));
+            graph.connect_output(light, 0, shifted, Socket::Input(2));
+            graph.connect_output(colour, 0, shifted, Socket::Input(4));
+            graph.connect_output(shifted, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
+        browser::Setup::RandomPlacement => {
+            use tequila_core::math::vec3;
+            use tequila_materials::nodes::Setting;
+            let info = graph.add_node(Node::new(NodeKind::Node(ShaderNode::ObjectInfo)));
+            let coordinates = graph.add_node(Node::new(NodeKind::Node(ShaderNode::TextureCoordinate)));
+            let thrice = graph.add_node(Node::new(NodeKind::Node(ShaderNode::CombineXyz)));
+            for axis in 0..3u8 {
+                graph.connect_output(info, RANDOM, thrice, Socket::Input(axis));
+            }
+            // The part's number times something different along each axis:
+            // far apart in the pattern, and turned every which way.
+            let times = |graph: &mut MaterialGraph, name: &str, by: tequila_core::math::Vec3| {
+                let mut multiply = ShaderNode::from_key("vector_math").expect("Vector Math");
+                multiply.set("operation", Setting::Choice("multiply"));
+                let node = graph.add_node(named(NodeKind::Node(multiply), name));
+                graph.node_mut(node).expect("just added").literals.insert(Socket::Input(1), Value::Vector(by));
+                graph.connect_output(thrice, 0, node, Socket::Input(0));
+                node
+            };
+            let moved = times(&mut graph, "Move", vec3(13.7, 7.1, 3.3));
+            let turned = times(&mut graph, "Turn", vec3(6.283, 12.566, 18.85));
+            // Vector, Location, Rotation, Scale.
+            let mapping = graph.add_node(Node::new(NodeKind::Node(ShaderNode::from_key("mapping").expect("Mapping"))));
+            graph.connect_output(coordinates, OBJECT, mapping, Socket::Input(0));
+            graph.connect_output(moved, 0, mapping, Socket::Input(1));
+            graph.connect_output(turned, 0, mapping, Socket::Input(2));
+            graph.connect_output(mapping, 0, surface, Socket::Param(Param::Tangent));
+            (graph, None)
+        }
     }
 }
+
+/// Object Info's Random output, and Texture Coordinate's Object.
+const RANDOM: u8 = 1;
+const OBJECT: u8 = 3;
 
 /// Add `other`'s nodes to `graph`, all but its surface, with the wires among
 /// them; what fed `other`'s surface feeds `graph`'s at `into`, when that is
@@ -3620,6 +3689,32 @@ mod tests {
         let geometry = two.node(side.0).unwrap();
         let NodeKind::Node(node) = &geometry.kind else { panic!("the factor is not a node's") };
         assert_eq!(node.outputs()[side.1 as usize].name, "Backfacing");
+
+        // The per-part ones: each reads the part's random number, compiles,
+        // and is left for the person to wire in.
+        for setup in [browser::Setup::RandomColour, browser::Setup::VaryColour, browser::Setup::RandomPlacement] {
+            let graph = add(setup);
+            assert!(!graph.links().iter().any(|l| l.to == graph.output()), "{setup:?} wired itself into the material");
+            let info = graph.nodes().find(|(_, n)| matches!(n.kind, NodeKind::Node(tequila_materials::nodes::ShaderNode::ObjectInfo))).map(|(id, _)| id).expect("an Object Info");
+            assert!(graph.links().iter().any(|l| l.from == info && l.from_socket == RANDOM), "{setup:?} does not read the part's number");
+        }
+        assert_eq!(tequila_materials::nodes::ShaderNode::ObjectInfo.outputs()[RANDOM as usize].name, "Random");
+        assert_eq!(tequila_materials::nodes::ShaderNode::TextureCoordinate.outputs()[OBJECT as usize].name, "Object");
+        // Wired in, each still compiles: a colour into Color, coordinates
+        // into a texture's Vector.
+        let mut graph = add(browser::Setup::RandomColour);
+        let ramp = graph.nodes().find(|(_, n)| matches!(n.kind, NodeKind::Gradient { .. })).map(|(id, _)| id).unwrap();
+        let surface = graph.output();
+        graph.connect_output(ramp, 0, surface, Socket::Param(Param::BaseColor));
+        let program = graph.compile().expect("a random colour compiles into Color");
+        assert!(program.driven.iter().any(|(p, _)| *p == Param::BaseColor));
+        let mut graph = add(browser::Setup::RandomPlacement);
+        let mapping = graph.nodes().find(|(_, n)| matches!(&n.kind, NodeKind::Node(node) if node.label() == "Mapping")).map(|(id, _)| id).unwrap();
+        let noise = graph.add_node(Node::new(NodeKind::Node(tequila_materials::nodes::ShaderNode::from_key("noise_texture").unwrap())));
+        let surface = graph.output();
+        graph.connect_output(mapping, 0, noise, Socket::Input(0));
+        graph.connect_output(noise, 0, surface, Socket::Param(Param::SpecularRoughness));
+        graph.compile().expect("random placement compiles into a texture");
 
         let composite = add(browser::Setup::Composite);
         assert_eq!(depth(&composite), 0, "colours, not surfaces");
