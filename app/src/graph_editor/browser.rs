@@ -103,6 +103,25 @@ pub enum Setup {
     /// that each start somewhere of their own, and blended (V-Ray's
     /// stochastic tiling).
     StochasticTiling,
+    /// A colour that changes from the face seen straight on to the face
+    /// seen edge on (3ds Max's Falloff map).
+    Falloff,
+    /// Another surface on whatever faces up: snow, dust, a wet top (3ds
+    /// Max's Top/Bottom material).
+    TopBottom,
+    /// Another surface for everything but the camera: what reflections,
+    /// glass and bounced light see (V-Ray's override material).
+    Override,
+    /// A colour's hue, saturation, brightness, contrast and gamma, in a
+    /// row (3ds Max's Color Correction map).
+    ColourCorrection,
+    /// Coordinates pushed about by a noise, so what is read at them is
+    /// warped (Bercon's distortion).
+    Distort,
+    /// A mask of the edges, broken up: where paint chips and metal shows.
+    WornEdges,
+    /// A mask of the creases, broken into streaks: where dirt gathers.
+    Dirt,
 }
 
 impl Setup {
@@ -115,6 +134,13 @@ impl Setup {
             Setup::VaryColour => "Vary colour per part",
             Setup::RandomPlacement => "Random placement per part",
             Setup::StochasticTiling => "Picture without repeats",
+            Setup::Falloff => "Falloff",
+            Setup::TopBottom => "Top and bottom",
+            Setup::Override => "Override (what reflections see)",
+            Setup::ColourCorrection => "Colour correction",
+            Setup::Distort => "Distort",
+            Setup::WornEdges => "Worn edges",
+            Setup::Dirt => "Dirt in the creases",
         }
     }
 
@@ -128,6 +154,13 @@ impl Setup {
             "vary_colour" | "vary_color" => Some(Setup::VaryColour),
             "random_placement" => Some(Setup::RandomPlacement),
             "stochastic_tiling" => Some(Setup::StochasticTiling),
+            "falloff" => Some(Setup::Falloff),
+            "top_bottom" => Some(Setup::TopBottom),
+            "override" => Some(Setup::Override),
+            "colour_correction" | "color_correction" => Some(Setup::ColourCorrection),
+            "distort" => Some(Setup::Distort),
+            "worn_edges" => Some(Setup::WornEdges),
+            "dirt" => Some(Setup::Dirt),
             _ => None,
         }
     }
@@ -142,6 +175,13 @@ impl Setup {
             Setup::VaryColour => "Vary colour",
             Setup::RandomPlacement => "Random placement",
             Setup::StochasticTiling => "Stochastic tiling",
+            Setup::Falloff => "Falloff",
+            Setup::TopBottom => "Top and bottom",
+            Setup::Override => "Override",
+            Setup::ColourCorrection => "Colour correction",
+            Setup::Distort => "Distort",
+            Setup::WornEdges => "Worn edges",
+            Setup::Dirt => "Dirt",
         }
     }
 
@@ -155,6 +195,13 @@ impl Setup {
             Setup::VaryColour => "variation vary hue per object part random colour color VRayMultiSubTex",
             Setup::RandomPlacement => "VRayUVWRandomizer UVW randomizer randomize random offset rotation per object part tiling",
             Setup::StochasticTiling => "stochastic tiling no repeat repeats seamless anti-tiling texture bombing randomize VRayUVWRandomizer VRayBitmap image bitmap",
+            Setup::Falloff => "falloff VRayFalloff fresnel perpendicular parallel facing rim edge velvet towards away",
+            Setup::TopBottom => "top bottom Top/Bottom snow dust moss wet up facing normal blend",
+            Setup::Override => "VRayOverrideMtl override reflection refraction GI bounce shadow camera ray switch",
+            Setup::ColourCorrection => "color colour correction ColorCorrection Output map tint hue saturation brightness contrast gamma levels curves VRayColor",
+            Setup::Distort => "distortion distort warp turbulence BerconDistortion VRayBerconDistortion coordinates wobble",
+            Setup::WornEdges => "worn edges edge wear chipped paint scratched VRayDirt inverted normal VRayCurvature mask",
+            Setup::Dirt => "dirt VRayDirt grime streaks crevice creases ambient occlusion AO dust rain mask",
         }
     }
 
@@ -167,6 +214,13 @@ impl Setup {
             Setup::VaryColour => "A colour made a little different on each part, in hue and in lightness: wire it into the material's Color, and set how far in the two Map Ranges.",
             Setup::RandomPlacement => "Coordinates moved and turned differently for each part: wire them into a texture's Vector, and parts that share the material no longer share its pattern.",
             Setup::StochasticTiling => "A picture tiled without its repeats showing: read three times, in patches that each start from a place of their own in it, and blended where the patches meet. Choose the picture on the three Images, and wire the last Mix where the picture went.",
+            Setup::Falloff => "A colour that goes from one, where the surface is seen straight on, to another, where it is seen edge on: the sheen of velvet, the rim of a pearl, a coating that shows at a glancing angle. Set the two colours in the Mix, how soon it turns in the Layer Weight's Blend, and wire the Mix into the material's Color.",
+            Setup::TopBottom => "Another surface on whatever faces up: snow, dust, a wet top. The Map Range sets how far round the side it comes, and the Top is a Shader of its own.",
+            Setup::Override => "Another surface for everything but the camera: reflections, glass and bounced light see the Shader, the camera sees the material. A bright product that should not tint the floor; a plain stand-in in a mirror.",
+            Setup::ColourCorrection => "A colour through hue, saturation and value, then brightness and contrast, then gamma. Wire a texture in place of Colour in, and the Gamma into the material's Color.",
+            Setup::Distort => "Coordinates pushed about by a noise: wire Distorted into a texture's Vector or an Image's Coordinates and what is read there is warped. Strength's Scale says how far; the Noise Texture's Scale how fine.",
+            Setup::WornEdges => "A mask of the part's edges, broken up by a noise: 1 where paint has chipped, 0 where it holds. Wire it into the Factor of a Mix of two colours, or of a Mix Shader with the metal under the paint.",
+            Setup::Dirt => "A mask of the part's creases, broken into streaks that run down it: 1 where dirt has gathered. Wire it into the Factor of a Mix of the colour and the dirt's, or into Roughness.",
         }
     }
 }
@@ -234,9 +288,18 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
             .into_iter()
             .filter(|kind| kind.category() == category)
             .filter_map(|kind| {
-                let label = kind.label().to_string();
-                let score = found(&label)?;
-                let item = Item::Node(NodeKind::Shader(Box::new(kind.defaults())), Some(label.clone()));
+                let name = kind.label().to_string();
+                // By its own name, or by one it goes by elsewhere - which
+                // the row then says, as a node found so does.
+                let (label, score) = match found(&name) {
+                    Some(score) => (name.clone(), score),
+                    None if searching => {
+                        let (other, score) = super::aliases::of_material(kind).iter().filter_map(|other| Some((other, found(other)?))).max_by_key(|(_, score)| *score)?;
+                        (format!("{name} › {other}"), score - 8)
+                    }
+                    None => return None,
+                };
+                let item = Item::Node(NodeKind::Shader(Box::new(kind.defaults())), Some(name));
                 Some((Row { label, family: Some(Family::Surface), item, current: false }, score))
             })
             .collect();
@@ -247,7 +310,7 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
         let score = if searching { [setup.label(), setup.words()].into_iter().filter_map(&found).max()? } else { 0 };
         Some((Row { label: setup.label().to_string(), family: Some(Family::Surface), item: Item::Setup(setup), current: false }, score))
     };
-    push(Group::Materials, Some("Layered"), [Setup::Blend, Setup::TwoSided].into_iter().filter_map(setup).collect());
+    push(Group::Materials, Some("Layered"), [Setup::Blend, Setup::TwoSided, Setup::TopBottom, Setup::Override].into_iter().filter_map(setup).collect());
 
     // Maps, then the rest, each family under its own heading.
     let families = |group: Group| -> &'static [Family] {
@@ -258,9 +321,13 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
     };
     for group in [Group::Maps, Group::Utilities] {
         for &family in families(group) {
-            let rows = entries
+            // A node found by its own name is not found again by another:
+            // "noise" is Noise Texture, not that and BerconNoise beside it.
+            let by_name: Vec<&NodeKind> = entries.iter().filter(|entry| searching && !entry.search_only && entry.family == family && found(&entry.label).is_some()).map(|entry| &entry.kind).collect();
+            let mut rows: Vec<(Row, i32)> = entries
                 .iter()
                 .filter(|entry| entry.family == family)
+                .filter(|entry| !(entry.search_only && by_name.contains(&&entry.kind)))
                 // The plain Shader is the Materials group, a kind at a time.
                 .filter(|entry| !matches!(entry.kind, NodeKind::Shader(_)))
                 .filter(|entry| searching || !entry.search_only)
@@ -276,12 +343,26 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
                     Some((Row { label, family: Some(family), item: Item::Node(entry.kind.clone(), None), current: false }, score))
                 })
                 .collect();
+            // And by two of its other names at once, it is one row: the
+            // better find.
+            if searching {
+                rows.sort_by(|a, b| b.1.cmp(&a.1));
+                let mut kept: Vec<(Row, i32)> = Vec::with_capacity(rows.len());
+                for row in rows {
+                    if !kept.iter().any(|(other, _)| other.item == row.0.item) {
+                        kept.push(row);
+                    }
+                }
+                rows = kept;
+            }
             push(group, Some(family.label()), rows);
         }
         if group == Group::Maps {
             push(Group::Maps, Some("Layered"), [Setup::Composite].into_iter().filter_map(setup).collect());
             push(Group::Maps, Some("Per part"), [Setup::RandomColour, Setup::VaryColour, Setup::RandomPlacement].into_iter().filter_map(setup).collect());
-            push(Group::Maps, Some("Tiling"), [Setup::StochasticTiling].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Placement"), [Setup::StochasticTiling, Setup::Distort].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Colour"), [Setup::Falloff, Setup::ColourCorrection].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Wear"), [Setup::WornEdges, Setup::Dirt].into_iter().filter_map(setup).collect());
         }
     }
 
@@ -546,6 +627,77 @@ mod tests {
         sections.iter().filter(|s| s.group == group).flat_map(|s| s.rows.iter().map(|r| r.label.clone())).collect()
     }
 
+    /// What someone from 3ds Max and V-Ray types finds what Tequila has for
+    /// it, under Tequila's name with theirs beside it; and every name in
+    /// the table points at something that is there.
+    #[test]
+    fn the_names_of_3ds_max_and_vray_find_their_counterparts() {
+        let entries = entries();
+        for (label, _) in super::super::aliases::NODES {
+            assert!(entries.iter().any(|e| !e.search_only && e.label == *label), "nothing in the Add menu is called {label}");
+        }
+        let finds = |query: &str, group: Group, wanted: &str| {
+            let found = sections(&entries, &[], &[], None, query);
+            assert!(labels(&found, group).iter().any(|l| l.starts_with(wanted)), "{query} does not find {wanted} among {group:?}: {:?}", labels(&found, group));
+        };
+        for (query, wanted) in [
+            ("VRayMtl", "Generic"),
+            ("Physical Material", "Generic"),
+            ("VRayCarPaintMtl", "Metallic Paint"),
+            ("VRayLightMtl", "Emissive"),
+            ("VRayFastSSS2", "Translucent"),
+            ("VRayToonMtl", "Toon"),
+            ("VRayMtlWrapper", "Ground"),
+            ("VRayBlendMtl", Setup::Blend.label()),
+            ("VRay2SidedMtl", Setup::TwoSided.label()),
+            ("VRayOverrideMtl", Setup::Override.label()),
+            ("Top/Bottom", Setup::TopBottom.label()),
+        ] {
+            finds(query, Group::Materials, wanted);
+        }
+        for (query, wanted) in [
+            ("VRayNoiseTex", "Noise Texture"),
+            ("Gradient Ramp", "Gradient Texture"),
+            ("VRayBerconTile", "Brick Texture"),
+            ("Perlin Marble", "Marble"),
+            ("Advanced Wood", "Wood (Advanced)"),
+            ("carbon fibre", "Weave"),
+            ("VRayCompTex", Setup::Composite.label()),
+            ("VRayMultiSubTex", Setup::RandomColour.label()),
+            ("VRayUVWRandomizer", Setup::StochasticTiling.label()),
+            ("Falloff", Setup::Falloff.label()),
+            ("Color Correction", Setup::ColourCorrection.label()),
+            ("BerconDistortion", Setup::Distort.label()),
+            ("VRayDirt", Setup::Dirt.label()),
+            ("chipped", Setup::WornEdges.label()),
+        ] {
+            finds(query, Group::Maps, wanted);
+        }
+        for (query, wanted) in [
+            ("UVW Map", "Projection"),
+            ("VRayTriplanarTex", "Projection"),
+            ("VRayDirt", "Occlusion"),
+            ("VRayCurvature", "Curvature"),
+            ("VRayDistanceTex", "Distance"),
+            ("VRayUserColor", "Object Info"),
+            ("VRayColor", "RGB"),
+            ("Color Correction", "Hue / Saturation / Value"),
+            ("VRayColor2Bump", "Bump"),
+            ("VRayFur", "Fuzz"),
+            ("remap", "Map Range"),
+        ] {
+            finds(query, Group::Utilities, wanted);
+        }
+        // Found by another name, the row says which.
+        let found = sections(&entries, &[], &[], None, "VRayDirt");
+        assert!(labels(&found, Group::Utilities).iter().any(|l| l == "Occlusion › VRayDirt"), "{:?}", labels(&found, Group::Utilities));
+        let found = sections(&entries, &[], &[], None, "VRayMtl");
+        assert!(labels(&found, Group::Materials).iter().any(|l| l == "Generic › VRayMtl"), "{:?}", labels(&found, Group::Materials));
+        // And by its own, it is itself.
+        let found = sections(&entries, &[], &[], None, "generic");
+        assert!(labels(&found, Group::Materials).iter().any(|l| l == "Generic"));
+    }
+
     /// The browser is the Add menu's list, grouped as a Max user looks for
     /// it: every node the menu lists is in Maps or Utilities once, the
     /// Materials are a Shader of each kind, and the scene's are last.
@@ -569,7 +721,7 @@ mod tests {
         assert!(labels(&sections, Group::Utilities).iter().any(|l| l == "Math"));
 
         let kinds = labels(&sections, Group::Materials);
-        assert_eq!(kinds.len(), MaterialType::ALL.len() + 2, "a Shader of each kind, and the two layered setups");
+        assert_eq!(kinds.len(), MaterialType::ALL.len() + 4, "a Shader of each kind, and the four layered setups");
         assert!(kinds.iter().any(|l| l == Setup::Blend.label()) && kinds.iter().any(|l| l == Setup::TwoSided.label()));
         assert!(labels(&sections, Group::Maps).iter().any(|l| l == Setup::Composite.label()));
         let glass = sections.iter().flat_map(|s| &s.rows).find(|r| r.label == MaterialType::Glass.label()).expect("glass");

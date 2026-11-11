@@ -96,10 +96,26 @@ pub fn entries(project: &Project) -> Vec<Entry> {
     // Layout.
     add("Reroute", NodeKind::Reroute { ty: SocketType::Color });
 
-    // Search only: the operations inside a node, each a node already set.
+    // Search only: other names for a node, and the operations inside one,
+    // each a node already set.
+    // A node by the names it goes by elsewhere, and by what it is for.
+    let named: Vec<(&'static str, NodeKind, &'static str)> = super::aliases::NODES
+        .iter()
+        .filter_map(|(label, names)| out.iter().find(|entry| !entry.search_only && entry.label == *label).map(|entry| (*label, entry.kind.clone(), *names)))
+        .flat_map(|(label, kind, names)| names.iter().map(move |name| (label, kind.clone(), *name)))
+        .collect();
     let mut variant = |parent: &'static str, label: &str, kind: NodeKind| {
         out.push(Entry { label: label.into(), parent: Some(parent), family: family(&kind), kind, search_only: true });
     };
+    for (label, kind, name) in named {
+        variant(label, name, kind);
+    }
+    for node in ShaderNode::catalog() {
+        let label = if matches!(node, ShaderNode::Mix { .. }) { "Mix Color" } else { node.menu_label() };
+        for word in node.keywords().split_whitespace() {
+            variant(label, word, NodeKind::Node(node));
+        }
+    }
     // A group by what it is for: "3d print" finds the layer lines.
     for &group in tequila_materials::groups::NodeGroup::ALL {
         for words in group.keywords().split(", ") {

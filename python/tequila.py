@@ -375,9 +375,10 @@ class Client:
         Material Graph editor's browser, which shows it),
         graph_bring={'library': '<name>'} or {'material': n} (that
         material brought into the open graph whole, as a Shader with its
-        nodes) or {'setup': 'blend'|'two_sided'|'composite'|'random_colour'|
-        'vary_colour'|'random_placement'|'stochastic_tiling'} (that
-        setup's nodes added, wired)."""
+        nodes) or {'setup': 'blend'|'two_sided'|'top_bottom'|'override'|
+        'composite'|'random_colour'|'vary_colour'|'random_placement'|
+        'stochastic_tiling'|'distort'|'falloff'|'colour_correction'|
+        'worn_edges'|'dirt'} (that setup's nodes added, wired)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):
