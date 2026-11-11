@@ -1,0 +1,101 @@
+{
+  "base_color": [0.11845234, 0.12649722, 0.13668072],
+  "base_metalness": 0.55,
+  "category": "Paint",
+  "edge_radius": 0.0003,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "group": "hammered",
+        "id": 2,
+        "kind": "group",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 4.5
+            }
+          }
+        ],
+        "position": [0, 0]
+      },
+      {
+        "depth": 0.00008,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.2
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.8
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.34
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.22
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Hammertone Grey",
+  "specular_roughness": 0.28,
+  "tags": [
+    "hammertone",
+    "hammer finish",
+    "hammered paint",
+    "chassis",
+    "grey"
+  ],
+  "type": "generic"
+}
+
