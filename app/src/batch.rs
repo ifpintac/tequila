@@ -2006,6 +2006,8 @@ mod tests {
                 disc: false,
                 two_sided: false,
                 spread: std::f32::consts::PI,
+                falloff: 0.0,
+                fade: 0.0,
             })),
         ];
         for (i, lamp) in lamps.into_iter().enumerate() {
@@ -4230,6 +4232,8 @@ mod tests {
                     disc: false,
                     two_sided: false,
                     spread: degrees.to_radians(),
+                    falloff: 0.0,
+                    fade: 0.0,
                 }));
                 *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![panel])));
             }
@@ -4243,6 +4247,105 @@ mod tests {
             assert!((cycles / tequila - 1.0).abs() < 0.1, "the {name} softbox lit {cycles:.0} in Cycles, {tequila:.0} in Tequila's renderer");
         }
         assert!(gridded[0] > 1.2 * plain[0] && gridded[1] > 1.2 * plain[1], "a grid gathered no light into its beam: {plain:?} to {gridded:?}");
+    }
+
+    /// A softbox's falloff and fade show in Cycles as in Tequila's renderer:
+    /// a mirror-smooth floor mirrors a softbox the camera does not see, dimmer
+    /// at its edges than its middle and fading from its top to its bottom
+    /// against an even panel, by as much in both; and the softbox lights the
+    /// sphere as brightly as the even panel does, in both. Cycles' area
+    /// lights are evenly bright, and are given the face by a shader
+    /// (`translate`'s `softbox_shader`). Skipped where Cycles is not
+    /// installed.
+    #[test]
+    fn a_softboxs_falloff_and_fade_show_alike_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_render_core::environment::Environment;
+        use tequila_render_core::light::{AreaLight, Light, LightKind, LightSet, Visibility};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let (falloff, fade) = (0.7, 0.6);
+        let folder = scratch("tequila-softbox-face");
+        let size = (640, 420);
+        // Turned over and two-sided, the floor mirrors its back face, which
+        // Cycles lays out the other way round.
+        let mirror = |falloff: f32, fade: f32, back: bool| {
+            let (scene, camera) = softbox_over_a_glossy_floor(0.0, false);
+            let mut softbox = Light { visibility: Visibility::HIDDEN, ..dimmed(&scene.lights.lights()[0]) };
+            if let LightKind::Area(area) = &mut softbox.kind {
+                (area.falloff, area.fade) = (falloff, fade);
+                if back {
+                    area.half_u = -area.half_u;
+                    area.two_sided = true;
+                }
+            }
+            (scene.with_lights(Arc::new(LightSet::new(vec![softbox]))), camera)
+        };
+        // Where the floor mirrors the softbox's middle, near its left edge,
+        // and near its top and bottom ends: its face at `su, sv` of (0, 0),
+        // (-0.8, 0), (0, 0.8) and (0, -0.8).
+        let even = mirror(0.0, 0.0, false);
+        let at = |su: f32, sv: f32| mirrored_box(&even, vec3(0.15 * su, 0.1 + 0.08 * sv, -0.5), size);
+        let (at_middle, at_edge, at_top, at_bottom) = (at(0.0, 0.0), at(-0.8, 0.0), at(0.0, 0.8), at(0.0, -0.8));
+        let narrow = |(x0, y0, x1, y1): (usize, usize, usize, usize)| (x0 + (x1 - x0) / 3, y0 + (y1 - y0) / 3, x1 - (x1 - x0) / 3, y1 - (y1 - y0) / 3);
+        for back in [false, true] {
+            let side = if back { "back" } else { "front" };
+            let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+                let measure = |name: &str, scene: &(tequila_render_core::scene::SceneSnapshot, Camera)| {
+                    let image = picture_into(&folder, &format!("{name}-{side}-{}", engine.key()), scene, engine, IntegratorConfig::product(), None, 64, size);
+                    [at_middle, at_edge, at_top, at_bottom].map(|b| box_mean(&image, size.0, narrow(b)))
+                };
+                let plain = measure("even", &mirror(0.0, 0.0, back));
+                let soft = measure("softbox", &mirror(falloff, fade, back));
+                // Against the even panel, so the floor's own falloff with
+                // angle is no part of it.
+                let edge = (soft[1] / soft[0]) / (plain[1] / plain[0]);
+                let ends = (soft[2] / soft[3]) / (plain[2] / plain[3]);
+                println!("{} {side}: even {plain:.1?}, softbox {soft:.1?}: edge against middle {edge:.2}, top against bottom {ends:.2}", engine.key());
+                assert!(plain[0] > 20.0 && plain[0] < 235.0, "{} {side}: the even softbox's reflection is {:.1}", engine.key(), plain[0]);
+                assert!(edge < 0.85, "{} {side}: the softbox's edge is {edge:.2} of its middle, against the even panel's", engine.key());
+                assert!(ends > 1.15, "{} {side}: the softbox's top is {ends:.2} of its bottom, against the even panel's", engine.key());
+                [edge, ends]
+            });
+            for (name, t, c) in [("edge against middle", tequila[0], cycles[0]), ("top against bottom", tequila[1], cycles[1])] {
+                assert!((t / c - 1.0).abs() < 0.06, "{side}, {name}: {t:.3} in Tequila's renderer, {c:.3} in Cycles");
+            }
+        }
+
+        // The light it gives is the light an even panel gives.
+        let lit = |falloff: f32, fade: f32| {
+            move |scene: &mut tequila_render_core::scene::SceneSnapshot| {
+                scene.environment = Arc::new(Environment::uniform(Spectrum::ZERO));
+                let position = vec3(1.6, 2.6, 2.4);
+                let facing = (vec3(0.0, 1.0, 0.0) - position).normalize();
+                let half_u = Vec3::Y.cross(facing).normalize() * 0.4;
+                let half_v = facing.cross(half_u).normalize() * 0.3;
+                let panel = Light::new(LightKind::Area(AreaLight {
+                    position,
+                    half_u,
+                    half_v,
+                    radiance: Spectrum::splat(4.0),
+                    disc: false,
+                    two_sided: false,
+                    spread: std::f32::consts::PI,
+                    falloff,
+                    fade,
+                }));
+                *scene = scene.clone().with_lights(Arc::new(LightSet::new(vec![panel])));
+            }
+        };
+        let total = |image: &[u8]| image.chunks_exact(4).map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>();
+        let plain = both_engines("softbox-even", lit(0.0, 0.0)).map(|i| total(&i));
+        let soft = both_engines("softbox-falloff", lit(falloff, -fade)).map(|i| total(&i));
+        println!("the sphere lit: even Tequila {:.0}, Cycles {:.0}; softbox Tequila {:.0}, Cycles {:.0}", plain[0], plain[1], soft[0], soft[1]);
+        for engine in 0..2 {
+            assert!(plain[engine] > 1000.0, "the even panel lit nothing");
+            assert!((soft[engine] / plain[engine] - 1.0).abs() < 0.04, "the softbox lit {:.0} where the even panel lit {:.0}", soft[engine], plain[engine]);
+        }
+        assert!((soft[1] / soft[0] - 1.0).abs() < 0.1, "the softbox lit {:.0} in Cycles, {:.0} in Tequila's renderer", soft[1], soft[0]);
     }
 
     /// Orthographic, shifted and panoramic cameras frame the sphere in Cycles
@@ -7094,6 +7197,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }));
         let mut scene = SceneSnapshot::new(meshes, instances, vec![glossy, clear, scent, gold], Arc::new(Environment::uniform(Spectrum::splat(0.35))))
             .with_lights(Arc::new(LightSet::new(vec![softbox])));
@@ -7143,6 +7248,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }));
         let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.1))))
             .with_lights(Arc::new(LightSet::new(vec![softbox])));
@@ -7524,6 +7631,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }));
         let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.025))))
             .with_lights(Arc::new(LightSet::new(vec![spot, softbox])));
@@ -7587,6 +7696,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }));
         let materials = vec![pale, clear, red, white];
         let mut scene = SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.04))))

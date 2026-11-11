@@ -462,6 +462,8 @@ fn a_lens_focuses_a_lamp_as_path_tracing_finds_it() {
         disc: false,
         two_sided: false,
         spread: std::f32::consts::PI,
+        falloff: 0.0,
+        fade: 0.0,
     }));
     let glow = Material { emission_color: Spectrum::ONE, emission_luminance: radiance, ..MaterialType::Emissive.defaults() };
     let panel = Mesh::new(vec![vec3(-half, y, -half), vec3(half, y, -half), vec3(half, y, half), vec3(-half, y, half)], vec![0, 1, 2, 0, 2, 3])
@@ -547,6 +549,8 @@ fn a_caustic_shows_on_a_shadow_catcher() {
         disc: false,
         two_sided: false,
         spread: std::f32::consts::PI,
+        falloff: 0.0,
+        fade: 0.0,
     }));
     let mut ball = tequila_scene::demo::uv_sphere(0.5, 96, 48);
     for p in &mut ball.positions {

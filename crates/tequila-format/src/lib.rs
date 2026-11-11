@@ -1813,6 +1813,12 @@ pub(crate) fn light_to_json(settings: &LightSettings) -> Value {
     if settings.spread_degrees < 180.0 {
         object.set("spread_degrees", settings.spread_degrees);
     }
+    if settings.edge_falloff > 0.0 {
+        object.set("edge_falloff", settings.edge_falloff);
+    }
+    if settings.fade != 0.0 {
+        object.set("fade", settings.fade);
+    }
     object.build()
 }
 
@@ -1887,6 +1893,8 @@ pub(crate) fn read_light(value: &Value) -> LightSettings {
     settings.links = value.get("links").map(read_linking);
     settings.shadow_links = value.get("shadow_links").map(read_linking);
     settings.spread_degrees = number("spread_degrees", 180.0).clamp(1.0, 180.0);
+    settings.edge_falloff = number("edge_falloff", 0.0).clamp(0.0, 1.0);
+    settings.fade = number("fade", 0.0).clamp(-1.0, 1.0);
     settings.visibility = Visibility {
         camera: flag("visible_to_camera", true),
         diffuse: flag("affects_diffuse", true),
@@ -4057,6 +4065,18 @@ mod light_link_tests {
         assert_eq!(read_light(&light_to_json(&gridded)), gridded);
         let plain = json_write::to_string(&light_to_json(&LightSettings::default()));
         assert!(!plain.contains("spread"), "{plain}");
+    }
+
+    /// A softbox's falloff and a graduated fade are kept, a fade the other
+    /// way too, and an even panel writes neither.
+    #[test]
+    fn an_area_lights_falloff_and_fade_survive_a_round_trip() {
+        for fade in [0.6, -0.4] {
+            let softbox = LightSettings { edge_falloff: 0.55, fade, ..LightSettings::default() };
+            assert_eq!(read_light(&light_to_json(&softbox)), softbox);
+        }
+        let even = json_write::to_string(&light_to_json(&LightSettings::default()));
+        assert!(!even.contains("falloff") && !even.contains("fade"), "{even}");
     }
 
     /// Shadow links are kept beside the light's own, and apart from them.

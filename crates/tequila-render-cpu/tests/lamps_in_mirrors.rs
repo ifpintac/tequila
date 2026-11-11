@@ -76,7 +76,7 @@ fn a_mirror_shows_a_disc_lamp_as_the_disc_it_is() {
     let across = Vec3::X;
     let up = (-mirrored).cross(across).normalize();
     let (half_u, half_v) = if (across * 0.4).cross(up * 0.4).dot(-mirrored) > 0.0 { (across * 0.4, up * 0.4) } else { (up * 0.4, across * 0.4) };
-    let lamp = AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(10.0), disc: true, two_sided: false, spread: std::f32::consts::PI };
+    let lamp = AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(10.0), disc: true, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 };
     let lamp_scene = {
         let square = Mesh::new(vec![at - half_u - half_v, at + half_u - half_v, at + half_u + half_v, at - half_u + half_v], vec![0, 1, 2, 0, 2, 3])
             .with_normals(vec![-mirrored; 4]);

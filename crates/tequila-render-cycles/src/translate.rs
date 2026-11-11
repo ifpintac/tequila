@@ -4281,7 +4281,10 @@ impl Builder<'_> {
                                 m[row * 4 + 2] = -m[row * 4 + 2];
                             }
                         }
-                        let node = self.session.light("area", shader, &m, visibility)?;
+                        // An uneven face, a softbox's falloff or a fade, by a
+                        // shader of its own; the plain white one otherwise.
+                        let face = if area.is_even() { shader } else { self.softbox_shader(area, side < 0.0)? };
+                        let node = self.session.light("area", face, &m, visibility)?;
                         self.session.set_float(node, "size", 1.0)?;
                         self.session.set_float(node, "sizeu", len_u)?;
                         self.session.set_float(node, "sizev", len_v)?;
@@ -4454,6 +4457,54 @@ impl Builder<'_> {
         let emission = self.session.node(shader, "emission")?;
         self.session.set_float3(emission, "color", [1.0, 1.0, 1.0])?;
         self.session.connect(shader, ies, "Fac", emission, "Strength")?;
+        let output = self.session.node(shader, "output")?;
+        self.session.connect(shader, emission, "Emission", output, "Surface")?;
+        self.session.commit(shader)
+    }
+
+    /// An area light's face lit unevenly, a softbox's falloff to its edges
+    /// and a graduated fade: Tequila's `AreaLight::face`, as a shader the
+    /// light's strength is multiplied by.
+    ///
+    /// Cycles hands a light's shader the point it is lit at as the Geometry
+    /// node's Parametric, which on an area light is `(u + 1/2, v + 1/2)`
+    /// across its own X and Y, each 0 to 1 from edge to edge (`area.h`'s
+    /// barycentrics, `1 - u - v` and `u`). [`Self::lights`] lays Cycles' X
+    /// along Tequila's `half_v` and its Y along `half_u`, and turns the back
+    /// face of a two-sided panel over about Y, so X runs the other way there.
+    fn softbox_shader(&mut self, area: &tequila_render_core::light::AreaLight, back: bool) -> Result<Node, String> {
+        let shader = self.session.shader("softbox")?;
+        let geometry = self.session.node(shader, "geometry")?;
+        let split = self.session.node(shader, "separate_xyz")?;
+        self.session.connect(shader, geometry, "Parametric", split, "Vector")?;
+        let (x, y) = (Slot::Link(split, "X"), Slot::Link(split, "Y"));
+        // Tequila's su and sv, each -1 to 1.
+        let sv = if back { self.madd(shader, x, num(-2.0), num(1.0))? } else { self.madd(shader, x, num(2.0), num(-1.0))? };
+        let su = self.madd(shader, y, num(2.0), num(-1.0))?;
+        let falloff = area.falloff.clamp(0.0, 1.0);
+        let fade = area.fade.clamp(-1.0, 1.0);
+        let (edge, edge_mean) = if area.disc {
+            let r2 = self.mul(shader, sv, sv)?;
+            let r2 = self.madd(shader, su, su, r2)?;
+            let r2 = self.float_op(shader, "minimum", r2, num(1.0))?;
+            (self.madd(shader, r2, num(-falloff), num(1.0))?, 1.0 - 0.5 * falloff)
+        } else {
+            let u2 = self.mul(shader, su, su)?;
+            let a = self.madd(shader, u2, num(-falloff), num(1.0))?;
+            let v2 = self.mul(shader, sv, sv)?;
+            let b = self.madd(shader, v2, num(-falloff), num(1.0))?;
+            let mean = 1.0 - falloff / 3.0;
+            (self.mul(shader, a, b)?, mean * mean)
+        };
+        // `1 - |g| (1 - sv sign(g)) / 2`: one at the bright end.
+        let g = fade.abs();
+        let ramp = self.madd(shader, sv, num(0.5 * g * fade.signum()), num(1.0 - 0.5 * g))?;
+        let face = self.mul(shader, edge, ramp)?;
+        let face = self.mul(shader, face, num(1.0 / (edge_mean * (1.0 - 0.5 * g)).max(1e-3)))?;
+        let face = self.float_op(shader, "maximum", face, num(0.0))?;
+        let emission = self.session.node(shader, "emission")?;
+        self.session.set_float3(emission, "color", [1.0, 1.0, 1.0])?;
+        self.feed(shader, emission, "Strength", face, false)?;
         let output = self.session.node(shader, "output")?;
         self.session.connect(shader, emission, "Emission", output, "Surface")?;
         self.session.commit(shader)

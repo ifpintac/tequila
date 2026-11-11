@@ -159,6 +159,62 @@ pub fn render_thumbnail_textured(
     environment: Arc<Environment>,
     settings: PreviewSettings,
 ) -> Result<Thumbnail, String> {
+    // Glass and clear plastic reflect a few percent and refract the rest, and
+    // which a sample does is chosen at random, so the reflection of a light
+    // arrives as a few very bright samples among many dark ones: at a
+    // thumbnail's sample count it is thirty-percent noise, which the
+    // denoiser smears into blotches. Twice the resolution and three times the
+    // samples puts twelve times the samples behind every pixel the tile
+    // shows, and gives the denoiser room; the tile is drawn at its own size,
+    // so the extra resolution costs nothing on screen. For the few clear
+    // materials only — everything else converges at the plain count.
+    let transmissive = graph.material().transmission_weight > 0.0;
+    let (size, samples) = if transmissive {
+        (settings.size * 2, settings.samples * 3)
+    } else {
+        (settings.size, settings.samples)
+    };
+    let mut picture = None;
+    render_steps(device, graph, textures, environment, PreviewSettings { size, ..settings }, &[samples], |thumbnail, _| {
+        picture = Some(thumbnail);
+        true
+    })?;
+    picture.ok_or_else(|| "a preview of no samples".to_string())
+}
+
+/// The same picture, handed over as it comes, for a swatch somebody is
+/// watching: after each of `steps` more samples a pixel, `each` is given the
+/// picture so far and the samples behind it, and says whether to go on.
+///
+/// One picture at the size asked for, added to, where the swatch beside the
+/// graph rendered a small rough one and then the whole clean one, and showed
+/// the rough one blown up for the three to fifteen seconds that took. A clear
+/// material gets three times the samples in each step and no more pixels:
+/// the size is the screen's, and there is nothing to scale down into.
+pub fn render_thumbnail_in_steps(
+    device: &Arc<Device>,
+    graph: &MaterialGraph,
+    textures: Arc<TextureTable>,
+    environment: Arc<Environment>,
+    settings: PreviewSettings,
+    steps: &[u32],
+    each: impl FnMut(Thumbnail, u32) -> bool,
+) -> Result<(), String> {
+    let scale = if graph.material().transmission_weight > 0.0 { 3 } else { 1 };
+    let steps: Vec<u32> = steps.iter().map(|s| s * scale).collect();
+    render_steps(device, graph, textures, environment, settings, &steps, each)
+}
+
+/// The preview scene at `settings.size`, `steps` samples at a time.
+fn render_steps(
+    device: &Arc<Device>,
+    graph: &MaterialGraph,
+    textures: Arc<TextureTable>,
+    environment: Arc<Environment>,
+    settings: PreviewSettings,
+    steps: &[u32],
+    mut each: impl FnMut(Thumbnail, u32) -> bool,
+) -> Result<(), String> {
     let material = graph.material();
     let radius = if settings.radius.is_finite() && settings.radius > 0.0 { settings.radius } else { PREVIEW_RADIUS };
     let mut scene = preview_scene(material, settings.shape, environment, radius, settings.uv_unit);
@@ -187,21 +243,7 @@ pub fn render_thumbnail_textured(
     }
     let intersector = EmbreeIntersector::build(device, scene)?;
 
-    // Glass and clear plastic reflect a few percent and refract the rest, and
-    // which a sample does is chosen at random, so the reflection of a light
-    // arrives as a few very bright samples among many dark ones: at a
-    // thumbnail's sample count it is thirty-percent noise, which the
-    // denoiser smears into blotches. Twice the resolution and three times the
-    // samples puts twelve times the samples behind every pixel the tile
-    // shows, and gives the denoiser room; the tile is drawn at its own size,
-    // so the extra resolution costs nothing on screen. For the few clear
-    // materials only — everything else converges at the plain count.
-    let transmissive = material.transmission_weight > 0.0;
-    let (size, samples) = if transmissive {
-        (settings.size * 2, settings.samples * 3)
-    } else {
-        (settings.size, settings.samples)
-    };
+    let size = settings.size;
     let mut framebuffer = Framebuffer::new(size, size);
     let context = RenderContext {
         camera: preview_camera(radius),
@@ -219,16 +261,26 @@ pub fn render_thumbnail_textured(
         ..RenderContext::default()
     };
     let schedule = ProgressiveSchedule::default();
-    render_pass(&intersector, &mut framebuffer, &context, &schedule, samples);
-
-    let guides = framebuffer.to_denoiser_buffers();
-    Ok(Thumbnail {
-        width: size,
-        height: size,
-        pixels: guides.color,
-        albedo: guides.albedo,
-        normal: guides.normal,
-    })
+    let mut behind = 0;
+    for &samples in steps {
+        if samples == 0 {
+            continue;
+        }
+        render_pass(&intersector, &mut framebuffer, &context, &schedule, samples);
+        behind += samples;
+        let guides = framebuffer.to_denoiser_buffers();
+        let thumbnail = Thumbnail {
+            width: size,
+            height: size,
+            pixels: guides.color,
+            albedo: guides.albedo,
+            normal: guides.normal,
+        };
+        if !each(thumbnail, behind) {
+            break;
+        }
+    }
+    Ok(())
 }
 
 /// The preview sphere's radius, in metres: a ball five centimetres across,
@@ -636,6 +688,44 @@ mod tests {
                 "{shape:?} rendered black"
             );
         }
+    }
+
+    /// A swatch somebody is watching comes in steps: each is the picture so
+    /// far with more samples behind it than the last, the last is the
+    /// picture one pass of them all would have made, and a "no" stops it.
+    #[test]
+    fn a_preview_in_steps_adds_up_to_the_whole() {
+        let graph = MaterialGraph::from_material(MaterialType::Paint.defaults());
+        let settings = PreviewSettings { size: 32, samples: 24, radius: PREVIEW_RADIUS, shape: PreviewShape::Sphere, uv_unit: None };
+        let table = || Arc::new(TextureTable::new());
+        let mut seen: Vec<(u32, Thumbnail)> = Vec::new();
+        render_thumbnail_in_steps(&device(), &graph, table(), studio(), settings, &[2, 6, 16], |picture, behind| {
+            seen.push((behind, picture));
+            true
+        })
+        .expect("renders");
+        assert_eq!(seen.iter().map(|(behind, _)| *behind).collect::<Vec<_>>(), [2, 8, 24]);
+        assert_ne!(seen[0].1, seen[2].1, "more samples changed nothing");
+        let whole = render_thumbnail_textured(&device(), &graph, table(), studio(), settings).expect("renders");
+        assert_eq!(seen[2].1, whole, "the steps did not add up to the one pass");
+
+        let mut handed = 0;
+        render_thumbnail_in_steps(&device(), &graph, table(), studio(), settings, &[2, 6, 16], |_, _| {
+            handed += 1;
+            false
+        })
+        .expect("renders");
+        assert_eq!(handed, 1, "it went on after being told to stop");
+
+        // A clear material: three times the samples, at the size asked for.
+        let glass = MaterialGraph::from_material(MaterialType::Glass.defaults());
+        let mut clear = Vec::new();
+        render_thumbnail_in_steps(&device(), &glass, table(), studio(), settings, &[2, 6], |picture, behind| {
+            clear.push((behind, picture.width));
+            true
+        })
+        .expect("renders");
+        assert_eq!(clear, [(6, 32), (24, 32)]);
     }
 
     /// Rendering the same material twice must give the same image, or the
