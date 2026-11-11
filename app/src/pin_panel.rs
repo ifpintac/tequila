@@ -42,7 +42,6 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
     // File dialogs block, so they run after the layout pass: `Some(None)`
     // for a new image pin, `Some(Some(i))` to change pin `i`'s picture.
     let mut pick_picture: Option<Option<usize>> = None;
-    let mut export = false;
     let missing = project.missing_pin_images();
 
     crate::field::Fold::new(if pins.is_empty() { "Lighting pins".to_string() } else { format!("Lighting pins · {}", pins.len()) })
@@ -215,31 +214,6 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
             }
         });
 
-    crate::theme::rule(ui);
-    ui.horizontal(|ui| {
-        let id = ui.id().with("export width");
-        let mut width: usize = ui.data_mut(|d| *d.get_temp_mut_or(id, 4096usize));
-        export = ui
-            .button("Save as a lighting image…")
-            .on_hover_text(
-                "Write the environment with its pins painted in as an .exr or .hdr \
-                 file, for another application or to keep.",
-            )
-            .clicked();
-        egui::ComboBox::from_id_salt(id)
-            .selected_text(format!("{}K", width / 1024))
-            .width(52.0)
-            .show_ui(ui, |ui| {
-                for option in [1024usize, 2048, 4096, 8192] {
-                    ui.selectable_value(&mut width, option, format!("{}K", option / 1024));
-                }
-            });
-        ui.data_mut(|d| d.insert_temp(id, width));
-        if export {
-            export_hdri(project, width);
-        }
-    });
-
     if let Some(target) = pick_picture {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Picture", &tequila_texture::image::Image::DECODABLE)
@@ -285,6 +259,36 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
         project.end_interaction();
     }
     aim_request
+}
+
+/// The environment with its pins painted in, written out as a file: an
+/// .exr or .hdr for another application, at the width chosen beside it.
+pub fn export_row(ui: &mut egui::Ui, project: &mut Project) {
+    let mut export = false;
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let id = ui.id().with("export width");
+        let mut width: usize = ui.data_mut(|d| *d.get_temp_mut_or(id, 4096usize));
+        export = ui
+            .button("Save as a lighting image…")
+            .on_hover_text(
+                "Write the environment with its pins painted in as an .exr or .hdr \
+                 file, for another application or to keep.",
+            )
+            .clicked();
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(format!("{}K", width / 1024))
+            .width(52.0)
+            .show_ui(ui, |ui| {
+                for option in [1024usize, 2048, 4096, 8192] {
+                    ui.selectable_value(&mut width, option, format!("{}K", option / 1024));
+                }
+            });
+        ui.data_mut(|d| d.insert_temp(id, width));
+        if export {
+            export_hdri(project, width);
+        }
+    });
 }
 
 /// The map on its own, at the top of the Environment tab: the whole sky at a

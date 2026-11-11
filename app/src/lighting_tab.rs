@@ -103,7 +103,10 @@ impl LightingTab {
         }
 
         // Folded under the presets, which set all of it; open on Custom,
-        // where it is what there is to set.
+        // where it is what there is to set. A section like every page's,
+        // though it is this page's only one.
+        let mut page = crate::sections::Page::new(ui, "lighting");
+        page.section(ui, "settings", "Settings", |ui| {
         crate::field::Fold::new("Settings")
             .id_salt("lighting-transport")
             .default_open(custom)
@@ -220,6 +223,8 @@ impl LightingTab {
                     });
                 }
             });
+        });
+        page.finish(ui);
     }
 }
 
@@ -308,7 +313,7 @@ pub fn add_light_menu(ui: &mut egui::Ui, parent: Option<NodeId>) -> Option<Comma
 }
 
 /// The properties of the selected light, if the selection is one.
-pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
+pub fn light_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) -> bool {
     let Some(node) = project.selection.active() else {
         return false;
     };
@@ -321,178 +326,197 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
 
     crate::theme::section(ui, "Light");
     ui.add(crate::field::Checkbox::new(&mut light.enabled, "On"));
-
-    // ---- Shape ---------------------------------------------------------
-    match &mut light.shape {
-        LightShape::Area {
-            width,
-            height,
-            disc,
-            two_sided,
-        } => {
-            ui.add(
-                crate::field::Slider::new(width, 0.001..=1000.0)
-                    .text("Width")
-                    .logarithmic(true),
-            );
-            ui.add(
-                crate::field::Slider::new(height, 0.001..=1000.0)
-                    .text("Height")
-                    .logarithmic(true),
-            );
-            ui.add(crate::field::Checkbox::new(disc, "Elliptical"));
-            ui.add(crate::field::Checkbox::new(two_sided, "Two sided"));
-            ui.add(crate::field::Slider::new(&mut light.spread_degrees, 1.0..=180.0).text("Spread"))
-                .on_hover_text("How wide the light leaves the panel: 180 is a plain panel, less a softbox behind a grid, its light gathered into a narrower beam of the same power.");
-        }
-        LightShape::Point { radius } => {
-            ui.add(
-                crate::field::Slider::new(radius, 0.0..=100.0)
-                    .text("Radius")
-                    .logarithmic(true),
-            )
-            .on_hover_text("Zero is a true point, which casts a perfectly hard shadow.");
-        }
-        LightShape::Spot {
-            inner_degrees,
-            outer_degrees,
-            falloff,
-        } => {
-            ui.add(crate::field::Slider::new(outer_degrees, 1.0..=89.0).text("Cone angle"));
-            ui.add(
-                crate::field::Slider::new(inner_degrees, 0.0..=*outer_degrees).text("Inner angle"),
-            );
-            ui.add(crate::field::Slider::new(falloff, 0.1..=8.0).text("Falloff"));
-        }
-        LightShape::Sun { angle_degrees } => {
-            ui.add(crate::field::Slider::new(angle_degrees, 0.0..=30.0).text("Angle"))
-                .on_hover_text("How wide the sun's disc is. Zero casts perfectly hard shadows; the real sun is half a degree. Where the light is does not matter, only which way it points.");
-        }
-    }
-
-    // ---- Intensity ------------------------------------------------------
-    crate::theme::heading(ui, "Brightness");
-    let mut amount = light.intensity.value();
-    crate::field::row(ui, "Amount", |ui| {
-        let speed = amount.max(1.0) * 0.02;
-        ui.add_sized(
-            [ui.available_width().min(120.0), 26.0],
-            egui::DragValue::new(&mut amount)
-                .speed(speed)
-                .range(0.0..=f32::INFINITY)
-                .suffix(format!(" {}", light.intensity.unit())),
-        );
-    });
-    // The unit is part of the value, not a display option: 1500 lumens and
-    // 1500 nits are different lights, and switching the unit must keep the
-    // number the user typed rather than silently converting it into
-    // something they did not ask for.
-    let units = [
-        Intensity::Lumens(amount),
-        Intensity::Nits(amount),
-        Intensity::Candela(amount),
-        Intensity::Lux(amount),
-    ];
-    let mut unit = units.iter().position(|c| std::mem::discriminant(c) == std::mem::discriminant(&light.intensity)).unwrap_or(0);
-    let names: Vec<(usize, &str)> = units.iter().enumerate().map(|(i, c)| (i, c.unit())).collect();
-    if crate::field::choice(ui, "Measured in", &mut unit, &names) {
-        light.intensity = units[unit];
-    }
-    light.intensity = light.intensity.with_value(amount);
-
-    // ---- Colour ---------------------------------------------------------
-    crate::theme::heading(ui, "Colour");
-    let mut by_temperature = light.temperature.is_some();
-    if crate::field::choice(ui, "Set by", &mut by_temperature, &[(false, "Colour"), (true, "Temperature")]) {
-        light.temperature = by_temperature.then_some(5500.0);
-    }
-    match &mut light.temperature {
-        Some(kelvin) => {
-            ui.add(
-                crate::field::Slider::new(kelvin, 1500.0..=15000.0)
-                    .text("Temperature")
-                    .suffix(" K")
-                    .fixed_decimals(0)
-                    .logarithmic(true),
-            )
-            .on_hover_text("Warm candlelight is about 1900 K, a household bulb 2700 K, daylight 5500 K, an overcast sky 7000 K.");
-        }
-        None => {
-            crate::color_picker::field(ui, "Colour", &mut light.color);
-        }
-    }
-
-    // ---- Photometry (§5.1) ----------------------------------------------
-    // Not for a sun, which is not a fitting.
     ui.add_space(2.0);
-    let mut photometric = light.photometry.is_some();
-    if !matches!(light.shape, LightShape::Sun { .. }) && ui
-        .add(crate::field::Checkbox::new(&mut photometric, "Use a maker's light file (.ies)"))
-        .on_hover_text(
-            "Use a manufacturer's measured distribution — an .ies file — instead of \
-             the shape's own falloff. The shape still says where the light is and \
-             which way it points.",
-        )
-        .changed()
-    {
-        light.photometry = photometric.then(|| tequila_scene::lighting::Photometry {
-            path: String::new(),
-        });
-    }
-    if let Some(photometry) = &mut light.photometry {
-        let mut browse = false;
-        crate::field::row(ui, "File", |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                browse = ui.button("Choose…").clicked();
-                ui.add(
-                    egui::TextEdit::singleline(&mut photometry.path)
-                        .desired_width(f32::INFINITY)
-                        .hint_text(egui::RichText::new("No file").color(crate::theme::p().text_faint)),
+
+    // The sections, in the person's own order.
+    let mut page = crate::sections::Page::new(ui, "light");
+    for section in page.order() {
+        match section {
+            "shape" => page.section(ui, section, "Shape", |ui| {
+                crate::field::Fold::new("Shape").id_salt("light-shape").aside(light.shape.label()).default_open(true).show(ui, |ui| {
+                    match &mut light.shape {
+                        LightShape::Area {
+                            width,
+                            height,
+                            disc,
+                            two_sided,
+                        } => {
+                            ui.add(
+                                crate::field::Slider::new(width, 0.001..=1000.0)
+                                    .text("Width")
+                                    .logarithmic(true),
+                            );
+                            ui.add(
+                                crate::field::Slider::new(height, 0.001..=1000.0)
+                                    .text("Height")
+                                    .logarithmic(true),
+                            );
+                            ui.add(crate::field::Checkbox::new(disc, "Elliptical"));
+                            ui.add(crate::field::Checkbox::new(two_sided, "Two sided"));
+                            ui.add(crate::field::Slider::new(&mut light.spread_degrees, 1.0..=180.0).text("Spread"))
+                                .on_hover_text("How wide the light leaves the panel: 180 is a plain panel, less a softbox behind a grid, its light gathered into a narrower beam of the same power.");
+                        }
+                        LightShape::Point { radius } => {
+                            ui.add(
+                                crate::field::Slider::new(radius, 0.0..=100.0)
+                                    .text("Radius")
+                                    .logarithmic(true),
+                            )
+                            .on_hover_text("Zero is a true point, which casts a perfectly hard shadow.");
+                        }
+                        LightShape::Spot {
+                            inner_degrees,
+                            outer_degrees,
+                            falloff,
+                        } => {
+                            ui.add(crate::field::Slider::new(outer_degrees, 1.0..=89.0).text("Cone angle"));
+                            ui.add(
+                                crate::field::Slider::new(inner_degrees, 0.0..=*outer_degrees).text("Inner angle"),
+                            );
+                            ui.add(crate::field::Slider::new(falloff, 0.1..=8.0).text("Falloff"));
+                        }
+                        LightShape::Sun { angle_degrees } => {
+                            ui.add(crate::field::Slider::new(angle_degrees, 0.0..=30.0).text("Angle"))
+                                .on_hover_text("How wide the sun's disc is. Zero casts perfectly hard shadows; the real sun is half a degree. Where the light is does not matter, only which way it points.");
+                        }
+                    }
+
+                });
+            }),
+            "brightness" => page.section(ui, section, "Brightness", |ui| {
+                crate::field::Fold::new("Brightness").id_salt("light-brightness").default_open(true).show(ui, |ui| {
+                    let mut amount = light.intensity.value();
+                    crate::field::row(ui, "Amount", |ui| {
+                        let speed = amount.max(1.0) * 0.02;
+                        ui.add_sized(
+                            [ui.available_width().min(120.0), 26.0],
+                            egui::DragValue::new(&mut amount)
+                                .speed(speed)
+                                .range(0.0..=f32::INFINITY)
+                                .suffix(format!(" {}", light.intensity.unit())),
+                        );
+                    });
+                    // The unit is part of the value, not a display option: 1500 lumens and
+                    // 1500 nits are different lights, and switching the unit must keep the
+                    // number the user typed rather than silently converting it into
+                    // something they did not ask for.
+                    let units = [
+                        Intensity::Lumens(amount),
+                        Intensity::Nits(amount),
+                        Intensity::Candela(amount),
+                        Intensity::Lux(amount),
+                    ];
+                    let mut unit = units.iter().position(|c| std::mem::discriminant(c) == std::mem::discriminant(&light.intensity)).unwrap_or(0);
+                    let names: Vec<(usize, &str)> = units.iter().enumerate().map(|(i, c)| (i, c.unit())).collect();
+                    if crate::field::choice(ui, "Measured in", &mut unit, &names) {
+                        light.intensity = units[unit];
+                    }
+                    light.intensity = light.intensity.with_value(amount);
+
+                    // ---- Photometry (§5.1) ----------------------------------------------
+                    // Not for a sun, which is not a fitting.
+                    let mut photometric = light.photometry.is_some();
+                    if !matches!(light.shape, LightShape::Sun { .. }) && ui
+                        .add(crate::field::Checkbox::new(&mut photometric, "Use a maker's light file (.ies)"))
+                        .on_hover_text(
+                            "Use a manufacturer's measured distribution — an .ies file — instead of \
+                             the shape's own falloff. The shape still says where the light is and \
+                             which way it points.",
+                        )
+                        .changed()
+                    {
+                        light.photometry = photometric.then(|| tequila_scene::lighting::Photometry {
+                            path: String::new(),
+                        });
+                    }
+                    if let Some(photometry) = &mut light.photometry {
+                        let mut browse = false;
+                        crate::field::row(ui, "File", |ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                browse = ui.button("Choose…").clicked();
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut photometry.path)
+                                        .desired_width(f32::INFINITY)
+                                        .hint_text(egui::RichText::new("No file").color(crate::theme::p().text_faint)),
+                                );
+                            });
+                        });
+                        if browse {
+                            if let Some(file) = rfd::FileDialog::new().add_filter("Photometric file", &["ies"]).set_title("A light's measured spread").pick_file() {
+                                photometry.path = file.display().to_string();
+                            }
+                        }
+                    }
+
+                });
+            }),
+            "colour" => page.section(ui, section, "Colour", |ui| {
+                crate::field::Fold::new("Colour").id_salt("light-colour").default_open(true).show(ui, |ui| {
+                    let mut by_temperature = light.temperature.is_some();
+                    if crate::field::choice(ui, "Set by", &mut by_temperature, &[(false, "Colour"), (true, "Temperature")]) {
+                        light.temperature = by_temperature.then_some(5500.0);
+                    }
+                    match &mut light.temperature {
+                        Some(kelvin) => {
+                            ui.add(
+                                crate::field::Slider::new(kelvin, 1500.0..=15000.0)
+                                    .text("Temperature")
+                                    .suffix(" K")
+                                    .fixed_decimals(0)
+                                    .logarithmic(true),
+                            )
+                            .on_hover_text("Warm candlelight is about 1900 K, a household bulb 2700 K, daylight 5500 K, an overcast sky 7000 K.");
+                        }
+                        None => {
+                            crate::color_picker::field(ui, "Colour", &mut light.color);
+                        }
+                    }
+
+                });
+            }),
+            "visibility" => page.section(ui, section, "Visibility", |ui| {
+                crate::field::Fold::new("Visibility")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.add(crate::field::Checkbox::new(&mut light.visibility.camera, "Visible to camera"));
+                        ui.add(crate::field::Checkbox::new(&mut light.visibility.diffuse, "Affects diffuse"));
+                        ui.add(crate::field::Checkbox::new(&mut light.visibility.specular, "Affects specular"));
+                        ui.add(crate::field::Checkbox::new(&mut light.visibility.shadow, "Casts shadows"));
+                        let mut layer = light.layer;
+                        ui.add(crate::field::Slider::new(&mut layer, 0..=7).text("Light layer"))
+                            .on_hover_text(
+                                "Layers isolate a light's contribution so it can be rescaled after the \
+                                 render rather than re-rendered.",
+                            );
+                        light.layer = layer;
+                    });
+
+            }),
+            "light_linking" => page.section(ui, section, "Light linking", |ui| {
+                linking_fold(
+                    ui,
+                    project,
+                    ("Light linking", "light-linking"),
+                    &mut light.links,
+                    "Lights every part, and shadows them all.",
+                    "What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.",
                 );
-            });
-        });
-        if browse {
-            if let Some(file) = rfd::FileDialog::new().add_filter("Photometric file", &["ies"]).set_title("A light's measured spread").pick_file() {
-                photometry.path = file.display().to_string();
-            }
+            }),
+            "shadow_linking" => page.section(ui, section, "Shadow linking", |ui| {
+                linking_fold(
+                    ui,
+                    project,
+                    ("Shadow linking", "shadow-linking"),
+                    &mut light.shadow_links,
+                    "Every part casts its shadow.",
+                    "The parts that cast its shadow. The rest let its light through, so a prop can stand in its beam without shadowing the product.",
+                );
+            }),
+            "templates" => page.section(ui, section, "Material templates", |ui| templates(ui, project)),
+            _ => {}
         }
     }
-    ui.add_space(4.0);
-
-    // ---- Visibility and layers -----------------------------------------
-    crate::field::Fold::new("Visibility")
-        .default_open(false)
-        .show(ui, |ui| {
-            ui.add(crate::field::Checkbox::new(&mut light.visibility.camera, "Visible to camera"));
-            ui.add(crate::field::Checkbox::new(&mut light.visibility.diffuse, "Affects diffuse"));
-            ui.add(crate::field::Checkbox::new(&mut light.visibility.specular, "Affects specular"));
-            ui.add(crate::field::Checkbox::new(&mut light.visibility.shadow, "Casts shadows"));
-            let mut layer = light.layer;
-            ui.add(crate::field::Slider::new(&mut layer, 0..=7).text("Light layer"))
-                .on_hover_text(
-                    "Layers isolate a light's contribution so it can be rescaled after the \
-                     render rather than re-rendered.",
-                );
-            light.layer = layer;
-        });
-
-    // ---- Light and shadow linking -------------------------------------------
-    linking_fold(
-        ui,
-        project,
-        ("Light linking", "light-linking"),
-        &mut light.links,
-        "Lights every part, and shadows them all.",
-        "What it does not light it does not shadow: a light kept to the product casts no shadow on the floor.",
-    );
-    linking_fold(
-        ui,
-        project,
-        ("Shadow linking", "shadow-linking"),
-        &mut light.shadow_links,
-        "Every part casts its shadow.",
-        "The parts that cast its shadow. The rest let its light through, so a prop can stand in its beam without shadowing the product.",
-    );
+    page.finish(ui);
 
     if light != before {
         let _ = project.apply(Command::SetLight {

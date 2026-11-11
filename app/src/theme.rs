@@ -718,32 +718,11 @@ pub fn section(ui: &mut egui::Ui, text: &str) {
     ui.add_space(1.0);
 }
 
-/// A heading for a block that follows another: the page's hairline across
-/// the panel, then the heading. One rule for every page, in place of a
-/// space, a separator and a heading written out at each.
-pub fn heading(ui: &mut egui::Ui, text: &str) {
-    rule(ui);
-    section(ui, text);
-}
-
 /// A heading with something at its right end: whose block it is, or a
 /// button that acts on all of it.
 pub fn heading_with<R>(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui) -> R) -> R {
     rule(ui);
     ui.add_space(4.0);
-    let inner = ui
-        .horizontal(|ui| {
-            ui.label(egui::RichText::new(text.to_uppercase()).font(strong(10.5)).color(p().text_dim).extra_letter_spacing(0.6));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right).inner
-        })
-        .inner;
-    ui.add_space(1.0);
-    inner
-}
-
-/// The same for the first block of a page, which has nothing above it to
-/// be ruled off from.
-pub fn heading_with_first<R>(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let inner = ui
         .horizontal(|ui| {
             ui.label(egui::RichText::new(text.to_uppercase()).font(strong(10.5)).color(p().text_dim).extra_letter_spacing(0.6));

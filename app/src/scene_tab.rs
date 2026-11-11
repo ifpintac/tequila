@@ -436,9 +436,10 @@ impl SceneTab {
         if layers.is_empty() {
             return;
         }
-        theme::heading(ui, "Layers");
         let mut command = None;
         let mut select = None;
+        let count = layers.len();
+        crate::field::Fold::new("Layers").id_salt("scene-layers").aside(if count == 1 { "1 layer".to_string() } else { format!("{count} layers") }).default_open(true).show(ui, |ui| {
         // An IGES file can have a hundred levels; they scroll rather than
         // push the sections below out of reach.
         egui::ScrollArea::vertical().id_salt("cad-layers").auto_shrink([false, true]).max_height(180.0).show(ui, |ui| {
@@ -481,6 +482,7 @@ impl SceneTab {
                     ui.label(egui::RichText::new(count).small().color(theme::dim()));
                 });
             }
+        });
         });
         if let Some(command) = command {
             if let Err(error) = project.apply(command) {

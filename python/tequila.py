@@ -371,7 +371,11 @@ class Client:
         application's settings; '' for the default), window_size=[w, h]
         (the window's inner size, in points), inspector_scroll=600 (the
         Inspector's page scrolled that many points down, for a picture of
-        a long page), preferences_page='viewport'
+        a long page), sections={'environment': ['pins']} (a page's
+        sections in that order; None for its default, False for every
+        page's), section_drag=['environment', 'pins', 0] (a section held
+        part-way through a drag, for a picture) or False,
+        preferences_page='viewport'
         and preferences_search='gizmo' (the Preferences window at a page,
         or searching), graph_search='noise' (typed in the search of the
         Material Graph editor's browser, which shows it),

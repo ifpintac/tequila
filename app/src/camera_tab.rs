@@ -50,214 +50,236 @@ impl CameraTab {
         aspect: f32,
     ) -> bool {
         let mut adopt = false;
+        // The saved cameras are the page's head: the rest is about the one
+        // looked through.
         crate::theme::section(ui, "Cameras");
         self.camera_list(ui, project, orbit, &mut adopt);
+        ui.add_space(6.0);
 
         let active = project.document().cameras.active_index();
         let mut saved = project.document().cameras.active().clone();
         let before = saved.clone();
 
-        // ---- Lens ------------------------------------------------------
-        let mut lens = saved.camera.projection;
-        crate::theme::heading(ui, "Lens");
-        crate::field::row(ui, "Kind", |ui| {
-            crate::field::combo(ui, "camera-lens", lens_label(lens), |ui| {
-                for (label, candidate) in lens_types() {
-                    let selected = std::mem::discriminant(&lens)
-                        == std::mem::discriminant(&candidate);
-                    if ui.selectable_label(selected, label).clicked() && !selected {
-                        lens = candidate;
-                    }
-                }
-            });
-        });
-        // Switching *to* orthographic adopts the height the camera was
-        // already framing, rather than the 1.0 the catalog offers as a
-        // placeholder. A scene is rarely one unit tall, so the placeholder
-        // meant the view leapt to a wild close-up on every switch — and then
-        // could not be zoomed back out, because zoom used to move the camera
-        // and an orthographic camera does not care where it is.
-        if !matches!(saved.camera.projection, Projection::Orthographic { .. }) {
-            if let Projection::Orthographic { scale } = &mut lens {
-                *scale = orbit.framed_height(aspect).max(1e-4);
-            }
-        }
-        saved.camera.projection = lens;
-
-        match &mut saved.camera.projection {
-            Projection::Perspective { focal_length_mm }
-            | Projection::Shift {
-                focal_length_mm, ..
-            } => {
-                // Dragged across the lenses people own, and typed for the
-                // rest: a focal length is a number people know — "an 85" —
-                // rather than a position on a scale, and it is the field
-                // §1.2's expression entry was written for: `= 36/1.5` is a
-                // sensor width over a crop factor, which is how the number is
-                // arrived at. A click types; any unit, `2in`, is taken.
-                ui.add(
-                    crate::field::Slider::new(focal_length_mm, 8.0..=400.0)
-                        .text("Focal length")
-                        .suffix(" mm")
-                        .logarithmic(true)
-                        .unit(crate::numeric::Unit::Millimetres)
-                        .clamping(egui::SliderClamping::Never),
-                )
-                .on_hover_text(
-                    "Drag, or click and type a length in any unit (`2in`), or an \
-                     expression after `=` (`= 36/1.5`).",
-                );
-                *focal_length_mm = focal_length_mm.clamp(1.0, 2000.0);
-            }
-            Projection::Orthographic { scale } => {
-                ui.add(
-                    crate::field::Slider::new(scale, 0.01..=10_000.0)
-                        .text("Height")
-                        .logarithmic(true),
-                );
-            }
-            Projection::Equirectangular => {
-                crate::theme::note(ui, "A 360° camera sees all round, so it has no focal length.");
-            }
-        }
-        if let Projection::Shift {
-            shift_x, shift_y, ..
-        } = &mut saved.camera.projection
-        {
-            ui.add(crate::field::Slider::new(shift_x, -1.0..=1.0).text("Shift X"));
-            ui.add(crate::field::Slider::new(shift_y, -1.0..=1.0).text("Shift Y"));
-        }
-
-        // The field of view, shown and editable, but derived: it is the focal
-        // length and the sensor that are physical, and editing one has to move
-        // the other rather than the two drifting apart.
-        //
-        // Neither exists for an orthographic camera, whose rays are parallel.
-        // They used to be drawn anyway, reading a meaningless 1 degree beside
-        // a Height that was the only control doing anything.
-        if !matches!(saved.camera.projection, Projection::Orthographic { .. }) {
-            let mut fov = saved.camera.vertical_fov(aspect).to_degrees();
-            if ui
-                .add(crate::field::Slider::new(&mut fov, 1.0..=150.0).text("Field of view").suffix("°"))
-                .changed()
-            {
-                saved.camera.set_vertical_fov(fov.to_radians(), aspect);
-            }
-            ui.horizontal(|ui| {
-                let button = 78.0;
-                crate::field::column(ui, ui.available_width() - button - ui.spacing().item_spacing.x, |ui| {
-                    ui.add(
-                        crate::field::Slider::new(&mut saved.camera.sensor_width_mm, 4.0..=80.0)
-                            .text("Sensor width")
-                            .suffix(" mm"),
-                    )
-                });
-                if ui
-                    .add_sized([button, 26.0], egui::Button::new("Full frame"))
-                    .on_hover_text("36 mm: a 35 mm film frame, and most professional cameras")
-                    .clicked()
-                {
-                    saved.camera.sensor_width_mm = FULL_FRAME_SENSOR_WIDTH_MM;
-                }
-            });
-        }
-
-        // ---- Depth of field --------------------------------------------
-        crate::theme::heading(ui, "Focus");
-        let mut dof = saved.camera.f_number.is_finite();
-        if ui
-            .add(crate::field::Checkbox::new(&mut dof, "Blur what is out of focus"))
-            .on_hover_text("Depth of field: sharp at the focus distance and softer in front of it and behind, as a real lens is. Off, everything is sharp.")
-            .changed()
-        {
-            // Switching off is infinity — a pinhole — rather than a very large
-            // number, so `aperture_radius` is exactly zero and a disabled
-            // control cannot leave a trace of blur behind.
-            saved.camera.f_number = if dof { 2.8 } else { f32::INFINITY };
-        }
-        if dof {
-            let mut f_number = saved.camera.f_number;
-            if ui
-                .add(
-                    crate::field::Slider::new(&mut f_number, 0.7..=32.0)
-                        .text("Aperture")
-                        .prefix("f/")
-                        .logarithmic(true),
-                )
-                .on_hover_text("The f-number. A low one (f/1.8) blurs a lot and keeps little in focus; a high one (f/16) keeps nearly everything sharp.")
-                .changed()
-            {
-                saved.camera.f_number = f_number;
-            }
-            ui.add(
-                crate::field::Slider::new(&mut saved.camera.focus_distance, 0.01..=10_000.0)
-                    .text("Focus distance")
-                    .logarithmic(true),
-            );
-            ui.add(crate::field::Checkbox::new(&mut saved.camera.keep_focus, "Keep focus"))
-                .on_hover_text(
-                    "Re-derive the focus distance from the camera's distance to its target \
-                     whenever it moves, so orbiting a subject does not drift it out of focus.",
-                );
-
-            let mut aperture = saved.camera.aperture;
-            crate::field::row(ui, "Blur shape", |ui| {
-                crate::field::combo(ui, "camera-aperture", aperture_label(aperture), |ui| {
-                    for (label, candidate) in aperture_shapes() {
-                        let selected = std::mem::discriminant(&aperture)
-                            == std::mem::discriminant(&candidate);
-                        if ui.selectable_label(selected, label).clicked() && !selected {
-                            aperture = candidate;
+        // The sections, in the person's own order.
+        let mut page = crate::sections::Page::new(ui, "camera");
+        for key in page.order() {
+            match key {
+                "lens" => page.section(ui, key, "Lens", |ui| {
+                    crate::field::Fold::new("Lens").id_salt("camera-lens-section").aside(lens_label(saved.camera.projection)).default_open(true).show(ui, |ui| {
+                    // ---- Lens ------------------------------------------------------
+                    let mut lens = saved.camera.projection;
+                    crate::field::row(ui, "Kind", |ui| {
+                        crate::field::combo(ui, "camera-lens", lens_label(lens), |ui| {
+                            for (label, candidate) in lens_types() {
+                                let selected = std::mem::discriminant(&lens)
+                                    == std::mem::discriminant(&candidate);
+                                if ui.selectable_label(selected, label).clicked() && !selected {
+                                    lens = candidate;
+                                }
+                            }
+                        });
+                    });
+                    // Switching *to* orthographic adopts the height the camera was
+                    // already framing, rather than the 1.0 the catalog offers as a
+                    // placeholder. A scene is rarely one unit tall, so the placeholder
+                    // meant the view leapt to a wild close-up on every switch — and then
+                    // could not be zoomed back out, because zoom used to move the camera
+                    // and an orthographic camera does not care where it is.
+                    if !matches!(saved.camera.projection, Projection::Orthographic { .. }) {
+                        if let Projection::Orthographic { scale } = &mut lens {
+                            *scale = orbit.framed_height(aspect).max(1e-4);
                         }
                     }
-                });
-            })
-            .response
-            .on_hover_text("The shape of the lens opening, which out-of-focus highlights take: round, or the blades of an iris.");
-            if let Aperture::Bladed { blades, rotation } = &mut aperture {
-                ui.add(crate::field::Slider::new(blades, 3..=12).text("Blades"));
-                ui.add(
-                    crate::field::Slider::new(rotation, 0.0..=std::f32::consts::TAU).text("Blade angle"),
-                );
+                    saved.camera.projection = lens;
+
+                    match &mut saved.camera.projection {
+                        Projection::Perspective { focal_length_mm }
+                        | Projection::Shift {
+                            focal_length_mm, ..
+                        } => {
+                            // Dragged across the lenses people own, and typed for the
+                            // rest: a focal length is a number people know — "an 85" —
+                            // rather than a position on a scale, and it is the field
+                            // §1.2's expression entry was written for: `= 36/1.5` is a
+                            // sensor width over a crop factor, which is how the number is
+                            // arrived at. A click types; any unit, `2in`, is taken.
+                            ui.add(
+                                crate::field::Slider::new(focal_length_mm, 8.0..=400.0)
+                                    .text("Focal length")
+                                    .suffix(" mm")
+                                    .logarithmic(true)
+                                    .unit(crate::numeric::Unit::Millimetres)
+                                    .clamping(egui::SliderClamping::Never),
+                            )
+                            .on_hover_text(
+                                "Drag, or click and type a length in any unit (`2in`), or an \
+                                 expression after `=` (`= 36/1.5`).",
+                            );
+                            *focal_length_mm = focal_length_mm.clamp(1.0, 2000.0);
+                        }
+                        Projection::Orthographic { scale } => {
+                            ui.add(
+                                crate::field::Slider::new(scale, 0.01..=10_000.0)
+                                    .text("Height")
+                                    .logarithmic(true),
+                            );
+                        }
+                        Projection::Equirectangular => {
+                            crate::theme::note(ui, "A 360° camera sees all round, so it has no focal length.");
+                        }
+                    }
+                    if let Projection::Shift {
+                        shift_x, shift_y, ..
+                    } = &mut saved.camera.projection
+                    {
+                        ui.add(crate::field::Slider::new(shift_x, -1.0..=1.0).text("Shift X"));
+                        ui.add(crate::field::Slider::new(shift_y, -1.0..=1.0).text("Shift Y"));
+                    }
+
+                    // The field of view, shown and editable, but derived: it is the focal
+                    // length and the sensor that are physical, and editing one has to move
+                    // the other rather than the two drifting apart.
+                    //
+                    // Neither exists for an orthographic camera, whose rays are parallel.
+                    // They used to be drawn anyway, reading a meaningless 1 degree beside
+                    // a Height that was the only control doing anything.
+                    if !matches!(saved.camera.projection, Projection::Orthographic { .. }) {
+                        let mut fov = saved.camera.vertical_fov(aspect).to_degrees();
+                        if ui
+                            .add(crate::field::Slider::new(&mut fov, 1.0..=150.0).text("Field of view").suffix("°"))
+                            .changed()
+                        {
+                            saved.camera.set_vertical_fov(fov.to_radians(), aspect);
+                        }
+                        ui.horizontal(|ui| {
+                            let button = 78.0;
+                            crate::field::column(ui, ui.available_width() - button - ui.spacing().item_spacing.x, |ui| {
+                                ui.add(
+                                    crate::field::Slider::new(&mut saved.camera.sensor_width_mm, 4.0..=80.0)
+                                        .text("Sensor width")
+                                        .suffix(" mm"),
+                                )
+                            });
+                            if ui
+                                .add_sized([button, 26.0], egui::Button::new("Full frame"))
+                                .on_hover_text("36 mm: a 35 mm film frame, and most professional cameras")
+                                .clicked()
+                            {
+                                saved.camera.sensor_width_mm = FULL_FRAME_SENSOR_WIDTH_MM;
+                            }
+                        });
+                    }
+
+                    });
+                }),
+                "focus" => page.section(ui, key, "Focus", |ui| {
+                    crate::field::Fold::new("Focus").id_salt("camera-focus").default_open(true).show(ui, |ui| {
+                    // ---- Depth of field --------------------------------------------
+                    let mut dof = saved.camera.f_number.is_finite();
+                    if ui
+                        .add(crate::field::Checkbox::new(&mut dof, "Blur what is out of focus"))
+                        .on_hover_text("Depth of field: sharp at the focus distance and softer in front of it and behind, as a real lens is. Off, everything is sharp.")
+                        .changed()
+                    {
+                        // Switching off is infinity — a pinhole — rather than a very large
+                        // number, so `aperture_radius` is exactly zero and a disabled
+                        // control cannot leave a trace of blur behind.
+                        saved.camera.f_number = if dof { 2.8 } else { f32::INFINITY };
+                    }
+                    if dof {
+                        let mut f_number = saved.camera.f_number;
+                        if ui
+                            .add(
+                                crate::field::Slider::new(&mut f_number, 0.7..=32.0)
+                                    .text("Aperture")
+                                    .prefix("f/")
+                                    .logarithmic(true),
+                            )
+                            .on_hover_text("The f-number. A low one (f/1.8) blurs a lot and keeps little in focus; a high one (f/16) keeps nearly everything sharp.")
+                            .changed()
+                        {
+                            saved.camera.f_number = f_number;
+                        }
+                        ui.add(
+                            crate::field::Slider::new(&mut saved.camera.focus_distance, 0.01..=10_000.0)
+                                .text("Focus distance")
+                                .logarithmic(true),
+                        );
+                        ui.add(crate::field::Checkbox::new(&mut saved.camera.keep_focus, "Keep focus"))
+                            .on_hover_text(
+                                "Re-derive the focus distance from the camera's distance to its target \
+                                 whenever it moves, so orbiting a subject does not drift it out of focus.",
+                            );
+
+                        let mut aperture = saved.camera.aperture;
+                        crate::field::row(ui, "Blur shape", |ui| {
+                            crate::field::combo(ui, "camera-aperture", aperture_label(aperture), |ui| {
+                                for (label, candidate) in aperture_shapes() {
+                                    let selected = std::mem::discriminant(&aperture)
+                                        == std::mem::discriminant(&candidate);
+                                    if ui.selectable_label(selected, label).clicked() && !selected {
+                                        aperture = candidate;
+                                    }
+                                }
+                            });
+                        })
+                        .response
+                        .on_hover_text("The shape of the lens opening, which out-of-focus highlights take: round, or the blades of an iris.");
+                        if let Aperture::Bladed { blades, rotation } = &mut aperture {
+                            ui.add(crate::field::Slider::new(blades, 3..=12).text("Blades"));
+                            ui.add(
+                                crate::field::Slider::new(rotation, 0.0..=std::f32::consts::TAU).text("Blade angle"),
+                            );
+                        }
+                        saved.camera.aperture = aperture;
+                    }
+
+                    });
+                }),
+                "exposure" => page.section(ui, key, "Exposure", |ui| {
+                    crate::field::Fold::new("Exposure").id_salt("camera-exposure").default_open(true).show(ui, |ui| {
+                    // ---- Exposure ---------------------------------------------------
+                    // ISO and shutter only once they mean something: off, the image's
+                    // Exposure is the whole of it.
+                    ui.add(crate::field::Checkbox::new(&mut saved.camera.physical_exposure, "Expose as a camera does"))
+                        .on_hover_text("Expose by ISO, shutter and f-number as a camera would, on top of the Image tab's Exposure. Doubling the shutter time adds a stop; so does opening up one f-stop.");
+                    if saved.camera.physical_exposure {
+                        ui.add(
+                            crate::field::Slider::new(&mut saved.camera.iso, 25.0..=6400.0)
+                                .text("ISO")
+                                .logarithmic(true),
+                        );
+                        let mut shutter = 1.0 / saved.camera.shutter_speed_seconds.max(1e-6);
+                        if ui
+                            .add(
+                                crate::field::Slider::new(&mut shutter, 1.0..=8000.0)
+                                    .text("Shutter")
+                                    .prefix("1/")
+                                    .logarithmic(true),
+                            )
+                            .changed()
+                        {
+                            saved.camera.shutter_speed_seconds = 1.0 / shutter.max(1.0);
+                        }
+                        crate::theme::note(ui, format!("{:+.1} stops on the picture's brightness", saved.camera.exposure_stops()));
+                    } else {
+                        crate::theme::note(ui, "Off: the picture's brightness is the Image page's Exposure alone.");
+                    }
+
+                    });
+                }),
+                "guides" => page.section(ui, key, "Guides", |ui| {
+                    crate::field::Fold::new("Guides").id_salt("camera-guides").default_open(true).show(ui, |ui| {
+                    // ---- Overlays ---------------------------------------------------
+                    ui.add(crate::field::Checkbox::new(&mut self.show_grid, "Ground grid")).on_hover_text("A measured grid on the floor, to judge sizes and line things up by. Never in a render. Snapping to it is in the tools at the view's left.");
+
+                    });
+                }),
+                "match" => page.section(ui, key, "Match perspective", |ui| self.match_perspective(ui, &mut saved, aspect)),
+                _ => {}
             }
-            saved.camera.aperture = aperture;
         }
-
-        // ---- Exposure ---------------------------------------------------
-        // ISO and shutter only once they mean something: off, the image's
-        // Exposure is the whole of it.
-        crate::theme::heading(ui, "Exposure");
-        ui.add(crate::field::Checkbox::new(&mut saved.camera.physical_exposure, "Expose as a camera does"))
-            .on_hover_text("Expose by ISO, shutter and f-number as a camera would, on top of the Image tab's Exposure. Doubling the shutter time adds a stop; so does opening up one f-stop.");
-        if saved.camera.physical_exposure {
-            ui.add(
-                crate::field::Slider::new(&mut saved.camera.iso, 25.0..=6400.0)
-                    .text("ISO")
-                    .logarithmic(true),
-            );
-            let mut shutter = 1.0 / saved.camera.shutter_speed_seconds.max(1e-6);
-            if ui
-                .add(
-                    crate::field::Slider::new(&mut shutter, 1.0..=8000.0)
-                        .text("Shutter")
-                        .prefix("1/")
-                        .logarithmic(true),
-                )
-                .changed()
-            {
-                saved.camera.shutter_speed_seconds = 1.0 / shutter.max(1.0);
-            }
-            crate::theme::note(ui, format!("{:+.1} stops on the picture's brightness", saved.camera.exposure_stops()));
-        } else {
-            crate::theme::note(ui, "Off: the picture's brightness is the Image page's Exposure alone.");
-        }
-
-        // ---- Overlays ---------------------------------------------------
-        crate::theme::heading(ui, "Guides");
-        ui.add(crate::field::Checkbox::new(&mut self.show_grid, "Ground grid")).on_hover_text("A measured grid on the floor, to judge sizes and line things up by. Never in a render. Snapping to it is in the tools at the view's left.");
-
-        ui.add_space(4.0);
-        self.match_perspective(ui, &mut saved, aspect);
+        page.finish(ui);
 
         if saved != before {
             let _ = project.apply(Command::SetCamera {

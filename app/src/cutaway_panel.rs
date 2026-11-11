@@ -45,7 +45,7 @@ pub fn add_cutaway_menu(ui: &mut egui::Ui, project: &Project, parent: Option<Nod
 }
 
 /// The settings of the selected cutaway, if the selection is one.
-pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
+pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) -> bool {
     let Some(node) = project.selection.active() else {
         return false;
     };
@@ -87,6 +87,11 @@ pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             settings: Box::new(cutaway),
         });
     }
+    // The templates, as on the Material page for a part.
+    ui.add_space(6.0);
+    let mut page = crate::sections::Page::new(ui, "cutaway");
+    page.section(ui, "templates", "Material templates", |ui| templates(ui, project));
+    page.finish(ui);
     true
 }
 

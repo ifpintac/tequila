@@ -61,34 +61,52 @@ impl StudioTab {
         {
             self.render_all = true;
         }
-        // The Snapshots are the page; what follows are four tools that
-        // build on them, each folded to a row until it is in use. Open,
-        // each began with a paragraph, and the page was mostly reading.
+        // The Snapshots are the page's head; under them four tools that
+        // build on them, each folded to a row until it is in use, in the
+        // person's own order. Open, each began with a paragraph, and the
+        // page was mostly reading.
         ui.add_space(8.0);
         let document = project.document();
         let (turning, sets, variants_in_use) = (document.animation.is_some(), document.model_sets.sets.len(), document.multi_materials.len());
-        crate::field::Fold::new("Turntable").id_salt("snapshots-turntable").default_open(turning).show(ui, |ui| {
-            camera_moved |= self.turntable(ui, project);
-        });
-        crate::field::Fold::new(if sets > 0 { format!("Model sets · {sets}") } else { "Model sets".to_string() })
-            .id_salt("snapshots-model-sets")
-            .default_open(sets > 0)
-            .show(ui, |ui| model_sets(ui, project));
-        crate::field::Fold::new(if variants_in_use > 0 { format!("Material variants · {variants_in_use}") } else { "Material variants".to_string() })
-            .id_salt("snapshots-variants")
-            .default_open(variants_in_use > 0)
-            .show(ui, |ui| variants(ui, project));
         let reveal = std::mem::take(&mut self.reveal);
         let configured = !project.document().configurator.options.is_empty();
         let before = project.document().configurator.current.clone();
         let mut action = None;
-        let wizard = &mut self.wizard;
-        let fold = crate::field::Fold::new("Configurator").id_salt("snapshots-configurator").default_open(configured).reveal(reveal).show(ui, |ui| {
-            action = wizard.show(ui, project);
-        });
-        if reveal {
-            ui.scroll_to_rect(fold.header_response.rect, Some(egui::Align::TOP));
+        let mut page = crate::sections::Page::new(ui, "snapshots");
+        for key in page.order() {
+            match key {
+                "turntable" => page.section(ui, key, "Turntable", |ui| {
+                    crate::field::Fold::new("Turntable").id_salt("snapshots-turntable").default_open(turning).show(ui, |ui| {
+                        camera_moved |= self.turntable(ui, project);
+                    });
+                }),
+                "model_sets" => page.section(ui, key, "Model sets", |ui| {
+                    crate::field::Fold::new("Model sets")
+                        .id_salt("snapshots-model-sets")
+                        .aside(if sets > 0 { format!("{sets}") } else { String::new() })
+                        .default_open(sets > 0)
+                        .show(ui, |ui| model_sets(ui, project));
+                }),
+                "variants" => page.section(ui, key, "Material variants", |ui| {
+                    crate::field::Fold::new("Material variants")
+                        .id_salt("snapshots-variants")
+                        .aside(if variants_in_use > 0 { format!("{variants_in_use}") } else { String::new() })
+                        .default_open(variants_in_use > 0)
+                        .show(ui, |ui| variants(ui, project));
+                }),
+                "configurator" => page.section(ui, key, "Configurator", |ui| {
+                    let wizard = &mut self.wizard;
+                    let fold = crate::field::Fold::new("Configurator").id_salt("snapshots-configurator").default_open(configured).reveal(reveal).show(ui, |ui| {
+                        action = wizard.show(ui, project);
+                    });
+                    if reveal {
+                        ui.scroll_to_rect(fold.header_response.rect, Some(egui::Align::TOP));
+                    }
+                }),
+                _ => {}
+            }
         }
+        page.finish(ui);
         self.action = action.or(self.action.take());
         // A configuration with a Studio in it can move the camera.
         let configurator = &project.document().configurator;

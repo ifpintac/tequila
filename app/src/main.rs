@@ -69,6 +69,7 @@ mod recent;
 mod render_frame;
 mod render_window;
 mod scene_tab;
+mod sections;
 mod self_test;
 mod shape_panel;
 mod shortcuts;
@@ -438,6 +439,10 @@ struct TequilaApp {
     /// file they are kept in: none in tests, which keep nothing.
     guides: composition::Guides,
     guides_file: Option<std::path::PathBuf>,
+    /// The order of each inspector page's sections, as the person put them,
+    /// and where they are kept (none in a test).
+    sections: sections::Store,
+    sections_file: Option<std::path::PathBuf>,
     /// The toolbar's menu of guides opened or closed by a script, for the
     /// next frame to do.
     open_guides_menu: Option<bool>,
@@ -972,6 +977,9 @@ impl TequilaApp {
         let guides_file = composition::Guides::file();
         app.guides = composition::Guides::load(&guides_file);
         app.guides_file = Some(guides_file);
+        let sections_file = sections::Store::file();
+        app.sections = sections::Store::load(&sections_file);
+        app.sections_file = Some(sections_file);
         // The session starts as the person's settings say.
         app.load_preferences(preferences::file());
         // Renders from earlier sessions, beside the queue and the journal.
@@ -1075,6 +1083,8 @@ impl TequilaApp {
             screenshots: screenshot::Preferences::default(),
             guides: composition::Guides::default(),
             guides_file: None,
+            sections: sections::Store::default(),
+            sections_file: None,
             open_guides_menu: None,
             screenshot_waiting: false,
             screenshot_drawn: false,
@@ -1709,11 +1719,7 @@ impl eframe::App for TequilaApp {
         // place; the conversation, when it is open, between it and the
         // viewport.
         if !self.full_viewport && self.show_project {
-            egui::SidePanel::right("project")
-                .default_width(340.0)
-                .width_range(320.0..=420.0)
-                .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 14.0, right: 10.0, top: 0.0, bottom: 0.0 }))
-                .show(ctx, |ui| profile::time("ui: inspector", || self.project_panel(ui)));
+            self.inspector_panel(ctx);
         }
 
         // The Project window, with the tabs `docs/04` §1.1 lists — the scene
@@ -4323,112 +4329,111 @@ impl TequilaApp {
             .map(|n| n.name.clone())
             .unwrap_or_default();
 
-        // Whose it is, at the heading's right: the page shows one part's
+        // Whose it is, at the title's right: the page shows one part's
         // place at a time, and a selection of many moves by the gizmo.
-        theme::heading_with(ui, "Position", |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(&name).size(theme::BODY - 1.5).color(theme::p().text_dim)).truncate());
-        });
+        crate::field::Fold::new("Position").id_salt("scene-position").aside(name).default_open(true).show(ui, |ui| {
 
-        // The fields take §1.2's units and expressions: a position
-        // typed as `2.5in` from a drawing, or `= 120/2` when somebody
-        // is halving a dimension. They read in the unit the scene
-        // shows lengths in, so a suffix converts into that, and the
-        // position itself is in metres, like every length.
-        let shown = self.project.document().units.shown();
-        let per_unit = shown.to_metres() as f32;
-        let unit = numeric::Unit::from_scene(shown);
-        let mut position = current.point(Vec3::ZERO) / per_unit;
-        let before = position;
-        let mut committed = false;
-        // Each axis named in its field and in the gizmo's colour for it, the
-        // three sharing the row: three bare numbers said neither which was
-        // which nor what they were of.
-        ui.horizontal(|ui| {
-            let gap = ui.spacing().item_spacing.x;
-            let width = ((ui.available_width() - gap * 2.0) / 3.0).max(40.0);
-            for (axis, value) in ["X", "Y", "Z"].into_iter().zip([&mut position.x, &mut position.y, &mut position.z]) {
-                let field = ui
-                    .add_sized([width, 26.0], numeric::drag_value(value, unit).speed(0.01).prefix(format!("{axis}  ")))
-                    .on_hover_text(format!("Where the part is along {axis}, in the scene's unit. Drag, or click and type a number, a length with its unit (2.5in) or = and a sum."));
-                // Dragging the field is one interaction; releasing it,
-                // or committing a typed number, ends it. Without this
-                // two values typed in turn become one undo step and
-                // the first is silently lost.
-                committed |= field.drag_stopped() || field.lost_focus();
-            }
-        });
-        if position != before {
-            // From what changed, so an axis nobody touched does not
-            // move by the rounding of a round trip through the unit.
-            let offset = (position - before) * per_unit;
-            if let Some(transform) = tequila_core::math::Transform::from_matrix(
-                tequila_core::math::Mat4::translation(offset) * current.matrix,
-            ) {
-                let _ = self.project.apply(Command::set_transform(node, transform));
-            }
-        }
-        if committed {
-            self.project.end_interaction();
-        }
-
-        ui.horizontal(|ui| {
-            if ui
-                .button("Drop to floor")
-                .on_hover_text("Lower or raise the part until it rests on the floor")
-                .clicked()
-            {
-                if let Some(transform) = tequila_scene::gizmo::snap_to_ground(
-                    self.project.document(),
-                    node,
-                    0.0,
+            // The fields take §1.2's units and expressions: a position
+            // typed as `2.5in` from a drawing, or `= 120/2` when somebody
+            // is halving a dimension. They read in the unit the scene
+            // shows lengths in, so a suffix converts into that, and the
+            // position itself is in metres, like every length.
+            let shown = self.project.document().units.shown();
+            let per_unit = shown.to_metres() as f32;
+            let unit = numeric::Unit::from_scene(shown);
+            let mut position = current.point(Vec3::ZERO) / per_unit;
+            let before = position;
+            let mut committed = false;
+            // Each axis named in its field and in the gizmo's colour for it, the
+            // three sharing the row: three bare numbers said neither which was
+            // which nor what they were of.
+            ui.horizontal(|ui| {
+                let gap = ui.spacing().item_spacing.x;
+                let width = ((ui.available_width() - gap * 2.0) / 3.0).max(40.0);
+                for (axis, value) in ["X", "Y", "Z"].into_iter().zip([&mut position.x, &mut position.y, &mut position.z]) {
+                    let field = ui
+                        .add_sized([width, 26.0], numeric::drag_value(value, unit).speed(0.01).prefix(format!("{axis}  ")))
+                        .on_hover_text(format!("Where the part is along {axis}, in the scene's unit. Drag, or click and type a number, a length with its unit (2.5in) or = and a sum."));
+                    // Dragging the field is one interaction; releasing it,
+                    // or committing a typed number, ends it. Without this
+                    // two values typed in turn become one undo step and
+                    // the first is silently lost.
+                    committed |= field.drag_stopped() || field.lost_focus();
+                }
+            });
+            if position != before {
+                // From what changed, so an axis nobody touched does not
+                // move by the rounding of a round trip through the unit.
+                let offset = (position - before) * per_unit;
+                if let Some(transform) = tequila_core::math::Transform::from_matrix(
+                    tequila_core::math::Mat4::translation(offset) * current.matrix,
                 ) {
                     let _ = self.project.apply(Command::set_transform(node, transform));
                 }
             }
-            if ui
-                .button("Reset")
-                .on_hover_text("Put the part back where, and how, it came in: no move, turn or scale")
-                .clicked()
-            {
-                let _ = self.project.apply(Command::set_transform(
-                    node,
-                    tequila_core::math::Transform::IDENTITY,
-                ));
+            if committed {
+                self.project.end_interaction();
             }
-        });
 
-        let options = [
-            (PivotMode::BoundingBoxCenter, "Middle"),
-            (PivotMode::Origin, "Origin"),
-            (PivotMode::Corner, "Corner"),
-            (PivotMode::Custom, "Custom"),
-        ];
-        crate::field::row(ui, "Turn about", |ui| theme::segmented(ui, &mut self.gizmo.pivot_mode, &options))
-            .response
-            .on_hover_text(
-                "The point the gizmo turns and scales the part about: the middle of its box, the model's own origin,                  a corner of its box, or a point you place.",
-            );
-        let has_custom = self
-            .project
-            .document()
-            .tree
-            .get(node)
-            .is_some_and(|n| n.pivot.is_some());
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.horizontal(|ui| {
                 if ui
-                    .add_enabled(has_custom, egui::Button::new("Clear"))
-                    .on_hover_text("Forget the placed point")
-                    .on_disabled_hover_text("No point has been placed")
+                    .button("Drop to floor")
+                    .on_hover_text("Lower or raise the part until it rests on the floor")
                     .clicked()
                 {
-                    let _ = self.project.apply(Command::set_pivot(node, None));
+                    if let Some(transform) = tequila_scene::gizmo::snap_to_ground(
+                        self.project.document(),
+                        node,
+                        0.0,
+                    ) {
+                        let _ = self.project.apply(Command::set_transform(node, transform));
+                    }
                 }
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    theme::note(ui, if has_custom {
-                        "Hold Insert and click the model to move the point."
-                    } else {
-                        "Hold Insert and click the model to place a point."
+                if ui
+                    .button("Reset")
+                    .on_hover_text("Put the part back where, and how, it came in: no move, turn or scale")
+                    .clicked()
+                {
+                    let _ = self.project.apply(Command::set_transform(
+                        node,
+                        tequila_core::math::Transform::IDENTITY,
+                    ));
+                }
+            });
+
+            let options = [
+                (PivotMode::BoundingBoxCenter, "Middle"),
+                (PivotMode::Origin, "Origin"),
+                (PivotMode::Corner, "Corner"),
+                (PivotMode::Custom, "Custom"),
+            ];
+            crate::field::row(ui, "Turn about", |ui| theme::segmented(ui, &mut self.gizmo.pivot_mode, &options))
+                .response
+                .on_hover_text(
+                    "The point the gizmo turns and scales the part about: the middle of its box, the model's own origin,                  a corner of its box, or a point you place.",
+                );
+            let has_custom = self
+                .project
+                .document()
+                .tree
+                .get(node)
+                .is_some_and(|n| n.pivot.is_some());
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(has_custom, egui::Button::new("Clear"))
+                        .on_hover_text("Forget the placed point")
+                        .on_disabled_hover_text("No point has been placed")
+                        .clicked()
+                    {
+                        let _ = self.project.apply(Command::set_pivot(node, None));
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        theme::note(ui, if has_custom {
+                            "Hold Insert and click the model to move the point."
+                        } else {
+                            "Hold Insert and click the model to place a point."
+                        });
                     });
                 });
             });
@@ -4980,6 +4985,32 @@ impl TequilaApp {
         match &self.guides_file {
             Some(file) => self.guides.save(file),
             None => Ok(()),
+        }
+    }
+
+    /// The inspector against its rail. The sections' order is lent to the
+    /// frame, and kept the moment a drag or a menu changes it: written to
+    /// `sections.txt` then, not when Tequila closes, so a crash keeps it as
+    /// well as a restart does.
+    fn inspector_panel(&mut self, ctx: &egui::Context) {
+        sections::install(ctx, &self.sections);
+        egui::SidePanel::right("project")
+            .default_width(340.0)
+            .width_range(320.0..=420.0)
+            .frame(egui::Frame::none().fill(theme::p().panel).inner_margin(egui::Margin { left: 14.0, right: 10.0, top: 0.0, bottom: 0.0 }))
+            .show(ctx, |ui| profile::time("ui: inspector", || self.project_panel(ui)));
+        if let Some(store) = sections::take_changed(ctx) {
+            self.sections = store;
+            self.keep_sections();
+        }
+    }
+
+    /// The inspector's section orders kept, or a warning.
+    pub(crate) fn keep_sections(&mut self) {
+        if let Some(file) = &self.sections_file {
+            if let Err(error) = self.sections.save(file) {
+                self.toasts.warn(format!("The order of the inspector's sections could not be kept: {error}"));
+            }
         }
     }
 
@@ -6079,26 +6110,50 @@ impl TequilaApp {
                     ui.add_space(2.0);
                     theme::note(ui, "Click a part here or in the view to move it, hide it from reflections or read its details.");
                 }
-                // What was just picked, under the tree where it was picked:
-                // a shape's dimensions and a pattern's settings first, since
-                // they are what that part is; then where it is.
-                if let Some(node) = selected.filter(|n| self.project.document().tree.get(*n).is_some_and(|n| n.shape.is_some())) {
-                    theme::heading(ui, "Shape");
-                    shape_panel::panel(ui, &mut self.project, node);
+                // The sections, in the person's own order: by default what
+                // was just picked first - a shape's dimensions and a
+                // pattern's settings, since they are what that part is, then
+                // where it is and what sees it - and the scene's own after.
+                let shape_node = selected.filter(|n| self.project.document().tree.get(*n).is_some_and(|n| n.shape.is_some()));
+                let pattern_group = selected.and_then(|n| tequila_scene::pattern::pattern_of(self.project.document(), n));
+                let mut page = sections::Page::new(ui, "scene");
+                for key in page.order() {
+                    match key {
+                        "shape" => {
+                            if let Some(node) = shape_node {
+                                page.section(ui, key, "Shape", |ui| {
+                                    crate::field::Fold::new("Shape").id_salt("scene-shape").default_open(true).show(ui, |ui| shape_panel::panel(ui, &mut self.project, node));
+                                });
+                            }
+                        }
+                        "pattern" => {
+                            if let Some(group) = pattern_group {
+                                page.section(ui, key, "Pattern", |ui| {
+                                    crate::field::Fold::new("Pattern").id_salt("scene-pattern").default_open(true).show(ui, |ui| pattern_panel::panel(ui, &mut self.project, group));
+                                });
+                            }
+                        }
+                        "position" => {
+                            if selected.is_some() {
+                                page.section(ui, key, "Position", |ui| self.transform_panel(ui));
+                            }
+                        }
+                        "visible" => page.section(ui, key, "Visible to", |ui| tab.rays_panel(ui, &mut self.project)),
+                        "values" => page.section(ui, key, "Part colour and number", |ui| tab.values_panel(ui, &mut self.project)),
+                        "details" => page.section(ui, key, "Details", |ui| {
+                            crate::field::Fold::new("Details").id_salt("scene-details").default_open(true).show(ui, |ui| tab.metadata_panel(ui, &mut self.project));
+                        }),
+                        "layers" => page.section(ui, key, "Layers", |ui| tab.layers_panel(ui, &mut self.project)),
+                        "units" => page.section(ui, key, "Scene units", |ui| {
+                            crate::field::Fold::new("Scene units").id_salt("scene-units").default_open(true).show(ui, |ui| self.units_panel(ui));
+                        }),
+                        "measure" => page.section(ui, key, "Measure", |ui| {
+                            crate::field::Fold::new("Measure").id_salt("scene-measure").default_open(true).show(ui, |ui| measure_tool::panel(ui, &mut self.project, &mut self.measure));
+                        }),
+                        _ => {}
+                    }
                 }
-                if let Some(group) = selected.and_then(|n| tequila_scene::pattern::pattern_of(self.project.document(), n)) {
-                    theme::heading(ui, "Pattern");
-                    pattern_panel::panel(ui, &mut self.project, group);
-                }
-                if selected.is_some() {
-                    self.transform_panel(ui);
-                    ui.add_space(4.0);
-                    tab.rays_panel(ui, &mut self.project);
-                    tab.values_panel(ui, &mut self.project);
-                }
-                theme::heading(ui, "Details");
-                tab.metadata_panel(ui, &mut self.project);
-                tab.layers_panel(ui, &mut self.project);
+                page.finish(ui);
                 let update = tab.update_request.take();
                 let retessellate = tab.retessellate_request.take();
                 let units = tab.units_request.take();
@@ -6129,17 +6184,17 @@ impl TequilaApp {
                 if let Some((node, quality)) = retessellate {
                     self.retessellate(node, quality);
                 }
-                theme::heading(ui, "Scene units");
-                self.units_panel(ui);
-                theme::heading(ui, "Measure");
-                measure_tool::panel(ui, &mut self.project, &mut self.measure);
             }
             ProjectTab::Material => {
                 // A light and a part are both nodes, and the panel that follows
                 // the selection has to follow it into either. Showing both at
                 // once would mean showing a material slot for a light.
-                let is_light = lighting_tab::light_panel(ui, &mut self.project)
-                    || cutaway_panel::cutaway_panel(ui, &mut self.project);
+                // The Material templates are the application's and work
+                // whatever is selected: a section of whichever page shows.
+                let templates_panel = &mut self.templates_panel;
+                let mut templates = |ui: &mut egui::Ui, project: &mut Project| templates_panel.show(ui, project);
+                let is_light = lighting_tab::light_panel(ui, &mut self.project, &mut templates)
+                    || cutaway_panel::cutaway_panel(ui, &mut self.project, &mut templates);
                 if !is_light {
                     let mut tab = std::mem::take(&mut self.material_tab);
                     tab.library_categories = tequila_format::library::categories(self.library.entries());
@@ -6158,7 +6213,7 @@ impl TequilaApp {
                         .map(|target| (target.material, target.index));
                     tab.placing_mapping = self.mapping_gizmo.armed().map(|t| (t.material, t.param));
                     tab.substance = std::mem::take(&mut self.substance);
-                    tab.show(ui, &mut self.project);
+                    tab.show(ui, &mut self.project, &mut templates);
                     self.substance = std::mem::take(&mut tab.substance);
                     if let Some(status) = tab.take_substance_status() {
                         self.toasts.info(status.clone());
@@ -6186,9 +6241,6 @@ impl TequilaApp {
                     }
                     self.material_tab = tab;
                 }
-                // Whatever is selected: templates work across the assembly.
-                ui.add_space(2.0);
-                self.templates_panel.show(ui, &mut self.project);
             }
             ProjectTab::Environment => {
                 let mut tab = std::mem::take(&mut self.environment_tab);
@@ -6218,54 +6270,11 @@ impl TequilaApp {
                 // §9.3 classifies every control on it as needing no re-render
                 // at all, so none of them touches `resubmit`.
                 let mut tab = std::mem::take(&mut self.image_tab);
-                tab.show(ui, &mut self.project);
+                // Its Remove noise section is the final render's own
+                // settings, which do restart the render.
+                resubmit |= tab.show(ui, &mut self.project);
                 self.image_tab = tab;
 
-                theme::heading(ui, "Remove noise");
-                {
-                    // The same settings the final render uses, edited here because
-                    // this is where a person notices noise. The Render window shows
-                    // the identical controls; both write to the document. The
-                    // viewport's own on and off is on its toolbar.
-                    let before = self.project.render_settings().clone();
-                    let mut settings = before.clone();
-                    ui.add(crate::field::Checkbox::new(&mut settings.denoise, "Clean up the final render"))
-                        .on_hover_text("Denoising: smooths away the grain a render has before it has run long. This is the final render's switch; the view has its own, the wand on its toolbar. Strength and how often are for both.");
-                    // Cycles' denoiser has no strength: it cleans fully or not
-                    // at all.
-                    let cycles = settings.engine.is_cycles();
-                    // Strength and cadence are the viewport's as well as the
-                    // render's: there to set while either denoises.
-                    let either = settings.denoise || settings.preview_denoise;
-                    ui.add_enabled(
-                        either && !cycles,
-                        crate::field::Slider::new(&mut settings.denoise_strength, 0.0..=1.0)
-                            .text("Strength"),
-                    )
-                    .on_disabled_hover_text(if cycles {
-                        "Cycles denoises at full strength; Strength is for Tequila's renderer"
-                    } else {
-                        "Denoising is off"
-                    });
-                    ui.add_enabled(
-                        either,
-                        crate::field::Slider::new(&mut settings.denoise_cadence, 1..=32)
-                            .text("Every")
-                            .suffix(" passes"),
-                    )
-                    .on_hover_text(
-                        "1 leaves the cadence to the scheduler, which denoises densely at \
-                     first and thins out as the image settles. A larger number is a \
-                     fixed interval, for an image big enough that denoising costs more \
-                     than the samples it smooths.",
-                    );
-                    if settings != before {
-                        let _ = self.project.apply(Command::SetRenderSettings {
-                            settings: Box::new(settings),
-                        });
-                        resubmit = true;
-                    }
-                }
             }
         }
         resubmit
@@ -8075,6 +8084,76 @@ mod inspector_tests {
             let last = hint.split_whitespace().last().unwrap_or_default();
             assert!(!["a", "an", "the", "and", "has", "to", "what"].contains(&last), "{}: \"{hint}\" stops mid-sentence", tab.label());
         }
+    }
+
+    /// A section dragged in the inspector is written to the settings file
+    /// as it is dropped, and a Tequila started afresh from that file - after
+    /// a restart, or an update, which leaves the settings folder alone -
+    /// draws the page in that order.
+    #[test]
+    fn a_dragged_section_order_is_kept_and_comes_back_after_a_restart() {
+        let folder = std::env::temp_dir().join(format!("tequila-section-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let file = folder.join("sections.txt");
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::style_for_tests(&ctx);
+        let mut time = 0.0;
+        let mut frame = |app: &mut TequilaApp, events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 1400.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run(input, |ctx| app.inspector_panel(ctx));
+        };
+        let top_down = |ctx: &egui::Context| -> Vec<&'static str> {
+            let mut drawn = sections::drawn(ctx, "environment");
+            drawn.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+            drawn.into_iter().map(|(k, _)| k).collect()
+        };
+
+        let mut app = TequilaApp::for_tests();
+        app.sections_file = Some(file.clone());
+        app.show_project = true;
+        app.project_tab = ProjectTab::Environment;
+        frame(&mut app, Vec::new());
+        frame(&mut app, Vec::new());
+        assert_eq!(top_down(&ctx), ["turn", "background", "ground", "sky", "pins"]);
+
+        // Lighting pins' title dragged up above Turn and size's, as the
+        // person who asked for it would.
+        let drawn = sections::drawn(&ctx, "environment");
+        let title = |key: &str| drawn.iter().find(|(k, _)| *k == key).unwrap().1.left_top() + egui::vec2(80.0, 18.0);
+        let (from, to) = (title("pins"), title("turn") - egui::vec2(0.0, 14.0));
+        let press = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        frame(&mut app, vec![egui::Event::PointerMoved(from), press(from, true)]);
+        for step in 1..=10 {
+            frame(&mut app, vec![egui::Event::PointerMoved(from + (to - from) * (step as f32 / 10.0))]);
+        }
+        frame(&mut app, vec![press(to, false)]);
+        frame(&mut app, Vec::new());
+        assert_eq!(app.sections.order("environment"), ["pins", "turn", "background", "ground", "sky"], "the drag did not move Lighting pins up");
+        assert_eq!(top_down(&ctx), ["pins", "turn", "background", "ground", "sky"]);
+        assert_eq!(sections::Store::load(&file), app.sections, "the drop was not written to the settings file");
+
+        // Started again: a new application reading the settings folder, as
+        // `assemble` does at start-up.
+        let ctx_again = egui::Context::default();
+        crate::theme::install_fonts(&ctx_again);
+        crate::theme::style_for_tests(&ctx_again);
+        let mut again = TequilaApp::for_tests();
+        again.sections = sections::Store::load(&file);
+        again.show_project = true;
+        again.project_tab = ProjectTab::Environment;
+        for _ in 0..2 {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 1400.0))), ..Default::default() };
+            let _ = ctx_again.run(input, |ctx| again.inspector_panel(ctx));
+        }
+        assert_eq!(top_down(&ctx_again), ["pins", "turn", "background", "ground", "sky"], "the order did not come back after a restart");
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// The Material page's line names what the page is showing, as it

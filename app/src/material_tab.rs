@@ -228,7 +228,10 @@ impl MaterialTab {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) {
+    /// The page for the selected part's material. `templates` draws the
+    /// Material templates section, which is the application's and works
+    /// whatever is selected.
+    pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) {
         let Some(node) = project.selection.active() else {
             empty_state(
                 ui,
@@ -236,6 +239,7 @@ impl MaterialTab {
                 "Pick a part to dress",
                 "Click a part in the viewport or the Scene tree, and its material opens here.",
             );
+            templates_alone(ui, project, templates);
             return;
         };
         // A group has no material of its own: it shows its first part's,
@@ -253,6 +257,7 @@ impl MaterialTab {
                 "Drag one from the Library onto the part, or double-click a library \
                  material with the part selected.",
             );
+            templates_alone(ui, project, templates);
             return;
         };
         let Some(definition) = project.document().materials.get(key) else {
@@ -448,14 +453,6 @@ impl MaterialTab {
                 },
             );
         }
-        // A Substance material's own settings, first: they are what makes it.
-        if project.document().materials.get(key).is_some_and(|d| d.substance.is_some()) {
-            let asked = crate::substance::panel(ui, project, &mut self.substance, key);
-            if asked.command.is_some() {
-                command = asked.command;
-            }
-            commit |= asked.commit;
-        }
         ui.add_space(4.0);
         crate::theme::section(ui, "Material");
 
@@ -563,230 +560,257 @@ impl MaterialTab {
 
         Self::linking_badge(ui, node, users, &mut command, &mut commit);
 
-        // ---- parameters -------------------------------------------------
-        // The surface before the labels on it: the labels' fold, open, stood
-        // between the material's name and its colour, the control looked
-        // for first.
-        crate::theme::heading(ui, "Surface");
-        let exposed = material_type.exposed();
-        let shown: Vec<Param> = if self.show_all {
-            Param::ALL.to_vec()
-        } else {
-            exposed.clone()
-        };
-
-        if shown.is_empty() {
-            crate::theme::note(ui, "This type has nothing to adjust.");
-        }
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for param in shown {
-                // In "show all", mark the ones this type would normally hide,
-                // so the panel still communicates what the preset is *for*.
-                let hidden = self.show_all && !exposed.contains(&param);
-                // The tangent is a direction a graph draws - a brushing
-                // pattern's own - not a value or a picture: shown where the
-                // graph drives it, and not otherwise.
-                if param == Param::Tangent && !connected.iter().any(|(p, _)| *p == param) {
-                    continue;
-                }
-                // §4.2: where the graph drives a parameter, the panel says so
-                // and offers a way to reach the node, rather than showing a
-                // slider whose value the graph would immediately overwrite.
-                if let Some((_, driver)) = connected.iter().find(|(p, _)| *p == param) {
-                    if connected_row(ui, param, driver, hidden) {
-                        command = Some(Command::SetParameterTexture {
-                            material: key,
-                            param,
-                            source: None,
+        // ---- sections ---------------------------------------------------
+        // In the person's own order; by default a Substance material's own
+        // settings first, since they are what makes it, then the surface,
+        // then the labels on it.
+        let label_count = definition_graph.decals.len();
+        let mut page = crate::sections::Page::new(ui, "material");
+        for section in page.order() {
+            match section {
+                "substance" if project.document().materials.get(key).is_some_and(|d| d.substance.is_some()) => {
+                    page.section(ui, section, "Substance", |ui| {
+                        crate::field::Fold::new("Substance").id_salt("material-substance").default_open(true).show(ui, |ui| {
+                            let asked = crate::substance::panel(ui, project, &mut self.substance, key);
+                            if asked.command.is_some() {
+                                command = asked.command;
+                            }
+                            commit |= asked.commit;
                         });
-                        commit = true;
-                    }
-                    // §5.3's shared mapping controls, on the map they belong
-                    // to. These existed in the graph and were evaluated on
-                    // every lookup, with nothing anywhere able to change them:
-                    // a texture could be attached and then never scaled,
-                    // rotated, tiled or projected any way but UV — which on
-                    // CAD geometry, where there are frequently no UVs at all,
-                    // means the texture could not be used.
-                    // A procedural's own controls, where one is what drives
-                    // the parameter. Without these it would be four fixed
-                    // patterns rather than four adjustable ones, which is most
-                    // of the way to not having them.
-                    if let Some((current, seed)) =
-                        tequila_scene::command::procedural_of(&definition_graph, param)
-                    {
-                        if let Some(next) = procedural_controls(ui, param, current) {
-                            command = Some(Command::SetParameterProcedural {
-                                material: key,
-                                param,
-                                procedural: Some(Box::new(next)),
-                                seed,
-                            });
-                            commit = true;
-                        }
-                        // A colour parameter reads its procedural through a
-                        // ramp, and the ramp is the half that decides whether
-                        // the result is wood or a grey field.
-                        if let Some(ramp) =
-                            tequila_scene::command::gradient_of(&definition_graph, param)
-                        {
-                            if let Some(next) = gradient_controls(ui, param, &ramp) {
-                                command = Some(Command::SetParameterGradient {
-                                    material: key,
-                                    param,
-                                    gradient: Box::new(next),
-                                });
-                                commit = true;
-                            }
-                        }
-                    }
-                    // How deep a pattern or height map stands, through its
-                    // Bump node, in millimetres: the control a bump needs most
-                    // and the one that was only in the graph editor.
-                    if let Some(depth) = tequila_scene::command::bump_depth_of(&definition_graph, param) {
-                        let mut millimetres = depth * 1000.0;
-                        let response = crate::field::column(ui, ui.available_width() - 33.0, |ui| {
-                            let slider = ui.add(
-                                crate::field::Slider::new(&mut millimetres, 0.001..=10.0)
-                                    .logarithmic(true)
-                                    .suffix(" mm")
-                                    .text("Depth"),
-                            );
-                            slider.on_hover_text("How far the pattern's highest point stands above its lowest.")
-                        });
-                        if response.inner.changed() {
-                            let mut graph = definition_graph.clone();
-                            if tequila_scene::command::set_bump_depth(&mut graph, param, millimetres / 1000.0) {
-                                command = Some(Command::SetGraph { material: key, graph: Box::new(graph) });
-                                commit = true;
-                            }
-                        }
-                    }
-                    if let Some(current) =
-                        tequila_scene::command::mapping_of(&definition_graph, param)
-                    {
-                        if let Some(next) = mapping_controls(ui, param, current) {
-                            command = Some(Command::SetTextureMapping {
-                                material: key,
-                                param,
-                                mapping: Box::new(next),
-                            });
-                            commit = true;
-                        }
-                        // Laid on flat, wrapped or from three sides: shown on
-                        // the part, and moved, sized and turned there.
-                        if current.projection != tequila_texture::projection::Projection::Uv {
-                            let placing = self.placing_mapping == Some((key, param));
-                            let button = ui
-                                .add(egui::Button::new(if placing { "Placing in view" } else { "Place in view" }).selected(placing))
-                                .on_hover_text("Show how the texture is laid on the part, and move, size and turn it there");
-                            if button.clicked() {
-                                self.place_mapping_request = Some((key, param));
-                            }
-                        }
-                    }
-                    continue;
-                }
-                ui.horizontal(|ui| {
-                    // Every row's control the same width, whatever its name,
-                    // with the texture button in a column at its right: the
-                    // fields line up down the panel. One child for the whole
-                    // control, so the hover covers it all, not just whichever
-                    // widget the pointer happens to be over.
-                    let row = crate::field::column(ui, ui.available_width() - 33.0, |ui| {
-                        parameter_row(ui, param, &material, hidden)
                     });
-                    if let Some(reason) = param.unimplemented() {
-                        row.response.on_hover_text(reason);
-                    } else if let Some(hint) = param.hint() {
-                        row.response.on_hover_text(hint);
+                }
+                "surface" => page.section(ui, section, "Surface", |ui| {
+                    crate::field::Fold::new("Surface").id_salt("material-surface").default_open(true).show(ui, |ui| {
+                    let exposed = material_type.exposed();
+                    let shown: Vec<Param> = if self.show_all {
+                        Param::ALL.to_vec()
+                    } else {
+                        exposed.clone()
+                    };
+
+                    if shown.is_empty() {
+                        crate::theme::note(ui, "This type has nothing to adjust.");
                     }
-                    if let Some((edit, ended)) = row.inner {
-                        command = Some(Command::SetMaterialParameter {
-                            material: key,
-                            parameter: edit,
-                        });
-                        commit |= ended;
-                    }
-                    // §4.2: the toggle that turns a literal into a texture.
-                    // Only where a texture would mean something — a metal
-                    // preset and a flag have nothing to map.
-                    if takes_a_texture(param) {
-                        // A menu rather than a button, because there are now
-                        // two ways to drive a parameter and a file picker is
-                        // only one of them. Procedurals sit beside images
-                        // rather than behind the graph editor: gating them
-                        // there would have meant shipping four nodes nobody
-                        // could reach, which is the trap this codebase has
-                        // fallen into twice.
-                        // An icon, not the word "tex": it sits on every row,
-                        // and a column of the same three letters is noise.
-                        let menu = egui::menu::menu_custom_button(
-                            ui,
-                            egui::Button::new("").frame(false).min_size(egui::vec2(26.0, 26.0)),
-                            |ui| {
-                            // Density varies through the part's inside, where
-                            // only a volume reaches: an image or a pattern is
-                            // a surface and would mean nothing there.
-                            if param == Param::VolumeDensity {
-                                if ui
-                                    .button("OpenVDB volume…")
-                                    .on_hover_text(
-                                        "Vary the density through the part from a .vdb file — smoke, \
-                                         cloud, a swirl in a liquid. The grid is fitted to the \
-                                         part's bounding box.",
-                                    )
-                                    .clicked()
-                                {
-                                    pending_volume = Some(param);
-                                    ui.close_menu();
+
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for param in shown {
+                            // In "show all", mark the ones this type would normally hide,
+                            // so the panel still communicates what the preset is *for*.
+                            let hidden = self.show_all && !exposed.contains(&param);
+                            // The tangent is a direction a graph draws - a brushing
+                            // pattern's own - not a value or a picture: shown where the
+                            // graph drives it, and not otherwise.
+                            if param == Param::Tangent && !connected.iter().any(|(p, _)| *p == param) {
+                                continue;
+                            }
+                            // §4.2: where the graph drives a parameter, the panel says so
+                            // and offers a way to reach the node, rather than showing a
+                            // slider whose value the graph would immediately overwrite.
+                            if let Some((_, driver)) = connected.iter().find(|(p, _)| *p == param) {
+                                if connected_row(ui, param, driver, hidden) {
+                                    command = Some(Command::SetParameterTexture {
+                                        material: key,
+                                        param,
+                                        source: None,
+                                    });
+                                    commit = true;
                                 }
-                                return;
-                            }
-                            if ui
-                                .button("Image…")
-                                .on_hover_text("Drive this parameter from a file.")
-                                .clicked()
-                            {
-                                pending_texture = Some(param);
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            for candidate in tequila_texture::procedural::Procedural::catalog() {
-                                if ui
-                                    .button(candidate.label())
-                                    .on_hover_text(procedural_hint(&candidate))
-                                    .clicked()
+                                // §5.3's shared mapping controls, on the map they belong
+                                // to. These existed in the graph and were evaluated on
+                                // every lookup, with nothing anywhere able to change them:
+                                // a texture could be attached and then never scaled,
+                                // rotated, tiled or projected any way but UV — which on
+                                // CAD geometry, where there are frequently no UVs at all,
+                                // means the texture could not be used.
+                                // A procedural's own controls, where one is what drives
+                                // the parameter. Without these it would be four fixed
+                                // patterns rather than four adjustable ones, which is most
+                                // of the way to not having them.
+                                if let Some((current, seed)) =
+                                    tequila_scene::command::procedural_of(&definition_graph, param)
                                 {
-                                    pending_procedural = Some((param, candidate));
-                                    ui.close_menu();
+                                    if let Some(next) = procedural_controls(ui, param, current) {
+                                        command = Some(Command::SetParameterProcedural {
+                                            material: key,
+                                            param,
+                                            procedural: Some(Box::new(next)),
+                                            seed,
+                                        });
+                                        commit = true;
+                                    }
+                                    // A colour parameter reads its procedural through a
+                                    // ramp, and the ramp is the half that decides whether
+                                    // the result is wood or a grey field.
+                                    if let Some(ramp) =
+                                        tequila_scene::command::gradient_of(&definition_graph, param)
+                                    {
+                                        if let Some(next) = gradient_controls(ui, param, &ramp) {
+                                            command = Some(Command::SetParameterGradient {
+                                                material: key,
+                                                param,
+                                                gradient: Box::new(next),
+                                            });
+                                            commit = true;
+                                        }
+                                    }
                                 }
+                                // How deep a pattern or height map stands, through its
+                                // Bump node, in millimetres: the control a bump needs most
+                                // and the one that was only in the graph editor.
+                                if let Some(depth) = tequila_scene::command::bump_depth_of(&definition_graph, param) {
+                                    let mut millimetres = depth * 1000.0;
+                                    let response = crate::field::column(ui, ui.available_width() - 33.0, |ui| {
+                                        let slider = ui.add(
+                                            crate::field::Slider::new(&mut millimetres, 0.001..=10.0)
+                                                .logarithmic(true)
+                                                .suffix(" mm")
+                                                .text("Depth"),
+                                        );
+                                        slider.on_hover_text("How far the pattern's highest point stands above its lowest.")
+                                    });
+                                    if response.inner.changed() {
+                                        let mut graph = definition_graph.clone();
+                                        if tequila_scene::command::set_bump_depth(&mut graph, param, millimetres / 1000.0) {
+                                            command = Some(Command::SetGraph { material: key, graph: Box::new(graph) });
+                                            commit = true;
+                                        }
+                                    }
+                                }
+                                if let Some(current) =
+                                    tequila_scene::command::mapping_of(&definition_graph, param)
+                                {
+                                    if let Some(next) = mapping_controls(ui, param, current) {
+                                        command = Some(Command::SetTextureMapping {
+                                            material: key,
+                                            param,
+                                            mapping: Box::new(next),
+                                        });
+                                        commit = true;
+                                    }
+                                    // Laid on flat, wrapped or from three sides: shown on
+                                    // the part, and moved, sized and turned there.
+                                    if current.projection != tequila_texture::projection::Projection::Uv {
+                                        let placing = self.placing_mapping == Some((key, param));
+                                        let button = ui
+                                            .add(egui::Button::new(if placing { "Placing in view" } else { "Place in view" }).selected(placing))
+                                            .on_hover_text("Show how the texture is laid on the part, and move, size and turn it there");
+                                        if button.clicked() {
+                                            self.place_mapping_request = Some((key, param));
+                                        }
+                                    }
+                                }
+                                continue;
                             }
-                            },
+                            ui.horizontal(|ui| {
+                                // Every row's control the same width, whatever its name,
+                                // with the texture button in a column at its right: the
+                                // fields line up down the panel. One child for the whole
+                                // control, so the hover covers it all, not just whichever
+                                // widget the pointer happens to be over.
+                                let row = crate::field::column(ui, ui.available_width() - 33.0, |ui| {
+                                    parameter_row(ui, param, &material, hidden)
+                                });
+                                if let Some(reason) = param.unimplemented() {
+                                    row.response.on_hover_text(reason);
+                                } else if let Some(hint) = param.hint() {
+                                    row.response.on_hover_text(hint);
+                                }
+                                if let Some((edit, ended)) = row.inner {
+                                    command = Some(Command::SetMaterialParameter {
+                                        material: key,
+                                        parameter: edit,
+                                    });
+                                    commit |= ended;
+                                }
+                                // §4.2: the toggle that turns a literal into a texture.
+                                // Only where a texture would mean something — a metal
+                                // preset and a flag have nothing to map.
+                                if takes_a_texture(param) {
+                                    // A menu rather than a button, because there are now
+                                    // two ways to drive a parameter and a file picker is
+                                    // only one of them. Procedurals sit beside images
+                                    // rather than behind the graph editor: gating them
+                                    // there would have meant shipping four nodes nobody
+                                    // could reach, which is the trap this codebase has
+                                    // fallen into twice.
+                                    // An icon, not the word "tex": it sits on every row,
+                                    // and a column of the same three letters is noise.
+                                    let menu = egui::menu::menu_custom_button(
+                                        ui,
+                                        egui::Button::new("").frame(false).min_size(egui::vec2(26.0, 26.0)),
+                                        |ui| {
+                                        // Density varies through the part's inside, where
+                                        // only a volume reaches: an image or a pattern is
+                                        // a surface and would mean nothing there.
+                                        if param == Param::VolumeDensity {
+                                            if ui
+                                                .button("OpenVDB volume…")
+                                                .on_hover_text(
+                                                    "Vary the density through the part from a .vdb file — smoke, \
+                                                     cloud, a swirl in a liquid. The grid is fitted to the \
+                                                     part's bounding box.",
+                                                )
+                                                .clicked()
+                                            {
+                                                pending_volume = Some(param);
+                                                ui.close_menu();
+                                            }
+                                            return;
+                                        }
+                                        if ui
+                                            .button("Image…")
+                                            .on_hover_text("Drive this parameter from a file.")
+                                            .clicked()
+                                        {
+                                            pending_texture = Some(param);
+                                            ui.close_menu();
+                                        }
+                                        ui.separator();
+                                        for candidate in tequila_texture::procedural::Procedural::catalog() {
+                                            if ui
+                                                .button(candidate.label())
+                                                .on_hover_text(procedural_hint(&candidate))
+                                                .clicked()
+                                            {
+                                                pending_procedural = Some((param, candidate));
+                                                ui.close_menu();
+                                            }
+                                        }
+                                        },
+                                    );
+                                    crate::icons::paint_button(ui, menu.response.rect, &menu.response, crate::icons::Icon::Texture, crate::icons::Tone::Quiet, true);
+                                    menu.response.on_hover_text(if param == Param::VolumeDensity {
+                                        "Drive this from an OpenVDB volume"
+                                    } else {
+                                        "Drive this from an image or a pattern"
+                                    });
+                                }
+                            });
+                        }
+                    });
+
+                    ui.add_space(2.0);
+                    ui.add(crate::field::Checkbox::new(&mut self.show_all, "Show every setting"))
+                        .on_hover_text(
+                            "The type normally shows only the controls that matter for it. \
+                             The rest are still there.",
                         );
-                        crate::icons::paint_button(ui, menu.response.rect, &menu.response, crate::icons::Icon::Texture, crate::icons::Tone::Quiet, true);
-                        menu.response.on_hover_text(if param == Param::VolumeDensity {
-                            "Drive this from an OpenVDB volume"
-                        } else {
-                            "Drive this from an image or a pattern"
-                        });
-                    }
-                });
+
+                    });
+                }),
+                "labels" => {
+                    let title = if label_count == 0 { "Labels".to_string() } else { format!("Labels · {label_count}") };
+                    page.section(ui, section, &title, |ui| {
+                        if let Some(index) = crate::decal_tab::show(ui, project, key, self.placing_label) {
+                            self.place_label_request = Some((key, index));
+                        }
+                    });
+                }
+                "templates" => page.section(ui, section, "Material templates", |ui| templates(ui, project)),
+                _ => {}
             }
-        });
-
-        ui.add_space(2.0);
-        ui.add(crate::field::Checkbox::new(&mut self.show_all, "Show every setting"))
-            .on_hover_text(
-                "The type normally shows only the controls that matter for it. \
-                 The rest are still there.",
-            );
-
-        ui.add_space(6.0);
-        if let Some(index) = crate::decal_tab::show(ui, project, key, self.placing_label) {
-            self.place_label_request = Some((key, index));
         }
+        page.finish(ui);
 
         // Picking a file is a blocking dialog, so it happens after the panel
         // has finished drawing rather than in the middle of a layout pass.
@@ -917,6 +941,15 @@ impl MaterialTab {
             });
         });
     }
+}
+
+/// The page with nothing selected, or a part with no material: only the
+/// templates, which work whatever is selected.
+fn templates_alone(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) {
+    ui.add_space(4.0);
+    let mut page = crate::sections::Page::new(ui, "material");
+    page.section(ui, "templates", "Material templates", |ui| templates(ui, project));
+    page.finish(ui);
 }
 
 /// One control, chosen by what the parameter says it is.
@@ -1294,7 +1327,7 @@ mod tests {
     /// Draw the panel once, headlessly, and hand back the project.
     fn draw(tab: &RefCell<MaterialTab>, project: &RefCell<Project>) {
         egui::__run_test_ui(|ui| {
-            tab.borrow_mut().show(ui, &mut project.borrow_mut());
+            tab.borrow_mut().show(ui, &mut project.borrow_mut(), &mut |_, _| {});
         });
     }
 

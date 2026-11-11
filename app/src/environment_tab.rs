@@ -171,39 +171,53 @@ impl EnvironmentTab {
             self.row(ui, param, &settings, &mut edits);
         }
 
-        for (name, params) in GROUPS {
-            crate::field::Fold::new(name)
-                .default_open(name == "Background")
-                .show(ui, |ui| {
-                    for param in params {
-                        self.row(ui, *param, &settings, &mut edits);
-                    }
-                    if name == "Turn and size" && settings.size <= 0.0 {
-                        crate::theme::note(
-                            ui,
-                            "Size 0 puts the environment infinitely far away, so lighting \
-                             does not change as a part moves.",
-                        );
-                    }
-                });
+        // The sections, in the person's own order: by default the order the
+        // light is built in - the dome turned and sized, what is seen behind
+        // the model, the floor, the sky that replaces the image, and the
+        // pins painted on top of it all.
+        let mut page = crate::sections::Page::new(ui, "environment");
+        for key in page.order() {
+            match key {
+                "turn" | "background" | "ground" => {
+                    let index = ["turn", "background", "ground"].iter().position(|k| *k == key).unwrap_or(0);
+                    let (name, params) = GROUPS[index];
+                    page.section(ui, key, name, |ui| {
+                        crate::field::Fold::new(name).default_open(name == "Background").show(ui, |ui| {
+                            for param in params {
+                                self.row(ui, *param, &settings, &mut edits);
+                            }
+                            if name == "Turn and size" && settings.size <= 0.0 {
+                                crate::theme::note(
+                                    ui,
+                                    "Size 0 puts the environment infinitely far away, so lighting \
+                                     does not change as a part moves.",
+                                );
+                            }
+                        });
+                    });
+                }
+                "sky" => page.section(ui, key, "Sun & sky", |ui| crate::sky_panel::show(ui, project)),
+                "pins" => {
+                    let count = project.document().environment.pins.len();
+                    let title = if count == 0 { "Lighting pins".to_string() } else { format!("Lighting pins · {count}") };
+                    page.section(ui, key, &title, |ui| {
+                        if let Some(index) = crate::pin_panel::show(ui, project, self.aiming_pin) {
+                            self.aim_pin_request = Some(index);
+                        }
+                    });
+                }
+                _ => {}
+            }
         }
+        page.finish(ui);
 
         for edit in edits {
             let _ = project.apply(Command::SetEnvironmentParameter { parameter: edit });
         }
 
-        // After the image and its adjustments, because that is the order the
-        // light is built in: the pins are painted onto the environment above
-        // before its CDF is rebuilt.
-        ui.add_space(4.0);
-        // Before the pins, because the sky *is* the environment and the pins
-        // are painted on top of it — the panel reads in the order the light
-        // is built.
-        crate::sky_panel::show(ui, project);
-        ui.add_space(2.0);
-        if let Some(index) = crate::pin_panel::show(ui, project, self.aiming_pin) {
-            self.aim_pin_request = Some(index);
-        }
+        // The whole environment written out, at the page's foot: it is of
+        // every section above, not of one.
+        crate::pin_panel::export_row(ui, project);
     }
 
     /// One control, shaped by what the field holds.

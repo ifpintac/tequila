@@ -653,7 +653,7 @@ pub fn panel(ui: &mut egui::Ui, project: &Project, renders: &mut Renders, materi
     let Some(link) = project.document().materials.get(material).and_then(|d| d.substance.as_deref()).cloned() else {
         return asked;
     };
-    crate::theme::section(ui, "Substance");
+    // Its title is the section's, on the Material page.
     let described = renders.describe(&link.file);
     let graph = described.as_ref().ok().and_then(|f| f.graph(Some(&link.graph)).cloned());
     let file_name = link.file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();

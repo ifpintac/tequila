@@ -466,11 +466,12 @@ pub struct Fold {
     id_salt: Option<egui::Id>,
     default_open: bool,
     reveal: bool,
+    aside: Option<String>,
 }
 
 impl Fold {
     pub fn new(title: impl Into<egui::WidgetText>) -> Self {
-        Fold { title: title.into(), id_salt: None, default_open: false, reveal: false }
+        Fold { title: title.into(), id_salt: None, default_open: false, reveal: false, aside: None }
     }
 
     pub fn id_salt(mut self, salt: impl std::hash::Hash) -> Self {
@@ -480,6 +481,13 @@ impl Fold {
 
     pub fn default_open(mut self, open: bool) -> Self {
         self.default_open = open;
+        self
+    }
+
+    /// A word or two at the title's right, dim: whose it is, or how many.
+    /// Room is left at the right end for a section's grip.
+    pub fn aside(mut self, text: impl Into<String>) -> Self {
+        self.aside = Some(text.into()).filter(|t: &String| !t.is_empty());
         self
     }
 
@@ -528,7 +536,17 @@ impl Fold {
                     if header.hovered() { p.text } else { p.text_dim },
                 );
                 let galley = painter.layout_no_wrap(title.clone(), theme::strong(if nested { 12.5 } else { 13.0 }), p.text);
+                let title_right = rect.left() + 26.0 + galley.size().x;
                 painter.galley(egui::pos2(rect.left() + 26.0, rect.center().y - galley.size().y * 0.5), galley, egui::Color32::PLACEHOLDER);
+                if let Some(aside) = &self.aside {
+                    // Cut short of the title, and of the grip at the end.
+                    let right = rect.right() - if nested { 6.0 } else { 28.0 };
+                    let room = (right - title_right - 12.0).max(0.0);
+                    let mut job = egui::text::LayoutJob::simple_singleline(aside.clone(), egui::FontId::proportional(theme::BODY - 1.5), p.text_dim);
+                    job.wrap = egui::text::TextWrapping { max_width: room, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+                    let galley = ui.fonts(|f| f.layout_job(job));
+                    painter.galley(egui::pos2(right - galley.size().x, rect.center().y - galley.size().y * 0.5), galley, egui::Color32::PLACEHOLDER);
+                }
             }
             let body = state.show_body_unindented(ui, |ui| {
                 FOLD_DEPTH.with(|d| d.set(d.get() + 1));
