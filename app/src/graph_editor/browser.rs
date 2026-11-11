@@ -15,7 +15,11 @@
 //! - **Maps** are the textures and patterns: pictures, noises, weaves.
 //! - **Utilities** are the rest of the nodes, by their families.
 //! - **Scene materials** are the document's materials: a click opens that
-//!   one's graph here, without going back to the Material tab for it.
+//!   one's graph here, without going back to the Material tab for it, and
+//!   one dragged into the graph comes in whole - its nodes, with a Shader
+//!   where its surface was - to be mixed with this one.
+//! - **Library** is the material library, by its categories: dragged in
+//!   or double-clicked, a library material comes in the same way.
 
 use super::menu::{score, Entry};
 use super::view::Family;
@@ -30,6 +34,7 @@ pub enum Group {
     Maps,
     Utilities,
     Scene,
+    Library,
 }
 
 impl Group {
@@ -39,8 +44,11 @@ impl Group {
             Group::Maps => "Maps",
             Group::Utilities => "Utilities",
             Group::Scene => "Scene materials",
+            Group::Library => "Library",
         }
     }
+
+    pub const ALL: [Group; 5] = [Group::Materials, Group::Maps, Group::Utilities, Group::Scene, Group::Library];
 
     /// What its rows are, under the group's name when it is open.
     fn about(self) -> &'static str {
@@ -48,7 +56,8 @@ impl Group {
             Group::Materials => "Another surface to mix with this one: wire it into a Mix Shader, and that into Layer.",
             Group::Maps => "Textures and patterns, for a colour, a roughness or a bump.",
             Group::Utilities => "Values, colour and number work, vectors, and what the part itself gives.",
-            Group::Scene => "Click one to edit its graph here.",
+            Group::Scene => "Click one to edit its graph here. Drag one into the graph to bring it in, its nodes with it, as a Shader to mix.",
+            Group::Library => "Drag one into the graph, or double-click it: it comes in with its nodes, as a Shader to mix with this material.",
         }
     }
 
@@ -64,6 +73,15 @@ pub enum Item {
     /// A node, and the name it is given when it is not the node's own.
     Node(NodeKind, Option<String>),
     Material(MaterialKey),
+    /// A library material, by its place in the library's list.
+    Library(usize),
+}
+
+/// A material brought into the graph whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Scene(MaterialKey),
+    Library(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -78,9 +96,9 @@ pub struct Row {
 
 /// A run of rows under one heading of a group.
 #[derive(Clone, Debug)]
-pub struct Section {
+pub struct Section<'a> {
     pub group: Group,
-    pub heading: Option<&'static str>,
+    pub heading: Option<&'a str>,
     pub rows: Vec<Row>,
 }
 
@@ -95,14 +113,15 @@ fn category_label(category: Category) -> &'static str {
 
 /// Everything the browser lists, or what of it `query` finds.
 ///
-/// `entries` are the Add menu's; `materials` the document's, by name. With
-/// a query the operations inside a node are found too ("multiply" finds
-/// Math › Multiply), best match first within each heading, and a heading
-/// with nothing found is left out.
-pub fn sections(entries: &[Entry], materials: &[(MaterialKey, String)], current: Option<MaterialKey>, query: &str) -> Vec<Section> {
+/// `entries` are the Add menu's; `materials` the document's, by name;
+/// `library` the material library's, each with its category, in the
+/// library's order. With a query the operations inside a node are found too
+/// ("multiply" finds Math › Multiply), best match first within each
+/// heading, and a heading with nothing found is left out.
+pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], library: &[(&'a str, &'a str)], current: Option<MaterialKey>, query: &str) -> Vec<Section<'a>> {
     let searching = !query.trim().is_empty();
-    let mut out: Vec<Section> = Vec::new();
-    let mut push = |group: Group, heading: Option<&'static str>, mut rows: Vec<(Row, i32)>| {
+    let mut out: Vec<Section<'a>> = Vec::new();
+    let mut push = |group: Group, heading: Option<&'a str>, mut rows: Vec<(Row, i32)>| {
         if searching {
             rows.sort_by(|a, b| b.1.cmp(&a.1));
         }
@@ -166,6 +185,26 @@ pub fn sections(entries: &[Entry], materials: &[(MaterialKey, String)], current:
         })
         .collect();
     push(Group::Scene, None, rows);
+
+    // The library, a heading for each category in the order they come.
+    let mut categories: Vec<&'a str> = Vec::new();
+    for (_, category) in library {
+        if !categories.contains(category) {
+            categories.push(category);
+        }
+    }
+    for category in categories {
+        let rows = library
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, its))| *its == category)
+            .filter_map(|(index, (name, _))| {
+                let score = found(name)?;
+                Some((Row { label: name.to_string(), family: None, item: Item::Library(index), current: false }, score))
+            })
+            .collect();
+        push(Group::Library, Some(category), rows);
+    }
     out
 }
 
@@ -177,13 +216,16 @@ pub enum Act {
     /// double-click, which puts it in the middle of the view.
     Add { kind: NodeKind, label: Option<String>, at: Option<egui::Pos2> },
     Open(MaterialKey),
+    /// Bring a material into the graph whole, dropped or double-clicked as
+    /// a node is.
+    Bring { source: Source, at: Option<egui::Pos2> },
 }
 
 #[derive(Default)]
 pub struct Browser {
     pub query: String,
     /// The row being dragged out, by its name.
-    drag: Option<(String, NodeKind, Option<String>)>,
+    drag: Option<(String, Item)>,
     /// Where each row was drawn, by its name, for a test's pointer.
     #[cfg(test)]
     pub drawn: Vec<(String, egui::Rect)>,
@@ -220,7 +262,7 @@ impl Browser {
                 ui.add_space(8.0);
                 ui.label(egui::RichText::new("Nothing by that name").size(12.0).color(p.text_dim));
             }
-            for group in [Group::Materials, Group::Maps, Group::Utilities, Group::Scene] {
+            for group in Group::ALL {
                 let own: Vec<&Section> = sections.iter().filter(|s| s.group == group).collect();
                 if own.is_empty() {
                     continue;
@@ -252,7 +294,7 @@ impl Browser {
 
         // The row being dragged follows the pointer, and is let go over the
         // canvas to be added there.
-        if let Some((name, kind, label)) = self.drag.clone() {
+        if let Some((name, item)) = self.drag.clone() {
             let (pointer, down) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
             if down {
                 if let Some(at) = pointer {
@@ -267,11 +309,24 @@ impl Browser {
             } else {
                 self.drag = None;
                 if let Some(at) = pointer.filter(|at| canvas.contains(*at)) {
-                    act = Act::Add { kind, label, at: Some(at) };
+                    act = match item {
+                        Item::Node(kind, label) => Act::Add { kind, label, at: Some(at) },
+                        Item::Material(key) => Act::Bring { source: Source::Scene(key), at: Some(at) },
+                        Item::Library(index) => Act::Bring { source: Source::Library(index), at: Some(at) },
+                    };
                 }
             }
         }
         act
+    }
+
+    /// The node being dragged out of the browser, if it is one: the canvas
+    /// lights the wire it would go into.
+    pub fn dragged_node(&self) -> Option<&NodeKind> {
+        match &self.drag {
+            Some((_, Item::Node(kind, _))) => Some(kind),
+            _ => None,
+        }
     }
 
     fn row(&mut self, ui: &mut egui::Ui, row: &Row, act: &mut Act) {
@@ -279,7 +334,7 @@ impl Browser {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::click_and_drag());
         #[cfg(test)]
         self.drawn.push((row.label.clone(), rect));
-        let dragged = self.drag.as_ref().is_some_and(|(name, _, _)| *name == row.label);
+        let dragged = self.drag.as_ref().is_some_and(|(name, item)| *name == row.label && *item == row.item);
         if row.current {
             ui.painter().rect_filled(rect, 4.0, p.accent.gamma_multiply(0.22));
         } else if response.hovered() || dragged {
@@ -300,21 +355,29 @@ impl Browser {
         }
         let text = rect.left_center() + egui::vec2(20.0, 0.0);
         ui.painter().with_clip_rect(rect.shrink2(egui::vec2(4.0, 0.0))).text(text, egui::Align2::LEFT_CENTER, &row.label, egui::FontId::proportional(12.5), p.text);
+        // The one being edited stays where it is: every other row can be
+        // dragged into the graph.
+        if response.drag_started() && !row.current {
+            self.drag = Some((row.label.clone(), row.item.clone()));
+        }
         match &row.item {
             Item::Node(kind, label) => {
-                if response.drag_started() {
-                    self.drag = Some((row.label.clone(), kind.clone(), label.clone()));
-                }
                 if response.double_clicked() {
                     *act = Act::Add { kind: kind.clone(), label: label.clone(), at: None };
                 }
-                response.on_hover_text("Drag it into the graph, or double-click to add it");
+                response.on_hover_text("Drag it into the graph, or double-click to add it. Dropped on a wire, it goes in between.");
             }
             Item::Material(key) => {
                 if response.clicked() && !row.current {
                     *act = Act::Open(*key);
                 }
-                response.on_hover_text(if row.current { "The material this graph is" } else { "Edit this material's graph" });
+                response.on_hover_text(if row.current { "The material this graph is" } else { "Click to edit this material's graph. Drag it into the graph to bring it in as a Shader, with its nodes." });
+            }
+            Item::Library(index) => {
+                if response.double_clicked() {
+                    *act = Act::Bring { source: Source::Library(*index), at: None };
+                }
+                response.on_hover_text("Drag it into the graph, or double-click: it comes in as a Shader, with its nodes.");
             }
         }
     }
@@ -343,11 +406,12 @@ mod tests {
     fn the_browser_lists_what_the_add_menu_does() {
         let entries = entries();
         let materials = [(MaterialKey(1), "Shell".to_string()), (MaterialKey(2), "Felt Grey".to_string())];
-        let sections = sections(&entries, &materials, Some(MaterialKey(2)), "");
+        let library = [("ABS White", "Plastic"), ("Brass", "Metal"), ("ABS Black", "Plastic")];
+        let sections = sections(&entries, &materials, &library, Some(MaterialKey(2)), "");
         let groups: Vec<Group> = sections.iter().map(|s| s.group).collect();
         let mut order = groups.clone();
         order.dedup();
-        assert_eq!(order, [Group::Materials, Group::Maps, Group::Utilities, Group::Scene]);
+        assert_eq!(order, Group::ALL);
 
         let listed: Vec<String> = [labels(&sections, Group::Maps), labels(&sections, Group::Utilities)].concat();
         for entry in entries.iter().filter(|e| !e.search_only && !matches!(e.kind, NodeKind::Shader(_))) {
@@ -365,6 +429,15 @@ mod tests {
         let scene: Vec<&Row> = sections.iter().filter(|s| s.group == Group::Scene).flat_map(|s| &s.rows).collect();
         assert_eq!(scene.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Shell", "Felt Grey"]);
         assert_eq!(scene.iter().map(|r| r.current).collect::<Vec<_>>(), [false, true]);
+
+        // The library by its categories, in the order they first come, each
+        // row knowing its place in the library's own list.
+        let shelves: Vec<(Option<&str>, Vec<(&str, &Item)>)> =
+            sections.iter().filter(|s| s.group == Group::Library).map(|s| (s.heading, s.rows.iter().map(|r| (r.label.as_str(), &r.item)).collect())).collect();
+        assert_eq!(
+            shelves,
+            [(Some("Plastic"), vec![("ABS White", &Item::Library(0)), ("ABS Black", &Item::Library(2))]), (Some("Metal"), vec![("Brass", &Item::Library(1))])]
+        );
     }
 
     /// The search is over everything at once, the operations inside a node
@@ -373,22 +446,25 @@ mod tests {
     fn the_browsers_search_finds_nodes_operations_and_materials() {
         let entries = entries();
         let materials = [(MaterialKey(1), "Shell".to_string()), (MaterialKey(2), "Felt Grey".to_string())];
-        let found = sections(&entries, &materials, None, "noise");
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "noise");
         assert_eq!(labels(&found, Group::Maps).first().map(String::as_str), Some("Noise Texture"), "the best match leads");
         assert!(labels(&found, Group::Scene).is_empty());
         assert!(labels(&found, Group::Maps).iter().all(|l| l.to_lowercase().contains("noise")), "{:?}", labels(&found, Group::Maps));
-        assert!(!sections(&entries, &materials, None, "vm").is_empty(), "initials still find Vector Math");
+        assert!(!sections(&entries, &materials, &[("Brass", "Metal")], None, "vm").is_empty(), "initials still find Vector Math");
         assert!(found.iter().all(|s| !s.rows.is_empty()), "a heading with nothing found is left out");
 
-        let found = sections(&entries, &materials, None, "multiply");
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "multiply");
         assert!(labels(&found, Group::Utilities).iter().any(|l| l == "Math › Multiply"), "{:?}", labels(&found, Group::Utilities));
 
-        let found = sections(&entries, &materials, None, "felt");
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "felt");
         assert_eq!(labels(&found, Group::Scene), ["Felt Grey"]);
 
-        let found = sections(&entries, &materials, None, "glass");
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "brass");
+        assert_eq!(labels(&found, Group::Library), ["Brass"]);
+
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "glass");
         assert!(labels(&found, Group::Materials).iter().any(|l| l == MaterialType::Glass.label()));
 
-        assert!(sections(&entries, &materials, None, "qqqzzz").is_empty());
+        assert!(sections(&entries, &materials, &[("Brass", "Metal")], None, "qqqzzz").is_empty());
     }
 }

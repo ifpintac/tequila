@@ -372,7 +372,10 @@ class Client:
         (the window's inner size, in points), preferences_page='viewport'
         and preferences_search='gizmo' (the Preferences window at a page,
         or searching), graph_search='noise' (typed in the search of the
-        Material Graph editor's browser, which shows it)."""
+        Material Graph editor's browser, which shows it),
+        graph_bring={'library': '<name>'} or {'material': n} (that
+        material brought into the open graph whole, as a Shader with its
+        nodes)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):
