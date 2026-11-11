@@ -447,6 +447,10 @@ pub struct UiChange {
     pub preferences_page: Option<String>,
     /// What is typed in the Preferences window's search, which opens it.
     pub preferences_search: Option<String>,
+    /// What is typed in the search of the Material Graph editor's browser,
+    /// which shows the browser ("" clears it). The browser itself is the
+    /// setting `interface.graph_browser`.
+    pub graph_search: Option<String>,
     /// A 3D mouse's input, made up: reports as a device would send them.
     pub spacemouse: Option<SpaceMouseInput>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
@@ -1400,6 +1404,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             preferences: opt_bool(value, "preferences")?,
             preferences_page: opt_string(value, "preferences_page")?,
             preferences_search: opt_string(value, "preferences_search")?,
+            graph_search: opt_string(value, "graph_search")?,
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,

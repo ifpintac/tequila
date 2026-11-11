@@ -13,6 +13,7 @@
 //! reaching the renderer. A drag of a node or a slider is one undo step, not
 //! one per frame.
 
+mod browser;
 mod menu;
 mod previews;
 mod sidebar;
@@ -136,6 +137,18 @@ pub struct GraphEditor {
     /// The span it shows, held while it is dragged so it does not rescale
     /// under the pointer.
     map_world: Option<egui::Rect>,
+    /// The Material/Map browser down the left side, and whether it shows:
+    /// the toolbar's Browser, T, and Preferences › Interface.
+    browser: browser::Browser,
+    pub show_browser: bool,
+    /// Whether the swatch and the settings show, down the right side (N).
+    show_settings: bool,
+    /// How many nodes the browser has put in the middle of the view, so
+    /// the next is not put on the last.
+    browser_added: u32,
+    /// A scene material clicked in the browser: the editor opens on it once
+    /// this frame's edits to the one it is on are applied.
+    switch_to: Option<MaterialKey>,
 }
 
 /// The minimap's place on screen and its scale: a canvas point `p` is at
@@ -189,6 +202,11 @@ impl Default for GraphEditor {
             show_map: true,
             minimap: None,
             map_world: None,
+            browser: browser::Browser::default(),
+            show_browser: true,
+            show_settings: true,
+            browser_added: 0,
+            switch_to: None,
         }
     }
 }
@@ -275,6 +293,18 @@ impl GraphEditor {
         self.material
     }
 
+    /// Type in the browser's search, showing the browser: a script's way
+    /// to a picture of what it finds.
+    pub fn search_browser(&mut self, query: &str) {
+        self.browser.query = query.to_string();
+        self.show_browser = true;
+    }
+
+    #[cfg(test)]
+    pub fn browser_search(&self) -> &str {
+        &self.browser.query
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, project: &mut Project) {
         if !self.open {
             self.hovered = false;
@@ -297,6 +327,7 @@ impl GraphEditor {
             return;
         };
         let title = format!("Material graph — {}", definition.name);
+        let name = definition.name.clone();
         let exposed = definition.material_type.exposed();
         let original = definition.graph.clone();
         // A graph nobody laid out is shown laid out, but not changed for
@@ -319,25 +350,37 @@ impl GraphEditor {
         let spec = crate::windows::Spec {
             kind: crate::windows::Kind::Graph,
             title,
-            size: egui::vec2(1240.0, 720.0),
+            // Wide enough for the browser, the canvas and the settings.
+            size: egui::vec2(1400.0, 760.0),
             min_size: egui::vec2(720.0, 420.0),
             resizable: true,
             margin: 0.0,
         };
-        let window = crate::windows::show(ctx, spec, &mut open, |window| window.default_size([1240.0, 720.0]).min_width(720.0).min_height(420.0).resizable(true), |ui| {
-                egui::SidePanel::right("graph-properties")
-                    .resizable(true)
-                    .default_width(300.0)
-                    .width_range(240.0..=460.0)
-                    .show_inside(ui, |ui| {
-                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                            ui.add_space(4.0);
-                            self.swatch_panel(ui, &graph, project);
-                            ui.add_space(4.0);
-                            ui.separator();
-                            committed |= self.properties(ui, project, &mut graph);
+        let window = crate::windows::show(ctx, spec, &mut open, |window| window.default_size([1400.0, 760.0]).min_width(720.0).min_height(420.0).resizable(true), |ui| {
+                if self.show_browser {
+                    egui::SidePanel::left("graph-browser")
+                        .resizable(true)
+                        .default_width(224.0)
+                        .width_range(180.0..=360.0)
+                        .show_inside(ui, |ui| {
+                            committed |= self.browser_panel(ui, project, &mut graph, key);
                         });
-                    });
+                }
+                if self.show_settings {
+                    egui::SidePanel::right("graph-properties")
+                        .resizable(true)
+                        .default_width(300.0)
+                        .width_range(240.0..=460.0)
+                        .show_inside(ui, |ui| {
+                            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                                ui.add_space(4.0);
+                                self.swatch_panel(ui, &graph, project);
+                                ui.add_space(4.0);
+                                ui.separator();
+                                committed |= self.properties(ui, project, &mut graph);
+                            });
+                        });
+                }
                 egui::TopBottomPanel::bottom("graph-status").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
                         let text = match &self.message {
@@ -353,7 +396,7 @@ impl GraphEditor {
                 egui::TopBottomPanel::top("graph-toolbar")
                     .frame(egui::Frame::none().fill(crate::theme::p().chrome).inner_margin(egui::Margin::symmetric(8.0, 5.0)))
                     .show_inside(ui, |ui| {
-                        self.toolbar(ui, &mut graph, &exposed, &mut committed);
+                        self.toolbar(ui, &name, &mut graph, &exposed, &mut committed);
                     });
                 egui::CentralPanel::default().frame(egui::Frame::none().fill(ink::canvas())).show_inside(ui, |ui| {
                     committed |= self.canvas(ui, project, &mut graph, &exposed);
@@ -389,6 +432,59 @@ impl GraphEditor {
             }
         } else if pointer_released {
             project.end_interaction();
+        }
+        // Another of the scene's materials, clicked in the browser: after
+        // the edits above, which were to the one the editor was on.
+        if let Some(next) = self.switch_to.take() {
+            if self.open && project.document().materials.get(next).is_some() {
+                project.end_interaction();
+                self.open_for(next);
+            }
+        }
+    }
+
+    // ---- the browser ------------------------------------------------------------------
+
+    /// The Material/Map browser, down the left side.
+    fn browser_panel(&mut self, ui: &mut egui::Ui, project: &Project, graph: &mut MaterialGraph, key: MaterialKey) -> bool {
+        let entries = menu::entries(project);
+        let materials: Vec<(MaterialKey, String)> = project.document().materials.iter().map(|(key, definition)| (key, definition.name.clone())).collect();
+        let sections = browser::sections(&entries, &materials, Some(key), &self.browser.query);
+        let act = self.browser.show(ui, &sections, self.canvas_rect);
+        self.browse(act, graph)
+    }
+
+    /// Do what the browser was asked: true when the graph changed.
+    fn browse(&mut self, act: browser::Act, graph: &mut MaterialGraph) -> bool {
+        match act {
+            browser::Act::None => false,
+            browser::Act::Open(material) => {
+                self.switch_to = Some(material);
+                false
+            }
+            browser::Act::Add { kind, label, at } => {
+                let rect = self.canvas_rect;
+                let width = view::node_width(&kind);
+                let at = match at {
+                    // Dropped: its header under the pointer.
+                    Some(screen) => self.to_canvas(rect, screen) - egui::vec2(width * 0.5, 12.0),
+                    // Double-clicked: the middle of the view, each a step
+                    // down and right of the last so none hides another.
+                    None => {
+                        let step = (self.browser_added % 6) as f32 * 24.0;
+                        self.browser_added += 1;
+                        self.to_canvas(rect, rect.center()) - egui::vec2(width * 0.5, 60.0) + egui::vec2(step, step)
+                    }
+                };
+                let mut node = Node::new(kind);
+                node.label = label;
+                node.position = GraphVec2 { x: snap(at.x), y: snap(at.y) };
+                let id = graph.add_node(node);
+                self.selected = BTreeSet::from([id]);
+                self.active = Some(id);
+                self.selected_frame = None;
+                true
+            }
         }
     }
 
@@ -1490,6 +1586,13 @@ impl GraphEditor {
         if plain && key(egui::Key::Home) {
             self.fit(rect, graph, exposed, None);
         }
+        // The side panels, as Blender's T and N.
+        if plain && key(egui::Key::T) {
+            self.show_browser = !self.show_browser;
+        }
+        if plain && key(egui::Key::N) {
+            self.show_settings = !self.show_settings;
+        }
         if plain && key(egui::Key::Period) {
             let selected = self.selected.clone();
             self.fit(rect, graph, exposed, Some(&selected));
@@ -1914,7 +2017,7 @@ impl GraphEditor {
     }
 
     /// The bar above the canvas.
-    fn toolbar(&mut self, ui: &mut egui::Ui, graph: &mut MaterialGraph, exposed: &[Param], committed: &mut bool) {
+    fn toolbar(&mut self, ui: &mut egui::Ui, name: &str, graph: &mut MaterialGraph, exposed: &[Param], committed: &mut bool) {
         let rect = self.canvas_rect;
         ui.horizontal(|ui| {
             let style = ui.style_mut();
@@ -1922,6 +2025,10 @@ impl GraphEditor {
             style.spacing.button_padding = egui::vec2(10.0, 3.0);
             style.spacing.interact_size.y = 24.0;
             let button = |text: &str| egui::Button::new(egui::RichText::new(text).size(12.5)).fill(crate::theme::p().control).rounding(6.0);
+            // Each side panel's switch is at its own end of the bar.
+            ui.toggle_value(&mut self.show_browser, egui::RichText::new("Browser").size(12.5))
+                .on_hover_text(format!("The materials, maps and scene materials down the left: drag one into the graph, or double-click it ({})", crate::theme::keys("T")));
+            ui.add_space(6.0);
             if ui.add(button("+  Add")).on_hover_text("Add a node (Shift A)").clicked() {
                 let at = rect.min + egui::vec2(12.0, 8.0);
                 self.menu = Some(menu::AddMenu::new(self.to_canvas(rect, rect.center()), at, None));
@@ -1942,6 +2049,14 @@ impl GraphEditor {
                 self.solo_request = Some(None);
                 self.solo_shown = None;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.toggle_value(&mut self.show_settings, egui::RichText::new("Settings").size(12.5))
+                    .on_hover_text(format!("The material's picture and the selected node's settings down the right ({})", crate::theme::keys("N")));
+                ui.add_space(6.0);
+                // Whose graph this is: the browser changes it without the
+                // window's title being looked at.
+                ui.add(egui::Label::new(egui::RichText::new(name).size(12.5).strong()).truncate());
+            });
         });
     }
 }
@@ -2302,10 +2417,23 @@ mod tests {
     }
 
     impl Harness {
+        /// The editor with its browser hidden: the canvas at the width
+        /// these tests lay their nodes out in. With it, a node added at the
+        /// first empty spot reaches over the surface node.
         fn new() -> Harness {
+            Harness::opened(false)
+        }
+
+        /// The editor as it opens, the browser down its left side.
+        fn with_browser() -> Harness {
+            Harness::opened(true)
+        }
+
+        fn opened(browser: bool) -> Harness {
             let project = project();
             let key = project.document().materials.iter().next().map(|(k, _)| k).expect("a material");
             let mut editor = GraphEditor::default();
+            editor.show_browser = browser;
             editor.open_for(key);
             let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0 };
             h.frame(Vec::new());
@@ -2616,5 +2744,142 @@ mod tests {
         assert_eq!(fresh.len(), 2);
         assert_eq!(graph.links().iter().filter(|l| fresh.contains(&l.from) && fresh.contains(&l.to)).count(), 1);
         assert!(!graph.links().iter().any(|l| fresh.contains(&l.from) && l.to == surface), "the copy is not wired to the surface");
+    }
+    /// What the browser asks is done as the Add menu does it: a
+    /// double-clicked row is a node in the middle of the view, selected,
+    /// and the next one beside it and not on it; a dropped one is under
+    /// the pointer; a Materials row is a Shader named for its kind.
+    #[test]
+    fn the_browser_adds_nodes_where_they_are_put() {
+        let mut h = Harness::with_browser();
+        let mut graph = h.graph();
+        let before = graph.len();
+        let canvas = h.editor.canvas_rect;
+        let value = || NodeKind::Constant(Value::Float(0.5));
+
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph));
+        assert_eq!(graph.len(), before + 1);
+        let first = h.editor.active.expect("the new node is the active one");
+        assert_eq!(h.editor.selected, BTreeSet::from([first]));
+        fn at(h: &Harness, graph: &MaterialGraph, id: NodeId) -> egui::Pos2 {
+            let p = graph.node(id).unwrap().position;
+            h.screen(egui::pos2(p.x, p.y))
+        }
+        let middle = at(&h, &graph, first);
+        assert!(canvas.shrink(40.0).contains(middle), "{middle:?} is in the view {canvas:?}");
+        assert!((middle.x - canvas.center().x).abs() < 160.0 && (middle.y - canvas.center().y).abs() < 160.0, "{middle:?} is near the middle of {canvas:?}");
+
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph));
+        let second = h.editor.active.unwrap();
+        assert_ne!(at(&h, &graph, second), middle, "the second landed on the first");
+
+        let drop = canvas.left_top() + egui::vec2(300.0, 200.0);
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: Some(drop) }, &mut graph));
+        let dropped = at(&h, &graph, h.editor.active.unwrap());
+        let width = view::node_width(&value()) * h.editor.zoom;
+        assert!(dropped.x <= drop.x && drop.x <= dropped.x + width + 20.0, "{dropped:?} is not under {drop:?}");
+        assert!((dropped.y - drop.y).abs() < 40.0, "{dropped:?} is not under {drop:?}");
+
+        let glass = tequila_materials::material_type::MaterialType::Glass;
+        let shader = NodeKind::Shader(Box::new(glass.defaults()));
+        assert!(h.editor.browse(browser::Act::Add { kind: shader, label: Some(glass.label().into()), at: None }, &mut graph));
+        let node = graph.node(h.editor.active.unwrap()).unwrap();
+        assert_eq!(view::title(node), glass.label(), "a Materials row is named for its kind");
+        assert!(!h.editor.browse(browser::Act::None, &mut graph));
+    }
+
+    /// With the pointer, as it is used: a row dragged out of the browser
+    /// and let go over the canvas is a node there, one let go anywhere else
+    /// is nothing, and a double-click adds one too.
+    #[test]
+    fn a_row_is_dragged_out_of_the_browser_into_the_graph() {
+        let mut h = Harness::with_browser();
+        h.editor.browser.query = "rgb".into();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let row = |h: &Harness| h.editor.browser.drawn.iter().find(|(label, _)| label == "RGB").map(|(_, rect)| rect.center()).expect("the RGB row is drawn");
+        let colours = |h: &Harness| h.graph().nodes().filter(|(_, n)| matches!(n.kind, NodeKind::Constant(Value::Color(_)))).map(|(id, _)| id).collect::<Vec<_>>();
+        assert!(colours(&h).is_empty());
+        let from = row(&h);
+        assert!(!h.editor.canvas_rect.contains(from), "the browser is beside the canvas, not on it");
+
+        let drop = h.empty_spot();
+        h.drag(from, drop, egui::PointerButton::Primary, egui::Modifiers::NONE);
+        let added = colours(&h);
+        assert_eq!(added.len(), 1, "the dragged row became a node");
+        assert_eq!(h.editor.active, Some(added[0]));
+        let rect = h.layout_of(added[0]).rect;
+        let on_screen = egui::Rect::from_min_max(h.screen(rect.min), h.screen(rect.max));
+        assert!(on_screen.expand(24.0).contains(drop), "{on_screen:?} is not where it was dropped, {drop:?}");
+
+        // Let go back on the browser: nothing.
+        let from = row(&h);
+        h.drag(from, from + egui::vec2(10.0, 60.0), egui::PointerButton::Primary, egui::Modifiers::NONE);
+        assert_eq!(colours(&h).len(), 1);
+
+        let from = row(&h);
+        h.move_to(from);
+        for pressed in [true, false, true, false] {
+            h.button(egui::PointerButton::Primary, pressed, egui::Modifiers::NONE);
+        }
+        h.frame(Vec::new());
+        assert_eq!(colours(&h).len(), 2, "a double-click adds one");
+        // One undo step each: the first Ctrl+Z takes the second node only.
+        h.project.undo();
+        assert_eq!(colours(&h).len(), 1);
+    }
+
+    /// A scene material clicked in the browser is the one the editor is on
+    /// from the next frame, and one that has gone is not.
+    #[test]
+    fn the_browser_opens_another_of_the_scenes_materials() {
+        let mut h = Harness::with_browser();
+        // The part given a copy of its material: two in the scene.
+        let part = h.project.document().tree.iter().find(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. })).map(|n| n.id).expect("a part");
+        h.project.apply(Command::UnlinkMaterial { node: part }).expect("unlinked");
+        let added = h.project.document().tree.get(part).unwrap().material.expect("the part's own material");
+        assert_ne!(added, h.key);
+        assert!(h.project.document().materials.get(h.key).is_some(), "the first material is still in the scene");
+        h.frame(Vec::new());
+
+        let mut graph = h.graph();
+        assert!(!h.editor.browse(browser::Act::Open(added), &mut graph), "opening changes no graph");
+        assert_eq!(h.editor.material(), Some(h.key), "not until this frame's edits are applied");
+        h.frame(Vec::new());
+        assert_eq!(h.editor.material(), Some(added));
+        assert!(h.editor.open);
+
+        assert!(!h.editor.browse(browser::Act::Open(MaterialKey(987_654)), &mut graph));
+        h.frame(Vec::new());
+        assert_eq!(h.editor.material(), Some(added), "a material that is not there is not opened");
+    }
+
+    /// T hides the browser and shows it, N the settings, as Blender's side
+    /// panels: with the pointer over the canvas, and no modifier.
+    #[test]
+    fn t_and_n_hide_the_side_panels() {
+        let mut h = Harness::with_browser();
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        assert!(h.editor.show_browser && h.editor.show_settings);
+        h.key(egui::Key::T, egui::Modifiers::NONE);
+        assert!(!h.editor.show_browser);
+        assert!(h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::N, egui::Modifiers::NONE);
+        assert!(!h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::T, egui::Modifiers::NONE);
+        // The browser is back and the canvas narrower: over it again.
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::N, egui::Modifiers::NONE);
+        assert!(h.editor.show_browser && h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::T, egui::Modifiers::SHIFT);
+        assert!(h.editor.show_browser, "Shift+T is not T");
     }
 }

@@ -759,6 +759,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         app.preferences.open = true;
         app.preferences.search = search.clone();
     }
+    if let Some(search) = &change.graph_search {
+        app.graph_editor.search_browser(search);
+    }
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
     }
@@ -2888,6 +2891,20 @@ mod handler_tests {
         let state = value(&mut app, r#"{"op":"ui","graph":false}"#);
         assert!(state.get("graph").is_some_and(|g| matches!(g, Value::Null)));
         assert!(!app.graph_editor.open);
+    }
+
+    /// The graph editor's browser is a setting, shown and hidden as any
+    /// other, and a script types in its search, which shows it.
+    #[test]
+    fn a_script_shows_hides_and_searches_the_graph_browser() {
+        let mut app = TequilaApp::for_tests();
+        assert!(app.graph_editor.show_browser, "the browser shows until it is hidden");
+        value(&mut app, r#"{"op":"preferences","set":{"interface.graph_browser":false}}"#);
+        assert!(!app.graph_editor.show_browser);
+        assert!(!app.prefs.graph_browser);
+        value(&mut app, r#"{"op":"ui","graph_search":"noise"}"#);
+        assert!(app.graph_editor.show_browser, "searching it shows it");
+        assert_eq!(app.graph_editor.browser_search(), "noise");
     }
 
     #[test]

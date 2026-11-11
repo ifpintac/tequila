@@ -371,7 +371,8 @@ class Client:
         application's settings; '' for the default), window_size=[w, h]
         (the window's inner size, in points), preferences_page='viewport'
         and preferences_search='gizmo' (the Preferences window at a page,
-        or searching)."""
+        or searching), graph_search='noise' (typed in the search of the
+        Material Graph editor's browser, which shows it)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

@@ -222,7 +222,7 @@ impl GraphEditor {
         crate::theme::section(ui, "Getting around");
         // As the Shortcuts window draws them: what it does, then the keys
         // as key caps.
-        let rows: [(&str, &str); 18] = [
+        let rows: [(&str, &str); 20] = [
             ("Add a node", "Shift + A / Tab"),
             ("Wire; drop in space to add", "Drag a socket"),
             ("Cut wires", "Ctrl + Right drag"),
@@ -236,6 +236,8 @@ impl GraphEditor {
             ("Mute", "M"),
             ("Collapse", "H"),
             ("Frame the selection", "Ctrl + J"),
+            ("Show or hide the browser", "T"),
+            ("Show or hide these settings", "N"),
             ("Solo a node's output", "Ctrl + Shift + Click"),
             ("Select all / none", "A / Alt + A"),
             ("Fit the graph", "Home"),
