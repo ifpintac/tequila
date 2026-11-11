@@ -99,7 +99,7 @@ fn fine_grain(name: &'static str, tags: &'static [&'static str], colour: Spectru
         m.base_color = colour;
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
         m.specular_ior = 1.566;
-        m.fuzz_weight = 0.18;
+        m.fuzz_weight = 0.07;
         m.fuzz_roughness = 0.5;
         m.fuzz_color = rgb(0.55, 0.55, 0.56);
         m.edge_radius = 3e-4;
@@ -280,7 +280,7 @@ pub fn all() -> Vec<Preset> {
         powder("Powder Coat Satin Black", &["powder", "satin", "chassis", "cover", "black", "sheet steel"], rgb(0.009, 0.009, 0.0095), (0.34, 0.48), 1900.0, 4e-6),
         powder("Powder Coat Fine Texture Black", &["powder", "texture", "sandy", "rack", "chassis", "black"], rgb(0.008, 0.008, 0.0085), (0.5, 0.64), 2400.0, 2.2e-5),
         powder("Powder Coat Fine Texture Grey", &["powder", "texture", "sandy", "rack", "chassis", "grey"], srgb("#5B5D60"), (0.5, 0.62), 2400.0, 2.2e-5),
-        fine_grain("Knob Plastic Black", &["knob", "abs", "fine grain", "textured", "black", "moulded"], rgb(0.015, 0.015, 0.016), (0.44, 0.6)),
+        fine_grain("Knob Plastic Black", &["knob", "abs", "fine grain", "textured", "black", "moulded"], rgb(0.011, 0.011, 0.0118), (0.44, 0.6)),
         fine_grain("Knob Plastic Cream", &["knob", "abs", "fine grain", "textured", "cream", "moulded"], srgb("#D9D0BC"), (0.42, 0.56)),
         fine_grain("Knob Pointer Grey", &["knob", "pointer", "line", "indicator", "grey", "moulded"], srgb("#8E9092"), (0.5, 0.6)),
         fine_grain("Knob Pointer White", &["knob", "pointer", "line", "indicator", "white", "moulded"], srgb("#E9E9E6"), (0.5, 0.6)),
