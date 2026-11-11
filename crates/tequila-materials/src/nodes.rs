@@ -68,6 +68,8 @@ pub enum ShaderNode {
     CombineColor { model: ColorModel },
     // ---- Vector --------------------------------------------------------
     Mapping { kind: MappingKind },
+    /// The colour of a glow at a temperature in kelvin.
+    Blackbody,
 }
 
 /// Where a node sits in the editor's Add menu.
@@ -341,6 +343,7 @@ impl ShaderNode {
             ShaderNode::CombineXyz,
             ShaderNode::SeparateColor { model: ColorModel::Rgb },
             ShaderNode::CombineColor { model: ColorModel::Rgb },
+            ShaderNode::Blackbody,
             ShaderNode::Mapping { kind: MappingKind::Point },
         ]
     }
@@ -376,6 +379,7 @@ impl ShaderNode {
             ShaderNode::BrightContrast => "brightness_contrast",
             ShaderNode::Gamma => "gamma",
             ShaderNode::InvertColor => "invert",
+            ShaderNode::Blackbody => "blackbody",
             ShaderNode::Math { .. } => "math",
             ShaderNode::VectorMath { .. } => "vector_math",
             ShaderNode::MapRange { .. } => "map_range",
@@ -478,6 +482,7 @@ impl ShaderNode {
             ShaderNode::BrightContrast => "Brightness / Contrast",
             ShaderNode::Gamma => "Gamma",
             ShaderNode::InvertColor => "Invert Color",
+            ShaderNode::Blackbody => "Blackbody",
             ShaderNode::Math { op, .. } => op.label(),
             ShaderNode::VectorMath { op } => op.label(),
             ShaderNode::MapRange { .. } => "Map Range",
@@ -539,6 +544,7 @@ impl ShaderNode {
             ShaderNode::ObjectInfo => "random variation per part",
             ShaderNode::LightPath => "ray type camera shadow reflection glass switch",
             ShaderNode::TextureCoordinate => "uv object generated coordinates",
+            ShaderNode::Blackbody => "kelvin temperature warm cool tungsten daylight glow",
             _ => "",
         }
     }
@@ -762,6 +768,7 @@ impl ShaderNode {
             ShaderNode::BrightContrast => vec![color("Color", "color", 0.8), ranged("Bright", "bright", 0.0, -1.0, 1.0), ranged("Contrast", "contrast", 0.0, -1.0, 1.0)],
             ShaderNode::Gamma => vec![color("Color", "color", 1.0), ranged("Gamma", "gamma", 1.0, 0.001, 10.0)],
             ShaderNode::InvertColor => vec![ranged("Fac", "fac", 1.0, 0.0, 1.0), color("Color", "color", 0.0)],
+            ShaderNode::Blackbody => vec![ranged("Temperature", "temperature", 5500.0, 800.0, 12000.0)],
             ShaderNode::Math { .. } => vec![float("Value", "value1", 0.5), float("Value", "value2", 0.5), float("Value", "value3", 0.0)],
             ShaderNode::VectorMath { .. } => vec![
                 vector("Vector", "vector1", Vec3::ZERO),
@@ -898,7 +905,12 @@ impl ShaderNode {
                     MixData::Color => Color,
                 },
             )],
-            ShaderNode::HueSaturationValue | ShaderNode::BrightContrast | ShaderNode::Gamma | ShaderNode::InvertColor | ShaderNode::CombineColor { .. } => {
+            ShaderNode::HueSaturationValue
+            | ShaderNode::BrightContrast
+            | ShaderNode::Gamma
+            | ShaderNode::InvertColor
+            | ShaderNode::Blackbody
+            | ShaderNode::CombineColor { .. } => {
                 vec![output("Color", "Color", Color)]
             }
             ShaderNode::Math { .. } => vec![output("Value", "Value", Float)],
@@ -1082,6 +1094,7 @@ impl ShaderNode {
             ShaderNode::BrightContrast => colour(ops::bright_contrast(c(0), f(1), f(2))),
             ShaderNode::Gamma => colour(ops::gamma(c(0), f(1))),
             ShaderNode::InvertColor => colour(ops::invert(c(1), f(0))),
+            ShaderNode::Blackbody => colour(ops::blackbody(f(0))),
             ShaderNode::Math { op, clamp } => {
                 let value = op.apply(f(0), f(1), f(2));
                 Value::Float(if clamp { value.clamp(0.0, 1.0) } else { value })

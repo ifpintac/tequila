@@ -378,7 +378,7 @@ class Client:
         nodes) or {'setup': 'blend'|'two_sided'|'top_bottom'|'override'|
         'composite'|'random_colour'|'vary_colour'|'random_placement'|
         'stochastic_tiling'|'distort'|'falloff'|'colour_correction'|
-        'worn_edges'|'dirt'} (that setup's nodes added, wired)."""
+        'curves'|'worn_edges'|'dirt'} (that setup's nodes added, wired)."""
         return self.request('ui', **changes)
 
     def queue(self, **job):

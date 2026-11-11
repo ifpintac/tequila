@@ -653,6 +653,98 @@ pub fn gamma(color: V3, gamma: f32) -> V3 {
     map3(color, |c| if c > 0.0 { c.powf(gamma) } else { c })
 }
 
+/// The Blackbody node: the colour of something glowing at a temperature in
+/// kelvin, in linear Rec.709 - warm below 6500 K or so, cool above, and
+/// brighter than one where it is warm. Cycles' own fit
+/// (`svm_math_blackbody_color_rec709`): `a/t + b t + c` for red and green
+/// and a cubic for blue, in seven ranges from 800 K to 12000 K.
+pub fn blackbody(t: f32) -> V3 {
+    const R: [[f32; 3]; 7] = [
+        [1.61919106e+03, -2.05010916e-03, 5.02995757e+00],
+        [2.48845471e+03, -1.11330907e-03, 3.22621544e+00],
+        [3.34143193e+03, -4.86551192e-04, 1.76486769e+00],
+        [4.09461742e+03, -1.27446582e-04, 7.25731635e-01],
+        [4.67028036e+03, 2.91258199e-05, 1.26703442e-01],
+        [4.59509185e+03, 2.87495649e-05, 1.50345020e-01],
+        [3.78717450e+03, 9.35907826e-06, 3.99075871e-01],
+    ];
+    const G: [[f32; 3]; 7] = [
+        [-4.88999748e+02, 6.04330754e-04, -7.55807526e-02],
+        [-7.55994277e+02, 3.16730098e-04, 4.78306139e-01],
+        [-1.02363977e+03, 1.20223470e-04, 9.36662319e-01],
+        [-1.26571316e+03, 4.87340896e-06, 1.27054498e+00],
+        [-1.42529332e+03, -4.01150431e-05, 1.43972784e+00],
+        [-1.17554822e+03, -2.16378048e-05, 1.30408023e+00],
+        [-5.00799571e+02, -4.59832026e-06, 1.09098763e+00],
+    ];
+    const B: [[f32; 4]; 7] = [
+        [5.96945309e-11, -4.85742887e-08, -9.70622247e-05, -4.07936148e-03],
+        [2.40430366e-11, 5.55021075e-08, -1.98503712e-04, 2.89312858e-02],
+        [-1.40949732e-11, 1.89878968e-07, -3.56632824e-04, 9.10767778e-02],
+        [-3.61460868e-11, 2.84822009e-07, -4.93211319e-04, 1.56723440e-01],
+        [-1.97075738e-11, 1.75359352e-07, -2.50542825e-04, -2.22783266e-02],
+        [-1.61997957e-13, -1.64216008e-08, 3.86216271e-04, -7.38077418e-01],
+        [6.72650283e-13, -2.73078809e-08, 4.24098264e-04, -7.52335691e-01],
+    ];
+    let rec709 = if t >= 12000.0 {
+        [0.826_295_5, 0.994_508_03, 1.566_307_7]
+    } else if t < 800.0 {
+        // Where the glow is very dim: Cycles' lower limit, and OSL's.
+        [5.413_294_3, -0.203_193_9, -0.082_253_52]
+    } else {
+        let i = if t >= 6365.0 {
+            6
+        } else if t >= 3315.0 {
+            5
+        } else if t >= 1902.0 {
+            4
+        } else if t >= 1449.0 {
+            3
+        } else if t >= 1167.0 {
+            2
+        } else if t >= 965.0 {
+            1
+        } else {
+            0
+        };
+        let (r, g, b) = (R[i], G[i], B[i]);
+        let inverse = 1.0 / t;
+        [r[0] * inverse + r[1] * t + r[2], g[0] * inverse + g[1] * t + g[2], ((b[0] * t + b[1]) * t + b[2]) * t + b[3]]
+    };
+    // Outside Rec.709's gamut a channel comes out below nought; the node
+    // gives none of it.
+    map3(rec709, |c| c.max(0.0))
+}
+
+#[cfg(test)]
+mod blackbody_tests {
+    use super::blackbody;
+
+    /// Warm below daylight, near white at it, cool above; never below
+    /// nought; and one curve across the seven ranges it is fitted in.
+    #[test]
+    fn a_glow_is_warm_then_white_then_cool() {
+        let [r, g, b] = blackbody(2700.0);
+        assert!(r > g && g > b && b > 0.0, "tungsten is {r} {g} {b}");
+        let [r, g, b] = blackbody(6500.0);
+        assert!((r - 1.0).abs() < 0.06 && (g - 1.0).abs() < 0.06 && (b - 1.0).abs() < 0.06, "daylight is {r} {g} {b}");
+        let [r, g, b] = blackbody(10000.0);
+        assert!(b > g && g > r, "a clear sky is {r} {g} {b}");
+        for t in (500..13000).step_by(7) {
+            assert!(blackbody(t as f32).iter().all(|c| *c >= 0.0 && c.is_finite()), "{t} K");
+        }
+        for edge in [965.0f32, 1167.0, 1449.0, 1902.0, 3315.0, 6365.0] {
+            let (below, above) = (blackbody(edge - 0.5), blackbody(edge + 0.5));
+            for c in 0..3 {
+                assert!((below[c] - above[c]).abs() < 0.01 * below[c].max(0.2), "a step at {edge} K: {below:?}, {above:?}");
+            }
+        }
+        // Cycles' own numbers at its ends.
+        assert_eq!(blackbody(12000.0), [0.826_295_5, 0.994_508_03, 1.566_307_7]);
+        assert_eq!(blackbody(700.0), [5.413_294_3, 0.0, 0.0]);
+    }
+}
+
 /// The Invert node.
 pub fn invert(color: V3, fac: f32) -> V3 {
     map3(color, |c| fac * (1.0 - c) + (1.0 - fac) * c)

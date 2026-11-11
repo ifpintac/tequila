@@ -2693,6 +2693,10 @@ pub(crate) fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socke
             graph.connect_output(distorted, 0, surface, Socket::Param(Param::Tangent));
             (graph, None)
         }
+        browser::Setup::Curves => {
+            curves_setup(&mut graph, surface);
+            (graph, None)
+        }
         browser::Setup::WornEdges => {
             use tequila_materials::nodes::Setting;
             let edges = graph.add_node(Node::new(NodeKind::Curvature {
@@ -2748,6 +2752,32 @@ pub(crate) fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socke
             (graph, None)
         }
     }
+}
+
+/// The Curves setup: a colour taken apart, each channel through a ramp
+/// from black to white, and put together again.
+fn curves_setup(graph: &mut MaterialGraph, surface: NodeId) {
+    use tequila_core::spectrum::Spectrum;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_texture::gradient::{Gradient, Stop};
+    let colour = graph.add_node({
+        let mut node = Node::new(NodeKind::Constant(Value::Color(Spectrum { r: 0.75, g: 0.2, b: 0.15 })));
+        node.label = Some("Colour in".into());
+        node
+    });
+    let apart = graph.add_node(Node::new(NodeKind::Node(ShaderNode::from_key("separate_color").expect("Separate Color"))));
+    let together = graph.add_node(Node::new(NodeKind::Node(ShaderNode::from_key("combine_color").expect("Combine Color"))));
+    graph.connect_output(colour, 0, apart, Socket::Input(0));
+    for (channel, name) in ["Red curve", "Green curve", "Blue curve"].into_iter().enumerate() {
+        // Straight, to start with: what goes in comes out.
+        let stops = vec![Stop { at: 0.0, color: Spectrum::splat(0.0) }, Stop { at: 1.0, color: Spectrum::splat(1.0) }];
+        let mut ramp = Node::new(NodeKind::Gradient { gradient: Box::new(Gradient::new(stops)) });
+        ramp.label = Some(name.into());
+        let ramp = graph.add_node(ramp);
+        graph.connect_output(apart, channel as u8, ramp, Socket::Input(0));
+        graph.connect_output(ramp, 0, together, Socket::Input(channel as u8));
+    }
+    graph.connect_output(together, 0, surface, Socket::Param(Param::BaseColor));
 }
 
 /// Which of a node's outputs goes by `name`.
@@ -3963,6 +3993,7 @@ mod tests {
         for (setup, last, param) in [
             (browser::Setup::Falloff, "Front to side", Param::BaseColor),
             (browser::Setup::ColourCorrection, "Gamma", Param::BaseColor),
+            (browser::Setup::Curves, "Combine Color", Param::BaseColor),
             (browser::Setup::WornEdges, "Wear", Param::SpecularRoughness),
             (browser::Setup::Dirt, "Dirt", Param::SpecularRoughness),
         ] {
@@ -3978,7 +4009,7 @@ mod tests {
             let program = graph.compile().unwrap_or_else(|e| panic!("{setup:?} does not compile: {e:?}"));
             // (A colour corrected is still one colour: folded into the
             // material, with nothing left to drive.)
-            let constant = setup == browser::Setup::ColourCorrection;
+            let constant = matches!(setup, browser::Setup::ColourCorrection | browser::Setup::Curves);
             assert!(constant || program.driven.iter().any(|(p, _)| *p == param), "{setup:?} does not drive {param:?}");
         }
         // Distorted coordinates place a picture.

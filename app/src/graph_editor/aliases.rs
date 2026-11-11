@@ -37,6 +37,7 @@ pub const NODES: &[(&str, &[&str])] = &[
     ("Gamma", &["Output gamma", "Gamma correction"]),
     ("Invert Color", &["Output invert", "Negative"]),
     ("RGB", &["VRayColor", "Colour swatch", "Solid color"]),
+    ("Blackbody", &["Color temperature", "Colour temperature", "VRayColor temperature", "White balance"]),
     ("Value", &["Float", "Constant", "Scalar"]),
     ("Math", &["Arithmetic", "VRayFloat"]),
     ("Map Range", &["Remap", "Fit range", "Output levels"]),
