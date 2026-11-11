@@ -151,6 +151,7 @@ pub fn show<R>(
     let mut hovered_inside = false;
     let mut last = None;
     let mut dark = placement.dark;
+    let shown_at = std::time::Instant::now();
     let inner = ctx.show_viewport_immediate(spec.kind.viewport(), builder, |ctx, class| {
         if class == egui::ViewportClass::Embedded {
             let window = egui::Window::new(spec.title.as_str()).id(id).open(&mut *open).collapsible(false);
@@ -173,10 +174,10 @@ pub fn show<R>(
             }));
             dark = Some(p.dark);
         }
-        let inner = egui::CentralPanel::default()
+        let inner = crate::profile::time("window: contents", || egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(p.panel).inner_margin(spec.margin))
             .show(ctx, |ui| add.take().map(|add| add(ui)))
-            .inner;
+            .inner);
         shared_keys(ctx);
         capture(ctx, spec.kind);
         // Where it is, once it is shown: while hidden it is still on its
@@ -193,6 +194,7 @@ pub fn show<R>(
         inner
     });
 
+    crate::profile::record("window: shown", shown_at.elapsed().as_secs_f64() * 1000.0);
     placement.seen = pass;
     placement.dark = dark;
     placement.frames = placement.frames.saturating_add(1);

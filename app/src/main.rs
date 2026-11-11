@@ -1970,9 +1970,15 @@ impl eframe::App for TequilaApp {
         if suspended || settled {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         } else {
-            // Input still repaints immediately. Polling for render frames
-            // at 60 Hz avoids driving the entire UI at the monitor's maximum.
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            // Input still repaints immediately, and each picture the render
+            // thread finishes wakes the window itself (`Orchestrator::
+            // set_waker`), so this is only for what changes with neither -
+            // Cycles saying what it prepares. Polled at 60 Hz, as it was,
+            // a still view drew the window sixty times a second over a
+            // picture that changed a few times, and each window of its own
+            // open with it: the material graph's took 7-8 ms to draw each
+            // time, on the processor and the graphics card Cycles was using.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         self.ui_capture.update(ctx);
     }

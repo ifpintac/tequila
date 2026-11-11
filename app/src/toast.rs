@@ -126,6 +126,14 @@ impl Toasts {
         if self.notices.is_empty() {
             return false;
         }
+        // Frames through a fade, and one when the next fade begins: the
+        // window draws only when asked now, not sixty times a second.
+        let until_fade = self.notices.iter().map(|n| (n.raised + n.hold()).saturating_duration_since(now)).min().unwrap_or_default();
+        if until_fade.is_zero() {
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(until_fade);
+        }
 
         // Painted in a foreground layer rather than as a panel: a toast must
         // not take part in layout, or the viewport would resize every time one
@@ -216,6 +224,37 @@ impl Toasts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A notice on screen asks for the frames it needs: one when its fade
+    /// begins, and every frame through the fade, the window now drawing
+    /// only when asked.
+    #[test]
+    fn a_notice_asks_for_its_own_frames() {
+        let ctx = egui::Context::default();
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = asked.clone();
+        ctx.set_request_repaint_callback(move |info| record.lock().unwrap().push(info.delay));
+        let mut toasts = Toasts::default();
+        // egui's own first frames ask for more; settled first.
+        for _ in 0..3 {
+            let _ = ctx.run(egui::RawInput::default(), |_| {});
+        }
+        asked.lock().unwrap().clear();
+        toasts.info("Hid 1 part");
+        let frame = |toasts: &mut Toasts| {
+            let mut shown = false;
+            let _ = ctx.run(egui::RawInput::default(), |ctx| shown = toasts.show(ctx, egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))));
+            shown
+        };
+        assert!(frame(&mut toasts));
+        let delays: Vec<Duration> = std::mem::take(&mut *asked.lock().unwrap());
+        assert!(delays.iter().any(|d| *d > Duration::from_millis(100) && *d < Duration::from_secs(30)), "held, the next frame is asked for when its fade begins: {delays:?}");
+        let hold = toasts.notices[0].hold();
+        toasts.notices[0].raised -= hold + Duration::from_millis(10);
+        assert!(frame(&mut toasts));
+        let delays: Vec<Duration> = std::mem::take(&mut *asked.lock().unwrap());
+        assert!(delays.contains(&Duration::ZERO), "fading, every frame: {delays:?}");
+    }
 
     /// The same message twice is one notice that happened twice, not two
     /// notices. Five copies of "Hid 1 part" sliding up the screen is the sort

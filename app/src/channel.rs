@@ -2242,6 +2242,8 @@ impl TequilaApp {
             self.screenshot_requested = false;
             return;
         };
+        // Frames until it is in: the window draws only when asked.
+        ctx.request_repaint();
         // A window of its own is captured as it draws itself.
         if self.screenshot_window.is_some() {
             self.settle_window_capture();
