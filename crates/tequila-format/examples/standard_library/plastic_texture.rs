@@ -107,7 +107,7 @@ fn grip(name: &'static str, tags: &'static [&'static str], ty: MaterialType, mat
 /// polish over flakes that each catch the light their own way.
 #[allow(clippy::too_many_arguments)]
 fn flaked(name: &'static str, tags: &'static [&'static str], colour: Spectrum, flake: Spectrum, weight: f32, size: f32, spread: f32, flake_roughness: f32) -> Preset {
-    plain(name, "Plastic", tags, MaterialType::MetallicPaint, |m| {
+    let mut r = Recipe::new(base(MaterialType::MetallicPaint, |m| {
         m.base_color = colour;
         m.flake_color = flake;
         m.flake_weight = weight;
@@ -116,7 +116,11 @@ fn flaked(name: &'static str, tags: &'static [&'static str], colour: Spectrum, f
         m.flake_roughness = flake_roughness;
         m.specular_roughness = 0.3;
         m.coat_roughness = 0.04;
-    })
+    }));
+    // A gloss moulding, so its reflections wander as any moulding's do.
+    let sink = noise(&mut r, 40.0, 2.0, 0.4);
+    r.bump(sink, 1.2e-5);
+    preset(name, "Plastic", tags, MaterialType::MetallicPaint, r)
 }
 
 /// Recycled sheet pressed from flakes of coloured bottles: chips of a
@@ -363,11 +367,15 @@ pub fn all() -> Vec<Preset> {
         m.subsurface_radius = rgb(0.002, 0.002, 0.002);
         m.specular_roughness = 0.46;
     }));
-    out.push(plain("POM White", "Plastic", &["pom", "acetal", "delrin", "white", "engineering", "waxy"], MaterialType::PlasticCloudy, |m| {
+    let mut r = Recipe::new(base(MaterialType::PlasticCloudy, |m| {
         m.base_color = srgb("#ECEBE5");
         m.specular_roughness = 0.3;
         m.subsurface_radius = rgb(0.03, 0.028, 0.025);
     }));
+    let gloss = wear(&mut r, 0.24, 0.36, 25.0);
+    r.to(Param::SpecularRoughness, gloss);
+    micro(&mut r, 5000.0, 1.5e-6);
+    out.push(preset("POM White", "Plastic", &["pom", "acetal", "delrin", "white", "engineering", "waxy"], MaterialType::PlasticCloudy, r));
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {
         m.base_color = srgb("#1A1A1C");
         m.specular_roughness = 0.42;

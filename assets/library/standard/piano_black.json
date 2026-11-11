@@ -1,6 +1,7 @@
 {
   "base_color": [0.0033621695, 0.0033509748, 0.0036335494],
   "category": "Plastic",
+  "edge_radius": 0.00035,
   "graph": {
     "decals": [],
     "links": [

@@ -1,6 +1,6 @@
 //! Paints and coatings: car finishes, enamels, powder coats, primers.
 
-use crate::{base, micro, orange_peel, plain, preset, rgb, srgb, wear, Preset, Recipe};
+use crate::{base, micro, orange_peel, preset, rgb, srgb, wear, Preset, Recipe};
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::{MaterialType, Param};
 
@@ -120,9 +120,14 @@ pub fn all() -> Vec<Preset> {
     r.bump(sand, 3e-5);
     out.push(preset("Paint Textured Charcoal", "Paint", &["textured", "wrinkle", "industrial", "charcoal"], MaterialType::Plastic, r));
 
-    out.push(plain("Paint Satin White", "Paint", &["satin", "wall", "white"], MaterialType::Plastic, |m| {
+    let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = srgb("#F0EFEA");
         m.specular_roughness = 0.45;
+        m.specular_ior = 1.52;
     }));
+    let gloss = wear(&mut r, 0.4, 0.5, 20.0);
+    r.to(Param::SpecularRoughness, gloss);
+    orange_peel(&mut r, 900.0, 4e-6);
+    out.push(preset("Paint Satin White", "Paint", &["satin", "wall", "white"], MaterialType::Plastic, r));
     out
 }

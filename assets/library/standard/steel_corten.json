@@ -2,6 +2,7 @@
   "base_color": [0.10193207, 0.04081226, 0.01675886],
   "base_diffuse_roughness": 0.5,
   "category": "Metal",
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [

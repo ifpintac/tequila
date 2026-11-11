@@ -2,6 +2,7 @@
   "base_color": [0.023200948, 0.023166876, 0.02402689],
   "base_diffuse_roughness": 1,
   "category": "Plastic",
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [

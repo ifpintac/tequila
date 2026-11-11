@@ -852,6 +852,9 @@ impl MaterialType {
                 FlakeSpread,
                 FlakeRoughness,
                 CoatRoughness,
+                // As Paint has: an orange peel to wire in, and with it
+                // the rounded edges a sprayed part always has.
+                Bump,
             ],
             MaterialType::Glass => {
                 vec![BaseColor, SpecularRoughness, SpecularIor, TransmissionColor]

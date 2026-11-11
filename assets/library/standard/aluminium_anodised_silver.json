@@ -1,6 +1,7 @@
 {
   "base_color": [0.693, 0.7003, 0.7135],
   "category": "Metal",
+  "edge_radius": 0.00015,
   "graph": {
     "decals": [],
     "links": [
@@ -22,6 +23,21 @@
       {
         "from": 5,
         "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:2",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "param:base_color",
         "to": 1
       }
     ],
@@ -129,6 +145,99 @@
         "id": 5,
         "kind": "bump",
         "position": [0, 0]
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 18
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.95
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.693, 0.7003, 0.7135]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "multiply",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
       }
     ],
     "output": 1

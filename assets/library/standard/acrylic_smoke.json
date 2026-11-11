@@ -1,5 +1,6 @@
 {
   "category": "Plastic",
+  "edge_radius": 0.0002,
   "name": "Acrylic Smoke",
   "specular_roughness": 0.02,
   "tags": [

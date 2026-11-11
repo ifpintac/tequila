@@ -2,6 +2,7 @@
   "base_color": [0.2, 0.2, 0.22],
   "base_metalness": 1,
   "category": "Metal",
+  "edge_radius": 0.00015,
   "graph": {
     "decals": [],
     "links": [
@@ -237,7 +238,7 @@
           {
             "socket": "input:2",
             "value": {
-              "color": [0.461634, 0.46721917, 0.4826547]
+              "color": [0.46163407, 0.46721917, 0.4826547]
             }
           }
         ],

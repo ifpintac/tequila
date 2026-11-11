@@ -1,6 +1,7 @@
 {
   "base_color": [0.005654722, 0.009760201, 0.0064557716],
   "category": "Paint",
+  "edge_radius": 0.0004,
   "flake_color": [0.44205606, 0.7081751, 0.46496958],
   "flake_roughness": 0.18,
   "flake_size": 0.00004,

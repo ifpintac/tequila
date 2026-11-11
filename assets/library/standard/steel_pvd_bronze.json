@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.5, 0.38],
   "category": "Metal",
+  "edge_radius": 0.00015,
   "graph": {
     "decals": [],
     "links": [
@@ -12,7 +13,7 @@
       {
         "from": 3,
         "socket": "input:2",
-        "to": 7
+        "to": 9
       },
       {
         "from": 4,
@@ -22,20 +23,30 @@
       {
         "from": 4,
         "socket": "input:0",
-        "to": 7
+        "to": 9
       },
       {
         "from": 5,
-        "socket": "input:0",
-        "to": 6
+        "socket": "input:2",
+        "to": 7
       },
       {
         "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 8,
         "socket": "param:bump",
         "to": 1
       },
       {
-        "from": 7,
+        "from": 9,
         "socket": "param:specular_roughness",
         "to": 1
       }
@@ -140,13 +151,62 @@
         "type": "math"
       },
       {
-        "depth": 0.0000004,
         "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 30
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 30
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0000004,
+        "id": 8,
         "kind": "bump",
         "position": [0, 0]
       },
       {
-        "id": 7,
+        "id": 9,
         "kind": "node",
         "literals": [
           {

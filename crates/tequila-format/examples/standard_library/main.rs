@@ -121,13 +121,47 @@ pub fn orange_peel(r: &mut Recipe, scale: f32, depth: f32) -> Out {
     n
 }
 
+/// No made thing has a knife edge, and a rendering of one that has is
+/// known for a rendering at once: a real part's edge is where it catches
+/// a line of light. Where the recipe of a plastic, a metal or a paint says
+/// nothing of its edges, they are rounded as its making leaves them, in
+/// metres: a moulding's as its tool's, which is not cut sharper than a
+/// third of a millimetre; a casting's or a forging's the same; a machined
+/// or sheared metal's as deburring leaves it; a clear plastic's polished
+/// arris; and a paint's, which pulls back from an edge and rounds it,
+/// a powder's more than an enamel's.
+fn edge_of(p: &Preset) -> f32 {
+    use tequila_materials::material_type::Param;
+    let name = p.name.to_lowercase();
+    let says = |word: &str| name.contains(word) || p.tags.iter().any(|t| t.contains(word));
+    // Nothing to round where the type has no such thing, or where the
+    // recipe cuts holes: a hole's edge is drawn, not modelled.
+    if !p.ty.exposed().contains(&Param::EdgeRadius) || p.recipe.graph.is_connected(Param::Opacity) {
+        return 0.0;
+    }
+    match p.category {
+        "Plastic" if p.ty == MaterialType::PlasticTransparent => 2e-4,
+        "Plastic" if says("3d print") => 2e-4,
+        "Plastic" if says("rubber") || says("foam") || says("silicone") || says("soft touch") => 4e-4,
+        "Plastic" => 3.5e-4,
+        "Paint" if says("powder") => 5e-4,
+        "Paint" => 4e-4,
+        "Metal" if says("cast") || says("hammered") || says("forged") || says("rust") || says("corten") || says("patina") || says("verdigris") => 4e-4,
+        "Metal" => 1.5e-4,
+        _ => 0.0,
+    }
+}
+
 fn main() {
     let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
     let mut written = Vec::new();
-    for p in presets {
+    for mut p in presets {
         assert!(names.insert(p.name), "{} twice", p.name);
+        if p.recipe.graph.material().edge_radius == 0.0 {
+            p.recipe.material_mut().edge_radius = edge_of(&p);
+        }
         p.recipe.graph.compile().unwrap_or_else(|e| panic!("{} does not compile: {e:?}", p.name));
         let material = p.recipe.graph.material().clone();
         assert_eq!(material.clone().sanitized(), material, "{} holds a value out of range", p.name);
