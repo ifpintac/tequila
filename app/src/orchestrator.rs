@@ -894,7 +894,7 @@ fn render_loop(shared: Arc<Shared>) {
                         let _timer = Timer::start("render: lay reflection");
                         let bright = tequila_render_cpu::floor::alpha_by_brightness(&state.request.scene);
                         use rayon::prelude::*;
-                        state.framebuffer.pixels_mut().par_iter_mut().zip(layer.pixels().par_iter()).for_each(|(pixel, laid)| {
+                        let lay = |(pixel, laid): (&mut tequila_render_core::framebuffer::Pixel, &tequila_render_core::framebuffer::Pixel)| {
                             let share = laid.alpha();
                             if share > 0.0 && pixel.samples > 0 {
                                 let n = pixel.samples as f32;
@@ -912,7 +912,13 @@ fn render_loop(shared: Arc<Shared>) {
                                 pixel.sum = colour * n;
                                 pixel.coverage_sum = coverage * n;
                             }
-                        });
+                        };
+                        // Shared out for a full-size picture only, as the frame is.
+                        if frame.width * frame.height >= crate::cycles_view::PARALLEL_PIXELS {
+                            state.framebuffer.pixels_mut().par_iter_mut().zip(layer.pixels().par_iter()).for_each(lay);
+                        } else {
+                            state.framebuffer.pixels_mut().iter_mut().zip(layer.pixels()).for_each(lay);
+                        }
                     } else {
                         floors.clear();
                     }

@@ -445,9 +445,13 @@ impl CyclesView {
         }
         let under = (self.background_under && self.under.len() == frame.width * frame.height).then_some(&self.under);
         let buffers = &self.frame;
-        // A row per task: a full-size frame is a million pixels and more.
+        // A row per task for a full-size frame, a million pixels and more;
+        // a moving picture's on this thread, as a loop shared out waits for
+        // its slowest share, and with the computer busy that was tens of
+        // milliseconds for a picture one core does in two.
         use rayon::prelude::*;
         let width = frame.width.max(1);
+        let shared_out = frame.width * frame.height >= PARALLEL_PIXELS;
         let fill = |(i, pixel): (usize, &mut Pixel)| {
             let rgba = &buffers.rgba[i * 4..i * 4 + 4];
             let albedo = &buffers.albedo[i * 3..i * 3 + 3];
@@ -474,11 +478,15 @@ impl CyclesView {
                 ..Pixel::default()
             };
         };
-        framebuffer.pixels_mut().par_chunks_mut(width).enumerate().for_each(|(y, row)| {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                fill((y * width + x, pixel));
-            }
-        });
+        if shared_out {
+            framebuffer.pixels_mut().par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    fill((y * width + x, pixel));
+                }
+            });
+        } else {
+            framebuffer.pixels_mut().iter_mut().enumerate().for_each(fill);
+        }
         Some(frame)
     }
 
@@ -534,6 +542,11 @@ impl CyclesView {
         }
     }
 }
+
+/// A picture this many pixels or more is worked on by every core; a
+/// smaller one, a moving picture, by the render thread alone
+/// (`CyclesView::take_frame`).
+pub const PARALLEL_PIXELS: usize = 512 * 1024;
 
 /// What a floor reflection layer is of: the scene (by pointer), the camera
 /// and the size of the pictures it goes over.
