@@ -649,6 +649,15 @@ impl GraphEditor {
             }
             browser::Act::Arrange { setup, at } => {
                 let (mut other, into) = setup_graph(setup);
+                if setup == browser::Setup::StochasticTiling {
+                    let picture = picture_for_setup(graph, self.active, project);
+                    let images: Vec<NodeId> = other.nodes().filter(|(_, n)| matches!(n.kind, NodeKind::ImageTexture { .. })).map(|(id, _)| id).collect();
+                    for id in images {
+                        if let Some(NodeKind::ImageTexture { texture, .. }) = other.node_mut(id).map(|n| &mut n.kind) {
+                            *texture = picture;
+                        }
+                    }
+                }
                 tidy::arrange(&mut other, &[]);
                 let top = NodeKind::MixShader { add: false };
                 let dropped = at.is_some();
@@ -2554,7 +2563,49 @@ pub(crate) fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socke
             graph.connect_output(mapping, 0, surface, Socket::Param(Param::Tangent));
             (graph, None)
         }
+        browser::Setup::StochasticTiling => {
+            use tequila_core::spectrum::Spectrum;
+            use tequila_materials::graph::TextureId;
+            let tiling = graph.add_node(Node::new(NodeKind::Group(tequila_materials::groups::NodeGroup::StochasticTiling)));
+            // The picture read three times, where the group says each
+            // time. Which picture is the editor's to say
+            // (`picture_for_setup`).
+            let readings: Vec<NodeId> = ["First reading", "Second reading", "Third reading"]
+                .into_iter()
+                .enumerate()
+                .map(|(output, name)| {
+                    let image = graph.add_node(named(NodeKind::ImageTexture { texture: TextureId(0), fallback: Value::Color(Spectrum::splat(0.18)) }, name));
+                    graph.connect_output(tiling, output as u8, image, Socket::Input(0));
+                    image
+                })
+                .collect();
+            // The second over the first by Blend B, the third over both by
+            // Blend C: Factor, then what is under, then what goes over.
+            let mut under = readings[0];
+            for (index, name) in ["Two readings", "Three readings"].into_iter().enumerate() {
+                let mix = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("mix").expect("the Mix node")), name));
+                graph.connect_output(tiling, 3 + index as u8, mix, Socket::Input(0));
+                graph.connect_output(under, 0, mix, Socket::Input(1));
+                graph.connect_output(readings[index + 1], 0, mix, Socket::Input(2));
+                under = mix;
+            }
+            // Wired to the stand-in for the layout alone.
+            graph.connect_output(under, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
     }
+}
+
+/// The picture a setup that reads one starts with: the selected Image's,
+/// or the project's first, or one that is missing until the person chooses.
+fn picture_for_setup(graph: &MaterialGraph, active: Option<NodeId>, project: &Project) -> tequila_materials::graph::TextureId {
+    let chosen = active.and_then(|id| graph.node(id)).and_then(|node| match &node.kind {
+        NodeKind::ImageTexture { texture, .. } | NodeKind::ImageAlpha { texture, .. } => Some(*texture),
+        _ => None,
+    });
+    chosen
+        .or_else(|| project.document().textures.iter().next().map(|(id, _)| id))
+        .unwrap_or(tequila_materials::graph::TextureId(0))
 }
 
 /// Object Info's Random output, and Texture Coordinate's Object.
@@ -3715,6 +3766,30 @@ mod tests {
         graph.connect_output(mapping, 0, noise, Socket::Input(0));
         graph.connect_output(noise, 0, surface, Socket::Param(Param::SpecularRoughness));
         graph.compile().expect("random placement compiles into a texture");
+
+        // Stochastic tiling: the group's three sets of coordinates each into
+        // an Image's Coordinates, its blends into the Mixes; and wired into
+        // a colour, the pictures are read where the group says.
+        let mut tiling = add(browser::Setup::StochasticTiling);
+        let group = tiling.nodes().find(|(_, n)| matches!(n.kind, NodeKind::Group(tequila_materials::groups::NodeGroup::StochasticTiling))).map(|(id, _)| id).expect("the group");
+        let images: Vec<NodeId> = tiling.nodes().filter(|(_, n)| matches!(n.kind, NodeKind::ImageTexture { .. })).map(|(id, _)| id).collect();
+        assert_eq!(images.len(), 3);
+        for image in &images {
+            assert!(tiling.links().iter().any(|l| l.from == group && l.to == *image && l.to_socket == Socket::Input(0)), "an Image is not read where the group says");
+        }
+        let mixes: Vec<NodeId> = tiling.nodes().filter(|(_, n)| matches!(&n.kind, NodeKind::Node(node) if node.label() == "Mix")).map(|(id, _)| id).collect();
+        assert_eq!(mixes.len(), 2);
+        for blend in [3u8, 4] {
+            assert!(tiling.links().iter().any(|l| l.from == group && l.from_socket == blend && mixes.contains(&l.to) && l.to_socket == Socket::Input(0)), "no Mix's factor is the group's blend {blend}");
+        }
+        assert!(!tiling.links().iter().any(|l| l.to == tiling.output()), "left for the person to wire in");
+        // The last Mix: the one no other Mix reads.
+        let mix = *mixes.iter().find(|m| !tiling.links().iter().any(|l| l.from == **m)).expect("a last Mix");
+        let surface = tiling.output();
+        tiling.connect_output(mix, 0, surface, Socket::Param(Param::BaseColor));
+        let program = tiling.compile().expect("stochastic tiling compiles into Color");
+        let placed = program.instructions.iter().filter(|i| matches!(i, tequila_materials::graph::Instruction::Sample { at: Some(_), .. })).count();
+        assert_eq!(placed, 3, "every reading is placed by the group");
 
         let composite = add(browser::Setup::Composite);
         assert_eq!(depth(&composite), 0, "colours, not surfaces");

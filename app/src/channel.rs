@@ -617,7 +617,7 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         }
         Some(tequila_scripting::protocol::GraphBring::Setup(name)) => match crate::graph_editor::Setup::from_key(name) {
             Some(setup) => Some(crate::graph_editor::Asked::Arrange(setup)),
-            None => return Reply::Failed(format!("there is no setup {name}; the setups are blend, two_sided, composite, random_colour, vary_colour and random_placement")),
+            None => return Reply::Failed(format!("there is no setup {name}; the setups are blend, two_sided, composite, random_colour, vary_colour, random_placement and stochastic_tiling")),
         },
         Some(tequila_scripting::protocol::GraphBring::Library(name)) => match app.library.entries().iter().position(|e| e.name.eq_ignore_ascii_case(name)) {
             Some(index) => Some(crate::graph_editor::Asked::Bring(crate::graph_editor::Brought::Library(index))),

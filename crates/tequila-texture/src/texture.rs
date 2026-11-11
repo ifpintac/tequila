@@ -271,10 +271,39 @@ impl Texture {
     /// 1 where the image has no alpha at all, which is a fully present
     /// surface — the answer that changes nothing.
     pub fn sample_alpha(&self, mapping: &Mapping, point: &SurfacePoint) -> f32 {
-        if !self.pyramid.base().has_alpha() {
-            return 1.0;
+        match self.alpha() {
+            Some(pyramid) => self.sample_pyramid(pyramid, mapping, point).x.clamp(0.0, 1.0),
+            None => 1.0,
         }
-        let pyramid = self.alpha_pyramid.get_or_init(|| {
+    }
+
+    /// The picture at a place a material's graph worked out: `x` across it
+    /// and `y` up it from its bottom left, as Blender's Image Texture reads
+    /// its Vector, repeating beyond its edges.
+    ///
+    /// Read at its sharpest. How wide the pixel's footprint is in these
+    /// coordinates is not known - they are whatever the graph made of the
+    /// point - and guessing it from the surface's own UVs blurs a picture
+    /// the graph enlarged. The renderer's many samples to a pixel do the
+    /// filtering instead.
+    pub fn sample_at(&self, x: f32, y: f32) -> Vec3 {
+        sample_axes(&self.pyramid, x, 1.0 - y, 0.0, Wrap::Repeat, Wrap::Repeat)
+    }
+
+    /// The alpha at a place the graph worked out ([`Texture::sample_at`]).
+    pub fn alpha_at(&self, x: f32, y: f32) -> f32 {
+        match self.alpha() {
+            Some(pyramid) => sample_axes(pyramid, x, 1.0 - y, 0.0, Wrap::Repeat, Wrap::Repeat).x.clamp(0.0, 1.0),
+            None => 1.0,
+        }
+    }
+
+    /// The alpha channel's own levels, or `None` for a picture without one.
+    fn alpha(&self) -> Option<&MipPyramid> {
+        if !self.pyramid.base().has_alpha() {
+            return None;
+        }
+        Some(self.alpha_pyramid.get_or_init(|| {
             let source = self.pyramid.base();
             // One channel, which a level reads back as three equal ones.
             let mut data = Vec::with_capacity(source.width * source.height);
@@ -293,10 +322,7 @@ impl Texture {
                 // fourth channel for exactly this reason.
                 color_space: ColorSpace::Raw,
             })
-        });
-        self.sample_pyramid(pyramid, mapping, point)
-            .x
-            .clamp(0.0, 1.0)
+        }))
     }
 
     fn sample_pyramid(

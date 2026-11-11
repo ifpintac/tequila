@@ -4747,6 +4747,157 @@ mod tests {
         );
     }
 
+    /// A picture looked up where the material's graph says is where Tequila's
+    /// own mapping would have put it, in both renderers: a red and white
+    /// checker read at the mesh's UVs doubled and moved, by a Mapping node
+    /// wired into the Image's Coordinates, covers the pixels a Mapping 2D of
+    /// the same size and offset covers. The Image read nothing but a Mapping
+    /// 2D there, and any other wire left the picture at the plain UVs.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_picture_is_placed_by_a_vector_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, TextureId, Value};
+        use tequila_materials::material_type::{MaterialType, Param};
+        use tequila_materials::nodes::ShaderNode;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::Mapping;
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let checker = Image {
+            width: 16,
+            height: 16,
+            channels: 3,
+            color_space: ColorSpace::LinearSrgb,
+            data: (0..256).flat_map(|i| if (i % 16 < 8) == (i / 16 < 8) { [1.0, 0.0, 0.0] } else { [1.0; 3] }).collect(),
+        };
+        let wearing = |scene: &mut tequila_render_core::scene::SceneSnapshot, by_vector: bool| {
+            let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+            let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: TextureId(1), fallback: Value::Float(0.0) }));
+            if by_vector {
+                let coordinates = ShaderNode::TextureCoordinate;
+                let uv = coordinates.outputs().iter().position(|o| o.name == "UV").expect("a UV output") as u8;
+                let coordinates = graph.add_node(Node::new(NodeKind::Node(coordinates)));
+                // Vector, Location, Rotation, Scale. Up the picture where
+                // Tequila's offset counts down it.
+                let mut mapping = Node::new(NodeKind::Node(ShaderNode::from_key("mapping").expect("Mapping")));
+                mapping.literals.insert(Socket::Input(1), Value::Vector(vec3(0.25, -0.125, 0.0)));
+                mapping.literals.insert(Socket::Input(3), Value::Vector(vec3(2.0, 2.0, 1.0)));
+                let mapping = graph.add_node(mapping);
+                graph.connect_output(coordinates, uv, mapping, Socket::Input(0));
+                graph.connect(mapping, image, Socket::Input(0));
+            } else {
+                let mapping = graph.add_node(Node::new(NodeKind::Mapping2d {
+                    mapping: Mapping { scale: vec3(2.0, 2.0, 1.0), offset: tequila_core::math::vec2(0.25, 0.125), ..Mapping::default() },
+                }));
+                graph.connect(mapping, image, Socket::Input(0));
+            }
+            let output = graph.output();
+            graph.connect(image, output, Socket::Param(Param::BaseColor));
+            let program = graph.compile().expect("compiles");
+            let mut table = tequila_render_core::shade::TextureTable::new();
+            table.insert(TextureId(1), Arc::new(Texture::from_linear(checker.clone(), MapRole::Color, Mapping::default())));
+            scene.materials[0] = graph.material().clone();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+        };
+        let [mapped, _] = both_engines("picture-mapped", |scene| wearing(scene, false));
+        let [tequila, cycles] = both_engines("picture-vector", |scene| wearing(scene, true));
+        let red = |image: &[u8]| -> Vec<bool> { image.chunks_exact(4).map(|p| f64::from(p[0]) - f64::from(p[1]) > 40.0).collect() };
+        let (wanted, a, b) = (red(&mapped), red(&tequila), red(&cycles));
+        let covered = wanted.iter().filter(|&&x| x).count();
+        assert!(covered > 200, "the mapped render shows no checker: {covered} red pixels");
+        for (name, got) in [("Tequila's renderer", &a), ("Cycles", &b)] {
+            let agree = wanted.iter().zip(got).filter(|(&x, &y)| x && y).count();
+            let stray = wanted.iter().zip(got).filter(|(&x, &y)| !x && y).count();
+            assert!(
+                agree as f64 > 0.85 * covered as f64 && (stray as f64) < 0.15 * covered as f64,
+                "of the mapped picture's {covered} red pixels {name} shows {agree} red by the Vector, and {stray} where it has none"
+            );
+        }
+    }
+
+    /// A picture tiled stochastically is the same patchwork in both
+    /// renderers: the group's three readings of a red and white checker,
+    /// blended by its two Mixes, light the same pixels in Tequila's renderer
+    /// and in Cycles - the same patches, each from the same place in the
+    /// picture. The group is Math nodes and White Noises, which each engine
+    /// has, and its coordinates reach the pictures as any Vector does.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn stochastic_tiling_is_the_same_patchwork_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, TextureId, Value};
+        use tequila_materials::groups::NodeGroup;
+        use tequila_materials::material_type::Param;
+        use tequila_materials::nodes::ShaderNode;
+        use tequila_texture::image::{ColorSpace, Image};
+        use tequila_texture::projection::Mapping;
+        use tequila_texture::texture::{MapRole, Texture};
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let checker = Image {
+            width: 16,
+            height: 16,
+            channels: 3,
+            color_space: ColorSpace::LinearSrgb,
+            data: (0..256).flat_map(|i| if (i % 16 < 8) == (i / 16 < 8) { [1.0, 0.0, 0.0] } else { [1.0; 3] }).collect(),
+        };
+        let mut graph = MaterialGraph::from_material(tequila_materials::openpbr::Material { specular_weight: 0.0, ..Default::default() });
+        // Few repeats and large patches, sharply blended: patches some
+        // pixels across in this small picture, each mostly one reading.
+        let tiling = graph.add_node(
+            Node::new(NodeKind::Group(NodeGroup::StochasticTiling))
+                .with_literal(Socket::Input(0), Value::Float(2.0))
+                .with_literal(Socket::Input(1), Value::Float(0.5))
+                .with_literal(Socket::Input(2), Value::Float(8.0)),
+        );
+        let mut under = None;
+        for output in 0..3u8 {
+            let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: TextureId(1), fallback: Value::Float(0.0) }));
+            graph.connect_output(tiling, output, image, Socket::Input(0));
+            under = Some(match under {
+                None => image,
+                Some(under) => {
+                    let mix = graph.add_node(Node::new(NodeKind::Node(ShaderNode::from_key("mix").expect("the Mix node"))));
+                    graph.connect_output(tiling, 2 + output, mix, Socket::Input(0));
+                    graph.connect_output(under, 0, mix, Socket::Input(1));
+                    graph.connect_output(image, 0, mix, Socket::Input(2));
+                    mix
+                }
+            });
+        }
+        let surface = graph.output();
+        graph.connect_output(under.expect("three readings"), 0, surface, Socket::Param(Param::BaseColor));
+        let [tequila, cycles] = both_engines("stochastic", move |scene| {
+            let program = graph.compile().expect("compiles");
+            let mut table = tequila_render_core::shade::TextureTable::new();
+            table.insert(TextureId(1), Arc::new(Texture::from_linear(checker.clone(), MapRole::Color, Mapping::default())));
+            scene.materials[0] = graph.material().clone();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(table));
+        });
+        // How red each pixel is, inside the sphere.
+        let redness = |image: &[u8]| -> Vec<f64> {
+            let red: Vec<u8> = image.chunks_exact(4).flat_map(|p| [p[0].saturating_sub(p[1]), 0, 0, 255]).collect();
+            inside_the_sphere(&red)
+        };
+        let (a, b) = (redness(&tequila), redness(&cycles));
+        let ((ma, sa), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+        let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+        for (x, y) in a.iter().zip(&b) {
+            cov += (x - ma) * (y - mb);
+            va += (x - ma) * (x - ma);
+            vb += (y - mb) * (y - mb);
+        }
+        let together = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+        assert!(sa > 20.0, "the checker is all one colour in Tequila's renderer ({sa:.1})");
+        assert!(together > 0.8, "Tequila's patchwork and Cycles' agree {together:.2} of the way");
+    }
+
     /// A texture pack's tri-planar normal map leans the surface the way
     /// Tequila's renderer leans it: a map leaning every texel across its
     /// picture changes the sphere's shading the same way in both. Cycles

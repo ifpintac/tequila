@@ -14,6 +14,7 @@
 
 mod blend_stack;
 mod fdm_layer_lines;
+mod stochastic;
 mod tiles;
 
 pub use blend_stack::COATS as BLEND_COATS;
@@ -36,6 +37,9 @@ pub enum NodeGroup {
     Herringbone,
     /// Blocks of planks, each block turned from its neighbours (`tiles`).
     Basketweave,
+    /// Three sets of coordinates and the blends between them, for a
+    /// picture tiled without its repeats showing (`stochastic`).
+    StochasticTiling,
 }
 
 /// One of a group's inputs. Every one is a number.
@@ -58,7 +62,7 @@ pub struct GroupOutput {
 }
 
 impl NodeGroup {
-    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack, NodeGroup::Herringbone, NodeGroup::Basketweave];
+    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack, NodeGroup::Herringbone, NodeGroup::Basketweave, NodeGroup::StochasticTiling];
 
     /// Whether it is a pattern over a surface, for where it is listed: the
     /// others work on numbers.
@@ -73,6 +77,7 @@ impl NodeGroup {
             NodeGroup::BlendStack => "blend_stack",
             NodeGroup::Herringbone => "herringbone",
             NodeGroup::Basketweave => "basketweave",
+            NodeGroup::StochasticTiling => "stochastic_tiling",
         }
     }
 
@@ -86,6 +91,7 @@ impl NodeGroup {
             NodeGroup::BlendStack => "Blend Stack",
             NodeGroup::Herringbone => "Herringbone",
             NodeGroup::Basketweave => "Basketweave",
+            NodeGroup::StochasticTiling => "Stochastic Tiling",
         }
     }
 
@@ -113,6 +119,12 @@ impl NodeGroup {
                  the mask of tile and joint; Random a number for each tile; Tile Coordinates run along each tile, for a \
                  wood's Vector."
             }
+            NodeGroup::StochasticTiling => {
+                "A picture tiled without its repeats showing: laid in patches, each from a place of its own in the \
+                 picture, blended where they meet. Wire Coordinates A, B and C into three Image Textures of the same \
+                 picture; Blend B into the Factor of a Mix of the first two, and Blend C into the Factor of a Mix of \
+                 that and the third. For colour and roughness; a normal map follows on a part with UVs."
+            }
         }
     }
 
@@ -123,6 +135,7 @@ impl NodeGroup {
             NodeGroup::BlendStack => "blend material, VRayBlendMtl, coats, layers, layered, stack",
             NodeGroup::Herringbone => "tiles, parquet, planks, floor, paving, chevron, VRayBerconTile, bricks",
             NodeGroup::Basketweave => "tiles, parquet, planks, floor, paving, blocks, VRayBerconTile, bricks",
+            NodeGroup::StochasticTiling => "stochastic, no repeat, seamless, texture bombing, randomize tiling, hex tiling, VRayUVWRandomizer, VRayBitmap, anti-tiling",
         }
     }
 
@@ -131,6 +144,7 @@ impl NodeGroup {
             NodeGroup::FdmLayerLines => fdm_layer_lines::INPUTS,
             NodeGroup::BlendStack => blend_stack::INPUTS,
             NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::INPUTS,
+            NodeGroup::StochasticTiling => stochastic::INPUTS,
         }
     }
 
@@ -139,6 +153,7 @@ impl NodeGroup {
             NodeGroup::FdmLayerLines => fdm_layer_lines::OUTPUTS,
             NodeGroup::BlendStack => blend_stack::OUTPUTS,
             NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::OUTPUTS,
+            NodeGroup::StochasticTiling => stochastic::OUTPUTS,
         }
     }
 
@@ -148,11 +163,13 @@ impl NodeGroup {
         static BLEND: OnceLock<Expansion> = OnceLock::new();
         static HERRINGBONE: OnceLock<Expansion> = OnceLock::new();
         static BASKETWEAVE: OnceLock<Expansion> = OnceLock::new();
+        static STOCHASTIC: OnceLock<Expansion> = OnceLock::new();
         match self {
             NodeGroup::FdmLayerLines => FDM.get_or_init(fdm_layer_lines::build),
             NodeGroup::BlendStack => BLEND.get_or_init(blend_stack::build),
             NodeGroup::Herringbone => HERRINGBONE.get_or_init(|| tiles::build(tiles::Bond::Herringbone)),
             NodeGroup::Basketweave => BASKETWEAVE.get_or_init(|| tiles::build(tiles::Bond::Basketweave)),
+            NodeGroup::StochasticTiling => STOCHASTIC.get_or_init(stochastic::build),
         }
     }
 }
