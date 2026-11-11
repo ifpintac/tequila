@@ -6352,6 +6352,9 @@ mod tests {
             ("Steel Electrogalvanised", 0.025),
             ("Grille Black Slotted", 0.025),
             ("Grille Black Expanded", 0.025),
+            // Paints, whose pigment has no shine of its own under the coat.
+            ("Automotive Red", 0.025),
+            ("Automotive Blue Metallic", 0.025),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();

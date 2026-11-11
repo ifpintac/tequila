@@ -175,13 +175,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.49632
+              "float": 0.59032
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.55968
+              "float": 0.66568
             }
           }
         ],
@@ -196,7 +196,7 @@
     "output": 1
   },
   "name": "Plastic VDI 36 Light Grey",
-  "specular_roughness": 0.528,
+  "specular_roughness": 0.628,
   "tags": [
     "vdi",
     "edm",
