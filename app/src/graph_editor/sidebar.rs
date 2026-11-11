@@ -82,7 +82,7 @@ impl GraphEditor {
                     let soloed = project.solo().is_some_and(|(_, n, _)| n == id);
                     if ui
                         .add(egui::SelectableLabel::new(soloed, "Solo"))
-                        .on_hover_text("Show only this node's output on the model, unlit (Ctrl+Shift+click a node). Click again, or close the editor, to stop.")
+                        .on_hover_text(format!("Show only this node's output on the model, unlit ({} a node). Click again, or close the editor, to stop.", crate::theme::keys("Ctrl + Shift + click")))
                         .clicked()
                     {
                         self.solo_request = Some((!soloed).then_some((id, 0)));
@@ -209,6 +209,16 @@ impl GraphEditor {
 
     /// With nothing selected: how the editor is driven.
     fn shortcuts(&self, ui: &mut egui::Ui) {
+        // What the graph is, first: it was under the eighteen shortcuts,
+        // below the fold of all but the tallest window.
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new("The Surface node is the material: wire textures, patterns and colours into its inputs. Drop a node on a wire to put it in between. Select a node to see its settings here.")
+                    .size(12.0)
+                    .color(crate::theme::p().text_dim),
+            )
+            .wrap(),
+        );
         crate::theme::section(ui, "Getting around");
         // As the Shortcuts window draws them: what it does, then the keys
         // as key caps.
@@ -240,12 +250,6 @@ impl GraphEditor {
                 ui.end_row();
             }
         });
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new("The Surface node is the material: wire textures, patterns and colours into its inputs. Drop a node on a wire to put it in between.")
-                .small()
-                .color(crate::theme::dim()),
-        );
     }
 }
 

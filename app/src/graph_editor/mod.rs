@@ -342,14 +342,10 @@ impl GraphEditor {
                     ui.horizontal(|ui| {
                         let text = match &self.message {
                             Some(message) => egui::RichText::new(message).color(crate::theme::p().danger),
-                            None => egui::RichText::new(format!(
-                                "{} nodes · {} selected · {:.0}%   —   Shift A: add · drag a socket: wire · Ctrl right-drag: cut · G: move · M: mute · H: collapse",
-                                graph.len(),
-                                self.selected.len(),
-                                self.zoom * 100.0
-                            ))
-                            .small()
-                            .color(crate::theme::dim()),
+                            // What there is and how close, and one way in.
+                            // It went on to list six shortcuts the sidebar
+                            // lists too, and said Ctrl where a Mac has Cmd.
+                            None => egui::RichText::new(status_line(graph.len(), self.selected.len(), self.zoom)).small().color(crate::theme::dim()),
                         };
                         ui.label(text);
                     });
@@ -1728,24 +1724,25 @@ impl GraphEditor {
             egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(4.0)).show(ui, |ui| {
                 ui.set_min_width(190.0);
                 let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, name: &'static str| {
-                    let response = ui.add(egui::Button::new(label).shortcut_text(keys).frame(false).min_size(egui::vec2(180.0, 22.0)));
+                    // The keys by this computer's names: these said Ctrl on a Mac.
+                    let response = ui.add(egui::Button::new(label).shortcut_text(crate::theme::keys(keys)).frame(false).min_size(egui::vec2(180.0, 22.0)));
                     if response.clicked() {
                         action = Some(name);
                     }
                 };
                 if target.is_some() {
-                    item(ui, "Duplicate", "Shift D", "duplicate");
-                    item(ui, "Copy", "Ctrl C", "copy");
+                    item(ui, "Duplicate", "Shift + D", "duplicate");
+                    item(ui, "Copy", "Ctrl + C", "copy");
                     item(ui, "Mute", "M", "mute");
                     item(ui, "Collapse", "H", "collapse");
-                    item(ui, "Solo output", "Ctrl Shift click", "solo");
-                    item(ui, "Frame selection", "Ctrl J", "frame");
+                    item(ui, "Solo output", "Ctrl + Shift + Click", "solo");
+                    item(ui, "Frame selection", "Ctrl + J", "frame");
                     ui.separator();
-                    item(ui, "Delete, keep wire", "Ctrl X", "dissolve");
+                    item(ui, "Delete, keep wire", "Ctrl + X", "dissolve");
                     item(ui, "Delete", "X", "delete");
                 } else {
-                    item(ui, "Add…", "Shift A", "add");
-                    item(ui, "Paste", "Ctrl V", "paste");
+                    item(ui, "Add…", "Shift + A", "add");
+                    item(ui, "Paste", "Ctrl + V", "paste");
                 }
                 ui.separator();
                 item(ui, "Tidy up", "", "tidy");
@@ -1939,7 +1936,8 @@ impl GraphEditor {
             }
             ui.add_space(6.0);
             ui.toggle_value(&mut self.show_previews, egui::RichText::new("Previews").size(12.5)).on_hover_text("Show each texture's picture in its node");
-            ui.toggle_value(&mut self.show_map, egui::RichText::new("Map").size(12.5)).on_hover_text("An overview of the graph in the corner, when it does not fit the view");
+            ui.toggle_value(&mut self.show_map, egui::RichText::new("Overview").size(12.5))
+                .on_hover_text("A small map of the whole graph in the corner, when it does not fit the view: click or drag in it to go there");
             if self.solo_shown.is_some() && ui.add(button("End solo")).on_hover_text("Show the material again").clicked() {
                 self.solo_request = Some(None);
                 self.solo_shown = None;
@@ -2173,10 +2171,35 @@ fn evaluate_preview(project: &Project, graph: &MaterialGraph, id: NodeId) -> Opt
     previews::evaluate(&scene.textures, extent, graph, id, previews::preview_output(&graph.node(id)?.kind))
 }
 
+/// The line under the canvas: how many nodes, how many of them selected,
+/// how close the view is, and the one key to start with, in this
+/// computer's names for the keys.
+fn status_line(nodes: usize, selected: usize, zoom: f32) -> String {
+    let chosen = match selected {
+        0 => "none selected".to_string(),
+        n => format!("{n} selected"),
+    };
+    let nodes = if nodes == 1 { "1 node".to_string() } else { format!("{nodes} nodes") };
+    format!("{nodes} · {chosen} · {:.0}%   —   {} adds a node; every key is in the sidebar with nothing selected", zoom * 100.0, crate::theme::keys("Shift + A"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tequila_core::spectrum::Spectrum;
+
+    /// The line under the canvas counts what is there and names one key,
+    /// by this computer's name for it: it was a row of six shortcuts with
+    /// Ctrl in it on a Mac.
+    #[test]
+    fn the_status_line_counts_and_names_this_computers_keys() {
+        let none = status_line(6, 0, 0.56);
+        assert!(none.starts_with("6 nodes · none selected · 56%"), "{none}");
+        let one = status_line(1, 1, 1.0);
+        assert!(one.starts_with("1 node · 1 selected · 100%"), "{one}");
+        assert!(one.contains(&crate::theme::keys("Shift + A")), "{one}");
+        assert!(!one.contains("Ctrl"), "{one}");
+    }
     use tequila_materials::nodes::ShaderNode;
 
     fn project() -> Project {
