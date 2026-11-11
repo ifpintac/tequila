@@ -211,9 +211,16 @@ pub mod metals {
         [4.266, 3.715, 3.137]
     );
 
+    // Zinc, as plated on steel and as die castings are made of: from
+    // Werner, Glantschnig and Ambrosch-Draxl 2009 (refractiveindex.info),
+    // at 650, 550 and 450 nm. Derived from electron energy-loss spectra
+    // rather than measured optically, and the least certain here; a
+    // bright, faintly blue-white metal either way.
+    metal!(ZINC, "Zinc", [1.234, 0.929, 0.678], [5.873, 4.975, 4.012]);
+
     /// Every preset with its display name, for the Metal material's Type
     /// dropdown (`docs/02` §3.1).
-    pub const ALL: [(&str, ComplexIor); 10] = [
+    pub const ALL: [(&str, ComplexIor); 11] = [
         ("Aluminium", ALUMINIUM),
         ("Silver", SILVER),
         ("Gold", GOLD),
@@ -224,6 +231,7 @@ pub mod metals {
         ("Titanium", TITANIUM),
         ("Tungsten", TUNGSTEN),
         ("Platinum", PLATINUM),
+        ("Zinc", ZINC),
     ];
 }
 

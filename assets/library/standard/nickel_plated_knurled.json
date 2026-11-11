@@ -1,0 +1,121 @@
+{
+  "base_color": [0.97, 0.93, 0.87],
+  "category": "Metal",
+  "edge_radius": 0.0001,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "group": "knurl",
+        "id": 2,
+        "kind": "group",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.2
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          }
+        ],
+        "position": [0, 0]
+      },
+      {
+        "depth": 0.00012,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.34
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.18
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Nickel",
+  "name": "Nickel Plated Knurled",
+  "specular_roughness": 0.24,
+  "tags": [
+    "nickel",
+    "plated",
+    "knurled",
+    "nut",
+    "thumbscrew",
+    "jack nut",
+    "hardware"
+  ],
+  "type": "metal"
+}
+

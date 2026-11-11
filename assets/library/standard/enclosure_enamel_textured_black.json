@@ -1,7 +1,7 @@
 {
   "base_color": [0.0052016005, 0.0051872195, 0.0055502094],
   "category": "Paint",
-  "edge_radius": 0.0003,
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [
@@ -124,7 +124,7 @@
     "output": 1
   },
   "name": "Enclosure Enamel Textured Black",
-  "specular_ior": 1.55,
+  "specular_ior": 1.52,
   "specular_roughness": 0.3,
   "tags": [
     "enamel",

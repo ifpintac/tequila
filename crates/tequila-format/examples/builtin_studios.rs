@@ -112,7 +112,7 @@ fn catalogue_studio() -> StudioPreset {
     let wide = |pin: Pin, width: f32, height: f32| Pin { angular_size: Vec2 { x: width, y: height }, ..pin };
     let pins = vec![
         softbox("Key", -130.0, 38.0, 0.7, 0.5, 10.0),
-        softbox("Overhead", 150.0, 68.0, 0.9, 0.7, 2.6),
+        softbox("Overhead", 150.0, 68.0, 0.9, 0.7, 6.0),
         softbox("Fill", 118.0, 17.0, 1.0, 0.8, 3.0),
         wide(softbox("Front", 180.0, 11.0, 1.2, 0.8, 2.5), 1.4, 0.5),
         wide(softbox("Back strip", 0.0, 20.0, 1.6, 0.4, 5.0), 1.6, 0.12),
@@ -122,6 +122,10 @@ fn catalogue_studio() -> StudioPreset {
     ];
     let environment = EnvironmentSettings {
         image: None,
+        // The room is kept dim and the softboxes do the lighting: a bright
+        // metal mirrors the room, and in a bright one it is a white shape
+        // with nothing in it.
+        brightness: 0.35,
         pins,
         background: tequila_scene::document::BackgroundMode::Color,
         background_color: tequila_core::spectrum::Spectrum::splat(1.0),
@@ -132,7 +136,7 @@ fn catalogue_studio() -> StudioPreset {
             // sweep of white paper does: without it every upright face of
             // a metal mirrors a black room.
             bounce: true,
-            bounce_strength: 3.0,
+            bounce_strength: 1.0,
             reflections: 0.3,
             reflection_blur: 0.02,
             reflection_fade_distance: 0.05,
@@ -180,7 +184,7 @@ fn catalogue_studio() -> StudioPreset {
     // it: the plain sRGB curve, a little under, where the default eases
     // highlights towards white.
     preset.image_style.display = tequila_color::DisplayTransform::Srgb;
-    preset.image_style.exposure = -0.35;
+    preset.image_style.exposure = 0.3;
     preset
 }
 

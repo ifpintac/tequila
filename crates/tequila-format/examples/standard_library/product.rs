@@ -1,6 +1,6 @@
 //! What audio gear is made of: the enamel on a pedal's die-cast box, the
 //! powder coat on a chassis, the knobs, the connectors' plastic, the
-//! plated nuts and screws, the anodised extrusion with its bright cut edge.
+//! plated nuts and screws.
 //!
 //! These are the finishes of small things seen close, so they are built
 //! the way a product renderer builds them by hand: a colour that is not
@@ -9,6 +9,22 @@
 //! edges that are never knife sharp - every one of them rounds its edges
 //! by a tenth of a millimetre or three, which is where a real part catches
 //! the light and a computed one does not.
+
+//!
+//! The numbers are published ones where there are any. Indices of
+//! refraction: polycarbonate 1.585, polystyrene 1.59, PMMA 1.49 and SAN,
+//! which is ABS's glassy part, 1.566 (Sultanova, Kasarova and Nikolov
+//! 2009, by refractiveindex.info); nylon 1.53; acetal about 1.49; cured
+//! enamels and polyurethanes 1.51 to 1.53. Gloss: an alkyd gloss enamel
+//! measures 80 to 95 gloss units at 60 degrees, a fine-texture black
+//! powder coat 7 to 11, a wrinkle finish about 10, a hammertone powder 15
+//! to 55 (makers' data sheets). Orange peel is read in two bands, 0.3 to
+//! 1.2 mm and 1.2 to 12 mm (BYK's wave-scan), which are the two grains an
+//! enamel has here. Edges: a moulding's or a zinc casting's outside edge
+//! is not made sharper than about 0.4 mm; a machined chamfer on anodised
+//! aluminium is 0.1 to 0.5 mm. Grilles are to DIN 24041's patterns, round
+//! holes staggered: Rv 3-5 and Rv 1.5-2.5 are a third open, and a PA
+//! speaker's grille two thirds.
 
 use crate::recipe::Out;
 use crate::{base, metal_ior, noise, plus, preset, rgb, srgb, wear, Preset, Recipe};
@@ -29,14 +45,14 @@ fn two_grains(r: &mut Recipe, fine: f32, coarse: f32, weight: f32, depth: f32) -
 
 /// The enamel on a die-cast enclosure: sprayed and baked, semi-gloss, with
 /// the fine tooth of the spray and a faint peel under it.
-fn enamel(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
+fn enamel(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32)) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = colour;
-        m.specular_roughness = 0.22;
-        m.specular_ior = 1.55;
-        m.edge_radius = 2e-4;
+        m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.specular_ior = 1.52;
+        m.edge_radius = 4e-4;
     }));
-    let gloss = wear(&mut r, 0.17, 0.27, 22.0);
+    let gloss = wear(&mut r, gloss.0, gloss.1, 22.0);
     r.to(Param::SpecularRoughness, gloss);
     two_grains(&mut r, 3200.0, 240.0, 2.5, 2.5e-6);
     preset(name, "Paint", tags, MaterialType::Plastic, r)
@@ -49,8 +65,8 @@ fn enamel_textured(name: &'static str, tags: &'static [&'static str], colour: Sp
     let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = colour;
         m.specular_roughness = 0.3;
-        m.specular_ior = 1.55;
-        m.edge_radius = 3e-4;
+        m.specular_ior = 1.52;
+        m.edge_radius = 4e-4;
     }));
     let gloss = wear(&mut r, 0.26, 0.34, 18.0);
     r.to(Param::SpecularRoughness, gloss);
@@ -82,10 +98,11 @@ fn fine_grain(name: &'static str, tags: &'static [&'static str], colour: Spectru
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {
         m.base_color = colour;
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.specular_ior = 1.566;
         m.fuzz_weight = 0.18;
         m.fuzz_roughness = 0.5;
         m.fuzz_color = rgb(0.55, 0.55, 0.56);
-        m.edge_radius = 1e-4;
+        m.edge_radius = 3e-4;
     }));
     // Three sizes of grain: the tool's texture, its finer tooth, and a
     // slow unevenness in how deep the texture took.
@@ -102,12 +119,12 @@ fn fine_grain(name: &'static str, tags: &'static [&'static str], colour: Spectru
 
 /// A hard, glossy moulding as it leaves a polished tool: a connector's
 /// body, a switch's slider, the plastic inside a jack.
-fn glossy(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32)) -> Preset {
+fn glossy(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32), ior: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = colour;
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
-        m.specular_ior = 1.55;
-        m.edge_radius = 1e-4;
+        m.specular_ior = ior;
+        m.edge_radius = 3e-4;
     }));
     let gloss = wear(&mut r, gloss.0, gloss.1, 40.0);
     r.to(Param::SpecularRoughness, gloss);
@@ -149,41 +166,14 @@ fn nickel(name: &'static str, tags: &'static [&'static str], gloss: (f32, f32), 
     preset(name, "Metal", tags, MaterialType::Metal, r)
 }
 
-/// Anodised aluminium whose edges were cut after it was dyed: the faces a
-/// fine satin in the dye's colour, and every outward edge bare, bright
-/// metal - the line of light round a machined case.
-fn diamond_cut(name: &'static str, tags: &'static [&'static str], tint: Spectrum) -> Preset {
-    let mut r = Recipe::new(base(MaterialType::Metal, |m| {
-        m.metal_ior = metal_ior("Aluminium");
-        m.base_color = tint;
-        m.specular_roughness = 0.38;
-    }));
-    // Where the surface turns outward within a few tenths of a millimetre.
-    let edge = r.edges(4e-4, 1.0);
-    let cut = r.smooth(edge, (0.25, 0.6), (0.0, 1.0));
-    let faces = wear(&mut r, 0.34, 0.44, 12.0);
-    let gloss = r.mix_float(cut, faces, 0.07);
-    r.to(Param::SpecularRoughness, gloss);
-    let dyed = r.node("combine_color").f("Red", tint.r).f("Green", tint.g).f("Blue", tint.b).out("Color");
-    let bare = r.node("combine_color").f("Red", 0.96).f("Green", 0.965).f("Blue", 0.97).out("Color");
-    let colour = r.mix("mix", cut, dyed, bare);
-    r.to(Param::BaseColor, colour);
-    // The blast under the dye; the cut is smooth.
-    let blast = noise(&mut r, 7500.0, 3.0, 0.5);
-    let blast = r.math("multiply", blast, 1.0);
-    let off = r.math("subtract", 1.0, cut);
-    let blast = r.math("multiply", blast, off);
-    r.bump(blast, 2.5e-6);
-    preset(name, "Metal", tags, MaterialType::Metal, r)
-}
-
 /// A moulded plastic with the satin of a lightly textured tool: most of
 /// an enclosure's inside and many a small part.
-fn moulded_satin(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32)) -> Preset {
+fn moulded_satin(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32), ior: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = colour;
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
-        m.edge_radius = 1.5e-4;
+        m.specular_ior = ior;
+        m.edge_radius = 3.5e-4;
     }));
     let sheen = wear(&mut r, gloss.0, gloss.1, 30.0);
     r.to(Param::SpecularRoughness, sheen);
@@ -199,7 +189,7 @@ fn plated_plastic(name: &'static str, tags: &'static [&'static str], gloss: (f32
         m.metal_ior = metal_ior("Chromium");
         m.base_color = rgb(0.98, 0.98, 0.99);
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
-        m.edge_radius = 2.5e-4;
+        m.edge_radius = 3.5e-4;
     }));
     let sheen = wear(&mut r, gloss.0, gloss.1, 25.0);
     r.to(Param::SpecularRoughness, sheen);
@@ -263,16 +253,24 @@ fn dishes(r: &mut Recipe) -> Out {
     r.of(hammered, "Height")
 }
 
+/// A gloss enamel's roughness, 80 to 95 gloss units, and a satin's.
+const GLOSS: (f32, f32) = (0.09, 0.13);
+const SATIN: (f32, f32) = (0.2, 0.3);
+
 pub fn all() -> Vec<Preset> {
     let mut out = vec![
-        enamel("Enclosure Enamel Orange", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "orange", "paint"], srgb("#DE5E12")),
-        enamel("Enclosure Enamel Red", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "red", "paint"], srgb("#B8161A")),
-        enamel("Enclosure Enamel Yellow", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "yellow", "paint"], srgb("#F0B400")),
-        enamel("Enclosure Enamel Green", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "green", "paint"], srgb("#1F7A3D")),
-        enamel("Enclosure Enamel Blue", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "blue", "paint"], srgb("#0E4FA6")),
-        enamel("Enclosure Enamel Purple", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "purple", "paint"], srgb("#5A2A82")),
-        enamel("Enclosure Enamel White", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "white", "paint"], srgb("#ECECE7")),
-        enamel("Enclosure Enamel Black", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "black", "paint"], srgb("#0D0D0E")),
+        enamel("Enclosure Enamel Orange", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "orange", "paint"], srgb("#DE5E12"), GLOSS),
+        enamel("Enclosure Enamel Red", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "red", "paint"], srgb("#B8161A"), GLOSS),
+        enamel("Enclosure Enamel Yellow", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "yellow", "paint"], srgb("#F0B400"), GLOSS),
+        enamel("Enclosure Enamel Green", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "green", "paint"], srgb("#1F7A3D"), GLOSS),
+        enamel("Enclosure Enamel Blue", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "blue", "paint"], srgb("#0E4FA6"), GLOSS),
+        enamel("Enclosure Enamel Purple", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "purple", "paint"], srgb("#5A2A82"), GLOSS),
+        enamel("Enclosure Enamel White", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "white", "paint"], srgb("#ECECE7"), GLOSS),
+        enamel("Enclosure Enamel Black", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "black", "paint"], srgb("#0D0D0E"), GLOSS),
+        enamel("Enclosure Enamel Satin Orange", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "orange", "satin", "paint"], srgb("#DE5E12"), SATIN),
+        enamel("Enclosure Enamel Satin Blue", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "blue", "satin", "paint"], srgb("#0E4FA6"), SATIN),
+        enamel("Enclosure Enamel Satin White", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "white", "satin", "paint"], srgb("#ECECE7"), SATIN),
+        enamel("Enclosure Enamel Satin Black", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "black", "satin", "paint"], srgb("#0D0D0E"), SATIN),
         enamel_textured("Enclosure Enamel Textured Orange", &["enamel", "pedal", "stompbox", "textured", "orange peel", "orange", "paint"], srgb("#E06A10")),
         enamel_textured("Enclosure Enamel Textured Black", &["enamel", "pedal", "stompbox", "textured", "orange peel", "black", "paint"], srgb("#101011")),
         crate::paint::metallic("Enclosure Metallic Gold", &["metallic", "pedal", "stompbox", "die-cast", "flake", "gold", "paint"], srgb("#8A6A2A"), srgb("#F0D890"), 0.55, 5e-5, 0.3, 0.28),
@@ -286,31 +284,29 @@ pub fn all() -> Vec<Preset> {
         fine_grain("Knob Plastic Cream", &["knob", "abs", "fine grain", "textured", "cream", "moulded"], srgb("#D9D0BC"), (0.42, 0.56)),
         fine_grain("Knob Pointer Grey", &["knob", "pointer", "line", "indicator", "grey", "moulded"], srgb("#8E9092"), (0.5, 0.6)),
         fine_grain("Knob Pointer White", &["knob", "pointer", "line", "indicator", "white", "moulded"], srgb("#E9E9E6"), (0.5, 0.6)),
-        glossy("Connector Plastic Black", &["connector", "jack", "socket", "pbt", "nylon", "black", "gloss"], rgb(0.004, 0.004, 0.0045), (0.15, 0.26)),
-        glossy("Connector Plastic Grey", &["connector", "jack", "socket", "pbt", "nylon", "grey", "gloss"], srgb("#8A8C8E"), (0.15, 0.26)),
-        glossy("Knob Plastic Gloss Black", &["knob", "gloss", "black", "pointer knob", "moulded", "polished"], rgb(0.008, 0.008, 0.0085), (0.04, 0.09)),
+        glossy("Connector Plastic Black", &["connector", "jack", "socket", "pbt", "nylon", "black", "gloss"], rgb(0.004, 0.004, 0.0045), (0.15, 0.26), 1.53),
+        glossy("Connector Plastic Grey", &["connector", "jack", "socket", "pbt", "nylon", "grey", "gloss"], srgb("#8A8C8E"), (0.15, 0.26), 1.53),
+        glossy("Knob Plastic Gloss Black", &["knob", "gloss", "black", "pointer knob", "moulded", "polished"], rgb(0.008, 0.008, 0.0085), (0.04, 0.09), 1.566),
         nickel("Nickel Plated Bright", &["nickel", "plated", "jack", "nut", "bushing", "hardware", "bright"], (0.1, 0.2), false, None),
         nickel("Nickel Plated Satin", &["nickel", "plated", "jack", "sleeve", "thread", "hardware", "satin"], (0.26, 0.36), false, None),
         nickel("Nickel Plated Handled", &["nickel", "plated", "connector", "smudged", "fingerprints", "hardware"], (0.12, 0.22), true, None),
+        crate::metal_pattern::spun("Nickel Plated Spun", &["nickel", "plated", "spun", "footswitch", "cap", "concentric", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.22),
+        crate::metal_pattern::turned("Nickel Plated Turned", &["nickel", "plated", "turned", "bushing", "thread", "lathe", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.24, 0.00012),
         nickel("Nickel Plated Matte", &["nickel", "matte", "die-cast", "connector shell", "xlr", "plug", "satin"], (0.42, 0.52), false, Some((4000.0, 6e-6))),
-        diamond_cut("Aluminium Anodised Blue Diamond Cut", &["aluminium", "anodised", "blue", "diamond cut", "chamfer", "bright edge"], srgb("#1F5FD0")),
-        diamond_cut("Aluminium Anodised Black Diamond Cut", &["aluminium", "anodised", "black", "diamond cut", "chamfer", "bright edge"], srgb("#1B1C1F")),
-        diamond_cut("Aluminium Anodised Silver Diamond Cut", &["aluminium", "anodised", "silver", "diamond cut", "chamfer", "bright edge"], srgb("#D8DADC")),
-        diamond_cut("Aluminium Anodised Red Diamond Cut", &["aluminium", "anodised", "red", "diamond cut", "chamfer", "bright edge"], srgb("#B5202A")),
     ];
 
     out.extend([
-        moulded_satin("Polycarbonate Satin Black", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "black"], rgb(0.011, 0.011, 0.012), (0.3, 0.4)),
-        moulded_satin("Polycarbonate Satin White", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "white"], srgb("#E8E8E5"), (0.3, 0.4)),
-        moulded_satin("Polycarbonate Satin Grey", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "grey"], srgb("#6E7074"), (0.3, 0.4)),
-        moulded_satin("HIPS Matte White", &["hips", "polystyrene", "housing", "tray", "matte", "white"], srgb("#E4E2DC"), (0.5, 0.62)),
-        moulded_satin("HIPS Matte Black", &["hips", "polystyrene", "housing", "tray", "matte", "black"], rgb(0.014, 0.014, 0.015), (0.5, 0.62)),
-        moulded_satin("POM Black", &["pom", "acetal", "delrin", "slider", "gear", "black", "engineering"], rgb(0.012, 0.012, 0.013), (0.24, 0.34)),
-        glossy("Polycarbonate Gloss Black", &["polycarbonate", "pc", "gloss", "bezel", "lens surround", "black"], rgb(0.005, 0.005, 0.0055), (0.03, 0.08)),
-        glossy("Polycarbonate Gloss White", &["polycarbonate", "pc", "gloss", "housing", "white"], srgb("#EDEDEA"), (0.04, 0.1)),
+        moulded_satin("Polycarbonate Satin Black", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "black"], rgb(0.011, 0.011, 0.012), (0.3, 0.4), 1.585),
+        moulded_satin("Polycarbonate Satin White", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "white"], srgb("#E8E8E5"), (0.3, 0.4), 1.585),
+        moulded_satin("Polycarbonate Satin Grey", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "grey"], srgb("#6E7074"), (0.3, 0.4), 1.585),
+        moulded_satin("HIPS Matte White", &["hips", "polystyrene", "housing", "tray", "matte", "white"], srgb("#E4E2DC"), (0.5, 0.62), 1.59),
+        moulded_satin("HIPS Matte Black", &["hips", "polystyrene", "housing", "tray", "matte", "black"], rgb(0.014, 0.014, 0.015), (0.5, 0.62), 1.59),
+        moulded_satin("POM Black", &["pom", "acetal", "delrin", "slider", "gear", "black", "engineering"], rgb(0.012, 0.012, 0.013), (0.24, 0.34), 1.49),
+        glossy("Polycarbonate Gloss Black", &["polycarbonate", "pc", "gloss", "bezel", "lens surround", "black"], rgb(0.005, 0.005, 0.0055), (0.03, 0.08), 1.585),
+        glossy("Polycarbonate Gloss White", &["polycarbonate", "pc", "gloss", "housing", "white"], srgb("#EDEDEA"), (0.04, 0.1), 1.585),
         plated_plastic("Chrome Plated Plastic Bright", &["chrome", "plated plastic", "trim", "ring", "button", "logo", "bright"], (0.03, 0.07)),
         plated_plastic("Chrome Plated Plastic Satin", &["chrome", "plated plastic", "trim", "ring", "button", "satin", "pearl chrome"], (0.24, 0.32)),
-        die_cast("Zinc Die Cast Raw", &["zinc", "zamak", "die-cast", "raw", "pedal box", "housing"], "Aluminium", rgb(0.6, 0.62, 0.66), (0.42, 0.56), 0.35),
+        die_cast("Zinc Die Cast Raw", &["zinc", "zamak", "die-cast", "raw", "pedal box", "housing"], "Zinc", rgb(0.72, 0.73, 0.75), (0.42, 0.56), 0.35),
         die_cast("Aluminium Die Cast Tumbled", &["aluminium", "die-cast", "tumbled", "vibratory", "enclosure", "housing"], "Aluminium", rgb(0.78, 0.78, 0.8), (0.44, 0.58), 0.5),
         crate::metal::brushed("Aluminium Anodised Brushed Black", &["aluminium", "anodised", "brushed", "black", "front panel"], "Aluminium", srgb("#1E1F22"), 0.32),
         crate::metal::brushed("Aluminium Anodised Brushed Silver", &["aluminium", "anodised", "brushed", "silver", "front panel"], "Aluminium", srgb("#D6D8DA"), 0.3),
@@ -318,10 +314,18 @@ pub fn all() -> Vec<Preset> {
         crate::metal::brushed("Aluminium Anodised Brushed Red", &["aluminium", "anodised", "brushed", "red", "front panel"], "Aluminium", srgb("#A8222C"), 0.32),
         crate::metal::brushed("Aluminium Anodised Brushed Gold", &["aluminium", "anodised", "brushed", "gold", "champagne", "front panel"], "Aluminium", srgb("#C8A968"), 0.32),
         crate::metal::brushed("Nickel Plated Brushed", &["nickel", "plated", "brushed", "nut", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.3),
-        patterned_paint("Powder Coat Wrinkle Black", &["powder", "wrinkle", "crackle finish", "chassis", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.0, (0.5, 0.36), wrinkle, 5.5e-5),
-        patterned_paint("Hammertone Grey", &["hammertone", "hammer finish", "hammered paint", "chassis", "grey"], srgb("#5E6468"), 0.55, (0.34, 0.22), dishes, 8e-5),
-        patterned_paint("Hammertone Silver", &["hammertone", "hammer finish", "hammered paint", "chassis", "silver"], srgb("#A9AEB2"), 0.6, (0.34, 0.22), dishes, 8e-5),
-        patterned_paint("Hammertone Blue", &["hammertone", "hammer finish", "hammered paint", "chassis", "blue"], srgb("#2C4C78"), 0.5, (0.34, 0.22), dishes, 8e-5),
+        patterned_paint("Powder Coat Wrinkle Black", &["powder", "wrinkle", "crackle finish", "chassis", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.0, (0.64, 0.5), wrinkle, 5.5e-5),
+        patterned_paint("Hammertone Grey", &["hammertone", "hammer finish", "hammered paint", "chassis", "grey"], srgb("#5E6468"), 0.55, (0.44, 0.3), dishes, 8e-5),
+        patterned_paint("Hammertone Silver", &["hammertone", "hammer finish", "hammered paint", "chassis", "silver"], srgb("#A9AEB2"), 0.6, (0.44, 0.3), dishes, 8e-5),
+        patterned_paint("Hammertone Blue", &["hammertone", "hammer finish", "hammered paint", "chassis", "blue"], srgb("#2C4C78"), 0.5, (0.44, 0.3), dishes, 8e-5),
+    ]);
+
+    // Grilles: sheet punched to DIN 24041's staggered round patterns and
+    // powder coated black. Pitch and hole radius in metres.
+    out.extend([
+        crate::metal_pattern::perforated_coated("Grille Black Round 3 mm", &["grille", "perforated", "vent", "speaker", "black", "rv 3-5", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.005, 0.0015, crate::finish::Hole::Round),
+        crate::metal_pattern::perforated_coated("Grille Black Round 1.5 mm", &["grille", "perforated", "vent", "fine", "black", "rv 1.5-2.5", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.0025, 0.00075, crate::finish::Hole::Round),
+        crate::metal_pattern::perforated_coated("Grille Black Hex 6 mm", &["grille", "perforated", "speaker", "pa", "hexagon", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.007, 0.003, crate::finish::Hole::Hex),
     ]);
 
     // A diffuser: white plastic the light goes through and is scattered
@@ -329,7 +333,7 @@ pub fn all() -> Vec<Preset> {
     out.push(crate::plain("Diffuser White", "Plastic", &["diffuser", "opal", "milky", "led window", "light ring", "translucent", "polycarbonate"], MaterialType::PlasticCloudy, |m| {
         m.base_color = rgb(0.9, 0.9, 0.88);
         m.specular_roughness = 0.34;
-        m.edge_radius = 2e-4;
+        m.edge_radius = 3e-4;
     }));
     // The window over an infrared receiver: black to the eye, a deep red
     // against the light.
@@ -339,6 +343,21 @@ pub fn all() -> Vec<Preset> {
         m.transmission_color = rgb(0.09, 0.004, 0.006);
         m.edge_radius = 2e-4;
     }));
+
+    // A knurled nut or thumbscrew: straight ridges round it, plated.
+    let mut r = Recipe::new(base(MaterialType::Metal, |m| {
+        m.metal_ior = metal_ior("Nickel");
+        m.base_color = rgb(0.97, 0.93, 0.87);
+        m.specular_roughness = 0.24;
+        m.edge_radius = 1e-4;
+    }));
+    let knurl = r.group(NodeGroup::Knurl, &[("Pitch (mm)", 0.7), ("Angle", 0.0), ("Flat", 0.2), ("Plane", 4.0)]);
+    let ridges = r.of(knurl, "Height");
+    r.bump(ridges, 1.2e-4);
+    // Brighter on the ridges' flats, duller down the flanks.
+    let gloss = r.range(ridges, (0.0, 1.0), (0.34, 0.18));
+    r.to(Param::SpecularRoughness, gloss);
+    out.push(preset("Nickel Plated Knurled", "Metal", &["nickel", "plated", "knurled", "nut", "thumbscrew", "jack nut", "hardware"], MaterialType::Metal, r));
 
     // Black zinc on a screw: dark metal under a thin, slightly dull film.
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {

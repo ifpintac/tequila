@@ -1,7 +1,7 @@
 {
   "base_color": [0.506186, 0.18446496, 0.035666168],
   "category": "Paint",
-  "edge_radius": 0.0003,
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [
@@ -124,7 +124,7 @@
     "output": 1
   },
   "name": "Enclosure Enamel Textured Orange",
-  "specular_ior": 1.55,
+  "specular_ior": 1.52,
   "specular_roughness": 0.3,
   "tags": [
     "enamel",
