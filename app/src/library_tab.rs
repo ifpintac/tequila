@@ -389,6 +389,18 @@ impl LibraryTab {
         crate::thumbnail::load_png(file).map(|image| crate::thumbnail::fit(image, pixels))
     }
 
+    /// The picture the library has of entry `index`, small: the one shipped
+    /// with it, or one kept from an earlier launch. For the Material Graph
+    /// editor's browser, which lists the library beside its nodes.
+    pub fn small_picture(&self, index: usize) -> Option<egui::ColorImage> {
+        const PIXELS: usize = 40;
+        let kept = || {
+            let key = *self.keys.get(index)?;
+            self.disk.load(crate::thumbnail::sized_key(key, self.tile_pixels)).map(|image| crate::thumbnail::fit(image, PIXELS))
+        };
+        self.shipped_image(index, PIXELS).or_else(kept)
+    }
+
     /// What the worker needs to make entry `index`'s preview with `settings`.
     fn job(&self, index: usize, settings: PreviewSettings) -> crate::previews::Job {
         let entry = &self.entries[index];
