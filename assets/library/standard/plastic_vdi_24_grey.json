@@ -175,13 +175,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.282
+              "float": 0.40984
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.318
+              "float": 0.46215996
             }
           }
         ],
@@ -196,7 +196,7 @@
     "output": 1
   },
   "name": "Plastic VDI 24 Grey",
-  "specular_roughness": 0.3,
+  "specular_roughness": 0.436,
   "tags": [
     "vdi",
     "edm",

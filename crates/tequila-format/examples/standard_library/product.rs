@@ -138,7 +138,7 @@ fn glossy(name: &'static str, tags: &'static [&'static str], colour: Spectrum, g
 fn nickel(name: &'static str, tags: &'static [&'static str], gloss: (f32, f32), handled: bool, pebble: Option<(f32, f32)>) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Metal, |m| {
         m.metal_ior = metal_ior("Nickel");
-        m.base_color = rgb(0.97, 0.93, 0.87);
+        m.base_color = rgb(0.99, 0.975, 0.95);
         m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
         m.edge_radius = 2e-4;
     }));
@@ -293,10 +293,10 @@ pub fn all() -> Vec<Preset> {
         enamel("Enclosure Enamel Satin Black", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "black", "satin", "paint"], srgb("#0D0D0E"), SATIN),
         enamel_textured("Enclosure Enamel Textured Orange", &["enamel", "pedal", "stompbox", "textured", "orange peel", "orange", "paint"], srgb("#E06A10")),
         enamel_textured("Enclosure Enamel Textured Black", &["enamel", "pedal", "stompbox", "textured", "orange peel", "black", "paint"], srgb("#101011")),
-        crate::paint::metallic("Enclosure Metallic Gold", &["metallic", "pedal", "stompbox", "die-cast", "flake", "gold", "paint"], srgb("#8A6A2A"), srgb("#F0D890"), 0.55, 5e-5, 0.3, 0.28),
-        crate::paint::metallic("Enclosure Metallic Charcoal", &["metallic", "pedal", "stompbox", "die-cast", "flake", "charcoal", "gunmetal", "paint"], srgb("#141518"), srgb("#7C8088"), 0.22, 6e-5, 0.3, 0.3),
-        crate::paint::metallic("Enclosure Metallic Silver", &["metallic", "painted plastic", "side panel", "flake", "silver", "paint"], srgb("#8E9296"), srgb("#F2F4F6"), 0.6, 4e-5, 0.3, 0.32),
-        crate::paint::metallic("Enclosure Metallic Dark Green", &["metallic", "pedal", "stompbox", "die-cast", "flake", "green", "sparkle", "paint"], srgb("#0A1A12"), srgb("#8FE0B0"), 0.35, 4e-5, 0.3, 0.16),
+        crate::paint::metallic("Enclosure Metallic Gold", &["metallic", "pedal", "stompbox", "die-cast", "flake", "gold", "paint"], srgb("#8A6A2A"), srgb("#F0D890"), 0.55, 5e-5, 0.3),
+        crate::paint::metallic("Enclosure Metallic Charcoal", &["metallic", "pedal", "stompbox", "die-cast", "flake", "charcoal", "gunmetal", "paint"], srgb("#141518"), srgb("#7C8088"), 0.22, 6e-5, 0.3),
+        crate::paint::metallic("Enclosure Metallic Silver", &["metallic", "painted plastic", "side panel", "flake", "silver", "paint"], srgb("#8E9296"), srgb("#F2F4F6"), 0.6, 4e-5, 0.3),
+        crate::paint::metallic("Enclosure Metallic Dark Green", &["metallic", "pedal", "stompbox", "die-cast", "flake", "green", "sparkle", "paint"], srgb("#0A1A12"), srgb("#8FE0B0"), 0.35, 4e-5, 0.3),
         powder("Powder Coat Satin Black", &["powder", "satin", "chassis", "cover", "black", "sheet steel"], rgb(0.009, 0.009, 0.0095), (0.34, 0.48), 1900.0, 4e-6),
         powder("Powder Coat Fine Texture Black", &["powder", "texture", "sandy", "rack", "chassis", "black"], rgb(0.008, 0.008, 0.0085), (0.5, 0.64), 2400.0, 2.2e-5),
         powder("Powder Coat Fine Texture Grey", &["powder", "texture", "sandy", "rack", "chassis", "grey"], srgb("#5B5D60"), (0.5, 0.62), 2400.0, 2.2e-5),
@@ -310,8 +310,8 @@ pub fn all() -> Vec<Preset> {
         nickel("Nickel Plated Bright", &["nickel", "plated", "jack", "nut", "bushing", "hardware", "bright"], (0.1, 0.2), false, None),
         nickel("Nickel Plated Satin", &["nickel", "plated", "jack", "sleeve", "thread", "hardware", "satin"], (0.26, 0.36), false, None),
         nickel("Nickel Plated Handled", &["nickel", "plated", "connector", "smudged", "fingerprints", "hardware"], (0.12, 0.22), true, None),
-        crate::metal_pattern::spun("Nickel Plated Spun", &["nickel", "plated", "spun", "footswitch", "cap", "concentric", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.22),
-        crate::metal_pattern::turned("Nickel Plated Turned", &["nickel", "plated", "turned", "bushing", "thread", "lathe", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.24, 0.00012),
+        crate::metal_pattern::spun("Nickel Plated Spun", &["nickel", "plated", "spun", "footswitch", "cap", "concentric", "hardware"], "Nickel", rgb(0.99, 0.975, 0.95), 0.22),
+        crate::metal_pattern::turned("Nickel Plated Turned", &["nickel", "plated", "turned", "bushing", "thread", "lathe", "hardware"], "Nickel", rgb(0.99, 0.975, 0.95), 0.24, 0.00012),
         nickel("Nickel Plated Matte", &["nickel", "matte", "die-cast", "connector shell", "xlr", "plug", "satin"], (0.42, 0.52), false, Some((4000.0, 6e-6))),
     ];
 
@@ -333,7 +333,7 @@ pub fn all() -> Vec<Preset> {
         crate::metal::brushed("Aluminium Anodised Brushed Blue", &["aluminium", "anodised", "brushed", "blue", "front panel"], "Aluminium", srgb("#2A5CB0"), 0.32),
         crate::metal::brushed("Aluminium Anodised Brushed Red", &["aluminium", "anodised", "brushed", "red", "front panel"], "Aluminium", srgb("#A8222C"), 0.32),
         crate::metal::brushed("Aluminium Anodised Brushed Gold", &["aluminium", "anodised", "brushed", "gold", "champagne", "front panel"], "Aluminium", srgb("#C8A968"), 0.32),
-        crate::metal::brushed("Nickel Plated Brushed", &["nickel", "plated", "brushed", "nut", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.3),
+        crate::metal::brushed("Nickel Plated Brushed", &["nickel", "plated", "brushed", "nut", "hardware"], "Nickel", rgb(0.99, 0.975, 0.95), 0.3),
         patterned_paint("Powder Coat Wrinkle Black", &["powder", "wrinkle", "crackle finish", "chassis", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.0, (0.64, 0.5), wrinkle, 5.5e-5),
         patterned_paint("Hammertone Grey", &["hammertone", "hammer finish", "hammered paint", "chassis", "grey"], srgb("#5E6468"), 0.55, (0.44, 0.3), dishes, 8e-5),
         patterned_paint("Hammertone Silver", &["hammertone", "hammer finish", "hammered paint", "chassis", "silver"], srgb("#A9AEB2"), 0.6, (0.44, 0.3), dishes, 8e-5),
@@ -372,8 +372,8 @@ pub fn all() -> Vec<Preset> {
         crate::metal_pattern::slotted_coated("Grille Black Slotted", &["grille", "vent", "slots", "slotted", "obround", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.012, 0.002, 0.016, 0.004),
         crate::metal_pattern::slotted_coated("Grille Black Slotted Fine", &["grille", "vent", "slots", "slotted", "fine", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.006, 0.0012, 0.0085, 0.0026),
         crate::metal_pattern::expanded_coated("Grille Black Expanded", &["grille", "expanded metal", "mesh", "diamond", "speaker", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.5, 0.008, 0.004, 0.3),
-        crate::metal_pattern::wire_mesh("Wire Mesh Nickel", &["wire mesh", "woven", "microphone", "grille", "screen", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.97, 0.93, 0.87), 0.2), 0.0013, 0.0004),
-        crate::metal_pattern::wire_mesh("Wire Mesh Nickel Fine", &["wire mesh", "woven", "microphone", "grille", "screen", "fine", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.97, 0.93, 0.87), 0.2), 0.0005, 0.00016),
+        crate::metal_pattern::wire_mesh("Wire Mesh Nickel", &["wire mesh", "woven", "microphone", "grille", "screen", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.99, 0.975, 0.95), 0.2), 0.0013, 0.0004),
+        crate::metal_pattern::wire_mesh("Wire Mesh Nickel Fine", &["wire mesh", "woven", "microphone", "grille", "screen", "fine", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.99, 0.975, 0.95), 0.2), 0.0005, 0.00016),
         crate::metal_pattern::wire_mesh("Wire Mesh Black", &["wire mesh", "woven", "microphone", "grille", "screen", "black"], base(MaterialType::Generic, |m| {
             m.base_color = rgb(0.01, 0.01, 0.0105);
             m.specular_roughness = 0.42;
@@ -399,7 +399,7 @@ pub fn all() -> Vec<Preset> {
     // A knurled nut or thumbscrew: straight ridges round it, plated.
     let mut r = Recipe::new(base(MaterialType::Metal, |m| {
         m.metal_ior = metal_ior("Nickel");
-        m.base_color = rgb(0.97, 0.93, 0.87);
+        m.base_color = rgb(0.99, 0.975, 0.95);
         m.specular_roughness = 0.24;
         m.edge_radius = 1e-4;
     }));

@@ -64,7 +64,10 @@ fn polish(name: &'static str, tags: &'static [&'static str], colour: Spectrum, l
 /// fine satin at VDI 18 to sandpaper at VDI 45.
 fn vdi(grade: u32, name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
     let ra = 1e-7 * 10f32.powf(grade as f32 / 20.0);
-    let roughness = (0.3 + 0.019 * (grade as f32 - 24.0)).clamp(0.2, 0.74);
+    // No rung of the ladder is a gloss: its finest is a satin that shows a
+    // window as a soft patch and no more, and by the thirties a grade
+    // shows no highlight to speak of.
+    let roughness = (0.34 + 0.016 * (grade as f32 - 18.0)).clamp(0.3, 0.76);
     let mut r = Recipe::new(plastic(colour, roughness));
     let crater = ra * 25.0;
     let big = r.node("voronoi_texture").set("feature", "smooth_f1").f("Scale", 1.0 / crater).f("Smoothness", 0.25).f("Randomness", 1.0).out("Distance");
@@ -114,7 +117,6 @@ fn flaked(name: &'static str, tags: &'static [&'static str], colour: Spectrum, f
         m.flake_size = size;
         m.flake_spread = spread;
         m.flake_roughness = flake_roughness;
-        m.specular_roughness = 0.3;
         m.coat_roughness = 0.04;
     }));
     // A gloss moulding, so its reflections wander as any moulding's do.

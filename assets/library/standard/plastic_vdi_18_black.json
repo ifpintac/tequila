@@ -175,13 +175,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.18800001
+              "float": 0.31960002
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.212
+              "float": 0.3604
             }
           }
         ],
@@ -196,7 +196,7 @@
     "output": 1
   },
   "name": "Plastic VDI 18 Black",
-  "specular_roughness": 0.2,
+  "specular_roughness": 0.34,
   "tags": [
     "vdi",
     "edm",
