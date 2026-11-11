@@ -1,0 +1,18 @@
+{
+  "base_color": [0.9, 0.9, 0.88],
+  "category": "Plastic",
+  "edge_radius": 0.0002,
+  "name": "Diffuser White",
+  "specular_roughness": 0.34,
+  "tags": [
+    "diffuser",
+    "opal",
+    "milky",
+    "led window",
+    "light ring",
+    "translucent",
+    "polycarbonate"
+  ],
+  "type": "plastic_cloudy"
+}
+

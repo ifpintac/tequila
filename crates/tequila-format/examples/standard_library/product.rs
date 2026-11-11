@@ -177,6 +177,92 @@ fn diamond_cut(name: &'static str, tags: &'static [&'static str], tint: Spectrum
     preset(name, "Metal", tags, MaterialType::Metal, r)
 }
 
+/// A moulded plastic with the satin of a lightly textured tool: most of
+/// an enclosure's inside and many a small part.
+fn moulded_satin(name: &'static str, tags: &'static [&'static str], colour: Spectrum, gloss: (f32, f32)) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
+        m.base_color = colour;
+        m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.edge_radius = 1.5e-4;
+    }));
+    let sheen = wear(&mut r, gloss.0, gloss.1, 30.0);
+    r.to(Param::SpecularRoughness, sheen);
+    two_grains(&mut r, 7000.0, 900.0, 1.5, 1.5e-6);
+    preset(name, "Plastic", tags, MaterialType::Plastic, r)
+}
+
+/// Chrome over a plastic moulding: a mirror, but one laid on plastic, so
+/// its reflections wander a little where the moulding sank and flowed -
+/// which is how a plated trim ring is told from a turned one.
+fn plated_plastic(name: &'static str, tags: &'static [&'static str], gloss: (f32, f32)) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Metal, |m| {
+        m.metal_ior = metal_ior("Chromium");
+        m.base_color = rgb(0.98, 0.98, 0.99);
+        m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.edge_radius = 2.5e-4;
+    }));
+    let sheen = wear(&mut r, gloss.0, gloss.1, 25.0);
+    r.to(Param::SpecularRoughness, sheen);
+    let flow = r.group(NodeGroup::OrangePeel, &[("Size (mm)", 7.0), ("Detail", 0.5)]);
+    let flow = r.of(flow, "Height");
+    r.bump(flow, 2.5e-6);
+    preset(name, "Metal", tags, MaterialType::Metal, r)
+}
+
+/// A die casting as it leaves the tool or the tumbler: a dull grey skin,
+/// finely pebbled, patchy where the metal flowed and chilled.
+fn die_cast(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, gloss: (f32, f32), grain_mm: f32) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Metal, |m| {
+        m.metal_ior = metal_ior(ior);
+        m.base_color = tint;
+        m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.edge_radius = 4e-4;
+    }));
+    let patches = r.group(NodeGroup::Patches, &[("Size (mm)", 18.0), ("Amount", 0.5), ("Softness", 0.8), ("Detail", 2.0)]);
+    let patch = r.of(patches, "Patch");
+    let sheen = r.mix_float(patch, gloss.0, gloss.1);
+    r.to(Param::SpecularRoughness, sheen);
+    let skin = r.group(NodeGroup::MouldTexture, &[("Grain (mm)", grain_mm), ("Unevenness", 0.6)]);
+    let skin = r.of(skin, "Height");
+    r.bump(skin, 9e-6);
+    preset(name, "Metal", tags, MaterialType::Metal, r)
+}
+
+/// A paint that pools into a pattern as it cures: `height` from a pattern,
+/// `depth` metres deep, under a gloss of `gloss`. Wrinkle finish and
+/// hammertone are both this.
+fn patterned_paint(name: &'static str, tags: &'static [&'static str], colour: Spectrum, metal: f32, gloss: (f32, f32), height: impl FnOnce(&mut Recipe) -> Out, depth: f32) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = colour;
+        m.base_metalness = metal;
+        m.specular_roughness = (gloss.0 + gloss.1) * 0.5;
+        m.edge_radius = 3e-4;
+    }));
+    let relief = height(&mut r);
+    r.bump(relief, depth);
+    // Thinner on the rises, so a touch duller there.
+    let sheen = r.range(relief, (0.2, 0.8), (gloss.0, gloss.1));
+    r.to(Param::SpecularRoughness, sheen);
+    preset(name, "Paint", tags, MaterialType::Generic, r)
+}
+
+/// Wrinkle finish: fine ridges that wander and join, a millimetre or so
+/// apart.
+fn wrinkle(r: &mut Recipe) -> Out {
+    let noise = r.node("noise_texture").f("Scale", 850.0).f("Detail", 1.0).f("Roughness", 0.4).f("Distortion", 2.6).out("Fac");
+    // The ridge where the noise crosses its middle.
+    let away = r.math3("multiply_add", noise, 2.0, -1.0);
+    let away = r.math("absolute", away, 0.0);
+    let ridge = r.math("subtract", 1.0, away);
+    r.smooth(ridge, (0.55, 0.98), (0.0, 1.0))
+}
+
+/// Hammertone: shallow dishes a few millimetres across.
+fn dishes(r: &mut Recipe) -> Out {
+    let hammered = r.group(NodeGroup::Hammered, &[("Size (mm)", 4.5)]);
+    r.of(hammered, "Height")
+}
+
 pub fn all() -> Vec<Preset> {
     let mut out = vec![
         enamel("Enclosure Enamel Orange", &["enamel", "pedal", "stompbox", "die-cast", "enclosure", "orange", "paint"], srgb("#DE5E12")),
@@ -190,7 +276,7 @@ pub fn all() -> Vec<Preset> {
         enamel_textured("Enclosure Enamel Textured Orange", &["enamel", "pedal", "stompbox", "textured", "orange peel", "orange", "paint"], srgb("#E06A10")),
         enamel_textured("Enclosure Enamel Textured Black", &["enamel", "pedal", "stompbox", "textured", "orange peel", "black", "paint"], srgb("#101011")),
         crate::paint::metallic("Enclosure Metallic Gold", &["metallic", "pedal", "stompbox", "die-cast", "flake", "gold", "paint"], srgb("#8A6A2A"), srgb("#F0D890"), 0.55, 5e-5, 0.3, 0.28),
-        crate::paint::metallic("Enclosure Metallic Charcoal", &["metallic", "pedal", "stompbox", "die-cast", "flake", "charcoal", "gunmetal", "paint"], srgb("#1C1D20"), srgb("#B8BCC4"), 0.45, 6e-5, 0.3, 0.3),
+        crate::paint::metallic("Enclosure Metallic Charcoal", &["metallic", "pedal", "stompbox", "die-cast", "flake", "charcoal", "gunmetal", "paint"], srgb("#141518"), srgb("#7C8088"), 0.22, 6e-5, 0.3, 0.3),
         crate::paint::metallic("Enclosure Metallic Silver", &["metallic", "painted plastic", "side panel", "flake", "silver", "paint"], srgb("#8E9296"), srgb("#F2F4F6"), 0.6, 4e-5, 0.3, 0.32),
         crate::paint::metallic("Enclosure Metallic Dark Green", &["metallic", "pedal", "stompbox", "die-cast", "flake", "green", "sparkle", "paint"], srgb("#0A1A12"), srgb("#8FE0B0"), 0.35, 4e-5, 0.3, 0.16),
         powder("Powder Coat Satin Black", &["powder", "satin", "chassis", "cover", "black", "sheet steel"], rgb(0.009, 0.009, 0.0095), (0.34, 0.48), 1900.0, 4e-6),
@@ -212,6 +298,47 @@ pub fn all() -> Vec<Preset> {
         diamond_cut("Aluminium Anodised Silver Diamond Cut", &["aluminium", "anodised", "silver", "diamond cut", "chamfer", "bright edge"], srgb("#D8DADC")),
         diamond_cut("Aluminium Anodised Red Diamond Cut", &["aluminium", "anodised", "red", "diamond cut", "chamfer", "bright edge"], srgb("#B5202A")),
     ];
+
+    out.extend([
+        moulded_satin("Polycarbonate Satin Black", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "black"], rgb(0.011, 0.011, 0.012), (0.3, 0.4)),
+        moulded_satin("Polycarbonate Satin White", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "white"], srgb("#E8E8E5"), (0.3, 0.4)),
+        moulded_satin("Polycarbonate Satin Grey", &["polycarbonate", "pc", "pc/abs", "housing", "satin", "grey"], srgb("#6E7074"), (0.3, 0.4)),
+        moulded_satin("HIPS Matte White", &["hips", "polystyrene", "housing", "tray", "matte", "white"], srgb("#E4E2DC"), (0.5, 0.62)),
+        moulded_satin("HIPS Matte Black", &["hips", "polystyrene", "housing", "tray", "matte", "black"], rgb(0.014, 0.014, 0.015), (0.5, 0.62)),
+        moulded_satin("POM Black", &["pom", "acetal", "delrin", "slider", "gear", "black", "engineering"], rgb(0.012, 0.012, 0.013), (0.24, 0.34)),
+        glossy("Polycarbonate Gloss Black", &["polycarbonate", "pc", "gloss", "bezel", "lens surround", "black"], rgb(0.005, 0.005, 0.0055), (0.03, 0.08)),
+        glossy("Polycarbonate Gloss White", &["polycarbonate", "pc", "gloss", "housing", "white"], srgb("#EDEDEA"), (0.04, 0.1)),
+        plated_plastic("Chrome Plated Plastic Bright", &["chrome", "plated plastic", "trim", "ring", "button", "logo", "bright"], (0.03, 0.07)),
+        plated_plastic("Chrome Plated Plastic Satin", &["chrome", "plated plastic", "trim", "ring", "button", "satin", "pearl chrome"], (0.24, 0.32)),
+        die_cast("Zinc Die Cast Raw", &["zinc", "zamak", "die-cast", "raw", "pedal box", "housing"], "Aluminium", rgb(0.6, 0.62, 0.66), (0.42, 0.56), 0.35),
+        die_cast("Aluminium Die Cast Tumbled", &["aluminium", "die-cast", "tumbled", "vibratory", "enclosure", "housing"], "Aluminium", rgb(0.78, 0.78, 0.8), (0.44, 0.58), 0.5),
+        crate::metal::brushed("Aluminium Anodised Brushed Black", &["aluminium", "anodised", "brushed", "black", "front panel"], "Aluminium", srgb("#1E1F22"), 0.32),
+        crate::metal::brushed("Aluminium Anodised Brushed Silver", &["aluminium", "anodised", "brushed", "silver", "front panel"], "Aluminium", srgb("#D6D8DA"), 0.3),
+        crate::metal::brushed("Aluminium Anodised Brushed Blue", &["aluminium", "anodised", "brushed", "blue", "front panel"], "Aluminium", srgb("#2A5CB0"), 0.32),
+        crate::metal::brushed("Aluminium Anodised Brushed Red", &["aluminium", "anodised", "brushed", "red", "front panel"], "Aluminium", srgb("#A8222C"), 0.32),
+        crate::metal::brushed("Aluminium Anodised Brushed Gold", &["aluminium", "anodised", "brushed", "gold", "champagne", "front panel"], "Aluminium", srgb("#C8A968"), 0.32),
+        crate::metal::brushed("Nickel Plated Brushed", &["nickel", "plated", "brushed", "nut", "hardware"], "Nickel", rgb(0.97, 0.93, 0.87), 0.3),
+        patterned_paint("Powder Coat Wrinkle Black", &["powder", "wrinkle", "crackle finish", "chassis", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.0, (0.5, 0.36), wrinkle, 5.5e-5),
+        patterned_paint("Hammertone Grey", &["hammertone", "hammer finish", "hammered paint", "chassis", "grey"], srgb("#5E6468"), 0.55, (0.34, 0.22), dishes, 8e-5),
+        patterned_paint("Hammertone Silver", &["hammertone", "hammer finish", "hammered paint", "chassis", "silver"], srgb("#A9AEB2"), 0.6, (0.34, 0.22), dishes, 8e-5),
+        patterned_paint("Hammertone Blue", &["hammertone", "hammer finish", "hammered paint", "chassis", "blue"], srgb("#2C4C78"), 0.5, (0.34, 0.22), dishes, 8e-5),
+    ]);
+
+    // A diffuser: white plastic the light goes through and is scattered
+    // by, so what is behind it is a glow and never a shape.
+    out.push(crate::plain("Diffuser White", "Plastic", &["diffuser", "opal", "milky", "led window", "light ring", "translucent", "polycarbonate"], MaterialType::PlasticCloudy, |m| {
+        m.base_color = rgb(0.9, 0.9, 0.88);
+        m.specular_roughness = 0.34;
+        m.edge_radius = 2e-4;
+    }));
+    // The window over an infrared receiver: black to the eye, a deep red
+    // against the light.
+    out.push(crate::plain("Window Infrared Dark Red", "Plastic", &["infrared", "ir window", "remote", "sensor", "dark red", "tinted"], MaterialType::PlasticTransparent, |m| {
+        m.specular_ior = 1.49;
+        m.specular_roughness = 0.03;
+        m.transmission_color = rgb(0.09, 0.004, 0.006);
+        m.edge_radius = 2e-4;
+    }));
 
     // Black zinc on a screw: dark metal under a thin, slightly dull film.
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {

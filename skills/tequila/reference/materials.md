@@ -4,13 +4,13 @@ Tequila's materials are OpenPBR. `tequila_query {"what": "api"}` is the authorit
 
 ## Start from the library
 
-369 presets, in these categories (`tequila_query {"what": "library"}` lists every name):
+393 presets, in these categories (`tequila_query {"what": "library"}` lists every name):
 
 | Category | Some of its presets (exact names) |
 |---|---|
-| Metal (99) | Aluminium Brushed, Aluminium Bead Blasted, Aluminium Polished, Aluminium Anodised Black, Aluminium Anodised Space Grey, Stainless Brushed, Stainless Polished, Chrome, Brass Satin, Copper Polished, Gold Polished, Titanium Brushed, Steel Knurled, Gunmetal, Cast Iron |
-| Plastic (68) | ABS Black, ABS White, ABS Red Gloss, ABS Textured, Piano Black, Plastic Matte White, Plastic Satin Black, Soft Touch Black, Rubber Black, Rubber Grip, Silicone Soft Grey, Polycarbonate Clear, Nylon Black, Plastic VDI 30 Black, Outsole Rubber White |
-| Paint (38) | Automotive Red, Automotive Blue Metallic, Automotive Pearl White, Paint Matte Black, Paint Satin White, Powder Coat Matte Black, Powder Coat White, Enamel Gloss White |
+| Metal (109) | Aluminium Brushed, Aluminium Bead Blasted, Aluminium Polished, Aluminium Anodised Black, Aluminium Anodised Space Grey, Stainless Brushed, Stainless Polished, Chrome, Brass Satin, Copper Polished, Gold Polished, Titanium Brushed, Steel Knurled, Gunmetal, Cast Iron |
+| Plastic (78) | ABS Black, ABS White, ABS Red Gloss, ABS Textured, Piano Black, Plastic Matte White, Plastic Satin Black, Soft Touch Black, Rubber Black, Rubber Grip, Silicone Soft Grey, Polycarbonate Clear, Nylon Black, Plastic VDI 30 Black, Outsole Rubber White |
+| Paint (42) | Automotive Red, Automotive Blue Metallic, Automotive Pearl White, Paint Matte Black, Paint Satin White, Powder Coat Matte Black, Powder Coat White, Enamel Gloss White |
 | Wood (23) | Wood Walnut, Wood European Walnut, Wood Red Oak, Wood White Oak, Wood Smoked Oak, Wood Maple, Wood Cherry, Wood Ash, Wood Teak, Wood Ebony |
 | Fabric (31) | Denim Indigo, Canvas Natural, Linen Natural, Felt Grey, Suede Tan, Velvet Charcoal, Herringbone Wool, Upholstery Charcoal, Boucle Cream. Footwear: Nylon Taffeta Grey/Black (tongues), Jersey Lining Grey/White; and, read along the part's UVs (U along the strip, V across or round it, in proportion), Shoelace Flat White/Black, Webbing Nylon Black, Thread Bonded White/Black |
 | Composite (20) | Carbon Fibre, Carbon Fibre 12K Twill, Carbon Fibre Matte, Forged Carbon, Kevlar Twill, Fiberglass Gelcoat White |
