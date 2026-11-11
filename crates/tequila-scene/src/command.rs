@@ -2336,8 +2336,15 @@ fn apply_studio_preset(
         // own taken out after, so there is always one.
         if !preset.cameras.is_empty() {
             let before = document.cameras.len();
+            // Framed as the views are, the product unturned.
+            let product = crate::snapshot::visible_bounds(document);
+            let aspect = preset.render.width.max(1) as f32 / preset.render.height.max(1) as f32;
             for camera in &preset.cameras {
-                run(document, Command::AddCamera { camera: Box::new(scaled_camera(camera, fitted.scale)) })?;
+                let mut camera = scaled_camera(camera, fitted.scale);
+                if preset.framing.fill > 0.0 && !product.is_empty() && product.diagonal().x.is_finite() {
+                    camera = crate::preset::filled_camera(&camera, &crate::preset::turned_corners(&product, 0.0), aspect, preset.framing.fill);
+                }
+                run(document, Command::AddCamera { camera: Box::new(camera) })?;
             }
             if !options.keep_cameras {
                 for _ in 0..before {
@@ -2349,7 +2356,11 @@ fn apply_studio_preset(
 
         // The views, and the rules to dress a product with the library -
         // offered, never applied.
-        run(document, Command::SetStudios { studios: views(preset, fitted.scale) })?;
+        // Framed for the product as it now stands, when the preset says to fill
+        // the frame with it.
+        let product = crate::snapshot::visible_bounds(document);
+        let product = (!product.is_empty() && product.diagonal().x.is_finite()).then_some(product);
+        run(document, Command::SetStudios { studios: views(preset, fitted.scale, product.as_ref()) })?;
         if !preset.material_rules.is_empty() {
             let name = crate::preset::template_name(preset);
             let rules: Vec<crate::templates::Rule> = preset

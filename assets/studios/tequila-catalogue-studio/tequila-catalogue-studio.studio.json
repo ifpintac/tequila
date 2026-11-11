@@ -58,14 +58,14 @@
       "up": [0, 0.0009999996, -0.9999995]
     }
   ],
-  "description": "The product cut out on white with a short reflection, lit so a flat top keeps its colour: a main view                       from high in front, left, right, rear and top, rendered as transparent 16-bit PNGs at 3000 by 2250.",
+  "description": "The product cut out on white with a short reflection, lit so a flat top keeps its colour: a main view from high in front, left, right, rear and top, rendered as transparent 16-bit PNGs at 3000 by 2250.",
   "environment": {
     "background": {
       "color": [1, 1, 1],
       "image": null,
       "mode": "Color"
     },
-    "brightness": 0.35,
+    "brightness": 1,
     "contrast": 1,
     "ground": {
       "bounce": true,
@@ -78,9 +78,9 @@
       "reflection_alpha": "coverage",
       "reflection_blur": 0.02,
       "reflection_fade_by": "height",
-      "reflection_fade_distance": 0.05,
+      "reflection_fade_distance": 0,
       "reflection_fresnel": false,
-      "reflection_length": 1,
+      "reflection_length": 0.5,
       "reflections": 0.3,
       "shadow_color": [0, 0, 0],
       "shadows": false,
@@ -90,94 +90,30 @@
     "image": null,
     "pins": [
       {
-        "angular_size": [0.7, 0.525],
-        "blend": "add",
+        "angular_size": [6.2831855, 6.2831855],
+        "blend": "over",
         "color": [1, 1, 1],
-        "direction": [-0.6036513, 0.6156615, 0.5065236],
+        "direction": [0, 1, 0],
         "enabled": true,
-        "intensity": 10,
-        "kind": "light",
+        "intensity": 1,
+        "kind": "gradient",
         "lighting": true,
-        "name": "Key",
+        "name": "Room",
+        "radial": true,
         "roll": 0,
-        "shape": "rectangle",
+        "shape": "ellipse",
         "show_in_background": false,
-        "softness": 0.5
-      },
-      {
-        "angular_size": [0.9, 0.67499995],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [0.18730333, 0.92718387, 0.32441887],
-        "enabled": true,
-        "intensity": 6,
-        "kind": "light",
-        "lighting": true,
-        "name": "Overhead",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.7
-      },
-      {
-        "angular_size": [1, 0.75],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [0.84436697, 0.2923717, 0.44895792],
-        "enabled": true,
-        "intensity": 3,
-        "kind": "light",
-        "lighting": true,
-        "name": "Fill",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.8
-      },
-      {
-        "angular_size": [1.4, 0.5],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [-0.00000008581657, 0.190809, 0.98162717],
-        "enabled": true,
-        "intensity": 2.5,
-        "kind": "light",
-        "lighting": true,
-        "name": "Front",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.8
-      },
-      {
-        "angular_size": [1.6, 0.12],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [0, 0.34202012, -0.9396926],
-        "enabled": true,
-        "intensity": 5,
-        "kind": "light",
-        "lighting": true,
-        "name": "Back strip",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.4
-      },
-      {
-        "angular_size": [1.5, 0.7],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [0, 0.7880107, -0.6156615],
-        "enabled": true,
-        "intensity": 0.6,
-        "kind": "light",
-        "lighting": true,
-        "name": "High back",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.9
+        "softness": 0,
+        "stops": [
+          {
+            "color": [0.05, 0.05, 0.05],
+            "t": 0
+          },
+          {
+            "color": [0.05, 0.05, 0.05],
+            "t": 1
+          }
+        ]
       }
     ],
     "rotation": 0,
@@ -187,8 +123,9 @@
   "format": "tequila.studio-preset",
   "framing": {
     "base_offset_m": 0,
+    "fill": 0.8,
     "reference_radius_m": 0.1,
-    "scale": "cameras"
+    "scale": "cameras_and_lights"
   },
   "id": "tequila-catalogue-studio",
   "image_style": {
@@ -227,12 +164,133 @@
     },
     "preset": "Product"
   },
-  "lights": [],
+  "lights": [
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.3,
+        "intensity": 4.4,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.36
+      },
+      "name": "Key",
+      "transform": [-0.6549305, 0.36629602, 0.66097903, -0.3, 0, 0.87467057, -0.4847179, 0.26, -0.7556891, -0.3174565, -0.57284844, 0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.42,
+        "intensity": 2.4,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.55
+      },
+      "name": "Overhead",
+      "transform": [-1, 0, 0, 0, 0, 0.5070202, -0.86193424, 0.38, 0, -0.86193424, -0.5070202, 0.2, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.34,
+        "intensity": 1.4,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.4
+      },
+      "name": "Fill",
+      "transform": [-0.52145, -0.1967948, -0.83027816, 0.36, 0, 0.97304094, -0.23063281, 0.14, 0.85328186, -0.12026347, -0.50739217, 0.22, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.2,
+        "intensity": 1,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.55
+      },
+      "name": "Front",
+      "transform": [-1, 0, 0, 0, 0, 0.99549544, -0.09480909, 0.08, 0, -0.09480909, -0.99549544, 0.42, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.45,
+        "enabled": true,
+        "height": 0.06,
+        "intensity": 2.4,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.6
+      },
+      "name": "Back strip",
+      "transform": [1, 0, 0, 0, 0, 0.9761871, -0.21693046, 0.12, 0, 0.21693046, 0.9761871, -0.36, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.2,
+        "enabled": true,
+        "height": 0.3,
+        "intensity": 0.32,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.6
+      },
+      "name": "High back",
+      "transform": [1, 0, 0, 0, 0, 0.6507914, -0.75925666, 0.32, 0, 0.75925666, 0.6507914, -0.24, 0, 0, 0, 1]
+    }
+  ],
   "material_rules": [],
   "materials": [],
   "name": "Catalogue Studio",
   "notes": "Generated by crates/tequila-format/examples/builtin_studios.rs.",
-  "preset_version": "1",
+  "preset_version": "2",
   "render": {
     "adaptive": true,
     "adaptive_threshold": null,

@@ -133,6 +133,11 @@ fn to_json(preset: &StudioPreset, layout: Layout, thumbnail: Option<&str>, unkno
                 .set("reference_radius_m", preset.framing.reference_radius)
                 .set("base_offset_m", preset.framing.base_offset)
                 .set("scale", preset.framing.scale.key());
+            // Only where it is set, so a preset from before reads and writes
+            // as it was.
+            if preset.framing.fill > 0.0 {
+                framing.set("fill", preset.framing.fill);
+            }
             framing.build()
         })
         .set(
@@ -401,6 +406,7 @@ fn parse(root: &Value, folder: Option<&Path>) -> Result<(StudioPreset, Option<Pa
                 None => FramingScale::Cameras,
                 Some(s) => FramingScale::from_key(s).ok_or_else(|| format!("`framing.scale` is `{s}`: cameras, cameras_and_lights or none"))?,
             },
+            fill: f.get("fill").and_then(|v| v.as_f32()).unwrap_or(0.0).clamp(0.0, 1.0),
         },
         None => Framing::default(),
     };
