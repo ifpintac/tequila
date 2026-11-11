@@ -1,0 +1,20 @@
+{
+  "base_color": [0.210038, 0.22789381, 0.1785593],
+  "category": "Glass",
+  "coat_roughness": 0.03,
+  "coat_weight": 1,
+  "name": "Display LCD Unlit",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.45,
+  "tags": [
+    "display",
+    "lcd",
+    "screen",
+    "off",
+    "reflective",
+    "grey green",
+    "segment"
+  ],
+  "type": "generic"
+}
+

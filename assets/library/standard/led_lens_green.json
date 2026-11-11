@@ -1,0 +1,22 @@
+{
+  "base_color": [0.1, 0.42, 0.08],
+  "category": "Plastic",
+  "edge_radius": 0.0002,
+  "name": "LED Lens Green",
+  "specular_ior": 1.55,
+  "specular_roughness": 0.08,
+  "subsurface_color": [0.1, 0.42, 0.08],
+  "subsurface_radius": [0.0012, 0.0012, 0.0012],
+  "subsurface_weight": 0.7,
+  "tags": [
+    "led",
+    "lens",
+    "unlit",
+    "off",
+    "diffused",
+    "epoxy",
+    "green"
+  ],
+  "type": "generic"
+}
+

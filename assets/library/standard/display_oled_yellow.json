@@ -1,0 +1,19 @@
+{
+  "base_color": [0.004, 0.004, 0.005],
+  "category": "Light",
+  "emission_color": [1, 0.7, 0.03],
+  "emission_luminance": 0.8,
+  "name": "Display OLED Yellow",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.03,
+  "tags": [
+    "display",
+    "oled",
+    "screen",
+    "pixels",
+    "lit",
+    "yellow"
+  ],
+  "type": "generic"
+}
+

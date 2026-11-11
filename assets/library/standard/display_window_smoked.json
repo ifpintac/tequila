@@ -1,0 +1,18 @@
+{
+  "category": "Plastic",
+  "edge_radius": 0.0002,
+  "name": "Display Window Smoked",
+  "specular_roughness": 0.02,
+  "tags": [
+    "display",
+    "window",
+    "lens",
+    "smoked",
+    "tinted",
+    "acrylic",
+    "bezel"
+  ],
+  "transmission_color": [0.1, 0.1, 0.11],
+  "type": "plastic_transparent"
+}
+
