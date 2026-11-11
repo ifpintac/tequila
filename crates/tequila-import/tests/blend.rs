@@ -15,6 +15,7 @@ use tequila_materials::graph::{MaterialGraph, NodeKind, Socket, Value};
 use tequila_materials::material_type::{MaterialType, Param};
 use tequila_materials::nodes::ShaderNode;
 use tequila_render_core::camera::Projection;
+use tequila_scene::lighting::{Intensity, LightShape};
 use tequila_scene::material::MaterialDefinition;
 use tequila_texture::cycles::ops::{MappingKind, MathOp};
 use tequila_texture::texture::MapRole;
@@ -120,7 +121,6 @@ fn the_scene_comes_over_as_blender_shows_it() {
 
     // Each part keeps the object it came from.
     assert_eq!(node(&scene, "Knob").1.metadata.get("Blender object").map(String::as_str), Some("Knob"));
-    assert!(scene.warnings.iter().any(|w| w.contains("1 light left out")), "{:?}", scene.warnings);
     // Blender's v runs up the picture; Tequila's down.
     let plate = &scene.meshes[node(&scene, "Plate").1.mesh.unwrap()];
     assert_eq!(plate.uvs.len(), plate.positions.len());
@@ -359,5 +359,103 @@ fn blender_itself_reads_the_same() {
     std::fs::write(&junk, b"not a blend file").unwrap();
     let error = tequila_import::blend::read_with(&blender, &junk, "Junk").unwrap_err().to_string();
     assert!(error.contains("Blender could not read it"), "{error}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+fn lighting() -> tequila_import::raw::RawLighting {
+    *fixture().setup.expect("a setup").lighting.expect("the file's lighting")
+}
+
+fn light<'a>(lighting: &'a tequila_import::raw::RawLighting, name: &str) -> &'a tequila_import::raw::RawLight {
+    lighting.lights.iter().find(|l| l.name == name).unwrap_or_else(|| panic!("no light {name}"))
+}
+
+/// Blender's lights, each as Tequila's light of the same kind and the same
+/// brightness: watts as lumens (the radiance both renderers make of them is
+/// the same), a sun's watts a square metre as lux, the exposure folded in.
+#[test]
+fn blenders_lights_come_over_at_their_brightness() {
+    let l = lighting();
+    let names: Vec<&str> = l.lights.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["Key", "Fill", "Spot", "Sun", "Off"]);
+
+    let key = light(&l, "Key");
+    assert_eq!(key.settings.intensity, Intensity::Lumens(50.0));
+    assert_eq!(key.settings.shape, LightShape::Area { width: 0.4, height: 0.2, disc: false, two_sided: false });
+    assert!((key.settings.spread_degrees - 120.0).abs() < 1e-3);
+    // It shines where Blender's does: down Blender's -Z, which Tequila's
+    // panel, facing its +Z, does turned over; both seen through the model's
+    // turn to Y up.
+    let turn = fixture().nodes[0].transform.matrix;
+    let shines = (turn * key.transform.matrix).transform_vector(Vec3::Z).normalize();
+    let (rx, rz) = (0.8f32, 0.785f32);
+    // Blender's -Z turned by X, then Z.
+    let down = vec3(-rz.sin() * rx.sin(), rz.cos() * rx.sin(), -rx.cos());
+    let blender_in_tequila = vec3(down.x, down.z, -down.y);
+    assert!((shines - blender_in_tequila).length() < 1e-4, "{shines:?} against {blender_in_tequila:?}");
+
+    let fill = light(&l, "Fill");
+    assert_eq!(fill.settings.intensity, Intensity::Lumens(40.0), "an exposure of 1 is twice the power");
+    assert_eq!(fill.settings.shape, LightShape::Point { radius: 0.05 });
+    assert!(same_colour(fill.settings.color, Spectrum::from_linear_srgb(vec3(1.0, 0.9, 0.8))));
+
+    let spot = light(&l, "Spot");
+    let LightShape::Spot { inner_degrees, outer_degrees, falloff } = spot.settings.shape else { panic!("{:?}", spot.settings.shape) };
+    assert!((outer_degrees - 30.0).abs() < 1e-3, "Blender's 60° cone is a 30° half-angle");
+    // Cycles' blend is the share of the cone's cosine the edge softens over.
+    let (o, i) = (outer_degrees.to_radians().cos(), inner_degrees.to_radians().cos());
+    assert!(((i - o) / (1.0 - o) - 0.3).abs() < 1e-4 && falloff == 1.0);
+
+    let sun = light(&l, "Sun");
+    assert_eq!(sun.settings.intensity, Intensity::Lux(3.0));
+    assert!(matches!(sun.settings.shape, LightShape::Sun { angle_degrees } if (angle_degrees - 2.0).abs() < 1e-3));
+
+    assert!(light(&l, "Off").hidden && !key.hidden);
+
+    // The world, one colour all round over Tequila's studio, at its strength.
+    let world = l.environment.as_ref().expect("the world");
+    assert!(world.image.is_none());
+    assert_eq!(world.pins.len(), 1);
+    assert!(same_colour(world.pins[0].color, Spectrum::from_linear_srgb(vec3(0.05, 0.06, 0.07))));
+    assert!((world.pins[0].intensity - 1.5).abs() < 1e-6);
+    assert_eq!(l.look, Some((tequila_color::DisplayTransform::Srgb, 0.0)));
+}
+
+/// Choosing the file's lighting puts its lights under the model, makes its
+/// world the environment and takes its look, as one step Undo takes back.
+#[test]
+fn the_files_lighting_lights_the_document_as_one_step() {
+    let mut document = tequila_scene::SceneDocument::new();
+    let folder = std::env::temp_dir().join(format!("tequila-blend-lighting-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let origin = tequila_import::Origin { directory: &folder, stem: "fixture" };
+    let (command, report) = tequila_import::build(&document, None, fixture(), &Default::default(), Some(origin)).unwrap();
+    let mut bus = tequila_scene::CommandBus::new();
+    bus.apply(&mut document, command).unwrap();
+    let lighting = report.setup.as_ref().and_then(|s| s.lighting.clone()).expect("lighting offered");
+    assert_eq!(lighting.summary(), "5 lights and its world");
+    let before = (document.environment.clone(), document.image_style);
+
+    bus.begin_group();
+    for command in lighting.commands(&document) {
+        bus.apply(&mut document, command).unwrap();
+    }
+    bus.end_group();
+    document.validate().unwrap();
+    let group = document.tree.iter().find(|n| n.name == "Blender lights").expect("the lights' group");
+    assert_eq!(group.parent, lighting.model, "the lights hang under the model");
+    let lights: Vec<_> = document.tree.iter().filter(|n| n.parent == Some(group.id)).collect();
+    assert_eq!(lights.len(), 5);
+    assert!(lights.iter().all(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Light { .. })));
+    assert!(!lights.iter().find(|n| n.name == "Off").unwrap().visible);
+    assert_eq!(document.environment.pins.len(), 1);
+    assert!(!document.environment.ground.enabled, "Tequila's ground would lie over the scene's own floor");
+    assert_eq!(document.image_style.display, tequila_color::DisplayTransform::Srgb);
+
+    // One step back is Tequila's lighting again, the model still in.
+    bus.undo(&mut document).unwrap();
+    assert!(document.tree.iter().all(|n| n.name != "Blender lights"));
+    assert_eq!((document.environment.clone(), document.image_style), before);
+    assert!(document.tree.iter().any(|n| n.name == "Body [Label]"));
     let _ = std::fs::remove_dir_all(&folder);
 }

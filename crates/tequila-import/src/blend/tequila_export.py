@@ -411,6 +411,43 @@ def camera_of(obj, scene):
     return out
 
 
+def light_of(obj, renders):
+    """A light as Blender holds it, in its own words and units: watts for a
+    point, spot or area light, watts a square metre for the sun."""
+    light = obj.data
+    out = {
+        "name": obj.name,
+        "type": light.type,
+        "matrix": matrix_rows(obj.matrix_world),
+        "color": [float(c) for c in light.color],
+        "power": float(light.energy),
+        "exposure": float(getattr(light, "exposure", 0.0)),
+        "temperature": float(light.temperature) if getattr(light, "use_temperature", False) else None,
+        "normalize": bool(getattr(light, "normalize", True)),
+        "radius": float(getattr(light, "shadow_soft_size", 0.0)),
+        "shadow": bool(getattr(light, "use_shadow", True)),
+        "camera": bool(getattr(obj, "visible_camera", True)),
+        "diffuse": bool(getattr(obj, "visible_diffuse", True)),
+        "glossy": bool(getattr(obj, "visible_glossy", True)),
+        "hidden": not renders,
+        "collection": obj.users_collection[0].name if obj.users_collection else None,
+        "nodes": bool(getattr(light, "use_nodes", False) and light.node_tree is not None and len(light.node_tree.nodes) > 2),
+    }
+    linking = getattr(obj, "light_linking", None)
+    out["linked"] = bool(linking is not None and (linking.receiver_collection is not None or linking.blocker_collection is not None))
+    if light.type == "SPOT":
+        out["spot_size"] = float(light.spot_size)
+        out["spot_blend"] = float(light.spot_blend)
+    elif light.type == "AREA":
+        out["shape"] = light.shape
+        out["size"] = float(light.size)
+        out["size_y"] = float(light.size_y)
+        out["spread"] = float(getattr(light, "spread", math.pi))
+    elif light.type == "SUN":
+        out["angle"] = float(light.angle)
+    return out
+
+
 def world_of(scene, export):
     world = scene.world
     if world is None:
@@ -481,7 +518,7 @@ def main(folder):
     geometry = {"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES"}
     left_out = {}
     cameras = []
-    lights = 0
+    lights = []
     object_node = {}
 
     # The collections, as groups.
@@ -529,7 +566,7 @@ def main(folder):
         if obj.type == "CAMERA":
             cameras.append(camera_of(obj, scene))
         if obj.type == "LIGHT":
-            lights += 1
+            lights.append(light_of(obj, renders.get(obj.name_full, True)))
         parent = object_node.get(obj.parent.name_full) if obj.parent is not None else None
         if parent is None:
             parent_index, matrix = home(obj), obj.matrix_world
@@ -594,8 +631,6 @@ def main(folder):
                     type="INSTANCE")
         placed += 1
 
-    if lights:
-        export.warnings.append(f"{lights} light{'s' if lights != 1 else ''} left out: Tequila lights a model with its studios")
     for kind, count in sorted(left_out.items()):
         export.warnings.append(f"{count} {kind.lower().replace('_', ' ')} object{'s' if count != 1 else ''} left out")
 
@@ -613,6 +648,7 @@ def main(folder):
         "trees": export.trees,
         "images": export.images,
         "cameras": cameras,
+        "lights": lights,
         "camera": scene.camera.name if scene.camera is not None else None,
         "world": world_of(scene, export),
         "render": {

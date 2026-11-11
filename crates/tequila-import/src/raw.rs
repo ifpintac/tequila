@@ -168,6 +168,34 @@ pub struct RawSetup {
     pub multi_materials: Vec<RawMultiMaterial>,
     pub model_sets: Vec<RawModelSet>,
     pub active_model_set: Option<usize>,
+    /// How the file itself lights the model - a Blender file's lights,
+    /// world and exposure - offered to the person once the model is in,
+    /// rather than imported with it (`crate::SceneLighting`).
+    pub lighting: Option<Box<RawLighting>>,
+}
+
+/// A scene file's own lighting, to light the model as the file does.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RawLighting {
+    pub lights: Vec<RawLight>,
+    /// The file's world, as Tequila's environment.
+    pub environment: Option<tequila_scene::document::EnvironmentSettings>,
+    /// The display transform and exposure the file is seen with, which its
+    /// lights' brightness is judged in.
+    pub look: Option<(tequila_color::DisplayTransform, f32)>,
+}
+
+/// One of a scene file's lights, in the file's units until the import
+/// brings it into metres with the model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RawLight {
+    pub name: String,
+    /// Relative to the model's top node.
+    pub transform: Transform,
+    pub settings: tequila_scene::lighting::LightSettings,
+    /// Switched off in the file.
+    pub hidden: bool,
+    pub metadata: BTreeMap<String, String>,
 }
 
 /// Material variants on parts, by place in the [`RawScene`].
@@ -211,6 +239,35 @@ impl RawSetup {
         self.cameras.iter_mut().for_each(camera);
         if let Some(e) = &mut self.environment {
             environment(e);
+        }
+        // A light keeps how bright it makes what it lights: a panel the same
+        // radiance over k² the area, a point the same irradiance at k times
+        // the distance - so k² the power either way. The sun's is a
+        // brightness at any distance.
+        for light in self.lighting.iter_mut().flat_map(|l| l.lights.iter_mut()) {
+            let m = &mut light.transform;
+            let mut matrix = m.matrix;
+            for row in matrix.m.iter_mut().take(3) {
+                row[3] *= k;
+            }
+            if let Some(t) = Transform::from_matrix(matrix) {
+                *m = t;
+            }
+            use tequila_scene::lighting::{Intensity, LightShape};
+            let s = &mut light.settings;
+            match &mut s.shape {
+                LightShape::Area { width, height, .. } => {
+                    *width *= k;
+                    *height *= k;
+                }
+                LightShape::Point { radius } => *radius *= k,
+                LightShape::Spot { .. } | LightShape::Sun { .. } => {}
+            }
+            s.intensity = match s.intensity {
+                Intensity::Lumens(v) => Intensity::Lumens(v * k * k),
+                Intensity::Candela(v) => Intensity::Candela(v * k * k),
+                other => other,
+            };
         }
         for studio in &mut self.studios {
             if let Some(c) = &mut studio.camera {

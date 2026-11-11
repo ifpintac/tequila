@@ -77,6 +77,9 @@ pub struct PendingImport {
     path: std::path::PathBuf,
     /// The up axis the script asked for, over the setting.
     up: Option<tequila_import::UpAxis>,
+    /// What the script asked done with a file's own lighting, over the
+    /// setting.
+    lighting: Option<crate::import_settings::BlenderLights>,
     parent: Option<NodeId>,
     peer: String,
     summary: String,
@@ -96,12 +99,13 @@ pub struct PendingImport {
 /// read where it stands, so the batch stays one step.
 pub fn begin_import(app: &mut TequilaApp, request: &Request, path: &str, parent: Option<u64>, responder: tequila_scripting::server::Responder, ctx: &egui::Context) {
     let path = std::path::PathBuf::from(path);
-    let up = match up_axis(match &request.operation {
-        Operation::Import { up, .. } => up.as_deref(),
-        _ => None,
-    }) {
-        Ok(up) => up,
-        Err(reply) => {
+    let (up, lighting) = match &request.operation {
+        Operation::Import { up, lighting, .. } => (up.as_deref(), lighting.as_deref()),
+        _ => (None, None),
+    };
+    let (up, lighting) = match (up_axis(up), lighting_choice(lighting)) {
+        (Ok(up), Ok(lighting)) => (up, lighting),
+        (Err(reply), _) | (_, Err(reply)) => {
             log_reply(app, &request.peer, request.operation.summary(), &[], &reply);
             responder.answer(&reply);
             return;
@@ -125,6 +129,7 @@ pub fn begin_import(app: &mut TequilaApp, request: &Request, path: &str, parent:
     app.script_imports.push(PendingImport {
         path,
         up,
+        lighting,
         parent: parent.map(NodeId),
         peer: request.peer.clone(),
         summary: request.operation.summary(),
@@ -160,7 +165,7 @@ pub fn poll_imports(app: &mut TequilaApp) -> bool {
             match result {
                 Ok(model) => {
                     arrived = true;
-                    finish_import(app, &pending.path, pending.parent, model, pending.up)
+                    finish_import(app, &pending.path, pending.parent, model, pending.up, pending.lighting)
                 }
                 Err(error) => Reply::Failed(error),
             }
@@ -253,9 +258,9 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             Reply::Done
         }
         Operation::Query(query) => Reply::Value(answer(app, *query)),
-        Operation::Import { path, parent, up } => match up_axis(up.as_deref()) {
-            Ok(up) => import(app, path, *parent, up),
-            Err(reply) => reply,
+        Operation::Import { path, parent, up, lighting } => match (up_axis(up.as_deref()), lighting_choice(lighting.as_deref())) {
+            (Ok(up), Ok(lighting)) => import(app, path, *parent, up, lighting),
+            (Err(reply), _) | (_, Err(reply)) => reply,
         },
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
@@ -1968,7 +1973,18 @@ fn up_axis(key: Option<&str>) -> Result<Option<tequila_import::UpAxis>, Reply> {
     }
 }
 
-fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>, up: Option<tequila_import::UpAxis>) -> Reply {
+/// What a script asked to be done with a file's own lighting: "blender",
+/// "tequila", or "ask" as the person would be; nothing, the setting.
+fn lighting_choice(key: Option<&str>) -> Result<Option<crate::import_settings::BlenderLights>, Reply> {
+    match key {
+        None => Ok(None),
+        Some(key) => crate::import_settings::BlenderLights::from_key(key)
+            .map(Some)
+            .ok_or_else(|| Reply::Failed(format!("`lighting` is blender, tequila or ask, not {key:?}"))),
+    }
+}
+
+fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>, up: Option<tequila_import::UpAxis>, lighting: Option<crate::import_settings::BlenderLights>) -> Reply {
     let path = std::path::PathBuf::from(path);
     if !path.is_file() {
         return Reply::Failed(format!("{} is not a file", path.display()));
@@ -1977,12 +1993,12 @@ fn import(app: &mut TequilaApp, path: &str, parent: Option<u64>, up: Option<tequ
         Ok(model) => model,
         Err(error) => return Reply::Failed(error.to_string()),
     };
-    finish_import(app, &path, parent.map(NodeId), model, up)
+    finish_import(app, &path, parent.map(NodeId), model, up, lighting)
 }
 
 /// Put a model read from `path` into the scene, under `parent`, and say what
 /// came in.
-fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<NodeId>, model: tequila_import::ReadModel, up: Option<tequila_import::UpAxis>) -> Reply {
+fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<NodeId>, model: tequila_import::ReadModel, up: Option<tequila_import::UpAxis>, lighting: Option<crate::import_settings::BlenderLights>) -> Reply {
     // As the File menu imports: the CAD file's bytes kept, so the model
     // divides again without its file, and a guessed unit applied in the
     // same undo step.
@@ -2009,8 +2025,16 @@ fn finish_import(app: &mut TequilaApp, path: &std::path::Path, parent: Option<No
         Err(error) => return Reply::Failed(error),
     };
     app.plugin_imported(path, &before);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let lit = app.file_lighting(&name, &report, lighting);
 
     let mut out = Object::new();
+    // What was done with a file's own lighting - a Blender scene's lights
+    // and world - and how many lights it had.
+    if let Some(lit) = lit {
+        let lights = report.setup.as_ref().and_then(|s| s.lighting.as_ref()).map_or(0, |l| l.lights.len());
+        out.set("lighting", lit).set("lights", lights as f64);
+    }
     out.set("path", path.display().to_string())
         .set("nodes", report.nodes as f64)
         .set("meshes", report.meshes_kept as f64)

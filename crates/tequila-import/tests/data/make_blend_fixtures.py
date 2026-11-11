@@ -5,7 +5,7 @@
 # Everything in it is made here, from Blender's own primitives: a part with
 # two materials, a child with a modifier, a hidden part, an excluded
 # collection, an empty one, a collection instanced twice, text, a curve,
-# two cameras and a light; and materials that use the nodes the import
+# two cameras, a light of each kind and a world; and materials that use the nodes the import
 # translates - a packed image clipped onto the top face as a label, a node
 # group, a muted node and a reroute, a ramp, curves, a bump, a normal map,
 # mixes of shaders, a cut-out and a glow.
@@ -297,8 +297,27 @@ top = bpy.data.objects.new("Top", top_data)
 top.location = (0, 0, 1.0)
 studio.objects.link(top)
 
-lamp = bpy.data.objects.new("Lamp", bpy.data.lights.new("Lamp", "AREA"))
-lamp.location = (0, 0, 0.5)
-studio.objects.link(lamp)
+# Lights of each kind, and a world.
+def lamp(name, kind, location, rotation=(0.0, 0.0, 0.0), **settings):
+    data = bpy.data.lights.new(name, kind)
+    for key, value in settings.items():
+        setattr(data, key, value)
+    obj = bpy.data.objects.new(name, data)
+    obj.location = location
+    obj.rotation_euler = rotation
+    studio.objects.link(obj)
+    return obj
+
+lamp("Key", "AREA", (0.3, -0.3, 0.4), (0.8, 0.0, 0.785), shape="RECTANGLE", size=0.4, size_y=0.2, energy=50.0, spread=2.0943951)
+lamp("Fill", "POINT", (-0.3, -0.2, 0.2), shadow_soft_size=0.05, energy=20.0, exposure=1.0, color=(1.0, 0.9, 0.8))
+lamp("Spot", "SPOT", (0.0, 0.3, 0.5), (-0.6, 0.0, 0.0), spot_size=1.0471976, spot_blend=0.3, energy=100.0)
+lamp("Sun", "SUN", (0.0, 0.0, 2.0), (0.3, 0.2, 0.0), energy=3.0, angle=0.0349066)
+lamp("Off", "POINT", (0.0, 0.0, 0.3), energy=10.0).hide_render = True
+
+world = bpy.data.worlds.new("Room")
+tree, n, l = nodes(world)
+n["Background"].inputs["Color"].default_value = (0.05, 0.06, 0.07, 1.0)
+n["Background"].inputs["Strength"].default_value = 1.5
+scene.world = world
 
 bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(out), compress=True)

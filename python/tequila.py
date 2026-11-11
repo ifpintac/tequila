@@ -181,15 +181,22 @@ class Client:
             fields.update(path=str(Path(path).resolve()), role=role)
         return self.apply('material.set_texture', **fields)
 
-    def import_model(self, path, *, parent=None, up=None):
+    def import_model(self, path, *, parent=None, up=None, lighting=None):
         """Import a model. `up` says which way up the file was drawn: 'z'
         for a CAD file drawn Z up, or 'file', 'y', 'x', '-y', '-z', '-x';
-        without it, File > Up axis of imports decides."""
+        without it, File > Up axis of imports decides. `lighting` says what
+        to do with a Blender file's own lights, world and exposure:
+        'blender' to light the model with them, 'tequila' to keep the
+        scene's lighting, 'ask' to ask in Tequila's window; without it,
+        File > Lights in Blender files decides. The answer's `lighting` says
+        which was done."""
         fields = {'path': str(Path(path).resolve())}
         if parent is not None:
             fields['parent'] = parent
         if up is not None:
             fields['up'] = up
+        if lighting is not None:
+            fields['lighting'] = lighting
         return self.request('import', **fields)
 
     def reimport(self, node=None, path=None):

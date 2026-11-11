@@ -250,6 +250,99 @@ pub struct SceneSetup {
     pub multi_materials: Vec<tequila_scene::studio::MultiMaterial>,
     pub model_sets: Vec<tequila_scene::studio::ModelSet>,
     pub active_model_set: Option<usize>,
+    /// How the file lights the model itself, for the person to choose
+    /// (`SceneLighting`). `None` for a file with no lighting to offer.
+    pub lighting: Option<Box<SceneLighting>>,
+}
+
+/// A file's own lighting - a Blender scene's lights, world and exposure -
+/// in metres, beside the model it came with.
+///
+/// Not put in with the model: a model is usually lit with Tequila's
+/// studios, and a Blender scene's lamps are where its author set them for
+/// Blender. So it is offered once the model is in, and [`SceneLighting::commands`]
+/// is what choosing it does: the lights in a group of their own under the
+/// model, the world as the environment with Tequila's ground off (a Blender
+/// scene's floor is part of it), the file's display transform and exposure
+/// on the look. Undo takes it back as one step.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneLighting {
+    /// Placed relative to `model`.
+    pub lights: Vec<raw::RawLight>,
+    pub environment: Option<tequila_scene::document::EnvironmentSettings>,
+    pub look: Option<(tequila_color::DisplayTransform, f32)>,
+    /// The model's top node, which the lights hang under so they move with
+    /// it.
+    pub model: Option<NodeId>,
+}
+
+impl SceneLighting {
+    /// What the offer says the file has: "7 lights and its world".
+    pub fn summary(&self) -> String {
+        let lights = match self.lights.len() {
+            0 => None,
+            1 => Some("1 light".to_string()),
+            n => Some(format!("{n} lights")),
+        };
+        let world = self.environment.as_ref().map(|e| if e.image.is_some() { "an HDRI world" } else { "its world" });
+        match (lights, world) {
+            (Some(l), Some(w)) => format!("{l} and {w}"),
+            (Some(l), None) => l,
+            (None, Some(w)) => w.to_string(),
+            (None, None) => "no lighting".to_string(),
+        }
+    }
+
+    /// Light `document` as the file does: its lights added under the
+    /// model, its world as the environment in place of Tequila's studio,
+    /// its display transform and exposure on the look.
+    pub fn commands(&self, document: &SceneDocument) -> Vec<Command> {
+        use tequila_scene::command::{EnvParam, EnvValue, EnvironmentParameter};
+        let mut out = Vec::new();
+        let model = self.model.filter(|m| document.tree.get(*m).is_some());
+        if !self.lights.is_empty() {
+            let (_, _, ids) = reserve_keys(document, 0, 0, self.lights.len() + 1);
+            let mut group = SceneNode::new(ids[0], "Blender lights", NodeKind::Group);
+            group.parent = model;
+            let mut nodes = vec![group];
+            for (light, &id) in self.lights.iter().zip(&ids[1..]) {
+                let mut node = SceneNode::new(id, light.name.clone(), NodeKind::Light { settings: Box::new(light.settings.clone()) });
+                node.parent = Some(ids[0]);
+                node.transform = light.transform;
+                node.visible = !light.hidden;
+                node.metadata = light.metadata.clone();
+                nodes.push(node);
+            }
+            out.push(Command::Import { payload: Box::new(ImportPayload { meshes: Vec::new(), textures: Vec::new(), materials: Vec::new(), nodes, roots: vec![ids[0]] }) });
+        }
+        if let Some(e) = &self.environment {
+            let set = |param: EnvParam, value: EnvValue| Command::SetEnvironmentParameter { parameter: EnvironmentParameter::new(param, value) };
+            if document.environment.sky.is_some() {
+                out.push(Command::SetSky { sky: Box::new(None) });
+            }
+            out.push(set(EnvParam::Image, EnvValue::Path(e.image.clone())));
+            out.push(set(EnvParam::Rotation, EnvValue::Scalar(e.rotation)));
+            out.push(set(EnvParam::Brightness, EnvValue::Scalar(e.brightness)));
+            out.push(set(EnvParam::Contrast, EnvValue::Scalar(1.0)));
+            out.push(Command::SetEnvironmentPins { pins: e.pins.clone() });
+            if document.environment.background != e.background {
+                out.push(set(EnvParam::Background, EnvValue::Mode(e.background)));
+            }
+            // Blender has no ground of its own: its scene's floor is in the
+            // model, where Tequila's ground, at the same height, would lie
+            // over it - a white sweep rendered as a dark floor.
+            if document.environment.ground.enabled {
+                out.push(set(EnvParam::GroundEnabled, EnvValue::Flag(false)));
+            }
+        }
+        if let Some((display, exposure)) = self.look {
+            let style = tequila_color::ImageStyle { display, exposure, ..document.image_style };
+            if style != document.image_style {
+                out.push(Command::SetImageStyle { style: Box::new(style) });
+            }
+        }
+        out
+    }
 }
 
 impl SceneSetup {
@@ -945,6 +1038,9 @@ fn finish_build(
                 .collect(),
             model_sets: raw.model_sets.iter().map(|s| tequila_scene::studio::ModelSet { name: s.name.clone(), nodes: parts(&s.nodes), always_visible: false }).collect(),
             active_model_set: raw.active_model_set,
+            lighting: raw.lighting.map(|l| {
+                Box::new(SceneLighting { lights: l.lights, environment: l.environment, look: l.look, model: scene.roots.first().and_then(|&r| node_ids.get(r).copied()) })
+            }),
         }));
     }
 

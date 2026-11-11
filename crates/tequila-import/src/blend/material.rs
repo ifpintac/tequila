@@ -1655,3 +1655,81 @@ fn blender_output_name<'n>(kind: &str, name: &'n str) -> &'n str {
         (_, name) => name,
     }
 }
+
+// ---- The world ------------------------------------------------------------------
+
+/// What a Blender world lights the scene with.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Surroundings {
+    /// One colour all round, at a strength.
+    Colour { colour: Spectrum, strength: f32 },
+    /// An HDR picture all round, at a strength, turned about the vertical
+    /// by Blender's Mapping node (radians, Blender's own sense).
+    Picture { path: String, strength: f32, turn: f32 },
+}
+
+/// The world `entry` as Tequila can light with it: its Background's colour
+/// or picture and strength. Anything else is said, and comes over as the
+/// world's viewport colour.
+pub(super) fn world(entry: &Json, cx: &Context<'_>, notes: &mut Notes) -> Surroundings {
+    let viewport = Surroundings::Colour { colour: linear(&entry.get("color").and_then(Json::as_f32_array).unwrap_or_else(|| vec![0.05, 0.05, 0.05])), strength: 1.0 };
+    let Some(tree) = entry.get("tree").and_then(Json::as_index).filter(|&t| t < cx.trees.len()) else { return viewport };
+    let flat = flatten(cx.trees, tree, notes, "The world");
+    let outputs: Vec<usize> = (0..flat.len()).filter(|&i| flat[i].kind() == "ShaderNodeOutputWorld").collect();
+    let target = |i: usize| text(flat[i].node, "target").unwrap_or("ALL");
+    let active = |i: usize| flat[i].node.get("active").and_then(Json::as_bool).unwrap_or(false);
+    let Some(output) = outputs.iter().copied().find(|&i| active(i) && target(i) != "EEVEE").or_else(|| outputs.first().copied()) else { return viewport };
+    let input = |node: usize, id: &str| -> Option<Source<'_>> {
+        let i = sockets(flat[node].node, "inputs").iter().position(|s| id_of(s) == id)?;
+        Some(flat[node].inputs[i])
+    };
+    let Some(Source::Output(shader, _)) = input(output, "Surface") else { return viewport };
+    if !matches!(flat[shader].kind(), "ShaderNodeBackground" | "ShaderNodeEmission") {
+        notes.add(format!("the world is made with a {} node, not a Background; it came over as its viewport colour", flat[shader].kind().trim_start_matches("ShaderNode")));
+        return viewport;
+    }
+    let strength = match input(shader, "Strength") {
+        Some(Source::Typed(s)) => typed(s).map(Value::as_float).unwrap_or(1.0),
+        Some(Source::Output(..)) => {
+            notes.add("the world's strength is worked out by nodes; it came over at 1".into());
+            1.0
+        }
+        _ => 1.0,
+    }
+    .max(0.0);
+    match input(shader, "Color") {
+        Some(Source::Typed(c)) => Surroundings::Colour { colour: typed(c).map(Value::as_color).unwrap_or(Spectrum::ONE), strength },
+        Some(Source::Output(texture, _)) if flat[texture].kind() == "ShaderNodeTexEnvironment" => {
+            let image = flat[texture].node.get("image").and_then(Json::as_index).and_then(|i| cx.images.get(i));
+            let Some(path) = image.and_then(|i| i.get("path")).and_then(Json::as_str) else {
+                if image.and_then(|i| i.get("file")).is_some() {
+                    notes.add("the world's picture is packed inside the .blend; unpack it in Blender (File › External Data › Unpack Resources) to bring it over".into());
+                }
+                return Surroundings::Colour { colour: Spectrum::splat(0.5), strength };
+            };
+            // Turned by a Mapping node between it and its coordinates.
+            let mut turn = 0.0;
+            if let Some(Source::Output(mapping, _)) = input(texture, "Vector") {
+                if flat[mapping].kind() == "ShaderNodeMapping" {
+                    if let Some(Source::Typed(r)) = input(mapping, "Rotation") {
+                        if let Some(Value::Vector(r)) = typed(r) {
+                            if r.x.abs() > 1e-4 || r.y.abs() > 1e-4 {
+                                notes.add("the world's picture is tilted; only its turn about the vertical came over".into());
+                            }
+                            turn = if text(flat[mapping].node, "vector_type") == Some("TEXTURE") { -r.z } else { r.z };
+                        }
+                    }
+                }
+            }
+            Surroundings::Picture { path: path.to_string(), strength, turn }
+        }
+        Some(Source::Output(other, _)) => {
+            notes.add(format!("the world's colour comes from a {} node; it came over as its viewport colour", flat[other].kind().trim_start_matches("ShaderNode")));
+            match viewport {
+                Surroundings::Colour { colour, .. } => Surroundings::Colour { colour, strength },
+                picture => picture,
+            }
+        }
+        _ => Surroundings::Colour { colour: Spectrum::splat(0.05), strength },
+    }
+}

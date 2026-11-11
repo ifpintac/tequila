@@ -663,7 +663,7 @@
  },
  {
   "name": "tequila_import",
-  "description": "Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.",
+  "description": "Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), Blender .blend (read by the Blender installed here, materials node for node), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -682,6 +682,15 @@
       "-x"
      ],
      "description": "Which way up the file was drawn: z for a CAD model drawn Z up, which otherwise comes in lying on its back. Without it, the setting File > Up axis of imports decides."
+    },
+    "lighting": {
+     "type": "string",
+     "enum": [
+      "blender",
+      "tequila",
+      "ask"
+     ],
+     "description": "For a Blender file with lights of its own: blender lights the model with them, its world and its exposure, as it looks in Blender; tequila keeps the scene's lighting; ask asks the person in Tequila's window. Without it, the setting File > Lights in Blender files decides."
     }
    },
    "required": [
