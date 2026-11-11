@@ -273,6 +273,9 @@ pub fn shade<'a>(
             Instruction::Occlusion { contrast, .. } => {
                 Value::Float(tequila_materials::graph::occlusion_shape(point.occlusion, *contrast))
             }
+            // The distance as a share of the reach: what is left of the
+            // closeness the snapshot measured.
+            Instruction::Distance { .. } => Value::Float((1.0 - point.world.closeness).clamp(0.0, 1.0)),
             Instruction::Sample {
                 texture,
                 mapping,
@@ -431,6 +434,7 @@ mod tests {
                 generated: vec3(0.1, 0.2, 0.3),
                 object_location: vec3(1.0, 0.0, 0.0),
                 object_random: 0.42,
+                closeness: 0.25,
                 ray: Default::default(),
             },
         }

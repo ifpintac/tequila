@@ -86,6 +86,7 @@ pub fn entries(project: &Project) -> Vec<Entry> {
         },
     );
     add("Occlusion", NodeKind::Occlusion { radius: tequila_materials::graph::DEFAULT_OCCLUSION_RADIUS, contrast: 1.0 });
+    add("Distance", NodeKind::Distance { radius: tequila_materials::graph::DEFAULT_DISTANCE_RADIUS });
     // Mixing surfaces.
     add("Shader", NodeKind::Shader(Box::new(tequila_materials::material_type::MaterialType::Plastic.defaults())));
     add("Mix Shader", NodeKind::MixShader { add: false });

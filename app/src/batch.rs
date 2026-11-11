@@ -5681,6 +5681,58 @@ mod tests {
         }
     }
 
+    /// A Distance node shades the same in both renderers: each reads what
+    /// was measured a vertex, here a ball marked from one side to the
+    /// other, and where nothing was measured both read it as nothing near.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_distance_node_reads_alike_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+        use tequila_materials::material_type::Param;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let render = |name: &str, marked: bool| {
+            let mut graph = MaterialGraph::from_material(tequila_materials::openpbr::Material { specular_weight: 0.0, ..Default::default() });
+            let distance = graph.add_node(Node::new(NodeKind::Distance { radius: 0.1 }));
+            let surface = graph.output();
+            graph.connect_output(distance, 0, surface, Socket::Param(Param::BaseColor));
+            both_engines(name, move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+                if marked {
+                    // Close on the side towards +X, clear on the other.
+                    let index = scene.instances[0].mesh.index();
+                    let mesh = Arc::make_mut(&mut scene.meshes[index]);
+                    mesh.closeness = mesh.positions.iter().map(|p| (p.x * 0.5 + 0.5).clamp(0.0, 1.0)).collect();
+                }
+            })
+        };
+        let [tequila, cycles] = render("distance-marked", true);
+        let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+        let ((ma, sa), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+        let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+        for (x, y) in a.iter().zip(&b) {
+            cov += (x - ma) * (y - mb);
+            va += (x - ma) * (x - ma);
+            vb += (y - mb) * (y - mb);
+        }
+        let together = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+        assert!(sa > 25.0, "the mark does not show in Tequila's renderer ({sa:.1})");
+        assert!(together > 0.9, "Tequila's mark and Cycles' agree {together:.2} of the way");
+        assert!((ma - mb).abs() < ma * 0.12 + 6.0, "as bright in one as the other: {ma:.0} and {mb:.0}");
+
+        // Nothing measured: nothing near, and the ball is its lightest in
+        // both, lighter than the marked one.
+        let [plain_tequila, plain_cycles] = render("distance-unmarked", false);
+        let (pa, pb) = (mean_and_spread(&inside_the_sphere(&plain_tequila)).0, mean_and_spread(&inside_the_sphere(&plain_cycles)).0);
+        assert!(pa > ma * 1.15 && pb > mb * 1.15, "unmarked {pa:.0} and {pb:.0}, marked {ma:.0} and {mb:.0}");
+        assert!((pa - pb).abs() < pa * 0.12 + 6.0, "unmarked, as bright in one as the other: {pa:.0} and {pb:.0}");
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.

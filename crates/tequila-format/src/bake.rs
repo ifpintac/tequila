@@ -307,6 +307,7 @@ impl Part<'_> {
                 generated,
                 object_location: self.world.point(Vec3::ZERO),
                 object_random: 0.0,
+                closeness: 0.0,
                 ray: Default::default(),
             },
         }

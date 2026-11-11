@@ -68,19 +68,19 @@ pub fn vertex_occlusion(mesh: &RenderMesh, radius: f32) -> Vec<f32> {
         .collect()
 }
 
-fn radical_inverse(mut bits: u32) -> f32 {
+pub(crate) fn radical_inverse(mut bits: u32) -> f32 {
     bits = bits.reverse_bits();
     bits as f32 * (1.0 / 4_294_967_296.0)
 }
 
-fn basis(n: Vec3) -> (Vec3, Vec3) {
+pub(crate) fn basis(n: Vec3) -> (Vec3, Vec3) {
     let reference = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
     let t = reference.cross(n).normalize();
     (t, n.cross(t))
 }
 
 /// The mesh's own normals, or ones made from its faces when it has none.
-fn vertex_normals(mesh: &RenderMesh) -> Vec<Vec3> {
+pub(crate) fn vertex_normals(mesh: &RenderMesh) -> Vec<Vec3> {
     if mesh.normals.len() == mesh.positions.len() {
         return mesh.normals.clone();
     }

@@ -134,6 +134,10 @@ pub struct MeshCache {
     /// its address — the key — cannot be reused by another mesh while the
     /// entry lives.
     occluded: BTreeMap<(usize, u32), (Arc<RenderMesh>, Arc<RenderMesh>)>,
+    /// Meshes with the closeness of other parts measured, by the mesh they
+    /// came from, where it stands, the reach, and where everything else
+    /// stands (as one number): measured again only when something moved.
+    close: BTreeMap<(usize, u64), (Arc<RenderMesh>, Arc<RenderMesh>)>,
     /// Where each part's bubbles went, by the part's mesh, placement and
     /// request, holding the mesh as `occluded` does.
     bubbles: BTreeMap<u64, (Arc<RenderMesh>, Vec<(tequila_core::math::Vec3, f32)>)>,
@@ -613,6 +617,7 @@ pub fn snapshot_with(
 
     displace_instances(&mut meshes, &mut instances, &instance_meshes, &programs, &textures, cache);
     occlude_instances(&mut meshes, &mut instances, &programs, cache);
+    measure_closeness(&mut meshes, &mut instances, &programs, cache);
     let densities = density_fields(&meshes, &instances, &programs, &textures);
     add_bubbles(&mut meshes, &mut instances, &programs, cache);
     add_fuzz(&mut meshes, &mut instances, &materials, &programs, &textures, &mut mapping, cache);
@@ -791,6 +796,65 @@ fn occlude_instances(
         instance.mesh = id;
     }
     cache.occluded = kept;
+}
+
+/// The Distance node: give each part whose material has one a copy of its
+/// mesh with the closeness of the other parts measured at the node's reach
+/// (`crate::proximity`), where they all stand now. After displacement and
+/// occlusion, whose meshes these are copies of.
+fn measure_closeness(meshes: &mut Vec<Arc<RenderMesh>>, instances: &mut [Instance], programs: &[Option<Arc<CompiledGraph>>], cache: &mut MeshCache) {
+    use std::hash::{Hash, Hasher};
+    let reach = |instance: &Instance| programs.get(instance.material.index()).and_then(|p| p.as_ref()).and_then(|p| p.requirements.distance_radius());
+    if !instances.iter().any(|i| reach(i).is_some()) {
+        cache.close.clear();
+        return;
+    }
+    // Where each part stands, as a number that changes when it moves or
+    // is another shape: as they are before any is given its measured copy.
+    let stands: Vec<u64> = instances
+        .iter()
+        .map(|instance| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (Arc::as_ptr(&meshes[instance.mesh.index()]) as usize).hash(&mut hasher);
+            for corner in [tequila_core::math::Vec3::ZERO, tequila_core::math::Vec3::X, tequila_core::math::Vec3::Y, tequila_core::math::Vec3::Z] {
+                let p = instance.transform.point(corner);
+                (p.x.to_bits(), p.y.to_bits(), p.z.to_bits()).hash(&mut hasher);
+            }
+            hasher.finish()
+        })
+        .collect();
+    // Parts that are there to be near: seen, and not a light's stand-in.
+    let solid: Vec<usize> = (0..instances.len()).filter(|&i| !instances[i].light_proxy).collect();
+    let mut neighbours: BTreeMap<usize, crate::proximity::Neighbour> = BTreeMap::new();
+    let mut kept = BTreeMap::new();
+    for index in 0..instances.len() {
+        let Some(radius) = reach(&instances[index]) else { continue };
+        let base = meshes[instances[index].mesh.index()].clone();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        radius.to_bits().hash(&mut hasher);
+        stands[index].hash(&mut hasher);
+        for &other in solid.iter().filter(|&&other| other != index) {
+            stands[other].hash(&mut hasher);
+        }
+        let key = (Arc::as_ptr(&base) as usize, hasher.finish());
+        let measured = match cache.close.get(&key) {
+            Some((source, mesh)) if Arc::ptr_eq(source, &base) => mesh.clone(),
+            _ => {
+                for &other in solid.iter().filter(|&&other| other != index) {
+                    neighbours.entry(other).or_insert_with(|| crate::proximity::Neighbour::new(&meshes[instances[other].mesh.index()], &instances[other].transform));
+                }
+                let others: Vec<&crate::proximity::Neighbour> = solid.iter().filter(|&&other| other != index).filter_map(|other| neighbours.get(other)).collect();
+                let mut copy = (*base).clone();
+                copy.closeness = crate::proximity::vertex_closeness(&base, &instances[index].transform, &others, radius);
+                Arc::new(copy)
+            }
+        };
+        let id = MeshId(meshes.len() as u32);
+        meshes.push(measured.clone());
+        kept.insert(key, (base, measured));
+        instances[index].mesh = id;
+    }
+    cache.close = kept;
 }
 
 /// §4.4's Bubbles: for each part whose material has a Bubbles node, an

@@ -452,6 +452,19 @@ fn legacy_controls(ui: &mut egui::Ui, project: &Project, kind: &mut NodeKind) ->
             hint(ui, "Measured on the part itself, once per vertex. 0 is open, 1 enclosed.");
             changed
         }
+        NodeKind::Distance { radius } => {
+            let mut changed = false;
+            let mut millimetres = *radius * 1000.0;
+            ui.horizontal(|ui| {
+                ui.label("Reach");
+                if ui.add(egui::DragValue::new(&mut millimetres).speed(0.1).range(0.1..=5000.0).suffix(" mm")).changed() {
+                    *radius = millimetres / 1000.0;
+                    changed = true;
+                }
+            });
+            hint(ui, "How far the nearest other part is, as a share of the reach: 0 where one touches, 1 where none is that near. Through a Color Ramp or a Map Range, the mark one part leaves on the next. Measured once per vertex, and again when a part moves.");
+            changed
+        }
         NodeKind::Curvature { mode, radius, contrast } => {
             let mut changed = false;
             ui.horizontal(|ui| {

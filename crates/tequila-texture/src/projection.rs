@@ -328,6 +328,10 @@ pub struct PointWorld {
     pub object_location: Vec3,
     /// 0 to 1, the same over a part, different between parts.
     pub object_random: f32,
+    /// How close the nearest other part is, within the reach the
+    /// material's Distance node asked for: 0 for none within it (and where
+    /// nothing asked), 1 for one touching.
+    pub closeness: f32,
     /// The kind of ray that came to the point, for the Light Path node.
     pub ray: RayKind,
 }
