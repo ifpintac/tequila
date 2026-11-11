@@ -99,6 +99,10 @@ pub enum Setup {
     /// A texture moved and turned differently on each part, so parts that
     /// share a material do not share its pattern (V-Ray's UVW randomizer).
     RandomPlacement,
+    /// A picture tiled without its repeats showing: read thrice, in patches
+    /// that each start somewhere of their own, and blended (V-Ray's
+    /// stochastic tiling).
+    StochasticTiling,
 }
 
 impl Setup {
@@ -110,6 +114,7 @@ impl Setup {
             Setup::RandomColour => "Random colour per part",
             Setup::VaryColour => "Vary colour per part",
             Setup::RandomPlacement => "Random placement per part",
+            Setup::StochasticTiling => "Picture without repeats",
         }
     }
 
@@ -122,6 +127,7 @@ impl Setup {
             "random_colour" | "random_color" => Some(Setup::RandomColour),
             "vary_colour" | "vary_color" => Some(Setup::VaryColour),
             "random_placement" => Some(Setup::RandomPlacement),
+            "stochastic_tiling" => Some(Setup::StochasticTiling),
             _ => None,
         }
     }
@@ -135,6 +141,7 @@ impl Setup {
             Setup::RandomColour => "Random colour",
             Setup::VaryColour => "Vary colour",
             Setup::RandomPlacement => "Random placement",
+            Setup::StochasticTiling => "Stochastic tiling",
         }
     }
 
@@ -147,6 +154,7 @@ impl Setup {
             Setup::RandomColour => "VRayMultiSubTex multi sub texture random colour color per object part variation",
             Setup::VaryColour => "variation vary hue per object part random colour color VRayMultiSubTex",
             Setup::RandomPlacement => "VRayUVWRandomizer UVW randomizer randomize random offset rotation per object part tiling",
+            Setup::StochasticTiling => "stochastic tiling no repeat repeats seamless anti-tiling texture bombing randomize VRayUVWRandomizer VRayBitmap image bitmap",
         }
     }
 
@@ -158,6 +166,7 @@ impl Setup {
             Setup::RandomColour => "One of four colours on each part, chosen by the part's own random number: set the colours in the Color Ramp, add more stops for more, and wire it into the material's Color.",
             Setup::VaryColour => "A colour made a little different on each part, in hue and in lightness: wire it into the material's Color, and set how far in the two Map Ranges.",
             Setup::RandomPlacement => "Coordinates moved and turned differently for each part: wire them into a texture's Vector, and parts that share the material no longer share its pattern.",
+            Setup::StochasticTiling => "A picture tiled without its repeats showing: read three times, in patches that each start from a place of their own in it, and blended where the patches meet. Choose the picture on the three Images, and wire the last Mix where the picture went.",
         }
     }
 }
@@ -272,6 +281,7 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
         if group == Group::Maps {
             push(Group::Maps, Some("Layered"), [Setup::Composite].into_iter().filter_map(setup).collect());
             push(Group::Maps, Some("Per part"), [Setup::RandomColour, Setup::VaryColour, Setup::RandomPlacement].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Tiling"), [Setup::StochasticTiling].into_iter().filter_map(setup).collect());
         }
     }
 
@@ -616,8 +626,14 @@ mod tests {
         assert_eq!(labels(&found, Group::Materials), [Setup::Blend.label()]);
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "two sided");
         assert_eq!(labels(&found, Group::Materials), [Setup::TwoSided.label()]);
+        // V-Ray's randomizer does both: a placement for each part, and
+        // tiling without repeats.
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "VRayUVWRandomizer");
-        assert_eq!(labels(&found, Group::Maps), [Setup::RandomPlacement.label()]);
+        for wanted in [Setup::RandomPlacement.label(), Setup::StochasticTiling.label()] {
+            assert!(labels(&found, Group::Maps).iter().any(|l| l == wanted), "{wanted}: {:?}", labels(&found, Group::Maps));
+        }
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "stochastic");
+        assert!(labels(&found, Group::Maps).iter().any(|l| l == Setup::StochasticTiling.label()), "{:?}", labels(&found, Group::Maps));
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "multisub");
         assert!(labels(&found, Group::Maps).iter().any(|l| l == Setup::RandomColour.label()), "{:?}", labels(&found, Group::Maps));
 

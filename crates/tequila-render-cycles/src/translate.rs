@@ -1636,6 +1636,29 @@ impl Builder<'_> {
         Ok(Some(Sampled { colour: colour.expect("three planes"), alpha }))
     }
 
+    /// `texture` read at coordinates the material's graph worked out: Cycles'
+    /// Image Texture with its Vector wired, which is what Tequila's renderer
+    /// follows here (`Texture::sample_at`), the picture repeating.
+    fn texture_at(&mut self, shader: Shader, texture: TextureId, place: Slot) -> Result<Option<Sampled>, String> {
+        let Some(image) = self.image(texture, false)? else {
+            return Ok(None);
+        };
+        let vector = match place {
+            Slot::Link(node, socket) => (node, socket),
+            // The one place, everywhere.
+            Slot::Value(value) => {
+                let v = value.as_vector();
+                let node = self.session.node(shader, "combine_xyz")?;
+                for (socket, part) in [("X", v.x), ("Y", v.y), ("Z", v.z)] {
+                    self.session.set_float(node, socket, part)?;
+                }
+                (node, "Vector")
+            }
+        };
+        let node = self.image_node(shader, image, &Mapping::default(), false, Some(vector))?;
+        Ok(Some(Sampled { colour: (node, "Color"), alpha: Slot::Link(node, "Alpha") }))
+    }
+
     /// One image texture node on `image`, looked up at `vector` (the mesh's
     /// UVs when `None`).
     fn image_node(&mut self, shader: Shader, image: i32, mapping: &Mapping, clip: bool, vector: Option<(Node, &'static str)>) -> Result<Node, String> {
@@ -2194,15 +2217,23 @@ impl Builder<'_> {
         for instruction in &program.instructions {
             let (dst, slot) = match instruction {
                 Instruction::Load { dst, value } => (dst, Slot::Value(*value)),
-                Instruction::Sample { dst, texture, mapping, fallback } => {
-                    let slot = match self.texture_node(shader, *texture, mapping)? {
+                Instruction::Sample { dst, texture, mapping, fallback, at } => {
+                    let sampled = match at {
+                        Some(at) => self.texture_at(shader, *texture, get(&registers, at))?,
+                        None => self.texture_node(shader, *texture, mapping)?,
+                    };
+                    let slot = match sampled {
                         Some(sampled) => sampled.colour(),
                         None => Slot::Value(*fallback),
                     };
                     (dst, slot)
                 }
-                Instruction::SampleAlpha { dst, texture, mapping, fallback } => {
-                    let slot = match self.texture_node(shader, *texture, mapping)? {
+                Instruction::SampleAlpha { dst, texture, mapping, fallback, at } => {
+                    let sampled = match at {
+                        Some(at) => self.texture_at(shader, *texture, get(&registers, at))?,
+                        None => self.texture_node(shader, *texture, mapping)?,
+                    };
+                    let slot = match sampled {
                         Some(sampled) => sampled.alpha,
                         None => Slot::Value(*fallback),
                     };
@@ -3809,6 +3840,18 @@ impl Builder<'_> {
                 if let Some((node, socket)) = self.projected_normal(shader, *texture, mapping)? {
                     self.session.connect(shader, node, socket, bsdf, "Normal")?;
                     normal = Some((node, socket));
+                }
+            }
+            // Looked up where the graph worked out: the lookup the program
+            // already made, decoded in the frame of the mesh's UVs.
+            Some(BumpSource::NormalMap { at: Some(_), .. }) => {
+                if let Some(Slot::Link(from, socket)) = driven.get(&Param::Bump).copied() {
+                    let node = self.session.node(shader, "normal_map")?;
+                    self.session.set_string(node, "space", "tangent")?;
+                    self.session.set_string(node, "attribute", "UVMap")?;
+                    self.session.connect(shader, from, socket, node, "Color")?;
+                    self.session.connect(shader, node, "Normal", bsdf, "Normal")?;
+                    normal = Some((node, "Normal"));
                 }
             }
             Some(BumpSource::NormalMap { texture, mapping, .. }) => {

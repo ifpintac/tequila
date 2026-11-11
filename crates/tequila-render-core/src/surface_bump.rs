@@ -43,11 +43,15 @@ pub const BUMP_FILTER_WIDTH: f32 = 0.1;
 #[derive(Debug)]
 pub enum BumpSource {
     /// A tangent-space normal map, sampled by the material's own program into
-    /// `register`, from `texture` through `mapping`.
+    /// `register`, from `texture` through `mapping` - or at the coordinates
+    /// the program worked out into `at`, when it did. Those are read as the
+    /// mesh's UVs moved about: the map is decoded in the UVs' own frame, so
+    /// coordinates the graph turned leave the relief lit as if they were not.
     NormalMap {
         register: Register,
         texture: tequila_materials::graph::TextureId,
         mapping: Box<tequila_texture::projection::Mapping>,
+        at: Option<Register>,
     },
     /// A height in scene units, which `program` — the material's program cut
     /// down to what the bump needs — computes into `register`.
@@ -80,10 +84,10 @@ impl BumpSource {
             .iter()
             .rev()
             .find(|instruction| instruction.destination() == register)?;
-        if let Instruction::Sample { texture, mapping, .. } = writer {
+        if let Instruction::Sample { texture, mapping, at, .. } = writer {
             match textures.get(*texture) {
                 Some(loaded) if loaded.role == MapRole::Normal => {
-                    return Some(BumpSource::NormalMap { register, texture: *texture, mapping: mapping.clone() });
+                    return Some(BumpSource::NormalMap { register, texture: *texture, mapping: mapping.clone(), at: *at });
                 }
                 Some(_) => {}
                 // Not loaded: its fallback is a number, not a normal, and

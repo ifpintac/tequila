@@ -1387,11 +1387,20 @@ pub enum Instruction {
     /// coordinates would silently reduce every tri-planar material to one of
     /// its three planes, which on a curved part is a texture that slides as the
     /// surface turns.
+    ///
+    /// Unless the graph worked the coordinates out itself: `at` is then the
+    /// register they are in, a vector whose x and y are where in the picture
+    /// to look, as Blender's Image Texture reads its Vector - (0, 0) the
+    /// picture's bottom left, v running up it, the picture repeating. That
+    /// is one lookup at one place, which is what such a graph asks for, and
+    /// `mapping` is left at the plain one for whoever cannot follow a
+    /// register (the Solid view's texture, drawn through the mesh's UVs).
     Sample {
         dst: Register,
         texture: TextureId,
         mapping: Box<tequila_texture::projection::Mapping>,
         fallback: Value,
+        at: Option<Register>,
     },
     /// The same lookup, returning the texture's alpha as a number.
     SampleAlpha {
@@ -1399,6 +1408,7 @@ pub enum Instruction {
         texture: TextureId,
         mapping: Box<tequila_texture::projection::Mapping>,
         fallback: Value,
+        at: Option<Register>,
     },
     /// A procedural evaluated from the shading point.
     ///
@@ -1635,8 +1645,13 @@ impl CompiledGraph {
             let dst = instruction.destination().0;
             if live.remove(&dst) {
                 keep[index] = true;
-                if let Instruction::Apply { args, .. } = instruction {
-                    live.extend(args.iter().map(|r| r.0));
+                match instruction {
+                    Instruction::Apply { args, .. } => live.extend(args.iter().map(|r| r.0)),
+                    // The coordinates a picture is looked up at.
+                    Instruction::Sample { at: Some(at), .. } | Instruction::SampleAlpha { at: Some(at), .. } => {
+                        live.insert(at.0);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1666,6 +1681,33 @@ impl CompiledGraph {
 }
 
 impl MaterialGraph {
+    /// Where a picture node's coordinates are when the graph works them out
+    /// itself: wired into its Coordinates from anything but a Mapping 2D,
+    /// which says how to project and is folded into the lookup instead. A
+    /// constant wired in is loaded into a register of its own.
+    fn worked_out_coordinates(
+        &self,
+        id: NodeId,
+        arg_registers: &[Option<Register>],
+        arg_values: &[Value],
+        next_register: &mut u16,
+        instructions: &mut Vec<Instruction>,
+    ) -> Option<Register> {
+        let link = self.links.iter().find(|l| l.to == id && l.to_socket == Socket::Input(0))?;
+        if matches!(self.nodes.get(&link.from).map(|n| &n.kind), None | Some(NodeKind::Mapping2d { .. })) {
+            return None;
+        }
+        Some(match arg_registers.first().copied().flatten() {
+            Some(register) => register,
+            None => {
+                let register = Register(*next_register);
+                *next_register += 1;
+                instructions.push(Instruction::Load { dst: register, value: arg_values.first().copied().unwrap_or(Value::Vector(Vec3::ZERO)) });
+                register
+            }
+        })
+    }
+
     /// Compile to the register machine (§4.3).
     pub fn compile(&self) -> Result<CompiledGraph, GraphError> {
         self.validate()?;
@@ -1958,11 +2000,13 @@ impl MaterialGraph {
                     if mapping.projection == tequila_texture::projection::Projection::Uv {
                         requirements.uv_sets.insert(mapping.uv_set);
                     }
+                    let at = self.worked_out_coordinates(*id, &arg_registers, &arg_values, &mut next_register, &mut instructions);
                     instructions.push(Instruction::Sample {
                         dst,
                         texture: *texture,
                         mapping: Box::new(mapping),
                         fallback: *fallback,
+                        at,
                     });
                 }
                 NodeKind::ImageAlpha { texture, fallback } => {
@@ -1983,11 +2027,13 @@ impl MaterialGraph {
                     if mapping.projection == tequila_texture::projection::Projection::Uv {
                         requirements.uv_sets.insert(mapping.uv_set);
                     }
+                    let at = self.worked_out_coordinates(*id, &arg_registers, &arg_values, &mut next_register, &mut instructions);
                     instructions.push(Instruction::SampleAlpha {
                         dst,
                         texture: *texture,
                         mapping: Box::new(mapping),
                         fallback: *fallback,
+                        at,
                     });
                 }
                 kind => {

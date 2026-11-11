@@ -282,8 +282,14 @@ pub fn shade<'a>(
                 texture,
                 mapping,
                 fallback,
+                at,
                 ..
             } => match textures.get(*texture) {
+                // Where the graph worked out, when it did.
+                Some(loaded) if at.is_some() => {
+                    let place = at.and_then(|r| registers.slots.get(r.0 as usize)).map(|v| v.as_vector()).unwrap_or_default();
+                    Value::Color(colour_of(loaded, loaded.sample_at(place.x, place.y)))
+                }
                 // The graph's mapping, not the texture's own. Projecting
                 // through the texture's would discard what the graph asked for
                 // and read from somewhere else entirely.
@@ -297,8 +303,13 @@ pub fn shade<'a>(
                 texture,
                 mapping,
                 fallback,
+                at,
                 ..
             } => match textures.get(*texture) {
+                Some(loaded) if at.is_some() => {
+                    let place = at.and_then(|r| registers.slots.get(r.0 as usize)).map(|v| v.as_vector()).unwrap_or_default();
+                    Value::Float(loaded.alpha_at(place.x, place.y))
+                }
                 Some(loaded) => Value::Float(loaded.sample_alpha(mapping, point)),
                 None => *fallback,
             },
