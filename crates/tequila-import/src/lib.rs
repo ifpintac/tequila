@@ -29,6 +29,7 @@
 
 pub mod axf;
 mod bip;
+pub mod blend;
 pub mod bip_scene;
 pub mod fbx;
 pub mod gltf;
@@ -332,7 +333,7 @@ pub fn open_scene(path: &Path, quality: step::Tessellation) -> Result<(SceneDocu
 /// its window takes as a model. KeyShot scenes, which open as scenes of
 /// their own, are [`is_scene_file`]'s.
 pub const MODEL_EXTENSIONS: &[&str] = &[
-    "obj", "stl", "ply", "3mf", "fbx", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "usdc", "usdz", "ifc",
+    "obj", "stl", "ply", "3mf", "fbx", "gltf", "glb", "step", "stp", "igs", "iges", "3dm", "usda", "usd", "usdc", "usdz", "ifc", "blend",
 ];
 
 /// Whether a file opens as a scene of its own ([`open_scene`]) rather than
@@ -458,6 +459,9 @@ pub fn read_file_with(path: &Path, quality: step::Tessellation) -> Result<ReadMo
     let scene = match extension.as_str() {
         "step" | "stp" => step::read_with(&bytes, &name, quality)?,
         "igs" | "iges" => iges::read_with(&bytes, &name, quality)?,
+        // Read by Blender, from where it is: its pictures are named from
+        // there.
+        "blend" => blend::read_file(path, &name)?,
         // Kept to divide again only when something in it was divided: a
         // file of saved meshes has nothing a quality would change.
         "3dm" => {
@@ -642,6 +646,7 @@ pub fn read_format(
         "igs" | "iges" => iges::read(bytes, name),
         "ifc" => ifc::read(bytes, name),
         "3dm" => rhino::read(bytes, name),
+        "blend" => blend::read(bytes, name),
         "bip" => bip_scene::read(bytes, name, bip_scene::Pictures::Sibling(sibling), step::Tessellation::default()),
         "ksp" => bip_scene::read_package(bytes, name, step::Tessellation::default()),
         other => Err(ImportError::UnknownFormat(format!(".{other}"))),
@@ -727,6 +732,11 @@ fn show_vertex_colours(scene: &mut RawScene) {
             continue;
         }
         let graph = &mut scene.materials[material].graph;
+        // A material that reads them already - a Blender material with a
+        // Color Attribute node - shows them its own way.
+        if graph.nodes().any(|(_, n)| matches!(n.kind, NodeKind::VertexColor)) {
+            continue;
+        }
         let output = graph.output();
         let colours = graph.add_node(Node::new(NodeKind::VertexColor));
         // Whatever gave the base colour before - a picture, or the colour
