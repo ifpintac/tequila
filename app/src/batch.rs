@@ -4898,6 +4898,58 @@ mod tests {
         assert!(together > 0.8, "Tequila's patchwork and Cycles' agree {together:.2} of the way");
     }
 
+    /// The product patterns are laid on the same pixels by both renderers:
+    /// a knurl, hexagons, dots, stripes and tread plate, each as a grey over
+    /// the ball, light and dark in the same places. The groups are Math
+    /// nodes and a White Noise, which each engine has. Skipped where Cycles
+    /// is not installed.
+    #[test]
+    fn product_patterns_are_laid_alike_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+        use tequila_materials::groups::NodeGroup;
+        use tequila_materials::material_type::Param;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        for (group, output) in [(NodeGroup::Knurl, "Height"), (NodeGroup::Hexagons, "Random"), (NodeGroup::Dots, "Dome"), (NodeGroup::Stripes, "Round"), (NodeGroup::TreadPlate, "Height")] {
+            let mut graph = MaterialGraph::from_material(tequila_materials::openpbr::Material { specular_weight: 0.0, ..Default::default() });
+            // A few to the ball, which is two metres across, on the wall
+            // facing the camera's side.
+            let mut node = Node::new(NodeKind::Group(group));
+            for (index, input) in group.inputs().iter().enumerate() {
+                let value = match input.name {
+                    "Plane" => 1.0,
+                    name if name.ends_with("(mm)") && name != "Gap (mm)" => 400.0,
+                    "Gap (mm)" => 60.0,
+                    _ => continue,
+                };
+                node = node.with_literal(Socket::Input(index as u8), Value::Float(value));
+            }
+            let pattern = graph.add_node(node);
+            let index = group.outputs().iter().position(|o| o.name == output).expect("that output") as u8;
+            let surface = graph.output();
+            graph.connect_output(pattern, index, surface, Socket::Param(Param::BaseColor));
+            let [tequila, cycles] = both_engines(&format!("pattern-{}", group.key()), move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+            });
+            let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+            let ((ma, sa), (mb, _)) = (mean_and_spread(&a), mean_and_spread(&b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(&b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            let together = cov / (va.sqrt() * vb.sqrt()).max(1e-9);
+            assert!(sa > 20.0, "{group:?} is all one grey in Tequila's renderer ({sa:.1})");
+            assert!(together > 0.85, "{group:?}: Tequila's and Cycles' agree {together:.2} of the way");
+        }
+    }
+
     /// A texture pack's tri-planar normal map leans the surface the way
     /// Tequila's renderer leans it: a map leaning every texel across its
     /// picture changes the sphere's shading the same way in both. Cycles

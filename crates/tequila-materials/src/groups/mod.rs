@@ -14,6 +14,8 @@
 
 mod blend_stack;
 mod fdm_layer_lines;
+mod build;
+mod geometric;
 mod stochastic;
 mod tiles;
 
@@ -40,6 +42,28 @@ pub enum NodeGroup {
     /// Three sets of coordinates and the blends between them, for a
     /// picture tiled without its repeats showing (`stochastic`).
     StochasticTiling,
+    /// The grip cut into a knob (`geometric`).
+    Knurl,
+    /// Hexagons side by side (`geometric`).
+    Hexagons,
+    /// Round dots in rows (`geometric`).
+    Dots,
+    /// Stripes and ribs (`geometric`).
+    Stripes,
+    /// The lozenges of tread plate (`geometric`).
+    TreadPlate,
+}
+
+/// A group said in one place: its names, its sockets and what builds it.
+/// The groups added since the first few are each one of these.
+pub(crate) struct Spec {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub keywords: &'static str,
+    pub inputs: &'static [GroupInput],
+    pub outputs: &'static [GroupOutput],
+    pub build: fn() -> Expansion,
 }
 
 /// One of a group's inputs. Every one is a number.
@@ -62,7 +86,32 @@ pub struct GroupOutput {
 }
 
 impl NodeGroup {
-    pub const ALL: &'static [NodeGroup] = &[NodeGroup::FdmLayerLines, NodeGroup::BlendStack, NodeGroup::Herringbone, NodeGroup::Basketweave, NodeGroup::StochasticTiling];
+    pub const ALL: &'static [NodeGroup] = &[
+        NodeGroup::FdmLayerLines,
+        NodeGroup::BlendStack,
+        NodeGroup::Herringbone,
+        NodeGroup::Basketweave,
+        NodeGroup::StochasticTiling,
+        NodeGroup::Knurl,
+        NodeGroup::Hexagons,
+        NodeGroup::Dots,
+        NodeGroup::Stripes,
+        NodeGroup::TreadPlate,
+    ];
+
+    /// The groups said as a [`Spec`], in the order their expansions are
+    /// kept.
+    const SPECS: &'static [(NodeGroup, &'static Spec)] = &[
+        (NodeGroup::Knurl, &geometric::KNURL),
+        (NodeGroup::Hexagons, &geometric::HEXAGONS),
+        (NodeGroup::Dots, &geometric::DOTS),
+        (NodeGroup::Stripes, &geometric::STRIPES),
+        (NodeGroup::TreadPlate, &geometric::TREAD_PLATE),
+    ];
+
+    fn spec(self) -> &'static Spec {
+        Self::SPECS.iter().find(|(group, _)| *group == self).map(|(_, spec)| *spec).expect("every later group has a Spec")
+    }
 
     /// Whether it is a pattern over a surface, for where it is listed: the
     /// others work on numbers.
@@ -78,6 +127,7 @@ impl NodeGroup {
             NodeGroup::Herringbone => "herringbone",
             NodeGroup::Basketweave => "basketweave",
             NodeGroup::StochasticTiling => "stochastic_tiling",
+            _ => self.spec().key,
         }
     }
 
@@ -92,6 +142,7 @@ impl NodeGroup {
             NodeGroup::Herringbone => "Herringbone",
             NodeGroup::Basketweave => "Basketweave",
             NodeGroup::StochasticTiling => "Stochastic Tiling",
+            _ => self.spec().label,
         }
     }
 
@@ -125,6 +176,7 @@ impl NodeGroup {
                  picture; Blend B into the Factor of a Mix of the first two, and Blend C into the Factor of a Mix of \
                  that and the third. For colour and roughness; a normal map follows on a part with UVs."
             }
+            _ => self.spec().description,
         }
     }
 
@@ -136,6 +188,7 @@ impl NodeGroup {
             NodeGroup::Herringbone => "tiles, parquet, planks, floor, paving, chevron, VRayBerconTile, bricks",
             NodeGroup::Basketweave => "tiles, parquet, planks, floor, paving, blocks, VRayBerconTile, bricks",
             NodeGroup::StochasticTiling => "stochastic, no repeat, seamless, texture bombing, randomize tiling, hex tiling, VRayUVWRandomizer, VRayBitmap, anti-tiling",
+            _ => self.spec().keywords,
         }
     }
 
@@ -145,6 +198,7 @@ impl NodeGroup {
             NodeGroup::BlendStack => blend_stack::INPUTS,
             NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::INPUTS,
             NodeGroup::StochasticTiling => stochastic::INPUTS,
+            _ => self.spec().inputs,
         }
     }
 
@@ -154,6 +208,7 @@ impl NodeGroup {
             NodeGroup::BlendStack => blend_stack::OUTPUTS,
             NodeGroup::Herringbone | NodeGroup::Basketweave => tiles::OUTPUTS,
             NodeGroup::StochasticTiling => stochastic::OUTPUTS,
+            _ => self.spec().outputs,
         }
     }
 
@@ -170,6 +225,11 @@ impl NodeGroup {
             NodeGroup::Herringbone => HERRINGBONE.get_or_init(|| tiles::build(tiles::Bond::Herringbone)),
             NodeGroup::Basketweave => BASKETWEAVE.get_or_init(|| tiles::build(tiles::Bond::Basketweave)),
             NodeGroup::StochasticTiling => STOCHASTIC.get_or_init(stochastic::build),
+            _ => {
+                static LATER: [OnceLock<Expansion>; 32] = [const { OnceLock::new() }; 32];
+                let index = Self::SPECS.iter().position(|(group, _)| *group == self).expect("every later group has a Spec");
+                LATER[index].get_or_init(self.spec().build)
+            }
         }
     }
 }
