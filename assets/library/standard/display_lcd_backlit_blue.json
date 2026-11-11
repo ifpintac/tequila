@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.005],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A lit LCD panel glowing blue with a few darker characters, as on a character display or older gadget.",
   "emission_color": [0.01, 0.04, 0.8],
   "emission_luminance": 0.6,
   "name": "Display LCD Backlit Blue",
@@ -12,7 +13,20 @@
     "screen",
     "backlit",
     "character display",
-    "blue"
+    "blue",
+    "blue lcd",
+    "glowing screen",
+    "illuminated",
+    "character lcd",
+    "16x2",
+    "monochrome",
+    "negative display",
+    "glow",
+    "backlight",
+    "small screen",
+    "electronics",
+    "appliances",
+    "audio"
   ],
   "type": "generic"
 }

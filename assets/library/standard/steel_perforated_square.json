@@ -1,7 +1,8 @@
 {
   "base_color": [0.86, 0.865, 0.87],
   "base_metalness": 1,
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Steel sheet punched with square holes in a regular grid: a grey perforated face, as on a guard, vent, filter or architectural screen.",
   "graph": {
     "decals": [],
     "links": [
@@ -2996,7 +2997,23 @@
     "perforated",
     "square",
     "grille",
-    "sheet"
+    "sheet",
+    "square holes",
+    "punched",
+    "perforated sheet",
+    "perforated metal",
+    "holes",
+    "vent",
+    "guard",
+    "grey",
+    "gray",
+    "screen",
+    "panel",
+    "filter",
+    "industrial",
+    "architecture",
+    "appliances",
+    "interior"
   ],
   "type": "generic"
 }

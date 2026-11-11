@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
   "category": "Metal",
+  "description": "Aluminium spun on a lathe: a satin silver with fine concentric circular lines radiating from the centre, as on a dial, speaker cap or knob top.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -155,7 +156,21 @@
     "radial",
     "concentric",
     "speaker",
-    "dial"
+    "dial",
+    "circular brushed",
+    "radial brush",
+    "turned",
+    "lathe",
+    "spinning",
+    "knob",
+    "cap",
+    "aluminum",
+    "satin",
+    "silver",
+    "audio",
+    "electronics",
+    "musical instruments",
+    "appliances"
   ],
   "type": "anisotropic"
 }

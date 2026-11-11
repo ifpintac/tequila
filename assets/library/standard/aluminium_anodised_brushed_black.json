@@ -1,6 +1,7 @@
 {
   "base_color": [0.013369932, 0.013682472, 0.015682796],
   "category": "Metal",
+  "description": "Black anodised aluminium with fine linear brush lines: a dark satin face with directional streaks, as on an amplifier or mixer front panel.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,22 @@
     "anodised",
     "brushed",
     "black",
-    "front panel"
+    "front panel",
+    "dark",
+    "hairline",
+    "grain",
+    "linear grain",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "anisotropic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.9223, 0.8458, 0.5604],
   "category": "Metal",
+  "description": "Brass with a soft satin finish: a muted warm gold with a gentle sheen and little reflection, as on switches, handles and fittings.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,23 @@
     "brass",
     "gold",
     "fitting",
-    "satin"
+    "satin",
+    "matte",
+    "muted gold",
+    "yellow metal",
+    "brushed look",
+    "handle",
+    "switch",
+    "tap",
+    "faucet",
+    "knob",
+    "trim",
+    "hardware",
+    "fixture",
+    "interior",
+    "furniture",
+    "lighting",
+    "kitchenware"
   ],
   "type": "metal"
 }

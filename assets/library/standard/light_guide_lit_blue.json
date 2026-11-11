@@ -1,6 +1,7 @@
 {
   "base_color": [0.0021, 0.027999999, 0.35],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A frosted plastic ring or pipe lit from inside, glowing blue as a soft halo around a button or dial.",
   "edge_radius": 0.00025,
   "emission_color": [0.006, 0.08, 1],
   "emission_luminance": 1.2,
@@ -147,7 +148,21 @@
     "on",
     "ring",
     "halo",
-    "blue"
+    "blue",
+    "cyan",
+    "light ring",
+    "glowing ring",
+    "illuminated",
+    "translucent",
+    "frosted",
+    "diffuser",
+    "status ring",
+    "pipe",
+    "glow",
+    "smart speaker",
+    "electronics",
+    "audio",
+    "appliances"
   ],
   "type": "generic"
 }

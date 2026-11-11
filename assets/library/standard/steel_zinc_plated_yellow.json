@@ -1,6 +1,7 @@
 {
   "base_color": [0.5179034, 0.46060792, 0.15098138],
   "category": "Metal",
+  "description": "Steel with yellow chromate-passivated zinc plating: a golden, slightly iridescent finish, as on bolts, nuts, brackets and workshop hardware.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -220,7 +221,23 @@
     "plated",
     "chromate",
     "yellow",
-    "fastener"
+    "fastener",
+    "yellow zinc",
+    "gold zinc",
+    "yellow passivate",
+    "galvanized",
+    "galvanised",
+    "electroplated",
+    "iridescent",
+    "gold",
+    "bolt",
+    "nut",
+    "washer",
+    "screw",
+    "industrial",
+    "tools",
+    "automotive",
+    "furniture"
   ],
   "type": "metal"
 }

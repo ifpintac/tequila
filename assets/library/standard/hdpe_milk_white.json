@@ -1,6 +1,7 @@
 {
   "base_color": [0.92, 0.9211, 0.8923],
   "category": "Plastic",
+  "description": "A soft milky-white translucent HDPE, as on milk jugs and squeeze bottles, with a slight waxy sheen.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -93,7 +94,22 @@
   "tags": [
     "hdpe",
     "translucent",
-    "bottle"
+    "bottle",
+    "high density polyethylene",
+    "polyethylene",
+    "pe",
+    "jug",
+    "container",
+    "waxy",
+    "satin",
+    "blow moulded",
+    "blow molded",
+    "cloudy",
+    "opaque white",
+    "packaging",
+    "food & drink",
+    "kitchenware",
+    "industrial"
   ],
   "type": "plastic_cloudy"
 }

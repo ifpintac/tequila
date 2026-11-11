@@ -1,6 +1,7 @@
 {
-  "base_color": [0.97, 0.93, 0.87],
+  "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Nickel-plated metal spun on a lathe: a warm silver with fine concentric circles, as on a footswitch cap or knob top.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -157,7 +158,22 @@
     "footswitch",
     "cap",
     "concentric",
-    "hardware"
+    "hardware",
+    "circular brushed",
+    "radial",
+    "turned",
+    "lathe",
+    "electroplated",
+    "silver",
+    "pedal",
+    "switch cap",
+    "knob",
+    "dial",
+    "spinning",
+    "musical instruments",
+    "audio",
+    "electronics",
+    "industrial"
   ],
   "type": "anisotropic"
 }

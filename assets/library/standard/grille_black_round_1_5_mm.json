@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black powder-coated sheet punched with fine 1.5 mm round holes: a dark, almost solid-looking perforated face, as on a vent or small speaker cover.",
   "graph": {
     "decals": [],
     "links": [
@@ -3064,7 +3065,23 @@
     "fine",
     "black",
     "rv 1.5-2.5",
-    "powder coat"
+    "powder coat",
+    "1.5mm",
+    "fine holes",
+    "round holes",
+    "punched",
+    "perforated sheet",
+    "black grille",
+    "powder coated",
+    "matte black",
+    "grill",
+    "speaker grill",
+    "steel",
+    "screen",
+    "audio",
+    "electronics",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

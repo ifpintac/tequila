@@ -1,8 +1,9 @@
 {
   "base_color": [0.210038, 0.22789381, 0.1785593],
-  "category": "Glass",
+  "category": "Light & Display",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "A dull grey-green reflective LCD with faint dark segments, as on a calculator, meter or digital watch with no backlight.",
   "name": "Display LCD Unlit",
   "specular_ior": 1.52,
   "specular_roughness": 0.45,
@@ -13,7 +14,22 @@
     "off",
     "reflective",
     "grey green",
-    "segment"
+    "segment",
+    "switched off",
+    "gray green",
+    "reflective lcd",
+    "monochrome",
+    "seven segment",
+    "calculator",
+    "digital watch",
+    "passive",
+    "dim",
+    "matte glass",
+    "numeric display",
+    "electronics",
+    "watches",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

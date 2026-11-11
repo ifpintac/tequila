@@ -1,6 +1,7 @@
 {
   "base_color": [0.0075496845, 0.007513414, 0.008428944],
   "category": "Plastic",
+  "description": "A smooth satin black plastic with a low sheen from a stone-polished mould, as on electronic enclosures.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -159,7 +160,21 @@
     "black",
     "stone polish",
     "spi c",
-    "enclosure"
+    "enclosure",
+    "semi matte",
+    "dark",
+    "stone finish",
+    "housing",
+    "case",
+    "injection moulded",
+    "molded",
+    "casing",
+    "smooth",
+    "low gloss",
+    "electronics",
+    "audio",
+    "appliances",
+    "automotive"
   ],
   "type": "plastic"
 }

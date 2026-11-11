@@ -171,6 +171,7 @@ pub fn to_inline(preset: &StudioPreset) -> Value {
 /// A library entry for one of a preset's materials.
 fn entry_of(material: &PresetMaterial) -> LibraryEntry {
     LibraryEntry {
+        description: String::new(),
         name: material.definition.name.clone(),
         category: material.category.clone(),
         tags: material.tags.clone(),

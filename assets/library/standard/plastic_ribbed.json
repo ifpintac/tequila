@@ -1,6 +1,7 @@
 {
   "base_color": [0.044366136, 0.046464622, 0.0533731],
   "category": "Plastic",
+  "description": "A moulded pattern of parallel raised ribs that gives a grippy fluted surface, as on lids and handles.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -280,7 +281,21 @@
     "fluted",
     "grip",
     "lid",
-    "textured"
+    "textured",
+    "ribbing",
+    "grooved",
+    "ridged",
+    "parallel lines",
+    "non slip",
+    "patterned",
+    "moulded",
+    "molded",
+    "cap",
+    "handle",
+    "packaging",
+    "tools",
+    "kitchenware",
+    "sporting goods"
   ],
   "type": "plastic"
 }

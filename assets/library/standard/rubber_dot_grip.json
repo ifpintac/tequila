@@ -1,7 +1,8 @@
 {
   "base_color": [0.010359685, 0.010338303, 0.010878041],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black rubber surface moulded with small raised dots, giving a non-slip grip on handles and mats.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -3018,7 +3019,23 @@
     "dots",
     "grip",
     "non slip",
-    "handle"
+    "handle",
+    "dotted",
+    "studded",
+    "non-slip",
+    "anti slip",
+    "textured",
+    "patterned",
+    "matte",
+    "mat",
+    "elastomer",
+    "moulded",
+    "molded",
+    "black rubber",
+    "tools",
+    "sporting goods",
+    "automotive",
+    "outdoor gear"
   ],
   "type": "generic"
 }

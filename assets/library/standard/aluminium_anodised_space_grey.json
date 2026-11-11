@@ -1,6 +1,7 @@
 {
   "base_color": [0.2639555, 0.26991963, 0.2887474],
   "category": "Metal",
+  "description": "Aluminium anodised a dark neutral grey: a fine matte-satin finish with a slight metallic sparkle, as on a laptop, tablet or phone body.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -249,7 +250,22 @@
     "anodised",
     "grey",
     "space grey",
-    "laptop"
+    "laptop",
+    "gray",
+    "dark grey",
+    "graphite",
+    "slate",
+    "tablet",
+    "phone",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "electronics",
+    "audio",
+    "accessories"
   ],
   "type": "metal"
 }

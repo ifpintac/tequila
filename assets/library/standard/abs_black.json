@@ -1,6 +1,7 @@
 {
   "base_color": [0.0092, 0.0092, 0.0102],
   "category": "Plastic",
+  "description": "A fine-grained matte black ABS, as on a pedal's knobs and a remote's case.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -200,7 +201,20 @@
     "abs",
     "injection",
     "enclosure",
-    "black"
+    "black",
+    "acrylonitrile butadiene styrene",
+    "matte",
+    "satin",
+    "dark",
+    "housing",
+    "case",
+    "moulded",
+    "molded",
+    "thermoplastic",
+    "electronics",
+    "audio",
+    "appliances",
+    "toys"
   ],
   "type": "plastic"
 }

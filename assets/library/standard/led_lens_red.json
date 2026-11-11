@@ -1,6 +1,7 @@
 {
   "base_color": [0.5, 0.03, 0.03],
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "An unlit diffused red epoxy dome, as on indicator lamps and standby lights when switched off.",
   "edge_radius": 0.0002,
   "name": "LED Lens Red",
   "specular_ior": 1.55,
@@ -15,7 +16,22 @@
     "off",
     "diffused",
     "epoxy",
-    "red"
+    "red",
+    "indicator",
+    "status light",
+    "pilot lamp",
+    "panel light",
+    "diffuser",
+    "translucent",
+    "dome",
+    "off state",
+    "cover",
+    "epoxy lens",
+    "standby light",
+    "electronics",
+    "audio",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

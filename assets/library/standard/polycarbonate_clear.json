@@ -1,5 +1,6 @@
 {
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A water-clear polycarbonate with a polished surface, tougher than acrylic, as on lenses, covers and guards.",
   "edge_radius": 0.0002,
   "name": "Polycarbonate Clear",
   "specular_ior": 1.585,
@@ -7,7 +8,23 @@
   "tags": [
     "pc",
     "clear",
-    "lens"
+    "lens",
+    "transparent",
+    "colorless",
+    "colourless",
+    "glossy",
+    "lexan",
+    "makrolon",
+    "shield",
+    "cover",
+    "window",
+    "visor",
+    "impact resistant",
+    "sheet",
+    "electronics",
+    "lighting",
+    "automotive",
+    "industrial"
   ],
   "transmission_color": [0.9619, 0.972, 0.9579],
   "type": "plastic_transparent"

@@ -3,6 +3,7 @@
   "category": "Composite",
   "coat_roughness": 0.18,
   "coat_weight": 1,
+  "description": "A tan twill weave of natural flax under clear resin, with a warm, linen-like look, as in bio-based panels and bike parts.",
   "graph": {
     "decals": [],
     "links": [
@@ -4401,7 +4402,23 @@
     "composite",
     "twill",
     "tan",
-    "bio"
+    "bio",
+    "flax fiber",
+    "natural fiber",
+    "bio composite",
+    "biocomposite",
+    "eco",
+    "sustainable",
+    "twill weave",
+    "woven",
+    "laminate",
+    "resin",
+    "beige",
+    "brown",
+    "automotive",
+    "sporting goods",
+    "interior",
+    "prototyping"
   ],
   "type": "generic"
 }

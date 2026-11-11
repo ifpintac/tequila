@@ -1,12 +1,27 @@
 {
-  "category": "Glass",
+  "category": "Glass & Clear Plastic",
+  "description": "A hard, perfectly clear synthetic sapphire with a polished face, as used for watch glasses and camera covers.",
   "name": "Sapphire Crystal",
   "specular_ior": 1.77,
   "tags": [
     "sapphire",
     "watch",
     "crystal",
-    "clear"
+    "clear",
+    "sapphire glass",
+    "synthetic sapphire",
+    "corundum",
+    "transparent",
+    "scratch resistant",
+    "glossy",
+    "watch glass",
+    "lens cover",
+    "colorless",
+    "colourless",
+    "watches",
+    "electronics",
+    "jewellery",
+    "accessories"
   ],
   "transmission_color": [0.964, 0.9726, 0.9962],
   "type": "gem"

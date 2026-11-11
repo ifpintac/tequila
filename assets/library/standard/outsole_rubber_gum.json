@@ -1,6 +1,7 @@
 {
   "base_color": [0.18692604, 0.09936519, 0.033410117],
-  "category": "Translucent",
+  "category": "Rubber & Foam",
+  "description": "A warm amber-tan gum rubber that is slightly translucent, as on sneaker and boot soles.",
   "graph": {
     "decals": [],
     "links": [
@@ -271,7 +272,20 @@
     "sneaker",
     "footwear",
     "brown",
-    "amber"
+    "amber",
+    "gum sole",
+    "brown rubber",
+    "caramel",
+    "tan",
+    "toffee",
+    "vulcanised",
+    "vulcanized",
+    "cupsole",
+    "shoe bottom",
+    "shoes",
+    "sporting goods",
+    "apparel",
+    "outdoor gear"
   ],
   "type": "translucent"
 }

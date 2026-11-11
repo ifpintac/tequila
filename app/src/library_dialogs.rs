@@ -311,6 +311,7 @@ pub struct DetailsDialog {
     name: String,
     category: String,
     tags: String,
+    description: String,
 }
 
 /// What the details dialog asked for: the entry, by its file, and its new
@@ -321,6 +322,7 @@ pub struct Details {
     pub name: String,
     pub category: String,
     pub tags: Vec<String>,
+    pub description: String,
 }
 
 impl DetailsDialog {
@@ -329,6 +331,7 @@ impl DetailsDialog {
         self.name = entry.name.clone();
         self.category = entry.category.clone();
         self.tags = entry.tags.join(", ");
+        self.description = entry.description.clone();
     }
 
     pub fn show(&mut self, ctx: &egui::Context, categories: &[String]) -> Option<Details> {
@@ -360,6 +363,9 @@ impl DetailsDialog {
                     ui.label("Tags");
                     ui.add(egui::TextEdit::singleline(&mut self.tags).hint_text("words to find it by").desired_width(230.0));
                     ui.end_row();
+                    ui.label("Description");
+                    ui.add(egui::TextEdit::multiline(&mut self.description).hint_text("what it is, and what it is for").desired_rows(2).desired_width(230.0));
+                    ui.end_row();
                 });
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
@@ -370,6 +376,7 @@ impl DetailsDialog {
                             name: self.name.trim().to_string(),
                             category: self.category.trim().to_string(),
                             tags: tags_from(&self.tags),
+                            description: self.description.trim().to_string(),
                         });
                     }
                     if ui.button("Cancel").clicked() {

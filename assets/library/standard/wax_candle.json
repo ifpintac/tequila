@@ -1,6 +1,7 @@
 {
   "base_color": [0.8201, 0.7865, 0.6521],
-  "category": "Translucent",
+  "category": "Liquid & Wax",
+  "description": "A pale cream paraffin wax, smooth and slightly translucent so a flame glows through it, as in household candles.",
   "name": "Wax Candle",
   "specular_roughness": 0.35,
   "subsurface_color": [0.825, 0.7799, 0.6054],
@@ -8,7 +9,20 @@
   "tags": [
     "wax",
     "candle",
-    "paraffin"
+    "paraffin",
+    "paraffin wax",
+    "candle wax",
+    "off-white",
+    "cream",
+    "smooth",
+    "waxy",
+    "translucent",
+    "pillar candle",
+    "tealight",
+    "soft glow",
+    "decor",
+    "interior",
+    "lighting"
   ],
   "type": "translucent"
 }

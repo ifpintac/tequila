@@ -1,7 +1,8 @@
 {
   "base_color": [0.013702081, 0.013702081, 0.01370208],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black closed-cell EVA foam with a fine matte skin, used for shoe midsoles, padding and protective inserts.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -162,7 +163,22 @@
     "closed cell",
     "black",
     "sole",
-    "padding"
+    "padding",
+    "ethylene vinyl acetate",
+    "rubber foam",
+    "sponge",
+    "matte",
+    "soft",
+    "cushion",
+    "midsole",
+    "insert",
+    "closed-cell",
+    "compressed",
+    "spongy",
+    "shoes",
+    "sporting goods",
+    "packaging",
+    "toys"
   ],
   "type": "generic"
 }

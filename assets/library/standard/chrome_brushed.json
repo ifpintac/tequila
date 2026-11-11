@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Brushed chrome: a pale silver satin with fine linear lines and a soft sheen, as on bathroom fittings, towel rails and appliance trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -409,7 +410,23 @@
     "chrome",
     "brushed",
     "satin chrome",
-    "fixture"
+    "fixture",
+    "brushed chromium",
+    "hairline",
+    "grain",
+    "silver",
+    "tap",
+    "faucet",
+    "handle",
+    "towel rail",
+    "trim",
+    "plated",
+    "fitting",
+    "linear grain",
+    "interior",
+    "appliances",
+    "kitchenware",
+    "furniture"
   ],
   "type": "anisotropic"
 }

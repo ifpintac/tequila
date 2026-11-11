@@ -1,6 +1,7 @@
 {
   "base_color": [0.9223, 0.8458, 0.5604],
   "category": "Metal",
+  "description": "Brass beaten with a hammer: a warm yellow metal covered in small dimples that catch the light, as on a bowl, lamp shade or handmade tray.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -142,7 +143,23 @@
     "brass",
     "hammered",
     "beaten",
-    "craft"
+    "craft",
+    "dimpled",
+    "planished",
+    "beaten brass",
+    "handmade",
+    "artisan",
+    "bowl",
+    "tray",
+    "lamp",
+    "vase",
+    "gold",
+    "yellow metal",
+    "textured",
+    "interior",
+    "kitchenware",
+    "lighting",
+    "furniture"
   ],
   "type": "metal"
 }

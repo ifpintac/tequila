@@ -1,5 +1,6 @@
 {
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A milky, near-clear natural PLA print that shows its layer lines and passes soft light.",
   "graph": {
     "decals": [],
     "links": [
@@ -208,7 +209,23 @@
     "translucent",
     "natural",
     "clear",
-    "milky"
+    "milky",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "uncoloured",
+    "uncolored",
+    "frosted",
+    "cloudy",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "lamp shade",
+    "prototyping",
+    "lighting",
+    "electronics",
+    "toys"
   ],
   "transmission_color": [1, 1, 1],
   "transmission_depth": 0.001,

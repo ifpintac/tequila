@@ -1,6 +1,7 @@
 {
   "base_color": [0.8365313, 0.837583, 0.81103575],
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A matte white PLA print with visible layer lines, typical of desktop prototypes and mock-ups.",
   "graph": {
     "decals": [],
     "links": [
@@ -497,7 +498,22 @@
     "pla",
     "layer lines",
     "filament",
-    "white"
+    "white",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "matte",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "ridged",
+    "mockup",
+    "model",
+    "prototyping",
+    "toys",
+    "tools",
+    "industrial"
   ],
   "type": "plastic"
 }

@@ -222,7 +222,7 @@ fn cone_paper(name: &'static str, tags: &'static [&'static str], colour: Spectru
 /// The vinyl a cabinet is covered in: cloth coated with PVC and embossed
 /// with a grain, `pebbles` to the metre and `depth` metres deep, glossier
 /// on the tops of the grain than between.
-fn vinyl(name: &'static str, tags: &'static [&'static str], colour: Spectrum, pebbles: f32, depth: f32) -> Preset {
+pub(crate) fn vinyl(name: &'static str, tags: &'static [&'static str], colour: Spectrum, pebbles: f32, depth: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {
         m.base_color = colour;
         m.base_diffuse_roughness = 0.4;
@@ -264,6 +264,10 @@ fn carpet(name: &'static str, tags: &'static [&'static str], dark: Spectrum, lig
     let mottle = noise(&mut r, 45.0, 4.0, 0.5);
     let tone = plus(&mut r, fibres, 0.5, mottle);
     let colour = r.ramp(tone, crate::recipe::Linear, &[(0.4, dark), (1.2, light)]);
+    // The wiry fibres that stand out of it, paler than the mat.
+    let hairs = crate::fabric::loose_fibres(&mut r, 300.0, 0.035);
+    let some = r.math("multiply", hairs, 0.55);
+    let colour = r.node("mix").f("Factor", some).w("A", colour).c("B", light * 2.6).out("Result");
     r.to(Param::BaseColor, colour);
     preset(name, "Fabric", tags, MaterialType::Velvet, r)
 }

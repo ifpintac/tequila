@@ -3,6 +3,7 @@
   "base_metalness": 0.2,
   "category": "Composite",
   "coat_roughness": 0,
+  "description": "Bare golden-yellow aramid cloth without resin, in a plain weave with a soft, slightly fuzzy surface, as in gloves and body armour.",
   "graph": {
     "decals": [],
     "links": [
@@ -4401,7 +4402,23 @@
     "dry",
     "plain",
     "gold",
-    "yellow"
+    "yellow",
+    "aramid fiber",
+    "aramid fibre",
+    "yellow fabric",
+    "unresin",
+    "woven",
+    "textile",
+    "cloth",
+    "ballistic",
+    "protective",
+    "matte",
+    "para-aramid",
+    "golden",
+    "sporting goods",
+    "industrial",
+    "prototyping",
+    "apparel"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
-  "base_color": [0.97, 0.93, 0.87],
+  "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Bright nickel plating: a smooth, slightly warm silver mirror, as on jack nuts, bushings, connector parts and small hardware.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -143,7 +144,22 @@
     "nut",
     "bushing",
     "hardware",
-    "bright"
+    "bright",
+    "polished nickel",
+    "electroplated",
+    "mirror",
+    "shiny",
+    "silver",
+    "warm silver",
+    "jack nut",
+    "connector",
+    "fastener",
+    "thread",
+    "ring",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "metal"
 }

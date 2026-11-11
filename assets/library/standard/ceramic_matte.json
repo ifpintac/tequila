@@ -1,7 +1,8 @@
 {
   "base_color": [0.6981194, 0.68106157, 0.6144297],
   "base_diffuse_roughness": 0.45,
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
+  "description": "A soft, dry-looking pale ceramic with a matte to satin surface, as on stoneware vases, planters and mugs.",
   "graph": {
     "decals": [],
     "links": [
@@ -960,7 +961,19 @@
     "bisque",
     "matte",
     "satin",
-    "stoneware"
+    "stoneware",
+    "unglazed",
+    "biscuit",
+    "pottery",
+    "fired",
+    "vase",
+    "planter",
+    "mug",
+    "off-white",
+    "clay",
+    "kitchenware",
+    "interior",
+    "jewellery"
   ],
   "type": "generic"
 }

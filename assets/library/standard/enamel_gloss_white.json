@@ -1,7 +1,8 @@
 {
   "base_color": [0.956, 0.956, 0.956],
-  "category": "Paint",
+  "category": "Paint & Coating",
   "coat_roughness": 0.01,
+  "description": "A smooth, glossy white enamel paint, as on appliance panels, cabinets and trim.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -59,12 +60,26 @@
     "output": 1
   },
   "name": "Enamel Gloss White",
-  "specular_roughness": 0.08,
   "tags": [
     "enamel",
     "appliance",
     "gloss",
-    "white"
+    "white",
+    "white paint",
+    "gloss paint",
+    "glossy",
+    "gloss enamel",
+    "sprayed",
+    "baked",
+    "smooth",
+    "fridge",
+    "washing machine",
+    "white goods",
+    "hard shell",
+    "appliances",
+    "furniture",
+    "interior",
+    "industrial"
   ],
   "type": "paint"
 }

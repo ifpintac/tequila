@@ -1,6 +1,7 @@
 {
   "base_color": [0.104760505, 0.108228736, 0.11937647],
   "category": "Fabric",
+  "description": "A smooth, thin grey nylon with a tight plain weave and a faint crisp sheen, for sneaker tongues, linings and light jackets.",
   "fuzz_color": [0.38085476, 0.38342872, 0.39168334],
   "fuzz_weight": 0.04,
   "graph": {
@@ -5335,7 +5336,21 @@
     "sneaker",
     "footwear",
     "jacket",
-    "grey"
+    "grey",
+    "textile",
+    "cloth",
+    "plain weave",
+    "sheen",
+    "lining",
+    "crisp",
+    "polyester",
+    "windbreaker",
+    "sneaker lining",
+    "lightweight",
+    "gray",
+    "shoes",
+    "apparel",
+    "bags"
   ],
   "type": "real_cloth"
 }

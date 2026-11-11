@@ -655,6 +655,7 @@ pub fn library_entry(
         .collect();
     let textures = payload.textures.into_iter().filter(|(id, _)| used.contains(id)).collect();
     Ok(tequila_format::library::LibraryEntry {
+        description: String::new(),
         name,
         category,
         tags,

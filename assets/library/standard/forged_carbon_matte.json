@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.38,
   "coat_weight": 1,
+  "description": "A black marbled surface of chopped carbon chips pressed in resin under a matte finish, as on car trim and watch cases.",
   "graph": {
     "decals": [],
     "links": [
@@ -984,7 +985,21 @@
     "chopped",
     "composite",
     "marbled",
-    "matte"
+    "matte",
+    "carbon fiber",
+    "cfrp",
+    "chopped carbon",
+    "forged composite",
+    "marble pattern",
+    "compression moulded",
+    "compression molded",
+    "black",
+    "resin",
+    "flat",
+    "automotive",
+    "watches",
+    "electronics",
+    "sporting goods"
   ],
   "type": "generic"
 }

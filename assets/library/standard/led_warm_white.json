@@ -1,5 +1,6 @@
 {
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A glowing soft yellowish-white light source, as in a lamp, string light or filament-style bulb.",
   "emission_color": [0.9026, 0.7919, 0.5584],
   "emission_luminance": 30,
   "name": "LED Warm White",
@@ -7,7 +8,22 @@
     "led",
     "light",
     "warm",
-    "white"
+    "white",
+    "soft white",
+    "2700k",
+    "3000k",
+    "white light",
+    "emitter",
+    "lit",
+    "glowing",
+    "emissive",
+    "lamp",
+    "bulb",
+    "fairy lights",
+    "led strip",
+    "lighting",
+    "electronics",
+    "interior"
   ],
   "type": "emissive"
 }

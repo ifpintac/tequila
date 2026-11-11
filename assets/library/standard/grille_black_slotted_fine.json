@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black powder-coated sheet punched with narrow, closely spaced slots: a dark matte vent face with a fine linear texture, as on a cabinet or enclosure.",
   "graph": {
     "decals": [],
     "links": [
@@ -3478,7 +3479,23 @@
     "slotted",
     "fine",
     "black",
-    "powder coat"
+    "powder coat",
+    "narrow slots",
+    "thin slots",
+    "punched",
+    "perforated sheet",
+    "black grille",
+    "powder coated",
+    "matte black",
+    "grill",
+    "steel",
+    "cover",
+    "panel",
+    "ventilation",
+    "electronics",
+    "audio",
+    "industrial",
+    "appliances"
   ],
   "type": "generic"
 }

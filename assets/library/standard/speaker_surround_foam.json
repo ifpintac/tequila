@@ -1,7 +1,8 @@
 {
   "base_color": [0.023200948, 0.023166876, 0.02402689],
   "base_diffuse_roughness": 1,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A charcoal foam half-roll that flexibly joins a speaker cone to its basket, with a porous matte surface.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -239,7 +240,23 @@
     "roll",
     "foam",
     "woofer",
-    "charcoal"
+    "charcoal",
+    "foam roll",
+    "loudspeaker",
+    "driver",
+    "half roll",
+    "suspension",
+    "porous",
+    "soft",
+    "dark grey",
+    "gray",
+    "matte",
+    "polyurethane foam",
+    "sponge",
+    "audio",
+    "electronics",
+    "automotive",
+    "musical instruments"
   ],
   "type": "generic"
 }

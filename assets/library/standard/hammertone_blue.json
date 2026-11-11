@@ -1,7 +1,8 @@
 {
   "base_color": [0.048878785, 0.07052126, 0.17180729],
   "base_metalness": 0.5,
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A blue metallic paint with a hand-beaten, dimpled look and a satin sheen, as on instrument chassis and test equipment.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -94,7 +95,22 @@
     "hammer finish",
     "hammered paint",
     "chassis",
-    "blue"
+    "blue",
+    "blue paint",
+    "hammered",
+    "dimpled",
+    "hammer paint",
+    "textured",
+    "metallic",
+    "satin",
+    "sprayed",
+    "baked",
+    "test equipment",
+    "vintage",
+    "painted metal",
+    "industrial",
+    "electronics",
+    "audio"
   ],
   "type": "generic"
 }

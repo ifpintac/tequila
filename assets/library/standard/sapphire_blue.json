@@ -1,12 +1,24 @@
 {
   "category": "Gem",
+  "description": "A deep royal-blue transparent corundum with bright facets, as set in rings and used for watch crystals and jewel bearings.",
   "name": "Sapphire Blue",
   "specular_ior": 1.77,
   "tags": [
     "sapphire",
     "corundum",
     "blue",
-    "jewellery"
+    "jewellery",
+    "royal blue",
+    "blue gem",
+    "blue corundum",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "september",
+    "transparent",
+    "precious",
+    "watches",
+    "accessories"
   ],
   "transmission_color": [0.2011, 0.2496, 0.8127],
   "transmission_dispersion_abbe": 72,

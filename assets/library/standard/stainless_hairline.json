@@ -1,6 +1,7 @@
 {
   "base_color": [0.8458, 0.8541, 0.8689],
   "category": "Metal",
+  "description": "Stainless steel with very fine, long hairline brushing: a cool, even satin grey with a smooth silky grain, as on a fridge door or lift panel.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -411,7 +412,23 @@
     "stainless",
     "hairline",
     "fine brushed",
-    "appliance"
+    "appliance",
+    "inox",
+    "ss304",
+    "stainless steel",
+    "no.4 finish",
+    "#4",
+    "satin",
+    "grey",
+    "gray",
+    "brushed",
+    "hairline finish",
+    "fridge",
+    "lift",
+    "appliances",
+    "architecture",
+    "kitchenware",
+    "interior"
   ],
   "type": "anisotropic"
 }

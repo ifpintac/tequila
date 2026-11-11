@@ -1,6 +1,7 @@
 {
   "base_color": [0.9, 0.9, 0.88],
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A milky opal white polycarbonate that glows evenly when backlit, as on LED windows and light rings.",
   "edge_radius": 0.0003,
   "name": "Diffuser White",
   "specular_roughness": 0.34,
@@ -11,7 +12,21 @@
     "led window",
     "light ring",
     "translucent",
-    "polycarbonate"
+    "polycarbonate",
+    "opal diffuser",
+    "frosted",
+    "satin",
+    "translucent white",
+    "light pipe",
+    "led cover",
+    "lamp cover",
+    "diffusing",
+    "backlit",
+    "cloudy",
+    "lighting",
+    "electronics",
+    "signage",
+    "appliances"
   ],
   "type": "plastic_cloudy"
 }

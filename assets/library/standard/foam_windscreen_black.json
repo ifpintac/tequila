@@ -1,7 +1,8 @@
 {
   "base_color": [0.012, 0.012, 0.013],
   "base_diffuse_roughness": 1,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black open-cell foam with a fine porous surface, as on microphone windscreens and pop covers.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -240,7 +241,21 @@
     "microphone",
     "pop filter",
     "open cell",
-    "black"
+    "black",
+    "microphone cover",
+    "wind shield",
+    "pop shield",
+    "polyurethane foam",
+    "sponge",
+    "porous",
+    "matte",
+    "soft",
+    "mic foam",
+    "acoustic",
+    "fuzzy",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "generic"
 }

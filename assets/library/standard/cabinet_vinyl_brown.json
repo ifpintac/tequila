@@ -1,7 +1,8 @@
 {
   "base_color": [0.053169623, 0.033166293, 0.0186908],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Brown textured vinyl covering with a fine leather-like grain and a low sheen, for amplifier, speaker and instrument-case coverings.",
   "graph": {
     "decals": [],
     "links": [
@@ -448,7 +449,20 @@
     "vinyl",
     "leatherette",
     "covering",
-    "brown"
+    "brown",
+    "tolex",
+    "pvc covering",
+    "amp covering",
+    "speaker cover",
+    "guitar amp",
+    "faux leather",
+    "tan",
+    "textured",
+    "matte",
+    "wrapped",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "generic"
 }

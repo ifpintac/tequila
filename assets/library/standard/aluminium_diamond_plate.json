@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Aluminium sheet with raised diamond-shaped ribs: a bright silver non-slip surface, as on a truck toolbox, ramp or workshop floor.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -2171,7 +2172,22 @@
     "checker plate",
     "tread",
     "industrial",
-    "floor"
+    "floor",
+    "chequer plate",
+    "checkerplate",
+    "checker",
+    "non-slip",
+    "anti slip",
+    "raised",
+    "sheet",
+    "floor plate",
+    "toolbox",
+    "aluminum",
+    "embossed",
+    "rolled",
+    "automotive",
+    "tools",
+    "architecture"
   ],
   "type": "metal"
 }

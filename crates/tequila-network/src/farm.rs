@@ -520,8 +520,13 @@ mod tests {
 
     #[test]
     fn a_node_nobody_runs_says_so_in_words() {
-        // A port taken and let go: nothing listens there now.
-        let address = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+        // Port 1, which nothing listens on and the system never hands out to
+        // a program asking for any free port. A port taken and let go was
+        // here once, and the tests beside this one, run at the same time,
+        // could be given it a moment later: the node then reached their
+        // listener, and waited on it, Connecting, past the deadline (seen
+        // on Windows, which hands freed ports out again soonest).
+        let address = "127.0.0.1:1".to_string();
         let farm = Farm::new("farm token");
         farm.add_worker(&address);
         let deadline = Instant::now() + Duration::from_secs(10);

@@ -30,7 +30,9 @@ Right-click a tile:
 
 - **Duplicate to my library** — works on shipped presets too; the copy is
   yours to change, and opens straight into *Edit details*.
-- **Edit details…** — name, category, tags.
+- **Edit details…** — name, category, tags, and a description: a sentence on
+  what it is and what it is for, shown when the pointer rests on it and in
+  the Cards view.
 - **Update from the selected part** — the workflow for refining a preset: put
   it on a part, tune it in the Material tab or node editor, then save the
   result back over the preset, keeping its name.
@@ -85,12 +87,18 @@ stays readable and diffable.
   "name": "Housing Blue",
   "type": "plastic",
   "category": "Plastic",
-  "tags": ["abs", "satin", "housing"],
+  "tags": ["abs", "satin", "housing", "electronics"],
+  "description": "A satin blue ABS for a moulded housing.",
   "base_color": [0.045, 0.11, 0.42],
   "specular_roughness": 0.3
 }
 ```
 
+- `description` is optional. `tags` are what search matches besides the name
+  and category; a tag that is one of the library's uses (`electronics`,
+  `audio`, `furniture`, `bags`, `shoes`, `apparel`, `automotive`,
+  `packaging`, … — `library::USES`) also puts it under that use in the
+  library's *Use* filter.
 - `type` is a material type's id: `plastic`, `metal`, `anisotropic`, `paint`,
   `metallic_paint`, `glass`, `glass_solid`, `plastic_transparent`,
   `plastic_cloudy`, `translucent`, `velvet`, `generic`, … (`query api` lists

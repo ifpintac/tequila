@@ -1,6 +1,7 @@
 {
   "base_color": [0.3196, 0.0452, 0.023],
   "category": "Plastic",
+  "description": "A glossy saturated red ABS moulded smooth, as on toy parts and handheld tool bodies.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -140,7 +141,19 @@
     "abs",
     "red",
     "gloss",
-    "toy"
+    "toy",
+    "acrylonitrile butadiene styrene",
+    "glossy",
+    "shiny",
+    "red plastic",
+    "moulded",
+    "molded",
+    "injection moulded",
+    "housing",
+    "toys",
+    "tools",
+    "appliances",
+    "electronics"
   ],
   "type": "plastic"
 }

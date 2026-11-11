@@ -1,6 +1,7 @@
 {
   "base_color": [0.010990992, 0.010968867, 0.011527344],
   "category": "Plastic",
+  "description": "A moulded fine grain that imitates leather, as on car dashboards, door cards and case trims.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -169,7 +170,20 @@
     "grained",
     "leatherette",
     "automotive",
-    "interior"
+    "interior",
+    "leather look",
+    "faux leather",
+    "embossed",
+    "textured",
+    "dashboard",
+    "interior trim",
+    "skin",
+    "etched",
+    "mould texture",
+    "mold texture",
+    "vinyl look",
+    "accessories",
+    "electronics"
   ],
   "type": "plastic"
 }

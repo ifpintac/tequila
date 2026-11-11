@@ -1,8 +1,9 @@
 {
   "base_color": [0.024456402, 0.034786627, 0.08511254],
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "A glossy blue glaze that varies from deep to pale in runs and patches, as on handmade pots and bowls.",
   "graph": {
     "decals": [],
     "links": [
@@ -815,7 +816,20 @@
     "glaze",
     "blue",
     "pottery",
-    "variegated"
+    "variegated",
+    "reactive glaze",
+    "mottled",
+    "streaky",
+    "handmade",
+    "glazed",
+    "fired",
+    "studio pottery",
+    "bowl",
+    "vase",
+    "glossy",
+    "kitchenware",
+    "interior",
+    "jewellery"
   ],
   "type": "generic"
 }

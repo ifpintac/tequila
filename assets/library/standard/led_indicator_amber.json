@@ -1,6 +1,7 @@
 {
   "base_color": [0.25, 0.0675, 0],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A small lit amber LED lens glowing on a dark panel, as a power or status indicator on equipment.",
   "edge_radius": 0.0002,
   "emission_color": [1, 0.27, 0],
   "emission_luminance": 1.3,
@@ -85,7 +86,22 @@
     "status",
     "amber",
     "orange",
-    "pilot light"
+    "pilot light",
+    "yellow",
+    "status light",
+    "power light",
+    "pilot lamp",
+    "glowing",
+    "illuminated",
+    "panel led",
+    "5mm led",
+    "on state",
+    "lens",
+    "glow",
+    "electronics",
+    "lighting",
+    "appliances",
+    "audio"
   ],
   "type": "generic"
 }

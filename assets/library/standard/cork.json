@@ -1,7 +1,8 @@
 {
   "base_color": [0.421902, 0.23878396, 0.1507332],
   "base_diffuse_roughness": 0.65,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A fine, light tan natural cork made of tiny granules, with a dull velvety surface, as on boards, coasters and mats.",
   "graph": {
     "decals": [],
     "links": [
@@ -1209,7 +1210,23 @@
     "cork",
     "natural",
     "granulated",
-    "board"
+    "board",
+    "natural cork",
+    "cork board",
+    "granulated cork",
+    "beige",
+    "tan",
+    "light brown",
+    "matte",
+    "pinboard",
+    "coaster",
+    "yoga block",
+    "bark",
+    "eco",
+    "interior",
+    "kitchenware",
+    "accessories",
+    "furniture"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
-  "base_color": [0.97, 0.93, 0.87],
+  "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Nickel plating with fine linear brush lines: a warm satin silver with directional streaks, as on nuts, collars and small hardware.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -362,7 +363,7 @@
           {
             "socket": "input:1",
             "value": {
-              "color": [0.97, 0.93, 0.87]
+              "color": [0.99, 0.975, 0.95]
             }
           }
         ],
@@ -411,7 +412,21 @@
     "plated",
     "brushed",
     "nut",
-    "hardware"
+    "hardware",
+    "hairline",
+    "grain",
+    "satin",
+    "silver",
+    "electroplated",
+    "collar",
+    "washer",
+    "fastener",
+    "fitting",
+    "linear grain",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "anisotropic"
 }

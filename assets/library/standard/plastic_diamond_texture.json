@@ -1,6 +1,7 @@
 {
   "base_color": [0.027970152, 0.028411407, 0.03247288],
   "category": "Plastic",
+  "description": "A moulded diamond-pyramid pattern that gives a sharp, knurled-looking grip surface, as on handles and pedal covers.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,23 @@
     "knurled",
     "pyramid",
     "grip",
-    "textured"
+    "textured",
+    "knurl",
+    "pyramid pattern",
+    "etched",
+    "mould texture",
+    "mold texture",
+    "non slip",
+    "handle",
+    "tool",
+    "grip pattern",
+    "moulded",
+    "molded",
+    "patterned",
+    "tools",
+    "sporting goods",
+    "automotive",
+    "industrial"
   ],
   "type": "plastic"
 }

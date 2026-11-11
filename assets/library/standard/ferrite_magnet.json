@@ -1,7 +1,8 @@
 {
   "base_color": [0.025340328, 0.025230434, 0.028004345],
   "base_diffuse_roughness": 0.5,
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
+  "description": "A dull dark grey sintered ceramic magnet with a fine matte grain, as in the ring behind a loudspeaker driver.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,21 @@
     "driver",
     "sintered",
     "ceramic",
-    "dark grey"
+    "dark grey",
+    "ceramic magnet",
+    "permanent magnet",
+    "speaker magnet",
+    "ring magnet",
+    "black",
+    "charcoal",
+    "matte",
+    "pressed",
+    "fired",
+    "driver magnet",
+    "iron oxide",
+    "audio",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

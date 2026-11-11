@@ -1,6 +1,7 @@
 {
   "base_color": [0.85, 0.8, 0.7],
   "category": "Metal",
+  "description": "Titanium coloured by heat or anodising into bands of gold, purple and blue: a rainbow oxide sheen, as on an exhaust pipe or a decorative part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -266,7 +267,23 @@
     "anodised",
     "rainbow",
     "exhaust",
-    "temper"
+    "temper",
+    "heat treated",
+    "oxide",
+    "temper colours",
+    "temper colors",
+    "iridescent",
+    "purple",
+    "blue",
+    "gold",
+    "straw",
+    "tailpipe",
+    "burnt",
+    "ti",
+    "automotive",
+    "accessories",
+    "jewellery",
+    "sporting goods"
   ],
   "type": "metal"
 }

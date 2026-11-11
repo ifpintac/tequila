@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "Golden-yellow aramid cloth in a diagonal twill weave under clear resin, as in racing parts, helmets and boat hulls.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,20 @@
     "weave",
     "twill",
     "gold",
-    "yellow"
+    "yellow",
+    "aramid fiber",
+    "aramid fibre",
+    "golden",
+    "resin",
+    "laminate",
+    "woven",
+    "glossy",
+    "diagonal weave",
+    "impact resistant",
+    "para-aramid",
+    "sporting goods",
+    "industrial",
+    "prototyping"
   ],
   "type": "generic"
 }

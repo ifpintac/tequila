@@ -1,12 +1,24 @@
 {
   "category": "Gem",
+  "description": "A deep red transparent corundum, cut with bright facets, as set in rings, pendants and watch jewels.",
   "name": "Ruby",
   "specular_ior": 1.77,
   "tags": [
     "ruby",
     "corundum",
     "red",
-    "jewellery"
+    "jewellery",
+    "red gem",
+    "pigeon blood",
+    "red corundum",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "july",
+    "transparent",
+    "precious",
+    "watches",
+    "accessories"
   ],
   "transmission_color": [0.602, 0.1758, 0.2057],
   "transmission_dispersion_abbe": 72,

@@ -1,6 +1,7 @@
 {
   "base_color": [0.45415324, 0.38566917, 0.20557585],
   "category": "Fabric",
+  "description": "A smooth champagne-gold woven cloth with a glossy, flowing sheen and a very fine weave, for evening wear, linings and ribbons.",
   "fuzz_color": [0.74845606, 0.69173014, 0.46950904],
   "fuzz_weight": 0.05,
   "graph": {
@@ -5268,7 +5269,22 @@
     "silk",
     "woven",
     "sheen",
-    "gold"
+    "gold",
+    "textile",
+    "cloth",
+    "polyester",
+    "glossy",
+    "smooth",
+    "lustrous",
+    "gown",
+    "lining",
+    "ribbon",
+    "pillow",
+    "beige",
+    "pale gold",
+    "apparel",
+    "accessories",
+    "interior"
   ],
   "type": "real_cloth"
 }

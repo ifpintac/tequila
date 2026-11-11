@@ -1,6 +1,7 @@
 {
   "base_color": [0.5872, 0.4205, 0.1124],
-  "category": "Translucent",
+  "category": "Liquid & Wax",
+  "description": "A soft, warm yellow wax that is slightly see-through, as in candles, polish and honeycomb.",
   "name": "Beeswax",
   "specular_roughness": 0.4,
   "subsurface_color": [0.6672, 0.4774, 0.1204],
@@ -8,7 +9,21 @@
   "tags": [
     "wax",
     "beeswax",
-    "yellow"
+    "yellow",
+    "natural wax",
+    "yellow wax",
+    "honeycomb",
+    "candle",
+    "polish",
+    "waxy",
+    "translucent",
+    "soft",
+    "golden",
+    "amber",
+    "bees wax",
+    "cosmetics",
+    "food & drink",
+    "interior"
   ],
   "type": "translucent"
 }

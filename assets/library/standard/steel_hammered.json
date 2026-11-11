@@ -1,6 +1,7 @@
 {
   "base_color": [0.6, 0.61, 0.62],
   "category": "Metal",
+  "description": "Steel planished with a hammer: a grey metal covered in shallow overlapping dimples, as on a forged panel, bowl or handmade tool.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "steel",
     "hammered",
     "planished",
-    "forged"
+    "forged",
+    "dimpled",
+    "planished steel",
+    "beaten",
+    "handmade",
+    "artisan",
+    "bowl",
+    "grey",
+    "gray",
+    "textured",
+    "panel",
+    "blacksmith",
+    "tools",
+    "kitchenware",
+    "interior",
+    "furniture"
   ],
   "type": "metal"
 }

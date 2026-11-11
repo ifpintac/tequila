@@ -1,6 +1,7 @@
 {
   "base_color": [0.73202276, 0.5682088, 0.082007565],
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A matte yellow PLA print with visible layer lines, as from a desktop filament printer.",
   "graph": {
     "decals": [],
     "links": [
@@ -497,7 +498,21 @@
     "pla",
     "layer lines",
     "filament",
-    "yellow"
+    "yellow",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "matte",
+    "yellow plastic",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "ridged",
+    "prototyping",
+    "toys",
+    "tools",
+    "industrial"
   ],
   "type": "plastic"
 }

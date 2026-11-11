@@ -1,6 +1,7 @@
 {
   "base_color": [0.016623849, 0.023286643, 0.11819069],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A bright gloss blue under a clear coat, flecked with fine aluminium that shifts in brightness with the angle, as on a sports car.",
   "edge_radius": 0.0004,
   "flake_color": [0.35404205, 0.4279747, 0.75513166],
   "flake_roughness": 0.18,
@@ -62,12 +63,25 @@
     "output": 1
   },
   "name": "Automotive Blue Metallic",
-  "specular_roughness": 0.24,
   "tags": [
     "car",
     "metallic",
     "flake",
-    "blue"
+    "blue",
+    "blue paint",
+    "metallic paint",
+    "clear coat",
+    "glossy",
+    "sprayed",
+    "baked",
+    "aluminium flake",
+    "aluminum flake",
+    "sparkle",
+    "car paint",
+    "vehicle paint",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "metallic_paint"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.14008887, 0.14140432, 0.1369414],
   "category": "Fabric",
+  "description": "A loose, open silver-and-black woven cloth with a fine visible grid, stretched over speaker and amplifier fronts so sound passes through.",
   "fuzz_color": [0.35022217, 0.3535108, 0.34235352],
   "fuzz_weight": 0.12,
   "graph": {
@@ -5270,7 +5271,21 @@
     "cabinet",
     "woven",
     "silver",
-    "salt and pepper"
+    "salt and pepper",
+    "textile",
+    "acoustic",
+    "sound-permeable",
+    "plain weave",
+    "open weave",
+    "matte",
+    "speaker front",
+    "guitar amp",
+    "hi-fi",
+    "monitor",
+    "dark",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "real_cloth"
 }

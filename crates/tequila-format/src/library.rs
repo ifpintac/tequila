@@ -53,10 +53,16 @@ pub enum Source {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LibraryEntry {
     pub name: String,
-    /// The group it appears under: Plastic, Metal, Paint, Glass, Fabric, Other.
+    /// The group it appears under, one of [`CATEGORIES`] for the library's
+    /// own; a person's own may name any.
     pub category: String,
-    /// Words to match when searching, beyond the name and category.
+    /// Words to match when searching, beyond the name and category: what it
+    /// is also called, its finish and colour, how it is made, and what it is
+    /// used for (a word from [`USES`]).
     pub tags: Vec<String>,
+    /// A sentence or two on what it looks like and what it is for, shown
+    /// when the pointer rests on it. Empty for one that has none.
+    pub description: String,
     pub material_type: MaterialType,
     pub material: Material,
     /// The material as a graph: patterns driving its parameters, when it has
@@ -212,6 +218,7 @@ impl LibraryEntry {
             name,
             category,
             tags: Vec::new(),
+            description: String::new(),
             material_type,
             material,
             graph,
@@ -220,6 +227,11 @@ impl LibraryEntry {
             source,
             path: String::new(),
         }
+    }
+
+    /// Whether it is tagged as used for `use_`, one of [`USES`].
+    pub fn is_for(&self, use_: &str) -> bool {
+        self.tags.iter().any(|t| t.eq_ignore_ascii_case(use_))
     }
 
     /// Whether a search query matches. Case-insensitive, and matches any word
@@ -365,6 +377,7 @@ pub fn read_entry(text: &str, name_hint: &str) -> Result<LibraryEntry, FormatErr
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
             .collect(),
+        description: value.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         material_type,
         material,
         graph,
@@ -632,6 +645,9 @@ fn write_entry_in(entry: &LibraryEntry, directory: Option<&Path>) -> String {
                 .map(|t| crate::json::Value::String(t.clone()))
                 .collect::<Vec<crate::json::Value>>(),
         );
+    }
+    if !entry.description.is_empty() {
+        object.set("description", entry.description.clone());
     }
     if let Some(unit) = entry.preview_uv_unit {
         object.set("preview_uv_unit", unit);
@@ -1111,10 +1127,11 @@ pub fn save_copy(entry: &LibraryEntry, directory: &Path, name: &str) -> Result<P
 /// A user entry renamed, filed under another category, or tagged
 /// differently, rewritten where it is. Its file keeps its name: the file is
 /// where it lives, not what it is called.
-pub fn edit_details(entry: &LibraryEntry, name: &str, category: &str, tags: &[String]) -> Result<LibraryEntry, FormatError> {
+pub fn edit_details(entry: &LibraryEntry, name: &str, category: &str, tags: &[String], description: &str) -> Result<LibraryEntry, FormatError> {
     let mut edited = entry.clone();
     edited.name = name.trim().to_string();
     edited.category = category.trim().to_string();
+    edited.description = description.trim().to_string();
     edited.tags = tags.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
     if edited.name.is_empty() || edited.category.is_empty() {
         return Err(FormatError::Invalid("a material needs a name and a category".into()));
@@ -1383,8 +1400,21 @@ pub fn read_directory_from(
         }
     }
 
-    entries.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
+    sort(&mut entries);
     (entries, problems)
+}
+
+/// Entries in the order the library shows them: by category in
+/// [`CATEGORIES`]' order (a person's own categories after, by name), then
+/// by name.
+pub fn sort(entries: &mut [LibraryEntry]) {
+    entries.sort_by(|a, b| (category_rank(&a.category), &a.category, &a.name).cmp(&(category_rank(&b.category), &b.category, &b.name)));
+}
+
+/// Where `category` comes in [`CATEGORIES`]; after all of them when it is
+/// not one.
+pub fn category_rank(category: &str) -> usize {
+    CATEGORIES.iter().position(|c| *c == category).unwrap_or(CATEGORIES.len())
 }
 
 /// The categories present, in a stable order for the browser's sidebar.
@@ -1395,8 +1425,71 @@ pub fn categories(entries: &[LibraryEntry]) -> Vec<String> {
             seen.push(entry.category.clone());
         }
     }
-    seen.sort();
+    // The library's own in [`CATEGORIES`]' order, which runs from what a
+    // product is most often made of; a person's own after them, by name.
+    seen.sort_by_key(|c| (category_rank(c), c.clone()));
     seen
+}
+
+/// The standard library's categories, in the order the library lists
+/// them: what a product is most often made of first, its parts that light
+/// and its surroundings after.
+pub const CATEGORIES: &[&str] = &[
+    "Plastic",
+    "Rubber & Foam",
+    "Glass & Clear Plastic",
+    "Metal",
+    "Metal Pattern & Mesh",
+    "Paint & Coating",
+    "Wood",
+    "Leather & Suede",
+    "Fabric",
+    "Composite",
+    "3D Print",
+    "Light & Display",
+    "Stone & Ceramic",
+    "Gem",
+    "Paper & Cork",
+    "Liquid & Wax",
+];
+
+/// What a material is used for: the words the standard library tags its
+/// presets with for it, and the library's Use filter offers.
+pub const USES: &[&str] = &[
+    "electronics",
+    "audio",
+    "musical instruments",
+    "appliances",
+    "lighting",
+    "furniture",
+    "interior",
+    "architecture",
+    "automotive",
+    "bags",
+    "shoes",
+    "apparel",
+    "accessories",
+    "jewellery",
+    "watches",
+    "eyewear",
+    "cosmetics",
+    "packaging",
+    "kitchenware",
+    "food & drink",
+    "toys",
+    "tools",
+    "sporting goods",
+    "outdoor gear",
+    "medical",
+    "industrial",
+    "signage",
+    "prototyping",
+];
+
+/// The uses of [`USES`] at least one of `entries` has among its tags, in
+/// [`USES`]' order.
+pub fn uses(entries: &[LibraryEntry]) -> Vec<&'static str> {
+    USES.iter().copied().filter(|u| entries.iter().any(|e| e.is_for(u))).collect()
 }
 
 /// Guard against a preset naming a parameter its type never shows.
@@ -1433,6 +1526,7 @@ mod writer_tests {
         material.specular_roughness = 0.17;
         material.base_color = tequila_core::spectrum::spectrum(0.91, 0.86, 0.62);
         LibraryEntry {
+            description: String::new(),
             name: "Brass Satin Test".to_string(),
             category: "Metal".to_string(),
             tags: vec!["brass".to_string(), "satin".to_string()],
@@ -1577,6 +1671,7 @@ mod writer_tests {
     #[test]
     fn only_the_differences_are_written() {
         let plain = LibraryEntry {
+            description: String::new(),
             name: "Plain".to_string(),
             category: "Plastic".to_string(),
             tags: Vec::new(),
@@ -1603,6 +1698,7 @@ mod writer_tests {
     #[test]
     fn a_strips_preview_size_is_kept() {
         let plain = |unit: Option<f32>| LibraryEntry {
+            description: String::new(),
             name: "Lace".to_string(),
             category: "Fabric".to_string(),
             tags: Vec::new(),
@@ -1873,13 +1969,13 @@ mod writer_tests {
         assert_eq!(copy.name, "My White");
         assert_eq!(copy.graph.content_hash(), abs.graph.content_hash());
 
-        let edited = edit_details(copy, "Housing White", "Enclosures", &["matte".into(), " ".into()]).expect("edits");
+        let edited = edit_details(copy, "Housing White", "Enclosures", &["matte".into(), " ".into()], " For the case of a lamp. ").expect("edits");
         let (mine, _) = read_directory_from(&root, Source::User);
         assert_eq!(mine[0].name, "Housing White");
         assert_eq!(mine[0].category, "Enclosures");
         assert_eq!(mine[0].tags, vec!["matte".to_string()]);
         assert_eq!(mine[0].path, copy_path.display().to_string(), "editing details moved the file");
-        assert!(edit_details(&edited, " ", "Enclosures", &[]).is_err());
+        assert!(edit_details(&edited, " ", "Enclosures", &[], "").is_err());
 
         let mut tuned = mine[0].clone();
         tuned.material.specular_roughness = 0.6;
@@ -2271,6 +2367,34 @@ mod tests {
         assert!(find("nonexistentmaterial").is_empty());
     }
 
+    /// Every shipped material says what it is and what it is for, sits in
+    /// one of the library's categories, and is tagged with at least one use
+    /// - so the hover has a sentence, the category list has no strays, and
+    /// the Use filter finds it.
+    #[test]
+    fn every_shipped_material_has_a_description_a_category_and_a_use() {
+        let (entries, problems) = read_directory(&library_path());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(entries.len() > 500, "the library is there");
+        let mut wrong = Vec::new();
+        for e in &entries {
+            if e.description.trim().is_empty() {
+                wrong.push(format!("{}: no description", e.name));
+            }
+            if !CATEGORIES.contains(&e.category.as_str()) {
+                wrong.push(format!("{}: category `{}`", e.name, e.category));
+            }
+            if !USES.iter().any(|u| e.is_for(u)) {
+                wrong.push(format!("{}: no use", e.name));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        // And the categories list in the library's own order.
+        let listed = categories(&entries);
+        let ordered: Vec<String> = CATEGORIES.iter().filter(|c| listed.contains(&c.to_string())).map(|c| c.to_string()).collect();
+        assert_eq!(listed, ordered);
+    }
+
     /// A preset that sets a parameter its type never shows is usually a typo.
     #[test]
     fn presets_stay_within_the_parameters_their_type_shows() {
@@ -2351,8 +2475,8 @@ mod tests {
         let categories = categories(&entries);
         assert!(categories.len() >= 4, "got {categories:?}");
         let mut sorted = categories.clone();
-        sorted.sort();
-        assert_eq!(categories, sorted, "categories must come out in order");
+        sorted.sort_by_key(|c| (category_rank(c), c.clone()));
+        assert_eq!(categories, sorted, "categories must come out in the library's order");
         let unique: std::collections::BTreeSet<_> = categories.iter().collect();
         assert_eq!(unique.len(), categories.len());
     }

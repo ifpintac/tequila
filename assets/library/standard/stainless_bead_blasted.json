@@ -1,6 +1,7 @@
 {
   "base_color": [0.84, 0.85, 0.86],
   "category": "Metal",
+  "description": "Stainless steel blasted with fine beads: an even, soft matte grey with no direction, as on a machined housing, tool or watch case.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -141,7 +142,23 @@
     "steel",
     "stainless",
     "blasted",
-    "matte"
+    "matte",
+    "inox",
+    "ss304",
+    "ss316",
+    "stainless steel",
+    "bead blasted",
+    "sandblasted",
+    "satin",
+    "grey",
+    "gray",
+    "machined",
+    "cnc",
+    "case",
+    "watches",
+    "tools",
+    "industrial",
+    "medical"
   ],
   "type": "metal"
 }

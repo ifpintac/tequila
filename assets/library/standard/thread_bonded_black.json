@@ -1,6 +1,7 @@
 {
   "base_color": [0.0116771925, 0.011630686, 0.012804573],
   "category": "Fabric",
+  "description": "A fine, smooth black nylon sewing thread with a slight sheen, used for visible stitching on bags, shoes and technical gear.",
   "fuzz_color": [0.2587579, 0.25872302, 0.25960344],
   "fuzz_weight": 0.15,
   "graph": {
@@ -553,7 +554,21 @@
     "seam",
     "sewing",
     "nylon",
-    "black"
+    "black",
+    "textile",
+    "yarn",
+    "sewing thread",
+    "polyester",
+    "fibre",
+    "fiber",
+    "sheen",
+    "topstitch",
+    "cord",
+    "dark",
+    "bags",
+    "shoes",
+    "apparel",
+    "accessories"
   ],
   "type": "real_cloth"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.1068469, 0.109222636, 0.11589323],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A grey powder coat with a fine sandy texture and low sheen, as on rack units, chassis and equipment housings.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "sandy",
     "rack",
     "chassis",
-    "grey"
+    "grey",
+    "grey paint",
+    "gray",
+    "fine textured",
+    "sand texture",
+    "matte",
+    "low gloss",
+    "powder coated",
+    "baked",
+    "cured",
+    "sheet steel",
+    "rack mount",
+    "metal finish",
+    "electronics",
+    "audio",
+    "industrial"
   ],
   "type": "plastic"
 }
