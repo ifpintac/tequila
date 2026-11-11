@@ -1,0 +1,72 @@
+{
+  "category": "Plastic",
+  "edge_radius": 0.00025,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 5600
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000003,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Light Guide Frosted",
+  "specular_roughness": 0.36,
+  "tags": [
+    "light guide",
+    "light pipe",
+    "led",
+    "diffuser",
+    "frosted",
+    "indicator"
+  ],
+  "transmission_color": [0.94, 0.95, 0.95],
+  "type": "plastic_transparent"
+}
+

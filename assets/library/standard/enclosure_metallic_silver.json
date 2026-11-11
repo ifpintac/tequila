@@ -1,0 +1,75 @@
+{
+  "base_color": [0.27788448, 0.28648767, 0.30235377],
+  "category": "Paint",
+  "flake_color": [0.8952009, 0.9037141, 0.9190341],
+  "flake_roughness": 0.18,
+  "flake_size": 0.00004,
+  "flake_weight": 0.6,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 520
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000005,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Enclosure Metallic Silver",
+  "specular_roughness": 0.32,
+  "tags": [
+    "metallic",
+    "painted plastic",
+    "side panel",
+    "flake",
+    "silver",
+    "paint"
+  ],
+  "type": "metallic_paint"
+}
+

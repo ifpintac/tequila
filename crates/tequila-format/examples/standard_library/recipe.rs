@@ -221,6 +221,31 @@ impl Recipe {
         self.node("mapping").w("Vector", coords).v("Scale", scale).out("Vector")
     }
 
+    /// One of Tequila's node groups, its inputs by their names; its
+    /// outputs are taken with [`Recipe::of`].
+    pub fn group(&mut self, group: tequila_materials::groups::NodeGroup, inputs: &[(&str, f32)]) -> NodeId {
+        let mut node = Node::new(NodeKind::Group(group));
+        for (name, value) in inputs {
+            let index = group.inputs().iter().position(|i| i.name == *name).unwrap_or_else(|| panic!("{} has no input {name}", group.label()));
+            node.literals.insert(Socket::Input(index as u8), Value::Float(*value));
+        }
+        self.graph.add_node(node)
+    }
+
+    /// Output `name` of a node group added with [`Recipe::group`].
+    pub fn of(&self, node: NodeId, name: &str) -> Out {
+        let Some(NodeKind::Group(group)) = self.graph.node(node).map(|n| &n.kind) else { panic!("not a group") };
+        let index = group.outputs().iter().position(|o| o.name == name).unwrap_or_else(|| panic!("{} has no output {name}", group.label()));
+        Out(node, index as u8)
+    }
+
+    /// How sharply the surface turns outward: one along an edge, nought on
+    /// a flat. `radius` is the bend, in metres, that counts as an edge.
+    pub fn edges(&mut self, radius: f32, contrast: f32) -> Out {
+        let id = self.graph.add_node(Node::new(NodeKind::Curvature { mode: tequila_materials::graph::CurvatureMode::Convex, radius, contrast }));
+        Out(id, 0)
+    }
+
     /// The material as it stands, for a parameter not wired.
     pub fn material_mut(&mut self) -> &mut Material {
         self.graph.material_mut()
