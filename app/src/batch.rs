@@ -6348,6 +6348,10 @@ mod tests {
             ("Speaker Cone Paper White", 0.006),
             ("Foam Open Cell Charcoal", 0.006),
             ("Grille Cloth Wheat", 0.012),
+            // And what a chassis is folded from and vented through.
+            ("Steel Electrogalvanised", 0.025),
+            ("Grille Black Slotted", 0.025),
+            ("Grille Black Expanded", 0.025),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();

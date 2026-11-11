@@ -181,6 +181,26 @@ fn moulded_satin(name: &'static str, tags: &'static [&'static str], colour: Spec
     preset(name, "Plastic", tags, MaterialType::Plastic, r)
 }
 
+/// Nylon with glass fibre in it: duller and paler where the fibres lie
+/// at the surface, in the swirls the melt flowed in.
+fn glass_filled(name: &'static str, tags: &'static [&'static str], resin: Spectrum, fibre: Spectrum) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = resin;
+        m.specular_ior = 1.53;
+        m.specular_roughness = 0.46;
+        m.edge_radius = 3.5e-4;
+    }));
+    let flow = r.node("noise_texture").f("Scale", 220.0).f("Detail", 4.0).f("Roughness", 0.55).f("Distortion", 2.2).out("Fac");
+    let colour = r.node("mix").w("Factor", flow).c("A", resin).c("B", fibre).out("Result");
+    r.to(Param::BaseColor, colour);
+    let sheen = r.range(flow, (0.3, 0.7), (0.38, 0.54));
+    r.to(Param::SpecularRoughness, sheen);
+    let along = r.stretched([0.06, 1.0, 1.0]);
+    let fibres = r.node("noise_texture").w("Vector", along).f("Scale", 2600.0).f("Detail", 2.0).out("Fac");
+    r.bump(fibres, 1.5e-6);
+    preset(name, "Plastic", tags, MaterialType::Generic, r)
+}
+
 /// Chrome over a plastic moulding: a mirror, but one laid on plastic, so
 /// its reflections wander a little where the moulding sank and flowed -
 /// which is how a plated trim ring is told from a turned one.
@@ -326,6 +346,38 @@ pub fn all() -> Vec<Preset> {
         crate::metal_pattern::perforated_coated("Grille Black Round 3 mm", &["grille", "perforated", "vent", "speaker", "black", "rv 3-5", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.005, 0.0015, crate::finish::Hole::Round),
         crate::metal_pattern::perforated_coated("Grille Black Round 1.5 mm", &["grille", "perforated", "vent", "fine", "black", "rv 1.5-2.5", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.0025, 0.00075, crate::finish::Hole::Round),
         crate::metal_pattern::perforated_coated("Grille Black Hex 6 mm", &["grille", "perforated", "speaker", "pa", "hexagon", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.007, 0.003, crate::finish::Hole::Hex),
+    ]);
+
+    // The rest of what a chassis and its small parts are moulded and
+    // folded from. Polypropylene's index is 1.49; the sheet steels are a
+    // chassis's usual two, zinc plated by electrolysis, which has no
+    // spangle, and bare cold rolled; tinplate is what a shield can on a
+    // circuit board is pressed from.
+    out.extend([
+        moulded_satin("Polypropylene Black", &["polypropylene", "pp", "housing", "moulded", "case", "black"], rgb(0.012, 0.012, 0.013), (0.34, 0.46), 1.49),
+        moulded_satin("Polypropylene Grey", &["polypropylene", "pp", "housing", "moulded", "case", "grey"], srgb("#74777A"), (0.34, 0.46), 1.49),
+        moulded_satin("Polypropylene White", &["polypropylene", "pp", "housing", "moulded", "case", "white"], srgb("#E6E5E0"), (0.34, 0.46), 1.49),
+        glossy("Connector Plastic White", &["connector", "jack", "socket", "pbt", "nylon", "white", "gloss"], srgb("#E4E3DD"), (0.15, 0.26), 1.53),
+        glass_filled("Nylon Glass Filled Grey", &["nylon", "pa66", "glass filled", "gf30", "engineering", "bracket", "grey"], srgb("#55585B"), srgb("#6C6F73")),
+        glass_filled("Nylon Glass Filled Natural", &["nylon", "pa66", "glass filled", "gf30", "engineering", "bracket", "natural", "cream"], srgb("#C9C0A8"), srgb("#D9D2BE")),
+        crate::metal_pattern::sheet("Steel Electrogalvanised", &["steel", "electrogalvanised", "secc", "zinc", "chassis", "sheet", "bracket"], "Zinc", rgb(0.72, 0.73, 0.75), (0.46, 0.58)),
+        crate::metal_pattern::sheet("Steel Cold Rolled", &["steel", "cold rolled", "crs", "spcc", "bare", "chassis", "sheet"], "Iron", rgb(0.9, 0.9, 0.91), (0.28, 0.4)),
+        crate::metal_pattern::sheet("Tinplate Bright", &["tinplate", "tin", "shield", "shielding can", "rf shield", "circuit board", "sheet"], "Aluminium", rgb(0.9, 0.89, 0.85), (0.14, 0.24)),
+        crate::metal_pattern::chromated("Aluminium Chromate Yellow", &["aluminium", "chromate", "conversion coating", "alodine", "iridite", "chassis", "yellow", "gold"], &[(0.25, srgb("#BCA662")), (0.5, srgb("#CDBB7E")), (0.75, srgb("#B3AE78"))]),
+    ]);
+
+    // More grilles: slots, expanded metal, and the woven wire of a
+    // microphone's head.
+    out.extend([
+        crate::metal_pattern::slotted_coated("Grille Black Slotted", &["grille", "vent", "slots", "slotted", "obround", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.012, 0.002, 0.016, 0.004),
+        crate::metal_pattern::slotted_coated("Grille Black Slotted Fine", &["grille", "vent", "slots", "slotted", "fine", "black", "powder coat"], rgb(0.01, 0.01, 0.0105), 0.5, 0.006, 0.0012, 0.0085, 0.0026),
+        crate::metal_pattern::expanded_coated("Grille Black Expanded", &["grille", "expanded metal", "mesh", "diamond", "speaker", "amplifier", "black"], rgb(0.01, 0.01, 0.0105), 0.5, 0.008, 0.004, 0.3),
+        crate::metal_pattern::wire_mesh("Wire Mesh Nickel", &["wire mesh", "woven", "microphone", "grille", "screen", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.97, 0.93, 0.87), 0.2), 0.0013, 0.0004),
+        crate::metal_pattern::wire_mesh("Wire Mesh Nickel Fine", &["wire mesh", "woven", "microphone", "grille", "screen", "fine", "nickel", "plated"], crate::metal_pattern::plated_wire("Nickel", rgb(0.97, 0.93, 0.87), 0.2), 0.0005, 0.00016),
+        crate::metal_pattern::wire_mesh("Wire Mesh Black", &["wire mesh", "woven", "microphone", "grille", "screen", "black"], base(MaterialType::Generic, |m| {
+            m.base_color = rgb(0.01, 0.01, 0.0105);
+            m.specular_roughness = 0.42;
+        }), 0.0013, 0.0004),
     ]);
 
     // A diffuser: white plastic the light goes through and is scattered

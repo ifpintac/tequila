@@ -143,6 +143,151 @@ pub fn perforated_coated(name: &'static str, tags: &'static [&'static str], colo
     preset(name, "Metal", tags, MaterialType::Generic, r)
 }
 
+/// A sheet as a chassis is folded from: the rolling mill's faint streaks
+/// under whatever it was plated with, `gloss` from the most polished
+/// streak to the dullest.
+pub fn sheet(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, gloss: (f32, f32)) -> Preset {
+    let mut r = Recipe::new(metal(MaterialType::Metal, ior, tint, (gloss.0 + gloss.1) * 0.5, 0.0));
+    r.material_mut().edge_radius = 1e-4;
+    let (streak, sheen) = mill_streaks(&mut r, gloss.0, gloss.1);
+    r.to(Param::SpecularRoughness, sheen);
+    let shade = r.range(streak, (0.3, 0.7), (0.93, 1.0));
+    let toned = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", tint).w("B", shade).out("Result");
+    r.to(Param::BaseColor, toned);
+    let tooth = noise(&mut r, 12000.0, 2.0, 0.5);
+    r.bump(tooth, 8e-7);
+    preset(name, "Metal", tags, MaterialType::Metal, r)
+}
+
+/// Aluminium sheet with a chromate conversion coat: a thin film in straws
+/// and golds that never comes out one colour, `stops` its colours.
+pub fn chromated(name: &'static str, tags: &'static [&'static str], stops: &[(f32, Spectrum)]) -> Preset {
+    let mut r = Recipe::new(metal(MaterialType::Metal, "Aluminium", stops[0].1, 0.36, 0.0));
+    r.material_mut().edge_radius = 1e-4;
+    let patches = r.node("noise_texture").f("Scale", 28.0).f("Detail", 3.0).f("Roughness", 0.5).f("Distortion", 0.8).out("Fac");
+    let colour = r.ramp(patches, crate::recipe::Linear, stops);
+    r.to(Param::BaseColor, colour);
+    let (_, sheen) = mill_streaks(&mut r, 0.3, 0.42);
+    r.to(Param::SpecularRoughness, sheen);
+    let tooth = noise(&mut r, 12000.0, 2.0, 0.5);
+    r.bump(tooth, 8e-7);
+    preset(name, "Metal", tags, MaterialType::Metal, r)
+}
+
+/// Where the point is from the nearest centre of each of a staggered
+/// pattern's two lattices, `pu` by `pv` and the second half a step along
+/// both: across and up, in metres.
+fn staggered_cells(r: &mut Recipe, u: Out, v: Out, pu: f32, pv: f32) -> [(Out, Out); 2] {
+    [(0.0, 0.0), (0.5, 0.5)].map(|(du, dv)| {
+        let (cu, _) = cell(r, u, pu, du);
+        let (cv, _) = cell(r, v, pv, dv);
+        (r.math("multiply", cu, pu), r.math("multiply", cv, pv))
+    })
+}
+
+/// A coated sheet with openings cut in it: open where `distance`, which
+/// is given the plane's u and v, is under `radius`, the coat a little
+/// thicker round each opening over `rim` metres.
+fn cut_coated(name: &'static str, tags: &'static [&'static str], colour: Spectrum, roughness: f32, radius: f32, rim: f32, distance: impl Fn(&mut Recipe, Out, Out) -> Out) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = colour;
+        m.base_metalness = 0.0;
+        m.specular_roughness = roughness;
+    }));
+    let blended = triplanar(&mut r, 8.0, |r, u, v, _| {
+        let d = distance(r, u, v);
+        let solid = r.smooth(d, (radius - rim * 0.12, radius + rim * 0.12), (0.0, 1.0));
+        let raised = r.smooth(d, (radius, radius + rim), (0.0, 1.0));
+        vec![solid, raised]
+    });
+    r.to(Param::Opacity, blended[0]);
+    r.bump(blended[1], 1.2e-4);
+    let gloss = wear(&mut r, roughness * 0.85, roughness * 1.15, 40.0);
+    r.to(Param::SpecularRoughness, gloss);
+    preset(name, "Metal", tags, MaterialType::Generic, r)
+}
+
+/// A vent of slots: round-ended, `length` by `width`, `along` from one's
+/// middle to the next in its row and the rows `across` apart, every
+/// other row half a step along.
+pub fn slotted_coated(name: &'static str, tags: &'static [&'static str], colour: Spectrum, roughness: f32, length: f32, width: f32, along: f32, across: f32) -> Preset {
+    cut_coated(name, tags, colour, roughness, width * 0.5, width * 0.25, move |r, u, v| {
+        let mut nearest = None;
+        for (au, av) in staggered_cells(r, u, v, along, across * 2.0) {
+            let a = r.math("absolute", au, 0.0);
+            let past = r.math("subtract", a, (length - width) * 0.5);
+            let past = r.math("maximum", past, 0.0);
+            let d = crate::finish::length(r, past, av);
+            nearest = Some(match nearest {
+                None => d,
+                Some(n) => r.math("minimum", n, d),
+            });
+        }
+        nearest.expect("two lattices")
+    })
+}
+
+/// Expanded metal: sheet slit and pulled into diamonds `long` by `short`
+/// from middle to middle, `strand` of each left as metal.
+pub fn expanded_coated(name: &'static str, tags: &'static [&'static str], colour: Spectrum, roughness: f32, long: f32, short: f32, strand: f32) -> Preset {
+    cut_coated(name, tags, colour, roughness, (1.0 - strand) * short * 0.5, short * 0.06, move |r, u, v| {
+        let mut nearest = None;
+        for (au, av) in staggered_cells(r, u, v, long, short) {
+            let a = r.math("absolute", au, 0.0);
+            let b = r.math("absolute", av, 0.0);
+            // A diamond's own measure, in metres up its short way.
+            let d = r.math3("multiply_add", a, short / long, b);
+            nearest = Some(match nearest {
+                None => d,
+                Some(n) => r.math("minimum", n, d),
+            });
+        }
+        nearest.expect("two lattices")
+    })
+}
+
+/// Woven wire mesh: round wires `wire` thick, `pitch` apart both ways,
+/// each over one and under the next, and nothing between them.
+pub fn wire_mesh(name: &'static str, tags: &'static [&'static str], material: tequila_materials::openpbr::Material, pitch: f32, wire: f32) -> Preset {
+    let mut r = Recipe::new(material);
+    let half = wire * 0.5 / pitch;
+    let blended = triplanar(&mut r, 8.0, |r, u, v, _| {
+        let (fu, iu) = cell(r, u, pitch, 0.0);
+        let (fv, iv) = cell(r, v, pitch, 0.0);
+        let column = r.math("add", iu, iv);
+        let mut wires = Vec::new();
+        // The wire running up, at the middle of its cell across, and the
+        // wire running across: `off` is how far from the wire's middle,
+        // `along` how far along it, and one rises where the other falls.
+        for (off, along, sign) in [(fu, fv, 1.0), (fv, fu, -1.0)] {
+            let away = r.math("absolute", off, 0.0);
+            let on = r.smooth(away, (half * 0.85, half * 1.15), (1.0, 0.0));
+            let t = r.math("divide", away, half);
+            let tt = r.math("multiply", t, t);
+            let round = r.math("subtract", 1.0, tt);
+            let round = r.math("maximum", round, 0.0);
+            let round = r.math("sqrt", round, 0.0);
+            let turn = r.math("add", along, column);
+            let turn = r.math("multiply", turn, std::f32::consts::PI);
+            let wave = r.math("cosine", turn, 0.0);
+            let lift = r.math3("multiply_add", wave, 0.25 * sign, 0.25);
+            let height = r.math3("multiply_add", round, 0.5, lift);
+            wires.push((on, r.math("multiply", height, on)));
+        }
+        let solid = r.math("maximum", wires[0].0, wires[1].0);
+        let height = r.math("maximum", wires[0].1, wires[1].1);
+        vec![solid, height]
+    });
+    r.to(Param::Opacity, blended[0]);
+    r.bump(blended[1], wire);
+    preset(name, "Metal", tags, MaterialType::Generic, r)
+}
+
+/// The metal of a [`wire_mesh`], plated.
+pub fn plated_wire(ior: &str, tint: Spectrum, roughness: f32) -> tequila_materials::openpbr::Material {
+    metal(MaterialType::Generic, ior, tint, roughness, 0.0)
+}
+
 /// An extruded profile: rounded ribs `pitch` apart down its length, and the
 /// die lines the extrusion drew along it.
 fn ribbed(name: &'static str, tags: &'static [&'static str], tint: Spectrum, roughness: f32, pitch: f32) -> Preset {
