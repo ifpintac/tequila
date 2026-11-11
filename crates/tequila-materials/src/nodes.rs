@@ -119,6 +119,10 @@ pub enum PointInput {
     ObjectLocation,
     /// A number from 0 to 1, the same over a part, different between parts.
     ObjectRandom,
+    /// The colour set on the part, white where none is.
+    ObjectColor,
+    /// The number set on the part, nought where none is.
+    ObjectNumber,
     /// 1 where the camera sees the point directly, else 0.
     IsCameraRay,
     /// 1 on a shadow ray, else 0.
@@ -854,7 +858,14 @@ impl ShaderNode {
             ],
             ShaderNode::LayerWeight => vec![output("Fresnel", "Fresnel", Float), output("Facing", "Facing", Float)],
             ShaderNode::Fresnel => vec![output("Fac", "Fac", Float)],
-            ShaderNode::ObjectInfo => vec![output("Location", "Location", Vector), output("Random", "Random", Float)],
+            // Color and Number last, where files and wires from before
+            // them count their outputs from.
+            ShaderNode::ObjectInfo => vec![
+                output("Location", "Location", Vector),
+                output("Random", "Random", Float),
+                output("Color", "Color", Color),
+                output("Number", "Alpha", Float),
+            ],
             ShaderNode::LightPath => vec![
                 output("Is Camera Ray", "Is Camera Ray", Float),
                 output("Is Shadow Ray", "Is Shadow Ray", Float),
@@ -915,7 +926,7 @@ impl ShaderNode {
         let list: &[PointInput] = match self {
             ShaderNode::TextureCoordinate => &[Generated, ObjectNormal, Uv, Object, Reflection],
             ShaderNode::Geometry => &[Position, Normal, TrueNormal, Incoming, Backfacing],
-            ShaderNode::ObjectInfo => &[ObjectLocation, ObjectRandom],
+            ShaderNode::ObjectInfo => &[ObjectLocation, ObjectRandom, ObjectColor, ObjectNumber],
             ShaderNode::LightPath => &[IsCameraRay, IsShadowRay, IsDiffuseRay, IsGlossyRay, IsTransmissionRay],
             _ => return None,
         };

@@ -164,6 +164,8 @@ pub fn point_input(input: PointInput, point: &SurfacePoint) -> Value {
         PointInput::Backfacing => Value::Float(if world.backfacing { 1.0 } else { 0.0 }),
         PointInput::ObjectLocation => Value::Vector(world.object_location),
         PointInput::ObjectRandom => Value::Float(world.object_random),
+        PointInput::ObjectColor => Value::Color(world.object_color),
+        PointInput::ObjectNumber => Value::Float(world.object_number),
         PointInput::IsCameraRay => ray_is(world.ray, RayKind::Camera),
         PointInput::IsShadowRay => ray_is(world.ray, RayKind::Shadow),
         PointInput::IsDiffuseRay => ray_is(world.ray, RayKind::Diffuse),
@@ -435,6 +437,8 @@ mod tests {
                 object_location: vec3(1.0, 0.0, 0.0),
                 object_random: 0.42,
                 closeness: 0.25,
+                object_color: tequila_core::spectrum::Spectrum { r: 0.2, g: 0.4, b: 0.6 },
+                object_number: 3.0,
                 ray: Default::default(),
             },
         }
@@ -480,6 +484,8 @@ mod tests {
         assert_eq!(point_input(PointInput::Object, &point), Value::Vector(vec3(1.0, 0.5, 0.0)));
         assert_eq!(point_input(PointInput::Uv, &point), Value::Vector(vec3(0.25, 0.25, 0.0)));
         assert_eq!(point_input(PointInput::ObjectRandom, &point), Value::Float(0.42));
+        assert_eq!(point_input(PointInput::ObjectColor, &point), Value::Color(tequila_core::spectrum::Spectrum { r: 0.2, g: 0.4, b: 0.6 }));
+        assert_eq!(point_input(PointInput::ObjectNumber, &point), Value::Float(3.0));
         assert_eq!(point_input(PointInput::Backfacing, &point), Value::Float(0.0));
         let Value::Vector(r) = point_input(PointInput::Reflection, &point) else { panic!() };
         // 2(n.i)n - i with n = (0, .6, .8), i = z: (0, .96, .28).

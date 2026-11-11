@@ -88,6 +88,29 @@ impl NodeKind {
     }
 }
 
+/// What a part says of itself to the material it wears: a colour and a
+/// number, read in the graph by Object Info's Color and Number. One
+/// material on many parts, each its own colour; or a number a Color Ramp
+/// or a Map Range turns into anything (V-Ray's user attributes, and its
+/// multi-sub texture by object ID). White and nought say nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartValues {
+    pub colour: tequila_core::spectrum::Spectrum,
+    pub number: f32,
+}
+
+impl Default for PartValues {
+    fn default() -> Self {
+        PartValues { colour: tequila_core::spectrum::Spectrum::ONE, number: 0.0 }
+    }
+}
+
+impl PartValues {
+    pub fn is_default(&self) -> bool {
+        *self == PartValues::default()
+    }
+}
+
 /// Which rays see a part, and everything under it: the camera, the light
 /// others' surfaces gather (diffuse), their reflections (glossy), what shows
 /// through glass (transmission), and shadows. And holdout, which cuts the
@@ -147,6 +170,8 @@ pub struct SceneNode {
     pub locked: bool,
     /// The rays that see it (`Rays`); its parent's limit it too.
     pub rays: Rays,
+    /// The colour and the number its material reads of it (`PartValues`).
+    pub values: PartValues,
     pub material: Option<MaterialKey>,
     /// CAD attributes and user annotations. Ordered, so the document
     /// serializes identically every time (§4.1).
@@ -207,6 +232,7 @@ impl SceneNode {
             visible: true,
             locked: false,
             rays: Rays::default(),
+            values: PartValues::default(),
             material: None,
             metadata: BTreeMap::new(),
             layers: Vec::new(),

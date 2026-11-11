@@ -43,6 +43,7 @@ CATALOG = (
     'scene.set_layer_visibility',
     'scene.set_locked',
     'scene.set_rays',
+    'scene.set_values',
     'scene.set_pivot',
     'scene.set_pattern',
     'scene.reparent',
@@ -305,6 +306,13 @@ class SceneCommands(_Commands):
         { "command": "scene.set_rays", "states": [ { "node": 2, "rays": { "camera": true, "diffuse": true, "glossy": false, "holdout": true, "shadow": true, "transmission": true } } ] }
         """
         return self._apply('scene.set_rays', {'states': states})
+
+    def set_values(self, *, states=_UNSET):
+        r"""`scene.set_values`: The colour and the number each node says of itself to its material (`PartValues`), read in the graph by Object Info's Color and Number.
+
+        { "command": "scene.set_values", "states": [ { "colour": [0.8, 0.1, 0.05], "node": 2, "number": 2 } ] }
+        """
+        return self._apply('scene.set_values', {'states': states})
 
     def set_pivot(self, *, pivots=_UNSET):
         r"""`scene.set_pivot`: The point a node rotates and scales about.

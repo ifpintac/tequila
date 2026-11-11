@@ -445,6 +445,8 @@ impl<'a> Paint<'a> {
                 object_location: self.transform.point(Vec3::ZERO),
                 object_random: self.object_random,
                 closeness: 0.0,
+                object_color: tequila_core::spectrum::Spectrum::ONE,
+                object_number: 0.0,
                 ray: Default::default(),
             },
         };

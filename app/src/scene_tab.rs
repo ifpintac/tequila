@@ -22,6 +22,9 @@ use tequila_scene::Command;
 #[derive(Debug, Default)]
 pub struct SceneTab {
     pub search: String,
+    /// A part's colour or number is being dragged: one undo step when the
+    /// pointer lets go.
+    values_editing: bool,
     collapsed: std::collections::BTreeSet<NodeId>,
     renaming: Option<(NodeId, String)>,
     /// The node being dragged, and the row it is currently over.
@@ -334,6 +337,67 @@ impl SceneTab {
             });
         if rays != before {
             let _ = project.apply(tequila_scene::Command::SetRays { states: selected.iter().map(|&id| (id, rays)).collect() });
+        }
+    }
+
+    /// What the selected parts say of themselves to their material
+    /// (`PartValues`): a colour and a number, read in its graph by Object
+    /// Info's Color and Number. Folded away until wanted.
+    pub fn values_panel(&mut self, ui: &mut egui::Ui, project: &mut Project) {
+        let document = project.document();
+        let selected: Vec<NodeId> = project
+            .selection
+            .nodes()
+            .filter(|&id| document.tree.get(id).is_some_and(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. })))
+            .collect();
+        let Some(first) = selected.first().and_then(|&id| document.tree.get(id)) else { return };
+        let before = first.values;
+        let mut values = before;
+        let mut finished = false;
+        crate::field::Fold::new("Part colour and number")
+            .id_salt("part-values")
+            .default_open(!before.is_default())
+            .show(ui, |ui| {
+                let mut srgb = swatch_of(values.colour);
+                ui.horizontal(|ui| {
+                    let picked = ui.color_edit_button_srgb(&mut srgb);
+                    if picked.changed() {
+                        values.colour = colour_of(srgb);
+                    }
+                    ui.label("Colour");
+                })
+                .response
+                .on_hover_text("A colour of this part's own, for its material to read: Object Info's Color in the material's graph. One material on many parts, each its own colour.");
+                ui.horizontal(|ui| {
+                    let field = ui.add(egui::DragValue::new(&mut values.number).speed(0.05));
+                    finished |= field.drag_stopped() || field.lost_focus();
+                    ui.label("Number");
+                })
+                .response
+                .on_hover_text("A number of this part's own: Object Info's Number in the material's graph. Through a Color Ramp or a Map Range, anything a part should differ by.");
+                ui.horizontal(|ui| {
+                    if !values.is_default() && ui.small_button("Clear").on_hover_text("White and nought: nothing said").clicked() {
+                        values = tequila_scene::tree::PartValues::default();
+                        finished = true;
+                    }
+                    if selected.len() > 1 {
+                        ui.label(egui::RichText::new(format!("For all {} selected", selected.len())).small().color(crate::theme::dim()));
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Read by Object Info in the material's graph; a material that does not read them is not changed by them.")
+                        .small()
+                        .color(crate::theme::dim()),
+                );
+            });
+        if values != before {
+            let _ = project.apply(tequila_scene::Command::SetValues { states: selected.iter().map(|&id| (id, values)).collect() });
+            self.values_editing = true;
+        }
+        // One step for a drag of the colour or the number, not one a frame.
+        if self.values_editing && (finished || !ui.input(|i| i.pointer.any_down())) {
+            project.end_interaction();
+            self.values_editing = false;
         }
     }
 
@@ -897,6 +961,22 @@ pub(crate) fn pieces(mesh: &tequila_scene::Mesh) -> usize {
             count
         }
     }
+}
+
+/// A rendering colour as the swatch that shows it, and back.
+fn swatch_of(colour: tequila_core::spectrum::Spectrum) -> [u8; 3] {
+    let linear = colour.to_linear_srgb();
+    let encode = |c: f32| {
+        let c = c.clamp(0.0, 1.0);
+        let v = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+        (v * 255.0).round() as u8
+    };
+    [encode(linear.x), encode(linear.y), encode(linear.z)]
+}
+
+fn colour_of(swatch: [u8; 3]) -> tequila_core::spectrum::Spectrum {
+    let v = tequila_core::math::vec3(swatch[0] as f32 / 255.0, swatch[1] as f32 / 255.0, swatch[2] as f32 / 255.0);
+    tequila_core::spectrum::Spectrum::from_srgb_encoded(v)
 }
 
 #[cfg(test)]

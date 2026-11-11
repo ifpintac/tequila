@@ -291,6 +291,10 @@ pub enum Command {
     /// diffuse, glossy, transmission and shadow, and holdout; and `catcher`,
     /// which makes it a shadow catcher as the floor is.
     SetRays { states: Vec<(NodeId, crate::tree::Rays)> },
+    /// `scene.set_values` — the colour and the number each node says of
+    /// itself to its material (`PartValues`), read in the graph by Object
+    /// Info's Color and Number.
+    SetValues { states: Vec<(NodeId, crate::tree::PartValues)> },
     /// `scene.set_pivot` — the point a node rotates and scales about.
     ///
     /// `None` clears it, returning the node to the gizmo's derived pivot
@@ -1141,6 +1145,10 @@ impl Command {
         Command::SetRays { states: vec![(node, rays)] }
     }
 
+    pub fn set_values(node: NodeId, values: crate::tree::PartValues) -> Command {
+        Command::SetValues { states: vec![(node, values)] }
+    }
+
     pub fn set_locked(node: NodeId, locked: bool) -> Command {
         Command::SetLocked {
             states: vec![(node, locked)],
@@ -1182,6 +1190,7 @@ impl Command {
             Command::SetLayerVisibility { .. } => "scene.set_layer_visibility",
             Command::SetLocked { .. } => "scene.set_locked",
             Command::SetRays { .. } => "scene.set_rays",
+            Command::SetValues { .. } => "scene.set_values",
             Command::SetPivot { .. } => "scene.set_pivot",
             Command::SetPattern { .. } => "scene.set_pattern",
             Command::Reparent { .. } => "scene.reparent",
@@ -1236,7 +1245,7 @@ impl Command {
 
     /// Every command name. `docs/05` §3.8 asserts each is reachable from both
     /// the UI and the scripting API.
-    pub const CATALOG: [&'static str; 76] = [
+    pub const CATALOG: [&'static str; 77] = [
         "material.add_decal",
         "material.set_decals",
         "scene.import",
@@ -1266,6 +1275,7 @@ impl Command {
         "scene.set_layer_visibility",
         "scene.set_locked",
         "scene.set_rays",
+        "scene.set_values",
         "scene.set_pivot",
         "scene.set_pattern",
         "scene.reparent",
@@ -1348,7 +1358,7 @@ impl Command {
             | Command::SetUnits { .. } => SceneChange::GeometryEdit,
             Command::SetTransform { .. } | Command::TurnProduct { .. } => SceneChange::InstanceTransform,
             Command::SetAnimation { .. } => SceneChange::SelectionChange,
-            Command::SetVisibility { .. } | Command::SetLayerVisibility { .. } | Command::SetRays { .. } => {
+            Command::SetVisibility { .. } | Command::SetLayerVisibility { .. } | Command::SetRays { .. } | Command::SetValues { .. } => {
                 SceneChange::VisibilityToggle
             }
             Command::AssignMaterial { .. } | Command::UnlinkMaterial { .. } => {
@@ -1548,6 +1558,7 @@ enum Undo {
     Visibility(Vec<(NodeId, bool)>),
     Locked(Vec<(NodeId, bool)>),
     Rays(Vec<(NodeId, crate::tree::Rays)>),
+    Values(Vec<(NodeId, crate::tree::PartValues)>),
     Pivots(Vec<(NodeId, Option<Vec3>)>),
     Parent {
         node: NodeId,
@@ -2759,6 +2770,21 @@ fn execute(
             Ok(Undo::Rays(previous))
         }
 
+        Command::SetValues { states } => {
+            for (node, values) in states {
+                document.tree.try_get(*node)?;
+                if !(values.number.is_finite() && values.colour.r.is_finite() && values.colour.g.is_finite() && values.colour.b.is_finite()) {
+                    return Err(CommandError::InvalidValue("a part's colour and number are numbers"));
+                }
+            }
+            let mut previous = Vec::with_capacity(states.len());
+            for (node, values) in states {
+                previous.push((*node, document.tree.get_mut(*node)?.values));
+                document.tree.get_mut(*node)?.values = *values;
+            }
+            Ok(Undo::Values(previous))
+        }
+
         Command::Reparent {
             node,
             parent,
@@ -3630,6 +3656,12 @@ fn revert(document: &mut SceneDocument, undo: &Undo) -> Result<(), CommandError>
         Undo::Rays(previous) => {
             for (node, rays) in previous {
                 document.tree.get_mut(*node)?.rays = *rays;
+            }
+            Ok(())
+        }
+        Undo::Values(previous) => {
+            for (node, values) in previous {
+                document.tree.get_mut(*node)?.values = *values;
             }
             Ok(())
         }

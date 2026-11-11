@@ -430,6 +430,7 @@ pub fn commands() -> Vec<Command> {
         Command::SetLayerVisibility { layer: "Construction".into(), visible: false },
         Command::set_locked(ids[1], true),
         Command::set_rays(ids[1], tequila_scene::tree::Rays { glossy: false, holdout: true, ..Default::default() }),
+        Command::set_values(ids[1], tequila_scene::tree::PartValues { colour: tequila_core::spectrum::Spectrum { r: 0.8, g: 0.1, b: 0.05 }, number: 2.0 }),
         Command::Reparent {
             node: ids[1],
             parent: Some(ids[0]),

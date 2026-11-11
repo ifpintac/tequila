@@ -112,6 +112,8 @@ pub fn evaluate(textures: &TextureTable, extent: f32, graph: &MaterialGraph, id:
                     object_location: tequila_core::math::Vec3::ZERO,
                     object_random: 0.5,
                     closeness: 0.0,
+                    object_color: tequila_core::spectrum::Spectrum::ONE,
+                    object_number: 0.0,
                     ray: Default::default(),
                 },
             };
