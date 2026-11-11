@@ -1179,6 +1179,19 @@ impl TequilaApp {
         }
     }
 
+    /// What a setting's row is marked against: its default, but for the
+    /// three drags under a preset, which are the preset's and not a change
+    /// of the person's. Marked, Blender's drags each offered to go "back"
+    /// to Tequila's own, one at a time.
+    fn shown_default(&self, setting: &Setting) -> Value {
+        let preset = self.prefs.nav_preset != crate::navigation::Preset::Custom;
+        if preset && setting.key.ends_with("_drag") && setting.page == Page::Navigation {
+            (setting.get)(self)
+        } else {
+            (setting.default)()
+        }
+    }
+
     /// Edit › Preferences: the window.
     pub(crate) fn preferences_window(&mut self, ctx: &egui::Context) {
         if !self.preferences.open {
@@ -1186,7 +1199,7 @@ impl TequilaApp {
         }
         let mut open = true;
         let values: Vec<Value> = SETTINGS.iter().map(|s| (s.get)(self)).collect();
-        let defaults: Vec<Value> = SETTINGS.iter().map(|s| (s.default)()).collect();
+        let defaults: Vec<Value> = SETTINGS.iter().map(|s| self.shown_default(s)).collect();
         let recent = self.recent.len();
         let own_folders = [("Settings", tequila_format::library::settings_directory()), ("Material library", crate::library_tab::user_library_path())];
         let mut mouse = std::mem::take(&mut self.spacemouse);
@@ -1945,10 +1958,15 @@ mod tests {
         assert_eq!(next.prefs.navigation(), custom);
         assert!(app.set_preference("navigation.orbit_drag", Value::Text("fourth button".into())).is_err());
 
+        // Under a preset the drags are not marked as changed; a drag of
+        // the person's own is.
+        let orbit = setting("navigation.orbit_drag").unwrap();
+        assert!(!(orbit.get)(&next).same(&next.shown_default(orbit)), "a custom drag is marked");
         // Another preset leaves the custom drags aside; Custom brings back
         // the drags in use, to change from.
         next.set_preference("navigation.preset", Value::Text("rhino".into())).unwrap();
         assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
+        assert!((orbit.get)(&next).same(&next.shown_default(orbit)), "Rhino's own drag was marked as a change");
         next.set_preference("navigation.preset", Value::Text("custom".into())).unwrap();
         assert_eq!(next.prefs.navigation(), Preset::Rhino.scheme().unwrap());
         next.reset_preferences(Some(Page::Navigation)).unwrap();
