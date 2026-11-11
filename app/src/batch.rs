@@ -5786,6 +5786,86 @@ mod tests {
         }
     }
 
+    /// The setups a 3ds Max user reaches for shade alike in both renderers.
+    /// Falloff: the ball goes from its front colour to its side colour the
+    /// same way in each. Top and bottom: the red top lies on the same
+    /// pixels. Override: the camera sees the material, blue, and not the
+    /// red that reflections are given. Each is made of nodes both engines
+    /// have. Skipped where Cycles is not installed.
+    #[test]
+    fn falloff_top_and_bottom_and_override_shade_alike_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::NodeKind;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let (red, blue) = (Spectrum { r: 0.8, g: 0.05, b: 0.05 }, Spectrum { r: 0.05, g: 0.1, b: 0.8 });
+        // How red each pixel inside the ball is, and how blue.
+        let tint = |image: &[u8], warm: bool| -> Vec<f64> {
+            let only: Vec<u8> = image.chunks_exact(4).flat_map(|p| [if warm { p[0].saturating_sub(p[2]) } else { p[2].saturating_sub(p[0]) }, 0, 0, 255]).collect();
+            inside_the_sphere(&only)
+        };
+        let together = |a: &[f64], b: &[f64]| {
+            let ((ma, _), (mb, _)) = (mean_and_spread(a), mean_and_spread(b));
+            let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+            for (x, y) in a.iter().zip(b) {
+                cov += (x - ma) * (y - mb);
+                va += (x - ma) * (x - ma);
+                vb += (y - mb) * (y - mb);
+            }
+            cov / (va.sqrt() * vb.sqrt()).max(1e-9)
+        };
+        for setup in [crate::graph_editor::Setup::Falloff, crate::graph_editor::Setup::TopBottom, crate::graph_editor::Setup::Override] {
+            let (mut graph, _) = crate::graph_editor::setup_graph(setup);
+            // The material blue, and the surface the setup brings red.
+            graph.material_mut().base_color = blue;
+            let coats: Vec<_> = graph.nodes().filter(|(id, n)| *id != graph.output() && matches!(n.kind, NodeKind::Shader(_))).map(|(id, _)| id).collect();
+            for id in coats {
+                if let Some(NodeKind::Shader(material)) = graph.node_mut(id).map(|n| &mut n.kind) {
+                    material.base_color = red;
+                }
+            }
+            // The top brought down to the ball's middle, where this view
+            // shows it: the Map Range's From Min and From Max.
+            let range = graph.nodes().find(|(_, n)| n.label.as_deref() == Some("How far round")).map(|(id, _)| id);
+            if let Some(node) = range.and_then(|id| graph.node_mut(id)) {
+                node.literals.insert(tequila_materials::graph::Socket::Input(1), tequila_materials::graph::Value::Float(-0.2));
+                node.literals.insert(tequila_materials::graph::Socket::Input(2), tequila_materials::graph::Value::Float(0.2));
+            }
+            let [tequila, cycles] = both_engines(&format!("familiar-{setup:?}"), move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+            });
+            match setup {
+                crate::graph_editor::Setup::Falloff => {
+                    // Brightness, which runs from the dark front to the
+                    // pale side.
+                    let (a, b) = (inside_the_sphere(&tequila), inside_the_sphere(&cycles));
+                    let (spread, agree) = (mean_and_spread(&a).1, together(&a, &b));
+                    assert!(spread > 20.0, "the falloff is one colour all over in Tequila's renderer ({spread:.1})");
+                    assert!(agree > 0.85, "Tequila's falloff and Cycles' agree {agree:.2} of the way");
+                }
+                crate::graph_editor::Setup::TopBottom => {
+                    let (a, b) = (tint(&tequila, true), tint(&cycles, true));
+                    let (spread, agree) = (mean_and_spread(&a).1, together(&a, &b));
+                    assert!(spread > 20.0, "there is no red top in Tequila's renderer ({spread:.1})");
+                    assert!(agree > 0.9, "Tequila's top and Cycles' agree {agree:.2} of the way");
+                    // And the bottom is the material's.
+                    assert!(mean_and_spread(&tint(&tequila, false)).0 > 10.0, "nothing of the blue material is left under the top");
+                }
+                _ => {
+                    for (name, image) in [("Tequila's renderer", &tequila), ("Cycles", &cycles)] {
+                        let (warm, cool) = (mean_and_spread(&tint(image, true)).0, mean_and_spread(&tint(image, false)).0);
+                        assert!(cool > 30.0 && warm < 3.0, "{name}: the camera sees the override, not the material (red {warm:.1}, blue {cool:.1})");
+                    }
+                }
+            }
+        }
+    }
+
     /// Herringbone and basketweave are laid on the same pixels by both
     /// renderers, each tile the same grey of its own in both: the groups
     /// are Math nodes and a White Noise, which each engine has. Skipped

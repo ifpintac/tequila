@@ -13,6 +13,7 @@
 //! reaching the renderer. A drag of a node or a slider is one undo step, not
 //! one per frame.
 
+mod aliases;
 mod browser;
 mod menu;
 pub use browser::Setup;
@@ -2593,7 +2594,165 @@ pub(crate) fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socke
             graph.connect_output(under, 0, surface, Socket::Param(Param::BaseColor));
             (graph, None)
         }
+        browser::Setup::Falloff => {
+            use tequila_core::spectrum::Spectrum;
+            // Layer Weight's Facing: nought seen straight on, one edge on.
+            let weight = ShaderNode::LayerWeight;
+            let facing = output_named(&weight, "Facing");
+            let weight = graph.add_node(Node::new(NodeKind::Node(weight)));
+            // Factor, then the colour straight on, then the colour edge on.
+            let mix = graph.add_node(
+                named(NodeKind::Node(ShaderNode::from_key("mix").expect("the Mix node")), "Front to side")
+                    .with_literal(Socket::Input(1), Value::Color(Spectrum { r: 0.05, g: 0.08, b: 0.3 }))
+                    .with_literal(Socket::Input(2), Value::Color(Spectrum { r: 0.75, g: 0.85, b: 1.0 })),
+            );
+            graph.connect_output(weight, facing, mix, Socket::Input(0));
+            graph.connect_output(mix, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
+        browser::Setup::TopBottom => {
+            // How far the face looks up: the world normal's Y, from the
+            // side (nought) to straight up (one).
+            let geometry = ShaderNode::Geometry;
+            let normal = output_named(&geometry, "Normal");
+            let geometry = graph.add_node(Node::new(NodeKind::Node(geometry)));
+            let split = graph.add_node(Node::new(NodeKind::Node(ShaderNode::SeparateXyz)));
+            graph.connect_output(geometry, normal, split, Socket::Input(0));
+            // Value, From Min, From Max: the top comes on between faces
+            // leaning a little up and faces mostly up.
+            let range = graph.add_node(
+                named(NodeKind::Node(ShaderNode::from_key("map_range").expect("Map Range")), "How far round")
+                    .with_literal(Socket::Input(1), Value::Float(0.35))
+                    .with_literal(Socket::Input(2), Value::Float(0.65)),
+            );
+            graph.connect_output(split, 1, range, Socket::Input(0));
+            let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }));
+            let top = graph.add_node(coat("Top"));
+            graph.connect_output(range, 0, mix, Socket::Input(0));
+            graph.connect_output(top, 0, mix, Socket::Input(1));
+            graph.connect_output(mix, 0, surface, LAYER_INPUT);
+            (graph, Some(LAYER_INPUT))
+        }
+        browser::Setup::Override => {
+            use tequila_materials::nodes::Setting;
+            // One for every ray but the camera's.
+            let path = ShaderNode::LightPath;
+            let camera = output_named(&path, "Is Camera Ray");
+            let path = graph.add_node(Node::new(NodeKind::Node(path)));
+            let mut subtract = ShaderNode::from_key("math").expect("Math");
+            subtract.set("operation", Setting::Choice("subtract"));
+            let others = graph.add_node(named(NodeKind::Node(subtract), "Not the camera").with_literal(Socket::Input(0), Value::Float(1.0)));
+            graph.connect_output(path, camera, others, Socket::Input(1));
+            let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }));
+            let seen = graph.add_node(coat("In reflections"));
+            graph.connect_output(others, 0, mix, Socket::Input(0));
+            graph.connect_output(seen, 0, mix, Socket::Input(1));
+            graph.connect_output(mix, 0, surface, LAYER_INPUT);
+            (graph, Some(LAYER_INPUT))
+        }
+        browser::Setup::ColourCorrection => {
+            let colour = graph.add_node(named(NodeKind::Constant(Value::Color(tequila_core::spectrum::Spectrum { r: 0.75, g: 0.2, b: 0.15 })), "Colour in"));
+            // Hue, Saturation, Value, Fac, Color.
+            let hsv = graph.add_node(Node::new(NodeKind::Node(ShaderNode::HueSaturationValue)));
+            graph.connect_output(colour, 0, hsv, Socket::Input(4));
+            let contrast = graph.add_node(Node::new(NodeKind::Node(ShaderNode::BrightContrast)));
+            graph.connect_output(hsv, 0, contrast, Socket::Input(0));
+            let gamma = graph.add_node(Node::new(NodeKind::Node(ShaderNode::Gamma)));
+            graph.connect_output(contrast, 0, gamma, Socket::Input(0));
+            graph.connect_output(gamma, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
+        browser::Setup::Distort => {
+            use tequila_core::math::Vec3;
+            use tequila_materials::nodes::Setting;
+            let coordinates = ShaderNode::TextureCoordinate;
+            let uv = output_named(&coordinates, "UV");
+            let coordinates = graph.add_node(Node::new(NodeKind::Node(coordinates)));
+            // A noise of the same coordinates, its three colours a push
+            // along each axis: about its middle, so as far one way as the
+            // other.
+            let noise = ShaderNode::from_key("noise_texture").expect("Noise Texture");
+            let colour = output_named(&noise, "Color");
+            let noise = graph.add_node(Node::new(NodeKind::Node(noise)).with_literal(Socket::Input(2), Value::Float(4.0)));
+            graph.connect_output(coordinates, uv, noise, Socket::Input(0));
+            let vector = |graph: &mut MaterialGraph, op: &'static str, name: &str| {
+                let mut math = ShaderNode::from_key("vector_math").expect("Vector Math");
+                math.set("operation", Setting::Choice(op));
+                graph.add_node(named(NodeKind::Node(math), name))
+            };
+            let centred = vector(&mut graph, "subtract", "About the middle");
+            graph.node_mut(centred).expect("just added").literals.insert(Socket::Input(1), Value::Vector(Vec3::splat(0.5)));
+            graph.connect_output(noise, colour, centred, Socket::Input(0));
+            // Scale's own input, the fourth: how far.
+            let pushed = vector(&mut graph, "scale", "Strength");
+            graph.node_mut(pushed).expect("just added").literals.insert(Socket::Input(3), Value::Float(0.1));
+            graph.connect_output(centred, 0, pushed, Socket::Input(0));
+            let distorted = vector(&mut graph, "add", "Distorted");
+            graph.connect_output(coordinates, uv, distorted, Socket::Input(0));
+            graph.connect_output(pushed, 0, distorted, Socket::Input(1));
+            graph.connect_output(distorted, 0, surface, Socket::Param(Param::Tangent));
+            (graph, None)
+        }
+        browser::Setup::WornEdges => {
+            use tequila_materials::nodes::Setting;
+            let edges = graph.add_node(Node::new(NodeKind::Curvature {
+                mode: tequila_materials::graph::CurvatureMode::Convex,
+                radius: tequila_materials::graph::DEFAULT_CURVATURE_RADIUS,
+                contrast: 1.0,
+            }));
+            let noise = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("noise_texture").expect("Noise Texture")), "Breaks").with_literal(Socket::Input(2), Value::Float(60.0)));
+            let mut multiply = ShaderNode::from_key("math").expect("Math");
+            multiply.set("operation", Setting::Choice("multiply"));
+            let broken = graph.add_node(named(NodeKind::Node(multiply), "Edges, broken"));
+            graph.connect_output(edges, 0, broken, Socket::Input(0));
+            graph.connect_output(noise, 0, broken, Socket::Input(1));
+            // Value, From Min, From Max: where the wear starts and where
+            // it is through.
+            let wear = graph.add_node(
+                named(NodeKind::Node(ShaderNode::from_key("map_range").expect("Map Range")), "Wear")
+                    .with_literal(Socket::Input(1), Value::Float(0.15))
+                    .with_literal(Socket::Input(2), Value::Float(0.3)),
+            );
+            graph.connect_output(broken, 0, wear, Socket::Input(0));
+            graph.connect_output(wear, 0, surface, Socket::Param(Param::SpecularRoughness));
+            (graph, None)
+        }
+        browser::Setup::Dirt => {
+            use tequila_core::math::vec3;
+            use tequila_materials::nodes::Setting;
+            let open = graph.add_node(Node::new(NodeKind::Occlusion { radius: tequila_materials::graph::DEFAULT_OCCLUSION_RADIUS, contrast: 1.0 }));
+            let math = |graph: &mut MaterialGraph, op: &'static str, name: &str| {
+                let mut math = ShaderNode::from_key("math").expect("Math");
+                math.set("operation", Setting::Choice(op));
+                graph.add_node(named(NodeKind::Node(math), name))
+            };
+            // Occlusion is one in the open: the creases are what is left.
+            let creases = math(&mut graph, "subtract", "Creases");
+            graph.node_mut(creases).expect("just added").literals.insert(Socket::Input(0), Value::Float(1.0));
+            graph.connect_output(open, 0, creases, Socket::Input(1));
+            // A noise squeezed across and drawn out up and down: streaks.
+            // Vector, Location, Rotation, Scale.
+            let stretch = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("mapping").expect("Mapping")), "Drawn out").with_literal(Socket::Input(3), Value::Vector(vec3(1.0, 0.08, 1.0))));
+            let noise = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("noise_texture").expect("Noise Texture")), "Streaks").with_literal(Socket::Input(2), Value::Float(80.0)));
+            graph.connect_output(stretch, 0, noise, Socket::Input(0));
+            let streaked = math(&mut graph, "multiply", "Creases, streaked");
+            graph.connect_output(creases, 0, streaked, Socket::Input(0));
+            graph.connect_output(noise, 0, streaked, Socket::Input(1));
+            let dirt = graph.add_node(
+                named(NodeKind::Node(ShaderNode::from_key("map_range").expect("Map Range")), "Dirt")
+                    .with_literal(Socket::Input(1), Value::Float(0.05))
+                    .with_literal(Socket::Input(2), Value::Float(0.35)),
+            );
+            graph.connect_output(streaked, 0, dirt, Socket::Input(0));
+            graph.connect_output(dirt, 0, surface, Socket::Param(Param::SpecularRoughness));
+            (graph, None)
+        }
     }
+}
+
+/// Which of a node's outputs goes by `name`.
+fn output_named(node: &tequila_materials::nodes::ShaderNode, name: &str) -> u8 {
+    node.outputs().iter().position(|o| o.name == name).unwrap_or_else(|| panic!("{} has no output {name}", node.label())) as u8
 }
 
 /// The picture a setup that reads one starts with: the selected Image's,
@@ -3790,6 +3949,47 @@ mod tests {
         let program = tiling.compile().expect("stochastic tiling compiles into Color");
         let placed = program.instructions.iter().filter(|i| matches!(i, tequila_materials::graph::Instruction::Sample { at: Some(_), .. })).count();
         assert_eq!(placed, 3, "every reading is placed by the group");
+
+        // What a Max user reaches for. The two that are surfaces go on the
+        // material's Layer; the rest are left to wire in, and each wired
+        // into what it is for compiles and drives it.
+        for setup in [browser::Setup::TopBottom, browser::Setup::Override] {
+            let graph = add(setup);
+            let mix = graph.links().iter().find(|l| l.to == graph.output() && l.to_socket == LAYER_INPUT).map(|l| l.from).unwrap_or_else(|| panic!("{setup:?} is not on the material's Layer"));
+            assert!(matches!(graph.node(mix).map(|n| &n.kind), Some(NodeKind::MixShader { add: false })));
+            assert!(graph.links().iter().any(|l| l.to == mix && l.to_socket == Socket::Input(0)), "{setup:?} has nothing to say where its surface shows");
+            graph.compile().unwrap_or_else(|e| panic!("{setup:?} does not compile: {e:?}"));
+        }
+        for (setup, last, param) in [
+            (browser::Setup::Falloff, "Front to side", Param::BaseColor),
+            (browser::Setup::ColourCorrection, "Gamma", Param::BaseColor),
+            (browser::Setup::WornEdges, "Wear", Param::SpecularRoughness),
+            (browser::Setup::Dirt, "Dirt", Param::SpecularRoughness),
+        ] {
+            let mut graph = add(setup);
+            assert!(!graph.links().iter().any(|l| l.to == graph.output()), "{setup:?} wired itself into the material");
+            let from = graph
+                .nodes()
+                .find(|(_, n)| n.label.as_deref() == Some(last) || matches!(&n.kind, NodeKind::Node(node) if node.label() == last))
+                .map(|(id, _)| id)
+                .unwrap_or_else(|| panic!("{setup:?} has no {last}"));
+            let surface = graph.output();
+            graph.connect_output(from, 0, surface, Socket::Param(param));
+            let program = graph.compile().unwrap_or_else(|e| panic!("{setup:?} does not compile: {e:?}"));
+            // (A colour corrected is still one colour: folded into the
+            // material, with nothing left to drive.)
+            let constant = setup == browser::Setup::ColourCorrection;
+            assert!(constant || program.driven.iter().any(|(p, _)| *p == param), "{setup:?} does not drive {param:?}");
+        }
+        // Distorted coordinates place a picture.
+        let mut graph = add(browser::Setup::Distort);
+        let distorted = graph.nodes().find(|(_, n)| n.label.as_deref() == Some("Distorted")).map(|(id, _)| id).expect("Distorted");
+        let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: tequila_materials::graph::TextureId(1), fallback: Value::Color(Spectrum::splat(0.18)) }));
+        let surface = graph.output();
+        graph.connect_output(distorted, 0, image, Socket::Input(0));
+        graph.connect_output(image, 0, surface, Socket::Param(Param::BaseColor));
+        let program = graph.compile().expect("a distorted picture compiles");
+        assert!(program.instructions.iter().any(|i| matches!(i, tequila_materials::graph::Instruction::Sample { at: Some(_), .. })), "the picture is not read at the distorted coordinates");
 
         let composite = add(browser::Setup::Composite);
         assert_eq!(depth(&composite), 0, "colours, not surfaces");
