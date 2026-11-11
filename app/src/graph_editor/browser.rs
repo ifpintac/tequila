@@ -238,8 +238,10 @@ const ROW: f32 = 22.0;
 const LOOSE: i32 = 68;
 
 impl Browser {
-    /// Draw the browser; `canvas` is where a dragged row may be dropped.
-    pub fn show(&mut self, ui: &mut egui::Ui, sections: &[Section], canvas: egui::Rect) -> Act {
+    /// Draw the browser; `canvas` is where a dragged row may be dropped,
+    /// and `pictured` says what a row's small picture is kept under, for
+    /// the rows that have one.
+    pub fn show(&mut self, ui: &mut egui::Ui, sections: &[Section], canvas: egui::Rect, thumbs: &mut super::thumbs::Thumbs, pictured: &dyn Fn(&Item) -> Option<u64>) -> Act {
         let p = crate::theme::p();
         let mut act = Act::None;
         #[cfg(test)]
@@ -274,7 +276,7 @@ impl Browser {
                             ui.label(egui::RichText::new(heading.to_uppercase()).font(crate::theme::strong(10.0)).color(p.text_faint).extra_letter_spacing(0.6));
                         }
                         for row in &section.rows {
-                            self.row(ui, row, &mut act);
+                            self.row(ui, row, &mut act, thumbs, pictured);
                         }
                     }
                 };
@@ -329,7 +331,7 @@ impl Browser {
         }
     }
 
-    fn row(&mut self, ui: &mut egui::Ui, row: &Row, act: &mut Act) {
+    fn row(&mut self, ui: &mut egui::Ui, row: &Row, act: &mut Act, thumbs: &mut super::thumbs::Thumbs, pictured: &dyn Fn(&Item) -> Option<u64>) {
         let p = crate::theme::p();
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::click_and_drag());
         #[cfg(test)]
@@ -340,20 +342,48 @@ impl Browser {
         } else if response.hovered() || dragged {
             ui.painter().rect_filled(rect, 4.0, p.hover);
         }
-        let mark = rect.left_center() + egui::vec2(9.0, 0.0);
-        match row.family {
-            Some(family) => {
-                ui.painter().circle_filled(mark, 4.0, family.tint().gamma_multiply(1.6));
-            }
-            // A material: a ball, filled for the one being edited.
-            None if row.current => {
-                ui.painter().circle_filled(mark, 4.5, p.accent);
+        // Its picture, for a row in view that has one: a ball of a
+        // material, a square of a map. A plain mark for the rest.
+        let picture = if ui.is_rect_visible(rect) { pictured(&row.item) } else { None };
+        let indent = match picture {
+            Some(key) => {
+                let side = super::thumbs::SIDE;
+                let square = egui::Rect::from_center_size(rect.left_center() + egui::vec2(4.0 + side * 0.5, 0.0), egui::Vec2::splat(side));
+                match thumbs.get(key) {
+                    Some(texture) => {
+                        let mut shape = egui::epaint::RectShape::filled(square, 4.0, egui::Color32::WHITE);
+                        shape.fill_texture_id = texture;
+                        shape.uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        ui.painter().add(shape);
+                    }
+                    // Its place, until it is made.
+                    None => {
+                        ui.painter().rect_filled(square, 4.0, p.field);
+                    }
+                }
+                if row.current {
+                    ui.painter().rect_stroke(square.expand(1.0), 5.0, egui::Stroke::new(1.5_f32, p.accent));
+                }
+                side + 12.0
             }
             None => {
-                ui.painter().circle_stroke(mark, 4.0, egui::Stroke::new(1.2_f32, p.text_dim));
+                let mark = rect.left_center() + egui::vec2(9.0, 0.0);
+                match row.family {
+                    Some(family) => {
+                        ui.painter().circle_filled(mark, 4.0, family.tint().gamma_multiply(1.6));
+                    }
+                    // A material: a ball, filled for the one being edited.
+                    None if row.current => {
+                        ui.painter().circle_filled(mark, 4.5, p.accent);
+                    }
+                    None => {
+                        ui.painter().circle_stroke(mark, 4.0, egui::Stroke::new(1.2_f32, p.text_dim));
+                    }
+                }
+                20.0
             }
-        }
-        let text = rect.left_center() + egui::vec2(20.0, 0.0);
+        };
+        let text = rect.left_center() + egui::vec2(indent, 0.0);
         ui.painter().with_clip_rect(rect.shrink2(egui::vec2(4.0, 0.0))).text(text, egui::Align2::LEFT_CENTER, &row.label, egui::FontId::proportional(12.5), p.text);
         // The one being edited stays where it is: every other row can be
         // dragged into the graph.

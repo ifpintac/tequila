@@ -19,6 +19,7 @@ pub use browser::Source as Brought;
 mod previews;
 mod sidebar;
 mod swatch;
+mod thumbs;
 mod tidy;
 mod view;
 
@@ -31,6 +32,21 @@ use tequila_scene::Command;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use view::{Inline, NodeLayout, RowKind, SettingField, SettingRef, Target, SOCKET_RADIUS};
+
+/// The material library, as the browser lists it: its entries, and the
+/// picture the library keeps of one, when it has it to hand.
+pub struct Library<'a> {
+    pub entries: &'a [tequila_format::library::LibraryEntry],
+    pub picture: &'a dyn Fn(usize) -> Option<egui::ColorImage>,
+}
+
+impl Library<'_> {
+    /// No library: the browser's last group is empty.
+    #[cfg(test)]
+    pub fn none() -> Library<'static> {
+        Library { entries: &[], picture: &|_| None }
+    }
+}
 
 /// One end of a wire being dragged.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,6 +171,8 @@ pub struct GraphEditor {
     browser_holding: bool,
     /// What a script asked of the browser, for the next frame.
     scripted: Option<browser::Act>,
+    /// The small pictures beside the browser's rows.
+    thumbs: thumbs::Thumbs,
 }
 
 /// The minimap's place on screen and its scale: a canvas point `p` is at
@@ -215,6 +233,7 @@ impl Default for GraphEditor {
             pending_textures: Vec::new(),
             browser_holding: false,
             scripted: None,
+            thumbs: thumbs::Thumbs::default(),
         }
     }
 }
@@ -320,7 +339,7 @@ impl GraphEditor {
     }
 
     /// `library` is the material library, for the browser's last group.
-    pub fn show(&mut self, ctx: &egui::Context, project: &mut Project, library: &[tequila_format::library::LibraryEntry]) {
+    pub fn show(&mut self, ctx: &egui::Context, project: &mut Project, library: &Library) {
         if !self.open {
             self.hovered = false;
             return;
@@ -486,16 +505,57 @@ impl GraphEditor {
         &mut self,
         ui: &mut egui::Ui,
         project: &Project,
-        library: &[tequila_format::library::LibraryEntry],
+        library: &Library,
         graph: &mut MaterialGraph,
         exposed: &[Param],
         key: MaterialKey,
     ) -> bool {
         let entries = menu::entries(project);
         let materials: Vec<(MaterialKey, String)> = project.document().materials.iter().map(|(key, definition)| (key, definition.name.clone())).collect();
-        let shelf: Vec<(&str, &str)> = library.iter().map(|entry| (entry.name.as_str(), entry.category.as_str())).collect();
+        let shelf: Vec<(&str, &str)> = library.entries.iter().map(|entry| (entry.name.as_str(), entry.category.as_str())).collect();
         let sections = browser::sections(&entries, &materials, &shelf, Some(key), &self.browser.query);
-        let act = self.browser.show(ui, &sections, self.canvas_rect);
+        // What each row's picture is kept under: the material's graph, the
+        // library's own key, a node as it is first set.
+        let pictured = |item: &browser::Item| -> Option<u64> {
+            match item {
+                browser::Item::Node(NodeKind::Shader(material), _) => Some(thumbs::key_of(material, 1)),
+                browser::Item::Node(kind, _) => matches!(view::family(kind), view::Family::Texture | view::Family::Pattern).then(|| thumbs::key_of(kind, 2)),
+                browser::Item::Material(key) => project.document().materials.get(*key).map(|definition| definition.graph.content_hash() ^ 0x5ce9e),
+                browser::Item::Library(index) => library.entries.get(*index).map(|entry| crate::library_tab::entry_key(entry) ^ 0x11b),
+            }
+        };
+        self.thumbs.collect(ui.ctx());
+        let act = self.browser.show(ui, &sections, self.canvas_rect, &mut self.thumbs, &pictured);
+        // The rows that came into view without one: the library's own
+        // picture if it has it, and the worker for the rest.
+        let wanted = self.thumbs.take_wanted();
+        if !wanted.is_empty() {
+            for row in sections.iter().flat_map(|section| &section.rows) {
+                let Some(key) = pictured(&row.item).filter(|key| wanted.contains(key)) else { continue };
+                let what = match &row.item {
+                    browser::Item::Node(NodeKind::Shader(material), _) => {
+                        Some(thumbs::Make::Ball { graph: MaterialGraph::from_material((**material).clone()), files: Vec::new(), loaded: None, uv_unit: None })
+                    }
+                    browser::Item::Node(kind, _) => Some(thumbs::Make::Map { kind: kind.clone(), textures: project.scene().textures.clone() }),
+                    browser::Item::Material(material) => project
+                        .document()
+                        .materials
+                        .get(*material)
+                        .map(|definition| thumbs::Make::Ball { graph: definition.graph.clone(), files: Vec::new(), loaded: Some(project.scene().textures.clone()), uv_unit: None }),
+                    browser::Item::Library(index) => match (library.picture)(*index) {
+                        Some(image) => {
+                            self.thumbs.put(ui.ctx(), key, image);
+                            continue;
+                        }
+                        None => library.entries.get(*index).map(|entry| thumbs::Make::Ball { graph: entry.graph.clone(), files: entry.textures.clone(), loaded: None, uv_unit: entry.preview_uv_unit }),
+                    },
+                };
+                match what {
+                    Some(what) => self.thumbs.make(ui.ctx(), key, what),
+                    None => self.thumbs.none(key),
+                }
+            }
+        }
         // A node's row held over a wire it could go into: the wire lights,
         // as it does under a node dragged on the canvas.
         let pointer = ui.input(|i| i.pointer.latest_pos()).filter(|at| self.canvas_rect.contains(*at));
@@ -529,7 +589,7 @@ impl GraphEditor {
     }
 
     /// Do what the browser was asked: true when the graph changed.
-    fn browse(&mut self, act: browser::Act, graph: &mut MaterialGraph, project: &Project, library: &[tequila_format::library::LibraryEntry], exposed: &[Param]) -> bool {
+    fn browse(&mut self, act: browser::Act, graph: &mut MaterialGraph, project: &Project, library: &Library, exposed: &[Param]) -> bool {
         let rect = self.canvas_rect;
         // Double-clicked: the middle of the view, each a step down and
         // right of the last so none hides another.
@@ -581,7 +641,7 @@ impl GraphEditor {
                         (definition.name.clone(), definition.graph.clone(), definition.material_type.exposed(), Vec::new())
                     }
                     browser::Source::Library(index) => {
-                        let Some(entry) = library.get(index) else { return false };
+                        let Some(entry) = library.entries.get(index) else { return false };
                         let (definition, textures) = entry.for_document(project.document());
                         (entry.name.clone(), definition.graph, entry.material_type.exposed(), textures)
                     }
@@ -2315,9 +2375,9 @@ fn apart(graph: &mut MaterialGraph, moved: &[NodeId]) {
 /// Another material brought into `graph` whole, to be mixed with it: its
 /// nodes and the wires among them, and where its Surface was a Shader of
 /// the same surface, named for the material, with the same wires into it -
-/// a Shader takes everything a Surface does. The Shader goes at `at` and
-/// the rest keep their places about it. Returns the Shader and every node
-/// added.
+/// a Shader takes everything a Surface does. Its labels come with it. The
+/// Shader goes at `at` and the rest keep their places about it. Returns
+/// the Shader and every node added.
 fn bring_in(graph: &mut MaterialGraph, other: &MaterialGraph, name: &str, at: GraphVec2) -> (NodeId, Vec<NodeId>) {
     let output = other.output();
     let origin = other.node(output).map(|n| n.position).unwrap_or(GraphVec2 { x: 0.0, y: 0.0 });
@@ -2341,6 +2401,9 @@ fn bring_in(graph: &mut MaterialGraph, other: &MaterialGraph, name: &str, at: Gr
             graph.connect_output(*from, link.from_socket, *to, link.to_socket);
         }
     }
+    // Its labels are part of it, and come too: printed on this material
+    // now, over whatever the two are mixed into, as a label is.
+    graph.decals.extend(other.decals.iter().cloned());
     (fresh[&output], added)
 }
 
@@ -2679,8 +2742,8 @@ mod tests {
                 ..Default::default()
             };
             let (editor, project) = (&mut self.editor, &mut self.project);
-            let library = &self.library;
-            let _ = self.ctx.run(input, |ctx| editor.show(ctx, project, library));
+            let library = Library { entries: &self.library, picture: &|_| None };
+            let _ = self.ctx.run(input, |ctx| editor.show(ctx, project, &library));
         }
 
         fn graph(&self) -> MaterialGraph {
@@ -2979,7 +3042,7 @@ mod tests {
         let canvas = h.editor.canvas_rect;
         let value = || NodeKind::Constant(Value::Float(0.5));
 
-        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &[], &[]));
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &Library::none(), &[]));
         assert_eq!(graph.len(), before + 1);
         let first = h.editor.active.expect("the new node is the active one");
         assert_eq!(h.editor.selected, BTreeSet::from([first]));
@@ -2991,12 +3054,12 @@ mod tests {
         assert!(canvas.shrink(40.0).contains(middle), "{middle:?} is in the view {canvas:?}");
         assert!((middle.x - canvas.center().x).abs() < 160.0 && (middle.y - canvas.center().y).abs() < 160.0, "{middle:?} is near the middle of {canvas:?}");
 
-        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &[], &[]));
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &Library::none(), &[]));
         let second = h.editor.active.unwrap();
         assert_ne!(at(&h, &graph, second), middle, "the second landed on the first");
 
         let drop = canvas.left_top() + egui::vec2(300.0, 200.0);
-        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: Some(drop) }, &mut graph, &h.project, &[], &[]));
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: Some(drop) }, &mut graph, &h.project, &Library::none(), &[]));
         let dropped = at(&h, &graph, h.editor.active.unwrap());
         let width = view::node_width(&value()) * h.editor.zoom;
         assert!(dropped.x <= drop.x && drop.x <= dropped.x + width + 20.0, "{dropped:?} is not under {drop:?}");
@@ -3004,10 +3067,10 @@ mod tests {
 
         let glass = tequila_materials::material_type::MaterialType::Glass;
         let shader = NodeKind::Shader(Box::new(glass.defaults()));
-        assert!(h.editor.browse(browser::Act::Add { kind: shader, label: Some(glass.label().into()), at: None }, &mut graph, &h.project, &[], &[]));
+        assert!(h.editor.browse(browser::Act::Add { kind: shader, label: Some(glass.label().into()), at: None }, &mut graph, &h.project, &Library::none(), &[]));
         let node = graph.node(h.editor.active.unwrap()).unwrap();
         assert_eq!(view::title(node), glass.label(), "a Materials row is named for its kind");
-        assert!(!h.editor.browse(browser::Act::None, &mut graph, &h.project, &[], &[]));
+        assert!(!h.editor.browse(browser::Act::None, &mut graph, &h.project, &Library::none(), &[]));
     }
 
     /// With the pointer, as it is used: a row dragged out of the browser
@@ -3065,13 +3128,13 @@ mod tests {
         h.frame(Vec::new());
 
         let mut graph = h.graph();
-        assert!(!h.editor.browse(browser::Act::Open(added), &mut graph, &h.project, &[], &[]), "opening changes no graph");
+        assert!(!h.editor.browse(browser::Act::Open(added), &mut graph, &h.project, &Library::none(), &[]), "opening changes no graph");
         assert_eq!(h.editor.material(), Some(h.key), "not until this frame's edits are applied");
         h.frame(Vec::new());
         assert_eq!(h.editor.material(), Some(added));
         assert!(h.editor.open);
 
-        assert!(!h.editor.browse(browser::Act::Open(MaterialKey(987_654)), &mut graph, &h.project, &[], &[]));
+        assert!(!h.editor.browse(browser::Act::Open(MaterialKey(987_654)), &mut graph, &h.project, &Library::none(), &[]));
         h.frame(Vec::new());
         assert_eq!(h.editor.material(), Some(added), "a material that is not there is not opened");
     }
@@ -3140,6 +3203,14 @@ mod tests {
         );
         assert!(!graph.links().iter().any(|l| l.to == surface), "nothing was wired into the graph's own surface");
         graph.compile().expect("it compiles as it came in");
+
+        // Its labels are part of it: they come too, after the graph's own.
+        let mut labelled = mapped(7);
+        labelled.decals.push(tequila_materials::decal::Decal::new("Logo", tequila_materials::graph::TextureId(9)));
+        let mut graph = MaterialGraph::from_material(Default::default());
+        graph.decals.push(tequila_materials::decal::Decal::new("Own", tequila_materials::graph::TextureId(3)));
+        bring_in(&mut graph, &labelled, "Brass", GraphVec2 { x: 480.0, y: 240.0 });
+        assert_eq!(graph.decals.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["Own", "Logo"]);
     }
 
     /// With the pointer: a scene material's row dragged into the graph is
