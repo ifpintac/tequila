@@ -5664,6 +5664,11 @@ impl TequilaApp {
                             crate::library_tab::open_folder(&licences);
                         }
                     }
+                    if let Some(trademarks) = shipped_file("TRADEMARKS.md", "TRADEMARKS.md") {
+                        if ui.button("Trademarks").on_hover_text("The other products named in Tequila, whose names are their owners'").clicked() {
+                            crate::library_tab::open_folder(&trademarks);
+                        }
+                    }
                     if let Some(folder) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
                         if ui.button("Open the program folder").clicked() {
                             crate::library_tab::open_folder(&folder);

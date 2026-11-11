@@ -23,6 +23,16 @@ framework that driver put on the computer, loaded when Tequila runs; it ships
 no 3Dconnexion software, is built without any, and uses no part of
 3Dconnexion's SDK.
 
+V-Ray and Chaos are trademarks of Chaos Software. Autodesk and 3ds Max are
+trademarks of Autodesk, Inc. Blender is a trademark of the Blender Foundation.
+Tequila's search finds its own nodes, patterns and materials by the names
+their nearest counterparts go by in those products ("VRayDirt" finds
+Occlusion, "UVW Map" finds Projection), so that someone who knows one finds
+the other. The names are used only to point: each thing found is Tequila's
+own, built from Tequila's own nodes, and carries Tequila's name. Tequila ships
+none of those products' software, shaders, textures or libraries, and reads
+none of their private formats.
+
 References to other products in Tequila's specification and documentation are
 **descriptive and comparative**: they identify capabilities and workflows that
 Tequila aims to provide, so that people evaluating or building the software
