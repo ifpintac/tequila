@@ -5990,6 +5990,24 @@ impl TequilaApp {
         panel_title(ui, tab.icon(), theme::hue(tab.hue()), tab.label(), &hint, || self.show_project = false, &close_hint);
 
         let mut resubmit = false;
+        // The Environment page's map kept in view: above the page, so it
+        // stays while the sections scroll under it - unless the panel is
+        // too short to give it the room without crowding the page.
+        let mut map_pin_clicked = false;
+        if tab == ProjectTab::Environment {
+            let wanted = self.sections.map_in_view();
+            let fits = ui.available_height() >= pin_panel::map_height(ui.available_width()) * 3.0;
+            self.environment_tab.map_pin = match (wanted, fits) {
+                (false, _) => pin_panel::MapPin::Off,
+                (true, true) => pin_panel::MapPin::On,
+                (true, false) => pin_panel::MapPin::TooShort,
+            };
+            if self.environment_tab.map_pin == pin_panel::MapPin::On {
+                map_pin_clicked = pin_panel::map_section(ui, &mut self.project, pin_panel::MapPin::On);
+                theme::rule(ui);
+                ui.add_space(4.0);
+            }
+        }
         // The page in a ui of its own, and the panel given the room it
         // offered and no more: a page that only scrolled down grew to its
         // widest row, the panel grew with it, and kept that width for every
@@ -6011,6 +6029,11 @@ impl TequilaApp {
         ui.allocate_rect(room, egui::Sense::hover());
         self.inspector_scrolled = [shown.state.offset.y, shown.content_size.y, room.height(), room.top(), shown.content_size.x - room.width()];
 
+        if map_pin_clicked || std::mem::take(&mut self.environment_tab.map_pin_clicked) {
+            let on = !self.sections.map_in_view();
+            self.sections.set_map_in_view(on);
+            self.keep_sections();
+        }
         if resubmit {
             self.submit();
         }
@@ -8154,6 +8177,54 @@ mod inspector_tests {
         }
         assert_eq!(top_down(&ctx_again), ["pins", "turn", "background", "ground", "sky"], "the order did not come back after a restart");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// The Environment map kept in view stays where it is while the page
+    /// under it scrolls; as it comes, it scrolls with the page; and on a
+    /// panel too short to give it the room, it scrolls with the page though
+    /// it is asked to stay.
+    #[test]
+    fn the_map_kept_in_view_stays_while_the_page_scrolls() {
+        let mut app = TequilaApp::for_tests();
+        app.project_tab = ProjectTab::Environment;
+        // Pins enough for a page that scrolls.
+        let pins = (0..6).map(|i| tequila_render_core::pins::softbox(&format!("Softbox {i}"), i as f32 * 40.0, 30.0, 0.8, 0.5, 12.0)).collect();
+        app.project.apply(Command::SetEnvironmentPins { pins }).unwrap();
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::style_for_tests(&ctx);
+        let draw = |app: &mut TequilaApp, height: f32, scroll: f32| {
+            app.pending_inspector_scroll = Some(scroll);
+            for _ in 0..2 {
+                let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(340.0, height))), ..Default::default() };
+                let _ = ctx.run(input, |ctx| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::none().inner_margin(egui::Margin { left: 14.0, right: 10.0, top: 0.0, bottom: 0.0 }))
+                        .show(ctx, |ui| app.project_panel(ui));
+                });
+            }
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("environment-map-rect"))).expect("the map was drawn").top()
+        };
+
+        // As it comes: the map is part of the page, and scrolls with it.
+        let top = draw(&mut app, 800.0, 0.0);
+        let scrolled = draw(&mut app, 800.0, 150.0);
+        assert!(app.inspector_scrolled[0] > 100.0, "the page did not scroll ({})", app.inspector_scrolled[0]);
+        assert!(scrolled < top - 100.0, "the map stayed though it was not kept in view ({top} then {scrolled})");
+
+        // Kept in view: above the page, still while the page scrolls.
+        app.sections.set_map_in_view(true);
+        let top = draw(&mut app, 800.0, 0.0);
+        assert_eq!(app.environment_tab.map_pin, pin_panel::MapPin::On);
+        let scrolled = draw(&mut app, 800.0, 150.0);
+        assert!(app.inspector_scrolled[0] > 100.0, "the page under the map did not scroll ({})", app.inspector_scrolled[0]);
+        assert_eq!(scrolled, top, "the map kept in view moved with the page");
+
+        // A panel too short for it: it scrolls with the page, and says so.
+        let top = draw(&mut app, 420.0, 0.0);
+        assert_eq!(app.environment_tab.map_pin, pin_panel::MapPin::TooShort);
+        let scrolled = draw(&mut app, 420.0, 150.0);
+        assert!(scrolled < top - 100.0, "on a short panel the map should scroll with the page ({top} then {scrolled})");
     }
 
     /// The Material page's line names what the page is showing, as it

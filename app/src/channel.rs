@@ -849,6 +849,10 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         app.sections = store;
         app.keep_sections();
     }
+    if let Some(on) = change.map_in_view {
+        app.sections.set_map_in_view(on);
+        app.keep_sections();
+    }
     match &change.section_drag {
         Some(Some((page, section, slot))) => {
             let page = section_page(page);
@@ -972,6 +976,7 @@ fn ui_state(app: &TequilaApp) -> Value {
             for (page, _) in crate::sections::PAGES {
                 pages.set(page, app.sections.order(page).iter().map(|k| Value::String(k.to_string())).collect::<Vec<_>>());
             }
+            pages.set("map_in_view", app.sections.map_in_view());
             pages.set(
                 "held",
                 match &app.sections.staged {
@@ -2978,6 +2983,12 @@ mod handler_tests {
         assert_eq!(order(&state, "snapshots")[0], "configurator", "another page kept its order");
         value(&mut app, r#"{"op":"ui","sections":false}"#);
         assert_eq!(app.sections, crate::sections::Store::default());
+
+        // The Environment map kept in view, and let scroll again.
+        let state = value(&mut app, r#"{"op":"ui","map_in_view":true}"#);
+        assert_eq!(state.get("sections").and_then(|s| s.get("map_in_view")).and_then(|v| v.as_bool()), Some(true));
+        let state = value(&mut app, r#"{"op":"ui","map_in_view":false}"#);
+        assert_eq!(state.get("sections").and_then(|s| s.get("map_in_view")).and_then(|v| v.as_bool()), Some(false));
     }
 
     /// one-sided ones turn by name, false hides them and keeps the choice,

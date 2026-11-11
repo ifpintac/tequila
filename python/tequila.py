@@ -374,7 +374,8 @@ class Client:
         a long page), sections={'environment': ['pins']} (a page's
         sections in that order; None for its default, False for every
         page's), section_drag=['environment', 'pins', 0] (a section held
-        part-way through a drag, for a picture) or False,
+        part-way through a drag, for a picture) or False, map_in_view=True
+        (the Environment map kept at the top while its page scrolls),
         preferences_page='viewport'
         and preferences_search='gizmo' (the Preferences window at a page,
         or searching), graph_search='noise' (typed in the search of the

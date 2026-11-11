@@ -38,6 +38,9 @@ pub const PAGES: &[(&str, &[&str])] = &[
     ("snapshots", &["turntable", "model_sets", "variants", "configurator"]),
 ];
 
+/// The Environment page's map, in what is kept in view.
+const MAP: &str = "environment.map";
+
 /// The height of a section's title row, the card's top edge included: where
 /// a drag starts and where the grip sits.
 const TITLE: f32 = 36.0;
@@ -61,6 +64,10 @@ pub struct Store {
     /// The lines of pages this version does not have, written back as they
     /// were read.
     unknown: Vec<String>,
+    /// What is kept in view while its page scrolls: `environment.map`, the
+    /// Environment page's map. Kept as a list, written `keep=...`, so a
+    /// later version can keep more without this one losing them.
+    kept: Vec<String>,
     /// A drag held part-way for a picture: the page, the section and the
     /// slot it would land in (0 above the first section shown, the count
     /// below the last). Nothing moves.
@@ -136,6 +143,19 @@ impl Store {
         self.pages.keys().map(String::as_str)
     }
 
+    /// Whether the Environment page's map stays at the top while the rest
+    /// of the page scrolls.
+    pub fn map_in_view(&self) -> bool {
+        self.kept.iter().any(|k| k == MAP)
+    }
+
+    pub fn set_map_in_view(&mut self, on: bool) {
+        self.kept.retain(|k| k != MAP);
+        if on {
+            self.kept.push(MAP.to_string());
+        }
+    }
+
     /// Where the orders are kept: `sections.txt`, beside the other settings.
     pub fn file() -> PathBuf {
         tequila_format::library::settings_directory().join("sections.txt")
@@ -160,6 +180,10 @@ impl Store {
         for line in text.lines() {
             let Some((page, keys)) = line.split_once('=') else { continue };
             let page = page.trim();
+            if page == "keep" {
+                store.kept = keys.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+                continue;
+            }
             if defaults(page).is_none() {
                 store.unknown.push(line.trim().to_string());
                 continue;
@@ -176,6 +200,9 @@ impl Store {
 
     fn to_text(&self) -> String {
         let mut text: String = self.pages.iter().map(|(page, keys)| format!("{page}={}\n", keys.join(","))).collect();
+        if !self.kept.is_empty() {
+            text.push_str(&format!("keep={}\n", self.kept.join(",")));
+        }
         for line in &self.unknown {
             text.push_str(line);
             text.push('\n');
@@ -563,6 +590,23 @@ mod tests {
         let older = "environment=sky,turn,background,pins\n";
         let store = Store::from_text(older);
         assert_eq!(store.order("environment"), vec!["sky", "turn", "background", "ground", "pins"], "a section the file lacks comes after the one it follows by default");
+    }
+
+    /// The map kept in view is kept in the file, beside the orders, and
+    /// what a later version keeps in view is not lost.
+    #[test]
+    fn the_map_kept_in_view_is_kept_in_the_file() {
+        let mut store = Store::default();
+        assert!(!store.map_in_view(), "it scrolls with the page, as it comes");
+        store.set_map_in_view(true);
+        let back = Store::from_text(&store.to_text());
+        assert!(back.map_in_view());
+        let mut later = Store::from_text("keep=environment.map,scene.tree\nenvironment=pins\n");
+        assert!(later.map_in_view());
+        later.set_map_in_view(false);
+        assert_eq!(later.to_text().lines().find(|l| l.starts_with("keep=")), Some("keep=scene.tree"));
+        later.reset(None);
+        assert!(later.to_text().contains("keep=scene.tree"), "putting the pages back in order keeps what is kept in view");
     }
 
     /// Moving among the sections shown leaves those not shown where they

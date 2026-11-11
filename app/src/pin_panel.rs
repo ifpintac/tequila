@@ -291,16 +291,46 @@ pub fn export_row(ui: &mut egui::Ui, project: &mut Project) {
     });
 }
 
+/// Whether the map is kept in view at the top of the Environment page while
+/// the rest of it scrolls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapPin {
+    /// It scrolls with the page, as it comes.
+    #[default]
+    Off,
+    /// It stays at the top.
+    On,
+    /// Asked for, but the panel is too short to give it the room: it
+    /// scrolls with the page until the window is taller.
+    TooShort,
+}
+
 /// The map on its own, at the top of the Environment tab: the whole sky at a
-/// glance, and its lights moved by dragging them across it.
-pub fn map_section(ui: &mut egui::Ui, project: &mut Project) {
+/// glance, and its lights moved by dragging them across it. Returns whether
+/// its pin was clicked, to keep it in view or let it scroll.
+pub fn map_section(ui: &mut egui::Ui, project: &mut Project, pin: MapPin) -> bool {
     let original = project.document().environment.pins.clone();
     let mut pins = original.clone();
     if let Some(added) = map(ui, project, &mut pins) {
         project.end_interaction();
         pins = added;
     }
-    crate::theme::note(ui, "Drag a light to move it · scroll over it to size it · double-click the sky to add one");
+    // The help, and at its right the pin: the map is what a pin is moved
+    // on, and a person tuning a pin far down the page wants to see it.
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            let (title, detail) = match pin {
+                MapPin::Off => ("Keep the map in view", "It stays at the top of the page while the sections under it scroll, so a pin's change shows on it as it is made."),
+                MapPin::On => ("The map is kept in view", "Click to let it scroll with the page again."),
+                MapPin::TooShort => ("Kept in view on a taller window", "The panel is too short to keep the map at the top without crowding the page, so it scrolls with it for now. Click to stop keeping it."),
+            };
+            clicked = crate::icons::tip(crate::icons::button(ui, crate::icons::Icon::Pin, pin != MapPin::Off, 24.0, egui::Sense::click()), title, detail, "").clicked();
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                crate::theme::note(ui, "Drag a light to move it · scroll over it to size it · double-click the sky to add one");
+            });
+        });
+    });
     if pins != original {
         if let Err(error) = project.apply(Command::SetEnvironmentPins { pins }) {
             project.status = error.to_string();
@@ -309,6 +339,13 @@ pub fn map_section(ui: &mut egui::Ui, project: &mut Project) {
     if ui.input(|i| i.pointer.any_released()) {
         project.end_interaction();
     }
+    clicked
+}
+
+/// How tall the map and its line of help stand in a panel `width` wide: what
+/// keeping it in view takes from the page.
+pub fn map_height(width: f32) -> f32 {
+    width.clamp(160.0, 560.0) * 0.5 + 44.0
 }
 
 /// The environment flattened, its pins drawn where they sit: KeyShot's HDRI
@@ -320,6 +357,8 @@ fn map(ui: &mut egui::Ui, project: &mut Project, pins: &mut [Pin]) -> Option<Vec
     use tequila_core::sampling::{direction_to_equirect, equirect_to_direction};
     let width = ui.available_width().clamp(160.0, 560.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, width * 0.5), egui::Sense::click_and_drag());
+    // Where it was drawn, for a test of whether it stays in view.
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("environment-map-rect"), rect));
     let selected_id = ui.id().with("pin-map-selected");
     let mut selected: Option<usize> = ui.data(|d| d.get_temp(selected_id)).filter(|&i: &usize| i < pins.len());
 

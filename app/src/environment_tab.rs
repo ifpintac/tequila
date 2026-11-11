@@ -34,6 +34,11 @@ pub struct EnvironmentTab {
     /// Which pin is being aimed right now, so its button shows as held down.
     /// Set by the app from the viewport's own state.
     pub aiming_pin: Option<usize>,
+    /// Whether the map is kept in view, drawn by the app above the page,
+    /// and so not here. Set by the app each frame.
+    pub map_pin: crate::pin_panel::MapPin,
+    /// The map's pin was clicked here; drained by the app.
+    pub map_pin_clicked: bool,
 }
 
 /// The groups, in the order §1.5 presents them.
@@ -126,8 +131,11 @@ impl EnvironmentTab {
         ui.add_space(2.0);
         // The whole environment flattened, its lights on it, as KeyShot's
         // HDRI editor shows it: where the light comes from, at a glance.
-        crate::pin_panel::map_section(ui, project);
-        ui.add_space(2.0);
+        // Kept in view, it is above the page, drawn by the app.
+        if self.map_pin != crate::pin_panel::MapPin::On {
+            self.map_pin_clicked |= crate::pin_panel::map_section(ui, project, self.map_pin);
+            ui.add_space(2.0);
+        }
 
         // The dialog blocks, so it runs after the panel is laid out rather
         // than in the middle of a layout pass.

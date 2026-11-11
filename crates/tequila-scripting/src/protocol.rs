@@ -489,6 +489,9 @@ pub struct UiChange {
     /// A section held part-way through a drag, for a picture: the page,
     /// the section and the slot it would land in. `Some(None)` lets it go.
     pub section_drag: Option<Option<(String, String, usize)>>,
+    /// Whether the Environment page's map stays at the top while the rest
+    /// of the page scrolls, as its pin sets it; kept in the settings.
+    pub map_in_view: Option<bool>,
 }
 
 /// Inspector pages' section orders as a script sets them.
@@ -1492,6 +1495,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                     _ => return Err(ProtocolError("`section_drag` is [page, section, slot], or false".into())),
                 },
             },
+            map_in_view: opt_bool(value, "map_in_view")?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1918,6 +1922,10 @@ mod tests {
         assert_eq!(change.section_drag, Some(None));
         assert!(parse_request(r#"{"id":16,"op":"ui","sections":{"environment":[3]}}"#).is_err());
         assert!(parse_request(r#"{"id":17,"op":"ui","section_drag":["environment","pins"]}"#).is_err());
+        let request = parse_request(r#"{"id":18,"op":"ui","map_in_view":true}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        assert_eq!(change.map_in_view, Some(true));
+        assert!(parse_request(r#"{"id":19,"op":"ui","map_in_view":"yes"}"#).is_err());
     }
 
     /// The composition guides: shown or hidden, a guide or a list of them,
