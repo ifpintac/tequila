@@ -442,6 +442,8 @@ Every method is a thin wrapper over a command. **CI asserts that every command i
 
 Unlimited by default (configurable), with a visible history panel listing named steps. Commands journal to disk for crash recovery (§03 §4.5). Non-mutating actions (selection, camera navigation, panel layout) are **not** undoable — putting camera moves in the undo stack is a common and infuriating mistake.
 
+*As built, November 11:* an import or an update (`scene.import`, `scene.reimport`) that brings a mesh, a material, a texture or a node under a key the scene already uses is refused, before anything is written. Taken, it put what it brought in place of what was there, and its undo then took the key away altogether: a part was left with no mesh, and the project saved after it would not open ("node2 references missing mesh 1"). Tequila's own imports reserve their keys and never met it; a script's command need not, and the documentation's own example of an update, applied to the Headphones sample and undone, did. Found by applying every command's example to a live scene, undoing each and opening the project saved after each step (`an_update_under_a_key_in_use_is_refused`).
+
 ---
 
 ## 9. Library window

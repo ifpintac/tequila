@@ -2386,6 +2386,25 @@ fn execute(
                     document.tree.try_get(parent)?;
                 }
             }
+            // And every key it brings must be free. What it brings under a
+            // key in use took the place of what was there, and undoing the
+            // import then took the key away altogether: a part was left
+            // with no mesh, and the project it was saved in would not open.
+            // Tequila's own imports reserve their keys (`reserve_keys`); a
+            // script's need not, and the documentation's own example of an
+            // update did not.
+            if payload.meshes.iter().any(|(key, _)| document.geometry.get(*key).is_some()) {
+                return Err(CommandError::InconsistentHistory("the import brings a mesh under a key the scene already uses"));
+            }
+            if payload.materials.iter().any(|(key, _)| document.materials.get(*key).is_some()) {
+                return Err(CommandError::InconsistentHistory("the import brings a material under a key the scene already uses"));
+            }
+            if payload.textures.iter().any(|(id, _)| document.textures.get(*id).is_some()) {
+                return Err(CommandError::InconsistentHistory("the import brings a texture under an id the scene already uses"));
+            }
+            if payload.nodes.iter().any(|node| document.tree.contains(node.id)) {
+                return Err(CommandError::InconsistentHistory("the import brings a node under an id the scene already uses"));
+            }
             for (key, mesh) in &payload.meshes {
                 document.geometry.insert_with_key(*key, mesh.clone());
             }
