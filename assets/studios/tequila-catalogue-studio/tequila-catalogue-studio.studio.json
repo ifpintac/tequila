@@ -1,0 +1,394 @@
+{
+  "cameras": [
+    {
+      "basis": [1, 0, 0, 0, 0.57077104, -0.82110924, 0, 0.82110924, 0.57077104],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.7331495,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Main",
+      "position": [0, 0.64699584, 0.41846052],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [0, 0.57077104, -0.82110924]
+    },
+    {
+      "basis": [1, 0, 0, 0, 0.9805807, -0.19611613, 0, 0.19611613, 0.9805807],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.7331495,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Side",
+      "position": [0, 0.18878245, 0.71891224],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [0, 0.9805807, -0.19611613]
+    },
+    {
+      "basis": [1, 0, 0, 0, 0.0009999996, -0.9999995, 0, 0.9999995, 0.0009999996],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.7331495,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Top",
+      "position": [0, 0.7781492, 0.00073314924],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [0, 0.0009999996, -0.9999995]
+    }
+  ],
+  "description": "The product cut out on white with a short reflection, lit so a flat top keeps its colour: a main view                       from high in front, left, right, rear and top, rendered as transparent 16-bit PNGs at 3000 by 2250.",
+  "environment": {
+    "background": {
+      "color": [1, 1, 1],
+      "image": null,
+      "mode": "Color"
+    },
+    "brightness": 1,
+    "contrast": 1,
+    "ground": {
+      "bounce": false,
+      "bounce_color": [1, 1, 1],
+      "bounce_contact_falloff": 0,
+      "bounce_strength": 1,
+      "enabled": true,
+      "flatten": false,
+      "occlusion_shadows": false,
+      "reflection_alpha": "coverage",
+      "reflection_blur": 0.02,
+      "reflection_fade_by": "height",
+      "reflection_fade_distance": 0.05,
+      "reflection_fresnel": false,
+      "reflection_length": 1,
+      "reflections": 0.3,
+      "shadow_color": [0, 0, 0],
+      "shadows": false,
+      "size": 0
+    },
+    "height": 0,
+    "image": null,
+    "pins": [
+      {
+        "angular_size": [0.7, 0.525],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [-0.6036513, 0.6156615, 0.5065236],
+        "enabled": true,
+        "intensity": 10,
+        "kind": "light",
+        "lighting": true,
+        "name": "Key",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.5
+      },
+      {
+        "angular_size": [0.9, 0.67499995],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [0.18730333, 0.92718387, 0.32441887],
+        "enabled": true,
+        "intensity": 2.6,
+        "kind": "light",
+        "lighting": true,
+        "name": "Overhead",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.7
+      },
+      {
+        "angular_size": [1, 0.75],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [0.84436697, 0.2923717, 0.44895792],
+        "enabled": true,
+        "intensity": 3,
+        "kind": "light",
+        "lighting": true,
+        "name": "Fill",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.8
+      },
+      {
+        "angular_size": [1.2, 0.45],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [-0.00000008581657, 0.190809, 0.98162717],
+        "enabled": true,
+        "intensity": 1.5,
+        "kind": "light",
+        "lighting": true,
+        "name": "Front",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.8
+      },
+      {
+        "angular_size": [1.6, 0.12],
+        "blend": "add",
+        "color": [1, 1, 1],
+        "direction": [0, 0.34202012, -0.9396926],
+        "enabled": true,
+        "intensity": 5,
+        "kind": "light",
+        "lighting": true,
+        "name": "Back strip",
+        "roll": 0,
+        "shape": "rectangle",
+        "show_in_background": false,
+        "softness": 0.4
+      }
+    ],
+    "rotation": 0,
+    "size": 0
+  },
+  "family": "Tequila Studio",
+  "format": "tequila.studio-preset",
+  "framing": {
+    "base_offset_m": 0,
+    "reference_radius_m": 0.1,
+    "scale": "cameras"
+  },
+  "id": "tequila-catalogue-studio",
+  "image_style": {
+    "blacks": 0,
+    "bloom": 0,
+    "bloom_radius": 0.03,
+    "chromatic_aberration": 0,
+    "contrast": 1,
+    "display_transform": "sRGB",
+    "exposure": -0.35,
+    "highlights": 0,
+    "saturation": 1,
+    "shadows": 0,
+    "sharpening": 0,
+    "temperature": 6500,
+    "tint": 0,
+    "type": "Basic",
+    "vignette": 0,
+    "whites": 0
+  },
+  "lighting": {
+    "custom": {
+      "adaptive_sampling_threshold": 0.01,
+      "caustics": false,
+      "direct_lighting": true,
+      "global_illumination": true,
+      "ground_illumination": false,
+      "interior_mode": false,
+      "light_source_materials": true,
+      "max_bounces": 6,
+      "max_transmission_bounces": 8,
+      "regularization_roughness": 0.09,
+      "regularization_start_bounce": 2,
+      "russian_roulette_start_bounce": 3,
+      "shadows": true
+    },
+    "preset": "Product"
+  },
+  "lights": [],
+  "material_rules": [],
+  "materials": [],
+  "name": "Catalogue Studio",
+  "notes": "Generated by crates/tequila-format/examples/builtin_studios.rs.",
+  "preset_version": "1",
+  "render": {
+    "adaptive": true,
+    "adaptive_threshold": null,
+    "alpha_mode": "straight",
+    "clamp_direct": null,
+    "clamp_indirect": null,
+    "denoise": true,
+    "denoise_cadence": 4,
+    "denoise_strength": 1,
+    "depth": "16",
+    "dpi": 300,
+    "engine": "cycles-gpu",
+    "filename_template": "{product}_{view}_{date}",
+    "format": "png",
+    "jpeg_quality": 92,
+    "kind": "photo",
+    "layers": [],
+    "max_samples": 512,
+    "max_seconds": null,
+    "output_directory": "",
+    "pixel_filter": null,
+    "prefilter_guides": true,
+    "preview_denoise": true,
+    "region": null,
+    "reject_fireflies": true,
+    "relight": false,
+    "resolution": [3000, 2250],
+    "spectral": "auto",
+    "wireframe": {
+      "background_bottom": [0.11, 0.11, 0.115],
+      "background_top": [0.2, 0.2, 0.21],
+      "edges": "mesh",
+      "hidden": "faint",
+      "line_colour": [0.82, 0.82, 0.84],
+      "line_width": 1.5
+    },
+    "write_passes": false,
+    "write_text_metadata": false,
+    "write_xmp": false
+  },
+  "size": "Medium",
+  "studios": [
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.57077104, -0.82110924, 0, 0.82110924, 0.57077104],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.7331495,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Main",
+        "position": [0, 0.64699584, 0.41846052],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.57077104, -0.82110924]
+      },
+      "name": "Main",
+      "product_yaw": 0,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.9805807, -0.19611613, 0, 0.19611613, 0.9805807],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.7331495,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Side",
+        "position": [0, 0.18878245, 0.71891224],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.9805807, -0.19611613]
+      },
+      "name": "Left",
+      "product_yaw": 1.5707964,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.9805807, -0.19611613, 0, 0.19611613, 0.9805807],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.7331495,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Side",
+        "position": [0, 0.18878245, 0.71891224],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.9805807, -0.19611613]
+      },
+      "name": "Right",
+      "product_yaw": -1.5707964,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.9805807, -0.19611613, 0, 0.19611613, 0.9805807],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.7331495,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Side",
+        "position": [0, 0.18878245, 0.71891224],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.9805807, -0.19611613]
+      },
+      "name": "Rear",
+      "product_yaw": 3.1415927,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.0009999996, -0.9999995, 0, 0.9999995, 0.0009999996],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.7331495,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Top",
+        "position": [0, 0.7781492, 0.00073314924],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.0009999996, -0.9999995]
+      },
+      "name": "Top",
+      "product_yaw": 0,
+      "variants": []
+    }
+  ],
+  "tags": [
+    "product",
+    "catalogue",
+    "packshot",
+    "white",
+    "transparent",
+    "built-in"
+  ],
+  "thumbnail": "thumbnail.png",
+  "version": 1
+}
