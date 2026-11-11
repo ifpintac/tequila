@@ -1,6 +1,7 @@
 {
   "base_color": [0.5556174, 0.52929026, 0.41039258],
   "category": "Plastic",
+  "description": "An uncoloured cream-beige glass-reinforced nylon with a matte finish, as on raw engineering parts and brackets.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -216,7 +217,23 @@
     "engineering",
     "bracket",
     "natural",
-    "cream"
+    "cream",
+    "polyamide",
+    "pa",
+    "gf",
+    "glass fiber",
+    "glass fibre",
+    "reinforced",
+    "engineering plastic",
+    "matte",
+    "uncoloured",
+    "uncolored",
+    "off white",
+    "beige",
+    "industrial",
+    "automotive",
+    "tools",
+    "prototyping"
   ],
   "type": "generic"
 }

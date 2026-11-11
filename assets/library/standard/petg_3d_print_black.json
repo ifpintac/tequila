@@ -1,6 +1,7 @@
 {
   "base_color": [0.0075496845, 0.007513414, 0.008428944],
-  "category": "Plastic",
+  "category": "3D Print",
+  "description": "A glossy black PETG print with fine layer lines, tougher than PLA, used for functional prototypes and brackets.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -395,7 +396,21 @@
     "3d print",
     "fdm",
     "layer lines",
-    "black"
+    "black",
+    "polyethylene terephthalate glycol",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "filament print",
+    "glossy",
+    "prototype",
+    "additive",
+    "printed",
+    "dark",
+    "ridged",
+    "prototyping",
+    "industrial",
+    "tools",
+    "electronics"
   ],
   "type": "plastic"
 }

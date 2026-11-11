@@ -1,6 +1,7 @@
 {
   "base_color": [0.007267729, 0.0074856766, 0.008910818],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A dark charcoal metallic paint with fine flakes over a cast metal box, as on guitar effects pedals and small instruments.",
   "edge_radius": 0.0004,
   "flake_color": [0.20852813, 0.21526463, 0.24195656],
   "flake_roughness": 0.18,
@@ -62,7 +63,6 @@
     "output": 1
   },
   "name": "Enclosure Metallic Charcoal",
-  "specular_roughness": 0.3,
   "tags": [
     "metallic",
     "pedal",
@@ -71,7 +71,22 @@
     "flake",
     "charcoal",
     "gunmetal",
-    "paint"
+    "paint",
+    "gunmetal grey",
+    "gunmetal gray",
+    "dark grey",
+    "dark gray",
+    "grey",
+    "gray",
+    "glossy",
+    "metal flake",
+    "painted metal",
+    "sprayed",
+    "baked",
+    "effects pedal",
+    "musical instruments",
+    "audio",
+    "electronics"
   ],
   "type": "metallic_paint"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black powder-coated sheet punched with rounded-end slots in rows: a dark matte vent face, as on an amplifier, power supply or equipment cover.",
   "graph": {
     "decals": [],
     "links": [
@@ -3478,7 +3479,22 @@
     "slotted",
     "obround",
     "black",
-    "powder coat"
+    "powder coat",
+    "slot vent",
+    "punched",
+    "perforated sheet",
+    "black grille",
+    "powder coated",
+    "matte black",
+    "grill",
+    "steel",
+    "cover",
+    "panel",
+    "ventilation",
+    "audio",
+    "electronics",
+    "industrial",
+    "appliances"
   ],
   "type": "generic"
 }

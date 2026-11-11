@@ -1,6 +1,7 @@
 {
   "base_color": [0.8458, 0.8541, 0.8689],
   "category": "Metal",
+  "description": "Stainless steel with fine linear brush lines: a cool satin grey with directional streaks, as on appliances, sinks and kitchen equipment.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -409,7 +410,23 @@
   "tags": [
     "steel",
     "stainless",
-    "brushed"
+    "brushed",
+    "inox",
+    "ss304",
+    "ss316",
+    "stainless steel",
+    "hairline",
+    "grain",
+    "satin",
+    "grey",
+    "gray",
+    "appliance",
+    "sink",
+    "panel",
+    "appliances",
+    "kitchenware",
+    "architecture",
+    "industrial"
   ],
   "type": "anisotropic"
 }

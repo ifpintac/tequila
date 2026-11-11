@@ -40,12 +40,12 @@ pub fn add_cutaway_menu(ui: &mut egui::Ui, project: &Project, parent: Option<Nod
         }
     }
     ui.separator();
-    ui.weak("Or give a part the Cutaway material: its own shape cuts.");
+    crate::theme::note(ui, "Or give a part the Cutaway material: its own shape cuts.");
     chosen
 }
 
 /// The settings of the selected cutaway, if the selection is one.
-pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
+pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) -> bool {
     let Some(node) = project.selection.active() else {
         return false;
     };
@@ -55,44 +55,28 @@ pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
     let before = (**settings).clone();
     let mut cutaway = before.clone();
 
+    crate::theme::section(ui, "Cutaway");
     ui.add(crate::field::Checkbox::new(&mut cutaway.enabled, "Cutting"))
         .on_hover_text("Off, the model is whole again; the cutaway stays where it is.");
 
-    ui.horizontal(|ui| {
-        ui.label("Shape");
-        for shape in CutShape::ALL {
-            ui.selectable_value(&mut cutaway.shape, shape, shape.label());
-        }
-    });
+    let shapes: Vec<(CutShape, &str)> = CutShape::ALL.iter().map(|s| (*s, s.label())).collect();
+    crate::field::choice(ui, "Shape", &mut cutaway.shape, &shapes);
 
-    ui.horizontal(|ui| {
-        ui.label("Cut face");
-        let own = matches!(cutaway.cap, CapStyle::Own);
-        if ui
-            .selectable_label(own, "Part's material")
-            .on_hover_text("The cut face looks like the part it cuts, as if solid all the way through.")
-            .clicked()
-        {
-            cutaway.cap = CapStyle::Own;
+    let own = matches!(cutaway.cap, CapStyle::Own);
+    let mut coloured = !own;
+    if crate::field::choice(ui, "Cut face", &mut coloured, &[(false, "Part's material"), (true, "Colour")]) {
+        cutaway.cap = if coloured { CapStyle::Color(Spectrum { r: 0.85, g: 0.2, b: 0.15 }) } else { CapStyle::Own };
+    }
+    match &mut cutaway.cap {
+        CapStyle::Color(color) => {
+            crate::color_picker::field(ui, "Cut colour", color);
         }
-        if ui
-            .selectable_label(!own, "Colour")
-            .on_hover_text("One flat colour for every cut face, the way a drawing marks a section.")
-            .clicked()
-            && own
-        {
-            cutaway.cap = CapStyle::Color(Spectrum {
-                r: 0.85,
-                g: 0.2,
-                b: 0.15,
-            });
+        CapStyle::Own => {
+            crate::theme::note(ui, "The cut face looks like the part it cuts, as if solid all the way through.");
         }
-        if let CapStyle::Color(color) = &mut cutaway.cap {
-            crate::color_picker::edit(ui, color);
-        }
-    });
+    }
 
-    ui.small(
+    crate::theme::note(ui,
         "Move, turn and scale it with the transform gizmo. Everything inside it is \
          removed; a plane removes what is in front of it.",
     );
@@ -103,6 +87,11 @@ pub fn cutaway_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
             settings: Box::new(cutaway),
         });
     }
+    // The templates, as on the Material page for a part.
+    ui.add_space(6.0);
+    let mut page = crate::sections::Page::new(ui, "cutaway");
+    page.section(ui, "templates", "Material templates", |ui| templates(ui, project));
+    page.finish(ui);
     true
 }
 

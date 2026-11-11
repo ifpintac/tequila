@@ -1,7 +1,8 @@
 {
   "base_color": [0.00699541, 0.00699541, 0.00699541],
   "base_diffuse_roughness": 0.4,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Black vinyl covering with a coarse, deeply pebbled grain and a low sheen, wrapped round guitar amplifier and speaker cabinets.",
   "graph": {
     "decals": [],
     "links": [
@@ -450,7 +451,20 @@
     "covering",
     "elephant",
     "coarse",
-    "black"
+    "black",
+    "tolex",
+    "pvc covering",
+    "amp covering",
+    "speaker cover",
+    "guitar amp",
+    "faux leather",
+    "pebbled",
+    "rough texture",
+    "black vinyl",
+    "embossed",
+    "audio",
+    "musical instruments",
+    "electronics"
   ],
   "type": "generic"
 }

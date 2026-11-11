@@ -1,6 +1,7 @@
 {
   "base_color": [0.49537963, 0.4059729, 0.17578945],
   "category": "Metal",
+  "description": "Gold-toned anodised aluminium with fine linear brushing: a warm champagne satin with directional streaks, as on a faceplate or decorative trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -411,7 +412,21 @@
     "brushed",
     "gold",
     "champagne",
-    "front panel"
+    "front panel",
+    "hairline",
+    "grain",
+    "linear grain",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "audio",
+    "electronics",
+    "accessories"
   ],
   "type": "anisotropic"
 }

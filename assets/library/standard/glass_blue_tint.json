@@ -1,12 +1,25 @@
 {
-  "category": "Glass",
+  "category": "Glass & Clear Plastic",
+  "description": "A transparent glass with a light blue tint, polished and smooth, for decorative panels, vases and bottles.",
   "name": "Glass Blue Tint",
   "specular_ior": 1.52,
   "tags": [
     "glass",
     "blue",
     "tinted",
-    "decorative"
+    "decorative",
+    "blue glass",
+    "transparent",
+    "glossy",
+    "cobalt",
+    "vase",
+    "panel",
+    "window",
+    "solid glass",
+    "interior",
+    "architecture",
+    "packaging",
+    "lighting"
   ],
   "transmission_color": [0.23267812, 0.31482863, 0.5410092],
   "transmission_depth": 0.02,

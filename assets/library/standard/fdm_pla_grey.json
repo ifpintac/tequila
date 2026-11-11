@@ -1,6 +1,7 @@
 {
   "base_color": [0.15308736, 0.15661627, 0.16381422],
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A matte mid-grey PLA print with visible layer lines, a common colour for fit-check prototypes.",
   "graph": {
     "decals": [],
     "links": [
@@ -498,7 +499,20 @@
     "layer lines",
     "filament",
     "grey",
-    "gray"
+    "gray",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "matte",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "ridged",
+    "prototyping",
+    "tools",
+    "industrial",
+    "electronics"
   ],
   "type": "plastic"
 }

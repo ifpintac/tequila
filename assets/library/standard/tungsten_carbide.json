@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Tungsten carbide: a very dark, dense grey metal with a smooth, slightly cool polish, as on a ring, drill bit or cutting tip.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,21 @@
     "carbide",
     "ring",
     "jewellery",
-    "dark"
+    "dark",
+    "hard metal",
+    "cemented carbide",
+    "dark grey",
+    "gray",
+    "gunmetal",
+    "wedding band",
+    "drill",
+    "insert",
+    "cutting tool",
+    "polished",
+    "scratch resistant",
+    "tools",
+    "industrial",
+    "watches"
   ],
   "type": "metal"
 }

@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Gold with fine linear brush lines: a rich yellow satin with directional streaks, as on a watch case, pen or jewellery piece.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -409,7 +410,22 @@
     "gold",
     "brushed",
     "watch",
-    "jewellery"
+    "jewellery",
+    "hairline",
+    "grain",
+    "yellow gold",
+    "satin",
+    "18k",
+    "24k",
+    "watch case",
+    "pen",
+    "ring",
+    "linear grain",
+    "precious metal",
+    "karat",
+    "watches",
+    "accessories",
+    "electronics"
   ],
   "type": "anisotropic"
 }

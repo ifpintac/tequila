@@ -1364,6 +1364,26 @@ pub fn paint_button(ui: &egui::Ui, rect: Rect, response: &egui::Response, icon: 
     paint(painter, Rect::from_center_size(rect.center(), egui::Vec2::splat(glyph)), icon, colour);
 }
 
+/// A tool in a panel's toolbar: one icon on a button's own ground, a row
+/// high, so it reads as a button beside the worded ones and is greyed out
+/// plainly when it has nothing to act on. Its name is its tooltip's.
+pub fn tool(ui: &mut egui::Ui, icon: Icon) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 26.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let p = theme::p();
+        let enabled = ui.is_enabled();
+        let hovered = enabled && response.hovered();
+        let ease = ui.ctx().animate_bool_with_time(response.id.with("ease"), hovered, 0.1);
+        let fill = if enabled && response.is_pointer_button_down_on() { p.pressed } else { theme::mix(p.control, p.hover, ease) };
+        // Opaque where it is greyed out, as its icon is: a disabled ui
+        // fades it toward the panel by itself.
+        ui.painter().rect_filled(rect, 6.0, if enabled { fill } else { p.control });
+        let colour = if enabled { theme::mix(p.text, p.icon_hover, ease) } else { theme::mix(p.icon, p.text_faint, 0.35) };
+        paint(ui.painter(), Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)), icon, colour);
+    }
+    response
+}
+
 /// A lighter or darker cut of `c`, for a filled button under the pointer.
 fn shade(c: Color32, lighter: bool, t: f32) -> Color32 {
     let target = if lighter { 255.0 } else { 0.0 };

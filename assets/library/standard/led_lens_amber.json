@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.24, 0.03],
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "An unlit diffused amber epoxy dome, as on indicator lamps and panel lights when switched off.",
   "edge_radius": 0.0002,
   "name": "LED Lens Amber",
   "specular_ior": 1.55,
@@ -16,7 +17,21 @@
     "diffused",
     "epoxy",
     "amber",
-    "orange"
+    "orange",
+    "indicator",
+    "status light",
+    "pilot lamp",
+    "panel light",
+    "diffuser",
+    "translucent",
+    "dome",
+    "off state",
+    "cover",
+    "epoxy lens",
+    "electronics",
+    "audio",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

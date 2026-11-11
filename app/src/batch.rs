@@ -6455,6 +6455,29 @@ mod tests {
             ("Steel Electrogalvanised", 0.025),
             ("Grille Black Slotted", 0.025),
             ("Grille Black Expanded", 0.025),
+            // Paints, whose pigment has no shine of its own under the coat.
+            ("Automotive Red", 0.025),
+            ("Automotive Blue Metallic", 0.025),
+            // Woods under a lacquer and under oil, a leather's hide and
+            // pressed grain, a suede's nap, a felt's loose fibres.
+            ("Wood Walnut Gloss", 0.025),
+            ("Wood Oak Black Open Grain", 0.025),
+            ("Plywood Birch", 0.025),
+            ("Leather Smooth Tan", 0.025),
+            ("Leather Saffiano Black", 0.006),
+            ("Leather Perforated Tan", 0.025),
+            ("Fine Suede Navy", 0.025),
+            ("Felt Cream", 0.012),
+            ("Spacer Mesh Grey", 0.025),
+            ("Speaker Fabric Grey Melange", 0.012),
+            // A sheen at less than its full weight, which Tequila's
+            // renderer once weighed twice; a ripstop's grid; a burl's
+            // eyes; a bamboo's strips.
+            ("Ripstop Nylon Orange", 0.025),
+            ("Laminate X-Ply Grey", 0.025),
+            ("Spunbond Sheet Black", 0.025),
+            ("Wood Walnut Burl", 0.025),
+            ("Wood Bamboo", 0.05),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();

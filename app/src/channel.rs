@@ -580,6 +580,45 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         },
     };
 
+    // The sections' orders worked out on a copy, every name checked before
+    // any is taken, as the guides are.
+    let sections = match &change.sections {
+        None => None,
+        Some(tequila_scripting::protocol::SectionsChange::Reset) => {
+            let mut store = app.sections.clone();
+            store.reset(None);
+            Some(store)
+        }
+        Some(tequila_scripting::protocol::SectionsChange::Pages(pages)) => {
+            let mut store = app.sections.clone();
+            for (page, order) in pages {
+                let page = section_page(page);
+                let result = match order {
+                    Some(order) => store.set(page, order),
+                    None if crate::sections::defaults(page).is_some() => {
+                        store.reset(Some(page));
+                        Ok(())
+                    }
+                    None => Err(format!("there is no page `{page}` with sections; the pages are {}", crate::sections::page_names())),
+                };
+                if let Err(message) = result {
+                    return Reply::Failed(message);
+                }
+            }
+            Some(store)
+        }
+    };
+    if let Some(Some((page, section, _))) = &change.section_drag {
+        let page = section_page(page);
+        match crate::sections::defaults(page) {
+            None => return Reply::Failed(format!("there is no page `{page}` with sections; the pages are {}", crate::sections::page_names())),
+            Some(keys) if !keys.contains(&section.as_str()) => {
+                return Reply::Failed(format!("the {page} page has no section `{section}`; its sections are {}", keys.join(", ")))
+            }
+            Some(_) => {}
+        }
+    }
+
     if let Some(Some([from, slot])) = change.studio_drag {
         let count = app.project.document().studios.len();
         if from >= count || slot > count {
@@ -803,6 +842,36 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some([width, height]) = change.window_size {
         app.pending_window_size = Some(egui::vec2(width, height));
     }
+    if let Some(offset) = change.inspector_scroll {
+        app.pending_inspector_scroll = Some(offset);
+    }
+    if let Some(store) = sections {
+        app.sections = store;
+        app.keep_sections();
+    }
+    if let Some(on) = change.map_in_view {
+        app.sections.set_map_in_view(on);
+        app.keep_sections();
+    }
+    match &change.section_drag {
+        Some(Some((page, section, slot))) => {
+            let page = section_page(page);
+            app.sections.staged = Some((page.to_string(), section.clone(), *slot));
+            // On the page it is on, so the picture shows it.
+            app.show_project = true;
+            app.project_tab = match page {
+                "scene" => crate::ProjectTab::Scene,
+                "material" | "light" | "cutaway" => crate::ProjectTab::Material,
+                "environment" => crate::ProjectTab::Environment,
+                "lighting" => crate::ProjectTab::Lighting,
+                "camera" => crate::ProjectTab::Camera,
+                "image" => crate::ProjectTab::Image,
+                _ => crate::ProjectTab::Studios,
+            };
+        }
+        Some(None) => app.sections.staged = None,
+        None => {}
+    }
     // Kept, as the menu keeps them.
     if let Some(guides) = guides {
         app.guides = guides;
@@ -834,6 +903,15 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         app.pending_look = Some(look);
     }
     Reply::Value(ui_state(app))
+}
+
+/// A page with sections as a script names it: the Snapshots page is
+/// `studios` to the channel's tabs, so that name is taken too.
+fn section_page(page: &str) -> &str {
+    match page {
+        "studios" => "snapshots",
+        other => other,
+    }
 }
 
 fn ui_state(app: &TequilaApp) -> Value {
@@ -882,6 +960,32 @@ fn ui_state(app: &TequilaApp) -> Value {
             shot.build()
         })
         .set("preview_denoise", app.project.render_settings().preview_denoise)
+        // The Inspector's page as last drawn: how far down it is, how tall
+        // it is, how much of it shows, where in the window that starts and
+        // how far it runs past its panel's width, in points.
+        .set("inspector_scroll", {
+            let [offset, height, shown, top, overflow] = app.inspector_scrolled;
+            let mut page = Object::new();
+            page.set("offset", offset as f64).set("height", height as f64).set("shown", shown as f64).set("top", top as f64).set("overflow", overflow.max(0.0) as f64);
+            page.build()
+        })
+        // Each inspector page's sections in the order they are drawn, and
+        // a drag held for a picture.
+        .set("sections", {
+            let mut pages = Object::new();
+            for (page, _) in crate::sections::PAGES {
+                pages.set(page, app.sections.order(page).iter().map(|k| Value::String(k.to_string())).collect::<Vec<_>>());
+            }
+            pages.set("map_in_view", app.sections.map_in_view());
+            pages.set(
+                "held",
+                match &app.sections.staged {
+                    Some((page, section, slot)) => vec![Value::String(page.clone()), Value::String(section.clone()), Value::Number(*slot as f64)],
+                    None => Vec::new(),
+                },
+            );
+            pages.build()
+        })
         .set("preferences", app.preferences.open)
         .set("preferences_page", app.preferences.page.key())
         .set("spacemouse", {
@@ -2847,6 +2951,46 @@ mod handler_tests {
     }
 
     /// The composition guides from a script: a list shows just those, the
+    /// A script puts a page's sections in its own order, back in the
+    /// default, and holds one part-way through a drag on its page; a name
+    /// the page does not have changes nothing.
+    #[test]
+    fn a_script_orders_the_inspectors_sections_and_holds_a_drag() {
+        let mut app = TequilaApp::for_tests();
+        let order = |state: &Value, page: &str| -> Vec<String> {
+            state.get("sections").and_then(|s| s.get(page)).map(|v| v.as_array().iter().filter_map(|k| k.as_str().map(str::to_string)).collect()).unwrap_or_default()
+        };
+        let state = value(&mut app, r#"{"op":"query","what":"ui"}"#);
+        assert_eq!(order(&state, "environment"), ["turn", "background", "ground", "sky", "pins"]);
+
+        let state = value(&mut app, r#"{"op":"ui","sections":{"environment":["pins"],"studios":["configurator"]}}"#);
+        assert_eq!(order(&state, "environment"), ["pins", "turn", "background", "ground", "sky"]);
+        assert_eq!(order(&state, "snapshots"), ["configurator", "turntable", "model_sets", "variants"], "`studios` names the Snapshots page");
+
+        let message = failure(&mut app, r#"{"op":"ui","sections":{"camera":["match"],"environment":["lens"]}}"#);
+        assert!(message.contains("no section `lens`") && message.contains("pins"), "the refusal lists the page's sections: {message}");
+        assert_eq!(app.sections.order("camera")[0], "lens", "a refused request changed nothing");
+        assert!(failure(&mut app, r#"{"op":"ui","section_drag":["kitchen","pins",0]}"#).contains("no page `kitchen`"));
+
+        let state = value(&mut app, r#"{"op":"ui","section_drag":["environment","sky",0]}"#);
+        assert_eq!(state.get("tab").and_then(|t| t.as_str()), Some("environment"), "the page with the drag is shown");
+        let held: Vec<String> = state.get("sections").and_then(|s| s.get("held")).map(|v| v.as_array().iter().map(|k| k.as_str().map(str::to_string).unwrap_or_else(|| k.as_f64().unwrap_or(-1.0).to_string())).collect()).unwrap_or_default();
+        assert_eq!(held, ["environment", "sky", "0"]);
+        assert_eq!(order(&state, "environment")[0], "pins", "holding a drag moves nothing");
+
+        let state = value(&mut app, r#"{"op":"ui","section_drag":false,"sections":{"environment":null}}"#);
+        assert_eq!(order(&state, "environment"), ["turn", "background", "ground", "sky", "pins"]);
+        assert_eq!(order(&state, "snapshots")[0], "configurator", "another page kept its order");
+        value(&mut app, r#"{"op":"ui","sections":false}"#);
+        assert_eq!(app.sections, crate::sections::Store::default());
+
+        // The Environment map kept in view, and let scroll again.
+        let state = value(&mut app, r#"{"op":"ui","map_in_view":true}"#);
+        assert_eq!(state.get("sections").and_then(|s| s.get("map_in_view")).and_then(|v| v.as_bool()), Some(true));
+        let state = value(&mut app, r#"{"op":"ui","map_in_view":false}"#);
+        assert_eq!(state.get("sections").and_then(|s| s.get("map_in_view")).and_then(|v| v.as_bool()), Some(false));
+    }
+
     /// one-sided ones turn by name, false hides them and keeps the choice,
     /// and a name that is no guide changes nothing.
     #[test]

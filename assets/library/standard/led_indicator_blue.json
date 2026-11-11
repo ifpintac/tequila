@@ -1,6 +1,7 @@
 {
   "base_color": [0.0015, 0.02, 0.25],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A small lit blue LED lens glowing on a dark panel, as a power or status indicator on equipment.",
   "edge_radius": 0.0002,
   "emission_color": [0.006, 0.08, 1],
   "emission_luminance": 1.5,
@@ -84,7 +85,22 @@
     "on",
     "status",
     "blue",
-    "pilot light"
+    "pilot light",
+    "cyan",
+    "status light",
+    "power light",
+    "pilot lamp",
+    "glowing",
+    "illuminated",
+    "panel led",
+    "5mm led",
+    "on state",
+    "lens",
+    "glow",
+    "electronics",
+    "lighting",
+    "appliances",
+    "audio"
   ],
   "type": "generic"
 }

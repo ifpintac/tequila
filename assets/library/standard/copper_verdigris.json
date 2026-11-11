@@ -1,6 +1,7 @@
 {
   "base_metalness": 1,
   "category": "Metal",
+  "description": "Copper weathered to a soft blue-green crust over brown metal: an aged roof or statue look, as on cladding, sculpture or old fittings.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -505,7 +506,21 @@
     "patina",
     "verdigris",
     "aged",
-    "green"
+    "green",
+    "blue green",
+    "teal",
+    "oxidised",
+    "oxidized",
+    "weathered",
+    "aged copper",
+    "roof",
+    "statue",
+    "cladding",
+    "turquoise",
+    "architecture",
+    "interior",
+    "accessories",
+    "furniture"
   ],
   "type": "generic"
 }

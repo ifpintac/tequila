@@ -1,6 +1,7 @@
 {
   "base_color": [0.693, 0.7003, 0.7135],
   "category": "Metal",
+  "description": "Clear anodised aluminium: a smooth, even satin silver as on a laptop body, speaker housing or appliance panel.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -247,7 +248,22 @@
   "tags": [
     "aluminium",
     "anodised",
-    "satin"
+    "satin",
+    "grey",
+    "gray",
+    "natural",
+    "laptop",
+    "phone",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "electronics",
+    "audio",
+    "appliances"
   ],
   "type": "metal"
 }

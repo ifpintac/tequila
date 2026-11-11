@@ -1,6 +1,7 @@
 {
   "base_color": [0.3, 0.31, 0.33],
   "category": "Metal",
+  "description": "Nickel plating in dark gunmetal black: a smooth semi-gloss near-black with a metallic gleam, as on hardware, jack nuts or decorative fittings.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -234,7 +235,23 @@
     "black",
     "plating",
     "hardware",
-    "dark"
+    "dark",
+    "black plating",
+    "dark nickel",
+    "black chrome look",
+    "gunmetal",
+    "electroplated",
+    "plated",
+    "semi gloss",
+    "fastener",
+    "knob",
+    "nut",
+    "bezel",
+    "jack",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "accessories"
   ],
   "type": "metal"
 }

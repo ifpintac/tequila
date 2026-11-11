@@ -1,6 +1,7 @@
 {
   "base_color": [0.20585203, 0.15022399, 0.041170783],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A warm gold metallic paint with fine flakes over a cast metal box, as on guitar effects pedals and small instruments.",
   "edge_radius": 0.0004,
   "flake_color": [0.78059256, 0.69416296, 0.33579016],
   "flake_roughness": 0.18,
@@ -61,7 +62,6 @@
     "output": 1
   },
   "name": "Enclosure Metallic Gold",
-  "specular_roughness": 0.28,
   "tags": [
     "metallic",
     "pedal",
@@ -69,7 +69,22 @@
     "die-cast",
     "flake",
     "gold",
-    "paint"
+    "paint",
+    "champagne",
+    "yellow gold",
+    "golden",
+    "brass colour",
+    "glossy",
+    "metal flake",
+    "painted metal",
+    "sprayed",
+    "baked",
+    "effects pedal",
+    "guitar pedal",
+    "sparkle",
+    "musical instruments",
+    "audio",
+    "electronics"
   ],
   "type": "metallic_paint"
 }

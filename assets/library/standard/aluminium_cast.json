@@ -1,6 +1,7 @@
 {
   "base_color": [0.6438, 0.6443, 0.6325],
   "category": "Metal",
+  "description": "Sand-cast aluminium: a dull grey surface with a fine pitted, slightly rough skin, as on a housing, engine part or pump body.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -234,7 +235,22 @@
   "tags": [
     "aluminium",
     "cast",
-    "rough"
+    "rough",
+    "sand cast",
+    "casting",
+    "foundry",
+    "grey",
+    "gray",
+    "pitted",
+    "matte",
+    "raw",
+    "housing",
+    "bracket",
+    "industrial",
+    "engine",
+    "automotive",
+    "tools",
+    "prototyping"
   ],
   "type": "metal"
 }

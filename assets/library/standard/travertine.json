@@ -1,7 +1,8 @@
 {
   "base_color": [0.67040676, 0.60414356, 0.44397682],
   "base_diffuse_roughness": 0.3,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A beige honed limestone with horizontal pitted bands and a soft matte surface, as on floors, walls and tabletops.",
   "graph": {
     "decals": [],
     "links": [
@@ -846,7 +847,21 @@
     "honed",
     "beige",
     "vein cut",
-    "limestone"
+    "limestone",
+    "beige stone",
+    "cream",
+    "filled",
+    "natural stone",
+    "matte",
+    "pitted",
+    "bands",
+    "flooring",
+    "wall tile",
+    "tabletop",
+    "mediterranean",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

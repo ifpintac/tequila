@@ -1,6 +1,7 @@
 {
   "base_color": [0.14947858, 0.09140846, 0.041000903],
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Tobacco-brown roughout suede with a coarse, hairy nap that looks dusty and matte, for boots, work gloves and rugged bags.",
   "fuzz_clump": 0.3,
   "fuzz_color": [0.24919418, 0.15536313, 0.06175758],
   "fuzz_color_variation": 0.4,
@@ -1838,7 +1839,21 @@
     "boot",
     "footwear",
     "brown",
-    "tobacco"
+    "tobacco",
+    "buff",
+    "rough side",
+    "reverse hide",
+    "napped leather",
+    "matte",
+    "work boot",
+    "glove",
+    "heavy duty",
+    "hide",
+    "chestnut",
+    "shoes",
+    "apparel",
+    "bags",
+    "outdoor gear"
   ],
   "type": "velvet"
 }

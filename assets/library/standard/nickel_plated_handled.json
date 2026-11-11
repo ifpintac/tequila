@@ -1,6 +1,7 @@
 {
-  "base_color": [0.97, 0.93, 0.87],
+  "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Nickel plating that has been handled: a warm silver with faint fingerprint smears and soft smudges, as on a well-used connector or switch.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -197,7 +198,21 @@
     "connector",
     "smudged",
     "fingerprints",
-    "hardware"
+    "hardware",
+    "used",
+    "worn",
+    "greasy",
+    "skin oil",
+    "warm silver",
+    "electroplated",
+    "plug",
+    "jack",
+    "switch",
+    "shiny",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "prototyping"
   ],
   "type": "metal"
 }

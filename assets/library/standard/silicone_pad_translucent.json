@@ -1,7 +1,8 @@
 {
   "base_color": [0.6877841, 0.6928899, 0.6628479],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft milky silicone rubber that glows when backlit, as on drum pads, trigger buttons and light-up keys.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -234,7 +235,23 @@
     "backlit",
     "unlit",
     "milky",
-    "translucent"
+    "translucent",
+    "drum trigger",
+    "rubber pad",
+    "elastomer",
+    "soft",
+    "matte",
+    "frosted",
+    "cloudy",
+    "backlight",
+    "illuminated",
+    "moulded",
+    "molded",
+    "diffusing",
+    "musical instruments",
+    "audio",
+    "electronics",
+    "appliances"
   ],
   "type": "generic"
 }

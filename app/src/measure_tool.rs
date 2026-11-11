@@ -258,9 +258,10 @@ fn snap_marker(painter: &egui::Painter, at: egui::Pos2, kind: SnapKind) {
 
 /// The Measurements section of the Scene tab: the tool's switch and the list.
 pub fn panel(ui: &mut egui::Ui, project: &mut Project, tool: &mut MeasureTool) {
+    let any = !project.document().measurements.is_empty();
     ui.horizontal(|ui| {
         if ui
-            .add(egui::SelectableLabel::new(tool.active(), "📏 Measure"))
+            .add(egui::Button::new(if tool.active() { "Measuring: click two points" } else { "Measure a distance" }).selected(tool.active()))
             .on_hover_text(
                 "Click two points on the model. The pointer snaps to corners and \
                  edges; Esc finishes.",
@@ -269,35 +270,42 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, tool: &mut MeasureTool) {
         {
             tool.toggle();
         }
-        let any = !project.document().measurements.is_empty();
-        if ui.add_enabled(any, egui::Button::new("Clear")).clicked() {
+        if any && ui.button("Clear all").on_hover_text("Remove every measurement").clicked() {
             let _ = project.apply(Command::SetMeasurements {
                 measurements: Vec::new(),
             });
         }
     });
+    if !any && !tool.active() {
+        crate::theme::note(ui, "Sizes read off the model, in the scene's unit. They show in the view, never in a render.");
+    }
 
     let original = project.document().measurements.clone();
     let mut measurements = original.clone();
     let mut remove = None;
     for (index, measurement) in measurements.iter_mut().enumerate() {
+        // A row a measurement, as a pin's or a camera's: seen or not, what
+        // it reads, and remove at the row's end.
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             let seen = measurement.visible;
-            if ui
-                .add(egui::SelectableLabel::new(seen, if seen { "👁" } else { "🚫" }))
-                .on_hover_text("Show or hide it in the viewport")
+            if crate::icons::button(ui, if seen { crate::icons::Icon::Eye } else { crate::icons::Icon::EyeClosed }, false, 24.0, egui::Sense::click())
+                .on_hover_text(if seen { "Shown in the view. Click to hide it." } else { "Hidden. Click to show it in the view." })
                 .clicked()
             {
                 measurement.visible = !seen;
             }
-            let text = match measurement.length(project.document()) {
-                Some(length) => format_length(length, &project.document().units),
-                None => "its part was deleted".into(),
-            };
-            ui.label(text);
-            if ui.small_button("×").on_hover_text("Remove").clicked() {
-                remove = Some(index);
-            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if crate::icons::button(ui, crate::icons::Icon::Close, false, 24.0, egui::Sense::click()).on_hover_text("Remove this measurement").clicked() {
+                    remove = Some(index);
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    match measurement.length(project.document()) {
+                        Some(length) => ui.label(format_length(length, &project.document().units)),
+                        None => crate::theme::note(ui, "its part was deleted"),
+                    };
+                });
+            });
         });
     }
     if let Some(index) = remove {

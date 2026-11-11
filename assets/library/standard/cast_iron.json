@@ -1,6 +1,7 @@
 {
   "base_color": [0.3012, 0.2966, 0.2888],
   "category": "Metal",
+  "description": "Cast iron: a dark grey, slightly rough and matte surface with a fine grainy skin, as on a skillet, grill grate, manhole cover or machine bed.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -156,7 +157,23 @@
     "iron",
     "cast",
     "dark",
-    "rough"
+    "rough",
+    "casting",
+    "grey",
+    "gray",
+    "black",
+    "skillet",
+    "pan",
+    "cookware",
+    "pot",
+    "grate",
+    "radiator",
+    "heavy",
+    "foundry",
+    "kitchenware",
+    "industrial",
+    "furniture",
+    "tools"
   ],
   "type": "metal"
 }

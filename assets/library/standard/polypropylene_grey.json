@@ -1,6 +1,7 @@
 {
   "base_color": [0.17893028, 0.1839216, 0.19309476],
   "category": "Plastic",
+  "description": "A grey polypropylene with a slightly waxy low-sheen surface, as on tool cases, housings and utility mouldings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,22 @@
     "housing",
     "moulded",
     "case",
-    "grey"
+    "grey",
+    "gray",
+    "waxy",
+    "satin",
+    "injection moulded",
+    "molded",
+    "tool case",
+    "box",
+    "container",
+    "flexible",
+    "casing",
+    "tough",
+    "tools",
+    "industrial",
+    "packaging",
+    "appliances"
   ],
   "type": "plastic"
 }

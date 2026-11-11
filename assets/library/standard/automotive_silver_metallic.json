@@ -1,6 +1,7 @@
 {
   "base_color": [0.4506, 0.4559, 0.4761],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A bright gloss silver full of fine aluminium flake under a clear coat, as on family cars and appliances.",
   "edge_radius": 0.0004,
   "flake_color": [0.9205, 0.9201, 0.9287],
   "flake_roughness": 0.18,
@@ -62,12 +63,26 @@
     "output": 1
   },
   "name": "Automotive Silver Metallic",
-  "specular_roughness": 0.26,
   "tags": [
     "car",
     "metallic",
     "flake",
-    "silver"
+    "silver",
+    "silver paint",
+    "grey metallic",
+    "gray metallic",
+    "metallic paint",
+    "clear coat",
+    "glossy",
+    "sprayed",
+    "baked",
+    "aluminium flake",
+    "aluminum flake",
+    "car paint",
+    "vehicle paint",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "metallic_paint"
 }

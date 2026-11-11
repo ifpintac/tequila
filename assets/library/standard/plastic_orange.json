@@ -1,6 +1,7 @@
 {
   "base_color": [0.53862363, 0.17359553, 0.041892096],
   "category": "Plastic",
+  "description": "A bold solid orange moulded plastic with a light sheen, as on toys, safety gear and tool housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -200,7 +201,20 @@
     "abs",
     "orange",
     "safety",
-    "toy"
+    "toy",
+    "safety orange",
+    "bright",
+    "satin",
+    "injection moulded",
+    "molded",
+    "housing",
+    "casing",
+    "hi vis",
+    "vivid",
+    "toys",
+    "tools",
+    "industrial",
+    "outdoor gear"
   ],
   "type": "plastic"
 }

@@ -158,7 +158,7 @@ Each entry: OpenPBR parameter defaults + the parameter set the UI exposes for th
 | **Flat** | Unlit constant emission (`emission_color=color`, all other lobes 0), not affected by lighting; renders as its colour, still writes depth/ID | Color |
 | **Metal** | `base_metalness=1`, complex IOR from a metal preset or from color+edge-tint | Type (Al/Ag/Au/Cu/Cr/…/Custom), Color, Roughness, Anisotropy + rotation, Bump |
 | **Plastic** | `base_metalness=0`, `specular_ior=1.5`, `specular_weight=1`, `specular_roughness=0.1` | Diffuse Color, Specular Color, Roughness, IOR, Bump, Opacity |
-| **Paint** | Plastic base + `coat_weight=1`, `coat_roughness=0.02` | Base Color, Roughness, Coat Roughness, Coat IOR, Bump |
+| **Paint** | Plastic base + `coat_weight=1`, `coat_roughness=0.02`. *As built:* the base has no shine of its own (`specular_weight=0`): the pigment lies under the coat, not under air, so there is no second surface to reflect, and with one every paint wore a milky veil under the coat's highlight. Metallic Paint inherits it; its flakes are its metal. | Base Color, Coat Roughness, Coat IOR, Bump |
 | **Metallic Paint** | Paint + a flake sub-layer: procedural Flakes node driving a metallic normal perturbation and a second metal lobe | Base Color, Flake Color, Flake Size, Flake Density, Coat Roughness |
 | **Glass** | `transmission_weight=1`, `geometry_thin_walled=true`, `transmission_depth=0` | Color, Roughness, IOR, Thickness (for tint) |
 | **Glass (Solid)** | `transmission_weight=1`, `geometry_thin_walled=false`, `transmission_depth>0` (Beer-Lambert absorption through real volume) | Color, Transmission Depth, Roughness, IOR, Abbe (dispersion) |

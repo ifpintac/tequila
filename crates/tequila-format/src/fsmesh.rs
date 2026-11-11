@@ -281,18 +281,13 @@ pub fn read(bytes: &[u8]) -> Result<Mesh, MeshError> {
     mesh.submeshes = submeshes;
     // Bounds are recomputed rather than trusted: they are derivable from the
     // positions, and a stored value that disagreed would make the BVH cull
-    // geometry that is really there.
+    // geometry that is really there. Stored bounds that disagree mean the
+    // mesh was changed after it was written, and the positions win; it was
+    // once an assertion, which took a debug build down on a damaged project
+    // where the shipped one opened it (`damaged_files.rs`). The round-trip
+    // tests below hold the writer to bounds that agree.
+    let _stored = bounds;
     mesh.recompute_bounds();
-    let stored = (
-        vec3(bounds[0], bounds[1], bounds[2]),
-        vec3(bounds[3], bounds[4], bounds[5]),
-    );
-    debug_assert!(
-        mesh.positions.is_empty()
-            || ((mesh.bounds().min - stored.0).length() < 1e-3
-                && (mesh.bounds().max - stored.1).length() < 1e-3),
-        "the stored bounds disagree with the positions"
-    );
     Ok(mesh)
 }
 

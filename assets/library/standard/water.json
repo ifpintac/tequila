@@ -1,11 +1,26 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A clear, colourless liquid with a bright wet surface that bends light, as in bottles, glasses and tanks.",
   "name": "Water",
   "specular_ior": 1.333,
   "tags": [
     "water",
     "liquid",
-    "fill"
+    "fill",
+    "clear liquid",
+    "colorless",
+    "transparent",
+    "fluid",
+    "drink",
+    "bottle fill",
+    "glass fill",
+    "aqua",
+    "wet",
+    "refractive",
+    "h2o",
+    "food & drink",
+    "packaging",
+    "kitchenware"
   ],
   "transmission_color": [0.967, 0.9806, 0.9971],
   "type": "liquid"

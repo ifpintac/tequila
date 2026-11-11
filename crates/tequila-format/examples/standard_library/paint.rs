@@ -6,10 +6,9 @@ use tequila_materials::material_type::{MaterialType, Param};
 
 /// A car's gloss finish: colour under a clear coat, with the fine orange
 /// peel every sprayed finish has, seen in the reflections' edges.
-fn gloss(name: &'static str, tags: &'static [&'static str], colour: Spectrum, roughness: f32) -> Preset {
+fn gloss(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Paint, |m| {
         m.base_color = colour;
-        m.specular_roughness = roughness;
         m.coat_roughness = 0.02;
     }));
     orange_peel(&mut r, 520.0, 5e-6);
@@ -19,11 +18,9 @@ fn gloss(name: &'static str, tags: &'static [&'static str], colour: Spectrum, ro
 }
 
 /// A metallic finish: flakes in the colour coat, a clear coat over them.
-#[allow(clippy::too_many_arguments)]
-pub fn metallic(name: &'static str, tags: &'static [&'static str], colour: Spectrum, flakes: Spectrum, weight: f32, size: f32, spread: f32, roughness: f32) -> Preset {
+pub fn metallic(name: &'static str, tags: &'static [&'static str], colour: Spectrum, flakes: Spectrum, weight: f32, size: f32, spread: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::MetallicPaint, |m| {
         m.base_color = colour;
-        m.specular_roughness = roughness;
         m.coat_roughness = 0.02;
         m.flake_weight = weight;
         m.flake_color = flakes;
@@ -50,17 +47,17 @@ fn powder(name: &'static str, tags: &'static [&'static str], colour: Spectrum, l
 
 pub fn all() -> Vec<Preset> {
     let mut out = vec![
-        gloss("Automotive Red", &["car", "gloss", "clearcoat", "red"], rgb(0.2426, 0.0332, 0.0167), 0.22),
-        gloss("Automotive Blue", &["car", "gloss", "clearcoat", "blue"], rgb(0.0248, 0.0345, 0.1673), 0.22),
-        gloss("Automotive White", &["car", "gloss", "clearcoat", "white"], rgb(0.9055, 0.9049, 0.9194), 0.2),
-        gloss("Automotive Racing Green", &["car", "gloss", "clearcoat", "green", "classic"], srgb("#0E3B2A"), 0.22),
-        gloss("Automotive Yellow", &["car", "gloss", "clearcoat", "yellow"], srgb("#F2B80A"), 0.2),
-        metallic("Automotive Black Metallic", &["car", "metallic", "flake", "black"], rgb(0.0081, 0.0081, 0.01), rgb(0.5514, 0.5504, 0.5761), 0.3, 4e-5, 0.35, 0.24),
-        metallic("Automotive Silver Metallic", &["car", "metallic", "flake", "silver"], rgb(0.4506, 0.4559, 0.4761), rgb(0.9205, 0.9201, 0.9287), 0.75, 5e-5, 0.25, 0.26),
-        metallic("Automotive Blue Metallic", &["car", "metallic", "flake", "blue"], srgb("#0D2A66"), srgb("#8FB0E8"), 0.45, 4.5e-5, 0.3, 0.24),
-        metallic("Automotive Red Metallic", &["car", "metallic", "flake", "red", "candy"], srgb("#6E0A0E"), srgb("#E86A5A"), 0.4, 4.5e-5, 0.3, 0.24),
-        metallic("Automotive Pearl White", &["car", "pearl", "flake", "white"], srgb("#ECEBE6"), srgb("#F4F0FF"), 0.35, 3e-5, 0.4, 0.2),
-        metallic("Automotive Champagne", &["car", "metallic", "flake", "gold", "beige"], srgb("#8C7656"), srgb("#E8D6B0"), 0.6, 5e-5, 0.3, 0.25),
+        gloss("Automotive Red", &["car", "gloss", "clearcoat", "red"], rgb(0.2426, 0.0332, 0.0167)),
+        gloss("Automotive Blue", &["car", "gloss", "clearcoat", "blue"], rgb(0.0248, 0.0345, 0.1673)),
+        gloss("Automotive White", &["car", "gloss", "clearcoat", "white"], rgb(0.9055, 0.9049, 0.9194)),
+        gloss("Automotive Racing Green", &["car", "gloss", "clearcoat", "green", "classic"], srgb("#0E3B2A")),
+        gloss("Automotive Yellow", &["car", "gloss", "clearcoat", "yellow"], srgb("#F2B80A")),
+        metallic("Automotive Black Metallic", &["car", "metallic", "flake", "black"], rgb(0.0081, 0.0081, 0.01), rgb(0.5514, 0.5504, 0.5761), 0.3, 4e-5, 0.35),
+        metallic("Automotive Silver Metallic", &["car", "metallic", "flake", "silver"], rgb(0.4506, 0.4559, 0.4761), rgb(0.9205, 0.9201, 0.9287), 0.75, 5e-5, 0.25),
+        metallic("Automotive Blue Metallic", &["car", "metallic", "flake", "blue"], srgb("#0D2A66"), srgb("#8FB0E8"), 0.45, 4.5e-5, 0.3),
+        metallic("Automotive Red Metallic", &["car", "metallic", "flake", "red", "candy"], srgb("#6E0A0E"), srgb("#E86A5A"), 0.4, 4.5e-5, 0.3),
+        metallic("Automotive Pearl White", &["car", "pearl", "flake", "white"], srgb("#ECEBE6"), srgb("#F4F0FF"), 0.35, 3e-5, 0.4),
+        metallic("Automotive Champagne", &["car", "metallic", "flake", "gold", "beige"], srgb("#8C7656"), srgb("#E8D6B0"), 0.6, 5e-5, 0.3),
         powder("Powder Coat Grey", &["powder", "satin", "industrial", "grey"], rgb(0.1647, 0.1679, 0.1737), 0.45, 0.6),
         powder("Powder Coat Matte Black", &["powder", "matte", "industrial", "black"], rgb(0.0104, 0.0103, 0.0114), 0.7, 0.84),
         powder("Powder Coat White", &["powder", "satin", "industrial", "white"], srgb("#EDEDEA"), 0.4, 0.55),
@@ -70,7 +67,6 @@ pub fn all() -> Vec<Preset> {
     // Gloss enamel: an appliance's hard white, its peel almost levelled.
     let mut r = Recipe::new(base(MaterialType::Paint, |m| {
         m.base_color = rgb(0.956, 0.956, 0.956);
-        m.specular_roughness = 0.08;
         m.coat_roughness = 0.01;
     }));
     orange_peel(&mut r, 400.0, 3e-6);

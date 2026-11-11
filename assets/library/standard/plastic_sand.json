@@ -1,6 +1,7 @@
 {
   "base_color": [0.6509924, 0.614079, 0.49796805],
   "category": "Plastic",
+  "description": "A warm sandy-beige moulded plastic with a soft satin finish, as on consumer housings and appliances.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -200,7 +201,21 @@
     "abs",
     "beige",
     "warm",
-    "consumer"
+    "consumer",
+    "tan",
+    "cream",
+    "off white",
+    "neutral",
+    "satin",
+    "injection moulded",
+    "molded",
+    "housing",
+    "casing",
+    "khaki",
+    "appliances",
+    "electronics",
+    "tools",
+    "toys"
   ],
   "type": "plastic"
 }

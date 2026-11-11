@@ -1,7 +1,8 @@
 {
   "base_color": [0.00699541, 0.00699541, 0.00699541],
   "base_diffuse_roughness": 0.2,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished jet-black granite with a deep mirror shine and a few tiny sparkles, as on worktops and monuments.",
   "graph": {
     "decals": [],
     "links": [
@@ -1333,7 +1334,22 @@
     "polished",
     "black",
     "absolute black",
-    "countertop"
+    "countertop",
+    "black granite",
+    "jet black",
+    "polished stone",
+    "dark",
+    "glossy",
+    "natural stone",
+    "sparkle",
+    "worktop",
+    "kitchen counter",
+    "slab",
+    "tile",
+    "architecture",
+    "interior",
+    "kitchenware",
+    "furniture"
   ],
   "type": "generic"
 }

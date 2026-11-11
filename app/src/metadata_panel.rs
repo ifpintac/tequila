@@ -123,7 +123,7 @@ impl MetadataPanel {
 
         ui.horizontal(|ui| {
             let what = match selected.len() {
-                0 => "Nothing selected".to_string(),
+                0 => "The whole scene".to_string(),
                 1 => project.document().tree.get(selected[0]).map(|n| n.name.clone()).unwrap_or_default(),
                 n => format!("{n} selected"),
             };
@@ -147,7 +147,7 @@ impl MetadataPanel {
         let mut select: Option<(String, String)> = None;
         let layers = layers(project, &selected);
         if fields.is_empty() && layers.is_none() {
-            ui.weak(if selected.len() == 1 { "No fields yet. A CAD file's attributes land here; add your own below." } else { "None of these has a field yet." });
+            theme::note(ui, if selected.len() == 1 { "No details yet. A CAD file's fields (part number, supplier, finish) land here; add your own below." } else { "None of these has a detail yet." });
         }
         // Rows of key, value, and the row's two actions, measured out by
         // hand: a grid gives a text field no width to fill.
@@ -268,10 +268,10 @@ impl MetadataPanel {
     /// With nothing selected: the fields the scene has, each a search away.
     fn overview(&mut self, ui: &mut egui::Ui, keys: &BTreeMap<String, usize>, search: &mut String) {
         if keys.is_empty() {
-            ui.weak("No part has metadata yet. CAD attributes arrive with the model; select a part to add your own.");
+            theme::note(ui, "No part has details yet. A CAD file's fields (part number, supplier, finish) arrive with the model; select a part to add your own.");
             return;
         }
-        ui.weak("Click a field to find the parts that have it, or search Field = value.");
+        theme::note(ui, "Click a field to find the parts that have it, or search Field = value.");
         ui.horizontal_wrapped(|ui| {
             for (key, count) in keys {
                 if ui

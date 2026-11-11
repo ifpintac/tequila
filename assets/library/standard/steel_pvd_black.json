@@ -1,6 +1,7 @@
 {
   "base_color": [0.049999997, 0.049999997, 0.0555],
   "category": "Metal",
+  "description": "Steel with a black PVD or DLC coating: a smooth, deep gloss-satin black with a slight metallic depth, as on a watch case or tool.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -178,7 +179,23 @@
     "pvd",
     "dlc",
     "black",
-    "watch"
+    "watch",
+    "diamond like carbon",
+    "black coating",
+    "physical vapor deposition",
+    "vacuum coated",
+    "gloss black",
+    "dark",
+    "case",
+    "bezel",
+    "scratch resistant",
+    "knife",
+    "tool",
+    "polished",
+    "watches",
+    "tools",
+    "accessories",
+    "eyewear"
   ],
   "type": "metal"
 }

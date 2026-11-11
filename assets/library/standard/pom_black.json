@@ -1,6 +1,7 @@
 {
   "base_color": [0.012, 0.012, 0.013],
   "category": "Plastic",
+  "description": "A smooth black acetal with a dense low-friction surface, used for gears, sliders and precision parts.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -203,7 +204,23 @@
     "slider",
     "gear",
     "black",
-    "engineering"
+    "engineering",
+    "polyoxymethylene",
+    "acetal copolymer",
+    "low friction",
+    "engineering plastic",
+    "machined",
+    "satin",
+    "dark",
+    "bearing",
+    "bushing",
+    "cnc machined",
+    "injection moulded",
+    "molded",
+    "industrial",
+    "tools",
+    "automotive",
+    "musical instruments"
   ],
   "type": "plastic"
 }

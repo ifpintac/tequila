@@ -1,7 +1,8 @@
 {
   "base_color": [0.0131, 0.013, 0.0143],
   "base_diffuse_roughness": 0.4,
-  "category": "Plastic",
+  "category": "3D Print",
+  "description": "A matte black sintered nylon with a slightly grainy, powdery surface, as from selective laser sintering prints.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -53,7 +54,23 @@
     "nylon",
     "sintered",
     "3d print",
-    "matte"
+    "matte",
+    "polyamide",
+    "pa12",
+    "sls",
+    "selective laser sintering",
+    "powder bed",
+    "grainy",
+    "dark",
+    "prototype",
+    "additive",
+    "printed",
+    "matte black",
+    "pa11",
+    "prototyping",
+    "industrial",
+    "tools",
+    "automotive"
   ],
   "type": "generic"
 }

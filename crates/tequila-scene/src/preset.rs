@@ -114,7 +114,10 @@ pub enum FramingScale {
     /// The cameras move in or out, positions and targets alike, so the
     /// product fills the frame as the preset's did.
     Cameras,
-    /// The lights move with them.
+    /// The lights with them: as much farther, and as much bigger. A softbox
+    /// that only moved away would be a smaller, harder light on a larger
+    /// product; grown with the distance it is the same light, and one given
+    /// in nits lights the product exactly as it lit the preset's.
     CamerasAndLights,
     /// Nothing: the preset as it was made.
     None,
@@ -305,12 +308,16 @@ pub fn render_settings(preset: &StudioPreset, document: &SceneDocument) -> Rende
 }
 
 /// A light of the preset placed for a product `s` times its size: moved
-/// with the cameras when [`FramingScale::CamerasAndLights`] says so.
+/// with the cameras, and grown as much, when
+/// [`FramingScale::CamerasAndLights`] says so. A light's size is its
+/// node's scale, so the whole matrix is scaled.
 pub fn light_transform(light: &PresetLight, s: f32, scale: FramingScale) -> Option<Transform> {
     let mut matrix = light.transform;
     if scale == FramingScale::CamerasAndLights && (s - 1.0).abs() > 1e-7 {
         for row in 0..3 {
-            matrix.m[row][3] *= s;
+            for column in 0..4 {
+                matrix.m[row][column] *= s;
+            }
         }
     }
     Transform::from_matrix(matrix)
@@ -472,6 +479,21 @@ mod tests {
         assert!((Front::PlusX.yaw() + std::f32::consts::FRAC_PI_2).abs() < 1e-6);
         let turned = Mat4::rotation(Vec3::Y, Front::PlusX.yaw()).transform_vector(Vec3::X);
         assert!((turned - Vec3::Z).length() < 1e-5, "+X faces +Z once turned: {turned:?}");
+    }
+
+    /// With the lights scaled, a softbox is as much bigger as it is
+    /// farther: to a product twice the size it is as wide across as it was,
+    /// so in nits it lights it the same. Only moved, it would be half as
+    /// wide across, a harder light and a quarter of it.
+    #[test]
+    fn a_scaled_light_grows_as_it_moves() {
+        let light = PresetLight { name: "Key".into(), settings: LightSettings::default(), transform: Mat4::translation(vec3(0.3, 0.2, 0.1)) };
+        let scaled = light_transform(&light, 2.0, FramingScale::CamerasAndLights).expect("a transform").matrix;
+        assert!((scaled.transform_point(Vec3::ZERO) - vec3(0.6, 0.4, 0.2)).length() < 1e-6, "twice as far");
+        assert!((scaled.transform_vector(Vec3::X).length() - 2.0).abs() < 1e-6, "and twice as big");
+        let kept = light_transform(&light, 2.0, FramingScale::Cameras).expect("a transform").matrix;
+        assert!((kept.transform_point(Vec3::ZERO) - vec3(0.3, 0.2, 0.1)).length() < 1e-6, "where it stood");
+        assert!((kept.transform_vector(Vec3::X).length() - 1.0).abs() < 1e-6, "and the size it was");
     }
 
     /// A preset keeps a light's linking without the parts of the product

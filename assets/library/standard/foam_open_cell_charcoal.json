@@ -1,7 +1,8 @@
 {
   "base_color": [0.027856853, 0.028379237, 0.03039287],
   "base_diffuse_roughness": 1,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A dark charcoal open-cell polyurethane foam with a rough porous surface, as in case linings and acoustic panels.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -240,7 +241,23 @@
     "packing",
     "case",
     "charcoal",
-    "grey"
+    "grey",
+    "polyurethane foam",
+    "sponge",
+    "acoustic foam",
+    "soft",
+    "porous",
+    "matte",
+    "dark grey",
+    "gray",
+    "case insert",
+    "egg crate",
+    "cushion",
+    "padding",
+    "audio",
+    "packaging",
+    "musical instruments",
+    "interior"
   ],
   "type": "generic"
 }

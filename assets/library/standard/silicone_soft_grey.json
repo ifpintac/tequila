@@ -1,6 +1,7 @@
 {
   "base_color": [0.20797613, 0.21510789, 0.23182258],
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft, slightly translucent grey silicone with a smooth matte feel, as on kitchen utensils and baking mats.",
   "name": "Silicone Soft Grey",
   "specular_roughness": 0.46,
   "subsurface_color": [0.331559, 0.34092423, 0.3626972],
@@ -11,7 +12,23 @@
     "soft",
     "rubber",
     "grey",
-    "kitchen"
+    "kitchen",
+    "gray",
+    "elastomer",
+    "flexible",
+    "matte",
+    "food safe",
+    "spatula",
+    "baking mat",
+    "moulded",
+    "molded",
+    "cookware",
+    "ice tray",
+    "cover",
+    "kitchenware",
+    "appliances",
+    "food & drink",
+    "medical"
   ],
   "type": "translucent"
 }

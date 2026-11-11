@@ -1,6 +1,7 @@
 {
   "base_color": [0.62, 0.5, 0.38],
   "category": "Metal",
+  "description": "Steel with a bronze PVD coating: a warm brown-gold satin with a metallic gleam, as on a tap, shower fitting or watch case.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -234,7 +235,23 @@
     "pvd",
     "bronze",
     "tap",
-    "fixture"
+    "fixture",
+    "bronze coating",
+    "physical vapor deposition",
+    "vacuum coated",
+    "brown",
+    "gold",
+    "warm",
+    "satin",
+    "faucet",
+    "shower",
+    "handle",
+    "watch case",
+    "trim",
+    "interior",
+    "kitchenware",
+    "watches",
+    "furniture"
   ],
   "type": "metal"
 }

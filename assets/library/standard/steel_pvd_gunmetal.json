@@ -1,6 +1,7 @@
 {
   "base_color": [0.36, 0.36, 0.38],
   "category": "Metal",
+  "description": "Steel with a gunmetal PVD coating: a dark bluish-grey satin with a soft metallic shimmer, as on a watch case, tap or fixture.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -234,7 +235,23 @@
     "pvd",
     "gunmetal",
     "watch",
-    "dark"
+    "dark",
+    "gun metal",
+    "pvd gray",
+    "physical vapor deposition",
+    "vacuum coated",
+    "dark grey",
+    "graphite",
+    "grey",
+    "gray",
+    "satin",
+    "case",
+    "faucet",
+    "tap",
+    "watches",
+    "interior",
+    "kitchenware",
+    "accessories"
   ],
   "type": "metal"
 }

@@ -1,6 +1,7 @@
 {
-  "base_color": [0.5064894, 0.54603213, 0.46747842],
+  "base_color": [0.5064894, 0.54603213, 0.46747845],
   "category": "Composite",
+  "description": "A pale, translucent layer of randomly scattered glass strands set in resin, the rough mat used in boat hulls and tanks.",
   "graph": {
     "decals": [],
     "links": [
@@ -1471,7 +1472,7 @@
   },
   "name": "Fiberglass Chopped Strand Mat",
   "specular_roughness": 0.06,
-  "subsurface_color": [0.5064894, 0.54603213, 0.46747842],
+  "subsurface_color": [0.5064894, 0.54603213, 0.46747845],
   "subsurface_radius": [0.08, 0.09, 0.08],
   "subsurface_weight": 0.65,
   "tags": [
@@ -1481,7 +1482,20 @@
     "csm",
     "grp",
     "composite",
-    "translucent"
+    "translucent",
+    "glass fibre mat",
+    "glass fiber mat",
+    "random fibre",
+    "random fiber",
+    "frp",
+    "resin",
+    "laminate",
+    "hand lay-up",
+    "boat hull",
+    "opaque white",
+    "industrial",
+    "outdoor gear",
+    "prototyping"
   ],
   "type": "translucent"
 }

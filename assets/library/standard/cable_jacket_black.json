@@ -1,7 +1,8 @@
 {
   "base_color": [0.008, 0.008, 0.0085],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A matte black PVC cable sheath with a slight sheen, as on power leads and audio cables.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,20 @@
     "pvc",
     "lead",
     "cord",
-    "black"
+    "black",
+    "power cord",
+    "pvc cable",
+    "sheath",
+    "matte",
+    "soft plastic",
+    "extruded",
+    "flexible",
+    "usb cable",
+    "insulation",
+    "electronics",
+    "audio",
+    "appliances",
+    "musical instruments"
   ],
   "type": "generic"
 }

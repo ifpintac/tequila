@@ -23,6 +23,13 @@ framework that driver put on the computer, loaded when Tequila runs; it ships
 no 3Dconnexion software, is built without any, and uses no part of
 3Dconnexion's SDK.
 
+Cordura, X-Pac, Dyneema, Cuben Fiber and Tyvek are trademarks of their
+respective owners. Tequila's library has cloths of its own of those kinds,
+under plain names (a pack nylon, an X-ply laminate, a composite film fabric,
+a spunbond sheet); the trademarks are among their search words so that
+someone who knows a cloth by its maker's name finds the kind, and nothing in
+the library is, or is measured from, those products.
+
 V-Ray and Chaos are trademarks of Chaos Software. Autodesk and 3ds Max are
 trademarks of Autodesk, Inc. Blender is a trademark of the Blender Foundation.
 Tequila's search finds its own nodes, patterns and materials by the names

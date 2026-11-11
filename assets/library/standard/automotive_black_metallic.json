@@ -1,6 +1,7 @@
 {
   "base_color": [0.0081, 0.0081, 0.01],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A deep gloss black under a clear coat with fine silver flecks that glint in the light, as on a saloon car body.",
   "edge_radius": 0.0004,
   "flake_color": [0.5514, 0.5504, 0.5761],
   "flake_roughness": 0.18,
@@ -63,12 +64,24 @@
     "output": 1
   },
   "name": "Automotive Black Metallic",
-  "specular_roughness": 0.24,
   "tags": [
     "car",
     "metallic",
     "flake",
-    "black"
+    "black",
+    "metallic paint",
+    "clear coat",
+    "glossy",
+    "sprayed",
+    "baked",
+    "metal flake",
+    "sparkle",
+    "car paint",
+    "vehicle paint",
+    "dark",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "metallic_paint"
 }

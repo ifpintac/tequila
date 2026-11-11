@@ -13,8 +13,8 @@ use std::path::Path;
 use tequila_core::math::{vec3, Vec3};
 use tequila_render_core::camera::{Camera, Projection};
 use tequila_scene::document::{EnvironmentSettings, GroundSettings};
-use tequila_scene::lighting::SavedCamera;
-use tequila_scene::preset::{Framing, FramingScale, StudioPreset};
+use tequila_scene::lighting::{Intensity, LightSettings, LightShape, SavedCamera};
+use tequila_scene::preset::{Framing, FramingScale, PresetLight, StudioPreset};
 use tequila_scene::render::{AlphaMode, BitDepth, OutputFormat, RenderSettings};
 use tequila_scene::studio::Studio;
 
@@ -188,9 +188,170 @@ fn catalogue_studio() -> StudioPreset {
     preset
 }
 
+/// A softbox `width` by `height` metres standing at `position` and turned
+/// to face `target`, `nits` bright. In nits, so the studio lights a large
+/// product as it lights a small one when its lights are scaled with it.
+/// Not seen by the camera: it lights, and shows in what reflects it.
+fn softbox_at(name: &str, position: Vec3, target: Vec3, width: f32, height: f32, nits: f32) -> PresetLight {
+    use tequila_core::math::Mat4;
+    // A panel shines along its own +Z.
+    let z = (target - position).normalize();
+    let x = if z.y.abs() > 0.999 { Vec3::X } else { Vec3::Y.cross(z).normalize() };
+    let y = z.cross(x);
+    let mut settings = LightSettings {
+        shape: LightShape::Area { width, height, disc: false, two_sided: false },
+        intensity: Intensity::Nits(nits),
+        ..LightSettings::default()
+    };
+    settings.visibility.camera = false;
+    PresetLight { name: name.into(), settings, transform: Mat4::translation(position) * Mat4::from_columns(x, y, z) }
+}
+
+/// A photographer's table: real softboxes standing close to the product
+/// in a dark room, on a graduated backdrop.
+///
+/// What the other two studios cannot do, their lights being paint on a
+/// sphere infinitely far away: a softbox a hand's breadth from a flat face
+/// is seen in it from one edge to the other at different angles, so the
+/// face carries a gradient and not one flat tone; and between the
+/// softboxes the room is dark, so a polished metal has black in it as
+/// well as white, which is what makes it read as metal. The lights are in
+/// nits and scale with the product, so a mixer is lit as a pedal is.
+fn photo_studio() -> StudioPreset {
+    use tequila_core::spectrum::Spectrum;
+    use tequila_render_core::pins::{GradientStop, Pin, PinBlend, PinKind, PinShape};
+    let hero = camera("Hero", vec3(0.62, 0.42, 0.66), Vec3::Y, 85.0);
+    let front = camera("Front", vec3(0.0, 0.16, 1.0), Vec3::Y, 85.0);
+    let high = camera("High", vec3(0.0, 0.82, 0.57), Vec3::Y, 85.0);
+    let top = camera("Top", vec3(0.0, 1.0, 0.001), -Vec3::Z, 85.0);
+    let middle = vec3(0.0, 0.04, 0.0);
+    let gridded = |mut light: PresetLight, spread: f32| {
+        light.settings.spread_degrees = spread;
+        light
+    };
+    let lights = vec![
+        // The main light: a wide box up behind the product, tipped down
+        // at it. A top face mirrors it, and since it is close and behind a
+        // grid, which dims it off its axis, what the face mirrors is a
+        // sheen that falls away across it and not a white rectangle.
+        gridded(softbox_at("Back sweep", vec3(0.0, 0.3, -0.32), vec3(0.0, 0.02, 0.06), 0.9, 0.5, 3.0), 90.0),
+        // A smaller box high in front, off to the key's side: the light on
+        // the faces the camera sees. Not overhead, where a view from above
+        // would see it mirrored whole in every flat top.
+        softbox_at("Front top", vec3(-0.1, 0.3, 0.18), middle, 0.3, 0.24, 7.0),
+        // A tall strip to one side in front: the long highlight down a
+        // knob and along a rounded edge.
+        softbox_at("Key strip", vec3(-0.34, 0.17, 0.2), middle, 0.1, 0.42, 16.0),
+        // A strip behind on the other side: a rim that lifts the far edges
+        // off the backdrop.
+        softbox_at("Rim strip", vec3(0.3, 0.2, -0.28), middle, 0.08, 0.42, 14.0),
+        // A white card where the key is not, to keep the shadow side from
+        // going to black.
+        softbox_at("Fill card", vec3(0.4, 0.14, 0.3), middle, 0.4, 0.4, 1.6),
+    ];
+    let grey = |v: f32| Spectrum::splat(v);
+    // The backdrop: paper swept up behind the product, lit where it lies
+    // flat and falling away to dark up the wall. Seen, and lighting
+    // nothing.
+    let backdrop = Pin {
+        name: "Backdrop".into(),
+        kind: PinKind::Gradient {
+            stops: vec![
+                // From straight down, where the paper lies lit under the
+                // product, to the horizon, where it has fallen to dark: every
+                // view, high or low, has a slope of it behind the product.
+                GradientStop { t: 0.0, color: grey(0.11) },
+                GradientStop { t: 0.2, color: grey(0.095) },
+                GradientStop { t: 0.3, color: grey(0.075) },
+                GradientStop { t: 0.4, color: grey(0.045) },
+                GradientStop { t: 0.5, color: grey(0.02) },
+                GradientStop { t: 1.0, color: grey(0.012) },
+            ],
+            radial: true,
+        },
+        shape: PinShape::Ellipse,
+        direction: -Vec3::Y,
+        angular_size: tequila_core::math::Vec2 { x: 2.0 * PI, y: 2.0 * PI },
+        softness: 0.0,
+        intensity: 1.0,
+        show_in_background: true,
+        in_lighting: false,
+        blend: PinBlend::Over,
+        ..Pin::default()
+    };
+    // The room: dark, so the softboxes are the light and what is between
+    // them in a mirror is black. Laid over the built-in room, for the
+    // lighting and not for the eye.
+    let room = Pin {
+        name: "Dark room".into(),
+        kind: PinKind::Gradient { stops: vec![GradientStop { t: 0.0, color: grey(0.012) }, GradientStop { t: 1.0, color: grey(0.012) }], radial: true },
+        shape: PinShape::Ellipse,
+        direction: Vec3::Y,
+        angular_size: tequila_core::math::Vec2 { x: 2.0 * PI, y: 2.0 * PI },
+        softness: 0.0,
+        intensity: 1.0,
+        show_in_background: false,
+        in_lighting: true,
+        blend: PinBlend::Over,
+        ..Pin::default()
+    };
+    let environment = EnvironmentSettings {
+        image: None,
+        pins: vec![room, backdrop],
+        ground: GroundSettings {
+            enabled: true,
+            shadows: true,
+            reflections: 0.1,
+            reflection_blur: 0.08,
+            reflection_fade_distance: 0.03,
+            ..GroundSettings::default()
+        },
+        ..EnvironmentSettings::default()
+    };
+    StudioPreset {
+        id: "tequila-photo-studio".into(),
+        name: "Photo Studio".into(),
+        family: "Tequila Studio".into(),
+        size: "Medium".into(),
+        description: "A photographer's table: an overhead softbox, a key strip, a rim strip and a fill card standing close to \
+                      the product in a dark room, on a graduated grey backdrop. Flat faces carry gradients and metals have \
+                      black in them. Hero, front, high, side, back and top views, as 16-bit PNGs at 3000 by 2250."
+            .into(),
+        tags: vec!["product".into(), "photography".into(), "softbox".into(), "gradient".into(), "backdrop".into(), "built-in".into()],
+        version: "1".into(),
+        environment,
+        lighting: Default::default(),
+        render: RenderSettings {
+            width: 3000,
+            height: 2250,
+            max_samples: 512,
+            format: OutputFormat::Png,
+            depth: BitDepth::Sixteen,
+            alpha_mode: AlphaMode::None,
+            filename_template: "{product}_{view}_{date}".into(),
+            ..RenderSettings::default()
+        },
+        image_style: Default::default(),
+        lights,
+        cameras: vec![hero.clone(), front.clone(), high.clone(), top.clone()],
+        studios: vec![
+            view("Hero", &hero, 0.0),
+            view("Front", &front, 0.0),
+            view("High", &high, 0.0),
+            view("Side", &front, -FRAC_PI_2),
+            view("Back", &front, PI),
+            view("Top", &top, 0.0),
+        ],
+        framing: Framing { reference_radius: RADIUS, base_offset: 0.0, scale: FramingScale::CamerasAndLights },
+        materials: Vec::new(),
+        material_rules: Vec::new(),
+        notes: "Generated by crates/tequila-format/examples/builtin_studios.rs.".into(),
+    }
+}
+
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/studios");
-    for preset in [soft_studio(), catalogue_studio()] {
+    for preset in [soft_studio(), catalogue_studio(), photo_studio()] {
         let folder = root.join(&preset.id);
         let file = tequila_format::studio_preset::write_folder(&preset, &folder, None).expect("writes");
         println!("wrote {}", file.display());

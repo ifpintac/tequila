@@ -1,5 +1,6 @@
 {
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Gold with parallel wavy stripes machined across it: a rippled yellow-gold surface, as on a watch movement bridge or plate.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -1996,7 +1997,21 @@
     "geneva stripes",
     "cotes de geneve",
     "watch",
-    "movement"
+    "movement",
+    "côtes de genève",
+    "geneva waves",
+    "wave stripes",
+    "rippled",
+    "engraved",
+    "bridge",
+    "plate",
+    "yellow gold",
+    "decorative",
+    "horology",
+    "watches",
+    "jewellery",
+    "accessories",
+    "prototyping"
   ],
   "type": "anisotropic"
 }

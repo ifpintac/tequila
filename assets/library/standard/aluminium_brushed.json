@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
   "category": "Metal",
+  "description": "Aluminium with fine linear brush lines: a satin silver face with directional streaks, as on a panel, appliance trim or laptop base.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -408,7 +409,23 @@
   "tags": [
     "aluminium",
     "brushed",
-    "satin"
+    "satin",
+    "hairline",
+    "grain",
+    "linear grain",
+    "silver",
+    "grey",
+    "sheet",
+    "panel",
+    "bezel",
+    "trim",
+    "front panel",
+    "satin finish",
+    "machined",
+    "electronics",
+    "appliances",
+    "audio",
+    "interior"
   ],
   "type": "anisotropic"
 }

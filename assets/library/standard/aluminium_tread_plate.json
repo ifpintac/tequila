@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Aluminium sheet rolled with raised five-bar ribs at alternating angles: a bright non-slip silver surface, as on a stair, truck bed or ramp.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -2606,7 +2607,22 @@
     "five bar",
     "tread plate",
     "industrial",
-    "floor"
+    "floor",
+    "five-bar",
+    "5 bar",
+    "chequer plate",
+    "checker",
+    "non-slip",
+    "anti slip",
+    "raised",
+    "sheet",
+    "stair tread",
+    "floor plate",
+    "aluminum",
+    "embossed",
+    "automotive",
+    "architecture",
+    "tools"
   ],
   "type": "metal"
 }

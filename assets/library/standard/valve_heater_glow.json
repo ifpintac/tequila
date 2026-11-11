@@ -1,6 +1,7 @@
 {
   "base_color": [0.35, 0.077, 0.0069999998],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "The warm orange glow of a heated valve filament seen through its glass, as in guitar amplifiers and vintage hi-fi.",
   "edge_radius": 0.00025,
   "emission_color": [1, 0.22, 0.02],
   "emission_luminance": 0.8,
@@ -99,7 +100,23 @@
     "filament",
     "glow",
     "orange",
-    "amplifier"
+    "amplifier",
+    "vacuum tube",
+    "tube glow",
+    "orange glow",
+    "amber glow",
+    "warm glow",
+    "glowing",
+    "lit",
+    "hot",
+    "vintage",
+    "tube amp",
+    "hi-fi",
+    "lamp",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "lighting"
   ],
   "type": "generic"
 }

@@ -1,12 +1,25 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A deep, clear red liquid that darkens to near black in thick layers, as in a glass or bottle.",
   "name": "Red Wine",
   "specular_ior": 1.345,
   "tags": [
     "wine",
     "red",
     "drink",
-    "alcohol"
+    "alcohol",
+    "beverage",
+    "alcoholic drink",
+    "burgundy",
+    "merlot",
+    "dark red",
+    "glass fill",
+    "bottle fill",
+    "fluid",
+    "transparent",
+    "vino",
+    "food & drink",
+    "packaging"
   ],
   "transmission_color": [0.3123, 0.0449, 0.0549],
   "transmission_depth": 0.03,

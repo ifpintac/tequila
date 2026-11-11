@@ -1,7 +1,8 @@
 {
   "base_color": [0.009, 0.009, 0.0095],
   "base_diffuse_roughness": 0.4,
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A black sprayed polyurea coating with a fine rough, spattered texture and low sheen, as on speaker and amplifier cabinets.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -168,7 +169,20 @@
     "spatter",
     "pa",
     "speaker",
-    "black"
+    "black",
+    "black paint",
+    "rhino",
+    "spray coat",
+    "matte",
+    "low gloss",
+    "rough",
+    "speaker cabinet",
+    "pa speaker",
+    "amp cabinet",
+    "spatter finish",
+    "audio",
+    "musical instruments",
+    "industrial"
   ],
   "type": "generic"
 }

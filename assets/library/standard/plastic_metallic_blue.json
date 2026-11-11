@@ -2,6 +2,7 @@
   "base_color": [0.024654474, 0.032938235, 0.119437486],
   "category": "Plastic",
   "coat_roughness": 0.04,
+  "description": "A moulded blue plastic with fine metallic flake that sparkles in light, as on consumer housings and trim.",
   "edge_radius": 0.00035,
   "flake_color": [0.42, 0.5, 0.78],
   "flake_roughness": 0.25,
@@ -63,13 +64,26 @@
     "output": 1
   },
   "name": "Plastic Metallic Blue",
-  "specular_roughness": 0.3,
   "tags": [
     "metallic",
     "blue",
     "flake",
     "moulded",
-    "consumer"
+    "consumer",
+    "metallic flake",
+    "blue plastic",
+    "sparkle",
+    "shimmer",
+    "flaked",
+    "injection moulded",
+    "molded",
+    "glossy",
+    "housing",
+    "trim",
+    "electronics",
+    "appliances",
+    "automotive",
+    "toys"
   ],
   "type": "metallic_paint"
 }

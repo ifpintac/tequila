@@ -1,6 +1,7 @@
 {
   "base_color": [0.010390583, 0.010347076, 0.011445291],
   "category": "Plastic",
+  "description": "A dark, flat-matte glass-reinforced nylon with a fine fibre texture, for housings, brackets and structural parts.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -212,7 +213,23 @@
     "pa66",
     "glass filled",
     "engineering",
-    "black"
+    "black",
+    "polyamide",
+    "pa",
+    "gf",
+    "glass fiber",
+    "glass fibre",
+    "reinforced",
+    "engineering plastic",
+    "matte",
+    "injection moulded",
+    "molded",
+    "bracket",
+    "dark",
+    "industrial",
+    "automotive",
+    "tools",
+    "electronics"
   ],
   "type": "generic"
 }

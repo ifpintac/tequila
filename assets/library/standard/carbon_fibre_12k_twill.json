@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A glossy black twill of heavy 12K carbon tow under clear resin, with a coarse, large-scale weave.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,20 @@
     "twill",
     "12k",
     "gloss",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "heavy tow",
+    "coarse weave",
+    "large weave",
+    "twill weave",
+    "black",
+    "woven",
+    "laminate",
+    "resin",
+    "clear coat",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

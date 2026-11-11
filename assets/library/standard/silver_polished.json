@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Polished silver: a bright, neutral white mirror finish, as on a ring, cutlery, tray or decorative object.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -231,7 +232,22 @@
   "tags": [
     "silver",
     "jewellery",
-    "mirror"
+    "mirror",
+    "bright",
+    "shiny",
+    "sterling",
+    "sterling silver",
+    "925",
+    "white metal",
+    "precious metal",
+    "cutlery",
+    "tray",
+    "jewelry",
+    "ring",
+    "buffed",
+    "kitchenware",
+    "accessories",
+    "watches"
   ],
   "type": "metal"
 }

@@ -1,12 +1,23 @@
 {
   "category": "Gem",
+  "description": "A transparent golden-yellow quartz with bright facets, as set in rings and pendants.",
   "name": "Citrine",
   "specular_ior": 1.544,
   "tags": [
     "citrine",
     "quartz",
     "yellow",
-    "jewellery"
+    "jewellery",
+    "golden",
+    "orange yellow",
+    "yellow quartz",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "november",
+    "transparent",
+    "semi-precious",
+    "accessories"
   ],
   "transmission_color": [0.7933, 0.6185, 0.2158],
   "transmission_dispersion_abbe": 70,

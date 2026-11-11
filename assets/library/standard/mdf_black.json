@@ -1,0 +1,173 @@
+{
+  "base_color": [0.017369857, 0.016514886, 0.015367299],
+  "base_diffuse_roughness": 0.6,
+  "category": "Wood",
+  "description": "Black-through MDF with a flat, fine-grained matt surface and no figure, for speaker cabinets, displays and modern furniture.",
+  "edge_radius": 0.0005,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:2",
+        "to": 4
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1800
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 5
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:8",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 40
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "gradient": [
+          {
+            "at": 0.45,
+            "color": [0.012421773, 0.011699691, 0.011073253]
+          },
+          {
+            "at": 1,
+            "color": [0.02231794, 0.02133008, 0.019661345]
+          }
+        ],
+        "id": 5,
+        "kind": "gradient",
+        "position": [0, 0]
+      },
+      {
+        "depth": 0.000012,
+        "id": 6,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "MDF Black",
+  "specular_roughness": 0.62,
+  "specular_weight": 0.4,
+  "tags": [
+    "mdf",
+    "fibreboard",
+    "black",
+    "through-coloured",
+    "cabinet",
+    "speaker",
+    "medium density fibreboard",
+    "fiberboard",
+    "engineered wood",
+    "composite board",
+    "panel",
+    "matte",
+    "dyed",
+    "smooth",
+    "sheet",
+    "flat",
+    "audio",
+    "furniture",
+    "interior",
+    "signage"
+  ],
+  "type": "generic"
+}
+

@@ -1,6 +1,7 @@
 {
   "base_color": [0.0081, 0.008, 0.009],
   "category": "Plastic",
+  "description": "A black matte coating with a velvety rubbery feel, as on phone cases, remote controls and handles.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -141,7 +142,23 @@
     "soft touch",
     "rubberised",
     "matte",
-    "black"
+    "black",
+    "rubberized",
+    "rubber paint",
+    "velvet",
+    "coating",
+    "overmould look",
+    "dark",
+    "grip",
+    "handle",
+    "casing",
+    "smooth",
+    "flat black",
+    "soft feel",
+    "electronics",
+    "audio",
+    "tools",
+    "automotive"
   ],
   "type": "generic"
 }

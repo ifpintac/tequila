@@ -2,6 +2,7 @@
   "base_color": [0.10193207, 0.04081226, 0.01675886],
   "base_diffuse_roughness": 0.5,
   "category": "Metal",
+  "description": "Weathering steel with a dry, rust-orange to brown crust, slightly rough and matte, as on a planter, cladding panel or outdoor sculpture.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -221,7 +222,23 @@
     "weathering",
     "rust",
     "patina",
-    "architectural"
+    "architectural",
+    "weathering steel",
+    "cor-ten",
+    "rusty",
+    "orange",
+    "brown",
+    "oxidised",
+    "oxidized",
+    "weathered",
+    "cladding",
+    "planter",
+    "sculpture",
+    "facade",
+    "architecture",
+    "furniture",
+    "interior",
+    "industrial"
   ],
   "type": "generic"
 }

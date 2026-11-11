@@ -1,11 +1,23 @@
 {
   "category": "Gem",
+  "description": "A clear sky-blue transparent stone cut with facets, as set in rings, pendants and earrings.",
   "name": "Topaz Blue",
   "specular_ior": 1.62,
   "tags": [
     "topaz",
     "blue",
-    "jewellery"
+    "jewellery",
+    "sky blue",
+    "swiss blue",
+    "london blue",
+    "blue gem",
+    "faceted",
+    "cut gemstone",
+    "birthstone",
+    "november",
+    "transparent",
+    "semi-precious",
+    "accessories"
   ],
   "transmission_color": [0.5755, 0.7316, 0.9178],
   "transmission_dispersion_abbe": 75,

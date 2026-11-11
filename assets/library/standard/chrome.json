@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Chromium plating: a bright, deep mirror finish with a slightly cool blue-silver tint, as on trim, taps, bumpers and decorative fittings.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,23 @@
     "chrome",
     "mirror",
     "trim",
-    "plating"
+    "plating",
+    "chromium",
+    "chrome plated",
+    "electroplated",
+    "polished",
+    "bright",
+    "shiny",
+    "reflective",
+    "silver",
+    "tap",
+    "faucet",
+    "bumper",
+    "handlebar",
+    "automotive",
+    "interior",
+    "appliances",
+    "accessories"
   ],
   "type": "metal"
 }

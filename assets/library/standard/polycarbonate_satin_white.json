@@ -1,6 +1,7 @@
 {
   "base_color": [0.80584306, 0.80663735, 0.7865861],
   "category": "Plastic",
+  "description": "A white PC/ABS blend with a smooth satin finish, as on device housings and appliance shells.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,20 @@
     "pc/abs",
     "housing",
     "satin",
-    "white"
+    "white",
+    "blend",
+    "semi matte",
+    "off white",
+    "injection moulded",
+    "molded",
+    "enclosure",
+    "casing",
+    "low gloss",
+    "smooth",
+    "electronics",
+    "appliances",
+    "medical",
+    "lighting"
   ],
   "type": "plastic"
 }

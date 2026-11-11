@@ -1,6 +1,7 @@
 {
   "base_color": [0.02369179, 0.024129692, 0.026888376],
   "category": "Plastic",
+  "description": "A rough, coarse stippled texture moulded into dark plastic, hiding scuffs on tool bodies and rugged enclosures.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -217,7 +218,23 @@
     "textured",
     "grained",
     "enclosure",
-    "tool"
+    "tool",
+    "rough",
+    "pebbled",
+    "etched",
+    "mould texture",
+    "mold texture",
+    "matte",
+    "heavy grain",
+    "case",
+    "housing",
+    "rugged",
+    "handle",
+    "bumpy",
+    "tools",
+    "industrial",
+    "outdoor gear",
+    "electronics"
   ],
   "type": "plastic"
 }

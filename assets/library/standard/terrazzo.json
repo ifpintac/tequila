@@ -1,6 +1,7 @@
 {
   "base_color": [0.6349779, 0.6236501, 0.6281457],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A pale floor-like surface of small stone chips set in white cement, ground smooth, as on floors and tabletops.",
   "graph": {
     "decals": [],
     "links": [
@@ -1749,7 +1750,22 @@
     "chips",
     "honed",
     "floor",
-    "white"
+    "white",
+    "terrazzo flooring",
+    "stone chips",
+    "aggregate",
+    "marble chips",
+    "speckled",
+    "cement",
+    "smooth",
+    "flooring",
+    "tabletop",
+    "matte",
+    "composite stone",
+    "confetti",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.012, 0.012, 0.013],
   "category": "Plastic",
+  "description": "A black polypropylene with a slightly waxy low-sheen surface, as on tool cases, housings and utility mouldings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,22 @@
     "housing",
     "moulded",
     "case",
-    "black"
+    "black",
+    "waxy",
+    "satin",
+    "dark",
+    "injection moulded",
+    "molded",
+    "tool case",
+    "box",
+    "container",
+    "flexible",
+    "casing",
+    "tough",
+    "tools",
+    "industrial",
+    "automotive",
+    "packaging"
   ],
   "type": "plastic"
 }

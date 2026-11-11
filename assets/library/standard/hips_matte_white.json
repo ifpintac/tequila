@@ -1,6 +1,7 @@
 {
   "base_color": [0.7677796, 0.7609954, 0.7218453],
   "category": "Plastic",
+  "description": "A flat white high-impact polystyrene, as in vacuum-formed trays, panels and low-cost casings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,20 @@
     "housing",
     "tray",
     "matte",
-    "white"
+    "white",
+    "high impact polystyrene",
+    "flat white",
+    "vacuum formed",
+    "thermoformed",
+    "casing",
+    "injection moulded",
+    "molded",
+    "off white",
+    "plastic sheet",
+    "packaging",
+    "appliances",
+    "electronics",
+    "prototyping"
   ],
   "type": "plastic"
 }

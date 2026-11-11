@@ -1,6 +1,7 @@
 {
   "base_color": [0.3447, 0.3506, 0.3347],
   "category": "Plastic",
+  "description": "A flat mid-grey rigid PVC with a dull smooth surface, as on pipes, fittings and conduit.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -199,7 +200,20 @@
   "tags": [
     "pvc",
     "pipe",
-    "industrial"
+    "industrial",
+    "gray",
+    "polyvinyl chloride",
+    "vinyl",
+    "conduit",
+    "fitting",
+    "matte",
+    "dull",
+    "extruded",
+    "plumbing",
+    "rigid",
+    "electrical",
+    "architecture",
+    "tools"
   ],
   "type": "plastic"
 }

@@ -1,7 +1,8 @@
 {
-  "base_color": [0.97, 0.93, 0.87],
+  "base_color": [0.99, 0.975, 0.95],
   "base_metalness": 1,
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Nickel-plated woven wire mesh: a medium silver grid of crossed strands, as on a microphone head, grille or vent screen.",
   "graph": {
     "decals": [],
     "links": [
@@ -3309,7 +3310,22 @@
     "grille",
     "screen",
     "nickel",
-    "plated"
+    "plated",
+    "woven mesh",
+    "wire cloth",
+    "wire screen",
+    "silver",
+    "chrome look",
+    "mic grille",
+    "speaker grill",
+    "cover",
+    "vent",
+    "steel",
+    "metal cloth",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

@@ -1079,6 +1079,15 @@ under M10's spectral item).
       read as openNURBS's. Two of rhino3dm's (MIT) are committed fixtures. Not read: curves, annotation, lights,
       linked blocks, embedded bitmaps, mitered extrusion ends, RDK content
       beyond its simulated material.
+- [x] Blender `.blend` import (2026-11-12; `docs/03` §6.3.2,
+      `tequila-import/src/blend/`): read by the Blender on the computer,
+      in the background with the file's scripts off, through Tequila's own
+      Apache-2.0 script; objects with modifiers applied under their
+      collections and parents, hidden as Blender's render hides them,
+      instances, cameras; materials' node trees translated node for node
+      onto Tequila's Cycles nodes, the Principled BSDF onto OpenPBR, images
+      packed or not. Tests on a kept answer, and on Blender itself where
+      it is installed.
 - [x] KeyShot scenes, `.ksp` and `.bip` (2026-10-30; `docs/keyshot-import.md`):
       opened as a project of their own (File > Open, a drop, the start
       screen, `tequila -i`) or imported into one (File > Import, the

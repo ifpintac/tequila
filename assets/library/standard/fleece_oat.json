@@ -1,6 +1,7 @@
 {
   "base_color": [0.43963405, 0.39610308, 0.288069],
   "category": "Fabric",
+  "description": "A soft, fluffy oat polyester pile with a brushed, slightly hazy surface, for jackets, blankets and cosy linings.",
   "fuzz_color": [0.7493372, 0.7054275, 0.57328033],
   "fuzz_roughness": 0.7,
   "graph": {
@@ -212,7 +213,22 @@
     "polar",
     "soft",
     "fuzzy",
-    "beige"
+    "beige",
+    "textile",
+    "cloth",
+    "polyester",
+    "brushed",
+    "napped",
+    "warm",
+    "jacket",
+    "blanket",
+    "hoodie",
+    "fiber",
+    "cream",
+    "off-white",
+    "apparel",
+    "outdoor gear",
+    "interior"
   ],
   "type": "velvet"
 }

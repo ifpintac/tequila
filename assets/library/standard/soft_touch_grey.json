@@ -1,6 +1,7 @@
 {
   "base_color": [0.094014235, 0.0972736, 0.107776776],
   "category": "Plastic",
+  "description": "A grey matte coating with a velvety rubbery feel, as on device housings, remote controls and handles.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -141,7 +142,21 @@
     "soft touch",
     "rubberised",
     "matte",
-    "grey"
+    "grey",
+    "gray",
+    "rubberized",
+    "rubber paint",
+    "velvet",
+    "coating",
+    "grip",
+    "handle",
+    "casing",
+    "smooth",
+    "soft feel",
+    "electronics",
+    "audio",
+    "tools",
+    "appliances"
   ],
   "type": "generic"
 }

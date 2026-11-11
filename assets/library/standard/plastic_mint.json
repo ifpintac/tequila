@@ -1,6 +1,7 @@
 {
   "base_color": [0.4981922, 0.6638238, 0.54180497],
   "category": "Plastic",
+  "description": "A pale pastel mint-green moulded plastic with a soft satin sheen, as on small appliances and toys.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -200,7 +201,21 @@
     "abs",
     "green",
     "pastel",
-    "consumer"
+    "consumer",
+    "pastel green",
+    "light green",
+    "aqua",
+    "soft green",
+    "satin",
+    "injection moulded",
+    "molded",
+    "housing",
+    "candy",
+    "casing",
+    "appliances",
+    "toys",
+    "electronics",
+    "kitchenware"
   ],
   "type": "plastic"
 }

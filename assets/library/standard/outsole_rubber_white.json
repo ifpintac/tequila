@@ -1,7 +1,8 @@
 {
   "base_color": [0.7764326, 0.7548166, 0.6655759],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A smooth matte white rubber, as on the cupsole and sidewall of sneakers.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -334,7 +335,19 @@
     "sole",
     "sneaker",
     "footwear",
-    "white"
+    "white",
+    "shoe sole",
+    "sidewall",
+    "matte",
+    "vulcanised",
+    "vulcanized",
+    "trainer",
+    "midsole",
+    "shoe bottom",
+    "shoes",
+    "sporting goods",
+    "apparel",
+    "accessories"
   ],
   "type": "generic"
 }

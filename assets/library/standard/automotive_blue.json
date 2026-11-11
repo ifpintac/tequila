@@ -1,6 +1,7 @@
 {
   "base_color": [0.0248, 0.0345, 0.1673],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A solid mid-blue gloss under a clear coat, its reflections faintly rippled with orange peel, as on a hatchback or van.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -135,12 +136,24 @@
     "output": 1
   },
   "name": "Automotive Blue",
-  "specular_roughness": 0.22,
   "tags": [
     "car",
     "gloss",
     "clearcoat",
-    "blue"
+    "blue",
+    "blue paint",
+    "solid colour",
+    "solid color",
+    "glossy",
+    "sprayed",
+    "baked",
+    "orange peel",
+    "car paint",
+    "vehicle paint",
+    "two-pack",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "paint"
 }

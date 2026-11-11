@@ -1,6 +1,7 @@
 {
   "base_color": [0.01297107, 0.01292018, 0.014204721],
-  "category": "FDM 3D Print",
+  "category": "3D Print",
+  "description": "A matte black PLA print showing fine horizontal layer lines, as from a desktop filament printer.",
   "graph": {
     "decals": [],
     "links": [
@@ -497,7 +498,21 @@
     "pla",
     "layer lines",
     "filament",
-    "black"
+    "black",
+    "polylactic acid",
+    "fused deposition modeling",
+    "fused deposition modelling",
+    "matte",
+    "dark",
+    "prototype",
+    "printed",
+    "additive",
+    "filament print",
+    "ridged",
+    "prototyping",
+    "toys",
+    "tools",
+    "industrial"
   ],
   "type": "plastic"
 }

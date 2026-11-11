@@ -1,6 +1,7 @@
 {
   "base_color": [0.27642724, 0.28255457, 0.3018835],
-  "category": "Plastic",
+  "category": "3D Print",
+  "description": "A smooth matte grey photopolymer resin print with very fine layers, as used for detailed prototypes and models.",
   "edge_radius": 0.0002,
   "graph": {
     "decals": [],
@@ -236,7 +237,23 @@
     "sla",
     "3d print",
     "prototype",
-    "grey"
+    "grey",
+    "stereolithography",
+    "photopolymer",
+    "gray",
+    "smooth",
+    "matte",
+    "printed",
+    "additive",
+    "model",
+    "fine detail",
+    "dlp",
+    "formlabs resin",
+    "sla print",
+    "prototyping",
+    "medical",
+    "industrial",
+    "jewellery"
   ],
   "type": "plastic"
 }

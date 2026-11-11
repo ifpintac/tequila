@@ -155,7 +155,11 @@ impl SceneTab {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui, project: &mut Project) {
-        ui.horizontal_wrapped(|ui| {
+        // One row at any width of the panel: Add in words, since it opens a
+        // menu of things to choose between, then the four that act on the
+        // selection as tools, each named with its key when pointed at, and
+        // greyed out with the reason when there is nothing for it to act on.
+        ui.horizontal(|ui| {
             let selected: Vec<NodeId> = project.selection.nodes().collect();
             let any = !selected.is_empty();
 
@@ -165,7 +169,7 @@ impl SceneTab {
             let mut add_light = None;
             let mut add_cutaway = None;
             let mut add_shape = None;
-            ui.menu_button("Add", |ui| {
+            ui.menu_button("+ Add", |ui| {
             ui.menu_button("Shape", |ui| {
                 for shape in tequila_scene::shapes::Shape::ALL {
                     if ui.button(shape.label()).clicked() {
@@ -213,9 +217,11 @@ impl SceneTab {
                 let _ = project.apply(command);
             }
 
-            if ui
-                .add_enabled(any, egui::Button::new("Duplicate"))
-                .on_hover_text(crate::theme::keys("Ctrl+D"))
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let nothing = "Select a part first";
+            let duplicate = ui.add_enabled_ui(any, |ui| icons::tool(ui, Icon::Copy)).inner;
+            if icons::tip(duplicate, "Duplicate", "A copy of the selection beside it, sharing its shape and material", "Ctrl + D")
+                .on_disabled_hover_text(nothing)
                 .clicked()
             {
                 if let Some((payload, copies)) = tequila_scene::duplicate::payload(project.document(), &selected) {
@@ -224,12 +230,19 @@ impl SceneTab {
                     }
                 }
             }
-            ui.menu_button("Pattern", |ui| crate::pattern_panel::menu_items(ui, project))
-                .response
-                .on_hover_text("Copies of a part along a line or around a circle");
-            if ui
-                .add_enabled(selected.len() >= 2, egui::Button::new("Group"))
-                .on_hover_text(crate::theme::keys("Ctrl+G"))
+            // The pattern's two kinds in a menu under its tool.
+            let pattern = icons::tip(icons::tool(ui, Icon::Grid), "Pattern", "Copies of one part along a line or around a circle", "");
+            let pattern_menu = ui.id().with("pattern-menu");
+            if pattern.clicked() {
+                ui.memory_mut(|m| m.toggle_popup(pattern_menu));
+            }
+            egui::popup::popup_below_widget(ui, pattern_menu, &pattern, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                ui.set_min_width(190.0);
+                crate::pattern_panel::menu_items(ui, project);
+            });
+            let group = ui.add_enabled_ui(selected.len() >= 2, |ui| icons::tool(ui, Icon::Group)).inner;
+            if icons::tip(group, "Group", "Put the selected parts in a group of their own", "Ctrl + G")
+                .on_disabled_hover_text("Select two or more parts first")
                 .clicked()
             {
                 let _ = project.apply(Command::Group {
@@ -248,26 +261,35 @@ impl SceneTab {
                         .is_some_and(|n| n.kind == NodeKind::Group)
                 })
                 .collect();
-            if ui
-                .add_enabled(!groups.is_empty(), egui::Button::new("Ungroup"))
+            let ungroup = ui.add_enabled_ui(!groups.is_empty(), |ui| icons::tool(ui, Icon::FolderOpen)).inner;
+            if icons::tip(ungroup, "Ungroup", "Take the selected group apart, keeping its parts", "Ctrl + Shift + G")
+                .on_disabled_hover_text("Select a group first")
                 .clicked()
             {
                 for group in groups {
                     let _ = project.apply(Command::Ungroup { group });
                 }
             }
-            if ui.add_enabled(any, egui::Button::new("Delete")).clicked() {
-                let _ = project.apply(Command::DeleteNodes { nodes: selected });
-            }
+            // Delete at the row's far end, apart from the tools that keep
+            // what they act on.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let delete = ui.add_enabled_ui(any, |ui| icons::tool(ui, Icon::Trash)).inner;
+                if icons::tip(delete, "Delete", "Remove the selection from the scene. Undo brings it back.", "Del")
+                    .on_disabled_hover_text(nothing)
+                    .clicked()
+                {
+                    let _ = project.apply(Command::DeleteNodes { nodes: selected });
+                }
+            });
         });
 
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Select").color(theme::p().text_dim));
-            let mut level = project.selection.level();
-            let options: Vec<(SelectionLevel, &str)> = SelectionLevel::ALL.iter().map(|l| (*l, l.label())).collect();
-            theme::segmented(ui, &mut level, &options);
-            project.selection.set_level(level);
-        });
+        // What a click in the view picks, said as that.
+        let mut level = project.selection.level();
+        let options: Vec<(SelectionLevel, &str)> = SelectionLevel::ALL.iter().map(|l| (*l, l.label())).collect();
+        crate::field::row(ui, "Click picks", |ui| theme::segmented(ui, &mut level, &options))
+            .response
+            .on_hover_text("What a click in the view selects: the part, the whole object it belongs to, every part with its material, or one face.");
+        project.selection.set_level(level);
     }
 
     /// Which rows the current search leaves visible.
@@ -332,7 +354,7 @@ impl SceneTab {
                 ui.add(crate::field::Checkbox::new(&mut rays.catcher, "Shadow catcher"))
                     .on_hover_text("Shows only the shadows that fall on it, as the floor does: the rest of it is the background. For a product on a photographed table, the table modelled to catch its shadow. Seen as itself in every view but Rendered.");
                 if selected.len() > 1 {
-                    ui.label(egui::RichText::new(format!("For all {} selected", selected.len())).small().color(crate::theme::dim()));
+                    theme::note(ui, format!("For all {} selected", selected.len()));
                 }
             });
         if rays != before {
@@ -358,37 +380,31 @@ impl SceneTab {
             .id_salt("part-values")
             .default_open(!before.is_default())
             .show(ui, |ui| {
+                theme::note(ui, "A colour and a number this part hands to its material, for one material to look different on each part. Only a material built to read them (Object Info, in its graph) changes.");
                 let mut srgb = swatch_of(values.colour);
-                ui.horizontal(|ui| {
+                crate::field::row(ui, "Colour", |ui| {
                     let picked = ui.color_edit_button_srgb(&mut srgb);
                     if picked.changed() {
                         values.colour = colour_of(srgb);
                     }
-                    ui.label("Colour");
                 })
                 .response
                 .on_hover_text("A colour of this part's own, for its material to read: Object Info's Color in the material's graph. One material on many parts, each its own colour.");
-                ui.horizontal(|ui| {
-                    let field = ui.add(egui::DragValue::new(&mut values.number).speed(0.05));
+                crate::field::row(ui, "Number", |ui| {
+                    let field = ui.add_sized([ui.available_width().min(96.0), 26.0], egui::DragValue::new(&mut values.number).speed(0.05));
                     finished |= field.drag_stopped() || field.lost_focus();
-                    ui.label("Number");
                 })
                 .response
                 .on_hover_text("A number of this part's own: Object Info's Number in the material's graph. Through a Color Ramp or a Map Range, anything a part should differ by.");
                 ui.horizontal(|ui| {
-                    if !values.is_default() && ui.small_button("Clear").on_hover_text("White and nought: nothing said").clicked() {
+                    if !values.is_default() && ui.button("Clear").on_hover_text("White and nought: nothing said").clicked() {
                         values = tequila_scene::tree::PartValues::default();
                         finished = true;
                     }
                     if selected.len() > 1 {
-                        ui.label(egui::RichText::new(format!("For all {} selected", selected.len())).small().color(crate::theme::dim()));
+                        theme::note(ui, format!("For all {} selected", selected.len()));
                     }
                 });
-                ui.label(
-                    egui::RichText::new("Read by Object Info in the material's graph; a material that does not read them is not changed by them.")
-                        .small()
-                        .color(crate::theme::dim()),
-                );
             });
         if values != before {
             let _ = project.apply(tequila_scene::Command::SetValues { states: selected.iter().map(|&id| (id, values)).collect() });
@@ -420,11 +436,10 @@ impl SceneTab {
         if layers.is_empty() {
             return;
         }
-        ui.add_space(4.0);
-        ui.separator();
-        theme::section(ui, "Layers");
         let mut command = None;
         let mut select = None;
+        let count = layers.len();
+        crate::field::Fold::new("Layers").id_salt("scene-layers").aside(if count == 1 { "1 layer".to_string() } else { format!("{count} layers") }).default_open(true).show(ui, |ui| {
         // An IGES file can have a hundred levels; they scroll rather than
         // push the sections below out of reach.
         egui::ScrollArea::vertical().id_salt("cad-layers").auto_shrink([false, true]).max_height(180.0).show(ui, |ui| {
@@ -467,6 +482,7 @@ impl SceneTab {
                     ui.label(egui::RichText::new(count).small().color(theme::dim()));
                 });
             }
+        });
         });
         if let Some(command) = command {
             if let Err(error) = project.apply(command) {

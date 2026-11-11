@@ -1,6 +1,7 @@
 {
   "base_color": [0.0667, 0.0718, 0.0941],
   "category": "Metal",
+  "description": "Steel blued by oxide treatment: a deep blue-black with a smooth soft sheen, as on a gun barrel, pocket-knife part or fine tool.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -233,7 +234,22 @@
     "steel",
     "gun",
     "dark",
-    "blued"
+    "blued",
+    "blued steel",
+    "bluing",
+    "gun blue",
+    "blue black",
+    "oxide",
+    "barrel",
+    "firearm",
+    "knife",
+    "tool",
+    "polished",
+    "gunmetal",
+    "tools",
+    "outdoor gear",
+    "accessories",
+    "industrial"
   ],
   "type": "metal"
 }

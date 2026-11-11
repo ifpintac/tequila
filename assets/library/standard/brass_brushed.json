@@ -1,6 +1,7 @@
 {
   "base_color": [0.9223, 0.8458, 0.5604],
   "category": "Metal",
+  "description": "Brass with fine linear brush lines: a warm yellow-gold satin with directional streaks, as on a door handle, tap or lamp fitting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,23 @@
     "brass",
     "brushed",
     "fitting",
-    "hardware"
+    "hardware",
+    "hairline",
+    "grain",
+    "yellow metal",
+    "gold",
+    "satin",
+    "tap",
+    "faucet",
+    "handle",
+    "lamp",
+    "fixture",
+    "sheet",
+    "trim",
+    "interior",
+    "lighting",
+    "furniture",
+    "kitchenware"
   ],
   "type": "anisotropic"
 }

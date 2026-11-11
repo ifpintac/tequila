@@ -511,9 +511,16 @@ impl MaterialType {
                 base_color: spectrum(0.35, 0.36, 0.4),
                 ..base
             },
+            // Pigment under a clear coat. The pigment has no shine of its
+            // own: it lies under the coat, not under air, and the two are
+            // as good as one index, so there is no surface between them to
+            // reflect. With one, every paint wore a second, broad highlight
+            // under the coat's sharp one - a milky veil over the colour that
+            // no sprayed panel has.
             MaterialType::Paint => Material {
                 coat_weight: 1.0,
                 coat_roughness: 0.02,
+                specular_weight: 0.0,
                 ..MaterialType::Plastic.defaults()
             },
             // §3.1: Paint plus a flake sub-layer — pigment under a clear coat,
@@ -842,10 +849,11 @@ impl MaterialType {
                 Opacity,
                 Occlusion,
             ],
-            MaterialType::Paint => vec![BaseColor, SpecularRoughness, CoatRoughness, CoatIor, Bump],
+            // No Roughness: what shines is the coat, and Coat Roughness is
+            // how much.
+            MaterialType::Paint => vec![BaseColor, CoatRoughness, CoatIor, Bump],
             MaterialType::MetallicPaint => vec![
                 BaseColor,
-                SpecularRoughness,
                 FlakeColor,
                 FlakeWeight,
                 FlakeSize,

@@ -1,6 +1,7 @@
 {
   "base_color": [0.025655542, 0.027176661, 0.032286573],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A dark grey paint with a fine wrinkled texture and low sheen, as on machine housings and industrial enclosures.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -58,7 +59,22 @@
     "textured",
     "wrinkle",
     "industrial",
-    "charcoal"
+    "charcoal",
+    "dark grey",
+    "dark gray",
+    "anthracite",
+    "wrinkle finish",
+    "wrinkle paint",
+    "matte",
+    "crinkle",
+    "sprayed",
+    "baked",
+    "powder",
+    "rough",
+    "painted metal",
+    "electronics",
+    "tools",
+    "appliances"
   ],
   "type": "plastic"
 }

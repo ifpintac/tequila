@@ -1,12 +1,28 @@
 {
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A soft, even light glowing out of a display surface, as on a lit monitor, phone or television.",
   "emission_color": [0.9592, 0.969, 0.9957],
   "emission_luminance": 5,
   "name": "Screen Glow",
   "tags": [
     "screen",
     "display",
-    "backlight"
+    "backlight",
+    "lit screen",
+    "bright screen",
+    "emissive",
+    "glowing",
+    "monitor",
+    "tv",
+    "phone",
+    "tablet",
+    "white light",
+    "illuminated",
+    "panel glow",
+    "on state",
+    "electronics",
+    "appliances",
+    "automotive"
   ],
   "type": "emissive"
 }

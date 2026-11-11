@@ -46,11 +46,13 @@ pub fn show(
     let mut pick: Option<VideoPick> = ui.ctx().data(|d| d.get_temp(pick_id));
     let mut picked = false;
 
-    crate::field::Fold::new(format!("Labels · {}", decals.len()))
+    crate::field::Fold::new(if decals.is_empty() { "Labels".to_string() } else { format!("Labels · {}", decals.len()) })
         .id_salt(("labels", key.0))
-        .default_open(true)
+        // Open where there are labels to work on; folded where there are
+        // none, so an empty list is one row and not a card of instructions.
+        .default_open(!decals.is_empty())
         .show(ui, |ui| {
-            ui.small(
+            crate::theme::note(ui,
                 "Printed artwork. Transparency reveals the material below; a file \
                  that says its print resolution arrives at its printed size.",
             );
@@ -103,7 +105,7 @@ pub fn show(
                 }
             }
             if decals.is_empty() {
-                ui.weak(if part_has_uvs {
+                crate::theme::note(ui, if part_has_uvs {
                     "Add your logo or packaging artwork. It will follow the \
                      part's own UV layout."
                 } else {
@@ -341,7 +343,7 @@ fn video_picker(ui: &mut egui::Ui, pick: &mut VideoPick) -> Option<bool> {
                 answer = Some(false);
             }
         });
-        ui.small("The frame is kept as a picture beside the project, and printed like any label.");
+        crate::theme::note(ui, "The frame is kept as a picture beside the project, and printed like any label.");
     });
     answer
 }
@@ -519,7 +521,7 @@ fn placement(ui: &mut egui::Ui, mapping: &mut Mapping, part_has_uvs: bool, fitte
 
 /// The controls for a label following the mesh's own coordinates.
 fn uv_placement(ui: &mut egui::Ui, mapping: &mut Mapping) {
-    ui.small("Follows the part's UV layout · artwork does not repeat");
+    crate::theme::note(ui, "Follows the part's UV layout · artwork does not repeat");
     ui.horizontal(|ui| {
         ui.label("Scale U / V");
         ui.add(

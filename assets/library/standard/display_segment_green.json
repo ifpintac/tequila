@@ -1,6 +1,7 @@
 {
   "base_color": [0, 0.35, 0.0245],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "Lit green seven-segment digits that glow against a dark window, as on a clock, meter or amplifier readout.",
   "edge_radius": 0.00025,
   "emission_color": [0, 1, 0.07],
   "emission_luminance": 1,
@@ -98,7 +99,21 @@
     "led display",
     "digit",
     "lit",
-    "green"
+    "green",
+    "lime green",
+    "led digits",
+    "numeric display",
+    "glowing",
+    "illuminated",
+    "clock display",
+    "readout",
+    "glow",
+    "dark window",
+    "tuner display",
+    "electronics",
+    "audio",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

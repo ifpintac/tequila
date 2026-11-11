@@ -1,6 +1,7 @@
 {
   "base_color": [0.6165817, 0.6108249, 0.5709496],
   "category": "Plastic",
+  "description": "A grey recycled plastic sheet flecked with dark and light specks that resembles granite.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -852,7 +853,21 @@
     "speckled",
     "granite look",
     "sheet",
-    "sustainable"
+    "sustainable",
+    "recycled hdpe",
+    "post consumer",
+    "flecks",
+    "terrazzo",
+    "pressed sheet",
+    "eco",
+    "upcycled",
+    "gray",
+    "surface material",
+    "mottled",
+    "furniture",
+    "interior",
+    "accessories",
+    "architecture"
   ],
   "type": "plastic"
 }

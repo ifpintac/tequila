@@ -1,6 +1,7 @@
 {
   "base_color": [0.03580083, 0.037319817, 0.04404683],
   "category": "Metal",
+  "description": "Steel with a black oxide conversion coat: a dull, slightly oily black-brown, as on a bolt, hand tool or machined part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -305,7 +306,22 @@
     "black oxide",
     "blackened",
     "tool",
-    "fastener"
+    "fastener",
+    "black oxidised",
+    "black oxidized",
+    "conversion coat",
+    "matte black",
+    "dark",
+    "bolt",
+    "screw",
+    "socket cap",
+    "hex key",
+    "hardware",
+    "machined",
+    "tools",
+    "industrial",
+    "automotive",
+    "prototyping"
   ],
   "type": "metal"
 }

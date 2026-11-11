@@ -1,9 +1,11 @@
 {
-  "base_color": [0.25427595, 0.10735908, 0.04954463],
+  "base_color": [0.25427598, 0.10735908, 0.04954463],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "description": "Sapele under a gloss lacquer: reddish-brown with narrow ribbon stripes that shimmer as it turns, for veneers, doors, guitar parts and cabinets.",
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -594,7 +596,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -612,7 +614,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -783,15 +785,15 @@
           },
           {
             "at": 0.901,
-            "color": [0.22937962, 0.0947567, 0.043160878]
+            "color": [0.22937962, 0.09475671, 0.043160878]
           },
           {
             "at": 0.982,
-            "color": [0.1961845, 0.07795353, 0.03464922]
+            "color": [0.19618452, 0.07795354, 0.03464922]
           },
           {
             "at": 1,
-            "color": [0.18048975, 0.07171725, 0.031877283]
+            "color": [0.18048976, 0.071717255, 0.031877283]
           }
         ],
         "id": 21,
@@ -1741,12 +1743,29 @@
   "name": "Wood Sapele",
   "specular_roughness": 0.4,
   "specular_roughness_anisotropy": 0.5,
+  "specular_weight": 0.5,
   "tags": [
     "wood",
     "sapele",
     "ribbon",
     "red",
-    "veneer"
+    "veneer",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "sapelli",
+    "african mahogany",
+    "reddish brown",
+    "ribbon grain",
+    "striped",
+    "satin",
+    "door",
+    "guitar body",
+    "cabinet",
+    "furniture",
+    "musical instruments",
+    "interior",
+    "architecture"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black woven wire mesh: a fine dark grid of crossed strands with a matte finish, as on a microphone head, speaker front or guitar amp.",
   "graph": {
     "decals": [],
     "links": [
@@ -3306,7 +3307,23 @@
     "microphone",
     "grille",
     "screen",
-    "black"
+    "black",
+    "woven mesh",
+    "wire cloth",
+    "wire screen",
+    "black grille",
+    "mic grille",
+    "dark",
+    "speaker grill",
+    "amp",
+    "cover",
+    "vent",
+    "steel",
+    "metal cloth",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

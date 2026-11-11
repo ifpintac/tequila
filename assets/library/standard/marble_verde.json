@@ -1,6 +1,7 @@
 {
   "base_color": [0.0038817027, 0.0046713613, 0.0044121407],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished dark green marble with pale veins and a deep gloss, as on tabletops, columns and wall cladding.",
   "graph": {
     "decals": [],
     "links": [
@@ -2395,7 +2396,22 @@
     "green",
     "dark",
     "verde",
-    "serpentine"
+    "serpentine",
+    "green stone",
+    "green marble",
+    "polished stone",
+    "natural stone",
+    "white veins",
+    "glossy",
+    "slab",
+    "tile",
+    "countertop",
+    "luxury",
+    "forest green",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

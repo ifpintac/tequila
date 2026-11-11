@@ -2,6 +2,8 @@
   "base_color": [0.19059716, 0.13320851, 0.0723451],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "European walnut, oiled: mid-brown with wavy grey-brown figure and a soft satin sheen, for furniture, veneers and dashboards.",
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -577,7 +579,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -595,7 +597,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -1625,7 +1627,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.42
+              "float": 0.5
             }
           }
         ],
@@ -1674,13 +1676,28 @@
     "output": 1
   },
   "name": "Wood European Walnut",
-  "specular_roughness": 0.42,
+  "specular_roughness": 0.5,
+  "specular_weight": 0.6,
   "tags": [
     "wood",
     "walnut",
     "european",
     "furniture",
-    "figured"
+    "figured",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "brown",
+    "grey brown",
+    "oiled",
+    "satin",
+    "veneer",
+    "dashboard",
+    "cabinet",
+    "table",
+    "interior",
+    "automotive",
+    "audio"
   ],
   "type": "generic"
 }

@@ -1,9 +1,10 @@
 {
   "base_color": [0.17982787, 0.08080527, 0.026656486],
   "base_diffuse_roughness": 0.5,
-  "category": "Leather",
+  "category": "Leather & Suede",
+  "description": "Warm cognac-brown leather with a fine natural grain and a soft satin sheen, for armchairs, bags and car seats.",
   "fuzz_roughness": 0.5,
-  "fuzz_weight": 0.15,
+  "fuzz_weight": 0.06,
   "graph": {
     "decals": [],
     "links": [
@@ -181,7 +182,7 @@
           {
             "socket": "input:1",
             "value": {
-              "vector": [0.0009, 0.0009, 0.0009]
+              "vector": [0.0013, 0.0013, 0.0013]
             }
           }
         ],
@@ -503,7 +504,7 @@
         "type": "math"
       },
       {
-        "depth": 0.0001,
+        "depth": 0.00013,
         "id": 17,
         "kind": "bump",
         "position": [0, 0]
@@ -527,13 +528,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.55
+              "float": 0.52
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.34
+              "float": 0.27
             }
           }
         ],
@@ -563,7 +564,7 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.84
+              "float": 0.78
             }
           },
           {
@@ -630,7 +631,7 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.88
+              "float": 0.85
             }
           },
           {
@@ -687,12 +688,27 @@
     "output": 1
   },
   "name": "Leather Cognac",
-  "specular_roughness": 0.38,
+  "specular_roughness": 0.34,
   "tags": [
     "leather",
     "grain",
     "upholstery",
-    "brown"
+    "brown",
+    "hide",
+    "cowhide",
+    "natural leather",
+    "full grain",
+    "finely grained",
+    "genuine leather",
+    "amber",
+    "caramel",
+    "warm brown",
+    "satin",
+    "armchair",
+    "furniture",
+    "automotive",
+    "bags",
+    "accessories"
   ],
   "type": "generic"
 }

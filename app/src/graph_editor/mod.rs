@@ -3738,6 +3738,7 @@ mod tests {
         let mut h = Harness::with_browser();
         let material = tequila_materials::material_type::MaterialType::Metal.defaults();
         h.library = vec![tequila_format::library::LibraryEntry {
+            description: String::new(),
             name: "Brass Hairline".into(),
             category: "Metal".into(),
             tags: Vec::new(),
