@@ -15,6 +15,7 @@
 mod blend_stack;
 mod fdm_layer_lines;
 mod build;
+mod finishes;
 mod geometric;
 mod stochastic;
 mod tiles;
@@ -52,6 +53,20 @@ pub enum NodeGroup {
     Stripes,
     /// The lozenges of tread plate (`geometric`).
     TreadPlate,
+    // How a surface was finished and what has happened to it since
+    // (`finishes`).
+    Hammered,
+    OrangePeel,
+    MouldTexture,
+    Droplets,
+    Cracks,
+    Terrazzo,
+    Patches,
+    Speckle,
+    Stucco,
+    Dent,
+    Smoke,
+    Smudges,
 }
 
 /// A group said in one place: its names, its sockets and what builds it.
@@ -97,6 +112,18 @@ impl NodeGroup {
         NodeGroup::Dots,
         NodeGroup::Stripes,
         NodeGroup::TreadPlate,
+        NodeGroup::Hammered,
+        NodeGroup::OrangePeel,
+        NodeGroup::MouldTexture,
+        NodeGroup::Droplets,
+        NodeGroup::Cracks,
+        NodeGroup::Terrazzo,
+        NodeGroup::Patches,
+        NodeGroup::Speckle,
+        NodeGroup::Stucco,
+        NodeGroup::Dent,
+        NodeGroup::Smoke,
+        NodeGroup::Smudges,
     ];
 
     /// The groups said as a [`Spec`], in the order their expansions are
@@ -107,6 +134,18 @@ impl NodeGroup {
         (NodeGroup::Dots, &geometric::DOTS),
         (NodeGroup::Stripes, &geometric::STRIPES),
         (NodeGroup::TreadPlate, &geometric::TREAD_PLATE),
+        (NodeGroup::Hammered, &finishes::HAMMERED),
+        (NodeGroup::OrangePeel, &finishes::ORANGE_PEEL),
+        (NodeGroup::MouldTexture, &finishes::MOULD_TEXTURE),
+        (NodeGroup::Droplets, &finishes::DROPLETS),
+        (NodeGroup::Cracks, &finishes::CRACKS),
+        (NodeGroup::Terrazzo, &finishes::TERRAZZO),
+        (NodeGroup::Patches, &finishes::PATCHES),
+        (NodeGroup::Speckle, &finishes::SPECKLE),
+        (NodeGroup::Stucco, &finishes::STUCCO),
+        (NodeGroup::Dent, &finishes::DENT),
+        (NodeGroup::Smoke, &finishes::SMOKE),
+        (NodeGroup::Smudges, &finishes::SMUDGES),
     ];
 
     fn spec(self) -> &'static Spec {

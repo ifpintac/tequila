@@ -4,7 +4,9 @@
 use super::{Expansion, GroupInput};
 use crate::graph::{NodeKind, Value};
 use crate::nodes::{MixData, ShaderNode};
-use tequila_texture::cycles::ops::{BlendMode, MathOp};
+use tequila_texture::cycles::noise::FractalKind;
+use tequila_texture::cycles::ops::{BlendMode, MathOp, VectorMathOp};
+use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 
 /// A value on its way through the group: a node's output, a number, or one
 /// of the group's inputs.
@@ -60,6 +62,11 @@ impl Build {
             self.feed(node, input as u8, *value);
         }
         V::Node(node, 0)
+    }
+
+    /// A node of that kind, nothing set on it.
+    pub fn node(&mut self, kind: NodeKind) -> u32 {
+        self.e.node(kind, &[])
     }
 
     /// `yes` where `when` is 1, `no` where it is 0.
@@ -128,6 +135,81 @@ impl Build {
         let (uc, vs) = (self.math(Multiply, &[u, c]), self.math(Multiply, &[v, s]));
         let (us, vc) = (self.math(Multiply, &[u, s]), self.math(Multiply, &[v, c]));
         (self.math(Add, &[uc, vs]), self.math(Subtract, &[vc, us]))
+    }
+
+    /// How many of a size in millimetres go to a scene unit: a texture's
+    /// Scale for features that size.
+    pub fn per_metre(&mut self, millimetres: V) -> V {
+        self.math(MathOp::Divide, &[V::Num(1000.0), millimetres])
+    }
+
+    /// A Noise Texture, in the part's own space or at `at`: its Fac, about
+    /// a half, and its Color. `w` moves it to another noise altogether.
+    pub fn noise(&mut self, at: Option<V>, scale: V, w: V, detail: V, roughness: f32, distortion: f32) -> (V, V) {
+        let node = self.e.node(
+            NodeKind::Node(ShaderNode::Noise { dims: 4, fractal: FractalKind::Fbm, normalize: true }),
+            &[(4, Value::Float(roughness)), (8, Value::Float(distortion))],
+        );
+        if let Some(at) = at {
+            self.feed(node, 0, at);
+        }
+        self.feed(node, 1, w);
+        self.feed(node, 2, scale);
+        self.feed(node, 3, detail);
+        (V::Node(node, 0), V::Node(node, 1))
+    }
+
+    /// A Voronoi Texture of that feature, in the part's own space or at
+    /// `at`: the node, whose outputs are the feature's.
+    pub fn cells(&mut self, feature: VoronoiFeature, at: Option<V>, scale: V, w: V) -> u32 {
+        let node = self.e.node(NodeKind::Node(ShaderNode::Voronoi { dims: 4, feature, metric: VoronoiMetric::Euclidean, normalize: false }), &[]);
+        if let Some(at) = at {
+            self.feed(node, 0, at);
+        }
+        self.feed(node, 1, w);
+        self.feed(node, 2, scale);
+        node
+    }
+
+    /// Nought below `low`, one above `high`, and an easy curve between.
+    pub fn smooth(&mut self, low: V, high: V, x: V) -> V {
+        use MathOp::*;
+        let (above, span) = (self.math(Subtract, &[x, low]), self.math(Subtract, &[high, low]));
+        let span = self.math(Maximum, &[span, V::Num(1e-5)]);
+        let t = self.clamped(Divide, &[above, span]);
+        let ease = self.math(MultiplyAdd, &[t, V::Num(-2.0), V::Num(3.0)]);
+        let squared = self.math(Multiply, &[t, t]);
+        self.math(Multiply, &[squared, ease])
+    }
+
+    /// Where the point is in the part's own space, in scene units.
+    pub fn object(&mut self) -> V {
+        let coordinates = self.e.node(NodeKind::Node(ShaderNode::TextureCoordinate), &[]);
+        V::Node(coordinates, OBJECT)
+    }
+
+    /// Vector Math on two vectors.
+    pub fn vector(&mut self, op: VectorMathOp, a: V, b: V) -> V {
+        let node = self.e.node(NodeKind::Node(ShaderNode::VectorMath { op }), &[]);
+        self.feed_vector(node, 0, a);
+        self.feed_vector(node, 1, b);
+        V::Node(node, 0)
+    }
+
+    /// A vector times a number.
+    pub fn scaled(&mut self, vector: V, by: V) -> V {
+        let node = self.e.node(NodeKind::Node(ShaderNode::VectorMath { op: VectorMathOp::Scale }), &[]);
+        self.feed_vector(node, 0, vector);
+        self.feed(node, 3, by);
+        V::Node(node, 0)
+    }
+
+    /// As [`Build::feed`], a number given being the same along each axis.
+    fn feed_vector(&mut self, node: u32, input: u8, value: V) {
+        match value {
+            V::Num(number) => self.e.set(node, input, Value::Vector(tequila_core::math::Vec3::splat(number))),
+            other => self.feed(node, input, other),
+        }
     }
 
     /// Millimetres as scene units.
