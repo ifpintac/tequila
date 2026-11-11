@@ -1,7 +1,9 @@
 {
   "base_color": [0.012, 0.012, 0.013],
-  "base_diffuse_roughness": 1,
   "category": "Fabric",
+  "fuzz_color": [0.259, 0.259, 0.25975],
+  "fuzz_roughness": 0.7,
+  "fuzz_weight": 0.5,
   "graph": {
     "decals": [],
     "links": [
@@ -3153,8 +3155,6 @@
     "output": 1
   },
   "name": "Spacer Mesh Black",
-  "specular_roughness": 0.8,
-  "specular_weight": 0.2,
   "tags": [
     "spacer mesh",
     "air mesh",
@@ -3165,6 +3165,6 @@
     "padding",
     "black"
   ],
-  "type": "generic"
+  "type": "velvet"
 }
 

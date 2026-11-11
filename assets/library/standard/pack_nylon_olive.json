@@ -1,7 +1,7 @@
 {
-  "base_color": [0.008142522, 0.008123999, 0.00859154],
+  "base_color": [0.06075581, 0.06686556, 0.035105795],
   "category": "Fabric",
-  "fuzz_color": [0.051421598, 0.051312666, 0.054062277],
+  "fuzz_color": [0.25706998, 0.27526796, 0.15620774],
   "fuzz_weight": 0.08,
   "graph": {
     "decals": [],
@@ -5213,13 +5213,13 @@
           {
             "socket": "input:1",
             "value": {
-              "color": [0.009750053, 0.009729406, 0.010250591]
+              "color": [0.0512946, 0.056798134, 0.029266354]
             }
           },
           {
             "socket": "input:2",
             "value": {
-              "color": [0.0065349904, 0.0065185935, 0.006932489]
+              "color": [0.07021702, 0.07693299, 0.04094524]
             }
           }
         ],
@@ -5261,16 +5261,17 @@
     ],
     "output": 1
   },
-  "name": "Cordura Black",
+  "name": "Pack Nylon Olive",
   "specular_roughness": 0.6,
   "tags": [
-    "cordura",
+    "pack cloth",
     "nylon",
     "500d",
+    "cordura",
     "bag",
     "case",
-    "gig bag",
-    "black"
+    "olive",
+    "green"
   ],
   "type": "real_cloth"
 }

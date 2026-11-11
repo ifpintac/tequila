@@ -51,6 +51,12 @@ pub enum Figure {
     Swirl { colour: Spectrum },
     /// Knots: branches the board was sawn through (pine).
     Knots { colour: Spectrum, density: f32 },
+    /// A burl: buds that never grew into branches, each a small dark eye
+    /// the rings wrap round, in clusters, with the grain between them
+    /// going every way. `eyes` to the metre, on `share` of the places one
+    /// could be: a walnut burl is crowded with them, a bird's-eye maple
+    /// has a few.
+    Burl { colour: Spectrum, eyes: f32, share: f32 },
 }
 
 /// How it is finished.
@@ -122,8 +128,9 @@ pub fn all() -> Vec<Preset> {
         Species { name: "Wood Padauk", tags: &["wood", "padauk", "exotic", "orange", "red"], early: "#B5482A", late: "#8F2F1A", rings: 320.0, latewood: 0.20, pores: Diffuse { size: 0.11, dark: 0.5 }, rays: 0.0, figure: Plain, finish: Oiled, drift: 0.25 },
         Species { name: "Wood Bubinga", tags: &["wood", "bubinga", "exotic", "red", "drum shell", "instrument"], early: "#8E4A3A", late: "#6B2F26", rings: 420.0, latewood: 0.20, pores: Diffuse { size: 0.08, dark: 0.45 }, rays: 0.0, figure: Streaks { colour: srgb("#3B1A16"), amount: 0.5 }, finish: Gloss, drift: 0.35 },
         Species { name: "Wood Macassar Ebony", tags: &["wood", "ebony", "macassar", "exotic", "striped", "dark", "veneer"], early: "#6B4A33", late: "#1C130F", rings: 180.0, latewood: 0.50, pores: Diffuse { size: 0.05, dark: 0.3 }, rays: 0.0, figure: Streaks { colour: srgb("#120C0A"), amount: 0.6 }, finish: Gloss, drift: 0.3 },
-        Species { name: "Wood Bamboo", tags: &["wood", "bamboo", "laminated", "strand", "pale", "sustainable"], early: "#D9B777", late: "#C49A58", rings: 900.0, latewood: 0.30, pores: None, rays: 0.0, figure: Plain, finish: Satin, drift: 0.15 },
         Species { name: "Wood Walnut Figured", tags: &["wood", "walnut", "figured", "crotch", "swirl", "veneer", "hi-fi", "luxury"], early: "#7A5638", late: "#4E3320", rings: 260.0, latewood: 0.20, pores: Diffuse { size: 0.06, dark: 0.45 }, rays: 0.0, figure: Swirl { colour: srgb("#2A1B13") }, finish: Gloss, drift: 0.5 },
+        Species { name: "Wood Walnut Burl", tags: &["wood", "walnut", "burl", "burr", "eyes", "veneer", "hi-fi", "dashboard", "luxury"], early: "#8A6240", late: "#5A3A22", rings: 300.0, latewood: 0.25, pores: Diffuse { size: 0.05, dark: 0.4 }, rays: 0.0, figure: Burl { colour: srgb("#24160F"), eyes: 150.0, share: 0.55 }, finish: Gloss, drift: 0.5 },
+        Species { name: "Wood Birdseye Maple", tags: &["wood", "maple", "birdseye", "bird's eye", "figured", "eyes", "instrument", "veneer", "pale"], early: "#EBD6AF", late: "#DCC198", rings: 520.0, latewood: 0.16, pores: Diffuse { size: 0.04, dark: 0.3 }, rays: 0.1, figure: Burl { colour: srgb("#8A6A44"), eyes: 210.0, share: 0.22 }, finish: Gloss, drift: 0.15 },
         Species { name: "Wood Walnut Gloss", tags: &["wood", "walnut", "gloss", "piano lacquer", "hi-fi", "speaker", "dark"], early: "#6E4C36", late: "#553826", rings: 300.0, latewood: 0.20, pores: Diffuse { size: 0.09, dark: 0.55 }, rays: 0.0, figure: Streaks { colour: srgb("#2A1B13"), amount: 0.35 }, finish: Gloss, drift: 0.45 },
         Species { name: "Wood Maple Gloss", tags: &["wood", "maple", "gloss", "lacquer", "drum shell", "pale"], early: "#EBD6AF", late: "#DCC198", rings: 520.0, latewood: 0.16, pores: Diffuse { size: 0.04, dark: 0.3 }, rays: 0.15, figure: Plain, finish: Gloss, drift: 0.15 },
         Species { name: "Wood Mahogany Gloss", tags: &["wood", "mahogany", "gloss", "lacquer", "guitar", "red", "ribbon"], early: "#8E4B2F", late: "#7A3D24", rings: 360.0, latewood: 0.18, pores: Diffuse { size: 0.1, dark: 0.5 }, rays: 0.0, figure: Ribbon { strength: 0.6 }, finish: Gloss, drift: 0.2 },
@@ -133,6 +140,8 @@ pub fn all() -> Vec<Preset> {
     ];
     let mut out: Vec<Preset> = species.iter().map(wood).collect();
     out.push(plywood());
+    out.push(bamboo("Wood Bamboo", &["wood", "bamboo", "laminated", "strips", "nodes", "pale", "natural", "sustainable"], srgb("#DEC388"), srgb("#BF9A58"), srgb("#8A6430")));
+    out.push(bamboo("Wood Bamboo Carbonised", &["wood", "bamboo", "laminated", "strips", "nodes", "carbonised", "caramel", "brown"], srgb("#B4804A"), srgb("#8A5628"), srgb("#553616")));
     out.push(fibreboard("MDF Raw", &["mdf", "fibreboard", "raw", "cabinet", "speaker", "brown"], srgb("#A9865E"), srgb("#8E6E4A")));
     out.push(fibreboard("MDF Black", &["mdf", "fibreboard", "black", "through-coloured", "cabinet", "speaker"], srgb("#2A2826"), srgb("#1E1C1B")));
     out
@@ -184,6 +193,81 @@ fn plywood() -> Preset {
     r.to(Param::BaseColor, colour);
     r.bump(fibre, 1.5e-5);
     preset("Plywood Birch", "Wood", &["plywood", "birch", "ply", "baltic birch", "edge", "layers", "cabinet", "speaker", "furniture"], MaterialType::Generic, r)
+}
+
+/// Laminated bamboo: the culm split into strips two centimetres wide,
+/// planed and glued side by side. Not a wood: no rings, but fibres dead
+/// straight along each strip, the dark dashes of its vessels among them,
+/// and every thirty centimetres or so a node, the joint of the cane - a
+/// dark line across the strip with paler wood either side of it - at a
+/// different place in every strip. `light` and `dark` are the strips'
+/// colours, `node` a joint's.
+fn bamboo(name: &'static str, tags: &'static [&'static str], light: Spectrum, dark: Spectrum, node: Spectrum) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = light.lerp(dark, 0.5);
+        m.base_diffuse_roughness = 0.4;
+        m.specular_roughness = 0.45;
+        m.specular_weight = 0.0;
+        m.coat_weight = 1.0;
+        m.coat_roughness = 0.28;
+    }));
+    let coords = r.node("texture_coordinate").out("Object");
+    let xyz = r.node("separate_xyz").w("Vector", coords).add();
+    let (x, y, z) = (Out(xyz, 0), Out(xyz, 1), Out(xyz, 2));
+    // The strips: 20 mm across, in layers 6 mm thick, each its own.
+    let across = r.math("divide", z, 0.02);
+    let up = r.math("divide", y, 0.006);
+    let strip = r.math("floor", across, 0.0);
+    let layer = r.math("floor", up, 0.0);
+    let id = r.node("combine_xyz").w("X", strip).w("Y", layer).f("Z", 3.0).out("Vector");
+    let own = r.node("white_noise_texture").w("Vector", id).out("Value");
+    let id2 = r.node("combine_xyz").w("X", strip).w("Y", layer).f("Z", 11.0).out("Vector");
+    let shift = r.node("white_noise_texture").w("Vector", id2).out("Value");
+    // A strip's colour: its own, from the cane it was split from.
+    let strip_colour = r.node("mix").w("Factor", own).c("A", dark).c("B", light).out("Result");
+    // The fibre: dead straight along x, fine.
+    let combed = r.node("mapping").w("Vector", coords).v("Scale", [6.0, 1800.0, 1800.0]).out("Vector");
+    let fibre = r.node("noise_texture").w("Vector", combed).f("Scale", 1.0).f("Detail", 3.0).f("Roughness", 0.6).out("Fac");
+    let fibre_tone = r.range(fibre, (0.3, 0.7), (0.9, 1.06));
+    // The vessels: short dark dashes along the grain, many.
+    let dash_space = r.node("mapping").w("Vector", coords).v("Scale", [110.0, 2400.0, 2400.0]).out("Vector");
+    let dashes = r.node("voronoi_texture").w("Vector", dash_space).f("Scale", 1.0).f("Randomness", 1.0).out("Distance");
+    let dash = r.smooth(dashes, (0.08, 0.2), (1.0, 0.0));
+    let dash_tone = r.range(dash, (0.0, 1.0), (1.0, 0.72));
+    // The nodes: one every 32 cm along a strip, wherever that strip's
+    // cane had it.
+    let along = r.math("divide", x, 0.32);
+    let along = r.math("add", along, shift);
+    let f = r.math("fraction", along, 0.0);
+    let off = r.math("subtract", f, 0.5);
+    let from_node = r.math("absolute", off, 0.0);
+    // The joint itself, a millimetre and a half; and the paler, denser
+    // wood a centimetre either side of it.
+    let joint = r.smooth(from_node, (0.002, 0.006), (1.0, 0.0));
+    let collar = r.smooth(from_node, (0.006, 0.04), (1.0, 0.0));
+    let collar_tone = r.range(collar, (0.0, 1.0), (1.0, 1.1));
+    // The glue lines between strips and between layers.
+    let fz = r.math("fraction", across, 0.0);
+    let fz = r.math("subtract", fz, 0.5);
+    let fz = r.math("absolute", fz, 0.0);
+    let seam_z = r.smooth(fz, (0.485, 0.5), (0.0, 1.0));
+    let fy = r.math("fraction", up, 0.0);
+    let fy = r.math("subtract", fy, 0.5);
+    let fy = r.math("absolute", fy, 0.0);
+    let seam_y = r.smooth(fy, (0.47, 0.5), (0.0, 1.0));
+    let seam = r.math("maximum", seam_z, seam_y);
+    let seam_tone = r.range(seam, (0.0, 1.0), (1.0, 0.6));
+    let shade = r.math("multiply", fibre_tone, dash_tone);
+    let shade = r.math("multiply", shade, collar_tone);
+    let shade = r.math("multiply", shade, seam_tone);
+    let colour = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).w("A", strip_colour).w("B", shade).out("Result");
+    let colour = r.node("mix").f("Factor", joint).w("A", colour).c("B", node).out("Result");
+    r.to(Param::BaseColor, colour);
+    // The joint stands a little proud under the lacquer, the seams sink.
+    let height = plus(&mut r, joint, 0.5, fibre);
+    let height = plus(&mut r, seam, -0.8, height);
+    r.bump(height, 1.6e-5);
+    preset(name, "Wood", tags, MaterialType::Generic, r)
 }
 
 /// Fibreboard: wood fibre pressed with resin, the same all through, with
@@ -254,6 +338,9 @@ pub fn wood(s: &Species) -> Preset {
     let bend = r.node("noise_texture").w("Vector", bend_space).f("Scale", 1.0).f("Detail", 3.0).f("Roughness", 0.55).out("Color");
     let reach = match s.figure {
         Figure::Swirl { .. } => 0.035,
+        // A crowded burl's grain is wild between its eyes; a few eyes in
+        // a straight board leave it straight.
+        Figure::Burl { share, .. } => 0.006 + 0.13 * (share - 0.2).max(0.0),
         _ => 0.006,
     };
     let bent = r.node("vector_math").set("operation", "multiply_add").w("Vector", bend).v("Vector 2", [0.0, reach, reach]).w("Vector 3", coords).out("Vector");
@@ -290,6 +377,24 @@ pub fn wood(s: &Species) -> Preset {
         let swirl = r.math("multiply", near, kept);
         phase = plus(&mut r, swirl, 3.5, phase);
         let core = r.smooth(Out(knots, 0), (0.04, 0.12), (1.0, 0.0));
+        knot_core = Some(r.math("multiply", core, kept));
+    }
+    // A burl's eyes: small, round, in clusters, each with the rings drawn
+    // in round it as round a knot, and a dark bud at its middle.
+    if let Figure::Burl { eyes, share, .. } = s.figure {
+        let cells = r.node("voronoi_texture").w("Vector", coords).f("Scale", eyes).f("Randomness", 1.0).add();
+        let pick = r.node("separate_color").w("Color", Out(cells, 1)).out("Red");
+        let own = r.node("white_noise_texture").w("Vector", Out(cells, 1)).out("Value");
+        // Clusters: more of them here, fewer there.
+        let crowd = r.node("noise_texture").w("Vector", coords).f("Scale", eyes * 0.12).f("Detail", 2.0).out("Fac");
+        let chance = plus(&mut r, crowd, 1.3, own);
+        let _ = pick;
+        let kept = r.smooth(chance, (1.5 - share - 0.03, 1.5 - share + 0.03), (0.0, 1.0));
+        let near = r.smooth(Out(cells, 0), (0.0, 0.5), (1.0, 0.0));
+        let swirl = r.math("multiply", near, kept);
+        // One year drawn in round it, and no more: two are a target.
+        phase = plus(&mut r, swirl, 0.9, phase);
+        let core = r.smooth(Out(cells, 0), (0.0, 0.3), (0.9, 0.0));
         knot_core = Some(r.math("multiply", core, kept));
     }
     let year = r.math("fraction", phase, 0.0);
@@ -333,6 +438,12 @@ pub fn wood(s: &Species) -> Preset {
     // ---- Figure -----------------------------------------------------------
     match s.figure {
         Figure::Plain | Figure::Knots { .. } => {}
+        Figure::Burl { colour: dark, share, .. } => {
+            // Dark lines where the years crowd round the eyes, as in the
+            // swirl of an olive, the more of them the more eyes there are.
+            let line = r.smooth(year, (0.82, 0.96), (0.0, ((share - 0.2) * 1.2).clamp(0.03, 0.45)));
+            colour = r.node("mix").f("Factor", line).w("A", colour).c("B", dark).out("Result");
+        }
         Figure::Ribbon { strength } => {
             // Bands a centimetre or two wide along the grain, alternately
             // lighter and darker, and turning the sheen as they go.
@@ -368,7 +479,7 @@ pub fn wood(s: &Species) -> Preset {
             colour = r.node("mix").f("Factor", line).w("A", colour).c("B", dark).out("Result");
         }
     }
-    if let (Some(core), Figure::Knots { colour: knot, .. }) = (knot_core, s.figure) {
+    if let (Some(core), Figure::Knots { colour: knot, .. } | Figure::Burl { colour: knot, .. }) = (knot_core, s.figure) {
         colour = r.node("mix").f("Factor", core).w("A", colour).c("B", knot).out("Result");
         sink = plus(&mut r, core, -0.6, sink);
     }

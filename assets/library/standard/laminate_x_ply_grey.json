@@ -1,8 +1,7 @@
 {
-  "base_color": [0.06075581, 0.06686556, 0.035105795],
+  "base_color": [0.19952506, 0.20458858, 0.22064954],
+  "base_diffuse_roughness": 0.5,
   "category": "Fabric",
-  "fuzz_color": [0.25706998, 0.27526796, 0.15620774],
-  "fuzz_weight": 0.08,
   "graph": {
     "decals": [],
     "links": [
@@ -21,36 +20,104 @@
       {
         "from": 4,
         "socket": "input:0",
-        "to": 84
+        "to": 97
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 161
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 167
       },
       {
         "from": 4,
         "socket": "input:0",
-        "to": 154
+        "to": 180
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 244
+      },
+      {
+        "from": 4,
+        "socket": "input:2",
+        "to": 250
       },
       {
         "from": 4,
         "output": 1,
-        "socket": "input:0",
-        "to": 17
-      },
-      {
-        "from": 4,
-        "output": 1,
-        "socket": "input:0",
-        "to": 155
-      },
-      {
-        "from": 4,
-        "output": 2,
         "socket": "input:0",
         "to": 18
       },
       {
         "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 81
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 87
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 181
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 244
+      },
+      {
+        "from": 4,
+        "output": 1,
+        "socket": "input:0",
+        "to": 250
+      },
+      {
+        "from": 4,
         "output": 2,
         "socket": "input:0",
-        "to": 85
+        "to": 17
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:2",
+        "to": 81
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:2",
+        "to": 87
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:0",
+        "to": 98
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:0",
+        "to": 161
+      },
+      {
+        "from": 4,
+        "output": 2,
+        "socket": "input:0",
+        "to": 167
       },
       {
         "from": 5,
@@ -137,47 +204,47 @@
       {
         "from": 14,
         "socket": "input:1",
-        "to": 81
+        "to": 94
       },
       {
         "from": 14,
         "socket": "input:1",
-        "to": 82
+        "to": 95
       },
       {
         "from": 14,
         "socket": "input:1",
-        "to": 83
+        "to": 96
       },
       {
         "from": 15,
         "socket": "input:1",
-        "to": 148
+        "to": 174
       },
       {
         "from": 15,
         "socket": "input:1",
-        "to": 150
+        "to": 176
       },
       {
         "from": 15,
         "socket": "input:1",
-        "to": 152
+        "to": 178
       },
       {
         "from": 16,
         "socket": "input:1",
-        "to": 218
+        "to": 257
       },
       {
         "from": 16,
         "socket": "input:1",
-        "to": 220
+        "to": 259
       },
       {
         "from": 16,
         "socket": "input:1",
-        "to": 222
+        "to": 261
       },
       {
         "from": 17,
@@ -308,11 +375,6 @@
         "from": 25,
         "socket": "input:0",
         "to": 73
-      },
-      {
-        "from": 25,
-        "socket": "input:0",
-        "to": 82
       },
       {
         "from": 26,
@@ -607,127 +669,57 @@
       {
         "from": 79,
         "socket": "input:0",
-        "to": 83
+        "to": 95
       },
       {
         "from": 80,
         "socket": "input:0",
-        "to": 81
+        "to": 94
       },
       {
         "from": 81,
         "socket": "input:0",
-        "to": 149
+        "to": 82
       },
       {
         "from": 82,
         "socket": "input:0",
-        "to": 151
+        "to": 83
       },
       {
         "from": 83,
         "socket": "input:0",
-        "to": 153
+        "to": 84
       },
       {
         "from": 84,
+        "socket": "input:0",
+        "to": 85
+      },
+      {
+        "from": 85,
         "socket": "input:0",
         "to": 86
       },
       {
-        "from": 84,
-        "socket": "input:0",
-        "to": 88
-      },
-      {
-        "from": 84,
-        "socket": "input:0",
-        "to": 121
-      },
-      {
-        "from": 84,
-        "socket": "input:0",
-        "to": 135
-      },
-      {
-        "from": 85,
-        "socket": "input:0",
-        "to": 87
-      },
-      {
-        "from": 85,
-        "socket": "input:0",
-        "to": 89
-      },
-      {
-        "from": 85,
-        "socket": "input:0",
-        "to": 116
-      },
-      {
-        "from": 85,
-        "socket": "input:1",
-        "to": 134
-      },
-      {
         "from": 86,
-        "socket": "input:0",
-        "to": 90
-      },
-      {
-        "from": 86,
-        "socket": "input:0",
-        "to": 128
-      },
-      {
-        "from": 86,
-        "socket": "input:0",
-        "to": 134
-      },
-      {
-        "from": 87,
-        "socket": "input:1",
-        "to": 90
-      },
-      {
-        "from": 87,
-        "socket": "input:0",
-        "to": 129
-      },
-      {
-        "from": 87,
-        "socket": "input:1",
-        "to": 135
-      },
-      {
-        "from": 88,
         "socket": "input:0",
         "to": 93
       },
       {
-        "from": 88,
+        "from": 87,
         "socket": "input:0",
-        "to": 109
+        "to": 88
       },
       {
         "from": 88,
         "socket": "input:0",
-        "to": 117
+        "to": 89
       },
       {
         "from": 89,
         "socket": "input:0",
-        "to": 99
-      },
-      {
-        "from": 89,
-        "socket": "input:0",
-        "to": 105
-      },
-      {
-        "from": 89,
-        "socket": "input:0",
-        "to": 122
+        "to": 90
       },
       {
         "from": 90,
@@ -741,88 +733,128 @@
       },
       {
         "from": 92,
-        "socket": "input:0",
-        "to": 115
-      },
-      {
-        "from": 92,
-        "socket": "input:0",
-        "to": 126
-      },
-      {
-        "from": 92,
-        "socket": "input:0",
-        "to": 132
-      },
-      {
-        "from": 92,
-        "socket": "input:0",
-        "to": 140
-      },
-      {
-        "from": 92,
-        "socket": "input:0",
-        "to": 150
+        "socket": "input:1",
+        "to": 93
       },
       {
         "from": 93,
         "socket": "input:0",
-        "to": 94
+        "to": 96
       },
       {
         "from": 94,
         "socket": "input:0",
-        "to": 95
-      },
-      {
-        "from": 94,
-        "socket": "input:1",
-        "to": 95
+        "to": 175
       },
       {
         "from": 95,
-        "socket": "input:1",
-        "to": 96
+        "socket": "input:0",
+        "to": 177
       },
       {
         "from": 96,
         "socket": "input:0",
-        "to": 97
+        "to": 179
       },
       {
         "from": 97,
         "socket": "input:0",
-        "to": 98
+        "to": 99
+      },
+      {
+        "from": 97,
+        "socket": "input:0",
+        "to": 101
+      },
+      {
+        "from": 97,
+        "socket": "input:0",
+        "to": 134
+      },
+      {
+        "from": 97,
+        "socket": "input:0",
+        "to": 148
       },
       {
         "from": 98,
         "socket": "input:0",
-        "to": 113
+        "to": 100
+      },
+      {
+        "from": 98,
+        "socket": "input:0",
+        "to": 102
+      },
+      {
+        "from": 98,
+        "socket": "input:0",
+        "to": 129
+      },
+      {
+        "from": 98,
+        "socket": "input:1",
+        "to": 147
       },
       {
         "from": 99,
         "socket": "input:0",
-        "to": 100
+        "to": 103
+      },
+      {
+        "from": 99,
+        "socket": "input:0",
+        "to": 141
+      },
+      {
+        "from": 99,
+        "socket": "input:0",
+        "to": 147
+      },
+      {
+        "from": 100,
+        "socket": "input:1",
+        "to": 103
       },
       {
         "from": 100,
         "socket": "input:0",
-        "to": 101
+        "to": 142
       },
       {
         "from": 100,
         "socket": "input:1",
-        "to": 101
+        "to": 148
       },
       {
         "from": 101,
-        "socket": "input:1",
-        "to": 102
+        "socket": "input:0",
+        "to": 106
+      },
+      {
+        "from": 101,
+        "socket": "input:0",
+        "to": 122
+      },
+      {
+        "from": 101,
+        "socket": "input:0",
+        "to": 130
       },
       {
         "from": 102,
         "socket": "input:0",
-        "to": 103
+        "to": 112
+      },
+      {
+        "from": 102,
+        "socket": "input:0",
+        "to": 118
+      },
+      {
+        "from": 102,
+        "socket": "input:0",
+        "to": 135
       },
       {
         "from": 103,
@@ -832,12 +864,27 @@
       {
         "from": 104,
         "socket": "input:0",
-        "to": 114
+        "to": 105
       },
       {
         "from": 105,
         "socket": "input:0",
-        "to": 106
+        "to": 128
+      },
+      {
+        "from": 105,
+        "socket": "input:0",
+        "to": 139
+      },
+      {
+        "from": 105,
+        "socket": "input:0",
+        "to": 145
+      },
+      {
+        "from": 105,
+        "socket": "input:0",
+        "to": 153
       },
       {
         "from": 106,
@@ -850,9 +897,14 @@
         "to": 108
       },
       {
+        "from": 107,
+        "socket": "input:1",
+        "to": 108
+      },
+      {
         "from": 108,
         "socket": "input:1",
-        "to": 113
+        "to": 109
       },
       {
         "from": 109,
@@ -867,17 +919,22 @@
       {
         "from": 111,
         "socket": "input:0",
-        "to": 112
+        "to": 126
       },
       {
         "from": 112,
-        "socket": "input:1",
+        "socket": "input:0",
+        "to": 113
+      },
+      {
+        "from": 113,
+        "socket": "input:0",
         "to": 114
       },
       {
         "from": 113,
-        "socket": "input:2",
-        "to": 115
+        "socket": "input:1",
+        "to": 114
       },
       {
         "from": 114,
@@ -886,23 +943,18 @@
       },
       {
         "from": 115,
-        "socket": "input:2",
-        "to": 127
-      },
-      {
-        "from": 115,
         "socket": "input:0",
-        "to": 142
+        "to": 116
       },
       {
         "from": 116,
         "socket": "input:0",
-        "to": 118
+        "to": 117
       },
       {
         "from": 117,
-        "socket": "input:1",
-        "to": 118
+        "socket": "input:0",
+        "to": 127
       },
       {
         "from": 118,
@@ -916,17 +968,17 @@
       },
       {
         "from": 120,
-        "socket": "input:2",
-        "to": 126
+        "socket": "input:0",
+        "to": 121
       },
       {
         "from": 121,
-        "socket": "input:0",
-        "to": 123
+        "socket": "input:1",
+        "to": 126
       },
       {
         "from": 122,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 123
       },
       {
@@ -942,27 +994,27 @@
       {
         "from": 125,
         "socket": "input:1",
-        "to": 126
-      },
-      {
-        "from": 126,
-        "socket": "input:0",
         "to": 127
       },
       {
         "from": 126,
-        "socket": "input:0",
-        "to": 145
+        "socket": "input:2",
+        "to": 128
       },
       {
         "from": 127,
-        "socket": "input:0",
-        "to": 147
+        "socket": "input:1",
+        "to": 128
+      },
+      {
+        "from": 128,
+        "socket": "input:2",
+        "to": 140
       },
       {
         "from": 128,
         "socket": "input:0",
-        "to": 130
+        "to": 155
       },
       {
         "from": 129,
@@ -971,12 +1023,12 @@
       },
       {
         "from": 130,
-        "socket": "input:2",
-        "to": 132
+        "socket": "input:1",
+        "to": 131
       },
       {
         "from": 131,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 132
       },
       {
@@ -986,8 +1038,8 @@
       },
       {
         "from": 133,
-        "socket": "input:0",
-        "to": 143
+        "socket": "input:2",
+        "to": 139
       },
       {
         "from": 134,
@@ -996,93 +1048,93 @@
       },
       {
         "from": 135,
-        "socket": "input:0",
-        "to": 137
+        "socket": "input:1",
+        "to": 136
       },
       {
         "from": 136,
         "socket": "input:0",
-        "to": 138
+        "to": 137
       },
       {
         "from": 137,
         "socket": "input:0",
-        "to": 139
+        "to": 138
       },
       {
         "from": 138,
-        "socket": "input:2",
+        "socket": "input:1",
+        "to": 139
+      },
+      {
+        "from": 139,
+        "socket": "input:0",
         "to": 140
       },
       {
         "from": 139,
-        "socket": "input:1",
-        "to": 140
+        "socket": "input:0",
+        "to": 158
       },
       {
         "from": 140,
         "socket": "input:0",
-        "to": 141
+        "to": 160
       },
       {
         "from": 141,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 143
       },
       {
-        "from": 141,
-        "socket": "input:1",
-        "to": 147
-      },
-      {
         "from": 142,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 144
       },
       {
         "from": 143,
-        "socket": "input:0",
-        "to": 144
+        "socket": "input:2",
+        "to": 145
       },
       {
         "from": 144,
-        "socket": "input:0",
-        "to": 146
+        "socket": "input:1",
+        "to": 145
       },
       {
         "from": 145,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 146
       },
       {
         "from": 146,
         "socket": "input:0",
-        "to": 152
+        "to": 156
       },
       {
         "from": 147,
         "socket": "input:0",
-        "to": 148
+        "to": 149
       },
       {
         "from": 148,
-        "socket": "input:1",
-        "to": 149
+        "socket": "input:0",
+        "to": 150
       },
       {
         "from": 149,
         "socket": "input:0",
-        "to": 219
-      },
-      {
-        "from": 150,
-        "socket": "input:1",
         "to": 151
       },
       {
-        "from": 151,
+        "from": 150,
         "socket": "input:0",
-        "to": 221
+        "to": 152
+      },
+      {
+        "from": 151,
+        "socket": "input:2",
+        "to": 153
       },
       {
         "from": 152,
@@ -1092,112 +1144,47 @@
       {
         "from": 153,
         "socket": "input:0",
-        "to": 223
+        "to": 154
       },
       {
         "from": 154,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 156
       },
       {
         "from": 154,
-        "socket": "input:0",
-        "to": 158
-      },
-      {
-        "from": 154,
-        "socket": "input:0",
-        "to": 191
-      },
-      {
-        "from": 154,
-        "socket": "input:0",
-        "to": 205
+        "socket": "input:1",
+        "to": 160
       },
       {
         "from": 155,
+        "socket": "input:1",
+        "to": 157
+      },
+      {
+        "from": 156,
         "socket": "input:0",
         "to": 157
       },
       {
-        "from": 155,
+        "from": 157,
         "socket": "input:0",
         "to": 159
       },
       {
-        "from": 155,
-        "socket": "input:0",
-        "to": 186
-      },
-      {
-        "from": 155,
-        "socket": "input:1",
-        "to": 204
-      },
-      {
-        "from": 156,
-        "socket": "input:0",
-        "to": 160
-      },
-      {
-        "from": 156,
-        "socket": "input:0",
-        "to": 198
-      },
-      {
-        "from": 156,
-        "socket": "input:0",
-        "to": 204
-      },
-      {
-        "from": 157,
-        "socket": "input:1",
-        "to": 160
-      },
-      {
-        "from": 157,
-        "socket": "input:0",
-        "to": 199
-      },
-      {
-        "from": 157,
-        "socket": "input:1",
-        "to": 205
-      },
-      {
         "from": 158,
-        "socket": "input:0",
-        "to": 163
-      },
-      {
-        "from": 158,
-        "socket": "input:0",
-        "to": 179
-      },
-      {
-        "from": 158,
-        "socket": "input:0",
-        "to": 187
+        "socket": "input:1",
+        "to": 159
       },
       {
         "from": 159,
         "socket": "input:0",
-        "to": 169
-      },
-      {
-        "from": 159,
-        "socket": "input:0",
-        "to": 175
-      },
-      {
-        "from": 159,
-        "socket": "input:0",
-        "to": 192
+        "to": 176
       },
       {
         "from": 160,
         "socket": "input:0",
-        "to": 161
+        "to": 174
       },
       {
         "from": 161,
@@ -1207,27 +1194,7 @@
       {
         "from": 162,
         "socket": "input:0",
-        "to": 185
-      },
-      {
-        "from": 162,
-        "socket": "input:0",
-        "to": 196
-      },
-      {
-        "from": 162,
-        "socket": "input:0",
-        "to": 202
-      },
-      {
-        "from": 162,
-        "socket": "input:0",
-        "to": 210
-      },
-      {
-        "from": 162,
-        "socket": "input:0",
-        "to": 220
+        "to": 163
       },
       {
         "from": 163,
@@ -1240,19 +1207,14 @@
         "to": 165
       },
       {
-        "from": 164,
-        "socket": "input:1",
-        "to": 165
-      },
-      {
         "from": 165,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 166
       },
       {
         "from": 166,
         "socket": "input:0",
-        "to": 167
+        "to": 173
       },
       {
         "from": 167,
@@ -1262,7 +1224,7 @@
       {
         "from": 168,
         "socket": "input:0",
-        "to": 183
+        "to": 169
       },
       {
         "from": 169,
@@ -1275,104 +1237,179 @@
         "to": 171
       },
       {
-        "from": 170,
-        "socket": "input:1",
-        "to": 171
-      },
-      {
         "from": 171,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 172
       },
       {
         "from": 172,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 173
       },
       {
         "from": 173,
         "socket": "input:0",
-        "to": 174
+        "to": 178
       },
       {
         "from": 174,
-        "socket": "input:0",
-        "to": 184
+        "socket": "input:1",
+        "to": 175
       },
       {
         "from": 175,
         "socket": "input:0",
-        "to": 176
+        "to": 258
       },
       {
         "from": 176,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 177
       },
       {
         "from": 177,
         "socket": "input:0",
-        "to": 178
+        "to": 260
       },
       {
         "from": 178,
         "socket": "input:1",
-        "to": 183
+        "to": 179
       },
       {
         "from": 179,
         "socket": "input:0",
-        "to": 180
+        "to": 262
       },
       {
         "from": 180,
         "socket": "input:0",
-        "to": 181
+        "to": 182
+      },
+      {
+        "from": 180,
+        "socket": "input:0",
+        "to": 184
+      },
+      {
+        "from": 180,
+        "socket": "input:0",
+        "to": 217
+      },
+      {
+        "from": 180,
+        "socket": "input:0",
+        "to": 231
       },
       {
         "from": 181,
         "socket": "input:0",
-        "to": 182
+        "to": 183
       },
       {
-        "from": 182,
-        "socket": "input:1",
-        "to": 184
-      },
-      {
-        "from": 183,
-        "socket": "input:2",
+        "from": 181,
+        "socket": "input:0",
         "to": 185
       },
       {
-        "from": 184,
-        "socket": "input:1",
-        "to": 185
-      },
-      {
-        "from": 185,
-        "socket": "input:2",
-        "to": 197
-      },
-      {
-        "from": 185,
+        "from": 181,
         "socket": "input:0",
         "to": 212
       },
       {
+        "from": 181,
+        "socket": "input:1",
+        "to": 230
+      },
+      {
+        "from": 182,
+        "socket": "input:0",
+        "to": 186
+      },
+      {
+        "from": 182,
+        "socket": "input:0",
+        "to": 224
+      },
+      {
+        "from": 182,
+        "socket": "input:0",
+        "to": 230
+      },
+      {
+        "from": 183,
+        "socket": "input:1",
+        "to": 186
+      },
+      {
+        "from": 183,
+        "socket": "input:0",
+        "to": 225
+      },
+      {
+        "from": 183,
+        "socket": "input:1",
+        "to": 231
+      },
+      {
+        "from": 184,
+        "socket": "input:0",
+        "to": 189
+      },
+      {
+        "from": 184,
+        "socket": "input:0",
+        "to": 205
+      },
+      {
+        "from": 184,
+        "socket": "input:0",
+        "to": 213
+      },
+      {
+        "from": 185,
+        "socket": "input:0",
+        "to": 195
+      },
+      {
+        "from": 185,
+        "socket": "input:0",
+        "to": 201
+      },
+      {
+        "from": 185,
+        "socket": "input:0",
+        "to": 218
+      },
+      {
         "from": 186,
         "socket": "input:0",
-        "to": 188
+        "to": 187
       },
       {
         "from": 187,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 188
       },
       {
         "from": 188,
         "socket": "input:0",
-        "to": 189
+        "to": 211
+      },
+      {
+        "from": 188,
+        "socket": "input:0",
+        "to": 222
+      },
+      {
+        "from": 188,
+        "socket": "input:0",
+        "to": 228
+      },
+      {
+        "from": 188,
+        "socket": "input:0",
+        "to": 236
       },
       {
         "from": 189,
@@ -1381,17 +1418,22 @@
       },
       {
         "from": 190,
-        "socket": "input:2",
-        "to": 196
+        "socket": "input:0",
+        "to": 191
+      },
+      {
+        "from": 190,
+        "socket": "input:1",
+        "to": 191
       },
       {
         "from": 191,
-        "socket": "input:0",
-        "to": 193
+        "socket": "input:1",
+        "to": 192
       },
       {
         "from": 192,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 193
       },
       {
@@ -1402,11 +1444,11 @@
       {
         "from": 194,
         "socket": "input:0",
-        "to": 195
+        "to": 209
       },
       {
         "from": 195,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 196
       },
       {
@@ -1416,32 +1458,32 @@
       },
       {
         "from": 196,
-        "socket": "input:0",
-        "to": 215
+        "socket": "input:1",
+        "to": 197
       },
       {
         "from": 197,
-        "socket": "input:0",
-        "to": 217
+        "socket": "input:1",
+        "to": 198
       },
       {
         "from": 198,
         "socket": "input:0",
-        "to": 200
+        "to": 199
       },
       {
         "from": 199,
         "socket": "input:0",
-        "to": 201
+        "to": 200
       },
       {
         "from": 200,
-        "socket": "input:2",
-        "to": 202
+        "socket": "input:0",
+        "to": 210
       },
       {
         "from": 201,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 202
       },
       {
@@ -1452,82 +1494,82 @@
       {
         "from": 203,
         "socket": "input:0",
-        "to": 213
+        "to": 204
       },
       {
         "from": 204,
-        "socket": "input:0",
-        "to": 206
+        "socket": "input:1",
+        "to": 209
       },
       {
         "from": 205,
         "socket": "input:0",
-        "to": 207
+        "to": 206
       },
       {
         "from": 206,
         "socket": "input:0",
-        "to": 208
+        "to": 207
       },
       {
         "from": 207,
         "socket": "input:0",
-        "to": 209
+        "to": 208
       },
       {
         "from": 208,
-        "socket": "input:2",
+        "socket": "input:1",
         "to": 210
       },
       {
         "from": 209,
-        "socket": "input:1",
-        "to": 210
+        "socket": "input:2",
+        "to": 211
       },
       {
         "from": 210,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 211
       },
       {
         "from": 211,
-        "socket": "input:1",
-        "to": 213
+        "socket": "input:2",
+        "to": 223
       },
       {
         "from": 211,
-        "socket": "input:1",
-        "to": 217
+        "socket": "input:0",
+        "to": 238
       },
       {
         "from": 212,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 214
       },
       {
         "from": 213,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 214
       },
       {
         "from": 214,
         "socket": "input:0",
-        "to": 216
+        "to": 215
       },
       {
         "from": 215,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 216
       },
       {
         "from": 216,
-        "socket": "input:0",
+        "socket": "input:2",
         "to": 222
       },
       {
         "from": 217,
         "socket": "input:0",
-        "to": 218
+        "to": 219
       },
       {
         "from": 218,
@@ -1537,41 +1579,281 @@
       {
         "from": 219,
         "socket": "input:0",
-        "to": 226
+        "to": 220
       },
       {
         "from": 220,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 221
       },
       {
         "from": 221,
-        "socket": "input:0",
-        "to": 224
+        "socket": "input:1",
+        "to": 222
       },
       {
         "from": 222,
-        "socket": "input:1",
+        "socket": "input:0",
         "to": 223
       },
       {
+        "from": 222,
+        "socket": "input:0",
+        "to": 241
+      },
+      {
         "from": 223,
-        "socket": "input:2",
-        "to": 225
+        "socket": "input:0",
+        "to": 243
       },
       {
         "from": 224,
-        "socket": "input:1",
-        "to": 225
+        "socket": "input:0",
+        "to": 226
       },
       {
         "from": 225,
+        "socket": "input:0",
+        "to": 227
+      },
+      {
+        "from": 226,
+        "socket": "input:2",
+        "to": 228
+      },
+      {
+        "from": 227,
+        "socket": "input:1",
+        "to": 228
+      },
+      {
+        "from": 228,
+        "socket": "input:0",
+        "to": 229
+      },
+      {
+        "from": 229,
+        "socket": "input:0",
+        "to": 239
+      },
+      {
+        "from": 230,
+        "socket": "input:0",
+        "to": 232
+      },
+      {
+        "from": 231,
+        "socket": "input:0",
+        "to": 233
+      },
+      {
+        "from": 232,
+        "socket": "input:0",
+        "to": 234
+      },
+      {
+        "from": 233,
+        "socket": "input:0",
+        "to": 235
+      },
+      {
+        "from": 234,
+        "socket": "input:2",
+        "to": 236
+      },
+      {
+        "from": 235,
+        "socket": "input:1",
+        "to": 236
+      },
+      {
+        "from": 236,
+        "socket": "input:0",
+        "to": 237
+      },
+      {
+        "from": 237,
+        "socket": "input:1",
+        "to": 239
+      },
+      {
+        "from": 237,
+        "socket": "input:1",
+        "to": 243
+      },
+      {
+        "from": 238,
+        "socket": "input:1",
+        "to": 240
+      },
+      {
+        "from": 239,
+        "socket": "input:0",
+        "to": 240
+      },
+      {
+        "from": 240,
+        "socket": "input:0",
+        "to": 242
+      },
+      {
+        "from": 241,
+        "socket": "input:1",
+        "to": 242
+      },
+      {
+        "from": 242,
+        "socket": "input:0",
+        "to": 259
+      },
+      {
+        "from": 243,
+        "socket": "input:0",
+        "to": 257
+      },
+      {
+        "from": 244,
+        "socket": "input:0",
+        "to": 245
+      },
+      {
+        "from": 245,
+        "socket": "input:0",
+        "to": 246
+      },
+      {
+        "from": 246,
+        "socket": "input:0",
+        "to": 247
+      },
+      {
+        "from": 247,
+        "socket": "input:0",
+        "to": 248
+      },
+      {
+        "from": 248,
+        "socket": "input:0",
+        "to": 249
+      },
+      {
+        "from": 249,
+        "socket": "input:0",
+        "to": 256
+      },
+      {
+        "from": 250,
+        "socket": "input:0",
+        "to": 251
+      },
+      {
+        "from": 251,
+        "socket": "input:0",
+        "to": 252
+      },
+      {
+        "from": 252,
+        "socket": "input:0",
+        "to": 253
+      },
+      {
+        "from": 253,
+        "socket": "input:0",
+        "to": 254
+      },
+      {
+        "from": 254,
+        "socket": "input:0",
+        "to": 255
+      },
+      {
+        "from": 255,
+        "socket": "input:1",
+        "to": 256
+      },
+      {
+        "from": 256,
+        "socket": "input:0",
+        "to": 261
+      },
+      {
+        "from": 257,
+        "socket": "input:1",
+        "to": 258
+      },
+      {
+        "from": 258,
+        "socket": "input:2",
+        "to": 267
+      },
+      {
+        "from": 259,
+        "socket": "input:1",
+        "to": 260
+      },
+      {
+        "from": 260,
+        "socket": "input:0",
+        "to": 264
+      },
+      {
+        "from": 261,
+        "socket": "input:1",
+        "to": 262
+      },
+      {
+        "from": 262,
+        "socket": "input:0",
+        "to": 263
+      },
+      {
+        "from": 262,
+        "socket": "input:0",
+        "to": 267
+      },
+      {
+        "from": 262,
+        "socket": "input:0",
+        "to": 270
+      },
+      {
+        "from": 263,
+        "socket": "input:1",
+        "to": 264
+      },
+      {
+        "from": 264,
+        "socket": "input:2",
+        "to": 265
+      },
+      {
+        "from": 265,
         "socket": "param:base_color",
         "to": 1
       },
       {
-        "from": 226,
+        "from": 266,
+        "socket": "input:0",
+        "to": 268
+      },
+      {
+        "from": 267,
+        "socket": "input:2",
+        "to": 268
+      },
+      {
+        "from": 268,
+        "socket": "input:0",
+        "to": 269
+      },
+      {
+        "from": 269,
         "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 270,
+        "socket": "param:specular_roughness",
         "to": 1
       }
     ],
@@ -1769,7 +2051,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 900
+              "float": 3000
             }
           }
         ],
@@ -1787,7 +2069,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 900
+              "float": 3000
             }
           }
         ],
@@ -1941,7 +2223,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 2.1052632
+              "float": 1.6666666
             }
           }
         ],
@@ -2041,7 +2323,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 2.1052632
+              "float": 1.6666666
             }
           }
         ],
@@ -2571,13 +2853,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.85
+              "float": 0.94
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 1.075
+              "float": 1.03
             }
           }
         ],
@@ -2731,13 +3013,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.9125
+              "float": 0.975
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 1.042
+              "float": 1.012
             }
           }
         ],
@@ -2863,107 +3145,41 @@
       {
         "id": 81,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.40402624
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "multiply_add"
         },
         "type": "math"
       },
       {
         "id": 82,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.011863882
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "divide"
         },
         "type": "math"
       },
       {
         "id": 83,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 84,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 900
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 85,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 900
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 86,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "floor"
-        },
-        "type": "math"
-      },
-      {
-        "id": 87,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "floor"
-        },
-        "type": "math"
-      },
-      {
-        "id": 88,
         "kind": "node",
         "literals": [
           {
@@ -2977,6 +3193,114 @@
         "settings": {
           "clamp": false,
           "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 84,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 85,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 86,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 87,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -0.40402624
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 88,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.011863882
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
         },
         "type": "math"
       },
@@ -3001,52 +3325,6 @@
       {
         "id": 90,
         "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 91,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 2
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "floored_modulo"
-        },
-        "type": "math"
-      },
-      {
-        "id": 92,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 1
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "less_than"
-        },
-        "type": "math"
-      },
-      {
-        "id": 93,
-        "kind": "node",
         "literals": [
           {
             "socket": "input:1",
@@ -3063,16 +3341,72 @@
         "type": "math"
       },
       {
-        "id": 94,
+        "id": 91,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 2.1052632
+              "float": 0
             }
           }
         ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 92,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 93,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "maximum"
+        },
+        "type": "math"
+      },
+      {
+        "id": 94,
+        "kind": "node",
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -3093,18 +3427,10 @@
       {
         "id": 96,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:0",
-            "value": {
-              "float": 1
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "subtract"
+          "operation": "multiply"
         },
         "type": "math"
       },
@@ -3115,19 +3441,37 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0
+              "float": 3000
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "maximum"
+          "operation": "multiply"
         },
         "type": "math"
       },
       {
         "id": 98,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3000
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 99,
         "kind": "node",
         "literals": [
           {
@@ -3140,12 +3484,112 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "sqrt"
+          "operation": "floor"
         },
         "type": "math"
       },
       {
-        "id": 99,
+        "id": 100,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 101,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 102,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 103,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 104,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floored_modulo"
+        },
+        "type": "math"
+      },
+      {
+        "id": 105,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "less_than"
+        },
+        "type": "math"
+      },
+      {
+        "id": 106,
         "kind": "node",
         "literals": [
           {
@@ -3163,13 +3607,13 @@
         "type": "math"
       },
       {
-        "id": 100,
+        "id": 107,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 2.1052632
+              "float": 1.6666666
             }
           }
         ],
@@ -3181,7 +3625,7 @@
         "type": "math"
       },
       {
-        "id": 101,
+        "id": 108,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3191,7 +3635,7 @@
         "type": "math"
       },
       {
-        "id": 102,
+        "id": 109,
         "kind": "node",
         "literals": [
           {
@@ -3209,7 +3653,7 @@
         "type": "math"
       },
       {
-        "id": 103,
+        "id": 110,
         "kind": "node",
         "literals": [
           {
@@ -3227,7 +3671,7 @@
         "type": "math"
       },
       {
-        "id": 104,
+        "id": 111,
         "kind": "node",
         "literals": [
           {
@@ -3245,152 +3689,34 @@
         "type": "math"
       },
       {
-        "id": 105,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 3.1415927
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 106,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "sine"
-        },
-        "type": "math"
-      },
-      {
-        "id": 107,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.35
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 108,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.65
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 109,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 3.1415927
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 110,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "sine"
-        },
-        "type": "math"
-      },
-      {
-        "id": 111,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.35
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
         "id": 112,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 0.65
+              "float": 0.5
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "subtract"
         },
         "type": "math"
       },
       {
         "id": 113,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.6666666
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -3411,12 +3737,20 @@
       {
         "id": 115,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
-          "clamp_factor": true,
-          "data_type": "float"
+          "clamp": false,
+          "operation": "subtract"
         },
-        "type": "mix"
+        "type": "math"
       },
       {
         "id": 116,
@@ -3425,14 +3759,14 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 2.5
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "maximum"
         },
         "type": "math"
       },
@@ -3443,35 +3777,25 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 1.2
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "sqrt"
         },
         "type": "math"
       },
       {
         "id": 118,
         "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 119,
-        "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 6.2831855
+              "float": 3.1415927
             }
           }
         ],
@@ -3483,7 +3807,7 @@
         "type": "math"
       },
       {
-        "id": 120,
+        "id": 119,
         "kind": "node",
         "literals": [
           {
@@ -3501,13 +3825,13 @@
         "type": "math"
       },
       {
-        "id": 121,
+        "id": 120,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 2.5
+              "float": 0.35
             }
           }
         ],
@@ -3519,13 +3843,31 @@
         "type": "math"
       },
       {
+        "id": 121,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.65
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
         "id": 122,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 1.2
+              "float": 3.1415927
             }
           }
         ],
@@ -3539,10 +3881,18 @@
       {
         "id": 123,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "sine"
         },
         "type": "math"
       },
@@ -3553,7 +3903,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 6.2831855
+              "float": 0.35
             }
           }
         ],
@@ -3571,6 +3921,118 @@
           {
             "socket": "input:1",
             "value": {
+              "float": 0.65
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 126,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 127,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 128,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 129,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 130,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 131,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 132,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6.2831855
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 133,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
               "float": 0
             }
           }
@@ -3583,7 +4045,89 @@
         "type": "math"
       },
       {
-        "id": 126,
+        "id": 134,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 135,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 136,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 137,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6.2831855
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 138,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
+        "id": 139,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3593,7 +4137,7 @@
         "type": "mix"
       },
       {
-        "id": 127,
+        "id": 140,
         "kind": "node",
         "literals": [
           {
@@ -3611,7 +4155,7 @@
         "type": "math"
       },
       {
-        "id": 128,
+        "id": 141,
         "kind": "node",
         "literals": [
           {
@@ -3632,7 +4176,7 @@
         "type": "combine_xyz"
       },
       {
-        "id": 129,
+        "id": 142,
         "kind": "node",
         "literals": [
           {
@@ -3653,7 +4197,7 @@
         "type": "combine_xyz"
       },
       {
-        "id": 130,
+        "id": 143,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3662,7 +4206,7 @@
         "type": "white_noise_texture"
       },
       {
-        "id": 131,
+        "id": 144,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3671,7 +4215,7 @@
         "type": "white_noise_texture"
       },
       {
-        "id": 132,
+        "id": 145,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3681,7 +4225,7 @@
         "type": "mix"
       },
       {
-        "id": 133,
+        "id": 146,
         "kind": "node",
         "literals": [
           {
@@ -3699,13 +4243,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.85
+              "float": 0.94
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 1.075
+              "float": 1.03
             }
           }
         ],
@@ -3717,7 +4261,7 @@
         "type": "map_range"
       },
       {
-        "id": 134,
+        "id": 147,
         "kind": "node",
         "literals": [
           {
@@ -3732,7 +4276,7 @@
         "type": "combine_xyz"
       },
       {
-        "id": 135,
+        "id": 148,
         "kind": "node",
         "literals": [
           {
@@ -3747,7 +4291,7 @@
         "type": "combine_xyz"
       },
       {
-        "id": 136,
+        "id": 149,
         "kind": "node",
         "literals": [
           {
@@ -3764,7 +4308,7 @@
         "type": "mapping"
       },
       {
-        "id": 137,
+        "id": 150,
         "kind": "node",
         "literals": [
           {
@@ -3781,7 +4325,7 @@
         "type": "mapping"
       },
       {
-        "id": 138,
+        "id": 151,
         "kind": "node",
         "literals": [
           {
@@ -3806,7 +4350,7 @@
         "type": "noise_texture"
       },
       {
-        "id": 139,
+        "id": 152,
         "kind": "node",
         "literals": [
           {
@@ -3831,7 +4375,7 @@
         "type": "noise_texture"
       },
       {
-        "id": 140,
+        "id": 153,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3841,7 +4385,7 @@
         "type": "mix"
       },
       {
-        "id": 141,
+        "id": 154,
         "kind": "node",
         "literals": [
           {
@@ -3859,13 +4403,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.9125
+              "float": 0.975
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 1.042
+              "float": 1.012
             }
           }
         ],
@@ -3877,7 +4421,7 @@
         "type": "map_range"
       },
       {
-        "id": 142,
+        "id": 155,
         "kind": "node",
         "literals": [
           {
@@ -3913,7 +4457,7 @@
         "type": "map_range"
       },
       {
-        "id": 143,
+        "id": 156,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3923,7 +4467,7 @@
         "type": "math"
       },
       {
-        "id": 144,
+        "id": 157,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -3933,7 +4477,7 @@
         "type": "math"
       },
       {
-        "id": 145,
+        "id": 158,
         "kind": "node",
         "literals": [
           {
@@ -3969,190 +4513,12 @@
         "type": "map_range"
       },
       {
-        "id": 146,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 147,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 148,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 149,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 150,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 151,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 152,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 153,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 154,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 900
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 155,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 900
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 156,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "floor"
-        },
-        "type": "math"
-      },
-      {
-        "id": 157,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "floor"
-        },
-        "type": "math"
-      },
-      {
-        "id": 158,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "fraction"
-        },
-        "type": "math"
-      },
-      {
         "id": 159,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "fraction"
+          "operation": "multiply"
         },
         "type": "math"
       },
@@ -4162,7 +4528,7 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "multiply"
         },
         "type": "math"
       },
@@ -4173,14 +4539,14 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 2
+              "float": 0.40402624
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "floored_modulo"
+          "operation": "multiply_add"
         },
         "type": "math"
       },
@@ -4191,14 +4557,14 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 1
+              "float": 0.011863882
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "less_than"
+          "operation": "divide"
         },
         "type": "math"
       },
@@ -4209,14 +4575,14 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.5
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "subtract"
+          "operation": "fraction"
         },
         "type": "math"
       },
@@ -4227,35 +4593,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 2.1052632
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 165,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 166,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:0",
-            "value": {
-              "float": 1
+              "float": 0.5
             }
           }
         ],
@@ -4267,7 +4605,7 @@
         "type": "math"
       },
       {
-        "id": 167,
+        "id": 165,
         "kind": "node",
         "literals": [
           {
@@ -4280,7 +4618,61 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "maximum"
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 166,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 167,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -0.40402624
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
         },
         "type": "math"
       },
@@ -4291,6 +4683,24 @@
           {
             "socket": "input:1",
             "value": {
+              "float": 0.011863882
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 169,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
               "float": 0
             }
           }
@@ -4298,12 +4708,12 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "sqrt"
+          "operation": "fraction"
         },
         "type": "math"
       },
       {
-        "id": 169,
+        "id": 170,
         "kind": "node",
         "literals": [
           {
@@ -4321,53 +4731,7 @@
         "type": "math"
       },
       {
-        "id": 170,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 2.1052632
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
         "id": 171,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 172,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:0",
-            "value": {
-              "float": 1
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "subtract"
-        },
-        "type": "math"
-      },
-      {
-        "id": 173,
         "kind": "node",
         "literals": [
           {
@@ -4377,6 +4741,52 @@
             }
           }
         ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 172,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 173,
+        "kind": "node",
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -4387,86 +4797,16 @@
       {
         "id": 174,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "sqrt"
+          "operation": "multiply"
         },
         "type": "math"
       },
       {
         "id": 175,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 3.1415927
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 176,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "sine"
-        },
-        "type": "math"
-      },
-      {
-        "id": 177,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.35
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 178,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.65
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -4475,20 +4815,42 @@
         "type": "math"
       },
       {
-        "id": 179,
+        "id": 176,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 3.1415927
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
           "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 177,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 178,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 179,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
         },
         "type": "math"
       },
@@ -4499,14 +4861,14 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0
+              "float": 3000
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "sine"
+          "operation": "multiply"
         },
         "type": "math"
       },
@@ -4517,7 +4879,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.35
+              "float": 3000
             }
           }
         ],
@@ -4535,113 +4897,19 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.65
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "floor"
         },
         "type": "math"
       },
       {
         "id": 183,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 184,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 185,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp_factor": true,
-          "data_type": "float"
-        },
-        "type": "mix"
-      },
-      {
-        "id": 186,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 2.5
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 187,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 1.2
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 188,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 189,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 6.2831855
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply"
-        },
-        "type": "math"
-      },
-      {
-        "id": 190,
         "kind": "node",
         "literals": [
           {
@@ -4654,21 +4922,131 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "sine"
+          "operation": "floor"
+        },
+        "type": "math"
+      },
+      {
+        "id": 184,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 185,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 186,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 187,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "floored_modulo"
+        },
+        "type": "math"
+      },
+      {
+        "id": 188,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "less_than"
+        },
+        "type": "math"
+      },
+      {
+        "id": 189,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 190,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.6666666
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
         },
         "type": "math"
       },
       {
         "id": 191,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 2.5
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -4681,26 +5059,34 @@
         "kind": "node",
         "literals": [
           {
-            "socket": "input:1",
+            "socket": "input:0",
             "value": {
-              "float": 1.2
+              "float": 1
             }
           }
         ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "subtract"
         },
         "type": "math"
       },
       {
         "id": 193,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "maximum"
         },
         "type": "math"
       },
@@ -4711,7 +5097,43 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 6.2831855
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sqrt"
+        },
+        "type": "math"
+      },
+      {
+        "id": 195,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 196,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.6666666
             }
           }
         ],
@@ -4723,7 +5145,89 @@
         "type": "math"
       },
       {
-        "id": 195,
+        "id": 197,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 198,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 199,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "maximum"
+        },
+        "type": "math"
+      },
+      {
+        "id": 200,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sqrt"
+        },
+        "type": "math"
+      },
+      {
+        "id": 201,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3.1415927
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 202,
         "kind": "node",
         "literals": [
           {
@@ -4741,255 +5245,135 @@
         "type": "math"
       },
       {
-        "id": 196,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp_factor": true,
-          "data_type": "float"
-        },
-        "type": "mix"
-      },
-      {
-        "id": 197,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.08
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": false,
-          "operation": "multiply_add"
-        },
-        "type": "math"
-      },
-      {
-        "id": 198,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 63.4
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {},
-        "type": "combine_xyz"
-      },
-      {
-        "id": 199,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 563.4
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 0
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {},
-        "type": "combine_xyz"
-      },
-      {
-        "id": 200,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "dimensions": "3D"
-        },
-        "type": "white_noise_texture"
-      },
-      {
-        "id": 201,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "dimensions": "3D"
-        },
-        "type": "white_noise_texture"
-      },
-      {
-        "id": 202,
-        "kind": "node",
-        "position": [0, 0],
-        "settings": {
-          "clamp_factor": true,
-          "data_type": "float"
-        },
-        "type": "mix"
-      },
-      {
         "id": 203,
         "kind": "node",
         "literals": [
           {
             "socket": "input:1",
             "value": {
-              "float": 0
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 1
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 0.85
-            }
-          },
-          {
-            "socket": "input:4",
-            "value": {
-              "float": 1.075
+              "float": 0.35
             }
           }
         ],
         "position": [0, 0],
         "settings": {
-          "clamp": true,
-          "interpolation": "linear"
+          "clamp": false,
+          "operation": "multiply"
         },
-        "type": "map_range"
+        "type": "math"
       },
       {
         "id": 204,
         "kind": "node",
         "literals": [
           {
-            "socket": "input:2",
+            "socket": "input:1",
             "value": {
-              "float": 63.4
+              "float": 0.65
             }
           }
         ],
         "position": [0, 0],
-        "settings": {},
-        "type": "combine_xyz"
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
       },
       {
         "id": 205,
         "kind": "node",
         "literals": [
           {
-            "socket": "input:2",
+            "socket": "input:1",
             "value": {
-              "float": 70.4
+              "float": 3.1415927
             }
           }
         ],
         "position": [0, 0],
-        "settings": {},
-        "type": "combine_xyz"
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
       },
       {
         "id": 206,
         "kind": "node",
         "literals": [
           {
-            "socket": "input:3",
+            "socket": "input:1",
             "value": {
-              "vector": [3, 0.08, 1]
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
         "settings": {
-          "type": "point"
+          "clamp": false,
+          "operation": "sine"
         },
-        "type": "mapping"
+        "type": "math"
       },
       {
         "id": 207,
         "kind": "node",
         "literals": [
           {
-            "socket": "input:3",
+            "socket": "input:1",
             "value": {
-              "vector": [0.08, 3, 1]
+              "float": 0.35
             }
           }
         ],
         "position": [0, 0],
         "settings": {
-          "type": "point"
+          "clamp": false,
+          "operation": "multiply"
         },
-        "type": "mapping"
+        "type": "math"
       },
       {
         "id": 208,
         "kind": "node",
         "literals": [
           {
-            "socket": "input:2",
+            "socket": "input:1",
             "value": {
-              "float": 1
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 2
+              "float": 0.65
             }
           }
         ],
         "position": [0, 0],
         "settings": {
-          "dimensions": "3D",
-          "normalize": true,
-          "type": "fBM"
+          "clamp": false,
+          "operation": "add"
         },
-        "type": "noise_texture"
+        "type": "math"
       },
       {
         "id": 209,
         "kind": "node",
-        "literals": [
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 1
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 2
-            }
-          }
-        ],
         "position": [0, 0],
         "settings": {
-          "dimensions": "3D",
-          "normalize": true,
-          "type": "fBM"
+          "clamp": false,
+          "operation": "multiply"
         },
-        "type": "noise_texture"
+        "type": "math"
       },
       {
         "id": 210,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 211,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -4997,42 +5381,6 @@
           "data_type": "float"
         },
         "type": "mix"
-      },
-      {
-        "id": 211,
-        "kind": "node",
-        "literals": [
-          {
-            "socket": "input:1",
-            "value": {
-              "float": 0.3
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 0.7
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 0.9125
-            }
-          },
-          {
-            "socket": "input:4",
-            "value": {
-              "float": 1.042
-            }
-          }
-        ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": true,
-          "interpolation": "linear"
-        },
-        "type": "map_range"
       },
       {
         "id": 212,
@@ -5041,38 +5389,28 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 1
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 0.45
-            }
-          },
-          {
-            "socket": "input:4",
-            "value": {
-              "float": 1
+              "float": 2.5
             }
           }
         ],
         "position": [0, 0],
         "settings": {
-          "clamp": true,
-          "interpolation": "linear"
+          "clamp": false,
+          "operation": "multiply"
         },
-        "type": "map_range"
+        "type": "math"
       },
       {
         "id": 213,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.2
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -5086,7 +5424,7 @@
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "multiply"
+          "operation": "add"
         },
         "type": "math"
       },
@@ -5097,38 +5435,10 @@
           {
             "socket": "input:1",
             "value": {
-              "float": -1
-            }
-          },
-          {
-            "socket": "input:2",
-            "value": {
-              "float": 1
-            }
-          },
-          {
-            "socket": "input:3",
-            "value": {
-              "float": 0.94
-            }
-          },
-          {
-            "socket": "input:4",
-            "value": {
-              "float": 1.04
+              "float": 6.2831855
             }
           }
         ],
-        "position": [0, 0],
-        "settings": {
-          "clamp": true,
-          "interpolation": "linear"
-        },
-        "type": "map_range"
-      },
-      {
-        "id": 216,
-        "kind": "node",
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -5137,8 +5447,34 @@
         "type": "math"
       },
       {
+        "id": 216,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "sine"
+        },
+        "type": "math"
+      },
+      {
         "id": 217,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 2.5
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -5149,6 +5485,14 @@
       {
         "id": 218,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1.2
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -5169,6 +5513,14 @@
       {
         "id": 220,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6.2831855
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
@@ -5179,10 +5531,18 @@
       {
         "id": 221,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "sine"
         },
         "type": "math"
       },
@@ -5191,18 +5551,26 @@
         "kind": "node",
         "position": [0, 0],
         "settings": {
-          "clamp": false,
-          "operation": "multiply"
+          "clamp_factor": true,
+          "data_type": "float"
         },
-        "type": "math"
+        "type": "mix"
       },
       {
         "id": 223,
         "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.08
+            }
+          }
+        ],
         "position": [0, 0],
         "settings": {
           "clamp": false,
-          "operation": "add"
+          "operation": "multiply_add"
         },
         "type": "math"
       },
@@ -5213,33 +5581,759 @@
           {
             "socket": "input:1",
             "value": {
-              "color": [0.0512946, 0.056798134, 0.029266354]
+              "float": 63.4
             }
           },
           {
             "socket": "input:2",
             "value": {
-              "color": [0.07021702, 0.07693299, 0.04094524]
+              "float": 0
             }
           }
         ],
         "position": [0, 0],
-        "settings": {
-          "blend_type": "mix",
-          "clamp_factor": true,
-          "clamp_result": false,
-          "data_type": "color"
-        },
-        "type": "mix"
+        "settings": {},
+        "type": "combine_xyz"
       },
       {
         "id": 225,
         "kind": "node",
         "literals": [
           {
+            "socket": "input:1",
+            "value": {
+              "float": 563.4
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 226,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 227,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D"
+        },
+        "type": "white_noise_texture"
+      },
+      {
+        "id": 228,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 229,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.94
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.03
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 230,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 63.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 231,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 70.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "combine_xyz"
+      },
+      {
+        "id": 232,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [3, 0.08, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 233,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:3",
+            "value": {
+              "vector": [0.08, 3, 1]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "type": "point"
+        },
+        "type": "mapping"
+      },
+      {
+        "id": 234,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 235,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 236,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 237,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.975
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.012
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 238,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.45
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 239,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 240,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 241,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -1
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.94
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1.04
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 242,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 243,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 244,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.40402624
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 245,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.011863882
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 246,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 247,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 248,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 249,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 250,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": -0.40402624
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 251,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.011863882
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "divide"
+        },
+        "type": "math"
+      },
+      {
+        "id": 252,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "fraction"
+        },
+        "type": "math"
+      },
+      {
+        "id": 253,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 254,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "absolute"
+        },
+        "type": "math"
+      },
+      {
+        "id": 255,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.018
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.04
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 256,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "maximum"
+        },
+        "type": "math"
+      },
+      {
+        "id": 257,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 258,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 259,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 260,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 261,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 262,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 263,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 264,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 265,
+        "kind": "node",
+        "literals": [
+          {
             "socket": "input:0",
             "value": {
               "float": 1
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.19952506, 0.20458858, 0.22064954]
             }
           }
         ],
@@ -5253,25 +6347,132 @@
         "type": "mix"
       },
       {
-        "depth": 0.00018,
-        "id": 226,
+        "id": 266,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 22
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 267,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 3
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 268,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 6
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.00004,
+        "id": 269,
         "kind": "bump",
         "position": [0, 0]
+      },
+      {
+        "id": 270,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.44
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.34
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
       }
     ],
     "output": 1
   },
-  "name": "Cordura Olive",
-  "specular_roughness": 0.6,
+  "name": "Laminate X-Ply Grey",
+  "specular_roughness": 0.42,
   "tags": [
-    "cordura",
-    "nylon",
-    "500d",
+    "laminate",
+    "sailcloth",
+    "x-ply",
+    "x-pac",
+    "vx21",
+    "diamond",
+    "waterproof",
     "bag",
-    "case",
-    "olive",
-    "green"
+    "pack",
+    "technical",
+    "grey"
   ],
-  "type": "real_cloth"
+  "type": "generic"
 }
 

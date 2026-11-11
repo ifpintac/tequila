@@ -6367,6 +6367,14 @@ mod tests {
             ("Felt Cream", 0.012),
             ("Spacer Mesh Grey", 0.025),
             ("Speaker Fabric Grey Melange", 0.012),
+            // A sheen at less than its full weight, which Tequila's
+            // renderer once weighed twice; a ripstop's grid; a burl's
+            // eyes; a bamboo's strips.
+            ("Ripstop Nylon Orange", 0.025),
+            ("Laminate X-Ply Grey", 0.025),
+            ("Spunbond Sheet Black", 0.025),
+            ("Wood Walnut Burl", 0.025),
+            ("Wood Bamboo", 0.05),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();
