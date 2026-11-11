@@ -383,6 +383,10 @@ impl Edits {
     }
 }
 
+/// The room the toolbar's right end asks for: the cone, Unwrap, the export
+/// and the keys.
+const TOOLBAR_END: f32 = 236.0;
+
 impl UvEditor {
     /// Open on a label, as the Labels tab's button asks: on its part, the
     /// label selected, and the part unwrapped if it has no layout yet.
@@ -821,8 +825,10 @@ impl UvEditor {
     // ---- the panels ---------------------------------------------------------
 
     fn toolbar(&mut self, ui: &mut egui::Ui, part: &Part, layout: Option<&layout::Layout>, edits: &mut Edits) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
+        // Wrapped: the tools fill the window's first width exactly, and in
+        // a narrower one they ran under each other and off its edge.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(2.0, 4.0);
             for info in &tools::TOOLS {
                 let on = self.tool == info.tool;
                 let response = icons::button(ui, info.icon, on, 30.0, egui::Sense::click());
@@ -865,7 +871,8 @@ impl UvEditor {
                     *value = !*value;
                 }
             };
-            toggle(ui, &mut self.prefs.snapping, Icon::Magnet, "Snapping", "Drags land on the grid, guides, the layout's edges and middle, islands and other labels. Hold Ctrl while dragging to drag freely.", "Ctrl + Shift + ;");
+            let snapping = format!("Drags land on the grid, guides, the layout's edges and middle, islands and other labels. Hold {} while dragging to drag freely.", crate::theme::keys("Ctrl"));
+            toggle(ui, &mut self.prefs.snapping, Icon::Magnet, "Snapping", &snapping, "Ctrl + Shift + ;");
             toggle(ui, &mut self.prefs.grid, Icon::Grid, "Grid", "Lines across the layout at the spacing set in View options", "Ctrl + '");
             toggle(ui, &mut self.prefs.guides, Icon::Guides, "Guides", "Show guides. Drag one out of a ruler; drag it back to remove it.", "Ctrl + ;");
             toggle(ui, &mut self.prefs.rulers, Icon::Rulers, "Rulers", "Rulers along the top and left, in the part's millimetres", "Ctrl + R");
@@ -882,7 +889,15 @@ impl UvEditor {
             ui.add_space(4.0);
             self.view_options(ui, part, layout, edits);
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // The unwrap and the two buttons after it keep to the right
+            // while there is room on this row, and start the next when not.
+            // (Before the wrap: a wrapping row's plain available width is
+            // the whole row's.)
+            if ui.available_size_before_wrap().x < TOOLBAR_END {
+                ui.end_row();
+            }
+            let row = egui::vec2(ui.available_size_before_wrap().x, 30.0);
+            ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let help = icons::button(ui, Icon::Keyboard, self.help, 30.0, egui::Sense::click());
                 self.help_anchor = Some(help.rect);
                 if icons::tip(help, "Shortcuts", "Every key the UV editor takes", "?").clicked() {
@@ -898,16 +913,16 @@ impl UvEditor {
                 let unwrap = ui
                     .button("Unwrap")
                     .on_hover_text("Lay the part's surface out flat as its first UV set: its faces apart at sharp edges, curved surfaces in a few even pieces. The set it had moves up one.");
-                ui.add(egui::DragValue::new(&mut self.cone).range(15.0..=85.0).suffix("°").speed(0.5))
+                ui.add_space(4.0);
+                // Said what it is: it was a bare "66°" beside the button.
+                ui.add(egui::DragValue::new(&mut self.cone).range(15.0..=85.0).prefix("Split at ").suffix("°").speed(0.5))
                     .on_hover_text("How far a surface may turn within one piece of the layout: smaller makes more, flatter pieces");
                 if unwrap.clicked() {
                     edits.unwrap = true;
                 }
-                if layout.is_none() {
-                    ui.weak("No layout yet");
-                }
-                icons::vertical_divider(ui, 24.0);
-                ui.add(egui::Label::new(egui::RichText::new(&part.name).strong()).truncate());
+                // The part's name is in the window's title and the status
+                // bar: here, the tools left it room for six letters of it,
+                // and "No layout yet" beside it ran under View options.
             });
         });
     }
@@ -989,6 +1004,9 @@ impl UvEditor {
         let now = ui.input(|i| i.time);
         ui.horizontal(|ui| {
             let small = |text: String| egui::RichText::new(text).size(12.0).color(p.text_dim);
+            // Whose layout this is, first.
+            ui.label(egui::RichText::new(&part.name).size(12.0).strong().color(p.text));
+            icons::vertical_divider(ui, 16.0);
             match self.pointer {
                 Some(at) => ui.label(small(format!("X {}   Y {}", self.scale.format(at.x), self.scale.format(at.y)))),
                 None => ui.label(small("X —   Y —".into())),
@@ -1016,7 +1034,7 @@ impl UvEditor {
                     let colour = if *refusal { p.danger } else { p.text };
                     // Cut short before the zoom's buttons, which it would
                     // run under.
-                    let room = (ui.available_width() - 190.0).max(60.0);
+                    let room = (ui.available_width() - 240.0).max(60.0);
                     ui.allocate_ui_with_layout(egui::vec2(room, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.set_max_width(room);
                         ui.add(egui::Label::new(egui::RichText::new(text.as_str()).size(12.0).color(colour)).truncate()).on_hover_text(text.as_str());
@@ -1025,7 +1043,8 @@ impl UvEditor {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for (text, zoom, tip) in [("200%", Some(2.0), "Twice as close (Ctrl + 2)"), ("100%", Some(1.0), "The layout's square fills the view (Ctrl + 1)"), ("Fit", None, "Everything in view (Home)")] {
+                for (text, zoom, tip, keys) in [("200%", Some(2.0), "Twice as close", "Ctrl + 2"), ("100%", Some(1.0), "The layout's square fills the view", "Ctrl + 1"), ("Fit", None, "Everything in view", "Home")] {
+                    let tip = format!("{tip} ({})", crate::theme::keys(keys));
                     if ui.add(egui::Button::new(egui::RichText::new(text).size(12.0)).frame(false)).on_hover_text(tip).clicked() {
                         match zoom {
                             Some(zoom) => self.zoom_request = Some(zoom),
@@ -1033,7 +1052,10 @@ impl UvEditor {
                         }
                     }
                 }
-                ui.label(small(format!("{:.0}%", self.view.zoom * 100.0)));
+                // The zoom now, apart from the three it can be set to: they
+                // read as one row of numbers, "100% Fit 100% 200%".
+                icons::vertical_divider(ui, 16.0);
+                ui.label(small(format!("Zoom {:.0}%", self.view.zoom * 100.0)));
             });
         });
     }
@@ -1206,6 +1228,23 @@ impl UvEditor {
         crate::field::Fold::new("Align").id_salt("uv-align").default_open(true).show(ui, |ui| {
             self.align_panel(ui, part, layout, edits);
         });
+
+        // Without a layout, one thing to do and one place that says it:
+        // Arrange, Texel density, Islands, Unwrap, Shape and Symmetry each
+        // opened on a line telling the person to unwrap the part.
+        if layout.is_none() {
+            // The canvas says there is no layout and holds the button.
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new("Arrange, Texel density, Islands, Unwrap, Shape and Symmetry are here once the part is unwrapped.")
+                        .size(12.0)
+                        .color(crate::theme::dim()),
+                )
+                .wrap(),
+            );
+            return;
+        }
 
         // ---- Arrange ------------------------------------------------------
         let arrange = crate::field::Fold::new("Arrange").id_salt("uv-arrange").default_open(true).show(ui, |ui| {
