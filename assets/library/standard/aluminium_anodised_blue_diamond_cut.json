@@ -1,0 +1,381 @@
+{
+  "base_color": [0.07713897, 0.11431057, 0.56146294],
+  "category": "Metal",
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 9
+      },
+      {
+        "from": 3,
+        "socket": "input:1",
+        "to": 12
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "input:1",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 7,
+        "socket": "input:1",
+        "to": 9
+      },
+      {
+        "from": 8,
+        "socket": "input:2",
+        "to": 9
+      },
+      {
+        "from": 9,
+        "socket": "param:base_color",
+        "to": 1
+      },
+      {
+        "from": 10,
+        "socket": "input:0",
+        "to": 11
+      },
+      {
+        "from": 11,
+        "socket": "input:0",
+        "to": 13
+      },
+      {
+        "from": 12,
+        "socket": "input:1",
+        "to": 13
+      },
+      {
+        "from": 13,
+        "socket": "input:0",
+        "to": 14
+      },
+      {
+        "from": 14,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "contrast": 1,
+        "id": 2,
+        "kind": "curvature",
+        "mode": "convex",
+        "position": [0, 0],
+        "radius": 0.0004
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.25
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 12
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.34
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.44
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.07
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp_factor": true,
+          "data_type": "float"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.07713897
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.11431057
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.56146294
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "mode": "rgb"
+        },
+        "type": "combine_color"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.96
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.965
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.97
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "mode": "rgb"
+        },
+        "type": "combine_color"
+      },
+      {
+        "id": 9,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      },
+      {
+        "id": 10,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 6500
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 11,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 12,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "subtract"
+        },
+        "type": "math"
+      },
+      {
+        "id": 13,
+        "kind": "node",
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.0000025,
+        "id": 14,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Aluminium Anodised Blue Diamond Cut",
+  "specular_roughness": 0.38,
+  "tags": [
+    "aluminium",
+    "anodised",
+    "blue",
+    "diamond cut",
+    "chamfer",
+    "bright edge"
+  ],
+  "type": "metal"
+}
+

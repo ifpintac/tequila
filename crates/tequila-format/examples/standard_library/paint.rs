@@ -20,7 +20,7 @@ fn gloss(name: &'static str, tags: &'static [&'static str], colour: Spectrum, ro
 
 /// A metallic finish: flakes in the colour coat, a clear coat over them.
 #[allow(clippy::too_many_arguments)]
-fn metallic(name: &'static str, tags: &'static [&'static str], colour: Spectrum, flakes: Spectrum, weight: f32, size: f32, spread: f32, roughness: f32) -> Preset {
+pub fn metallic(name: &'static str, tags: &'static [&'static str], colour: Spectrum, flakes: Spectrum, weight: f32, size: f32, spread: f32, roughness: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::MetallicPaint, |m| {
         m.base_color = colour;
         m.specular_roughness = roughness;

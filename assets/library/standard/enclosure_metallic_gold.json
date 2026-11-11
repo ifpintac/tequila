@@ -1,0 +1,75 @@
+{
+  "base_color": [0.20585203, 0.15022399, 0.041170783],
+  "category": "Paint",
+  "flake_color": [0.78059256, 0.69416296, 0.33579016],
+  "flake_roughness": 0.18,
+  "flake_weight": 0.55,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 520
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000005,
+        "id": 3,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "name": "Enclosure Metallic Gold",
+  "specular_roughness": 0.28,
+  "tags": [
+    "metallic",
+    "pedal",
+    "stompbox",
+    "die-cast",
+    "flake",
+    "gold",
+    "paint"
+  ],
+  "type": "metallic_paint"
+}
+
