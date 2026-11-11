@@ -889,7 +889,7 @@ fn render_loop(shared: Arc<Shared>) {
                     // full-size sample is long.
                     if view.floor_reflection() {
                         let key = (Arc::as_ptr(&state.request.scene) as usize, frame_camera, frame.width, frame.height);
-                        let given_up = || at_full_size && news(&shared, seen_request);
+                        let given_up = || !moving && at_full_size && news(&shared, seen_request);
                         let layer = floors.for_frame(state.intersector.as_ref(), key, &state.request.config, moving || !at_full_size, &given_up);
                         let _timer = Timer::start("render: lay reflection");
                         let bright = tequila_render_cpu::floor::alpha_by_brightness(&state.request.scene);
@@ -990,8 +990,8 @@ fn render_loop(shared: Arc<Shared>) {
                         if let (true, Some(camera)) = (view.floor_reflection(), view.camera()) {
                             let (width, height) = view.size();
                             let key = (Arc::as_ptr(&state.request.scene) as usize, camera, width, height);
-                            let full = view.size() == view.full_size();
-                            let given_up = || full && news(&shared, seen_request);
+                            let still = view.size() == view.full_size() && !view.navigating();
+                            let given_up = || still && news(&shared, seen_request);
                             floors.prepare(state.intersector.as_ref(), key, &state.request.config, &given_up);
                         }
                     }
