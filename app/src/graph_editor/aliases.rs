@@ -6,7 +6,8 @@
 //! which name found it ("Occlusion › VRayDirt"), so the next time they know
 //! what it is called here.
 //!
-//! These are names only. What a thing does is Tequila's own, and where
+//! These are names only, used to point (`TRADEMARKS.md` says whose they
+//! are). What a thing does is Tequila's own, and where
 //! there was nothing to point a name at, the thing was built first (the
 //! setups in `browser`, the groups in `tequila_materials::groups`).
 
