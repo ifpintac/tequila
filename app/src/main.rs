@@ -1865,7 +1865,7 @@ impl eframe::App for TequilaApp {
         }
         {
             let mut editor = std::mem::take(&mut self.graph_editor);
-            profile::time("ui: graph", || editor.show(ctx, &mut self.project));
+            profile::time("ui: graph", || editor.show(ctx, &mut self.project, self.library.entries()));
             self.graph_editor = editor;
         }
 

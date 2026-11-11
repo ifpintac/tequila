@@ -13,7 +13,9 @@
 //! reaching the renderer. A drag of a node or a slider is one undo step, not
 //! one per frame.
 
+mod browser;
 mod menu;
+pub use browser::Source as Brought;
 mod previews;
 mod sidebar;
 mod swatch;
@@ -136,6 +138,23 @@ pub struct GraphEditor {
     /// The span it shows, held while it is dragged so it does not rescale
     /// under the pointer.
     map_world: Option<egui::Rect>,
+    /// The Material/Map browser down the left side, and whether it shows:
+    /// the toolbar's Browser, T, and Preferences › Interface.
+    browser: browser::Browser,
+    pub show_browser: bool,
+    /// Whether the swatch and the settings show, down the right side (N).
+    show_settings: bool,
+    /// A scene material clicked in the browser: the editor opens on it once
+    /// this frame's edits to the one it is on are applied.
+    switch_to: Option<MaterialKey>,
+    /// The pictures a library material brought into the graph reads, which
+    /// the document does not have yet: added with the graph, as one step.
+    pending_textures: Vec<(tequila_materials::graph::TextureId, tequila_scene::textures::TextureSource)>,
+    /// A row of the browser is held over the canvas, and `insert_into` is
+    /// its wire, not a dragged node's.
+    browser_holding: bool,
+    /// What a script asked of the browser, for the next frame.
+    scripted: Option<browser::Act>,
 }
 
 /// The minimap's place on screen and its scale: a canvas point `p` is at
@@ -189,6 +208,13 @@ impl Default for GraphEditor {
             show_map: true,
             minimap: None,
             map_world: None,
+            browser: browser::Browser::default(),
+            show_browser: true,
+            show_settings: true,
+            switch_to: None,
+            pending_textures: Vec::new(),
+            browser_holding: false,
+            scripted: None,
         }
     }
 }
@@ -275,7 +301,26 @@ impl GraphEditor {
         self.material
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, project: &mut Project) {
+    /// Type in the browser's search, showing the browser: a script's way
+    /// to a picture of what it finds.
+    pub fn search_browser(&mut self, query: &str) {
+        self.browser.query = query.to_string();
+        self.show_browser = true;
+    }
+
+    #[cfg(test)]
+    pub fn browser_search(&self) -> &str {
+        &self.browser.query
+    }
+
+    /// Bring a material into the graph whole, as its row in the browser
+    /// double-clicked: a script's way, done when the editor is next drawn.
+    pub fn bring(&mut self, source: Brought) {
+        self.scripted = Some(browser::Act::Bring { source, at: None });
+    }
+
+    /// `library` is the material library, for the browser's last group.
+    pub fn show(&mut self, ctx: &egui::Context, project: &mut Project, library: &[tequila_format::library::LibraryEntry]) {
         if !self.open {
             self.hovered = false;
             return;
@@ -297,11 +342,14 @@ impl GraphEditor {
             return;
         };
         let title = format!("Material graph — {}", definition.name);
+        let name = definition.name.clone();
         let exposed = definition.material_type.exposed();
         let original = definition.graph.clone();
         // A graph nobody laid out is shown laid out, but not changed for
         // being looked at: the positions are saved with the first real edit.
-        let baseline = if tidy::overlapping(&original, &exposed) {
+        // (Not while a node is being moved: it may pass exactly over
+        // another on its way, and is stepped off one it is let go on.)
+        let baseline = if self.drag.is_none() && self.grab.is_none() && tidy::unplaced(&original) {
             let mut arranged = original.clone();
             tidy::arrange(&mut arranged, &exposed);
             arranged
@@ -319,25 +367,41 @@ impl GraphEditor {
         let spec = crate::windows::Spec {
             kind: crate::windows::Kind::Graph,
             title,
-            size: egui::vec2(1240.0, 720.0),
+            // Wide enough for the browser, the canvas and the settings.
+            size: egui::vec2(1400.0, 760.0),
             min_size: egui::vec2(720.0, 420.0),
             resizable: true,
             margin: 0.0,
         };
-        let window = crate::windows::show(ctx, spec, &mut open, |window| window.default_size([1240.0, 720.0]).min_width(720.0).min_height(420.0).resizable(true), |ui| {
-                egui::SidePanel::right("graph-properties")
-                    .resizable(true)
-                    .default_width(300.0)
-                    .width_range(240.0..=460.0)
-                    .show_inside(ui, |ui| {
-                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                            ui.add_space(4.0);
-                            self.swatch_panel(ui, &graph, project);
-                            ui.add_space(4.0);
-                            ui.separator();
-                            committed |= self.properties(ui, project, &mut graph);
+        let window = crate::windows::show(ctx, spec, &mut open, |window| window.default_size([1400.0, 760.0]).min_width(720.0).min_height(420.0).resizable(true), |ui| {
+                // A script's request of the browser, whether it shows or not.
+                if let Some(act) = self.scripted.take() {
+                    committed |= self.browse(act, &mut graph, project, library, &exposed);
+                }
+                if self.show_browser {
+                    egui::SidePanel::left("graph-browser")
+                        .resizable(true)
+                        .default_width(224.0)
+                        .width_range(180.0..=360.0)
+                        .show_inside(ui, |ui| {
+                            committed |= self.browser_panel(ui, project, library, &mut graph, &exposed, key);
                         });
-                    });
+                }
+                if self.show_settings {
+                    egui::SidePanel::right("graph-properties")
+                        .resizable(true)
+                        .default_width(300.0)
+                        .width_range(240.0..=460.0)
+                        .show_inside(ui, |ui| {
+                            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                                ui.add_space(4.0);
+                                self.swatch_panel(ui, &graph, project);
+                                ui.add_space(4.0);
+                                ui.separator();
+                                committed |= self.properties(ui, project, &mut graph);
+                            });
+                        });
+                }
                 egui::TopBottomPanel::bottom("graph-status").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
                         let text = match &self.message {
@@ -353,7 +417,7 @@ impl GraphEditor {
                 egui::TopBottomPanel::top("graph-toolbar")
                     .frame(egui::Frame::none().fill(crate::theme::p().chrome).inner_margin(egui::Margin::symmetric(8.0, 5.0)))
                     .show_inside(ui, |ui| {
-                        self.toolbar(ui, &mut graph, &exposed, &mut committed);
+                        self.toolbar(ui, &name, &mut graph, &exposed, &mut committed);
                     });
                 egui::CentralPanel::default().frame(egui::Frame::none().fill(ink::canvas())).show_inside(ui, |ui| {
                     committed |= self.canvas(ui, project, &mut graph, &exposed);
@@ -380,15 +444,192 @@ impl GraphEditor {
             // Continuous edits (a node being dragged, a slider held) merge
             // into one step; a finished one closes it.
             let dragging = pointer_down || self.grab.is_some();
+            // A library material brought in: its pictures first, and the
+            // graph that reads them, as one step.
+            let textures = std::mem::take(&mut self.pending_textures);
+            let grouped = !textures.is_empty();
+            if grouped {
+                project.end_interaction();
+                project.begin_group();
+                let payload = tequila_scene::command::ImportPayload { meshes: Vec::new(), textures, materials: Vec::new(), nodes: Vec::new(), roots: Vec::new() };
+                if let Err(error) = project.apply(Command::Import { payload: Box::new(payload) }) {
+                    self.message = Some(explain(&error.to_string()));
+                }
+            }
             match project.apply(Command::SetGraph { material: key, graph: Box::new(graph) }) {
                 Ok(()) => self.message = None,
                 Err(error) => self.message = Some(explain(&error.to_string())),
+            }
+            if grouped {
+                project.end_group();
             }
             if !dragging || committed {
                 project.end_interaction();
             }
         } else if pointer_released {
             project.end_interaction();
+        }
+        // Another of the scene's materials, clicked in the browser: after
+        // the edits above, which were to the one the editor was on.
+        if let Some(next) = self.switch_to.take() {
+            if self.open && project.document().materials.get(next).is_some() {
+                project.end_interaction();
+                self.open_for(next);
+            }
+        }
+    }
+
+    // ---- the browser ------------------------------------------------------------------
+
+    /// The Material/Map browser, down the left side.
+    fn browser_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        project: &Project,
+        library: &[tequila_format::library::LibraryEntry],
+        graph: &mut MaterialGraph,
+        exposed: &[Param],
+        key: MaterialKey,
+    ) -> bool {
+        let entries = menu::entries(project);
+        let materials: Vec<(MaterialKey, String)> = project.document().materials.iter().map(|(key, definition)| (key, definition.name.clone())).collect();
+        let shelf: Vec<(&str, &str)> = library.iter().map(|entry| (entry.name.as_str(), entry.category.as_str())).collect();
+        let sections = browser::sections(&entries, &materials, &shelf, Some(key), &self.browser.query);
+        let act = self.browser.show(ui, &sections, self.canvas_rect);
+        // A node's row held over a wire it could go into: the wire lights,
+        // as it does under a node dragged on the canvas.
+        let pointer = ui.input(|i| i.pointer.latest_pos()).filter(|at| self.canvas_rect.contains(*at));
+        match (self.browser.dragged_node().cloned(), pointer) {
+            (Some(kind), Some(at)) => {
+                self.insert_into = self.wire_at(graph, exposed, &kind, at);
+                self.browser_holding = true;
+            }
+            _ if self.browser_holding => {
+                self.insert_into = None;
+                self.browser_holding = false;
+            }
+            _ => {}
+        }
+        self.browse(act, graph, project, library, exposed)
+    }
+
+    /// Where a node whose header is under `screen` sits on the canvas.
+    fn dropped_at(&self, kind: &NodeKind, screen: egui::Pos2) -> egui::Vec2 {
+        self.to_canvas(self.canvas_rect, screen) - egui::vec2(view::node_width(kind) * 0.5, 12.0)
+    }
+
+    /// The wire a node of `kind` dropped at `screen` would go into.
+    fn wire_at(&self, graph: &MaterialGraph, exposed: &[Param], kind: &NodeKind, screen: egui::Pos2) -> Option<Link> {
+        let rect = self.canvas_rect;
+        let at = self.dropped_at(kind, screen);
+        // Its header and a little of its body: what the pointer carries.
+        let held = egui::Rect::from_min_size(at.to_pos2(), egui::vec2(view::node_width(kind), 60.0));
+        let layouts = tidy::layouts(graph, exposed, self.show_previews);
+        self.wire_fitting(graph, &layouts, rect, self.rect_to_screen(rect, held), kind, None)
+    }
+
+    /// Do what the browser was asked: true when the graph changed.
+    fn browse(&mut self, act: browser::Act, graph: &mut MaterialGraph, project: &Project, library: &[tequila_format::library::LibraryEntry], exposed: &[Param]) -> bool {
+        let rect = self.canvas_rect;
+        // Double-clicked: the middle of the view, each a step down and
+        // right of the last so none hides another.
+        let middle = |editor: &GraphEditor, width: f32| editor.to_canvas(rect, rect.center()) - egui::vec2(width * 0.5, 60.0);
+        match act {
+            browser::Act::None => false,
+            browser::Act::Open(material) => {
+                self.switch_to = Some(material);
+                false
+            }
+            browser::Act::Add { kind, label, at } => {
+                // Dropped on a wire it fits: it goes in between.
+                let link = at.and_then(|screen| self.wire_at(graph, exposed, &kind, screen));
+                let at = match at {
+                    Some(screen) => self.dropped_at(&kind, screen),
+                    // Clear of the nodes that are there, if a few steps find
+                    // such a place.
+                    None => {
+                        let wanted = middle(self, view::node_width(&kind));
+                        let size = egui::vec2(view::node_width(&kind), 120.0);
+                        let taken: Vec<egui::Rect> = tidy::layouts(graph, exposed, self.show_previews).into_values().map(|l| l.rect.expand(GRID)).collect();
+                        (0..16)
+                            .map(|step| wanted + egui::Vec2::splat(step as f32 * GRID * 4.0))
+                            .find(|at| !taken.iter().any(|r| r.intersects(egui::Rect::from_min_size(at.to_pos2(), size))))
+                            .unwrap_or(wanted)
+                    }
+                };
+                let mut node = Node::new(kind);
+                node.label = label;
+                node.position = GraphVec2 { x: snap(at.x), y: snap(at.y) };
+                let id = graph.add_node(node);
+                if let Some(link) = link {
+                    insert(graph, link, id);
+                }
+                apart(graph, &[id]);
+                self.insert_into = None;
+                self.browser_holding = false;
+                self.selected = BTreeSet::from([id]);
+                self.active = Some(id);
+                self.selected_frame = None;
+                true
+            }
+            browser::Act::Bring { source, at } => {
+                // The material as this document holds it: a library
+                // material's pictures numbered as the document's are.
+                let (name, mut other, its_exposed, textures) = match source {
+                    browser::Source::Scene(key) => {
+                        let Some(definition) = project.document().materials.get(key) else { return false };
+                        (definition.name.clone(), definition.graph.clone(), definition.material_type.exposed(), Vec::new())
+                    }
+                    browser::Source::Library(index) => {
+                        let Some(entry) = library.get(index) else { return false };
+                        let (definition, textures) = entry.for_document(project.document());
+                        (entry.name.clone(), definition.graph, entry.material_type.exposed(), textures)
+                    }
+                };
+                // One nobody laid out comes in laid out, not in a heap.
+                if tidy::unplaced(&other) {
+                    tidy::arrange(&mut other, &its_exposed);
+                }
+                let shader = NodeKind::Shader(Box::default());
+                let dropped = at.is_some();
+                let at = match at {
+                    Some(screen) => self.dropped_at(&shader, screen),
+                    // Under everything that is there, from its left edge:
+                    // a material's nodes need room no middle of a view has.
+                    None => {
+                        let here = tidy::content_bounds(graph, exposed, self.show_previews);
+                        let theirs = tidy::content_bounds(&other, &its_exposed, self.show_previews);
+                        let surface = other.node(other.output()).map(|n| n.position).unwrap_or(GraphVec2 { x: 0.0, y: 0.0 });
+                        match (here, theirs) {
+                            (Some(here), Some(theirs)) => egui::vec2(here.left() + (surface.x - theirs.left()), here.bottom() + GRID * 8.0 + tidy::FRAME_TITLE + (surface.y - theirs.top())),
+                            _ => middle(self, view::node_width(&shader)),
+                        }
+                    }
+                };
+                let (shader, fresh) = bring_in(graph, &other, &name, GraphVec2 { x: at.x, y: at.y });
+                apart(graph, &fresh);
+                // Put below what was in view: the view takes it all in.
+                if !dropped {
+                    self.frame_pending = true;
+                }
+                // More than the one node: a frame round them, with its name.
+                if fresh.len() > 1 {
+                    let layouts = tidy::layouts(graph, exposed, self.show_previews);
+                    if let Some(bounds) = fresh.iter().filter_map(|id| layouts.get(id).map(|l| l.rect)).reduce(|a, b| a.union(b)) {
+                        let around = bounds.expand(24.0);
+                        graph.frames.push(tequila_materials::graph::Frame {
+                            title: name,
+                            min: GraphVec2 { x: around.min.x, y: around.min.y - tidy::FRAME_TITLE },
+                            max: GraphVec2 { x: around.max.x, y: around.max.y },
+                        });
+                    }
+                }
+                self.pending_textures = textures;
+                self.selected = fresh.into_iter().collect();
+                self.active = Some(shader);
+                self.selected_frame = None;
+                true
+            }
         }
     }
 
@@ -1000,7 +1241,10 @@ impl GraphEditor {
                     }
                 }
             } else if confirm {
-                self.grab = None;
+                if let Some(grab) = self.grab.take() {
+                    let moved: Vec<NodeId> = grab.nodes.iter().map(|(id, _)| *id).collect();
+                    apart(graph, &moved);
+                }
                 committed = true;
             }
             return committed;
@@ -1174,6 +1418,8 @@ impl GraphEditor {
                             insert(graph, link, id);
                         }
                     }
+                    let moved: Vec<NodeId> = nodes.iter().map(|(id, _)| *id).collect();
+                    apart(graph, &moved);
                     committed = true;
                 }
             }
@@ -1490,6 +1736,13 @@ impl GraphEditor {
         if plain && key(egui::Key::Home) {
             self.fit(rect, graph, exposed, None);
         }
+        // The side panels, as Blender's T and N.
+        if plain && key(egui::Key::T) {
+            self.show_browser = !self.show_browser;
+        }
+        if plain && key(egui::Key::N) {
+            self.show_settings = !self.show_settings;
+        }
         if plain && key(egui::Key::Period) {
             let selected = self.selected.clone();
             self.fit(rect, graph, exposed, Some(&selected));
@@ -1530,6 +1783,8 @@ impl GraphEditor {
                 graph.connect_output(*from, link.from_socket, *to, link.to_socket);
             }
         }
+        let pasted: Vec<NodeId> = fresh.values().copied().collect();
+        apart(graph, &pasted);
         self.selected = fresh.values().copied().collect();
         self.active = fresh.values().next().copied();
         self.selected_frame = None;
@@ -1538,14 +1793,21 @@ impl GraphEditor {
 
     /// The wire a node at `screen` sits on, if any: one it could go into.
     fn wire_under(&self, graph: &MaterialGraph, layouts: &HashMap<NodeId, NodeLayout>, rect: egui::Rect, screen: egui::Rect, id: NodeId) -> Option<Link> {
-        let node = graph.node(id)?;
-        let inputs = node.kind.inputs();
-        let outputs = node.kind.outputs();
+        let kind = &graph.node(id)?.kind;
+        self.wire_fitting(graph, layouts, rect, screen, kind, Some(id))
+    }
+
+    /// The wire under `screen` that a node of `kind` could go into: `own`
+    /// is the node itself when it is in the graph already, whose wires are
+    /// not the ones meant.
+    fn wire_fitting(&self, graph: &MaterialGraph, layouts: &HashMap<NodeId, NodeLayout>, rect: egui::Rect, screen: egui::Rect, kind: &NodeKind, own: Option<NodeId>) -> Option<Link> {
+        let inputs = kind.inputs();
+        let outputs = kind.outputs();
         if inputs.is_empty() || outputs.is_empty() {
             return None;
         }
         graph.links().iter().copied().find(|link| {
-            if link.from == id || link.to == id {
+            if own.is_some_and(|id| link.from == id || link.to == id) {
                 return false;
             }
             let (Some(a), Some(b)) = (
@@ -1906,6 +2168,7 @@ impl GraphEditor {
                     }
                     None => {}
                 }
+                apart(graph, &[id]);
                 self.selected = BTreeSet::from([id]);
                 self.active = Some(id);
                 true
@@ -1914,7 +2177,7 @@ impl GraphEditor {
     }
 
     /// The bar above the canvas.
-    fn toolbar(&mut self, ui: &mut egui::Ui, graph: &mut MaterialGraph, exposed: &[Param], committed: &mut bool) {
+    fn toolbar(&mut self, ui: &mut egui::Ui, name: &str, graph: &mut MaterialGraph, exposed: &[Param], committed: &mut bool) {
         let rect = self.canvas_rect;
         ui.horizontal(|ui| {
             let style = ui.style_mut();
@@ -1922,6 +2185,10 @@ impl GraphEditor {
             style.spacing.button_padding = egui::vec2(10.0, 3.0);
             style.spacing.interact_size.y = 24.0;
             let button = |text: &str| egui::Button::new(egui::RichText::new(text).size(12.5)).fill(crate::theme::p().control).rounding(6.0);
+            // Each side panel's switch is at its own end of the bar.
+            ui.toggle_value(&mut self.show_browser, egui::RichText::new("Browser").size(12.5))
+                .on_hover_text(format!("The materials, maps and scene materials down the left: drag one into the graph, or double-click it ({})", crate::theme::keys("T")));
+            ui.add_space(6.0);
             if ui.add(button("+  Add")).on_hover_text("Add a node (Shift A)").clicked() {
                 let at = rect.min + egui::vec2(12.0, 8.0);
                 self.menu = Some(menu::AddMenu::new(self.to_canvas(rect, rect.center()), at, None));
@@ -1942,6 +2209,14 @@ impl GraphEditor {
                 self.solo_request = Some(None);
                 self.solo_shown = None;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.toggle_value(&mut self.show_settings, egui::RichText::new("Settings").size(12.5))
+                    .on_hover_text(format!("The material's picture and the selected node's settings down the right ({})", crate::theme::keys("N")));
+                ui.add_space(6.0);
+                // Whose graph this is: the browser changes it without the
+                // window's title being looked at.
+                ui.add(egui::Label::new(egui::RichText::new(name).size(12.5).strong()).truncate());
+            });
         });
     }
 }
@@ -1980,8 +2255,11 @@ pub(super) fn over_popup(ctx: &egui::Context, id: &str) -> bool {
         .is_some_and(|layer| layer.id == egui::Id::new(id))
 }
 
+/// The grid nodes are placed on, in canvas units.
+const GRID: f32 = 12.0;
+
 fn snap(v: f32) -> f32 {
-    (v / 12.0).round() * 12.0
+    (v / GRID).round() * GRID
 }
 
 /// Whether a wire from output `out` of `from` may go into `socket` on `to`,
@@ -2009,6 +2287,61 @@ fn adopt(graph: &mut MaterialGraph, from: NodeId, output: u8, to: NodeId) {
     if let Some(Node { kind: NodeKind::Reroute { ty: own }, .. }) = graph.node_mut(to) {
         *own = ty;
     }
+}
+
+/// Step `moved` off any node they were put exactly on: two nodes at the very
+/// same place are how a graph nobody laid out is known ([`tidy::unplaced`]),
+/// and one hidden under another is no use to anybody. A grid step down and
+/// right at a time, together, so what was moved keeps its shape.
+fn apart(graph: &mut MaterialGraph, moved: &[NodeId]) {
+    let place = |p: GraphVec2| (p.x.to_bits(), p.y.to_bits());
+    for _ in 0..64 {
+        let others: HashSet<(u32, u32)> = graph.nodes().filter(|(id, _)| !moved.contains(id)).map(|(_, n)| place(n.position)).collect();
+        let mut own = HashSet::new();
+        let clash = moved.iter().filter_map(|id| graph.node(*id)).any(|n| others.contains(&place(n.position)) || !own.insert(place(n.position)));
+        if !clash {
+            return;
+        }
+        for (index, id) in moved.iter().enumerate() {
+            if let Some(node) = graph.node_mut(*id) {
+                // Each a step further when they were on each other too.
+                let step = GRID * 2.0 * if own.len() < moved.len() { 1.0 + index as f32 } else { 1.0 };
+                node.position = GraphVec2 { x: node.position.x + step, y: node.position.y + step };
+            }
+        }
+    }
+}
+
+/// Another material brought into `graph` whole, to be mixed with it: its
+/// nodes and the wires among them, and where its Surface was a Shader of
+/// the same surface, named for the material, with the same wires into it -
+/// a Shader takes everything a Surface does. The Shader goes at `at` and
+/// the rest keep their places about it. Returns the Shader and every node
+/// added.
+fn bring_in(graph: &mut MaterialGraph, other: &MaterialGraph, name: &str, at: GraphVec2) -> (NodeId, Vec<NodeId>) {
+    let output = other.output();
+    let origin = other.node(output).map(|n| n.position).unwrap_or(GraphVec2 { x: 0.0, y: 0.0 });
+    let mut fresh: HashMap<NodeId, NodeId> = HashMap::new();
+    let mut added = Vec::new();
+    for (id, node) in other.nodes() {
+        let mut node = node.clone();
+        if id == output {
+            if let NodeKind::Surface(material) = &node.kind {
+                node.kind = NodeKind::Shader(material.clone());
+            }
+            node.label = Some(name.to_string());
+        }
+        node.position = GraphVec2 { x: snap(node.position.x - origin.x + at.x), y: snap(node.position.y - origin.y + at.y) };
+        let new = graph.add_node(node);
+        fresh.insert(id, new);
+        added.push(new);
+    }
+    for link in other.links() {
+        if let (Some(from), Some(to)) = (fresh.get(&link.from), fresh.get(&link.to)) {
+            graph.connect_output(*from, link.from_socket, *to, link.to_socket);
+        }
+    }
+    (fresh[&output], added)
 }
 
 /// Put `id` into `link`'s wire: the source into its first input that takes
@@ -2299,15 +2632,31 @@ mod tests {
         key: MaterialKey,
         pointer: egui::Pos2,
         time: f64,
+        /// The material library the browser lists: none, unless a test
+        /// puts some in.
+        library: Vec<tequila_format::library::LibraryEntry>,
     }
 
     impl Harness {
+        /// The editor with its browser hidden: the canvas at the width
+        /// these tests lay their nodes out in. With it, a node added at the
+        /// first empty spot reaches over the surface node.
         fn new() -> Harness {
+            Harness::opened(false)
+        }
+
+        /// The editor as it opens, the browser down its left side.
+        fn with_browser() -> Harness {
+            Harness::opened(true)
+        }
+
+        fn opened(browser: bool) -> Harness {
             let project = project();
             let key = project.document().materials.iter().next().map(|(k, _)| k).expect("a material");
             let mut editor = GraphEditor::default();
+            editor.show_browser = browser;
             editor.open_for(key);
-            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0 };
+            let mut h = Harness { ctx: egui::Context::default(), editor, project, key, pointer: egui::pos2(10.0, 10.0), time: 0.0, library: Vec::new() };
             h.frame(Vec::new());
             h.frame(Vec::new());
             h
@@ -2330,7 +2679,8 @@ mod tests {
                 ..Default::default()
             };
             let (editor, project) = (&mut self.editor, &mut self.project);
-            let _ = self.ctx.run(input, |ctx| editor.show(ctx, project));
+            let library = &self.library;
+            let _ = self.ctx.run(input, |ctx| editor.show(ctx, project, library));
         }
 
         fn graph(&self) -> MaterialGraph {
@@ -2616,5 +2966,385 @@ mod tests {
         assert_eq!(fresh.len(), 2);
         assert_eq!(graph.links().iter().filter(|l| fresh.contains(&l.from) && fresh.contains(&l.to)).count(), 1);
         assert!(!graph.links().iter().any(|l| fresh.contains(&l.from) && l.to == surface), "the copy is not wired to the surface");
+    }
+    /// What the browser asks is done as the Add menu does it: a
+    /// double-clicked row is a node in the middle of the view, selected,
+    /// and the next one beside it and not on it; a dropped one is under
+    /// the pointer; a Materials row is a Shader named for its kind.
+    #[test]
+    fn the_browser_adds_nodes_where_they_are_put() {
+        let mut h = Harness::with_browser();
+        let mut graph = h.graph();
+        let before = graph.len();
+        let canvas = h.editor.canvas_rect;
+        let value = || NodeKind::Constant(Value::Float(0.5));
+
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &[], &[]));
+        assert_eq!(graph.len(), before + 1);
+        let first = h.editor.active.expect("the new node is the active one");
+        assert_eq!(h.editor.selected, BTreeSet::from([first]));
+        fn at(h: &Harness, graph: &MaterialGraph, id: NodeId) -> egui::Pos2 {
+            let p = graph.node(id).unwrap().position;
+            h.screen(egui::pos2(p.x, p.y))
+        }
+        let middle = at(&h, &graph, first);
+        assert!(canvas.shrink(40.0).contains(middle), "{middle:?} is in the view {canvas:?}");
+        assert!((middle.x - canvas.center().x).abs() < 160.0 && (middle.y - canvas.center().y).abs() < 160.0, "{middle:?} is near the middle of {canvas:?}");
+
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: None }, &mut graph, &h.project, &[], &[]));
+        let second = h.editor.active.unwrap();
+        assert_ne!(at(&h, &graph, second), middle, "the second landed on the first");
+
+        let drop = canvas.left_top() + egui::vec2(300.0, 200.0);
+        assert!(h.editor.browse(browser::Act::Add { kind: value(), label: None, at: Some(drop) }, &mut graph, &h.project, &[], &[]));
+        let dropped = at(&h, &graph, h.editor.active.unwrap());
+        let width = view::node_width(&value()) * h.editor.zoom;
+        assert!(dropped.x <= drop.x && drop.x <= dropped.x + width + 20.0, "{dropped:?} is not under {drop:?}");
+        assert!((dropped.y - drop.y).abs() < 40.0, "{dropped:?} is not under {drop:?}");
+
+        let glass = tequila_materials::material_type::MaterialType::Glass;
+        let shader = NodeKind::Shader(Box::new(glass.defaults()));
+        assert!(h.editor.browse(browser::Act::Add { kind: shader, label: Some(glass.label().into()), at: None }, &mut graph, &h.project, &[], &[]));
+        let node = graph.node(h.editor.active.unwrap()).unwrap();
+        assert_eq!(view::title(node), glass.label(), "a Materials row is named for its kind");
+        assert!(!h.editor.browse(browser::Act::None, &mut graph, &h.project, &[], &[]));
+    }
+
+    /// With the pointer, as it is used: a row dragged out of the browser
+    /// and let go over the canvas is a node there, one let go anywhere else
+    /// is nothing, and a double-click adds one too.
+    #[test]
+    fn a_row_is_dragged_out_of_the_browser_into_the_graph() {
+        let mut h = Harness::with_browser();
+        h.editor.browser.query = "rgb".into();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let row = |h: &Harness| h.editor.browser.drawn.iter().find(|(label, _)| label == "RGB").map(|(_, rect)| rect.center()).expect("the RGB row is drawn");
+        let colours = |h: &Harness| h.graph().nodes().filter(|(_, n)| matches!(n.kind, NodeKind::Constant(Value::Color(_)))).map(|(id, _)| id).collect::<Vec<_>>();
+        assert!(colours(&h).is_empty());
+        let from = row(&h);
+        assert!(!h.editor.canvas_rect.contains(from), "the browser is beside the canvas, not on it");
+
+        let drop = h.empty_spot();
+        h.drag(from, drop, egui::PointerButton::Primary, egui::Modifiers::NONE);
+        let added = colours(&h);
+        assert_eq!(added.len(), 1, "the dragged row became a node");
+        assert_eq!(h.editor.active, Some(added[0]));
+        let rect = h.layout_of(added[0]).rect;
+        let on_screen = egui::Rect::from_min_max(h.screen(rect.min), h.screen(rect.max));
+        assert!(on_screen.expand(24.0).contains(drop), "{on_screen:?} is not where it was dropped, {drop:?}");
+
+        // Let go back on the browser: nothing.
+        let from = row(&h);
+        h.drag(from, from + egui::vec2(10.0, 60.0), egui::PointerButton::Primary, egui::Modifiers::NONE);
+        assert_eq!(colours(&h).len(), 1);
+
+        let from = row(&h);
+        h.move_to(from);
+        for pressed in [true, false, true, false] {
+            h.button(egui::PointerButton::Primary, pressed, egui::Modifiers::NONE);
+        }
+        h.frame(Vec::new());
+        assert_eq!(colours(&h).len(), 2, "a double-click adds one");
+        // One undo step each: the first Ctrl+Z takes the second node only.
+        h.project.undo();
+        assert_eq!(colours(&h).len(), 1);
+    }
+
+    /// A scene material clicked in the browser is the one the editor is on
+    /// from the next frame, and one that has gone is not.
+    #[test]
+    fn the_browser_opens_another_of_the_scenes_materials() {
+        let mut h = Harness::with_browser();
+        // The part given a copy of its material: two in the scene.
+        let part = h.project.document().tree.iter().find(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. })).map(|n| n.id).expect("a part");
+        h.project.apply(Command::UnlinkMaterial { node: part }).expect("unlinked");
+        let added = h.project.document().tree.get(part).unwrap().material.expect("the part's own material");
+        assert_ne!(added, h.key);
+        assert!(h.project.document().materials.get(h.key).is_some(), "the first material is still in the scene");
+        h.frame(Vec::new());
+
+        let mut graph = h.graph();
+        assert!(!h.editor.browse(browser::Act::Open(added), &mut graph, &h.project, &[], &[]), "opening changes no graph");
+        assert_eq!(h.editor.material(), Some(h.key), "not until this frame's edits are applied");
+        h.frame(Vec::new());
+        assert_eq!(h.editor.material(), Some(added));
+        assert!(h.editor.open);
+
+        assert!(!h.editor.browse(browser::Act::Open(MaterialKey(987_654)), &mut graph, &h.project, &[], &[]));
+        h.frame(Vec::new());
+        assert_eq!(h.editor.material(), Some(added), "a material that is not there is not opened");
+    }
+
+    /// T hides the browser and shows it, N the settings, as Blender's side
+    /// panels: with the pointer over the canvas, and no modifier.
+    #[test]
+    fn t_and_n_hide_the_side_panels() {
+        let mut h = Harness::with_browser();
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        assert!(h.editor.show_browser && h.editor.show_settings);
+        h.key(egui::Key::T, egui::Modifiers::NONE);
+        assert!(!h.editor.show_browser);
+        assert!(h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::N, egui::Modifiers::NONE);
+        assert!(!h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::T, egui::Modifiers::NONE);
+        // The browser is back and the canvas narrower: over it again.
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::N, egui::Modifiers::NONE);
+        assert!(h.editor.show_browser && h.editor.show_settings);
+        let spot = h.empty_spot();
+        h.move_to(spot);
+        h.key(egui::Key::T, egui::Modifiers::SHIFT);
+        assert!(h.editor.show_browser, "Shift+T is not T");
+    }
+    /// A material's graph with a picture into its colour: an image node
+    /// wired to the surface, as a library material with a map has.
+    fn mapped(texture: u32) -> MaterialGraph {
+        let mut graph = MaterialGraph::from_material(tequila_materials::material_type::MaterialType::Metal.defaults());
+        let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: tequila_materials::graph::TextureId(texture), fallback: Value::Color(Spectrum::splat(0.18)) }));
+        let surface = graph.output();
+        graph.connect_output(image, 0, surface, Socket::Param(Param::BaseColor));
+        graph
+    }
+
+    /// A material brought in whole: its nodes and their wires, its surface
+    /// now a Shader of the same surface under the material's name, and the
+    /// graph it came into otherwise as it was.
+    #[test]
+    fn a_material_is_brought_in_as_a_shader_with_its_nodes() {
+        let other = mapped(7);
+        let mut graph = MaterialGraph::from_material(Default::default());
+        let surface = graph.output();
+        let before = graph.len();
+        let (shader, fresh) = bring_in(&mut graph, &other, "Brass", GraphVec2 { x: 480.0, y: 240.0 });
+        assert_eq!(graph.len(), before + other.len());
+        assert_eq!(fresh.len(), other.len());
+        assert_eq!(graph.output(), surface, "the graph's own surface is still its output");
+        let node = graph.node(shader).unwrap();
+        let NodeKind::Shader(material) = &node.kind else { panic!("the surface came in as {:?}", node.kind.label()) };
+        assert_eq!(**material, *other.material(), "the same surface");
+        assert_eq!(view::title(node), "Brass");
+        assert_eq!((node.position.x, node.position.y), (480.0, 240.0), "the Shader is where it was put");
+        let image = fresh.iter().copied().find(|id| matches!(graph.node(*id).unwrap().kind, NodeKind::ImageTexture { .. })).expect("the image node came too");
+        assert!(
+            graph.links().iter().any(|l| l.from == image && l.to == shader && l.to_socket == Socket::Param(Param::BaseColor)),
+            "the picture is wired into the Shader's colour: {:?}",
+            graph.links()
+        );
+        assert!(!graph.links().iter().any(|l| l.to == surface), "nothing was wired into the graph's own surface");
+        graph.compile().expect("it compiles as it came in");
+    }
+
+    /// With the pointer: a scene material's row dragged into the graph is
+    /// that material brought in, in a frame with its name, as one undo
+    /// step; and the row of the material being edited does not drag.
+    #[test]
+    fn a_scene_material_is_dragged_into_the_graph() {
+        let mut h = Harness::with_browser();
+        let part = h.project.document().tree.iter().find(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. })).map(|n| n.id).expect("a part");
+        h.project.apply(Command::UnlinkMaterial { node: part }).expect("unlinked");
+        let other = h.project.document().tree.get(part).unwrap().material.expect("the part's own material");
+        h.project.apply(Command::RenameMaterial { material: other, name: "Second".into() }).expect("renamed");
+        let mut its = h.project.document().materials.get(other).unwrap().graph.clone();
+        let extra = its.add_node(Node::new(NodeKind::Constant(Value::Color(Spectrum::splat(0.5)))));
+        let surface = its.output();
+        its.connect_output(extra, 0, surface, Socket::Param(Param::BaseColor));
+        h.project.apply(Command::SetGraph { material: other, graph: Box::new(its.clone()) }).expect("a graph");
+        h.project.end_interaction();
+        // Searched for, so its row is in view: the scene's materials are
+        // under the maps, below the fold.
+        h.editor.browser.query = "second".into();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+
+        let row = |h: &Harness, name: &str| h.editor.browser.drawn.iter().find(|(label, _)| label == name).map(|(_, rect)| rect.center()).unwrap_or_else(|| panic!("no row {name}: {:?}", h.editor.browser.drawn.iter().map(|(l, _)| l).collect::<Vec<_>>()));
+        let before = h.graph().len();
+        let drop = h.empty_spot();
+        let from = row(&h, "Second");
+        h.drag(from, drop, egui::PointerButton::Primary, egui::Modifiers::NONE);
+        assert_eq!(h.editor.material(), Some(h.key), "a drag does not open it");
+        assert_eq!(h.editor.message, None, "the graph was taken");
+        let graph = h.graph();
+        assert_eq!(graph.len(), before + its.len(), "its nodes came in");
+        let shader = graph.nodes().find(|(_, n)| matches!(n.kind, NodeKind::Shader(_))).map(|(id, _)| id).expect("a Shader");
+        assert_eq!(view::title(graph.node(shader).unwrap()), "Second");
+        assert!(graph.links().iter().any(|l| l.to == shader && l.to_socket == Socket::Param(Param::BaseColor)));
+        assert_eq!(graph.frames.iter().filter(|f| f.title == "Second").count(), 1, "framed, with its name");
+        h.project.undo();
+        assert_eq!(h.graph().len(), before, "one undo takes all of it back");
+
+        // The material the editor is on: its own row stays put.
+        let own = h.project.document().materials.get(h.key).unwrap().name.clone();
+        h.editor.browser.query = own.clone();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        // The last row by that name: a kind of material may share it, and
+        // the scene's are listed after those.
+        let from = h.editor.browser.drawn.iter().rev().find(|(label, _)| *label == own).map(|(_, rect)| rect.center()).expect("its own row");
+        let drop = h.empty_spot();
+        h.drag(from, drop, egui::PointerButton::Primary, egui::Modifiers::NONE);
+        assert_eq!(h.graph().len(), before);
+    }
+
+    /// A library material double-clicked in the browser comes in the same
+    /// way, and the picture it reads is added to the document with it, the
+    /// graph reading it by the document's number: all one undo step.
+    #[test]
+    fn a_library_material_comes_in_with_its_pictures() {
+        let mut h = Harness::with_browser();
+        let material = tequila_materials::material_type::MaterialType::Metal.defaults();
+        h.library = vec![tequila_format::library::LibraryEntry {
+            name: "Brass Hairline".into(),
+            category: "Metal".into(),
+            tags: Vec::new(),
+            material_type: tequila_materials::material_type::MaterialType::Metal,
+            material,
+            graph: mapped(1),
+            textures: vec![(tequila_materials::graph::TextureId(1), tequila_scene::textures::TextureSource::new("brass-hairline.png", tequila_texture::texture::MapRole::Color))],
+            preview_uv_unit: None,
+            source: tequila_format::library::Source::Standard,
+            path: String::new(),
+        }];
+        h.editor.browser.query = "brass".into();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let pictures = |h: &Harness| h.project.document().textures.iter().count();
+        let (before, had) = (h.graph().len(), pictures(&h));
+        let row = h.editor.browser.drawn.iter().find(|(label, _)| label == "Brass Hairline").map(|(_, rect)| rect.center()).expect("the library's row");
+        h.move_to(row);
+        for pressed in [true, false, true, false] {
+            h.button(egui::PointerButton::Primary, pressed, egui::Modifiers::NONE);
+        }
+        h.frame(Vec::new());
+
+        let graph = h.graph();
+        assert_eq!(graph.len(), before + 2, "the Shader and its image node");
+        assert_eq!(pictures(&h), had + 1, "its picture is in the document");
+        let (added, source) = h.project.document().textures.iter().last().map(|(id, s)| (id, s.clone())).unwrap();
+        assert!(source.path.ends_with("brass-hairline.png"));
+        let reads = graph.nodes().find_map(|(_, n)| match n.kind {
+            NodeKind::ImageTexture { texture, .. } => Some(texture),
+            _ => None,
+        });
+        assert_eq!(reads, Some(added), "the node reads the document's picture");
+        assert!(graph.nodes().any(|(_, n)| matches!(n.kind, NodeKind::Shader(_)) && view::title(n) == "Brass Hairline"));
+
+        h.project.undo();
+        assert_eq!((h.graph().len(), pictures(&h)), (before, had), "one undo takes the nodes and the picture back");
+    }
+
+    /// A row let go over a wire it fits goes in between, as a node dragged
+    /// onto one does; over empty canvas it is wired to nothing.
+    #[test]
+    fn a_row_dropped_on_a_wire_goes_in_between() {
+        let mut h = Harness::with_browser();
+        // A colour wired into the surface's colour, well apart.
+        let mut graph = h.graph();
+        let surface = graph.output();
+        let at = graph.node(surface).unwrap().position;
+        let mut colour = Node::new(NodeKind::Constant(Value::Color(Spectrum::splat(0.5))));
+        colour.position = GraphVec2 { x: at.x - 520.0, y: at.y };
+        let colour = graph.add_node(colour);
+        graph.connect_output(colour, 0, surface, Socket::Param(Param::BaseColor));
+        h.project.apply(Command::SetGraph { material: h.key, graph: Box::new(graph) }).expect("a graph");
+        h.project.end_interaction();
+        h.editor.frame_pending = true;
+        h.editor.browser.query = "invert".into();
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+
+        let from = h.screen(h.layout_of(colour).output_at(0).unwrap());
+        let to = h.screen(h.layout_of(surface).input_at(Socket::Param(Param::BaseColor)).unwrap());
+        let middle = from + (to - from) * 0.5;
+        assert!(h.editor.canvas_rect.contains(middle), "the wire's middle is in view");
+        let (label, row) = h.editor.browser.drawn.iter().find(|(label, _)| label.to_lowercase().starts_with("invert")).map(|(label, rect)| (label.clone(), rect.center())).expect("an Invert row");
+        h.drag(row, middle, egui::PointerButton::Primary, egui::Modifiers::NONE);
+
+        let graph = h.graph();
+        let added = graph.nodes().map(|(id, _)| id).find(|id| *id != colour && *id != surface).unwrap_or_else(|| panic!("{label} was not added"));
+        assert!(graph.links().iter().any(|l| l.from == colour && l.to == added), "the colour goes into it: {:?}", graph.links());
+        assert!(graph.links().iter().any(|l| l.from == added && l.to == surface && l.to_socket == Socket::Param(Param::BaseColor)), "and it into the surface: {:?}", graph.links());
+        assert!(!graph.links().iter().any(|l| l.from == colour && l.to == surface), "the old wire is gone");
+        assert_eq!(h.editor.insert_into, None, "the wire is no longer lit");
+    }
+    /// A node dragged onto another stays where it was put, and nothing else
+    /// moves: the graph is laid out for the person only when nobody has
+    /// laid it out, every node where an importer left it.
+    #[test]
+    fn a_node_dropped_on_another_does_not_rearrange_the_graph() {
+        let mut h = Harness::new();
+        let mut graph = h.graph();
+        let surface = graph.output();
+        let at = graph.node(surface).unwrap().position;
+        let mut place = |dx: f32, dy: f32| {
+            let mut node = Node::new(NodeKind::Constant(Value::Float(0.5)));
+            node.position = GraphVec2 { x: at.x - dx, y: at.y + dy };
+            graph.add_node(node)
+        };
+        let (a, b, c) = (place(480.0, 0.0), place(480.0, 240.0), place(240.0, 480.0));
+        h.project.apply(Command::SetGraph { material: h.key, graph: Box::new(graph) }).expect("a graph");
+        h.project.end_interaction();
+        h.editor.frame_pending = true;
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let position = |h: &Harness, id: NodeId| h.graph().node(id).unwrap().position;
+        let (was_c, was_surface) = (position(&h, c), position(&h, surface));
+
+        // a, by its header, onto b.
+        let header = |h: &Harness, id: NodeId| {
+            let rect = h.layout_of(id).header();
+            h.screen(rect.center())
+        };
+        let (from, to) = (header(&h, a), header(&h, b));
+        h.drag(from, to, egui::PointerButton::Primary, egui::Modifiers::NONE);
+        let (now_a, now_b) = (position(&h, a), position(&h, b));
+        assert!((now_a.x - now_b.x).abs() < 30.0 && (now_a.y - now_b.y).abs() < 30.0, "a is on b: {now_a:?} {now_b:?}");
+        assert_eq!(position(&h, c), was_c, "a node that was not touched moved");
+        assert_eq!(position(&h, surface), was_surface, "the surface moved");
+        // And it is shown where it is kept.
+        let shown = h.layout_of(c).rect.min;
+        assert_eq!((shown.x, shown.y), (was_c.x, was_c.y));
+    }
+    /// Shift+D sets a copy down a step from its original, on top of it: the
+    /// other nodes stay where they were. Any overlap used to count as a
+    /// graph nobody had laid out, and a duplicate re-laid all of it.
+    #[test]
+    fn a_duplicate_does_not_rearrange_the_graph() {
+        let mut h = Harness::new();
+        let mut graph = h.graph();
+        let surface = graph.output();
+        let at = graph.node(surface).unwrap().position;
+        let mut place = |dx: f32, dy: f32| {
+            let mut node = Node::new(NodeKind::Constant(Value::Float(0.5)));
+            node.position = GraphVec2 { x: at.x - dx, y: at.y + dy };
+            graph.add_node(node)
+        };
+        let (a, b) = (place(480.0, 0.0), place(240.0, 480.0));
+        h.project.apply(Command::SetGraph { material: h.key, graph: Box::new(graph) }).expect("a graph");
+        h.project.end_interaction();
+        h.editor.frame_pending = true;
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        let position = |h: &Harness, id: NodeId| h.graph().node(id).unwrap().position;
+        let was = (position(&h, a), position(&h, b), position(&h, surface));
+
+        let header = h.screen(h.layout_of(a).header().center());
+        h.click(header, egui::Modifiers::NONE);
+        h.key(egui::Key::D, egui::Modifiers::SHIFT);
+        // Set down where it is: a step from the original.
+        h.button(egui::PointerButton::Primary, true, egui::Modifiers::NONE);
+        h.button(egui::PointerButton::Primary, false, egui::Modifiers::NONE);
+        h.frame(Vec::new());
+        h.frame(Vec::new());
+        assert_eq!(h.graph().len(), 4, "the copy is there");
+        assert_eq!((position(&h, a), position(&h, b), position(&h, surface)), was, "the others moved");
+        assert!(!tidy::unplaced(&h.graph()), "no two nodes are at one place");
     }
 }

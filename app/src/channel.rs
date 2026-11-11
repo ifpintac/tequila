@@ -605,10 +605,32 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         None => None,
     };
 
+    // A material to bring into the graph: found before anything changes.
+    let bring = match &change.graph_bring {
+        None => None,
+        Some(tequila_scripting::protocol::GraphBring::Material(key)) => {
+            let key = tequila_scene::tree::MaterialKey(*key);
+            if app.project.document().materials.get(key).is_none() {
+                return Reply::Failed(format!("there is no material {}; query materials for their numbers", key.0));
+            }
+            Some(crate::graph_editor::Brought::Scene(key))
+        }
+        Some(tequila_scripting::protocol::GraphBring::Library(name)) => match app.library.entries().iter().position(|e| e.name.eq_ignore_ascii_case(name)) {
+            Some(index) => Some(crate::graph_editor::Brought::Library(index)),
+            None => return Reply::Failed(format!("the library has no material named {name}")),
+        },
+    };
+    if bring.is_some() && !(app.graph_editor.open || matches!(graph, Some(Some(_)))) {
+        return Reply::Failed("`graph_bring` brings a material into the Material Graph editor, which is not open: open it with `graph`".into());
+    }
+
     match graph {
         Some(Some(key)) => app.graph_editor.open_for(key),
         Some(None) => app.graph_editor.open = false,
         None => {}
+    }
+    if let Some(source) = bring {
+        app.graph_editor.bring(source);
     }
     if let Some(open) = change.render_window {
         app.render_window.open = open;
@@ -758,6 +780,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         app.start_screen.open = false;
         app.preferences.open = true;
         app.preferences.search = search.clone();
+    }
+    if let Some(search) = &change.graph_search {
+        app.graph_editor.search_browser(search);
     }
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
@@ -2888,6 +2913,35 @@ mod handler_tests {
         let state = value(&mut app, r#"{"op":"ui","graph":false}"#);
         assert!(state.get("graph").is_some_and(|g| matches!(g, Value::Null)));
         assert!(!app.graph_editor.open);
+    }
+
+    /// A script brings a material into the open graph as the browser does,
+    /// and is told when there is no such material or no graph open.
+    #[test]
+    fn a_script_brings_a_material_into_the_graph() {
+        let mut app = TequilaApp::for_tests();
+        let key = app.project.document().materials.iter().next().expect("the demo has materials").0;
+        assert!(failure(&mut app, &format!(r#"{{"op":"ui","graph_bring":{{"material":{}}}}}"#, key.0)).contains("not open"));
+        assert!(failure(&mut app, &format!(r#"{{"op":"ui","graph":{},"graph_bring":{{"library":"No such material"}}}}"#, key.0)).contains("no material named"));
+        assert!(!app.graph_editor.open, "a refused request opens nothing");
+        assert!(failure(&mut app, r#"{"op":"ui","graph_bring":{"material":987654}}"#).contains("no material 987654"));
+        assert!(tequila_scripting::protocol::parse_request(r#"{"id":1,"op":"ui","graph_bring":"brass"}"#).is_err());
+        value(&mut app, &format!(r#"{{"op":"ui","graph":{0},"graph_bring":{{"material":{0}}}}}"#, key.0));
+        assert!(app.graph_editor.open);
+    }
+
+    /// The graph editor's browser is a setting, shown and hidden as any
+    /// other, and a script types in its search, which shows it.
+    #[test]
+    fn a_script_shows_hides_and_searches_the_graph_browser() {
+        let mut app = TequilaApp::for_tests();
+        assert!(app.graph_editor.show_browser, "the browser shows until it is hidden");
+        value(&mut app, r#"{"op":"preferences","set":{"interface.graph_browser":false}}"#);
+        assert!(!app.graph_editor.show_browser);
+        assert!(!app.prefs.graph_browser);
+        value(&mut app, r#"{"op":"ui","graph_search":"noise"}"#);
+        assert!(app.graph_editor.show_browser, "searching it shows it");
+        assert_eq!(app.graph_editor.browser_search(), "noise");
     }
 
     #[test]

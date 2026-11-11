@@ -289,6 +289,8 @@ pub struct Prefs {
     pub tooltip_delay: f32,
     /// How the material library shows its shelf.
     pub library_view: crate::library_tab::View,
+    /// The Material Graph editor's browser, down its left side.
+    pub graph_browser: bool,
     /// What a session starts with: its shading and what the view shows.
     pub shading: ViewMode,
     pub show_grid: bool,
@@ -326,6 +328,7 @@ impl Default for Prefs {
             tooltips: true,
             tooltip_delay: 0.5,
             library_view: crate::library_tab::View::default(),
+            graph_browser: true,
             shading: ViewMode::default(),
             show_grid: false,
             show_axis_legend: true,
@@ -668,6 +671,15 @@ pub static SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    own_toggle!(
+        "interface.graph_browser",
+        Interface,
+        "Material Graph editor",
+        "Show the browser",
+        "The list of materials, maps and the scene's materials down the left of the Material Graph editor, as 3ds Max's Slate editor has: a row is dragged into the graph, or double-clicked. The editor's Browser button and T show and hide it too.",
+        graph_browser,
+        |app, on| app.graph_editor.show_browser = on
+    ),
     // ---- Viewport --------------------------------------------------------
     Setting {
         key: "viewport.shading",
@@ -1194,6 +1206,11 @@ impl TequilaApp {
         // The library's own buttons choose its view too: kept as chosen.
         if self.library.view != self.prefs.library_view {
             self.prefs.library_view = self.library.view;
+            self.keep_preferences();
+        }
+        // So do the graph editor's Browser button and T.
+        if self.graph_editor.show_browser != self.prefs.graph_browser {
+            self.prefs.graph_browser = self.graph_editor.show_browser;
             self.keep_preferences();
         }
         self.gizmo.scale = (self.prefs.gizmo_size / 100.0).clamp(0.25, 4.0);

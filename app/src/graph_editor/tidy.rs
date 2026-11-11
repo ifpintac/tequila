@@ -19,8 +19,24 @@ pub fn layouts(graph: &MaterialGraph, exposed: &[Param], previews: bool) -> Hash
         .collect()
 }
 
-/// Whether any two nodes sit on top of each other — as every node of a graph
-/// built by an importer does, all at the origin, since nothing placed them.
+/// Whether nobody has placed the graph's nodes: two of them are at the very
+/// same place, as every node of a graph built by an importer is, all at the
+/// origin, and as the ones the Material tab adds are. Such a graph is shown
+/// laid out.
+///
+/// It was "any two nodes overlap", which a person does all the time: a node
+/// dropped on another, a duplicate set down a step from its original, a
+/// paste over the graph - and each of those re-laid the whole graph and
+/// kept it so. The editor never leaves two nodes at one place itself
+/// ([`super::apart`]), so two there were put there by something that places
+/// nothing.
+pub fn unplaced(graph: &MaterialGraph) -> bool {
+    let mut places = std::collections::HashSet::new();
+    graph.nodes().any(|(_, node)| !places.insert((node.position.x.to_bits(), node.position.y.to_bits())))
+}
+
+/// Whether any two nodes sit on top of each other.
+#[cfg(test)]
 pub fn overlapping(graph: &MaterialGraph, exposed: &[Param]) -> bool {
     let rects: Vec<egui::Rect> = layouts(graph, exposed, true).into_values().map(|l| l.rect).collect();
     rects
@@ -151,12 +167,19 @@ mod tests {
         graph.connect(c, surface, Socket::Param(Param::SpecularRoughness));
         let exposed = tequila_materials::material_type::MaterialType::ALL[0].exposed();
         assert!(overlapping(&graph, &exposed), "all at the origin to begin with");
+        assert!(unplaced(&graph), "which is how a graph nobody laid out is known");
         arrange(&mut graph, &exposed);
         assert!(!overlapping(&graph, &exposed));
+        assert!(!unplaced(&graph));
         for link in graph.links() {
             let (from, to) = (graph.node(link.from).unwrap().position, graph.node(link.to).unwrap().position);
             assert!(from.x < to.x, "a wire runs into a node to its right");
         }
+        // One node put on top of another by a person is placed all the same.
+        let onto = graph.node(b).unwrap().position;
+        graph.node_mut(a).unwrap().position = GraphVec2 { x: onto.x + 24.0, y: onto.y + 24.0 };
+        assert!(overlapping(&graph, &exposed));
+        assert!(!unplaced(&graph), "an overlap is not a graph nobody laid out");
     }
 
     /// Tidying moves the nodes; a group moves with the nodes it held and

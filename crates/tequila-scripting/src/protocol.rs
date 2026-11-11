@@ -368,6 +368,15 @@ fn with_preset(command: Value) -> Result<Value, ProtocolError> {
 /// The library's actions, for the protocol and its documentation.
 pub const LIBRARY_ACTIONS: &[&str] = &["apply", "save", "import", "export", "delete"];
 
+/// A material brought into the Material Graph editor's graph whole.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GraphBring {
+    /// A library material, by its name.
+    Library(String),
+    /// One of the document's materials, by its number.
+    Material(u64),
+}
+
 /// Changes to the application's panels. Absent fields are left alone.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UiChange {
@@ -447,6 +456,14 @@ pub struct UiChange {
     pub preferences_page: Option<String>,
     /// What is typed in the Preferences window's search, which opens it.
     pub preferences_search: Option<String>,
+    /// What is typed in the search of the Material Graph editor's browser,
+    /// which shows the browser ("" clears it). The browser itself is the
+    /// setting `interface.graph_browser`.
+    pub graph_search: Option<String>,
+    /// A material brought into the open graph whole, as the browser's row
+    /// double-clicked or dragged in: `{"library": "<name>"}` or
+    /// `{"material": n}`.
+    pub graph_bring: Option<GraphBring>,
     /// A 3D mouse's input, made up: reports as a device would send them.
     pub spacemouse: Option<SpaceMouseInput>,
     /// P's Screenshot, as the key takes it: the viewport's picture saved
@@ -1400,6 +1417,15 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             preferences: opt_bool(value, "preferences")?,
             preferences_page: opt_string(value, "preferences_page")?,
             preferences_search: opt_string(value, "preferences_search")?,
+            graph_search: opt_string(value, "graph_search")?,
+            graph_bring: match value.get("graph_bring") {
+                None | Some(Value::Null) => None,
+                Some(v) => match (v.get("library").and_then(|l| l.as_str()), v.get("material").and_then(|m| m.as_index())) {
+                    (Some(name), None) => Some(GraphBring::Library(name.to_string())),
+                    (None, Some(material)) => Some(GraphBring::Material(material as u64)),
+                    _ => return Err(ProtocolError(r#"`graph_bring` is {"library": "<name>"} or {"material": n}"#.into())),
+                },
+            },
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,
             save_screenshot: opt_bool(value, "save_screenshot")?,
             screenshot_folder: opt_string(value, "screenshot_folder")?,
