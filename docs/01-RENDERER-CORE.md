@@ -558,6 +558,8 @@ And letting go of a drag ends the move there: a Cycles view goes back to its siz
 | 1.07M-triangle STEP, Cycles | 45 -> 50 ms | 28.3 -> 26.7 | 50 -> 46 ms | 562 -> 370 ms |
 | 1.07M-triangle STEP, Tequila | 630 -> 17 ms | 42 -> 75 | 16 -> 16 ms | 1759 -> 541 ms |
 
+A final render begun from the Rendered view no longer runs beside the viewport's Cycles session and the graphics card's denoiser, both held paused through it: they are let go as it starts (`Orchestrator::let_go`). Rendering the Headphones at 1920x1080 and 128 samples, the application's memory peaked at 8.9 GB instead of 12.9, in the same 11 s; the Rendered view takes a second or so to start Cycles again afterwards. Holding the live view to fewer path states was measured too and left as it is: 2.6 million instead of 5.2 saved 0.9 GB and 0.6 s on entering the view, and refined a still view 16% slower; 1.3 million saved 1.4 GB and refined 36% slower.
+
 Beside another program's render on twelve cores the differences were larger: the Headphones' first picture in Cycles 1.2 s before and 75 ms after, and palma P8 in Tequila's renderer showed nothing at all while moving before, 24 pictures a second after. Still slow: palma P8 in Cycles moves at 13 pictures a second, held by Cycles' own 65-75 ms for a sample of it at the smallest moving size, whether or not its optimized kernels are ready; and importing the 236 MB STEP file takes 90 s, 65 of them in OpenCASCADE turning the file into shapes, on one core.
 
 ### 9.3 Dirty-state taxonomy — what invalidates what

@@ -326,6 +326,9 @@ struct Shared {
     wakeup_lock: Mutex<()>,
     /// Told whenever a picture is ready: the window, to put it up then.
     waker: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Set for the render thread to let go of what it holds on the
+    /// graphics card (`Orchestrator::let_go`).
+    let_go: AtomicBool,
     /// How many times the next camera went to Cycles before a picture was
     /// put up (see the render thread's loop).
     #[cfg(test)]
@@ -365,6 +368,7 @@ impl Orchestrator {
             wakeup: Condvar::new(),
             wakeup_lock: Mutex::new(()),
             waker: Mutex::new(None),
+            let_go: AtomicBool::new(false),
             #[cfg(test)]
             handed_early: AtomicU64::new(0),
         });
@@ -379,6 +383,14 @@ impl Orchestrator {
             shared,
             thread: Some(thread),
         }
+    }
+
+    /// Let go of the Cycles view and the graphics card's denoiser now, paused
+    /// or not: a final render is starting, with its own. The picture stays;
+    /// the next Rendered view starts Cycles again.
+    pub fn let_go(&self) {
+        self.shared.let_go.store(true, Ordering::Release);
+        self.shared.wake();
     }
 
     /// What to call whenever a picture is ready.
@@ -664,6 +676,26 @@ fn render_loop(shared: Arc<Shared>) {
 
         // Keep display edits available while paused, but defer scene builds
         // and tracing. Resuming consumes the latest request only.
+        // A final render begun: what the viewport holds on the graphics
+        // card goes now, rather than ten seconds after it last showed (or
+        // never, while the render keeps the viewport paused). The render
+        // makes a Cycles session and a denoiser of its own beside it, and
+        // with the viewport's kept, a Headphones session came to 12 GB; on
+        // a card with memory of its own, two sessions may not fit at all.
+        // Showing the Rendered view again starts Cycles again.
+        if shared.let_go.swap(false, Ordering::AcqRel) {
+            if cycles.take().is_some() {
+                shared.keeps_cycles.store(false, Ordering::Release);
+                cycles_frames = 0;
+                cycles_clean = false;
+                floors.clear();
+            }
+            if let Some(gpu) = gpu_denoiser.take() {
+                gpu.release();
+            }
+            warmed = None;
+            cycles_away = None;
+        }
         if shared.paused.load(Ordering::Acquire) {
             if let Some(view) = cycles.as_mut() {
                 view.set_paused(true);
@@ -2494,6 +2526,48 @@ mod tests {
     /// viewport shows Rendered again. Kept paused, it held gigabytes on the
     /// graphics card for as long as Tequila ran. Skipped where Cycles is not
     /// installed (`TEQUILA_CYCLES`).
+    /// A final render starting lets the viewport's Cycles view go at once,
+    /// while the viewport is paused for it, rather than holding it beside
+    /// the render's own; shown again afterwards, the view starts Cycles
+    /// again and draws. Skipped where Cycles is not installed.
+    #[test]
+    fn a_final_render_starting_lets_the_cycles_view_go() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let renderer = Orchestrator::new();
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut seen = 0;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        renderer.submit(req.clone());
+        while !renderer.take_image(&mut seen).is_some_and(|image| image.samples >= 2 && image.width == 64) {
+            assert!(Instant::now() < deadline, "Cycles never drew the viewport");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(renderer.keeps_cycles());
+        // As the window does when a render begins: paused, and let go.
+        renderer.set_paused(true);
+        renderer.let_go();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while renderer.keeps_cycles() {
+            assert!(Instant::now() < deadline, "the Cycles view was held through the final render");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        renderer.set_paused(false);
+        req.camera = Camera::look_at(Vec3::splat(4.5), Vec3::ZERO, Vec3::Y);
+        renderer.submit(req);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !renderer.take_image(&mut seen).is_some_and(|image| image.width == 64 && image.engine.is_cycles()) {
+            assert!(Instant::now() < deadline, "the view never drew again");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(renderer.keeps_cycles(), "a Cycles view made again");
+    }
+
     #[test]
     fn the_cycles_view_is_let_go_after_the_viewport_leaves_it() {
         if let Err(why) = tequila_render_cycles::available() {

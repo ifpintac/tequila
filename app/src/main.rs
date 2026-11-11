@@ -538,6 +538,9 @@ struct TequilaApp {
     menu_click: Option<(egui::Pos2, bool)>,
     /// A drag across the viewport a script asked for (`ui drag`), under way.
     scripted_drag: Option<view_timing::ScriptedDrag>,
+    /// Whether a final render was running at the last frame: its start is
+    /// when the viewport lets go of the graphics card (`Orchestrator::let_go`).
+    final_render_running: bool,
     /// How long the viewport's pictures take to answer (`view_timing`).
     answers: view_timing::Answers,
     /// The UV editor window: a part's layout, and a label placed on it.
@@ -1123,6 +1126,7 @@ impl TequilaApp {
             menu_buttons: Vec::new(),
             menu_click: None,
             scripted_drag: None,
+            final_render_running: false,
             answers: view_timing::Answers::default(),
             uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
@@ -1960,6 +1964,13 @@ impl eframe::App for TequilaApp {
             || (self.batch.is_running() && self.shading != orchestrator::Shading::Fast)
             || ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         self.orchestrator.set_paused(suspended);
+        // A final render begun: the viewport lets go of its Cycles session
+        // and its denoiser on the graphics card, for the render's own.
+        let rendering = self.batch.is_running();
+        if rendering && !self.final_render_running {
+            self.orchestrator.let_go();
+        }
+        self.final_render_running = rendering;
         // On the GPU a Solid frame is finished the moment it is drawn; on the
         // CPU, once the renderer has reached its sample cap. Waiting for the
         // cap in GPU mode — which never traces, so never reaches it — kept the
