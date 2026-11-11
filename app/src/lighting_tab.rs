@@ -70,6 +70,14 @@ impl LightingTab {
                 lighting.preset == Some(preset),
             );
             speed_pips(ui, response.rect, speed);
+            // What the bars say, in words, for whoever wonders.
+            let response = response.on_hover_text(match speed {
+                5 => "The bars are speed: this is the fastest.",
+                4 => "The bars are speed: fast.",
+                3 => "The bars are speed: in the middle.",
+                2 => "The bars are speed: slow.",
+                _ => "The bars are speed: this is the slowest.",
+            });
             if response.clicked() && lighting.preset != Some(preset) {
                 let _ = project.apply(Command::SetLightingPreset { preset });
             }
@@ -81,7 +89,7 @@ impl LightingTab {
             crate::icons::Icon::Sliders,
             crate::theme::hue(crate::theme::Hue::Slate),
             "Custom",
-            "Every transport setting, set by hand below.",
+            "Every setting below, set by hand.",
             custom,
         )
         .clicked()
@@ -94,13 +102,20 @@ impl LightingTab {
             });
         }
 
-        crate::field::Fold::new("Transport")
+        // Folded under the presets, which set all of it; open on Custom,
+        // where it is what there is to set.
+        crate::field::Fold::new("Settings")
+            .id_salt("lighting-transport")
             .default_open(custom)
             .show(ui, |ui| {
                 let before = lighting.config();
                 let mut config = before.clone();
                 let mut bounces = config.max_bounces;
-                ui.add(crate::field::Slider::new(&mut bounces, 1..=64).text("Ray bounces"));
+                if !custom {
+                    crate::theme::note(ui, "What the chosen preset sets. Changing one makes the lighting Custom.");
+                }
+                ui.add(crate::field::Slider::new(&mut bounces, 1..=64).text("Ray bounces"))
+                    .on_hover_text("How many times light may bounce between surfaces before it is given up. More reaches deeper into corners and through more layers of glass, and takes longer.");
                 config.max_bounces = bounces;
                 let mut transmission = config.max_transmission_bounces;
                 ui.add(
@@ -113,18 +128,20 @@ impl LightingTab {
                 );
                 config.max_transmission_bounces = transmission;
 
-                ui.add(crate::field::Checkbox::new(&mut config.global_illumination, "Global illumination"));
-                ui.add(crate::field::Checkbox::new(&mut config.direct_lighting, "Direct lighting"));
+                ui.add(crate::field::Checkbox::new(&mut config.global_illumination, "Global illumination"))
+                    .on_hover_text("Light bounced from one surface onto another: the soft fill in corners and the colour a red part throws on a white one.");
+                ui.add(crate::field::Checkbox::new(&mut config.direct_lighting, "Direct lighting"))
+                    .on_hover_text("Light that reaches a surface straight from a light or the environment.");
                 ui.add(crate::field::Checkbox::new(&mut config.shadows, "Shadows"));
-                ui.add(crate::field::Checkbox::new(&mut config.light_source_materials, "Light source materials"));
+                ui.add(crate::field::Checkbox::new(&mut config.light_source_materials, "Light source materials"))
+                    .on_hover_text("Parts with a glowing material light the parts around them, as a lamp would.");
                 ui.add(crate::field::Checkbox::new(&mut config.ground_illumination, "Ground illumination"))
                     .on_hover_text("Let the ground plane bounce light back into the scene.");
                 // Off, or one of the two ways of finding caustics: the
                 // setting is the switch and the method together.
                 let mut caustics = config.caustics.then_some(config.caustics_method);
-                egui::ComboBox::from_label("Caustics")
-                    .selected_text(caustics.map_or("Off", CausticsMethod::label))
-                    .show_ui(ui, |ui| {
+                crate::field::row(ui, "Caustics", |ui| {
+                    crate::field::combo(ui, "lighting-caustics", caustics.map_or("Off", CausticsMethod::label), |ui| {
                         ui.selectable_value(&mut caustics, None, "Off").on_hover_text(
                             "Light passes clear glass straight on, tinted, onto what is behind it, \
                              and is focused nowhere.",
@@ -144,7 +161,8 @@ impl LightingTab {
                                  light; the environment's light through glass is found by bounces, and \
                                  mirrors focus nothing.",
                             );
-                    })
+                    });
+                })
                     .response
                     .on_hover_text(
                         "The bright patterns glass, liquids and gems focus under and beside \
@@ -155,24 +173,23 @@ impl LightingTab {
                 if let Some(method) = caustics {
                     config.caustics_method = method;
                 }
-                ui.add(crate::field::Checkbox::new(&mut config.interior_mode, "Interior mode"));
+                ui.add(crate::field::Checkbox::new(&mut config.interior_mode, "Interior mode"))
+                    .on_hover_text("For a room lit through its windows: looks harder for the light that finds its way in. Slower, much cleaner.");
                 ui.add(
                     crate::field::Slider::new(&mut config.regularization_roughness, 0.0..=0.4)
                         .text("Roughness floor"),
-                );
+                )
+                .on_hover_text("Treats very shiny surfaces as a little rougher after the first bounce, which takes the sparkle of noise out of their reflections. 0 is exact.");
 
                 let unset = tequila_render_core::settings::CyclesTransport::NONE;
                 crate::field::Fold::new("Advanced (Cycles)")
                     .id_salt("lighting-cycles-light-paths")
                     .default_open(config.cycles != unset)
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(
-                                "Blender's Light Paths, for a studio that must match one. Unticked, Cycles takes \
-                                 what it always has; with diffuse or glossy set, Ray bounces is the total.",
-                            )
-                            .small()
-                            .color(crate::theme::dim()),
+                        crate::theme::note(
+                            ui,
+                            "Blender's Light Paths, for a studio that must match one. Unticked, Cycles takes \
+                             what it always has; with diffuse or glossy set, Ray bounces is the total.",
                         );
                         let automatic = config.max_bounces.max(4);
                         optional_count(ui, "Diffuse bounces", &mut config.cycles.diffuse_bounces, automatic);
@@ -302,7 +319,8 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
     let before = (**settings).clone();
     let mut light = before.clone();
 
-    ui.add(crate::field::Checkbox::new(&mut light.enabled, "Enabled"));
+    crate::theme::section(ui, "Light");
+    ui.add(crate::field::Checkbox::new(&mut light.enabled, "On"));
 
     // ---- Shape ---------------------------------------------------------
     match &mut light.shape {
@@ -353,47 +371,51 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
     }
 
     // ---- Intensity ------------------------------------------------------
-    ui.add_space(4.0);
+    crate::theme::heading(ui, "Brightness");
     let mut amount = light.intensity.value();
-    ui.horizontal(|ui| {
+    crate::field::row(ui, "Amount", |ui| {
         let speed = amount.max(1.0) * 0.02;
-        ui.add(
+        ui.add_sized(
+            [ui.available_width().min(120.0), 26.0],
             egui::DragValue::new(&mut amount)
                 .speed(speed)
-                .range(0.0..=f32::INFINITY),
+                .range(0.0..=f32::INFINITY)
+                .suffix(format!(" {}", light.intensity.unit())),
         );
-        // The unit is part of the value, not a display option: 1500 lumens and
-        // 1500 nits are different lights, and switching the unit must keep the
-        // number the user typed rather than silently converting it into
-        // something they did not ask for.
-        for candidate in [
-            Intensity::Lumens(amount),
-            Intensity::Nits(amount),
-            Intensity::Candela(amount),
-            Intensity::Lux(amount),
-        ] {
-            let selected =
-                std::mem::discriminant(&light.intensity) == std::mem::discriminant(&candidate);
-            if ui.selectable_label(selected, candidate.unit()).clicked() {
-                light.intensity = candidate;
-            }
-        }
     });
+    // The unit is part of the value, not a display option: 1500 lumens and
+    // 1500 nits are different lights, and switching the unit must keep the
+    // number the user typed rather than silently converting it into
+    // something they did not ask for.
+    let units = [
+        Intensity::Lumens(amount),
+        Intensity::Nits(amount),
+        Intensity::Candela(amount),
+        Intensity::Lux(amount),
+    ];
+    let mut unit = units.iter().position(|c| std::mem::discriminant(c) == std::mem::discriminant(&light.intensity)).unwrap_or(0);
+    let names: Vec<(usize, &str)> = units.iter().enumerate().map(|(i, c)| (i, c.unit())).collect();
+    if crate::field::choice(ui, "Measured in", &mut unit, &names) {
+        light.intensity = units[unit];
+    }
     light.intensity = light.intensity.with_value(amount);
 
     // ---- Colour ---------------------------------------------------------
-    ui.add_space(4.0);
+    crate::theme::heading(ui, "Colour");
     let mut by_temperature = light.temperature.is_some();
-    if ui.add(crate::field::Checkbox::new(&mut by_temperature, "Colour temperature")).changed() {
+    if crate::field::choice(ui, "Set by", &mut by_temperature, &[(false, "Colour"), (true, "Temperature")]) {
         light.temperature = by_temperature.then_some(5500.0);
     }
     match &mut light.temperature {
         Some(kelvin) => {
             ui.add(
                 crate::field::Slider::new(kelvin, 1500.0..=15000.0)
-                    .text("Kelvin")
+                    .text("Temperature")
+                    .suffix(" K")
+                    .fixed_decimals(0)
                     .logarithmic(true),
-            );
+            )
+            .on_hover_text("Warm candlelight is about 1900 K, a household bulb 2700 K, daylight 5500 K, an overcast sky 7000 K.");
         }
         None => {
             crate::color_picker::field(ui, "Colour", &mut light.color);
@@ -402,10 +424,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
 
     // ---- Photometry (§5.1) ----------------------------------------------
     // Not for a sun, which is not a fitting.
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     let mut photometric = light.photometry.is_some();
     if !matches!(light.shape, LightShape::Sun { .. }) && ui
-        .add(crate::field::Checkbox::new(&mut photometric, "Photometric file"))
+        .add(crate::field::Checkbox::new(&mut photometric, "Use a maker's light file (.ies)"))
         .on_hover_text(
             "Use a manufacturer's measured distribution — an .ies file — instead of \
              the shape's own falloff. The shape still says where the light is and \
@@ -418,12 +440,24 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project) -> bool {
         });
     }
     if let Some(photometry) = &mut light.photometry {
-        ui.add(
-            egui::TextEdit::singleline(&mut photometry.path)
-                .desired_width(f32::INFINITY)
-                .hint_text("path to a .ies file"),
-        );
+        let mut browse = false;
+        crate::field::row(ui, "File", |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                browse = ui.button("Choose…").clicked();
+                ui.add(
+                    egui::TextEdit::singleline(&mut photometry.path)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(egui::RichText::new("No file").color(crate::theme::p().text_faint)),
+                );
+            });
+        });
+        if browse {
+            if let Some(file) = rfd::FileDialog::new().add_filter("Photometric file", &["ies"]).set_title("A light's measured spread").pick_file() {
+                photometry.path = file.display().to_string();
+            }
+        }
     }
+    ui.add_space(4.0);
 
     // ---- Visibility and layers -----------------------------------------
     crate::field::Fold::new("Visibility")
@@ -499,7 +533,7 @@ fn linking_fold(
                 };
             }
             let Some(links) = links else {
-                ui.label(egui::RichText::new(everything).small().color(crate::theme::dim()));
+                crate::theme::note(ui, everything);
                 return;
             };
             ui.add(crate::field::Checkbox::new(&mut links.product, "The product"))
@@ -521,8 +555,8 @@ fn linking_fold(
             }
             let deeper = links.nodes.iter().filter(|n| !roots.contains(n)).count();
             if deeper > 0 {
-                ui.label(egui::RichText::new(format!("and {deeper} parts set by a script")).small().color(crate::theme::dim()));
+                crate::theme::note(ui, format!("and {deeper} parts set by a script"));
             }
-            ui.label(egui::RichText::new(note).small().color(crate::theme::dim()));
+            crate::theme::note(ui, note);
         });
 }

@@ -51,37 +51,45 @@ impl StudioTab {
     /// camera has to follow.
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
         let mut camera_moved = false;
-        crate::theme::section(ui, "Snapshots");
         camera_moved |= studios(ui, project, &mut self.thumbnails, &mut self.reorder);
         let views = project.document().studios.len();
         if views > 1
             && ui
-                .button(format!("Render all {views} views"))
+                .button(format!("Render all {views} Snapshots"))
                 .on_hover_text("Queue every Snapshot, one image each, named for the view: {view} in the file name.")
                 .clicked()
         {
             self.render_all = true;
         }
-        ui.add_space(6.0);
-        ui.separator();
-        crate::theme::section(ui, "Turntable");
-        camera_moved |= self.turntable(ui, project);
-        ui.add_space(6.0);
-        ui.separator();
-        crate::theme::section(ui, "Model sets");
-        model_sets(ui, project);
-        ui.add_space(6.0);
-        ui.separator();
-        crate::theme::section(ui, "Material variants");
-        variants(ui, project);
-        ui.add_space(6.0);
-        ui.separator();
-        crate::theme::section(ui, "Configurator");
-        if std::mem::take(&mut self.reveal) {
-            ui.scroll_to_cursor(Some(egui::Align::TOP));
-        }
+        // The Snapshots are the page; what follows are four tools that
+        // build on them, each folded to a row until it is in use. Open,
+        // each began with a paragraph, and the page was mostly reading.
+        ui.add_space(8.0);
+        let document = project.document();
+        let (turning, sets, variants_in_use) = (document.animation.is_some(), document.model_sets.sets.len(), document.multi_materials.len());
+        crate::field::Fold::new("Turntable").id_salt("snapshots-turntable").default_open(turning).show(ui, |ui| {
+            camera_moved |= self.turntable(ui, project);
+        });
+        crate::field::Fold::new(if sets > 0 { format!("Model sets · {sets}") } else { "Model sets".to_string() })
+            .id_salt("snapshots-model-sets")
+            .default_open(sets > 0)
+            .show(ui, |ui| model_sets(ui, project));
+        crate::field::Fold::new(if variants_in_use > 0 { format!("Material variants · {variants_in_use}") } else { "Material variants".to_string() })
+            .id_salt("snapshots-variants")
+            .default_open(variants_in_use > 0)
+            .show(ui, |ui| variants(ui, project));
+        let reveal = std::mem::take(&mut self.reveal);
+        let configured = !project.document().configurator.options.is_empty();
         let before = project.document().configurator.current.clone();
-        self.action = self.wizard.show(ui, project).or(self.action.take());
+        let mut action = None;
+        let wizard = &mut self.wizard;
+        let fold = crate::field::Fold::new("Configurator").id_salt("snapshots-configurator").default_open(configured).reveal(reveal).show(ui, |ui| {
+            action = wizard.show(ui, project);
+        });
+        if reveal {
+            ui.scroll_to_rect(fold.header_response.rect, Some(egui::Align::TOP));
+        }
+        self.action = action.or(self.action.take());
         // A configuration with a Studio in it can move the camera.
         let configurator = &project.document().configurator;
         if configurator.current != before
@@ -114,11 +122,16 @@ impl StudioTab {
     fn turntable(&mut self, ui: &mut egui::Ui, project: &mut Project) -> bool {
         use tequila_scene::animation::{Animation, Interpolation};
         let draft = &mut self.turntable;
-        ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut draft.frames).range(1..=3600).suffix(" frames"));
-            ui.add(egui::DragValue::new(&mut draft.degrees).range(-3600.0..=3600.0).suffix("°"));
-            ui.add(egui::DragValue::new(&mut draft.fps).range(1.0..=120.0).suffix(" fps"));
-        });
+        crate::theme::note(ui, "The product turning on the spot, rendered as one numbered image a frame.");
+        ui.add(crate::field::Slider::new(&mut draft.frames, 1..=360).text("Frames").logarithmic(true).clamping(egui::SliderClamping::Never))
+            .on_hover_text("How many images the turn is made of. 36 is a step of ten degrees.");
+        draft.frames = draft.frames.clamp(1, 3600);
+        ui.add(crate::field::Slider::new(&mut draft.degrees, -360.0..=360.0).text("Turn").suffix("°").fixed_decimals(0).clamping(egui::SliderClamping::Never))
+            .on_hover_text("How far it turns over the frames. 360 is once round; a negative angle turns the other way.");
+        draft.degrees = draft.degrees.clamp(-3600.0, 3600.0);
+        ui.add(crate::field::Slider::new(&mut draft.fps, 1.0..=60.0).text("Frames a second").fixed_decimals(0).clamping(egui::SliderClamping::Never))
+            .on_hover_text("How fast it plays as a video.");
+        draft.fps = draft.fps.clamp(1.0, 120.0);
         ui.add(crate::field::Checkbox::new(&mut draft.ease, "Ease in and out"))
             .on_hover_text("Start and stop the turn gently, rather than at an even rate all the way.");
         let existing = project.document().animation.clone();
@@ -140,7 +153,6 @@ impl StudioTab {
             }
         });
         let Some(animation) = existing else {
-            ui.label(egui::RichText::new("A turntable renders the product turning, one numbered image a frame.").small().color(crate::theme::dim()));
             return false;
         };
         let last = animation.frames.saturating_sub(1);
@@ -581,10 +593,10 @@ impl Reorder {
 
 fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails, reorder: &mut Reorder) -> bool {
     thumbnails.update(ui.ctx(), project);
-    ui.small(
-        "A Snapshot is a saved shot: the camera, the environment, the image style, \
-         the model set and the material variants, recalled in one click. Drag \
-         one by its picture to move it in the list.",
+    crate::theme::note(
+        ui,
+        "A Snapshot is a saved shot: the camera, the lighting, the picture's look and \
+         which versions of the model and its materials show. Click one to go back to it.",
     );
     let original = project.document().studios.clone();
     let mut list = original.clone();
@@ -771,7 +783,7 @@ fn studios(ui: &mut egui::Ui, project: &mut Project, thumbnails: &mut Thumbnails
 // ---- Model sets -----------------------------------------------------------------
 
 fn model_sets(ui: &mut egui::Ui, project: &mut Project) {
-    ui.small(
+    crate::theme::note(ui,
         "Versions of the model in one project: one set is shown at a time, and \
          an always-visible set — a backdrop, a stand — shows with every one.",
     );
@@ -813,7 +825,7 @@ fn model_sets(ui: &mut egui::Ui, project: &mut Project) {
                 ui.add(egui::TextEdit::singleline(&mut set.name).desired_width(110.0));
                 ui.add(crate::field::Checkbox::new(&mut set.always_visible, "Always"))
                     .on_hover_text("Always visible: shown whichever set is active.");
-                ui.weak(format!("{} nodes", set.nodes.len()));
+                crate::theme::note(ui, format!("{} nodes", set.nodes.len()));
                 if ui
                     .add_enabled(!selection.is_empty(), egui::Button::new("Use selection").small())
                     .on_hover_text("Make the selection this set's members.")
@@ -846,7 +858,7 @@ fn model_sets(ui: &mut egui::Ui, project: &mut Project) {
 // ---- Material variants -------------------------------------------------------------
 
 fn variants(ui: &mut egui::Ui, project: &mut Project) {
-    ui.small(
+    crate::theme::note(ui,
         "Colourways: several materials for the same parts, one in use. Switching \
          is one click and one undo step, and a Snapshot can remember the choice.",
     );
@@ -904,7 +916,7 @@ fn variants(ui: &mut egui::Ui, project: &mut Project) {
             let multi = &mut list[index];
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut multi.name).desired_width(120.0));
-                ui.weak(format!("{} parts", multi.parts.len()));
+                crate::theme::note(ui, format!("{} parts", multi.parts.len()));
                 if ui.small_button("×").on_hover_text("Delete the variants; parts keep the one in use").clicked() {
                     remove = Some(index);
                 }

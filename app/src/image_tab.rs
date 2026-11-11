@@ -33,39 +33,50 @@ impl ImageTab {
         let before = project.image_style();
         let mut style = before;
 
-        ui.horizontal(|ui| {
-            for mode in ToneMode::ALL {
-                ui.selectable_value(&mut style.mode, mode, mode.label());
-            }
+        // Reset at the heading's right, where it is found before the
+        // controls it clears and is not one more row among them.
+        let reset = crate::theme::heading_with_first(ui, "Adjust", |ui| {
+            ui.add(egui::Button::new("Reset").small())
+                .on_hover_text("Put every adjustment on this page back, keeping the tone map")
+                .clicked()
         });
+        let modes: Vec<(ToneMode, &str)> = ToneMode::ALL.iter().map(|m| (*m, m.label())).collect();
+        crate::theme::segmented(ui, &mut style.mode, &modes);
         ui.add_space(2.0);
 
-        ui.add(crate::field::Slider::new(&mut style.exposure, -6.0..=6.0).text("Exposure"));
+        ui.add(crate::field::Slider::new(&mut style.exposure, -6.0..=6.0).text("Exposure"))
+            .on_hover_text("Brighter or darker, in stops: +1 is twice the light");
         ui.add(crate::field::Slider::new(&mut style.contrast, 0.4..=2.5).text("Contrast"));
         ui.add(crate::field::Slider::new(&mut style.saturation, 0.0..=2.0).text("Saturation"));
 
         if style.mode == ToneMode::Photographic {
-            ui.add_space(4.0);
+            crate::theme::heading(ui, "Tones");
             ui.add(crate::field::Slider::new(&mut style.highlights, -1.0..=1.0).text("Highlights"));
             ui.add(crate::field::Slider::new(&mut style.shadows, -1.0..=1.0).text("Shadows"));
             ui.add(crate::field::Slider::new(&mut style.whites, -1.0..=1.0).text("Whites"));
             ui.add(crate::field::Slider::new(&mut style.blacks, -1.0..=1.0).text("Blacks"));
 
-            ui.add_space(4.0);
+            let neutral = crate::theme::heading_with(ui, "White balance", |ui| {
+                ui.add(egui::Button::new("Neutral").small())
+                    .on_hover_text("Daylight, with no tint")
+                    .clicked()
+            });
             ui.add(
                 crate::field::Slider::new(&mut style.temperature, 1800.0..=15000.0)
                     .text("Temperature")
                     .suffix(" K")
+                    .fixed_decimals(0)
                     .logarithmic(true),
             );
             ui.add(crate::field::Slider::new(&mut style.tint, -1.0..=1.0).text("Tint"));
-            if ui.small_button("Neutral").clicked() {
+            if neutral {
                 style.temperature = NEUTRAL_KELVIN;
                 style.tint = 0.0;
             }
 
-            ui.add_space(4.0);
-            ui.add(crate::field::Slider::new(&mut style.vignette, 0.0..=1.0).text("Vignette"));
+            crate::theme::heading(ui, "Lens effects");
+            ui.add(crate::field::Slider::new(&mut style.vignette, 0.0..=1.0).text("Vignette"))
+                .on_hover_text("Darkens the picture's corners, as a lens does");
             ui.add(crate::field::Slider::new(&mut style.bloom, 0.0..=1.0).text("Bloom"));
             if style.bloom > 0.0 {
                 ui.add(
@@ -81,18 +92,20 @@ impl ImageTab {
             );
         }
 
-        ui.add_space(4.0);
-        egui::ComboBox::from_label("Tone map")
-            .selected_text(style.display.label())
-            .show_ui(ui, |ui| {
+        crate::theme::heading(ui, "Output");
+        crate::field::row(ui, "Tone map", |ui| {
+            crate::field::combo(ui, "image-tone-map", style.display.label(), |ui| {
                 for transform in DisplayTransform::ALL {
                     ui.selectable_value(&mut style.display, transform, transform.label());
                 }
             });
+        })
+        .response
+        .on_hover_text("How the render's light is fitted to a screen. PBR Neutral keeps colours as the materials set them; AgX and Filmic roll bright areas off like film; sRGB is the plain curve other programs' Standard view uses.");
 
         self.color_management(ui, project);
 
-        if ui.small_button("Reset").clicked() {
+        if reset {
             // The display transform survives a reset: it is a choice about the
             // *output device and pipeline*, not part of the look, and having it
             // snap back to AgX every time the grade is cleared would be an
@@ -103,11 +116,7 @@ impl ImageTab {
             };
         }
 
-        ui.label(
-            egui::RichText::new("These re-grade the accumulated image; they never restart it.")
-                .small()
-                .weak(),
-        );
+        crate::theme::note(ui, "Changing these never restarts the render: they work on the picture it has made.");
 
         if style != before {
             let _ = project.apply(Command::SetImageStyle {
@@ -134,19 +143,31 @@ impl ImageTab {
                     (None, None) => String::new(),
                 };
 
-                ui.label(
-                    egui::RichText::new(
-                        "Point at an OpenColorIO config to develop through the same \
-                         transforms as the rest of your pipeline.",
-                    )
-                    .small()
-                    .weak(),
+                crate::theme::note(
+                    ui,
+                    "For a studio with its own colour pipeline: point at its OpenColorIO config \
+                     and the picture is developed through the same transforms.",
                 );
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut path)
-                        .desired_width(f32::INFINITY)
-                        .hint_text("path to config.ocio"),
-                );
+                let mut browse = false;
+                let response = crate::field::row(ui, "Config", |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        browse = ui.button("Choose…").clicked();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut path)
+                                .desired_width(f32::INFINITY)
+                                .hint_text(egui::RichText::new("No config").color(crate::theme::p().text_faint)),
+                        )
+                    })
+                    .inner
+                })
+                .inner;
+                if browse {
+                    if let Some(file) = rfd::FileDialog::new().add_filter("OpenColorIO config", &["ocio"]).set_title("Colour config").pick_file() {
+                        self.typing = None;
+                        self.load(&file.display().to_string(), project);
+                        return;
+                    }
+                }
                 if response.changed() {
                     self.typing = Some(path.clone());
                 }
@@ -182,25 +203,25 @@ impl ImageTab {
                 }
 
                 let mut chosen = selection.clone();
-                egui::ComboBox::from_label("Display")
-                    .selected_text(&chosen.display)
-                    .show_ui(ui, |ui| {
+                crate::field::row(ui, "Display", |ui| {
+                    crate::field::combo(ui, "ocio-display", chosen.display.clone(), |ui| {
                         for (display, _) in &displays {
                             ui.selectable_value(&mut chosen.display, display.clone(), display);
                         }
                     });
+                });
                 let views = displays
                     .iter()
                     .find(|(name, _)| *name == chosen.display)
                     .map(|(_, views)| views.clone())
                     .unwrap_or_default();
-                egui::ComboBox::from_label("View")
-                    .selected_text(&chosen.view)
-                    .show_ui(ui, |ui| {
+                crate::field::row(ui, "View", |ui| {
+                    crate::field::combo(ui, "ocio-view", chosen.view.clone(), |ui| {
                         for view in &views {
                             ui.selectable_value(&mut chosen.view, view.clone(), view);
                         }
                     });
+                });
                 // Changing the display can leave a view that the new one does
                 // not have, which would develop through nothing at all.
                 if !views.is_empty() && !views.contains(&chosen.view) {

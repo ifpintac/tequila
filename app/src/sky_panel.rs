@@ -45,9 +45,10 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project) {
                 changed = true;
             }
             let Some(sky) = next.as_mut() else {
-                ui.weak(
+                crate::theme::note(
+                    ui,
                     "Off. The scene is lit by the built-in studio, or by an \
-                     image you load above.",
+                     image you choose above.",
                 );
                 return;
             };
@@ -69,11 +70,11 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project) {
             let (mut bearing_deg, mut height_deg) = (bearing.to_degrees(), height.to_degrees());
             let mut moved = false;
             moved |= ui
-                .add(crate::field::Slider::new(&mut bearing_deg, -180.0..=180.0).text("Sun around °"))
+                .add(crate::field::Slider::new(&mut bearing_deg, -180.0..=180.0).text("Sun around").suffix("°"))
                 .on_hover_text("Which way the sun is. 0 is behind the camera.")
                 .changed();
             moved |= ui
-                .add(crate::field::Slider::new(&mut height_deg, -10.0..=89.0).text("Sun height °"))
+                .add(crate::field::Slider::new(&mut height_deg, -10.0..=89.0).text("Sun height").suffix("°"))
                 .on_hover_text(
                     "How high. Below zero is dusk: the sun is gone and only the \
                      sky is left.",

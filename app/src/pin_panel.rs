@@ -45,15 +45,19 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
     let mut export = false;
     let missing = project.missing_pin_images();
 
-    crate::field::Fold::new(format!("Lighting pins · {}", pins.len()))
+    crate::field::Fold::new(if pins.is_empty() { "Lighting pins".to_string() } else { format!("Lighting pins · {}", pins.len()) })
+        // Open once there are pins, whatever it was while there were none.
+        .id_salt(("lighting-pins", pins.is_empty()))
         .default_open(!pins.is_empty())
         .show(ui, |ui| {
-            ui.small(
+            crate::theme::note(
+                ui,
                 "Softboxes painted onto the environment. They light the scene, \
                  cast soft shadows and show up in reflections.",
             );
 
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 if ui
                     .button("+ Softbox")
                     .on_hover_text("One light, in front and above.")
@@ -94,7 +98,8 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
             });
 
             if pins.is_empty() {
-                ui.weak(
+                crate::theme::note(
+                    ui,
                     "No pins. The scene is lit by the environment alone — add a \
                      softbox, or start from one of the setups above.",
                 );
@@ -105,74 +110,103 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
             let count = pins.len();
             for index in 0..count {
                 ui.push_id(index, |ui| {
-                    ui.separator();
+                    crate::theme::rule(ui);
                     let pin = &mut pins[index];
+                    // One row a pin, its settings folded under it: five pins
+                    // each with a dozen controls showing made a page six
+                    // screens long, and the pin wanted was a scroll away. The
+                    // one being aimed is always open.
+                    let open_id = ui.id().with("open");
+                    let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(count == 1) || aiming == Some(index);
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let chevron = crate::icons::button(
+                            ui,
+                            if open { crate::icons::Icon::ChevronDown } else { crate::icons::Icon::ChevronRight },
+                            false,
+                            22.0,
+                            egui::Sense::click(),
+                        )
+                        .on_hover_text(if open { "Fold its settings away" } else { "Its position, size and softness" });
+                        if chevron.clicked() {
+                            open = !open;
+                        }
                         ui.add(crate::field::Checkbox::new(&mut pin.enabled, "")).on_hover_text("Light on");
-                        ui.add(egui::TextEdit::singleline(&mut pin.name).desired_width(110.0));
-                        crate::color_picker::edit(ui, &mut pin.color);
-                        // An eye, because "show in background" is a sentence
-                        // and this row is already full.
-                        let seen = pin.show_in_background;
+                        // The buttons from the row's end, and the name what
+                        // they leave: measured out by hand, the name was a
+                        // little too wide, and each row ran further past the
+                        // panel than the one above it.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if crate::icons::button(ui, crate::icons::Icon::Close, false, 24.0, egui::Sense::click()).on_hover_text("Remove this pin").clicked() {
+                                remove = Some(index);
+                            }
+                            let lights = pin.in_lighting;
+                            if crate::icons::button(ui, crate::icons::Icon::Light, lights, 24.0, egui::Sense::click())
+                                .on_hover_text(if lights {
+                                    "Lights the scene and shows in reflections. Click \
+                                     to make it background only."
+                                } else {
+                                    "Background only: seen behind the product, lights \
+                                     nothing. Click to let it light the scene."
+                                })
+                                .clicked()
+                            {
+                                pin.in_lighting = !lights;
+                            }
+                            // An eye, because "show in background" is a sentence
+                            // and this row is already full.
+                            let seen = pin.show_in_background;
+                            if crate::icons::button(ui, if seen { crate::icons::Icon::Eye } else { crate::icons::Icon::EyeClosed }, false, 24.0, egui::Sense::click())
+                                .on_hover_text(if seen {
+                                    "Seen behind the product. Click to hide it — it \
+                                     goes on lighting the scene and showing in \
+                                     reflections."
+                                } else {
+                                    "Hidden behind the product, still lighting it \
+                                     and still in its reflections. Click to show."
+                                })
+                                .clicked()
+                            {
+                                pin.show_in_background = !seen;
+                            }
+                            crate::color_picker::edit(ui, &mut pin.color);
+                            ui.add(egui::TextEdit::singleline(&mut pin.name).desired_width(f32::INFINITY));
+                        });
+                    });
+                    ui.data_mut(|d| d.insert_temp(open_id, open));
+                    if !open {
+                        return;
+                    }
+                    ui.indent("pin-settings", |ui| {
+                        let pin = &mut pins[index];
                         if ui
-                            .add(egui::SelectableLabel::new(seen, if seen { "👁" } else { "🚫" }))
-                            .on_hover_text(if seen {
-                                "Seen behind the product. Click to hide it — it \
-                                 goes on lighting the scene and showing in \
-                                 reflections."
-                            } else {
-                                "Hidden behind the product, still lighting it \
-                                 and still in its reflections. Click to show."
-                            })
-                            .clicked()
-                        {
-                            pin.show_in_background = !seen;
-                        }
-                        let lights = pin.in_lighting;
-                        if ui
-                            .add(egui::SelectableLabel::new(lights, "💡"))
-                            .on_hover_text(if lights {
-                                "Lights the scene and shows in reflections. Click \
-                                 to make it background only."
-                            } else {
-                                "Background only: seen behind the product, lights \
-                                 nothing. Click to let it light the scene."
-                            })
-                            .clicked()
-                        {
-                            pin.in_lighting = !lights;
-                        }
-                        if ui.small_button("×").on_hover_text("Remove").clicked() {
-                            remove = Some(index);
-                        }
-                        if ui
-                            .add(egui::SelectableLabel::new(aiming == Some(index), "◎ Aim"))
+                            .add(egui::Button::new(if aiming == Some(index) { "Aiming: click the model" } else { "Aim in the view" }).selected(aiming == Some(index)))
                             .on_hover_text(AIM_HINT)
                             .clicked()
                         {
                             aim_request = Some(index);
                         }
-                    });
-                    if let PinKind::Image { path } = &pin.kind {
-                        ui.horizontal(|ui| {
+                        if let PinKind::Image { path } = &pin.kind {
                             let name = std::path::Path::new(path)
                                 .file_name()
                                 .map(|n| n.to_string_lossy().into_owned())
                                 .unwrap_or_else(|| "no picture".into());
-                            ui.label(format!("🖼 {name}")).on_hover_text(path.as_str());
-                            if ui.small_button("Change…").clicked() {
-                                pick_picture = Some(Some(index));
+                            crate::field::row(ui, "Picture", |ui| {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("Change…").clicked() {
+                                        pick_picture = Some(Some(index));
+                                    }
+                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.add(egui::Label::new(name).truncate()).on_hover_text(path.as_str());
+                                    });
+                                });
+                            });
+                            if missing.contains(path) {
+                                crate::theme::warning(ui, "This picture will not load, so the pin shows nothing.");
                             }
-                        });
-                        if missing.contains(path) {
-                            ui.label(
-                                egui::RichText::new("This picture will not load, so the pin shows nothing.")
-                                    .small()
-                                    .color(crate::theme::p().busy),
-                            );
                         }
-                    }
-                    controls(ui, pin);
+                        controls(ui, pin);
+                    });
                 });
             }
             if let Some(index) = remove {
@@ -181,11 +215,12 @@ pub fn show(ui: &mut egui::Ui, project: &mut Project, aiming: Option<usize>) -> 
             }
         });
 
+    crate::theme::rule(ui);
     ui.horizontal(|ui| {
         let id = ui.id().with("export width");
         let mut width: usize = ui.data_mut(|d| *d.get_temp_mut_or(id, 4096usize));
         export = ui
-            .button("Export HDRI…")
+            .button("Save as a lighting image…")
             .on_hover_text(
                 "Write the environment with its pins painted in as an .exr or .hdr \
                  file, for another application or to keep.",
@@ -261,11 +296,7 @@ pub fn map_section(ui: &mut egui::Ui, project: &mut Project) {
         project.end_interaction();
         pins = added;
     }
-    ui.label(
-        egui::RichText::new("Drag a light to move it · scroll over it to size it · double-click the sky to add one")
-            .small()
-            .color(crate::theme::dim()),
-    );
+    crate::theme::note(ui, "Drag a light to move it · scroll over it to size it · double-click the sky to add one");
     if pins != original {
         if let Err(error) = project.apply(Command::SetEnvironmentPins { pins }) {
             project.status = error.to_string();
@@ -498,20 +529,15 @@ fn export_hdri(project: &mut Project, width: usize) {
 
 /// A gradient's stops, and its shape.
 fn gradient_controls(ui: &mut egui::Ui, stops: &mut Vec<GradientStop>, radial: &mut bool) {
-    ui.horizontal(|ui| {
-        ui.label("Gradient");
-        ui.selectable_value(radial, true, "Round")
-            .on_hover_text("Out from the pin's centre in every direction. Centred straight down, floor to ceiling.");
-        ui.selectable_value(radial, false, "Across")
-            .on_hover_text("Bottom to top across the pin.");
-    });
+    crate::field::choice(ui, "Gradient", radial, &[(true, "Round"), (false, "Across")]);
     let mut remove = None;
     let count = stops.len();
     for (index, stop) in stops.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             crate::color_picker::edit(ui, &mut stop.color);
-            ui.add(crate::field::Slider::new(&mut stop.t, 0.0..=1.0).text("at"));
-            if count > 2 && ui.small_button("×").on_hover_text("Remove this colour").clicked() {
+            let close = if count > 2 { 26.0 + ui.spacing().item_spacing.x } else { 0.0 };
+            crate::field::column(ui, ui.available_width() - close, |ui| ui.add(crate::field::Slider::new(&mut stop.t, 0.0..=1.0).text("at")));
+            if count > 2 && crate::icons::button(ui, crate::icons::Icon::Close, false, 26.0, egui::Sense::click()).on_hover_text("Remove this colour").clicked() {
                 remove = Some(index);
             }
         });
@@ -519,7 +545,7 @@ fn gradient_controls(ui: &mut egui::Ui, stops: &mut Vec<GradientStop>, radial: &
     if let Some(index) = remove {
         stops.remove(index);
     }
-    if ui.small_button("+ Colour").clicked() {
+    if ui.button("+ Colour").clicked() {
         let t = 0.5;
         let color = tequila_render_core::pins::gradient_at(stops, t);
         stops.push(GradientStop { t, color });
@@ -538,7 +564,7 @@ fn controls(ui: &mut egui::Ui, pin: &mut Pin) {
     moved |= ui
         .add(
             crate::field::Slider::new(&mut bearing_deg, -180.0..=180.0)
-                .text("Around °")
+                .text("Around")
                 .suffix("°"),
         )
         .on_hover_text("Swing the light around the product. 0 is behind the camera.")
@@ -546,7 +572,7 @@ fn controls(ui: &mut egui::Ui, pin: &mut Pin) {
     moved |= ui
         .add(
             crate::field::Slider::new(&mut height_deg, -89.0..=89.0)
-                .text("Height °")
+                .text("Height")
                 .suffix("°"),
         )
         .on_hover_text("Raise or lower it. 90 is straight overhead.")
@@ -569,31 +595,28 @@ fn controls(ui: &mut egui::Ui, pin: &mut Pin) {
     // sphere; everything else stops short of a hemisphere, where a flat
     // footprint stops meaning anything.
     let widest = if radial { 360.0 } else { 170.0 };
-    ui.horizontal(|ui| {
-        ui.label("Size °");
-        if ui
-            .add(egui::DragValue::new(&mut width).speed(0.5).range(1.0..=widest))
-            .changed()
-        {
+    let size_hint = "How big the light looks from the product. A bigger source gives a \
+         softer shadow edge — the same reason a photographer moves a softbox \
+         closer.";
+    if radial {
+        if ui.add(crate::field::Slider::new(&mut width, 1.0..=widest).text("Size").suffix("°")).on_hover_text(size_hint).changed() {
             pin.angular_size.x = width.to_radians();
         }
-        if !radial && ui
-            .add(
-                egui::DragValue::new(&mut height_size)
-                    .speed(0.5)
-                    .range(1.0..=170.0),
-            )
-            .changed()
-        {
-            pin.angular_size.y = height_size.to_radians();
-        }
-    })
-    .response
-    .on_hover_text(
-        "How big the light looks from the product. A bigger source gives a \
-         softer shadow edge — the same reason a photographer moves a softbox \
-         closer.",
-    );
+    } else {
+        crate::field::pair(
+            ui,
+            |ui| {
+                if ui.add(crate::field::Slider::new(&mut width, 1.0..=widest).text("Wide").suffix("°")).on_hover_text(size_hint).changed() {
+                    pin.angular_size.x = width.to_radians();
+                }
+            },
+            |ui| {
+                if ui.add(crate::field::Slider::new(&mut height_size, 1.0..=170.0).text("Tall").suffix("°")).on_hover_text(size_hint).changed() {
+                    pin.angular_size.y = height_size.to_radians();
+                }
+            },
+        );
+    }
 
     ui.add(crate::field::Slider::new(&mut pin.softness, 0.0..=1.0).text("Softness"))
         .on_hover_text(
@@ -603,7 +626,7 @@ fn controls(ui: &mut egui::Ui, pin: &mut Pin) {
 
     let mut roll_deg = pin.roll.to_degrees();
     if ui
-        .add(crate::field::Slider::new(&mut roll_deg, -90.0..=90.0).text("Turn °"))
+        .add(crate::field::Slider::new(&mut roll_deg, -90.0..=90.0).text("Turn").suffix("°"))
         .on_hover_text("Turns the box on its own axis. Only visible when it is not square.")
         .changed()
     {
@@ -611,19 +634,16 @@ fn controls(ui: &mut egui::Ui, pin: &mut Pin) {
     }
 
     if !radial {
-        ui.horizontal(|ui| {
-            ui.label("Shape");
-            ui.selectable_value(&mut pin.shape, PinShape::Rectangle, "Box");
-            ui.selectable_value(&mut pin.shape, PinShape::Ellipse, "Round");
-        });
+        crate::field::choice(ui, "Shape", &mut pin.shape, &[(PinShape::Rectangle, "Box"), (PinShape::Ellipse, "Round")]);
     }
-    ui.horizontal(|ui| {
-        ui.label("Blend");
-        ui.selectable_value(&mut pin.blend, PinBlend::Add, "Add")
-            .on_hover_text("Adds light on top of what is there, like a real light.");
-        ui.selectable_value(&mut pin.blend, PinBlend::Over, "Cover")
-            .on_hover_text("Covers what is under it: the pins above it in the list and the environment.");
-    });
+    crate::field::choice(ui, "Blend", &mut pin.blend, &[(PinBlend::Add, "Add"), (PinBlend::Over, "Cover")]);
+    crate::theme::note(
+        ui,
+        match pin.blend {
+            PinBlend::Add => "Adds its light on top of what is there, like a real light.",
+            PinBlend::Over => "Covers what is under it: the pins above it in the list and the environment.",
+        },
+    );
 }
 
 #[cfg(test)]

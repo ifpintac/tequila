@@ -71,35 +71,36 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, group: NodeId) {
     let unit = numeric::Unit::from_scene(shown);
     let mut edited = current.clone();
     let mut committed = false;
-    let dim = crate::theme::p().text_dim;
 
-    ui.horizontal(|ui| {
-        ui.label("Kind");
-        let circle = matches!(current.kind, PatternKind::Circle { .. });
-        for (label, wants_circle) in [("Line", false), ("Circle", true)] {
-            if ui.selectable_label(circle == wants_circle, label).clicked() && circle != wants_circle {
-                if let Some(start) = pattern::starting(project.document(), current.source, wants_circle) {
-                    edited.kind = start.kind;
-                    committed = true;
-                }
-            }
+    let circle = matches!(current.kind, PatternKind::Circle { .. });
+    let mut wants_circle = circle;
+    if crate::field::choice(ui, "Kind", &mut wants_circle, &[(false, "Line"), (true, "Circle")]) && wants_circle != circle {
+        if let Some(start) = pattern::starting(project.document(), current.source, wants_circle) {
+            edited.kind = start.kind;
+            committed = true;
         }
-    });
-    ui.horizontal(|ui| {
-        ui.label("Count");
-        let field = ui.add(egui::DragValue::new(&mut edited.count).range(2..=MOST).speed(0.1)).on_hover_text("How many there are, the original included");
+    }
+    crate::field::row(ui, "Count", |ui| {
+        let field = ui
+            .add_sized([ui.available_width().min(96.0), 26.0], egui::DragValue::new(&mut edited.count).range(2..=MOST).speed(0.1))
+            .on_hover_text("How many there are, the original included");
         committed |= field.drag_stopped() || field.lost_focus();
     });
     let mut vector_row = |ui: &mut egui::Ui, label: &str, value: &mut Vec3, about: &str| {
         let mut shown_value = *value / per_unit;
         let before = shown_value;
-        ui.horizontal(|ui| {
-            ui.label(label).on_hover_text(about);
-            for v in [&mut shown_value.x, &mut shown_value.y, &mut shown_value.z] {
-                let field = ui.add(numeric::drag_value(v, unit).speed(0.01));
+        // Its three numbers named, sharing what the row's name leaves.
+        crate::field::row(ui, label, |ui| {
+            let gap = 4.0;
+            ui.spacing_mut().item_spacing.x = gap;
+            let width = ((ui.available_width() - gap * 2.0) / 3.0).max(36.0);
+            for (name, v) in ["X", "Y", "Z"].into_iter().zip([&mut shown_value.x, &mut shown_value.y, &mut shown_value.z]) {
+                let field = ui.add_sized([width, 26.0], numeric::drag_value(v, unit).speed(0.01).prefix(format!("{name} ")));
                 committed |= field.drag_stopped() || field.lost_focus();
             }
-        });
+        })
+        .response
+        .on_hover_text(about);
         if shown_value != before {
             *value += (shown_value - before) * per_unit;
         }
@@ -108,25 +109,23 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, group: NodeId) {
         PatternKind::Line { step } => vector_row(ui, "Step", step, "From each copy to the next, along X, Y and Z"),
         PatternKind::Circle { centre, axis, angle } => {
             vector_row(ui, "Centre", centre, "The point the copies go round");
-            ui.horizontal(|ui| {
-                ui.label("Axis").on_hover_text("The line through the centre they turn about");
-                for (label, direction) in [("X", Vec3::X), ("Y", Vec3::Y), ("Z", Vec3::Z)] {
-                    let on = axis.try_normalize().is_some_and(|a| (a - direction).length() < 1e-3);
-                    if ui.selectable_label(on, label).clicked() && !on {
-                        *axis = direction;
-                        committed = true;
-                    }
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Angle").on_hover_text("From the original to the last copy; 360° spaces them evenly all the way round");
-                let mut degrees = angle.to_degrees();
-                let field = ui.add(egui::DragValue::new(&mut degrees).range(1.0..=360.0).speed(0.5).suffix("°"));
-                committed |= field.drag_stopped() || field.lost_focus();
-                if (degrees - angle.to_degrees()).abs() > 1e-4 {
-                    *angle = degrees.to_radians();
-                }
-            });
+            // Which of the three it turns about, or none of them: an axis
+            // a script set askew shows no choice made.
+            let directions = [Vec3::X, Vec3::Y, Vec3::Z];
+            let mut chosen = directions.iter().position(|d| axis.try_normalize().is_some_and(|a| (a - *d).length() < 1e-3)).unwrap_or(usize::MAX);
+            if crate::field::choice(ui, "Around", &mut chosen, &[(0, "X"), (1, "Y"), (2, "Z")]) {
+                *axis = directions[chosen];
+                committed = true;
+            }
+            let mut degrees = angle.to_degrees();
+            let field = ui
+                .add(crate::field::Slider::new(&mut degrees, 1.0..=360.0).text("Angle").suffix("°").fixed_decimals(1))
+                .on_hover_text("From the original to the last copy; 360° spaces them evenly all the way round");
+            // A drag let go, or a number typed: either ends the step.
+            committed |= field.drag_stopped() || (field.changed() && !field.dragged());
+            if (degrees - angle.to_degrees()).abs() > 1e-4 {
+                *angle = degrees.to_radians();
+            }
         }
     }
 
@@ -143,7 +142,8 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, group: NodeId) {
     // The copies are laid out from the original when the pattern changes;
     // moved since, it is out of step with them until laid out again.
     let stale = out_of_step(project, group);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         if ui
             .add_enabled(stale, egui::Button::new("Lay out again"))
             .on_hover_text("Put the copies back in step with the original, which has moved")
@@ -169,7 +169,7 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, group: NodeId) {
             }
         }
     });
-    ui.label(egui::RichText::new("The copies share the original's mesh and material: a material on one is on all of them.").size(11.5).color(dim));
+    crate::theme::note(ui, "The copies share the original's shape and material: a material on one is on all of them.");
 }
 
 /// Whether the first copy is not where the pattern would put it now.

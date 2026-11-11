@@ -304,7 +304,8 @@ impl MaterialTab {
         // slider just do" — and answers it on a sphere under known lighting,
         // where a change is visible, rather than on whatever corner of the
         // product happens to be in frame.
-        crate::theme::card(ui, |ui| ui.horizontal(|ui| {
+        crate::theme::card(ui, |ui| {
+            ui.horizontal(|ui| {
             // The project's own pictures, so a textured or labelled
             // material previews as itself rather than as its fallbacks.
             let textures = project.scene().textures.clone();
@@ -332,20 +333,30 @@ impl MaterialTab {
                     })
                     .response
                     .on_hover_text("Put another material from this project on the selected parts");
-                ui.label(
-                    egui::RichText::new(material_type.label())
-                        .small()
-                        .color(crate::theme::dim()),
+                // What kind it is and how many parts wear it, in a line.
+                crate::theme::note(
+                    ui,
+                    match users {
+                        0 | 1 => material_type.label().to_string(),
+                        n => format!("{} · on {n} parts", material_type.label()),
+                    },
                 );
-                ui.add_space(2.0);
+            });
+            });
+            // Its actions under it, across the card's whole width and
+            // wrapping where the panel is narrow: beside the preview they
+            // ran off the card, and widened the whole panel to fit.
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 if ui
-                    .add(egui::Button::new("Edit graph…").min_size(egui::vec2(ui.available_width(), 0.0)))
+                    .button("Edit graph…")
                     .on_hover_text("Build this material from nodes: textures, patterns, colour ramps")
                     .clicked()
                 {
                     self.open_graph = Some(key);
                 }
-                ui.horizontal(|ui| {
+                {
                 // A draft for this material, started when the menu first
                 // opens on it: the name as it is, the category guessed.
                 if self.save_draft.as_ref().is_none_or(|(k, _, _)| *k != key) {
@@ -409,9 +420,9 @@ impl MaterialTab {
                 {
                     pending_substance = true;
                 }
-                });
+                }
             });
-        }));
+        });
         if let Some((name, category)) = save_to_library {
             // Saved as a *copy*, into the user's own directory. It does not
             // become linked to the material in the document: a library entry
@@ -445,16 +456,15 @@ impl MaterialTab {
             }
             commit |= asked.commit;
         }
-        ui.add_space(6.0);
+        ui.add_space(4.0);
         crate::theme::section(ui, "Material");
 
-        ui.horizontal(|ui| {
-            ui.label("Name");
+        crate::field::row(ui, "Name", |ui| {
             let mut editing = match &self.renaming {
                 Some((k, text)) if *k == key => text.clone(),
                 _ => name.clone(),
             };
-            let field = ui.add(egui::TextEdit::singleline(&mut editing).desired_width(160.0));
+            let field = ui.add(egui::TextEdit::singleline(&mut editing).desired_width(f32::INFINITY));
             if field.changed() {
                 self.renaming = Some((key, editing.clone()));
             }
@@ -472,12 +482,8 @@ impl MaterialTab {
             }
         });
 
-        ui.horizontal(|ui| {
-            ui.label("Type");
-            egui::ComboBox::from_id_salt("material_type")
-                .selected_text(material_type.label())
-                .width(160.0)
-                .show_ui(ui, |ui| {
+        crate::field::row(ui, "Type", |ui| {
+            crate::field::combo(ui, "material_type", material_type.label(), |ui| {
                     for candidate in MaterialType::ALL {
                         let mut chosen = material_type;
                         if ui
@@ -498,8 +504,7 @@ impl MaterialTab {
         // A texture pack's maps share one mapping: its size where anyone
         // looks for it, not only under each map's own Mapping section.
         if let Some((mapping_node, mapping)) = shared_mapping(&definition_graph).filter(|(_, m)| !m.real_world_units) {
-            ui.horizontal(|ui| {
-                ui.label("Texture repeats");
+            crate::field::row(ui, "Repeats", |ui| {
                 let mut across = mapping.scale.x;
                 let mut down = mapping.scale.y;
                 let a = ui.add(egui::DragValue::new(&mut across).speed(0.05).range(0.01..=1000.0).max_decimals(2))
@@ -523,8 +528,7 @@ impl MaterialTab {
             });
         }
         if let Some((mapping_node, mapping)) = shared_mapping(&definition_graph).filter(|(_, m)| m.real_world_units) {
-            ui.horizontal(|ui| {
-                ui.label("Texture size");
+            crate::field::row(ui, "Texture size", |ui| {
                 let mut centimetres = mapping.scale.x * 100.0;
                 let response = ui
                     .add(
@@ -558,16 +562,12 @@ impl MaterialTab {
         }
 
         Self::linking_badge(ui, node, users, &mut command, &mut commit);
-        if !definition_graph.decals.is_empty() {
-            ui.small("Labels appear in the viewport and are saved with the project.");
-        }
-        ui.separator();
-        if let Some(index) = crate::decal_tab::show(ui, project, key, self.placing_label) {
-            self.place_label_request = Some((key, index));
-        }
-        ui.separator();
 
         // ---- parameters -------------------------------------------------
+        // The surface before the labels on it: the labels' fold, open, stood
+        // between the material's name and its colour, the control looked
+        // for first.
+        crate::theme::heading(ui, "Surface");
         let exposed = material_type.exposed();
         let shown: Vec<Param> = if self.show_all {
             Param::ALL.to_vec()
@@ -576,11 +576,7 @@ impl MaterialTab {
         };
 
         if shown.is_empty() {
-            ui.label(
-                egui::RichText::new("This type has no adjustable parameters.")
-                    .small()
-                    .weak(),
-            );
+            crate::theme::note(ui, "This type has nothing to adjust.");
         }
 
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -780,12 +776,17 @@ impl MaterialTab {
             }
         });
 
-        ui.separator();
-        ui.add(crate::field::Checkbox::new(&mut self.show_all, "Show every parameter"))
+        ui.add_space(2.0);
+        ui.add(crate::field::Checkbox::new(&mut self.show_all, "Show every setting"))
             .on_hover_text(
                 "The type normally shows only the controls that matter for it. \
                  The rest are still there.",
             );
+
+        ui.add_space(6.0);
+        if let Some(index) = crate::decal_tab::show(ui, project, key, self.placing_label) {
+            self.place_label_request = Some((key, index));
+        }
 
         // Picking a file is a blocking dialog, so it happens after the panel
         // has finished drawing rather than in the middle of a layout pass.
@@ -892,20 +893,14 @@ impl MaterialTab {
         command: &mut Option<Command>,
         commit: &mut bool,
     ) {
+        // One part's own material needs no line about it: the card says
+        // what it is. Shared, it says what an edit here will do, with the
+        // way out beside it.
+        if users < 2 {
+            return;
+        }
         ui.horizontal(|ui| {
-            let text = match users {
-                0 => "Used by nothing".to_string(),
-                1 => "Used by 1 part".to_string(),
-                n => format!("Shared by {n} parts"),
-            };
-            let badge = if users > 1 {
-                egui::RichText::new(text).strong()
-            } else {
-                egui::RichText::new(text).weak()
-            };
-            ui.label(badge);
-
-            if users > 1 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .button("Unlink")
                     .on_hover_text(
@@ -916,7 +911,10 @@ impl MaterialTab {
                     *command = Some(Command::UnlinkMaterial { node });
                     *commit = true;
                 }
-            }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    crate::theme::note(ui, format!("Shared by {users} parts: a change here changes them all."));
+                });
+            });
         });
     }
 }
@@ -1430,24 +1428,34 @@ mod tests {
 /// A parameter the graph drives (§4.2). Returns whether the user detached it.
 fn connected_row(ui: &mut egui::Ui, param: Param, driver: &str, hidden: bool) -> bool {
     let mut detach = false;
+    // The outline of a field, as an empty texture slot is: the name where a
+    // field's is, what drives it where its value would be, and the way back
+    // to a plain value in the column the texture buttons stand in.
     ui.horizontal(|ui| {
-        let label = if hidden {
-            egui::RichText::new(param.label()).weak()
-        } else {
-            egui::RichText::new(param.label())
-        };
-        ui.label(label);
-        ui.label(
-            egui::RichText::new(driver)
-                .small()
-                .color(crate::theme::hue(crate::theme::Hue::Blue)),
-        )
-        .on_hover_text(
-            "This parameter is driven by the material graph. Its value comes from there.",
-        );
-        if ui
-            .small_button("×")
-            .on_hover_text("Go back to a plain value.")
+        let p = crate::theme::p();
+        let (rect, response) = ui.allocate_exact_size(egui::vec2((ui.available_width() - 33.0).max(60.0), 26.0), egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            painter.rect_stroke(rect.shrink(0.5), 5.0, egui::Stroke::new(1.0_f32, p.line_strong));
+            let font = egui::FontId::proportional(crate::theme::BODY - 0.5);
+            let blue = crate::theme::hue(crate::theme::Hue::Blue);
+            let mut job = egui::text::LayoutJob::simple_singleline(driver.to_string(), font.clone(), blue);
+            job.wrap = egui::text::TextWrapping { max_width: rect.width() * 0.55, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+            let value = ui.fonts(|f| f.layout_job(job));
+            let value_width = value.size().x;
+            painter.galley(egui::pos2(rect.right() - 9.0 - value_width, rect.center().y - value.size().y * 0.5), value, egui::Color32::PLACEHOLDER);
+            let mut job = egui::text::LayoutJob::simple_singleline(param.label().to_string(), font, if hidden { p.text_faint } else { p.text_dim });
+            job.wrap = egui::text::TextWrapping { max_width: (rect.width() - 26.0 - value_width).max(0.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+            let name = ui.fonts(|f| f.layout_job(job));
+            painter.galley(egui::pos2(rect.left() + 9.0, rect.center().y - name.size().y * 0.5), name, egui::Color32::PLACEHOLDER);
+        }
+        response.on_hover_text(format!(
+            "{} comes from {}: an image, a pattern or the material's graph drives it, so it has no single value here. Its settings are below.",
+            param.label(),
+            if driver == "graph" { "the material's graph" } else { driver }
+        ));
+        if crate::icons::button(ui, crate::icons::Icon::Close, false, 26.0, egui::Sense::click())
+            .on_hover_text("Go back to a plain value")
             .clicked()
         {
             detach = true;

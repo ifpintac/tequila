@@ -369,7 +369,9 @@ class Client:
         save_screenshot=True (P's Screenshot of the viewport, into the
         screenshot folder), screenshot_folder='<folder>' (kept in the
         application's settings; '' for the default), window_size=[w, h]
-        (the window's inner size, in points), preferences_page='viewport'
+        (the window's inner size, in points), inspector_scroll=600 (the
+        Inspector's page scrolled that many points down, for a picture of
+        a long page), preferences_page='viewport'
         and preferences_search='gizmo' (the Preferences window at a page,
         or searching), graph_search='noise' (typed in the search of the
         Material Graph editor's browser, which shows it),

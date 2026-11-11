@@ -480,6 +480,9 @@ pub struct UiChange {
     /// The viewport's composition guides, as View › Composition guides
     /// sets them; kept in the application's settings.
     pub guides: Option<GuidesChange>,
+    /// How far down the Inspector's page is scrolled, in points from its
+    /// top: for a picture of what is below the window's edge.
+    pub inspector_scroll: Option<f32>,
 }
 
 /// The viewport's composition guides, as a script sets them. Absent fields
@@ -1438,6 +1441,9 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 _ => None,
             })?,
             guides: value.get("guides").filter(|v| !matches!(v, Value::Null)).map(guides_change).transpose()?,
+            inspector_scroll: optional(value, "inspector_scroll", "a distance from the page's top in points, 0 or more", |v| {
+                v.as_f32().filter(|v| v.is_finite() && *v >= 0.0)
+            })?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1844,6 +1850,13 @@ mod tests {
         assert_eq!(change.window_size, Some([1200.0, 800.0]));
         assert!(parse_request(r#"{"id":9,"op":"ui","window_size":[0,800]}"#).is_err());
         assert!(parse_request(r#"{"id":10,"op":"ui","window_size":"big"}"#).is_err());
+        // How far down the Inspector's page is scrolled, for a picture of
+        // what is below the window's edge.
+        let request = parse_request(r#"{"id":11,"op":"ui","inspector_scroll":420}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        assert_eq!(change.inspector_scroll, Some(420.0));
+        assert!(parse_request(r#"{"id":12,"op":"ui","inspector_scroll":-1}"#).is_err());
+        assert!(parse_request(r#"{"id":13,"op":"ui","inspector_scroll":"down"}"#).is_err());
     }
 
     /// The composition guides: shown or hidden, a guide or a list of them,

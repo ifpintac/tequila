@@ -803,6 +803,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some([width, height]) = change.window_size {
         app.pending_window_size = Some(egui::vec2(width, height));
     }
+    if let Some(offset) = change.inspector_scroll {
+        app.pending_inspector_scroll = Some(offset);
+    }
     // Kept, as the menu keeps them.
     if let Some(guides) = guides {
         app.guides = guides;
@@ -882,6 +885,15 @@ fn ui_state(app: &TequilaApp) -> Value {
             shot.build()
         })
         .set("preview_denoise", app.project.render_settings().preview_denoise)
+        // The Inspector's page as last drawn: how far down it is, how tall
+        // it is, how much of it shows, where in the window that starts and
+        // how far it runs past its panel's width, in points.
+        .set("inspector_scroll", {
+            let [offset, height, shown, top, overflow] = app.inspector_scrolled;
+            let mut page = Object::new();
+            page.set("offset", offset as f64).set("height", height as f64).set("shown", shown as f64).set("top", top as f64).set("overflow", overflow.max(0.0) as f64);
+            page.build()
+        })
         .set("preferences", app.preferences.open)
         .set("preferences_page", app.preferences.page.key())
         .set("spacemouse", {

@@ -552,6 +552,16 @@ pub fn set_appearance(ctx: &egui::Context, appearance: Appearance, save: bool) {
 
 /// Follow egui's idea of the current theme — the desktop's, in Auto — at
 /// the start of each frame.
+/// The application's spacing and sizes on a test's own context, and
+/// nothing process-wide: `apply` and `set_appearance` set the semibold flag
+/// and the palette every other test's context reads, and a page laid out
+/// with egui's own spacing is not the page the application draws.
+#[cfg(test)]
+pub fn style_for_tests(ctx: &egui::Context) {
+    ctx.set_style_of(egui::Theme::Dark, style(ctx, &palette(Flavor::Graphite, true)));
+    ctx.set_style_of(egui::Theme::Light, style(ctx, &palette(Flavor::Graphite, false)));
+}
+
 pub fn sync(ctx: &egui::Context) {
     IS_DARK.store(ctx.theme() == egui::Theme::Dark, Ordering::Relaxed);
 }
@@ -706,6 +716,73 @@ pub fn section(ui: &mut egui::Ui, text: &str) {
             .extra_letter_spacing(0.6),
     );
     ui.add_space(1.0);
+}
+
+/// A heading for a block that follows another: the page's hairline across
+/// the panel, then the heading. One rule for every page, in place of a
+/// space, a separator and a heading written out at each.
+pub fn heading(ui: &mut egui::Ui, text: &str) {
+    rule(ui);
+    section(ui, text);
+}
+
+/// A heading with something at its right end: whose block it is, or a
+/// button that acts on all of it.
+pub fn heading_with<R>(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    rule(ui);
+    ui.add_space(4.0);
+    let inner = ui
+        .horizontal(|ui| {
+            ui.label(egui::RichText::new(text.to_uppercase()).font(strong(10.5)).color(p().text_dim).extra_letter_spacing(0.6));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right).inner
+        })
+        .inner;
+    ui.add_space(1.0);
+    inner
+}
+
+/// The same for the first block of a page, which has nothing above it to
+/// be ruled off from.
+pub fn heading_with_first<R>(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let inner = ui
+        .horizontal(|ui| {
+            ui.label(egui::RichText::new(text.to_uppercase()).font(strong(10.5)).color(p().text_dim).extra_letter_spacing(0.6));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right).inner
+        })
+        .inner;
+    ui.add_space(1.0);
+    inner
+}
+
+/// The hairline between a page's blocks.
+pub fn rule(ui: &mut egui::Ui) {
+    ui.add_space(6.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0_f32, p().line));
+    ui.add_space(1.0);
+}
+
+/// A line or two saying what a control or a block is for: small and dim,
+/// wrapped to the panel, never wider than it.
+pub fn note(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
+    ui.add(egui::Label::new(egui::RichText::new(text).size(BODY - 1.5).color(p().text_dim)).wrap())
+}
+
+/// A note that something needs attention: as a note, in the busy amber.
+pub fn warning(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
+    ui.add(egui::Label::new(egui::RichText::new(text).size(BODY - 1.5).color(p().busy)).wrap())
+}
+
+/// The ink of a greyed-out control's words: `c` a step toward the panel,
+/// and opaque. A disabled ui fades what it draws halfway to the panel by
+/// itself, and an ink made translucent as well all but vanished on the
+/// light panels - a disabled field's name read white on white.
+pub fn disabled_ink(c: Color32) -> Color32 {
+    disabled_ink_on(&p(), c)
+}
+
+fn disabled_ink_on(p: &Palette, c: Color32) -> Color32 {
+    mix(c, p.panel, 0.3)
 }
 
 /// The grey used for anything secondary: hints, units, counts.
@@ -976,6 +1053,25 @@ mod tests {
     /// The thresholds are WCAG's: 4.5 for text, 3 for large text and
     /// the faint hints. A theme that failed one would ship text somebody
     /// cannot read, which is the one thing a theme must never do.
+    /// A greyed-out control's name can still be read, in every theme and
+    /// both modes: its ink, faded halfway to the panel as a disabled ui
+    /// fades everything, against the field it is written in. Made
+    /// translucent instead, it read white on white on the light panels.
+    #[test]
+    fn a_greyed_out_fields_name_can_still_be_read() {
+        for flavor in Flavor::ALL {
+            for dark in [true, false] {
+                let p = palette(flavor, dark);
+                let ink = disabled_ink_on(&p, p.text_dim);
+                assert_eq!(ink.a(), 255, "the ink is opaque");
+                let shown = mix(ink, p.panel, 0.5);
+                let well = mix(p.field, p.panel, 0.5);
+                let ratio = contrast(shown, well);
+                assert!(ratio >= 1.35, "{} {}: a greyed-out name is {ratio:.2}:1 on its field", flavor.label(), if dark { "dark" } else { "light" });
+            }
+        }
+    }
+
     #[test]
     fn every_theme_reads_in_both_modes() {
         for flavor in Flavor::ALL {

@@ -23,7 +23,7 @@ impl TemplatesPanel {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) {
         // Open from the start in a project that has templates to use.
         let any = !project.document().material_templates.is_empty();
-        crate::field::Fold::new(egui::RichText::new("Material templates").strong())
+        crate::field::Fold::new("Material templates")
             .default_open(any)
             .show(ui, |ui| self.body(ui, project));
     }
@@ -32,7 +32,7 @@ impl TemplatesPanel {
         if self.open.is_none() && !project.document().material_templates.is_empty() {
             self.open = Some(0);
         }
-        ui.small(
+        crate::theme::note(ui,
             "Rules that give every matching part a material at once: by part name, \
              by the material or colour the CAD file gave it, or by a metadata field \
              such as its layer. The first rule that matches a part decides it.",
@@ -92,9 +92,9 @@ impl TemplatesPanel {
                 };
                 egui::ScrollArea::vertical().max_height(220.0).id_salt("template preview").show(ui, |ui| {
                     egui::Grid::new("template preview grid").striped(true).num_columns(3).show(ui, |ui| {
-                        ui.weak("Part");
-                        ui.weak("Now");
-                        ui.weak("Becomes");
+                        crate::theme::note(ui, "Part");
+                        crate::theme::note(ui, "Now");
+                        crate::theme::note(ui, "Becomes");
                         ui.end_row();
                         for line in planned.iter().take(PREVIEW_ROWS) {
                             let part = project.document().tree.get(line.part).map_or(String::new(), |n| n.name.clone());
@@ -105,7 +105,7 @@ impl TemplatesPanel {
                         }
                     });
                     if planned.len() > PREVIEW_ROWS {
-                        ui.weak(format!("… and {} more", planned.len() - PREVIEW_ROWS));
+                        crate::theme::note(ui, format!("… and {} more", planned.len() - PREVIEW_ROWS));
                     }
                 });
                 if ui

@@ -306,7 +306,7 @@ impl egui::Widget for Slider<'_> {
                 painter.rect_filled(filled, rounding, fill);
             }
             let enabled = ui.is_enabled();
-            let ink = |c: egui::Color32| if enabled { c } else { c.gamma_multiply(0.45) };
+            let ink = |c: egui::Color32| if enabled { c } else { theme::disabled_ink(c) };
             let inset = 9.0;
             let value_galley = self.show_value.then(|| {
                 painter.layout_no_wrap(self.format(value), font.clone(), ink(if hovered { theme::p().icon_hover } else { theme::p().text }))
@@ -336,6 +336,48 @@ pub fn column<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) 
         ui.set_width(width);
         add(ui)
     })
+}
+
+/// The width a row's name takes, so the controls of a page start on one
+/// line down it.
+pub const LABEL: f32 = 88.0;
+
+/// A row with its name on the left and its control filling the rest: a
+/// drop-down, a text field, a row of choices. The name is dim, as a number
+/// field's is, and every row's control starts at the same place.
+pub fn row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    ui.horizontal(|ui| {
+        let width = LABEL.min(ui.available_width() * 0.42);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 26.0), egui::Sense::hover());
+        if ui.is_rect_visible(rect) {
+            let ink = if ui.is_enabled() { theme::p().text_dim } else { theme::disabled_ink(theme::p().text_dim) };
+            let mut job = egui::text::LayoutJob::simple_singleline(label.to_string(), egui::FontId::proportional(theme::BODY - 0.5), ink);
+            job.wrap = egui::text::TextWrapping { max_width: width - 4.0, max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
+            let galley = ui.fonts(|f| f.layout_job(job));
+            ui.painter().galley(egui::pos2(rect.left(), rect.center().y - galley.size().y * 0.5), galley, egui::Color32::PLACEHOLDER);
+        }
+        add(ui)
+    })
+}
+
+/// A drop-down the width of what is left of its row.
+pub fn combo<R>(ui: &mut egui::Ui, id: impl std::hash::Hash, selected: impl Into<egui::WidgetText>, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>> {
+    let width = ui.available_width().max(60.0);
+    egui::ComboBox::from_id_salt(id).width(width).selected_text(selected).show_ui(ui, add)
+}
+
+/// A named row of a few choices, shown as one control.
+pub fn choice<T: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, value: &mut T, options: &[(T, &str)]) -> bool {
+    row(ui, label, |ui| theme::segmented(ui, value, options)).inner
+}
+
+/// Two fields side by side, sharing the row equally.
+pub fn pair(ui: &mut egui::Ui, first: impl FnOnce(&mut egui::Ui), second: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
+        column(ui, width, first);
+        column(ui, width, second);
+    });
 }
 
 /// The well a field sits in, lifted a little under the pointer.
@@ -383,7 +425,7 @@ impl egui::Widget for Checkbox<'_> {
         response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *checked, galley.as_ref().map(|g| g.text()).unwrap_or("")));
         if ui.is_rect_visible(rect) {
             let enabled = ui.is_enabled();
-            let ink = |c: egui::Color32| if enabled { c } else { c.gamma_multiply(0.45) };
+            let ink = |c: egui::Color32| if enabled { c } else { theme::disabled_ink(c) };
             let hovered = response.hovered();
             let square = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - box_side * 0.5), egui::Vec2::splat(box_side));
             let painter = ui.painter();
@@ -423,11 +465,12 @@ pub struct Fold {
     title: egui::WidgetText,
     id_salt: Option<egui::Id>,
     default_open: bool,
+    reveal: bool,
 }
 
 impl Fold {
     pub fn new(title: impl Into<egui::WidgetText>) -> Self {
-        Fold { title: title.into(), id_salt: None, default_open: false }
+        Fold { title: title.into(), id_salt: None, default_open: false, reveal: false }
     }
 
     pub fn id_salt(mut self, salt: impl std::hash::Hash) -> Self {
@@ -440,11 +483,21 @@ impl Fold {
         self
     }
 
+    /// Open it now, whatever it was: for a fold something else has just
+    /// sent the person to.
+    pub fn reveal(mut self, reveal: bool) -> Self {
+        self.reveal = reveal;
+        self
+    }
+
     pub fn show<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::CollapsingResponse<R> {
         let p = theme::p();
         let title = self.title.text().to_string();
         let id = ui.make_persistent_id(self.id_salt.unwrap_or_else(|| egui::Id::new(&title)));
         let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, self.default_open);
+        if self.reveal {
+            state.set_open(true);
+        }
         let nested = FOLD_DEPTH.with(|d| d.get()) > 0;
         let frame = if nested {
             egui::Frame::none()

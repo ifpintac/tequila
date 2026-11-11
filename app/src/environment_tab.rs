@@ -39,7 +39,7 @@ pub struct EnvironmentTab {
 /// The groups, in the order §1.5 presents them.
 const GROUPS: [(&str, &[EnvParam]); 3] = [
     (
-        "Transform",
+        "Turn and size",
         &[
             EnvParam::Rotation,
             EnvParam::Size,
@@ -92,34 +92,36 @@ impl EnvironmentTab {
         // and nothing else.
         let mut load = false;
         let mut clear = false;
-        ui.horizontal(|ui| {
-            ui.label("HDRI");
-            let shown = settings
-                .image
-                .clone()
-                .unwrap_or_else(|| "Built-in studio".into());
-            ui.add(
-                egui::Label::new(egui::RichText::new(shown.clone()).monospace().small())
-                    .truncate(),
-            )
-            .on_hover_text(shown);
-        });
-        ui.horizontal(|ui| {
-            load = ui
-                .button("Load…")
-                .on_hover_text("An equirectangular .hdr or .exr.")
-                .clicked();
-            clear = ui
-                .add_enabled(settings.image.is_some(), egui::Button::new("Use built-in"))
-                .on_hover_text("Go back to the procedural studio environment.")
-                .clicked();
+        // One row: what lights the scene, and the two things to do about
+        // it. "HDRI" is the file's kind, said in the tooltip; the row is
+        // named for what the image is for.
+        crate::theme::section(ui, "Light from");
+        crate::field::row(ui, "Image", |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if settings.image.is_some() {
+                    clear = crate::icons::button(ui, crate::icons::Icon::Close, false, 26.0, egui::Sense::click())
+                        .on_hover_text("Go back to the built-in studio")
+                        .clicked();
+                }
+                load = ui
+                    .button("Choose…")
+                    .on_hover_text("Light the scene with a 360° image of a place or a studio: an HDRI, as an .hdr or .exr file")
+                    .clicked();
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let (shown, whole) = match &settings.image {
+                        Some(path) => (
+                            std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone()),
+                            path.clone(),
+                        ),
+                        None => ("Built-in studio".to_string(), "Tequila's own studio: soft light from above and both sides".to_string()),
+                    };
+                    ui.add(egui::Label::new(shown).truncate()).on_hover_text(whole);
+                });
+            });
         });
         if let Some(problem) = &self.problem {
-            ui.label(
-                egui::RichText::new(problem)
-                    .small()
-                    .color(crate::theme::p().busy),
-            );
+            crate::theme::warning(ui, problem.as_str());
         }
         ui.add_space(2.0);
         // The whole environment flattened, its lights on it, as KeyShot's
@@ -171,19 +173,16 @@ impl EnvironmentTab {
 
         for (name, params) in GROUPS {
             crate::field::Fold::new(name)
-                .default_open(name != "Ground")
+                .default_open(name == "Background")
                 .show(ui, |ui| {
                     for param in params {
                         self.row(ui, *param, &settings, &mut edits);
                     }
-                    if name == "Transform" && settings.size <= 0.0 {
-                        ui.label(
-                            egui::RichText::new(
-                                "Size 0 puts the environment infinitely far away, so lighting \
-                                 does not change as a part moves.",
-                            )
-                            .small()
-                            .weak(),
+                    if name == "Turn and size" && settings.size <= 0.0 {
+                        crate::theme::note(
+                            ui,
+                            "Size 0 puts the environment infinitely far away, so lighting \
+                             does not change as a part moves.",
                         );
                     }
                 });
@@ -272,6 +271,22 @@ impl EnvironmentTab {
                     edits.push(EnvironmentParameter::scalar(param, (mm / 1000.0).max(0.0)));
                 }
             }
+            // A turn, stored in radians and shown in degrees, the unit a
+            // person turns things by: it read 0.00 to 6.28.
+            EnvValue::Scalar(value) if param == EnvParam::Rotation => {
+                let mut degrees = value.to_degrees();
+                let response = ui.add_enabled(
+                    enabled,
+                    crate::field::Slider::new(&mut degrees, 0.0..=360.0)
+                        .text(ui_hints.label)
+                        .suffix("°")
+                        .fixed_decimals(1)
+                        .clamping(egui::SliderClamping::Never),
+                );
+                if response.changed() {
+                    edits.push(EnvironmentParameter::scalar(param, degrees.to_radians()));
+                }
+            }
             EnvValue::Scalar(value) => {
                 let mut v = value;
                 let (lo, hi) = ui_hints.range;
@@ -311,7 +326,8 @@ impl EnvironmentTab {
                 }
             }
             EnvValue::Mode(mode) => {
-                ui.label(egui::RichText::new(ui_hints.label).color(crate::theme::p().text_dim));
+                // No name of its own: it is the first thing under the
+                // fold called Background, and said it a second time.
                 let mut next = mode;
                 let options: Vec<(BackgroundMode, &str)> = BackgroundMode::ALL.iter().map(|m| (*m, m.label())).collect();
                 if crate::theme::segmented(ui, &mut next, &options) {
@@ -319,26 +335,29 @@ impl EnvironmentTab {
                 }
             }
             EnvValue::Choice(choice) => {
-                ui.add_enabled(enabled, egui::Label::new(egui::RichText::new(ui_hints.label).color(crate::theme::p().text_dim)));
                 let mut next = choice;
                 let options: Vec<(&'static str, &str)> = param.choices().iter().map(|(key, label)| (*key, *label)).collect();
-                let changed = ui.add_enabled_ui(enabled, |ui| crate::theme::segmented(ui, &mut next, &options)).inner;
+                let changed = ui.add_enabled_ui(enabled, |ui| crate::field::choice(ui, ui_hints.label, &mut next, &options)).inner;
                 if changed {
                     edits.push(EnvironmentParameter::new(param, EnvValue::Choice(next)));
                 }
             }
             EnvValue::Path(path) => {
-                ui.horizontal(|ui| {
-                    ui.add_enabled(enabled, egui::Label::new(ui_hints.label));
+                // A picture is chosen, not typed: the button first, with
+                // the path beside it for whoever pastes one.
+                let mut browse = false;
+                let mut picked: Option<String> = None;
+                ui.add_enabled_ui(enabled, |ui| crate::field::row(ui, ui_hints.label, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    browse = ui.button("Choose…").on_hover_text("A photograph to stand behind the model").clicked();
                     let mut text = match &self.editing {
                         Some((editing, text)) if *editing == param => text.clone(),
                         _ => path.clone().unwrap_or_default(),
                     };
-                    let response = ui.add_enabled(
-                        enabled,
+                    let response = ui.add(
                         egui::TextEdit::singleline(&mut text)
                             .desired_width(f32::INFINITY)
-                            .hint_text(egui::RichText::new("A path to an image").color(crate::theme::p().text_faint)),
+                            .hint_text(egui::RichText::new("No picture").color(crate::theme::p().text_faint)),
                     );
                     if response.changed() {
                         self.editing = Some((param, text.clone()));
@@ -351,10 +370,23 @@ impl EnvironmentTab {
                         self.editing = None;
                         let value = (!text.trim().is_empty()).then(|| text.trim().to_string());
                         if value != path {
-                            edits.push(EnvironmentParameter::new(param, EnvValue::Path(value)));
+                            picked = Some(value.unwrap_or_default());
                         }
                     }
-                });
+                    });
+                }));
+                if browse {
+                    if let Some(file) = rfd::FileDialog::new()
+                        .add_filter("Picture", &tequila_texture::image::Image::DECODABLE)
+                        .set_title(ui_hints.label)
+                        .pick_file()
+                    {
+                        picked = Some(file.display().to_string());
+                    }
+                }
+                if let Some(text) = picked {
+                    edits.push(EnvironmentParameter::new(param, EnvValue::Path((!text.is_empty()).then_some(text))));
+                }
             }
         }
     }
