@@ -1,6 +1,7 @@
 {
   "base_color": [0.59626216, 0.62158483, 0.7090653],
   "category": "Metal",
+  "edge_radius": 0.00015,
   "graph": {
     "decals": [],
     "links": [

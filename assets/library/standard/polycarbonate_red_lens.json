@@ -1,5 +1,6 @@
 {
   "category": "Plastic",
+  "edge_radius": 0.0002,
   "name": "Polycarbonate Red Lens",
   "specular_ior": 1.585,
   "tags": [

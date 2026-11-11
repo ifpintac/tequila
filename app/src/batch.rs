@@ -6335,6 +6335,23 @@ mod tests {
             ("Recycled Plastic Confetti", 0.025),
             ("Damascus Steel", 0.025),
             ("Titanium Heat Tinted", 0.025),
+            // What is on the gear, of 2026-11-11: an indicator brightest
+            // where it faces the eye, a guide's uneven glow, light going
+            // into silicone, and the grains of a tread, a vinyl, a sprayed
+            // coating, a pulp and a foam.
+            ("LED Indicator Amber", 0.025),
+            ("Light Guide Lit Blue", 0.025),
+            ("Silicone Keypad White", 0.025),
+            ("Rubber Tread Studded", 0.012),
+            ("Cabinet Vinyl Black Coarse", 0.012),
+            ("Cabinet Coating Textured Black", 0.006),
+            ("Speaker Cone Paper White", 0.006),
+            ("Foam Open Cell Charcoal", 0.006),
+            ("Grille Cloth Wheat", 0.012),
+            // And what a chassis is folded from and vented through.
+            ("Steel Electrogalvanised", 0.025),
+            ("Grille Black Slotted", 0.025),
+            ("Grille Black Expanded", 0.025),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();

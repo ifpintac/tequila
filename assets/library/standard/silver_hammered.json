@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [

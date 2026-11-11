@@ -1,6 +1,7 @@
 {
   "base_color": [0.6509924, 0.614079, 0.49796805],
   "category": "Plastic",
+  "edge_radius": 0.00035,
   "graph": {
     "decals": [],
     "links": [
@@ -16,11 +17,21 @@
       },
       {
         "from": 4,
-        "socket": "input:0",
-        "to": 5
+        "socket": "input:2",
+        "to": 6
       },
       {
         "from": 5,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
         "socket": "param:bump",
         "to": 1
       }
@@ -125,8 +136,57 @@
         "type": "noise_texture"
       },
       {
-        "depth": 0.000003,
         "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 45
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 4
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.000003,
+        "id": 7,
         "kind": "bump",
         "position": [0, 0]
       }
@@ -134,6 +194,7 @@
     "output": 1
   },
   "name": "Plastic Sand",
+  "specular_ior": 1.54,
   "specular_roughness": 0.3,
   "tags": [
     "abs",

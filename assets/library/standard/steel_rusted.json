@@ -2,6 +2,7 @@
   "base_color": [0.55, 0.55, 0.56],
   "base_metalness": 1,
   "category": "Metal",
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [

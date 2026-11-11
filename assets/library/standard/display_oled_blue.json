@@ -1,0 +1,20 @@
+{
+  "base_color": [0.004, 0.004, 0.005],
+  "category": "Light",
+  "emission_color": [0.05, 0.4, 1],
+  "emission_luminance": 0.8,
+  "name": "Display OLED Blue",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.03,
+  "tags": [
+    "display",
+    "oled",
+    "screen",
+    "pixels",
+    "lit",
+    "blue",
+    "cyan"
+  ],
+  "type": "generic"
+}
+

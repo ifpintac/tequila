@@ -1,5 +1,6 @@
 {
   "category": "Plastic",
+  "edge_radius": 0.0002,
   "name": "Polycarbonate Clear",
   "specular_ior": 1.585,
   "specular_roughness": 0.02,

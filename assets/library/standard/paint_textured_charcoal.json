@@ -1,6 +1,7 @@
 {
   "base_color": [0.025655542, 0.027176661, 0.032286573],
   "category": "Paint",
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [

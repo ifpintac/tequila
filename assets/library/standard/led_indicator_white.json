@@ -1,0 +1,91 @@
+{
+  "base_color": [0.23, 0.2375, 0.25],
+  "category": "Light",
+  "edge_radius": 0.0002,
+  "emission_color": [0.92, 0.95, 1],
+  "emission_luminance": 1.3,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "output": 1,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:emission_luminance",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {},
+        "type": "layer_weight"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.1
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.9
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 1.3
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.585
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "LED Indicator White",
+  "specular_ior": 1.55,
+  "specular_roughness": 0.1,
+  "tags": [
+    "led",
+    "indicator",
+    "lit",
+    "on",
+    "status",
+    "white",
+    "pilot light"
+  ],
+  "type": "generic"
+}
+

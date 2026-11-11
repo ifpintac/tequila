@@ -21,7 +21,12 @@ pub fn metal(ior: &str, tint: Spectrum, roughness: f32) -> tequila_materials::op
 pub fn hairlines(r: &mut Recipe, gloss: crate::Out, density: f32) -> crate::Out {
     let scratches = pattern(r, Procedural::Scratches { frequency: 110.0, width: 0.012, density, spread: 0.25 }, 11);
     let sunk = r.math("multiply", scratches, -1.0);
-    r.bump(sunk, 4e-7);
+    // And the slow waviness a buffing wheel leaves, a hundredth of a
+    // millimetre over a few centimetres: enough to bend a softbox's edge
+    // in the mirror, which a flat computed face never does.
+    let wave = noise(r, 30.0, 2.0, 0.4);
+    let height = plus(r, wave, 30.0, sunk);
+    r.bump(height, 4e-7);
     plus(r, scratches, 0.12, gloss)
 }
 
@@ -57,6 +62,11 @@ pub fn anodised(name: &'static str, tags: &'static [&'static str], tint: Spectru
     let gloss = wear(&mut r, low, high, 12.0);
     r.to(Param::SpecularRoughness, gloss);
     micro(&mut r, 9000.0, 2.5e-6);
+    // The dye never takes quite evenly: a few percent, over centimetres.
+    let take = noise(&mut r, 18.0, 3.0, 0.5);
+    let shade = r.range(take, (0.3, 0.7), (0.95, 1.0));
+    let dyed = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", tint).w("B", shade).out("Result");
+    r.to(Param::BaseColor, dyed);
     preset(name, "Metal", tags, MaterialType::Metal, r)
 }
 

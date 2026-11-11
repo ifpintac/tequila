@@ -1,0 +1,106 @@
+{
+  "base_color": [0.35, 0.217, 0.105000004],
+  "category": "Light",
+  "edge_radius": 0.00025,
+  "emission_color": [1, 0.62, 0.3],
+  "emission_luminance": 0.8,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:emission_luminance",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 45
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.25
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.75
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.688
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.88000005
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Meter Backlight Warm",
+  "specular_ior": 1.49,
+  "specular_roughness": 0.4,
+  "tags": [
+    "meter",
+    "vu meter",
+    "backlight",
+    "dial",
+    "lit",
+    "warm",
+    "lamp"
+  ],
+  "type": "generic"
+}
+

@@ -1,0 +1,17 @@
+{
+  "base_color": [0.003, 0.003, 0.0035],
+  "category": "Glass",
+  "name": "Display Glass Black",
+  "specular_ior": 1.52,
+  "specular_roughness": 0.02,
+  "tags": [
+    "display",
+    "screen",
+    "oled",
+    "off",
+    "black glass",
+    "cover glass"
+  ],
+  "type": "generic"
+}
+

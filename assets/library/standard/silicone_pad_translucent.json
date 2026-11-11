@@ -1,0 +1,241 @@
+{
+  "base_color": [0.6877841, 0.6928899, 0.6628479],
+  "base_diffuse_roughness": 0.5,
+  "category": "Plastic",
+  "edge_radius": 0.0004,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "input:0",
+        "to": 8
+      },
+      {
+        "from": 8,
+        "socket": "param:base_color",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 40
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.5
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.66
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 9000
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.000002,
+        "id": 5,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "group": "speckle",
+        "id": 6,
+        "kind": "group",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 0.22
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.07
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 7
+            }
+          }
+        ],
+        "position": [0, 0]
+      },
+      {
+        "id": 7,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.45
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply"
+        },
+        "type": "math"
+      },
+      {
+        "id": 8,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "color": [0.6877841, 0.6928899, 0.6628479]
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "color": [0.42, 0.41, 0.39]
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "blend_type": "mix",
+          "clamp_factor": true,
+          "clamp_result": false,
+          "data_type": "color"
+        },
+        "type": "mix"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Silicone Pad Translucent",
+  "specular_ior": 1.41,
+  "specular_roughness": 0.58,
+  "subsurface_color": [0.6877841, 0.6928899, 0.6628479],
+  "subsurface_radius": [0.0015, 0.0015, 0.0015],
+  "subsurface_weight": 0.9,
+  "tags": [
+    "silicone",
+    "pad",
+    "drum pad",
+    "button",
+    "backlit",
+    "unlit",
+    "milky",
+    "translucent"
+  ],
+  "type": "generic"
+}
+

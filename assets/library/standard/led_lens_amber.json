@@ -1,0 +1,23 @@
+{
+  "base_color": [0.62, 0.24, 0.03],
+  "category": "Plastic",
+  "edge_radius": 0.0002,
+  "name": "LED Lens Amber",
+  "specular_ior": 1.55,
+  "specular_roughness": 0.08,
+  "subsurface_color": [0.62, 0.24, 0.03],
+  "subsurface_radius": [0.0012, 0.0012, 0.0012],
+  "subsurface_weight": 0.7,
+  "tags": [
+    "led",
+    "lens",
+    "unlit",
+    "off",
+    "diffused",
+    "epoxy",
+    "amber",
+    "orange"
+  ],
+  "type": "generic"
+}
+

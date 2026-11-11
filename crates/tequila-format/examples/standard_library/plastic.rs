@@ -5,15 +5,22 @@ use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::{MaterialType, Param};
 
 /// A moulded part: the polish of its tool, a gloss that varies with
-/// handling, and the tool's faint texture.
-fn moulded(name: &'static str, tags: &'static [&'static str], colour: Spectrum, low: f32, high: f32) -> Preset {
+/// handling, the tool's faint texture, and under it the slow waviness of
+/// a wall that shrank as it cooled, which is what keeps a moulding's
+/// reflections from being drawn with a ruler. `ior` is the plastic's
+/// index of refraction: ABS about 1.54, PVC 1.53.
+fn moulded(name: &'static str, tags: &'static [&'static str], colour: Spectrum, low: f32, high: f32, ior: f32) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Plastic, |m| {
         m.base_color = colour;
         m.specular_roughness = (low + high) * 0.5;
+        m.specular_ior = ior;
     }));
     let gloss = wear(&mut r, low, high, 30.0);
     r.to(Param::SpecularRoughness, gloss);
-    micro(&mut r, 2600.0, 3e-6);
+    let grain = noise(&mut r, 2600.0, 2.0, 0.5);
+    let sink = noise(&mut r, 45.0, 2.0, 0.4);
+    let height = plus(&mut r, sink, 4.0, grain);
+    r.bump(height, 3e-6);
     preset(name, "Plastic", tags, MaterialType::Plastic, r)
 }
 
@@ -30,15 +37,15 @@ pub fn knurl(r: &mut Recipe, scale: f32) -> Out {
 
 pub fn all() -> Vec<Preset> {
     let mut out = vec![
-        moulded("ABS White", &["abs", "injection", "enclosure", "white"], rgb(0.8535, 0.8546, 0.827), 0.24, 0.32),
-        moulded("ABS Black", &["abs", "injection", "enclosure", "black"], rgb(0.0092, 0.0092, 0.0102), 0.25, 0.34),
-        moulded("ABS Grey", &["abs", "injection", "grey"], rgb(0.2118, 0.2155, 0.2221), 0.28, 0.36),
-        moulded("ABS Blue", &["abs", "blue", "toy"], rgb(0.0441, 0.062, 0.3565), 0.2, 0.28),
-        moulded("ABS Yellow", &["abs", "yellow", "toy"], rgb(0.735, 0.536, 0.0813), 0.2, 0.28),
-        moulded("PVC Grey", &["pvc", "pipe", "industrial"], rgb(0.3447, 0.3506, 0.3347), 0.34, 0.44),
-        moulded("Plastic Orange", &["abs", "orange", "safety", "toy"], srgb("#E8641E"), 0.18, 0.26),
-        moulded("Plastic Mint", &["abs", "green", "pastel", "consumer"], srgb("#A8D8C0"), 0.22, 0.3),
-        moulded("Plastic Sand", &["abs", "beige", "warm", "consumer"], srgb("#D8CDB8"), 0.26, 0.34),
+        moulded("ABS White", &["abs", "injection", "enclosure", "white"], rgb(0.8535, 0.8546, 0.827), 0.24, 0.32, 1.54),
+        moulded("ABS Black", &["abs", "injection", "enclosure", "black"], rgb(0.0092, 0.0092, 0.0102), 0.25, 0.34, 1.54),
+        moulded("ABS Grey", &["abs", "injection", "grey"], rgb(0.2118, 0.2155, 0.2221), 0.28, 0.36, 1.54),
+        moulded("ABS Blue", &["abs", "blue", "toy"], rgb(0.0441, 0.062, 0.3565), 0.2, 0.28, 1.54),
+        moulded("ABS Yellow", &["abs", "yellow", "toy"], rgb(0.735, 0.536, 0.0813), 0.2, 0.28, 1.54),
+        moulded("PVC Grey", &["pvc", "pipe", "industrial"], rgb(0.3447, 0.3506, 0.3347), 0.34, 0.44, 1.53),
+        moulded("Plastic Orange", &["abs", "orange", "safety", "toy"], srgb("#E8641E"), 0.18, 0.26, 1.54),
+        moulded("Plastic Mint", &["abs", "green", "pastel", "consumer"], srgb("#A8D8C0"), 0.22, 0.3, 1.54),
+        moulded("Plastic Sand", &["abs", "beige", "warm", "consumer"], srgb("#D8CDB8"), 0.26, 0.34, 1.54),
     ];
 
     // A gloss moulding: a mirror finish with the gentle waviness every

@@ -1,0 +1,19 @@
+{
+  "category": "Plastic",
+  "edge_radius": 0.0004,
+  "name": "Bumper Foot Clear",
+  "specular_ior": 1.5,
+  "specular_roughness": 0.14,
+  "tags": [
+    "bumper",
+    "foot",
+    "feet",
+    "stick-on",
+    "polyurethane",
+    "clear",
+    "dome"
+  ],
+  "transmission_color": [0.88, 0.9, 0.88],
+  "type": "plastic_transparent"
+}
+

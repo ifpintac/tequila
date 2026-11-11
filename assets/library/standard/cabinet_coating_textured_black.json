@@ -1,0 +1,175 @@
+{
+  "base_color": [0.009, 0.009, 0.0095],
+  "base_diffuse_roughness": 0.4,
+  "category": "Paint",
+  "edge_radius": 0.0004,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:2",
+        "to": 4
+      },
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 6
+      },
+      {
+        "from": 3,
+        "socket": "input:0",
+        "to": 4
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:bump",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "param:specular_roughness",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "group": "stucco",
+        "id": 2,
+        "kind": "group",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 1.1
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.62
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          }
+        ],
+        "position": [0, 0]
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 2600
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 4,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.12
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "depth": 0.00007,
+        "id": 5,
+        "kind": "bump",
+        "position": [0, 0]
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 1
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.66
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.54
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "linear"
+        },
+        "type": "map_range"
+      }
+    ],
+    "output": 1
+  },
+  "name": "Cabinet Coating Textured Black",
+  "specular_roughness": 0.6,
+  "tags": [
+    "cabinet",
+    "coating",
+    "textured paint",
+    "polyurea",
+    "spatter",
+    "pa",
+    "speaker",
+    "black"
+  ],
+  "type": "generic"
+}
+
