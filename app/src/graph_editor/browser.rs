@@ -91,6 +91,14 @@ pub enum Setup {
     /// Colours laid over one another, each with its blend and its mask
     /// (3ds Max's Composite map).
     Composite,
+    /// One of a few colours for each part, by the part's own random number
+    /// (V-Ray's multi-sub texture, at random).
+    RandomColour,
+    /// A colour shifted a little for each part: no two quite alike.
+    VaryColour,
+    /// A texture moved and turned differently on each part, so parts that
+    /// share a material do not share its pattern (V-Ray's UVW randomizer).
+    RandomPlacement,
 }
 
 impl Setup {
@@ -99,6 +107,9 @@ impl Setup {
             Setup::Blend => "Blend (3 coats)",
             Setup::TwoSided => "Two-sided",
             Setup::Composite => "Composite (4 layers)",
+            Setup::RandomColour => "Random colour per part",
+            Setup::VaryColour => "Vary colour per part",
+            Setup::RandomPlacement => "Random placement per part",
         }
     }
 
@@ -108,6 +119,9 @@ impl Setup {
             "blend" => Some(Setup::Blend),
             "two_sided" => Some(Setup::TwoSided),
             "composite" => Some(Setup::Composite),
+            "random_colour" | "random_color" => Some(Setup::RandomColour),
+            "vary_colour" | "vary_color" => Some(Setup::VaryColour),
+            "random_placement" => Some(Setup::RandomPlacement),
             _ => None,
         }
     }
@@ -118,6 +132,9 @@ impl Setup {
             Setup::Blend => "Blend",
             Setup::TwoSided => "Two-sided",
             Setup::Composite => "Composite",
+            Setup::RandomColour => "Random colour",
+            Setup::VaryColour => "Vary colour",
+            Setup::RandomPlacement => "Random placement",
         }
     }
 
@@ -127,6 +144,9 @@ impl Setup {
             Setup::Blend => "VRayBlendMtl blend material coats layers layered stack",
             Setup::TwoSided => "VRay2SidedMtl two sided double sided back face front",
             Setup::Composite => "composite layers layered mix stack VRayCompTex",
+            Setup::RandomColour => "VRayMultiSubTex multi sub texture random colour color per object part variation",
+            Setup::VaryColour => "variation vary hue per object part random colour color VRayMultiSubTex",
+            Setup::RandomPlacement => "VRayUVWRandomizer UVW randomizer randomize random offset rotation per object part tiling",
         }
     }
 
@@ -135,6 +155,9 @@ impl Setup {
             Setup::Blend => "Three coats over the material, each over everything under it by its own amount: a number, or a mask wired into the Blend Stack. Each coat is a Shader of its own.",
             Setup::TwoSided => "Another surface on the back of every face: a label's reverse, the inside of a shell, the other side of a leaf.",
             Setup::Composite => "Four colours laid over one another, each with its own blend and amount. Wire a texture into a layer's colour or its Factor, and the last Mix into the material.",
+            Setup::RandomColour => "One of four colours on each part, chosen by the part's own random number: set the colours in the Color Ramp, add more stops for more, and wire it into the material's Color.",
+            Setup::VaryColour => "A colour made a little different on each part, in hue and in lightness: wire it into the material's Color, and set how far in the two Map Ranges.",
+            Setup::RandomPlacement => "Coordinates moved and turned differently for each part: wire them into a texture's Vector, and parts that share the material no longer share its pattern.",
         }
     }
 }
@@ -245,6 +268,7 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
         }
         if group == Group::Maps {
             push(Group::Maps, Some("Layered"), [Setup::Composite].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Per part"), [Setup::RandomColour, Setup::VaryColour, Setup::RandomPlacement].into_iter().filter_map(setup).collect());
         }
     }
 
@@ -582,6 +606,10 @@ mod tests {
         assert_eq!(labels(&found, Group::Materials), [Setup::Blend.label()]);
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "two sided");
         assert_eq!(labels(&found, Group::Materials), [Setup::TwoSided.label()]);
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "VRayUVWRandomizer");
+        assert_eq!(labels(&found, Group::Maps), [Setup::RandomPlacement.label()]);
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "multisub");
+        assert!(labels(&found, Group::Maps).iter().any(|l| l == Setup::RandomColour.label()), "{:?}", labels(&found, Group::Maps));
 
         assert!(sections(&entries, &materials, &[("Brass", "Metal")], None, "qqqzzz").is_empty());
     }
