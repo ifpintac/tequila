@@ -16,13 +16,12 @@ pub fn panel(ui: &mut egui::Ui, project: &mut Project, node: NodeId) {
     let unit = numeric::Unit::from_scene(shown);
     let mut edited = spec;
     let mut committed = false;
-    ui.label(egui::RichText::new(spec.shape.label()).strong());
+    crate::theme::note(ui, format!("A {}. Its sizes are in the scene's unit.", spec.shape.label().to_lowercase()));
     for &(dimension, label) in spec.dimensions() {
         let mut value = spec.get(dimension) / per_unit;
         let before = value;
-        ui.horizontal(|ui| {
-            ui.label(label);
-            let field = ui.add(numeric::drag_value(&mut value, unit).speed(0.01));
+        crate::field::row(ui, label, |ui| {
+            let field = ui.add_sized([ui.available_width().min(120.0), 26.0], numeric::drag_value(&mut value, unit).speed(0.01));
             committed |= field.drag_stopped() || field.lost_focus();
         });
         if value != before {

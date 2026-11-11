@@ -480,6 +480,27 @@ pub struct UiChange {
     /// The viewport's composition guides, as View › Composition guides
     /// sets them; kept in the application's settings.
     pub guides: Option<GuidesChange>,
+    /// How far down the Inspector's page is scrolled, in points from its
+    /// top: for a picture of what is below the window's edge.
+    pub inspector_scroll: Option<f32>,
+    /// The order of inspector pages' sections, as dragging their titles
+    /// sets it; kept in the application's settings.
+    pub sections: Option<SectionsChange>,
+    /// A section held part-way through a drag, for a picture: the page,
+    /// the section and the slot it would land in. `Some(None)` lets it go.
+    pub section_drag: Option<Option<(String, String, usize)>>,
+    /// Whether the Environment page's map stays at the top while the rest
+    /// of the page scrolls, as its pin sets it; kept in the settings.
+    pub map_in_view: Option<bool>,
+}
+
+/// Inspector pages' section orders as a script sets them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SectionsChange {
+    /// Every page back in its default order.
+    Reset,
+    /// Each page named, in the order given, or `None` for its default.
+    Pages(Vec<(String, Option<Vec<String>>)>),
 }
 
 /// The viewport's composition guides, as a script sets them. Absent fields
@@ -1438,6 +1459,43 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 _ => None,
             })?,
             guides: value.get("guides").filter(|v| !matches!(v, Value::Null)).map(guides_change).transpose()?,
+            inspector_scroll: optional(value, "inspector_scroll", "a distance from the page's top in points, 0 or more", |v| {
+                v.as_f32().filter(|v| v.is_finite() && *v >= 0.0)
+            })?,
+            sections: match value.get("sections") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(false)) => Some(SectionsChange::Reset),
+                Some(Value::Object(pages)) => {
+                    let mut out = Vec::new();
+                    for (page, order) in pages.iter() {
+                        let order = match order {
+                            Value::Null => None,
+                            Value::Array(keys) => Some(
+                                keys.iter()
+                                    .map(|k| k.as_str().map(str::to_string))
+                                    .collect::<Option<Vec<_>>>()
+                                    .ok_or_else(|| ProtocolError(format!("`sections.{page}` is a list of the page's section names")))?,
+                            ),
+                            _ => return Err(ProtocolError(format!("`sections.{page}` is a list of the page's section names, or null for its default order"))),
+                        };
+                        out.push((page.to_string(), order));
+                    }
+                    Some(SectionsChange::Pages(out))
+                }
+                Some(_) => return Err(ProtocolError(r#"`sections` is {"page": ["section", ...]}, or false to put every page back in order"#.into())),
+            },
+            section_drag: match value.get("section_drag") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(false)) => Some(None),
+                Some(v) => match v.as_array() {
+                    [page, section, slot] => match (page.as_str(), section.as_str(), slot.as_index()) {
+                        (Some(page), Some(section), Some(slot)) => Some(Some((page.to_string(), section.to_string(), slot))),
+                        _ => return Err(ProtocolError("`section_drag` is [page, section, slot], or false".into())),
+                    },
+                    _ => return Err(ProtocolError("`section_drag` is [page, section, slot], or false".into())),
+                },
+            },
+            map_in_view: opt_bool(value, "map_in_view")?,
         }),
         "queue" => Operation::Queue(QueueRender {
             name: opt_string(value, "name")?,
@@ -1844,6 +1902,30 @@ mod tests {
         assert_eq!(change.window_size, Some([1200.0, 800.0]));
         assert!(parse_request(r#"{"id":9,"op":"ui","window_size":[0,800]}"#).is_err());
         assert!(parse_request(r#"{"id":10,"op":"ui","window_size":"big"}"#).is_err());
+        // How far down the Inspector's page is scrolled, for a picture of
+        // what is below the window's edge.
+        let request = parse_request(r#"{"id":11,"op":"ui","inspector_scroll":420}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        assert_eq!(change.inspector_scroll, Some(420.0));
+        assert!(parse_request(r#"{"id":12,"op":"ui","inspector_scroll":-1}"#).is_err());
+        assert!(parse_request(r#"{"id":13,"op":"ui","inspector_scroll":"down"}"#).is_err());
+        // The inspector's section orders, and a drag held for a picture.
+        let request = parse_request(r#"{"id":14,"op":"ui","sections":{"environment":["pins","turn"],"camera":null},"section_drag":["environment","pins",1]}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        let Some(SectionsChange::Pages(pages)) = change.sections else { panic!("no pages") };
+        assert!(pages.contains(&("environment".to_string(), Some(vec!["pins".to_string(), "turn".to_string()]))));
+        assert!(pages.contains(&("camera".to_string(), None)));
+        assert_eq!(change.section_drag, Some(Some(("environment".to_string(), "pins".to_string(), 1))));
+        let request = parse_request(r#"{"id":15,"op":"ui","sections":false,"section_drag":false}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        assert_eq!(change.sections, Some(SectionsChange::Reset));
+        assert_eq!(change.section_drag, Some(None));
+        assert!(parse_request(r#"{"id":16,"op":"ui","sections":{"environment":[3]}}"#).is_err());
+        assert!(parse_request(r#"{"id":17,"op":"ui","section_drag":["environment","pins"]}"#).is_err());
+        let request = parse_request(r#"{"id":18,"op":"ui","map_in_view":true}"#).unwrap();
+        let Operation::Ui(change) = request.operation else { panic!("not a ui request") };
+        assert_eq!(change.map_in_view, Some(true));
+        assert!(parse_request(r#"{"id":19,"op":"ui","map_in_view":"yes"}"#).is_err());
     }
 
     /// The composition guides: shown or hidden, a guide or a list of them,
