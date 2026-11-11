@@ -264,12 +264,19 @@ pub fn all() -> Vec<Preset> {
         ("Leather Tan", &["leather", "grain", "upholstery", "tan"], srgb("#9C6B3F")),
         ("Leather Oxblood", &["leather", "grain", "upholstery", "red", "burgundy"], srgb("#4A1418")),
         ("Leather Cognac", &["leather", "grain", "upholstery", "brown"], srgb("#8A4A22")),
+        ("Leather Dark Brown", &["leather", "grain", "upholstery", "dark brown", "chocolate"], srgb("#3A2418")),
+        ("Leather Navy", &["leather", "grain", "upholstery", "navy", "blue"], srgb("#1B2540")),
+        ("Leather Grey", &["leather", "grain", "upholstery", "grey"], srgb("#6C6C6E")),
+        ("Leather Red", &["leather", "grain", "upholstery", "red"], srgb("#8E1A1E")),
+        ("Leather White", &["leather", "grain", "upholstery", "white", "cream"], srgb("#E2DED4")),
     ] {
         let mut r = Recipe::new(base(MaterialType::Generic, |m| {
             m.base_color = colour;
             m.base_diffuse_roughness = 0.5;
-            m.specular_roughness = 0.38;
-            m.fuzz_weight = 0.15;
+            m.specular_roughness = 0.34;
+            // A hide's bloom, and no more: more of it is a grey veil that
+            // turns a leather into a matte vinyl.
+            m.fuzz_weight = 0.06;
             m.fuzz_color = rgb(1.0, 1.0, 1.0);
             m.fuzz_roughness = 0.5;
         }));
@@ -280,7 +287,7 @@ pub fn all() -> Vec<Preset> {
         // do instead of running straight from corner to corner.
         let coords = r.node("texture_coordinate").out("Object");
         let wander = r.node("noise_texture").w("Vector", coords).f("Scale", 900.0).f("Detail", 2.0).out("Color");
-        let warped = r.node("vector_math").set("operation", "multiply_add").w("Vector", wander).v("Vector 2", [0.0009, 0.0009, 0.0009]).w("Vector 3", coords).out("Vector");
+        let warped = r.node("vector_math").set("operation", "multiply_add").w("Vector", wander).v("Vector 2", [0.0013, 0.0013, 0.0013]).w("Vector 3", coords).out("Vector");
         let edge = r.node("voronoi_texture").set("feature", "distance_to_edge").w("Vector", warped).f("Scale", 720.0).f("Randomness", 1.0).out("Distance");
         let groove = r.smooth(edge, (0.0, 0.16), (0.0, 1.0));
         let centre = r.node("voronoi_texture").w("Vector", warped).f("Scale", 720.0).f("Randomness", 1.0).out("Distance");
@@ -295,14 +302,14 @@ pub fn all() -> Vec<Preset> {
         let apart = r.math("absolute", off, 0.0);
         let wrinkle = r.smooth(apart, (0.0, 0.03), (-1.0, 0.0));
         let height = plus(&mut r, wrinkle, 0.6, pebble);
-        r.bump(height, 1.0e-4);
+        r.bump(height, 1.3e-4);
         // Tops a little polished by use; grooves duller.
-        let gloss = r.range(pebble, (0.0, 1.0), (0.55, 0.34));
+        let gloss = r.range(pebble, (0.0, 1.0), (0.52, 0.27));
         r.to(Param::SpecularRoughness, gloss);
         // Darker in the grooves and the wrinkles, and a hide's uneven dye.
-        let shade = r.range(pebble, (0.0, 1.0), (0.84, 1.0));
+        let shade = r.range(pebble, (0.0, 1.0), (0.78, 1.0));
         let dye = noise(&mut r, 40.0, 3.0, 0.5);
-        let mottle = r.range(dye, (0.3, 0.7), (0.88, 1.0));
+        let mottle = r.range(dye, (0.3, 0.7), (0.85, 1.0));
         let both = r.math("multiply", shade, mottle);
         let toned = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", colour).w("B", both).out("Result");
         r.to(Param::BaseColor, toned);

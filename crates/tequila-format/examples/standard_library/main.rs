@@ -27,6 +27,7 @@ mod finish;
 mod footwear;
 mod fur;
 mod granite;
+mod leather;
 mod marble;
 mod metal;
 mod metal_finish;
@@ -123,7 +124,7 @@ pub fn orange_peel(r: &mut Recipe, scale: f32, depth: f32) -> Out {
 
 /// No made thing has a knife edge, and a rendering of one that has is
 /// known for a rendering at once: a real part's edge is where it catches
-/// a line of light. Where the recipe of a plastic, a metal or a paint says
+/// a line of light. Where the recipe of a plastic, a metal, a paint or a wood says
 /// nothing of its edges, they are rounded as its making leaves them, in
 /// metres: a moulding's as its tool's, which is not cut sharper than a
 /// third of a millimetre; a casting's or a forging's the same; a machined
@@ -148,12 +149,14 @@ fn edge_of(p: &Preset) -> f32 {
         "Paint" => 4e-4,
         "Metal" if says("cast") || says("hammered") || says("forged") || says("rust") || says("corten") || says("patina") || says("verdigris") => 4e-4,
         "Metal" => 1.5e-4,
+        // A joiner breaks every edge with a pass of paper.
+        "Wood" => 5e-4,
         _ => 0.0,
     }
 }
 
 fn main() {
-    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all()].into_iter().flatten().collect();
+    let presets: Vec<Preset> = [plastic::all(), plastic_texture::all(), metal::all(), metal_finish::all(), metal_pattern::all(), paint::all(), natural::all(), marble::all(), granite::all(), concrete::all(), ceramic::all(), composite::all(), wood::all(), fabric::all(), suede::all(), fur::all(), footwear::all(), clear::all(), fdm::all(), product::all(), equipment::all(), leather::all()].into_iter().flatten().collect();
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/library/standard");
     let mut names = std::collections::BTreeSet::new();
     let mut written = Vec::new();

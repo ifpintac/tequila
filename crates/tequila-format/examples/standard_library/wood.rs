@@ -115,8 +115,93 @@ pub fn all() -> Vec<Preset> {
         Species { name: "Wood Wenge", tags: &["wood", "wenge", "exotic", "dark", "striped"], early: "#5C4333", late: "#211611", rings: 300.0, latewood: 0.50, pores: Diffuse { size: 0.14, dark: 0.6 }, rays: 0.0, figure: Plain, finish: Oiled, drift: 0.25 },
         Species { name: "Wood Zebrawood", tags: &["wood", "zebrawood", "exotic", "striped"], early: "#DDBA7E", late: "#3F2A19", rings: 220.0, latewood: 0.40, pores: Diffuse { size: 0.06, dark: 0.4 }, rays: 0.0, figure: Plain, finish: Satin, drift: 0.15 },
         Species { name: "Wood Olive", tags: &["wood", "olive", "figured", "kitchen", "swirl"], early: "#DAB98E", late: "#B8956A", rings: 240.0, latewood: 0.20, pores: Diffuse { size: 0.05, dark: 0.4 }, rays: 0.0, figure: Swirl { colour: srgb("#5A3E28") }, finish: Oiled, drift: 0.3 },
+        // More of what instruments and hi-fi are made of, and the same woods
+        // under a piano lacquer or stained black with the grain left open.
+        Species { name: "Wood Alder", tags: &["wood", "alder", "guitar body", "plain", "pale", "reddish"], early: "#C89A72", late: "#B88660", rings: 420.0, latewood: 0.15, pores: Diffuse { size: 0.03, dark: 0.3 }, rays: 0.1, figure: Plain, finish: Satin, drift: 0.2 },
+        Species { name: "Wood Koa", tags: &["wood", "koa", "figured", "ukulele", "guitar", "golden", "instrument"], early: "#A9683A", late: "#7E4522", rings: 300.0, latewood: 0.20, pores: Diffuse { size: 0.08, dark: 0.5 }, rays: 0.0, figure: Curl { strength: 0.6 }, finish: Gloss, drift: 0.5 },
+        Species { name: "Wood Padauk", tags: &["wood", "padauk", "exotic", "orange", "red"], early: "#B5482A", late: "#8F2F1A", rings: 320.0, latewood: 0.20, pores: Diffuse { size: 0.11, dark: 0.5 }, rays: 0.0, figure: Plain, finish: Oiled, drift: 0.25 },
+        Species { name: "Wood Bubinga", tags: &["wood", "bubinga", "exotic", "red", "drum shell", "instrument"], early: "#8E4A3A", late: "#6B2F26", rings: 420.0, latewood: 0.20, pores: Diffuse { size: 0.08, dark: 0.45 }, rays: 0.0, figure: Streaks { colour: srgb("#3B1A16"), amount: 0.5 }, finish: Gloss, drift: 0.35 },
+        Species { name: "Wood Macassar Ebony", tags: &["wood", "ebony", "macassar", "exotic", "striped", "dark", "veneer"], early: "#6B4A33", late: "#1C130F", rings: 180.0, latewood: 0.50, pores: Diffuse { size: 0.05, dark: 0.3 }, rays: 0.0, figure: Streaks { colour: srgb("#120C0A"), amount: 0.6 }, finish: Gloss, drift: 0.3 },
+        Species { name: "Wood Bamboo", tags: &["wood", "bamboo", "laminated", "strand", "pale", "sustainable"], early: "#D9B777", late: "#C49A58", rings: 900.0, latewood: 0.30, pores: None, rays: 0.0, figure: Plain, finish: Satin, drift: 0.15 },
+        Species { name: "Wood Walnut Figured", tags: &["wood", "walnut", "figured", "crotch", "swirl", "veneer", "hi-fi", "luxury"], early: "#7A5638", late: "#4E3320", rings: 260.0, latewood: 0.20, pores: Diffuse { size: 0.06, dark: 0.45 }, rays: 0.0, figure: Swirl { colour: srgb("#2A1B13") }, finish: Gloss, drift: 0.5 },
+        Species { name: "Wood Walnut Gloss", tags: &["wood", "walnut", "gloss", "piano lacquer", "hi-fi", "speaker", "dark"], early: "#6E4C36", late: "#553826", rings: 300.0, latewood: 0.20, pores: Diffuse { size: 0.09, dark: 0.55 }, rays: 0.0, figure: Streaks { colour: srgb("#2A1B13"), amount: 0.35 }, finish: Gloss, drift: 0.45 },
+        Species { name: "Wood Maple Gloss", tags: &["wood", "maple", "gloss", "lacquer", "drum shell", "pale"], early: "#EBD6AF", late: "#DCC198", rings: 520.0, latewood: 0.16, pores: Diffuse { size: 0.04, dark: 0.3 }, rays: 0.15, figure: Plain, finish: Gloss, drift: 0.15 },
+        Species { name: "Wood Mahogany Gloss", tags: &["wood", "mahogany", "gloss", "lacquer", "guitar", "red", "ribbon"], early: "#8E4B2F", late: "#7A3D24", rings: 360.0, latewood: 0.18, pores: Diffuse { size: 0.1, dark: 0.5 }, rays: 0.0, figure: Ribbon { strength: 0.6 }, finish: Gloss, drift: 0.2 },
+        Species { name: "Wood Oak Black Open Grain", tags: &["wood", "oak", "black", "ebonised", "stained", "open grain", "speaker", "furniture"], early: "#1E1D1C", late: "#151413", rings: 340.0, latewood: 0.45, pores: RingPorous { size: 0.13, dark: 0.8 }, rays: 0.3, figure: Plain, finish: Satin, drift: 0.1 },
+        Species { name: "Wood Ash Black Open Grain", tags: &["wood", "ash", "black", "ebonised", "stained", "open grain", "guitar", "furniture"], early: "#201F1E", late: "#141312", rings: 300.0, latewood: 0.45, pores: RingPorous { size: 0.14, dark: 0.8 }, rays: 0.0, figure: Plain, finish: Satin, drift: 0.1 },
+        Species { name: "Wood Oak Whitewashed", tags: &["wood", "oak", "whitewashed", "limed", "pale", "scandinavian", "furniture"], early: "#DCD2BF", late: "#CBBFA9", rings: 340.0, latewood: 0.45, pores: RingPorous { size: 0.11, dark: 0.3 }, rays: 0.5, figure: Plain, finish: Raw, drift: 0.12 },
     ];
-    species.iter().map(wood).collect()
+    let mut out: Vec<Preset> = species.iter().map(wood).collect();
+    out.push(plywood());
+    out.push(fibreboard("MDF Raw", &["mdf", "fibreboard", "raw", "cabinet", "speaker", "brown"], srgb("#A9865E"), srgb("#8E6E4A")));
+    out.push(fibreboard("MDF Black", &["mdf", "fibreboard", "black", "through-coloured", "cabinet", "speaker"], srgb("#2A2826"), srgb("#1E1C1B")));
+    out
+}
+
+/// Birch plywood: a rotary-cut face, its grain wide and wandering, and
+/// on every edge the plies, a millimetre and a half each, light where a
+/// ply's grain runs along the edge and dark where it is cut across.
+fn plywood() -> Preset {
+    let face = srgb("#E3CDA6");
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = face;
+        m.base_diffuse_roughness = 0.4;
+        m.specular_roughness = 0.45;
+        m.specular_weight = 0.0;
+        m.coat_weight = 1.0;
+        m.coat_roughness = 0.3;
+    }));
+    let coords = r.node("texture_coordinate").out("Object");
+    let normal = r.node("texture_coordinate").out("Normal");
+    let xyz = r.node("separate_xyz").w("Vector", coords).add();
+    let up = r.node("separate_xyz").w("Vector", normal).out("Y");
+    // The face: peeled off the log round and round, so its figure is wide
+    // flames along the grain and not a board's cathedrals.
+    let flame_space = r.node("mapping").w("Vector", coords).v("Scale", [3.0, 1.0, 26.0]).out("Vector");
+    let flame = r.node("noise_texture").w("Vector", flame_space).f("Scale", 1.0).f("Detail", 4.0).f("Roughness", 0.55).f("Distortion", 0.8).out("Fac");
+    let fibre_space = r.node("mapping").w("Vector", coords).v("Scale", [30.0, 900.0, 900.0]).out("Vector");
+    let fibre = r.node("noise_texture").w("Vector", fibre_space).f("Scale", 1.0).f("Detail", 3.0).out("Fac");
+    let face_tone = r.range(flame, (0.3, 0.7), (0.86, 1.04));
+    let fibre_tone = r.range(fibre, (0.3, 0.7), (0.93, 1.05));
+    let face_shade = r.math("multiply", face_tone, fibre_tone);
+    let face_colour = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).c("A", face).w("B", face_shade).out("Result");
+    // The edge: plies up the thickness, every other one end grain.
+    let ply = r.math("divide", Out(xyz, 1), 0.003);
+    let which = r.math("fraction", ply, 0.0);
+    let end_grain = r.smooth(which, (0.47, 0.53), (0.0, 1.0));
+    let glue = r.math("multiply", which, 2.0);
+    let glue = r.math("fraction", glue, 0.0);
+    let line = r.smooth(glue, (0.0, 0.07), (1.0, 0.0));
+    let edge_colour = r.node("mix").f("Factor", end_grain).c("A", srgb("#DCC29A")).c("B", srgb("#B8935F")).out("Result");
+    let edge_colour = r.node("mix").f("Factor", line).w("A", edge_colour).c("B", srgb("#5E4226")).out("Result");
+    let speck = r.node("noise_texture").f("Scale", 2600.0).f("Detail", 2.0).out("Fac");
+    let speck_tone = r.range(speck, (0.3, 0.7), (0.9, 1.06));
+    let edge_colour = r.node("mix").set("blend_type", "multiply").f("Factor", 1.0).w("A", edge_colour).w("B", speck_tone).out("Result");
+    // Which is which: the faces look up and down, the edges sideways.
+    let facing = r.math("absolute", up, 0.0);
+    let is_face = r.smooth(facing, (0.6, 0.8), (0.0, 1.0));
+    let colour = r.node("mix").f("Factor", is_face).w("A", edge_colour).w("B", face_colour).out("Result");
+    r.to(Param::BaseColor, colour);
+    r.bump(fibre, 1.5e-5);
+    preset("Plywood Birch", "Wood", &["plywood", "birch", "ply", "baltic birch", "edge", "layers", "cabinet", "speaker", "furniture"], MaterialType::Generic, r)
+}
+
+/// Fibreboard: wood fibre pressed with resin, the same all through, with
+/// no grain - a fine fleck, a dry face, and nothing else.
+fn fibreboard(name: &'static str, tags: &'static [&'static str], light: Spectrum, dark: Spectrum) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = light.lerp(dark, 0.5);
+        m.base_diffuse_roughness = 0.6;
+        m.specular_roughness = 0.62;
+        m.specular_weight = 0.4;
+    }));
+    let fleck = r.node("noise_texture").f("Scale", 1800.0).f("Detail", 5.0).f("Roughness", 0.7).f("Distortion", 1.0).out("Fac");
+    let cloud = r.node("noise_texture").f("Scale", 40.0).f("Detail", 3.0).out("Fac");
+    let tone = plus(&mut r, cloud, 0.4, fleck);
+    let colour = r.ramp(tone, Linear, &[(0.45, dark), (1.0, light)]);
+    r.to(Param::BaseColor, colour);
+    r.bump(fleck, 1.2e-5);
+    preset(name, "Wood", tags, MaterialType::Generic, r)
 }
 
 /// One species, made.
@@ -126,16 +211,36 @@ pub fn wood(s: &Species) -> Preset {
     let mut r = Recipe::new(base(MaterialType::Generic, |m| {
         m.base_color = early.lerp(late, 0.3);
         m.base_diffuse_roughness = 0.4;
+        // Under a lacquer the wood has no shine of its own: there is no
+        // air between the two for a surface to reflect, and with one the
+        // lacquer's highlight sat on a second, broad one, a milky veil
+        // over the grain. A figured wood keeps half of it: the shimmer of
+        // a ribbon or a curl is its fibres turning the light, under
+        // whatever is over them.
+        let under = match s.figure {
+            Figure::Ribbon { .. } | Figure::Curl { .. } => 0.5,
+            _ => 0.0,
+        };
         match s.finish {
-            Finish::Raw => m.specular_roughness = 0.62,
-            Finish::Oiled => m.specular_roughness = 0.42,
+            // Bare wood is open and dry: what sheen it has is weak and
+            // broad, and an oil only closes it a little.
+            Finish::Raw => {
+                m.specular_roughness = 0.7;
+                m.specular_weight = 0.4;
+            }
+            Finish::Oiled => {
+                m.specular_roughness = 0.5;
+                m.specular_weight = 0.6;
+            }
             Finish::Satin => {
                 m.specular_roughness = 0.45;
-                m.coat_weight = 0.55;
-                m.coat_roughness = 0.22;
+                m.specular_weight = under;
+                m.coat_weight = 1.0;
+                m.coat_roughness = 0.28;
             }
             Finish::Gloss => {
                 m.specular_roughness = 0.4;
+                m.specular_weight = under;
                 m.coat_weight = 1.0;
                 m.coat_roughness = 0.03;
             }
@@ -157,8 +262,13 @@ pub fn wood(s: &Species) -> Preset {
     let wobble = r.node("noise_texture").w("Vector", wobble_space).f("Scale", 1.0).f("Detail", 4.0).f("Roughness", 0.6).out("Color");
     let bent = r.node("vector_math").set("operation", "multiply_add").w("Vector", wobble).v("Vector 2", [0.0, 0.0012, 0.0012]).w("Vector 3", bent).out("Vector");
     let xyz = r.node("separate_xyz").w("Vector", bent).add();
-    let y = r.math("add", Out(xyz, 1), 0.45);
-    let z = r.math("add", Out(xyz, 2), 0.2);
+    // The pith is off on the diagonal, so the faces a product shows, up
+    // and to the front, are both cut across the rings at a slope - the
+    // straight, close grain of a board sawn on the rift, which is how a
+    // cabinet's show faces are chosen. Under a face, the rings lie flat
+    // to it and show as a few wide blotches.
+    let y = r.math("add", Out(xyz, 1), 0.33);
+    let z = r.math("add", Out(xyz, 2), 0.33);
     let yy = r.math("multiply", y, y);
     let zz = r.math("multiply", z, z);
     let rr = r.math("add", yy, zz);
@@ -317,6 +427,12 @@ pub fn wood(s: &Species) -> Preset {
     let base_roughness = r.material_mut().specular_roughness;
     let gloss = r.math("add", gloss_drop, base_roughness);
     r.to(Param::SpecularRoughness, gloss);
+    if matches!(s.finish, Finish::Satin) {
+        // A satin lacquer does not fill the pores: it is duller over them.
+        let coat = r.material_mut().coat_roughness;
+        let over = r.math3("multiply_add", gloss_drop, 0.6, coat);
+        r.to(Param::CoatRoughness, over);
+    }
     let fibre_relief = r.math("multiply", fibre, 0.05);
     let height = r.math("add", sink, fibre_relief);
     let depth = match s.finish {

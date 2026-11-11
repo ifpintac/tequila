@@ -6355,6 +6355,18 @@ mod tests {
             // Paints, whose pigment has no shine of its own under the coat.
             ("Automotive Red", 0.025),
             ("Automotive Blue Metallic", 0.025),
+            // Woods under a lacquer and under oil, a leather's hide and
+            // pressed grain, a suede's nap, a felt's loose fibres.
+            ("Wood Walnut Gloss", 0.025),
+            ("Wood Oak Black Open Grain", 0.025),
+            ("Plywood Birch", 0.025),
+            ("Leather Smooth Tan", 0.025),
+            ("Leather Saffiano Black", 0.006),
+            ("Leather Perforated Tan", 0.025),
+            ("Fine Suede Navy", 0.025),
+            ("Felt Cream", 0.012),
+            ("Spacer Mesh Grey", 0.025),
+            ("Speaker Fabric Grey Melange", 0.012),
         ] {
             let entry = entries.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("no preset {name}"));
             let graph = entry.graph.clone();

@@ -1,9 +1,10 @@
 {
-  "base_color": [0.32367587, 0.16205487, 0.07271926],
+  "base_color": [0.32367587, 0.16205487, 0.07271927],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
-  "coat_roughness": 0.22,
-  "coat_weight": 0.55,
+  "coat_roughness": 0.28,
+  "coat_weight": 1,
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -278,7 +279,7 @@
       {
         "from": 38,
         "socket": "input:0",
-        "to": 66
+        "to": 67
       },
       {
         "from": 39,
@@ -389,7 +390,7 @@
       {
         "from": 54,
         "socket": "input:0",
-        "to": 67
+        "to": 68
       },
       {
         "from": 55,
@@ -453,22 +454,32 @@
         "to": 65
       },
       {
+        "from": 64,
+        "socket": "input:0",
+        "to": 66
+      },
+      {
         "from": 65,
         "socket": "param:specular_roughness",
         "to": 1
       },
       {
         "from": 66,
-        "socket": "input:1",
-        "to": 67
+        "socket": "param:coat_roughness",
+        "to": 1
       },
       {
         "from": 67,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 68
       },
       {
         "from": 68,
+        "socket": "input:0",
+        "to": 69
+      },
+      {
+        "from": 69,
         "socket": "param:bump",
         "to": 1
       }
@@ -625,7 +636,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -643,7 +654,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -806,11 +817,11 @@
         "gradient": [
           {
             "at": 0,
-            "color": [0.38022444, 0.21334377, 0.11893703]
+            "color": [0.38022444, 0.21334377, 0.11893704]
           },
           {
             "at": 0.82,
-            "color": [0.3544005, 0.18056644, 0.082226075]
+            "color": [0.3544005, 0.18056644, 0.08222608]
           },
           {
             "at": 0.901,
@@ -1795,6 +1806,30 @@
           {
             "socket": "input:1",
             "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.28
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 67,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
               "float": 0.05
             }
           }
@@ -1807,7 +1842,7 @@
         "type": "math"
       },
       {
-        "id": 67,
+        "id": 68,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -1818,7 +1853,7 @@
       },
       {
         "depth": 0.000025,
-        "id": 68,
+        "id": 69,
         "kind": "bump",
         "position": [0, 0]
       }
@@ -1827,6 +1862,7 @@
   },
   "name": "Wood Cherry",
   "specular_roughness": 0.45,
+  "specular_weight": 0,
   "tags": [
     "wood",
     "cherry",

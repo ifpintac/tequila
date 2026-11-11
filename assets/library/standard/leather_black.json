@@ -3,7 +3,7 @@
   "base_diffuse_roughness": 0.5,
   "category": "Leather",
   "fuzz_roughness": 0.5,
-  "fuzz_weight": 0.15,
+  "fuzz_weight": 0.06,
   "graph": {
     "decals": [],
     "links": [
@@ -181,7 +181,7 @@
           {
             "socket": "input:1",
             "value": {
-              "vector": [0.0009, 0.0009, 0.0009]
+              "vector": [0.0013, 0.0013, 0.0013]
             }
           }
         ],
@@ -503,7 +503,7 @@
         "type": "math"
       },
       {
-        "depth": 0.0001,
+        "depth": 0.00013,
         "id": 17,
         "kind": "bump",
         "position": [0, 0]
@@ -527,13 +527,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.55
+              "float": 0.52
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.34
+              "float": 0.27
             }
           }
         ],
@@ -563,7 +563,7 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.84
+              "float": 0.78
             }
           },
           {
@@ -630,7 +630,7 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.88
+              "float": 0.85
             }
           },
           {
@@ -687,7 +687,7 @@
     "output": 1
   },
   "name": "Leather Black",
-  "specular_roughness": 0.38,
+  "specular_roughness": 0.34,
   "tags": [
     "leather",
     "grain",

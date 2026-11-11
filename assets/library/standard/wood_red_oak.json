@@ -2,8 +2,9 @@
   "base_color": [0.4816794, 0.34162074, 0.21166618],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
-  "coat_roughness": 0.22,
-  "coat_weight": 0.55,
+  "coat_roughness": 0.28,
+  "coat_weight": 1,
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -283,7 +284,7 @@
       {
         "from": 38,
         "socket": "input:0",
-        "to": 68
+        "to": 69
       },
       {
         "from": 39,
@@ -404,7 +405,7 @@
       {
         "from": 56,
         "socket": "input:0",
-        "to": 69
+        "to": 70
       },
       {
         "from": 57,
@@ -468,22 +469,32 @@
         "to": 67
       },
       {
+        "from": 66,
+        "socket": "input:0",
+        "to": 68
+      },
+      {
         "from": 67,
         "socket": "param:specular_roughness",
         "to": 1
       },
       {
         "from": 68,
-        "socket": "input:1",
-        "to": 69
+        "socket": "param:coat_roughness",
+        "to": 1
       },
       {
         "from": 69,
-        "socket": "input:0",
+        "socket": "input:1",
         "to": 70
       },
       {
         "from": 70,
+        "socket": "input:0",
+        "to": 71
+      },
+      {
+        "from": 71,
         "socket": "param:bump",
         "to": 1
       }
@@ -640,7 +651,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -658,7 +669,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -1856,6 +1867,30 @@
           {
             "socket": "input:1",
             "value": {
+              "float": 0.6
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.28
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 69,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
               "float": 0.05
             }
           }
@@ -1868,7 +1903,7 @@
         "type": "math"
       },
       {
-        "id": 69,
+        "id": 70,
         "kind": "node",
         "position": [0, 0],
         "settings": {
@@ -1879,7 +1914,7 @@
       },
       {
         "depth": 0.000025,
-        "id": 70,
+        "id": 71,
         "kind": "bump",
         "position": [0, 0]
       }
@@ -1888,6 +1923,7 @@
   },
   "name": "Wood Red Oak",
   "specular_roughness": 0.45,
+  "specular_weight": 0,
   "tags": [
     "wood",
     "oak",

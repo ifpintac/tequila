@@ -4,6 +4,7 @@
   "category": "Wood",
   "coat_roughness": 0.03,
   "coat_weight": 1,
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -579,7 +580,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -597,7 +598,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -1677,6 +1678,7 @@
   },
   "name": "Wood Ebony",
   "specular_roughness": 0.4,
+  "specular_weight": 0,
   "tags": [
     "wood",
     "ebony",

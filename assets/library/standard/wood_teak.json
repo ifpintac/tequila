@@ -2,6 +2,7 @@
   "base_color": [0.26729324, 0.15363473, 0.05968698],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -577,7 +578,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -595,7 +596,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -1625,7 +1626,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.42
+              "float": 0.5
             }
           }
         ],
@@ -1674,7 +1675,8 @@
     "output": 1
   },
   "name": "Wood Teak",
-  "specular_roughness": 0.42,
+  "specular_roughness": 0.5,
+  "specular_weight": 0.6,
   "tags": [
     "wood",
     "teak",

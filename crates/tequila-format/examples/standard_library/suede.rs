@@ -58,8 +58,20 @@ pub fn all() -> Vec<Preset> {
         tags.extend_from_slice(colour);
         Vec::leak(tags)
     };
+    let fine_tags = |colour: &'static [&'static str]| -> &'static [&'static str] {
+        let mut tags = vec!["suede", "fine suede", "calf suede", "nubuck", "leather", "nap", "shoe", "footwear"];
+        tags.extend_from_slice(colour);
+        Vec::leak(tags)
+    };
     vec![
-        fine(),
+        fine("Fine Suede Sand", fine_tags(&["sand", "beige"]), "#846E58", "#D4C6B2"),
+        fine("Fine Suede Grey", fine_tags(&["grey"]), "#5E5C5A", "#BDBAB6"),
+        fine("Fine Suede Black", fine_tags(&["black"]), "#1E1D1C", "#6E6B68"),
+        fine("Fine Suede Navy", fine_tags(&["navy", "blue"]), "#1C2740", "#7786A8"),
+        fine("Fine Suede Burgundy", fine_tags(&["burgundy", "red", "wine"]), "#4E1820", "#B07880"),
+        fine("Fine Suede Olive", fine_tags(&["olive", "green"]), "#4A4B30", "#A6A784"),
+        fine("Fine Suede Chestnut", fine_tags(&["chestnut", "brown"]), "#6A3F26", "#C09878"),
+        fine("Microfibre Suede Charcoal", &["microfibre", "microsuede", "synthetic suede", "headliner", "steering wheel", "headphone", "nap", "charcoal", "grey"], "#333335", "#8E8E92"),
         roughout("Roughout Suede Tobacco", roughout_tags(&["brown", "tobacco"]), &TOBACCO),
         roughout("Roughout Suede Cream", roughout_tags(&["cream", "beige", "off-white"]), &CREAM),
     ]
@@ -83,9 +95,9 @@ const CREAM: Palette = Palette { body: "#F4E2C4", sheen: "#F8EEDD", base: "#EEDC
 
 /// Calf suede: a nap so short and fine the surface reads as velvet, a
 /// frosted pile up close, laid one way here and another there by brushing.
-fn fine() -> Preset {
-    let leather = srgb("#846E58");
-    let sheen = srgb("#D4C6B2");
+fn fine(name: &'static str, tags: &'static [&'static str], leather: &str, sheen: &str) -> Preset {
+    let leather = srgb(leather);
+    let sheen = srgb(sheen);
     let mut r = Recipe::new(base(MaterialType::Velvet, |m| {
         m.base_color = leather;
         m.fuzz_color = sheen;
@@ -104,8 +116,8 @@ fn fine() -> Preset {
     let cloud = r.smooth(cloud_field, (0.3, 0.7), (0.96, 1.04));
     // Fibre tips at a tenth of a millimetre, tufts at half a millimetre, and
     // the pile standing and lying in patches between: suede's frost.
-    let grain_field = noise(&mut r, coords, 7000.0, 2.0, 0.6, 0.0);
-    let grain = r.smooth(grain_field, (0.3, 0.7), (0.96, 1.04));
+    let grain_field = noise(&mut r, coords, 4200.0, 3.0, 0.65, 0.0);
+    let grain = r.smooth(grain_field, (0.3, 0.7), (0.9, 1.08));
     let tufts = r.node("voronoi_texture").w("Vector", coords).f("Scale", 1700.0).out("Distance");
     let pile_field = noise(&mut r, coords, 2000.0, 3.0, 0.65, 0.0);
     let pile = r.smooth(pile_field, (0.3, 0.7), (0.0, 1.0));
@@ -113,18 +125,25 @@ fn fine() -> Preset {
     let curv = curvature(&mut r, 0.0025, 1.0);
     let burnish = r.smooth(curv, (0.5, 0.95), (1.0, 0.88));
 
-    let nap_tone = r.smooth(nap, (0.0, 1.0), (0.99, 1.01));
-    let pile_tone = r.smooth(pile, (0.0, 1.0), (0.93, 1.05));
+    // And the strokes of a hand across it, a few centimetres long: the
+    // nap laid one way is paler than the nap laid the other, which is what
+    // a suede is known by. Without them it is a matte plastic.
+    let stroke_space = r.node("mapping").w("Vector", coords).v("Rotation", [0.2, 0.5, 0.9]).v("Scale", [4.0, 1.0, 1.5]).out("Vector");
+    let strokes = noise(&mut r, stroke_space, 20.0, 2.0, 0.5, 0.8);
+    let stroke = r.smooth(strokes, (0.25, 0.75), (0.0, 1.0));
+    let nap = r.mix_float(0.6, nap, stroke);
+    let nap_tone = r.smooth(nap, (0.0, 1.0), (0.95, 1.04));
+    let pile_tone = r.smooth(pile, (0.0, 1.0), (0.9, 1.07));
     let shade = product(&mut r, &[cloud, grain, nap_tone, pile_tone, burnish]);
     let colour = tint(&mut r, leather, shade);
     r.to(Param::BaseColor, colour);
-    let nap_sheen = r.smooth(nap, (0.0, 1.0), (0.94, 1.05));
+    let nap_sheen = r.smooth(nap, (0.0, 1.0), (0.88, 1.1));
     let pile_sheen = r.smooth(pile, (0.0, 1.0), (0.84, 1.12));
     let glow = product(&mut r, &[cloud, nap_sheen, pile_sheen, burnish]);
     let glow = tint(&mut r, sheen, glow);
     r.to(Param::FuzzColor, glow);
     // A rougher sheen where the nap stands, a tighter one where it lies.
-    let stands = r.smooth(nap, (0.0, 1.0), (-0.04, 0.03));
+    let stands = r.smooth(nap, (0.0, 1.0), (-0.06, 0.05));
     let flat = r.smooth(curv, (0.5, 0.95), (0.0, -0.1));
     let lie = r.math("add", stands, flat);
     let lie = r.math("add", lie, 0.62);
@@ -134,14 +153,8 @@ fn fine() -> Preset {
     let fine_part = r.math("multiply", grain_field, 0.2);
     let pile_part = r.math3("multiply_add", pile_field, 0.35, fine_part);
     let height = r.math3("multiply_add", domes, 0.45, pile_part);
-    r.bump(height, 2.2e-5);
-    preset(
-        "Fine Suede Sand",
-        "Leather",
-        &["suede", "fine suede", "calf suede", "nubuck", "leather", "nap", "shoe", "footwear", "sand", "beige"],
-        MaterialType::Velvet,
-        r,
-    )
+    r.bump(height, 3.2e-5);
+    preset(name, "Leather", tags, MaterialType::Velvet, r)
 }
 
 /// Roughout: the flesh side worn out, its nap torn up into ragged tufts a
