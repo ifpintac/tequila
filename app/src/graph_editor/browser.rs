@@ -122,6 +122,9 @@ pub enum Setup {
     WornEdges,
     /// A mask of the creases, broken into streaks: where dirt gathers.
     Dirt,
+    /// A curve for each of red, green and blue: what goes in against what
+    /// comes out (3ds Max's Output curves, a LUT by hand).
+    Curves,
 }
 
 impl Setup {
@@ -141,6 +144,7 @@ impl Setup {
             Setup::Distort => "Distort",
             Setup::WornEdges => "Worn edges",
             Setup::Dirt => "Dirt in the creases",
+            Setup::Curves => "Curves",
         }
     }
 
@@ -161,6 +165,7 @@ impl Setup {
             "distort" => Some(Setup::Distort),
             "worn_edges" => Some(Setup::WornEdges),
             "dirt" => Some(Setup::Dirt),
+            "curves" => Some(Setup::Curves),
             _ => None,
         }
     }
@@ -182,6 +187,7 @@ impl Setup {
             Setup::Distort => "Distort",
             Setup::WornEdges => "Worn edges",
             Setup::Dirt => "Dirt",
+            Setup::Curves => "Curves",
         }
     }
 
@@ -202,6 +208,7 @@ impl Setup {
             Setup::Distort => "distortion distort warp turbulence BerconDistortion VRayBerconDistortion coordinates wobble",
             Setup::WornEdges => "worn edges edge wear chipped paint scratched VRayDirt inverted normal VRayCurvature mask",
             Setup::Dirt => "dirt VRayDirt grime streaks crevice creases ambient occlusion AO dust rain mask",
+            Setup::Curves => "curves RGB curves tone curve levels VRayLut LUT Output map contrast S-curve",
         }
     }
 
@@ -221,6 +228,7 @@ impl Setup {
             Setup::Distort => "Coordinates pushed about by a noise: wire Distorted into a texture's Vector or an Image's Coordinates and what is read there is warped. Strength's Scale says how far; the Noise Texture's Scale how fine.",
             Setup::WornEdges => "A mask of the part's edges, broken up by a noise: 1 where paint has chipped, 0 where it holds. Wire it into the Factor of a Mix of two colours, or of a Mix Shader with the metal under the paint.",
             Setup::Dirt => "A mask of the part's creases, broken into streaks that run down it: 1 where dirt has gathered. Wire it into the Factor of a Mix of the colour and the dirt's, or into Roughness.",
+            Setup::Curves => "A curve for each of red, green and blue, as a Color Ramp from black to white: what goes in along it, what comes out up it. Move a ramp's stops, or add some, to bend its channel; set all three alike for contrast. Wire a texture in place of Colour in, and the Combine Color into the material's Color.",
         }
     }
 }
@@ -361,7 +369,7 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
             push(Group::Maps, Some("Layered"), [Setup::Composite].into_iter().filter_map(setup).collect());
             push(Group::Maps, Some("Per part"), [Setup::RandomColour, Setup::VaryColour, Setup::RandomPlacement].into_iter().filter_map(setup).collect());
             push(Group::Maps, Some("Placement"), [Setup::StochasticTiling, Setup::Distort].into_iter().filter_map(setup).collect());
-            push(Group::Maps, Some("Colour"), [Setup::Falloff, Setup::ColourCorrection].into_iter().filter_map(setup).collect());
+            push(Group::Maps, Some("Colour"), [Setup::Falloff, Setup::ColourCorrection, Setup::Curves].into_iter().filter_map(setup).collect());
             push(Group::Maps, Some("Wear"), [Setup::WornEdges, Setup::Dirt].into_iter().filter_map(setup).collect());
         }
     }
@@ -667,6 +675,7 @@ mod tests {
             ("VRayUVWRandomizer", Setup::StochasticTiling.label()),
             ("Falloff", Setup::Falloff.label()),
             ("Color Correction", Setup::ColourCorrection.label()),
+            ("VRayLut", Setup::Curves.label()),
             ("BerconDistortion", Setup::Distort.label()),
             ("VRayDirt", Setup::Dirt.label()),
             ("chipped", Setup::WornEdges.label()),
@@ -685,6 +694,8 @@ mod tests {
             ("VRayColor2Bump", "Bump"),
             ("VRayFur", "Fuzz"),
             ("remap", "Map Range"),
+            ("kelvin", "Blackbody"),
+            ("Color temperature", "Blackbody"),
         ] {
             finds(query, Group::Utilities, wanted);
         }

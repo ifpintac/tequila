@@ -5015,6 +5015,69 @@ mod tests {
         }
     }
 
+    /// A Blackbody's colour is the same in both renderers: over a ball that
+    /// glows warmer towards its foot and cooler towards its top, each
+    /// channel comes out as bright in Cycles as in Tequila's renderer, and
+    /// warm and cool lie on the same pixels. Tequila's fit is Cycles' own.
+    /// Skipped where Cycles is not installed.
+    #[test]
+    fn a_blackbodys_colour_is_the_same_in_both_renderers() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+        use tequila_materials::material_type::Param;
+        use tequila_materials::nodes::ShaderNode;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut graph = MaterialGraph::from_material(tequila_materials::openpbr::Material { specular_weight: 0.0, ..Default::default() });
+        // How high the point is, from the ball's foot to its top, as 3000 K
+        // to 10000 K.
+        let geometry = graph.add_node(Node::new(NodeKind::Node(ShaderNode::Geometry)));
+        let split = graph.add_node(Node::new(NodeKind::Node(ShaderNode::SeparateXyz)));
+        graph.connect_output(geometry, 0, split, Socket::Input(0));
+        let kelvin = graph.add_node(
+            Node::new(NodeKind::Node(ShaderNode::from_key("map_range").expect("Map Range")))
+                .with_literal(Socket::Input(1), Value::Float(0.0))
+                .with_literal(Socket::Input(2), Value::Float(2.0))
+                .with_literal(Socket::Input(3), Value::Float(3000.0))
+                .with_literal(Socket::Input(4), Value::Float(10000.0)),
+        );
+        graph.connect_output(split, 1, kelvin, Socket::Input(0));
+        let glow = graph.add_node(Node::new(NodeKind::Node(ShaderNode::Blackbody)));
+        graph.connect_output(kelvin, 0, glow, Socket::Input(0));
+        // Half as bright, so the warm end's red stays a colour a surface
+        // can be: Hue, Saturation, Value, Fac, Color.
+        let dimmed = graph.add_node(Node::new(NodeKind::Node(ShaderNode::HueSaturationValue)).with_literal(Socket::Input(2), Value::Float(0.5)));
+        graph.connect_output(glow, 0, dimmed, Socket::Input(4));
+        let surface = graph.output();
+        graph.connect_output(dimmed, 0, surface, Socket::Param(Param::BaseColor));
+        let [tequila, cycles] = both_engines("blackbody", move |scene| {
+            let program = graph.compile().expect("compiles");
+            scene.materials[0] = graph.material().clone();
+            *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+        });
+        let (a, b) = (channel_means(&tequila), channel_means(&cycles));
+        for c in 0..3 {
+            assert!((a[c] - b[c]).abs() < a[c] * 0.08 + 5.0, "Tequila's glow is {a:.0?}, Cycles' {b:.0?}");
+        }
+        // Warm at the foot and cool at the top: red less blue, pixel by pixel.
+        let warmth = |image: &[u8]| -> Vec<f64> {
+            let only: Vec<u8> = image.chunks_exact(4).flat_map(|p| [(128 + i32::from(p[0]) / 2 - i32::from(p[2]) / 2) as u8, 0, 0, 255]).collect();
+            inside_the_sphere(&only)
+        };
+        let (wa, wb) = (warmth(&tequila), warmth(&cycles));
+        let ((ma, sa), (mb, _)) = (mean_and_spread(&wa), mean_and_spread(&wb));
+        let (mut cov, mut va, mut vb) = (0.0, 0.0, 0.0);
+        for (x, y) in wa.iter().zip(&wb) {
+            cov += (x - ma) * (y - mb);
+            va += (x - ma) * (x - ma);
+            vb += (y - mb) * (y - mb);
+        }
+        assert!(sa > 8.0, "the ball is one colour from foot to top in Tequila's renderer ({sa:.1})");
+        assert!(cov / (va.sqrt() * vb.sqrt()).max(1e-9) > 0.95, "warm and cool are not where Cycles has them");
+    }
+
     /// A texture pack's tri-planar normal map leans the surface the way
     /// Tequila's renderer leans it: a map leaning every texel across its
     /// picture changes the sphere's shading the same way in both. Cycles

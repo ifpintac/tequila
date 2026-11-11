@@ -683,6 +683,7 @@ fn shader_node(node: &ShaderNode, a: &[Arg], output: u8, memo: &mut Memo) -> Opt
         ShaderNode::BrightContrast => vec4_of(format!("max((1.0 + {c}) * {} + ({} - {c} * 0.5), vec3(0.0))", v(0), f(1), c = f(2))),
         ShaderNode::Gamma => vec4_of(format!("fs_gamma({}, {})", v(0), f(1))),
         ShaderNode::InvertColor => vec4_of(format!("mix({c}, vec3(1.0) - {c}, {})", f(0), c = v(1))),
+        ShaderNode::Blackbody => vec4_of(format!("fs_blackbody({})", f(0))),
         ShaderNode::Math { op, clamp } => {
             let e = math(op, &f(0), &f(1), &f(2));
             float4(if clamp { format!("clamp({e}, 0.0, 1.0)") } else { e })
