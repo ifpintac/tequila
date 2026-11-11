@@ -243,6 +243,20 @@ The toolbar's Add menu adds a shape, a light or a cutaway. **Add › Shape** is 
 
 Ship alternative navigation presets emulating SolidWorks, Rhino, Blender, Maya, and Fusion 360, selectable in Preferences. This is a five-minute feature that removes a real adoption barrier.
 
+*As built, November 11:* Preferences › Navigation › *Move the view as in* (`app/src/navigation.rs`). Which button, with which keys held, orbits, pans and zooms by dragging is a scheme of three drags, and the viewport asks it what a drag does rather than knowing. The presets, each its program's own:
+
+| Preset | Orbit | Pan | Zoom by dragging |
+|---|---|---|---|
+| Tequila (as KeyShot), the default | Left | Middle | `Alt` + Right |
+| Blender | Middle | `Shift` + Middle | `Ctrl` + Middle |
+| Maya, Cinema 4D | `Alt` + Left | `Alt` + Middle | `Alt` + Right |
+| 3ds Max | `Alt` + Middle | Middle | `Ctrl` + `Alt` + Middle |
+| SolidWorks | Middle | `Ctrl` + Middle | `Shift` + Middle |
+| Rhino | Right | `Shift` + Right | `Ctrl` + Right |
+| Fusion 360 | `Shift` + Middle | Middle | `Ctrl` + `Shift` + Middle |
+
+Below the preset, *Orbit*, *Pan* and *Zoom* each choose any button with any of Ctrl, Shift and Alt; changing one makes the preset **Custom**, starting from the drags in use, and a drag another move had is swapped with it, so no two share one. Of the drags that fit a press, the one asking for the most keys wins (Blender's Shift and the middle button pans, though the middle button alone orbits), and keys a drag does not ask for do no harm, as before: Shift and a left drag still orbits in Tequila's own. The wheel zooms, Alt and the wheel change the focal length, a click selects and a right-click opens the menu in every preset; where the right button orbits (Rhino), a right-click that does not move is still the menu. The left button is the gizmo's and the axis legend's before it is the view's. The Shortcuts window's Mouse rows show the scheme in use. Kept in `preferences.txt` (`navigation.preset`, `navigation.orbit_drag`, `navigation.pan_drag`, `navigation.zoom_drag`), and set by scripts as any setting. Not built: the wheel's direction per preset (SolidWorks' and Fusion's is the other way; *Reverse the zoom direction* is its own setting), twist, and the other §6.1 bindings as choices. Tests: `navigation.rs`'s, and `a_navigation_preset_and_a_custom_drag_are_kept`.
+
 #### 6.1.1 3D mouse
 
 A 3Dconnexion 3D mouse (SpaceMouse, SpaceNavigator and their kin) turns, pans and zooms the view with one hand while the other keeps the mouse, as in CAD applications. The cap moves the model: push it right and the model goes right, lift it and the model rises, pull it toward you and the model comes closer; twist it and the model turns about the vertical, tilt it forward and the model tips away. The two main buttons step to the next Studio (the left, Menu on the larger devices) and fit the view (the right, Fit). Its settings are in Edit > Preferences (§12).
@@ -500,13 +514,13 @@ The pages and settings built:
 - **General**: the start screen at launch *(was the appearance picker's)*; the recovery copy on or off and how often (1 to 60 minutes; off, each change is still journalled); how many recent projects are listed (0 to 30), and *Clear the list*.
 - **Interface**: light, dark or auto, the colour theme and the interface size *(the appearance picker's, which stays)*; tooltips on or off and their delay.
 - **Viewport**: what a session starts with - its shading, the ground grid, axis legend, render frame, statistics, model edges, the selection's outline and the gizmo (each still switched for the session from the View menu or its key); the gizmo's size (50 to 250%) and the mode it starts in; for the Rendered view, *While the view moves* - Smooth, Balanced or Sharp, the time a moving picture is given (22, 33 or 50 ms, `cycles_view`) - and the samples a still Cycles view refines to (16 to 16,384).
-- **Navigation**: orbit, pan and zoom speed (0.25× to 4×); the wheel's zoom reversed (a pinch keeps its direction); whether a trackpad's two-finger swipe pans or orbits, Shift doing the other; and the 3D mouse's settings, which were the whole window before.
+- **Navigation**: whose way the mouse moves the view, and the three drags of one's own (§6.1); orbit, pan and zoom speed (0.25× to 4×); the wheel's zoom reversed (a pinch keeps its direction); whether a trackpad's two-finger swipe pans or orbits, Shift doing the other; and the 3D mouse's settings, which were the whole window before.
 - **Keyboard**: every key of the main window, changed there (§6.3).
 - **Import**: the up axis of imports *(File › Up axis of imports, which stays)*.
 - **Folders**: the screenshot folder *(View › Screenshot folder…, which stays)*, and Tequila's settings and library folders, opened.
 - **Updates**: the quiet look for a new version at launch.
 
-Tequila's newer choices are kept in `preferences.txt` beside the others, a `name=value` line each, and a line that is not understood keeps its default. The older ones - the look, the up axis, the screenshot folder, updates, the 3D mouse - are still kept in their own files by the code that owns them: **the one settings file of §12.1 is not built**, and nor is telling a project's defaults from the application's choices, since none of these settings is a project's. Not built either: the pages Rendering, Performance and memory, Colour management, Materials and library, Assistant, and Plugins and scripting; the navigation presets; autosave versions, undo depth, units and language; the outline's colour and width; power settings; and, on a Mac, the item in the application menu (it is in Edit: the application menu is winit's). Held by the tests in `preferences.rs`, `ctrl_comma_opens_preferences`, `a_script_opens_preferences_and_changes_a_setting` and `a_swipe_follows_the_navigation_settings`.
+Tequila's newer choices are kept in `preferences.txt` beside the others, a `name=value` line each, and a line that is not understood keeps its default. The older ones - the look, the up axis, the screenshot folder, updates, the 3D mouse - are still kept in their own files by the code that owns them: **the one settings file of §12.1 is not built**, and nor is telling a project's defaults from the application's choices, since none of these settings is a project's. Not built either: the pages Rendering, Performance and memory, Colour management, Materials and library, Assistant, and Plugins and scripting; autosave versions, undo depth, units and language; the outline's colour and width; power settings; and, on a Mac, the item in the application menu (it is in Edit: the application menu is winit's). Held by the tests in `preferences.rs`, `ctrl_comma_opens_preferences`, `a_script_opens_preferences_and_changes_a_setting` and `a_swipe_follows_the_navigation_settings`.
 
 The rest is specified below and not built yet (planned November 10). The aim is that a person can make every choice Tequila makes for them, in one window: today's few settings are spread over the appearance picker, the File and View menus, the Material tab and this window, and much of the rest is fixed in the code.
 
