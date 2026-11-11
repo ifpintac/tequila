@@ -375,6 +375,9 @@ pub enum GraphBring {
     Library(String),
     /// One of the document's materials, by its number.
     Material(u64),
+    /// One of the browser's setups, several nodes wired: `blend`,
+    /// `two_sided` or `composite`.
+    Setup(String),
 }
 
 /// Changes to the application's panels. Absent fields are left alone.
@@ -1420,10 +1423,11 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             graph_search: opt_string(value, "graph_search")?,
             graph_bring: match value.get("graph_bring") {
                 None | Some(Value::Null) => None,
-                Some(v) => match (v.get("library").and_then(|l| l.as_str()), v.get("material").and_then(|m| m.as_index())) {
-                    (Some(name), None) => Some(GraphBring::Library(name.to_string())),
-                    (None, Some(material)) => Some(GraphBring::Material(material as u64)),
-                    _ => return Err(ProtocolError(r#"`graph_bring` is {"library": "<name>"} or {"material": n}"#.into())),
+                Some(v) => match (v.get("library").and_then(|l| l.as_str()), v.get("material").and_then(|m| m.as_index()), v.get("setup").and_then(|s| s.as_str())) {
+                    (Some(name), None, None) => Some(GraphBring::Library(name.to_string())),
+                    (None, Some(material), None) => Some(GraphBring::Material(material as u64)),
+                    (None, None, Some(setup)) => Some(GraphBring::Setup(setup.to_string())),
+                    _ => return Err(ProtocolError(r#"`graph_bring` is {"library": "<name>"}, {"material": n} or {"setup": "blend"}"#.into())),
                 },
             },
             spacemouse: value.get("spacemouse").map(spacemouse_input).transpose()?,

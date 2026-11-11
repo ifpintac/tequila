@@ -2045,8 +2045,11 @@ impl MaterialGraph {
     /// (`shade::choose_layer`).
     fn compile_layered(&self, layer: Layer) -> Result<CompiledGraph, GraphError> {
         let wired = |node: NodeId| self.links.iter().any(|l| l.to == node && LOBE_PARAMS.iter().any(|p| l.to_socket == Socket::Param(*p)));
+        // (Not when the other has a layer of its own: mixed into this one
+        // parameter by parameter, it has no Layer left for that to be on,
+        // and the coat on the coat was dropped.)
         let alike = match (self.shader_material(self.output), self.shader_material(layer.shader)) {
-            (Some(a), Some(b)) => same_lobes(a, b) && !wired(self.output) && !wired(layer.shader),
+            (Some(a), Some(b)) => same_lobes(a, b) && !wired(self.output) && !wired(layer.shader) && self.layer_of(layer.shader).is_none(),
             _ => false,
         };
         if alike && !layer.add {
@@ -2994,5 +2997,41 @@ mod tests {
             .instructions
             .iter()
             .any(|i| matches!(i, Instruction::Load { dst, value: Value::Vector(v) } if *dst == register && *v == Vec3::X)));
+    }
+    /// A coat on a coat is kept when the material and its first coat are of
+    /// a kind. Two of a kind are mixed parameter by parameter into one
+    /// surface, and that left the first coat's own layer behind: a third
+    /// surface in the graph, and none of it in the render.
+    #[test]
+    fn a_layer_on_a_layer_of_the_same_kind_is_kept() {
+        let plain = Material::default();
+        let mut graph = MaterialGraph::from_material(plain.clone());
+        let surface = graph.output();
+        let coat = |graph: &mut MaterialGraph, under: NodeId, colour: f32, factor: f32, metal: bool| {
+            let mut material = plain.clone();
+            material.base_color = Spectrum::splat(colour);
+            material.base_metalness = if metal { 1.0 } else { 0.0 };
+            let shader = graph.add_node(Node::new(NodeKind::Shader(Box::new(material))));
+            let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }).with_literal(Socket::Input(0), Value::Float(factor)));
+            graph.connect_output(shader, 0, mix, Socket::Input(1));
+            graph.connect_output(mix, 0, under, LAYER_INPUT);
+            shader
+        };
+        // A coat of the material's own kind, and a metal one on that.
+        let first = coat(&mut graph, surface, 0.2, 0.5, false);
+        coat(&mut graph, first, 0.9, 0.25, true);
+        let program = graph.compile().expect("compiles");
+        let layer = program.layer.as_ref().expect("the first coat is a layer of its own, with one on it");
+        assert_eq!(layer.factor.constants.geometry_opacity, 0.5);
+        let on_it = layer.shader.layer.as_ref().expect("the coat on the coat");
+        assert_eq!(on_it.factor.constants.geometry_opacity, 0.25);
+        assert_eq!(on_it.shader.constants.base_color, Spectrum::splat(0.9));
+        assert!(on_it.shader.layer.is_none());
+
+        // With no coat on it, two of a kind are still one surface, mixed.
+        let mut graph = MaterialGraph::from_material(plain.clone());
+        let surface = graph.output();
+        coat(&mut graph, surface, 0.2, 0.5, false);
+        assert!(graph.compile().expect("compiles").layer.is_none());
     }
 }

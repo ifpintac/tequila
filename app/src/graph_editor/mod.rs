@@ -15,7 +15,16 @@
 
 mod browser;
 mod menu;
+pub use browser::Setup;
 pub use browser::Source as Brought;
+
+/// What a script asks of the browser.
+pub enum Asked {
+    /// A material brought into the graph whole.
+    Bring(Brought),
+    /// A setup's nodes added, wired.
+    Arrange(Setup),
+}
 mod previews;
 mod sidebar;
 mod swatch;
@@ -332,10 +341,14 @@ impl GraphEditor {
         &self.browser.query
     }
 
-    /// Bring a material into the graph whole, as its row in the browser
-    /// double-clicked: a script's way, done when the editor is next drawn.
-    pub fn bring(&mut self, source: Brought) {
-        self.scripted = Some(browser::Act::Bring { source, at: None });
+    /// Bring a material into the graph whole, or add a setup, as its row
+    /// in the browser double-clicked: a script's way, done when the editor
+    /// is next drawn.
+    pub fn ask(&mut self, asked: Asked) {
+        self.scripted = Some(match asked {
+            Asked::Bring(source) => browser::Act::Bring { source, at: None },
+            Asked::Arrange(setup) => browser::Act::Arrange { setup, at: None },
+        });
     }
 
     /// `library` is the material library, for the browser's last group.
@@ -522,6 +535,7 @@ impl GraphEditor {
                 browser::Item::Node(kind, _) => matches!(view::family(kind), view::Family::Texture | view::Family::Pattern).then(|| thumbs::key_of(kind, 2)),
                 browser::Item::Material(key) => project.document().materials.get(*key).map(|definition| definition.graph.content_hash() ^ 0x5ce9e),
                 browser::Item::Library(index) => library.entries.get(*index).map(|entry| crate::library_tab::entry_key(entry) ^ 0x11b),
+                browser::Item::Setup(_) => None,
             }
         };
         self.thumbs.collect(ui.ctx());
@@ -549,6 +563,7 @@ impl GraphEditor {
                         }
                         None => library.entries.get(*index).map(|entry| thumbs::Make::Ball { graph: entry.graph.clone(), files: entry.textures.clone(), loaded: None, uv_unit: entry.preview_uv_unit }),
                     },
+                    browser::Item::Setup(_) => None,
                 };
                 match what {
                     Some(what) => self.thumbs.make(ui.ctx(), key, what),
@@ -629,6 +644,49 @@ impl GraphEditor {
                 self.browser_holding = false;
                 self.selected = BTreeSet::from([id]);
                 self.active = Some(id);
+                self.selected_frame = None;
+                true
+            }
+            browser::Act::Arrange { setup, at } => {
+                let (mut other, into) = setup_graph(setup);
+                tidy::arrange(&mut other, &[]);
+                let top = NodeKind::MixShader { add: false };
+                let dropped = at.is_some();
+                // The node that feeds the surface: the one the rest are
+                // placed about.
+                let stand_in = other.output();
+                let last = other.links().iter().find(|l| l.to == stand_in).and_then(|l| other.node(l.from)).map(|n| n.position).unwrap_or(GraphVec2 { x: 0.0, y: 0.0 });
+                let at = match at {
+                    Some(screen) => self.dropped_at(&top, screen),
+                    // To the left of everything that is there, level with
+                    // the material: where what feeds it comes from, so its
+                    // wire runs straight in.
+                    None => {
+                        let here = tidy::content_bounds(graph, exposed, self.show_previews);
+                        let theirs = tidy::layouts(&other, &[], self.show_previews).into_iter().filter(|(id, _)| *id != stand_in).map(|(_, l)| l.rect).reduce(|a, b| a.union(b));
+                        let level = graph.node(graph.output()).map_or(0.0, |n| n.position.y);
+                        match (here, theirs) {
+                            (Some(here), Some(theirs)) => egui::vec2(last.x + (here.left() - GRID * 10.0 - theirs.right()), last.y + (level - theirs.top())),
+                            _ => middle(self, view::node_width(&top)),
+                        }
+                    }
+                };
+                let fresh = arrange_setup(graph, &other, into, GraphVec2 { x: at.x, y: at.y });
+                apart(graph, &fresh);
+                let layouts = tidy::layouts(graph, exposed, self.show_previews);
+                if let Some(bounds) = fresh.iter().filter_map(|id| layouts.get(id).map(|l| l.rect)).reduce(|a, b| a.union(b)) {
+                    let around = bounds.expand(24.0);
+                    graph.frames.push(tequila_materials::graph::Frame {
+                        title: setup.title().into(),
+                        min: GraphVec2 { x: around.min.x, y: around.min.y - tidy::FRAME_TITLE },
+                        max: GraphVec2 { x: around.max.x, y: around.max.y },
+                    });
+                }
+                if !dropped {
+                    self.frame_pending = true;
+                }
+                self.active = fresh.last().copied();
+                self.selected = fresh.into_iter().collect();
                 self.selected_frame = None;
                 true
             }
@@ -2372,6 +2430,105 @@ fn apart(graph: &mut MaterialGraph, moved: &[NodeId]) {
     }
 }
 
+/// A setup as a graph of its own, laid out by its wires: the nodes it adds,
+/// feeding a stand-in surface, and the input of the real surface that what
+/// feeds the stand-in is wired to when it is free (`None`: left for the
+/// person to wire where they want it).
+fn setup_graph(setup: browser::Setup) -> (MaterialGraph, Option<Socket>) {
+    use tequila_materials::graph::LAYER_INPUT;
+    use tequila_materials::material_type::MaterialType;
+    use tequila_materials::nodes::ShaderNode;
+    let mut graph = MaterialGraph::from_material(Default::default());
+    let surface = graph.output();
+    let named = |kind: NodeKind, name: &str| {
+        let mut node = Node::new(kind);
+        node.label = Some(name.to_string());
+        node
+    };
+    let coat = |name: &str| named(NodeKind::Shader(Box::new(MaterialType::Plastic.defaults())), name);
+    match setup {
+        browser::Setup::Blend => {
+            let stack = graph.add_node(Node::new(NodeKind::Group(tequila_materials::groups::NodeGroup::BlendStack)));
+            // Each coat on the Layer of the one under it; the first on the
+            // surface's.
+            let mut under = surface;
+            for index in 0..3u8 {
+                let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }));
+                let shader = graph.add_node(coat(&format!("Coat {}", index + 1)));
+                graph.connect_output(stack, index, mix, Socket::Input(0));
+                graph.connect_output(shader, 0, mix, Socket::Input(1));
+                graph.connect_output(mix, 0, under, LAYER_INPUT);
+                under = shader;
+            }
+            (graph, Some(LAYER_INPUT))
+        }
+        browser::Setup::TwoSided => {
+            let geometry = ShaderNode::Geometry;
+            let backfacing = geometry.outputs().iter().position(|o| o.name == "Backfacing").unwrap_or(4) as u8;
+            let side = graph.add_node(Node::new(NodeKind::Node(geometry)));
+            let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }));
+            let back = graph.add_node(coat("Back"));
+            graph.connect_output(side, backfacing, mix, Socket::Input(0));
+            graph.connect_output(back, 0, mix, Socket::Input(1));
+            graph.connect_output(mix, 0, surface, LAYER_INPUT);
+            (graph, Some(LAYER_INPUT))
+        }
+        browser::Setup::Composite => {
+            let colour = |name: &str, grey: f32| named(NodeKind::Constant(Value::Color(tequila_core::spectrum::Spectrum::splat(grey))), name);
+            let mut under = graph.add_node(colour("Layer 1", 0.8));
+            for (index, grey) in [0.5, 0.3, 0.1].into_iter().enumerate() {
+                let layer = graph.add_node(colour(&format!("Layer {}", index + 2), grey));
+                let mix = graph.add_node(named(NodeKind::Node(ShaderNode::from_key("mix").expect("the Mix node")), &format!("Over {}", index + 1)));
+                // Factor, then what is under, then the layer.
+                graph.node_mut(mix).expect("just added").literals.insert(Socket::Input(0), Value::Float(0.5));
+                graph.connect_output(under, 0, mix, Socket::Input(1));
+                graph.connect_output(layer, 0, mix, Socket::Input(2));
+                under = mix;
+            }
+            // Wired to the stand-in for the layout alone.
+            graph.connect_output(under, 0, surface, Socket::Param(Param::BaseColor));
+            (graph, None)
+        }
+    }
+}
+
+/// Add `other`'s nodes to `graph`, all but its surface, with the wires among
+/// them; what fed `other`'s surface feeds `graph`'s at `into`, when that is
+/// given and free. The node that fed the surface goes at `at` and the rest
+/// keep their places about it. Returns the nodes added, that one last.
+fn arrange_setup(graph: &mut MaterialGraph, other: &MaterialGraph, into: Option<Socket>, at: GraphVec2) -> Vec<NodeId> {
+    let stand_in = other.output();
+    let last = other.links().iter().find(|l| l.to == stand_in).copied();
+    let origin = last.and_then(|l| other.node(l.from)).map(|n| n.position).unwrap_or(GraphVec2 { x: 0.0, y: 0.0 });
+    let mut fresh: HashMap<NodeId, NodeId> = HashMap::new();
+    let mut added = Vec::new();
+    for (id, node) in other.nodes().filter(|(id, _)| *id != stand_in) {
+        let mut node = node.clone();
+        node.position = GraphVec2 { x: snap(node.position.x - origin.x + at.x), y: snap(node.position.y - origin.y + at.y) };
+        let new = graph.add_node(node);
+        fresh.insert(id, new);
+        added.push(new);
+    }
+    for link in other.links() {
+        if let (Some(from), Some(to)) = (fresh.get(&link.from), fresh.get(&link.to)) {
+            graph.connect_output(*from, link.from_socket, *to, link.to_socket);
+        }
+    }
+    let surface = graph.output();
+    if let (Some(link), Some(socket)) = (last, into) {
+        let free = !graph.links().iter().any(|l| l.to == surface && l.to_socket == socket);
+        if let (true, Some(from)) = (free, fresh.get(&link.from)) {
+            graph.connect_output(*from, link.from_socket, surface, socket);
+        }
+    }
+    // The one that fed the surface last: the one to look at.
+    if let Some(top) = last.and_then(|l| fresh.get(&l.from)).copied() {
+        added.retain(|id| *id != top);
+        added.push(top);
+    }
+    added
+}
+
 /// Another material brought into `graph` whole, to be mixed with it: its
 /// nodes and the wires among them, and where its Surface was a Shader of
 /// the same surface, named for the material, with the same wires into it -
@@ -3417,5 +3574,65 @@ mod tests {
         assert_eq!(h.graph().len(), 4, "the copy is there");
         assert_eq!((position(&h, a), position(&h, b), position(&h, surface)), was, "the others moved");
         assert!(!tidy::unplaced(&h.graph()), "no two nodes are at one place");
+    }
+    /// A setup is several nodes added wired: the blend's coats each on the
+    /// Layer of the one under it with the stack's factors, the two-sided's
+    /// back on the faces' backs, the composite's colours one over another.
+    /// Each compiles, and the layered ones are layered as deep as they say.
+    #[test]
+    fn a_setup_is_added_wired_and_compiles() {
+        use tequila_materials::graph::LAYER_INPUT;
+        let add = |setup: browser::Setup| {
+            let mut h = Harness::with_browser();
+            let mut graph = h.graph();
+            assert!(h.editor.browse(browser::Act::Arrange { setup, at: None }, &mut graph, &h.project, &Library::none(), &[]));
+            graph.compile().unwrap_or_else(|e| panic!("{setup:?} does not compile: {e:?}"));
+            assert!(!tidy::unplaced(&graph), "{setup:?} left two nodes at one place");
+            assert_eq!(graph.frames.iter().filter(|f| f.title == setup.title()).count(), 1);
+            graph
+        };
+        let depth = |graph: &MaterialGraph| {
+            let mut layer = graph.compile().expect("compiles").layer;
+            let mut deep = 0;
+            while let Some(next) = layer {
+                deep += 1;
+                layer = next.shader.layer;
+            }
+            deep
+        };
+
+        let blend = add(browser::Setup::Blend);
+        // (The top two, both plastic as they are added, are one surface
+        // mixed parameter by parameter: two layers deep until one is made
+        // another kind.)
+        assert_eq!(depth(&blend), 2, "the coats are layers on one another");
+        let stack = blend.nodes().find(|(_, n)| matches!(n.kind, NodeKind::Group(tequila_materials::groups::NodeGroup::BlendStack))).map(|(id, _)| id).expect("the stack");
+        let mixes: Vec<NodeId> = blend.nodes().filter(|(_, n)| matches!(n.kind, NodeKind::MixShader { add: false })).map(|(id, _)| id).collect();
+        assert_eq!(mixes.len(), 3);
+        for mix in &mixes {
+            assert!(blend.links().iter().any(|l| l.from == stack && l.to == *mix && l.to_socket == Socket::Input(0)), "a Mix Shader's factor is not the stack's");
+        }
+        assert!(blend.links().iter().any(|l| l.to == blend.output() && l.to_socket == LAYER_INPUT), "the first coat is on the material's Layer");
+
+        let two = add(browser::Setup::TwoSided);
+        let mix = two.nodes().find(|(_, n)| matches!(n.kind, NodeKind::MixShader { .. })).map(|(id, _)| id).unwrap();
+        let side = two.links().iter().find(|l| l.to == mix && l.to_socket == Socket::Input(0)).map(|l| (l.from, l.from_socket)).expect("a factor");
+        let geometry = two.node(side.0).unwrap();
+        let NodeKind::Node(node) = &geometry.kind else { panic!("the factor is not a node's") };
+        assert_eq!(node.outputs()[side.1 as usize].name, "Backfacing");
+
+        let composite = add(browser::Setup::Composite);
+        assert_eq!(depth(&composite), 0, "colours, not surfaces");
+        assert!(!composite.links().iter().any(|l| l.to == composite.output()), "left for the person to wire in");
+        assert_eq!(composite.nodes().filter(|(_, n)| matches!(n.kind, NodeKind::Constant(Value::Color(_)))).count(), 4);
+
+        // A material whose Layer is taken keeps it: the setup is added beside.
+        let mut h = Harness::with_browser();
+        let mut graph = h.graph();
+        assert!(h.editor.browse(browser::Act::Arrange { setup: browser::Setup::TwoSided, at: None }, &mut graph, &h.project, &Library::none(), &[]));
+        let first = graph.links().iter().find(|l| l.to == graph.output() && l.to_socket == LAYER_INPUT).copied().expect("layered");
+        assert!(h.editor.browse(browser::Act::Arrange { setup: browser::Setup::Blend, at: None }, &mut graph, &h.project, &Library::none(), &[]));
+        assert_eq!(graph.links().iter().filter(|l| l.to == graph.output() && l.to_socket == LAYER_INPUT).copied().collect::<Vec<_>>(), [first]);
+        graph.compile().expect("still compiles");
     }
 }

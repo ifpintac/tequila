@@ -75,6 +75,68 @@ pub enum Item {
     Material(MaterialKey),
     /// A library material, by its place in the library's list.
     Library(usize),
+    /// Several nodes, wired.
+    Setup(Setup),
+}
+
+/// A few nodes added together, already wired: what a single node is in the
+/// material editors of 3ds Max and V-Ray, made here of the nodes there are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setup {
+    /// Coats stacked on the material, each over everything under it
+    /// (V-Ray's blend material).
+    Blend,
+    /// Another surface on the back of the faces (V-Ray's two-sided).
+    TwoSided,
+    /// Colours laid over one another, each with its blend and its mask
+    /// (3ds Max's Composite map).
+    Composite,
+}
+
+impl Setup {
+    pub fn label(self) -> &'static str {
+        match self {
+            Setup::Blend => "Blend (3 coats)",
+            Setup::TwoSided => "Two-sided",
+            Setup::Composite => "Composite (4 layers)",
+        }
+    }
+
+    /// Its name to a script.
+    pub fn from_key(key: &str) -> Option<Setup> {
+        match key {
+            "blend" => Some(Setup::Blend),
+            "two_sided" => Some(Setup::TwoSided),
+            "composite" => Some(Setup::Composite),
+            _ => None,
+        }
+    }
+
+    /// The frame's title round its nodes.
+    pub fn title(self) -> &'static str {
+        match self {
+            Setup::Blend => "Blend",
+            Setup::TwoSided => "Two-sided",
+            Setup::Composite => "Composite",
+        }
+    }
+
+    /// What a search also finds it by.
+    fn words(self) -> &'static str {
+        match self {
+            Setup::Blend => "VRayBlendMtl blend material coats layers layered stack",
+            Setup::TwoSided => "VRay2SidedMtl two sided double sided back face front",
+            Setup::Composite => "composite layers layered mix stack VRayCompTex",
+        }
+    }
+
+    fn about(self) -> &'static str {
+        match self {
+            Setup::Blend => "Three coats over the material, each over everything under it by its own amount: a number, or a mask wired into the Blend Stack. Each coat is a Shader of its own.",
+            Setup::TwoSided => "Another surface on the back of every face: a label's reverse, the inside of a shell, the other side of a leaf.",
+            Setup::Composite => "Four colours laid over one another, each with its own blend and amount. Wire a texture into a layer's colour or its Factor, and the last Mix into the material.",
+        }
+    }
 }
 
 /// A material brought into the graph whole.
@@ -148,6 +210,12 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
             .collect();
         push(Group::Materials, Some(category_label(category)), rows);
     }
+    // And the layered ones, which are several nodes wired together.
+    let setup = |setup: Setup| {
+        let score = if searching { [setup.label(), setup.words()].into_iter().filter_map(&found).max()? } else { 0 };
+        Some((Row { label: setup.label().to_string(), family: Some(Family::Surface), item: Item::Setup(setup), current: false }, score))
+    };
+    push(Group::Materials, Some("Layered"), [Setup::Blend, Setup::TwoSided].into_iter().filter_map(setup).collect());
 
     // Maps, then the rest, each family under its own heading.
     let families = |group: Group| -> &'static [Family] {
@@ -174,6 +242,9 @@ pub fn sections<'a>(entries: &[Entry], materials: &[(MaterialKey, String)], libr
                 })
                 .collect();
             push(group, Some(family.label()), rows);
+        }
+        if group == Group::Maps {
+            push(Group::Maps, Some("Layered"), [Setup::Composite].into_iter().filter_map(setup).collect());
         }
     }
 
@@ -219,6 +290,8 @@ pub enum Act {
     /// Bring a material into the graph whole, dropped or double-clicked as
     /// a node is.
     Bring { source: Source, at: Option<egui::Pos2> },
+    /// Add a setup's nodes, wired.
+    Arrange { setup: Setup, at: Option<egui::Pos2> },
 }
 
 #[derive(Default)]
@@ -315,6 +388,7 @@ impl Browser {
                         Item::Node(kind, label) => Act::Add { kind, label, at: Some(at) },
                         Item::Material(key) => Act::Bring { source: Source::Scene(key), at: Some(at) },
                         Item::Library(index) => Act::Bring { source: Source::Library(index), at: Some(at) },
+                        Item::Setup(setup) => Act::Arrange { setup, at: Some(at) },
                     };
                 }
             }
@@ -409,6 +483,12 @@ impl Browser {
                 }
                 response.on_hover_text("Drag it into the graph, or double-click: it comes in as a Shader, with its nodes.");
             }
+            Item::Setup(setup) => {
+                if response.double_clicked() {
+                    *act = Act::Arrange { setup: *setup, at: None };
+                }
+                response.on_hover_text(format!("{} Drag it into the graph, or double-click.", setup.about()));
+            }
         }
     }
 }
@@ -452,7 +532,9 @@ mod tests {
         assert!(labels(&sections, Group::Utilities).iter().any(|l| l == "Math"));
 
         let kinds = labels(&sections, Group::Materials);
-        assert_eq!(kinds.len(), MaterialType::ALL.len());
+        assert_eq!(kinds.len(), MaterialType::ALL.len() + 2, "a Shader of each kind, and the two layered setups");
+        assert!(kinds.iter().any(|l| l == Setup::Blend.label()) && kinds.iter().any(|l| l == Setup::TwoSided.label()));
+        assert!(labels(&sections, Group::Maps).iter().any(|l| l == Setup::Composite.label()));
         let glass = sections.iter().flat_map(|s| &s.rows).find(|r| r.label == MaterialType::Glass.label()).expect("glass");
         assert_eq!(glass.item, Item::Node(NodeKind::Shader(Box::new(MaterialType::Glass.defaults())), Some(MaterialType::Glass.label().to_string())));
 
@@ -494,6 +576,12 @@ mod tests {
 
         let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "glass");
         assert!(labels(&found, Group::Materials).iter().any(|l| l == MaterialType::Glass.label()));
+
+        // By the names they go by elsewhere.
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "VRayBlendMtl");
+        assert_eq!(labels(&found, Group::Materials), [Setup::Blend.label()]);
+        let found = sections(&entries, &materials, &[("Brass", "Metal")], None, "two sided");
+        assert_eq!(labels(&found, Group::Materials), [Setup::TwoSided.label()]);
 
         assert!(sections(&entries, &materials, &[("Brass", "Metal")], None, "qqqzzz").is_empty());
     }

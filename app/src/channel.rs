@@ -613,10 +613,14 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
             if app.project.document().materials.get(key).is_none() {
                 return Reply::Failed(format!("there is no material {}; query materials for their numbers", key.0));
             }
-            Some(crate::graph_editor::Brought::Scene(key))
+            Some(crate::graph_editor::Asked::Bring(crate::graph_editor::Brought::Scene(key)))
         }
+        Some(tequila_scripting::protocol::GraphBring::Setup(name)) => match crate::graph_editor::Setup::from_key(name) {
+            Some(setup) => Some(crate::graph_editor::Asked::Arrange(setup)),
+            None => return Reply::Failed(format!("there is no setup {name}; the setups are blend, two_sided and composite")),
+        },
         Some(tequila_scripting::protocol::GraphBring::Library(name)) => match app.library.entries().iter().position(|e| e.name.eq_ignore_ascii_case(name)) {
-            Some(index) => Some(crate::graph_editor::Brought::Library(index)),
+            Some(index) => Some(crate::graph_editor::Asked::Bring(crate::graph_editor::Brought::Library(index))),
             None => return Reply::Failed(format!("the library has no material named {name}")),
         },
     };
@@ -629,8 +633,8 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
         Some(None) => app.graph_editor.open = false,
         None => {}
     }
-    if let Some(source) = bring {
-        app.graph_editor.bring(source);
+    if let Some(asked) = bring {
+        app.graph_editor.ask(asked);
     }
     if let Some(open) = change.render_window {
         app.render_window.open = open;
@@ -2928,6 +2932,8 @@ mod handler_tests {
         assert!(tequila_scripting::protocol::parse_request(r#"{"id":1,"op":"ui","graph_bring":"brass"}"#).is_err());
         value(&mut app, &format!(r#"{{"op":"ui","graph":{0},"graph_bring":{{"material":{0}}}}}"#, key.0));
         assert!(app.graph_editor.open);
+        value(&mut app, r#"{"op":"ui","graph_bring":{"setup":"blend"}}"#);
+        assert!(failure(&mut app, r#"{"op":"ui","graph_bring":{"setup":"sandwich"}}"#).contains("no setup sandwich"));
     }
 
     /// The graph editor's browser is a setting, shown and hidden as any

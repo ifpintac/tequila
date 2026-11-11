@@ -97,7 +97,10 @@ pub fn family(kind: &NodeKind) -> Family {
         },
         NodeKind::Constant(_) | NodeKind::Mapping2d { .. } | NodeKind::VertexColor => Family::Input,
         NodeKind::ImageTexture { .. } | NodeKind::ImageAlpha { .. } | NodeKind::VolumeMap { .. } => Family::Texture,
-        NodeKind::Procedural { .. } | NodeKind::Group(_) => Family::Pattern,
+        NodeKind::Procedural { .. } => Family::Pattern,
+        // A group that makes a pattern is one; one that works on numbers is
+        // with the nodes that do.
+        NodeKind::Group(group) => if group.is_pattern() { Family::Pattern } else { Family::Converter },
         NodeKind::Gradient { .. } | NodeKind::Remap { .. } | NodeKind::Clamp { .. } | NodeKind::Channel { .. } => Family::Converter,
         NodeKind::Mix | NodeKind::Multiply | NodeKind::Add | NodeKind::Invert => Family::Color,
         NodeKind::Bump { .. } => Family::Vector,

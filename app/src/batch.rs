@@ -5542,6 +5542,63 @@ mod tests {
         assert!(wrong.is_empty(), "fibres render differently in Cycles:\n{}", wrong.join("\n"));
     }
 
+    /// Coats blended on a material are a stack in both renderers: each over
+    /// everything under it by its own amount. A grey material under a red
+    /// coat at a half and a blue one at a half is a quarter grey, a quarter
+    /// red and half blue - bluer than red, where coats merely nested on one
+    /// another's Layer by those amounts are as red as blue - and is the
+    /// colour of one surface mixed in those shares. Skipped where Cycles is
+    /// not installed.
+    #[test]
+    fn blended_coats_are_a_stack_in_both_renderers() {
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value, LAYER_INPUT};
+        use tequila_materials::groups::NodeGroup;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let matte = |colour: Spectrum| tequila_materials::openpbr::Material { base_color: colour, specular_weight: 0.0, ..Default::default() };
+        let (grey, red, blue) = (Spectrum::splat(0.8), Spectrum { r: 0.8, g: 0.05, b: 0.05 }, Spectrum { r: 0.05, g: 0.05, b: 0.8 });
+        let mut graph = MaterialGraph::from_material(matte(grey));
+        let stack = graph.add_node(Node::new(NodeKind::Group(NodeGroup::BlendStack)).with_literal(Socket::Input(0), Value::Float(0.5)).with_literal(Socket::Input(1), Value::Float(0.5)));
+        let mut under = graph.output();
+        for (index, colour) in [red, blue].into_iter().enumerate() {
+            let mix = graph.add_node(Node::new(NodeKind::MixShader { add: false }));
+            let shader = graph.add_node(Node::new(NodeKind::Shader(Box::new(matte(colour)))));
+            graph.connect_output(stack, index as u8, mix, Socket::Input(0));
+            graph.connect_output(shader, 0, mix, Socket::Input(1));
+            graph.connect_output(mix, 0, under, LAYER_INPUT);
+            under = shader;
+        }
+        let render = |name: &str, graph: &MaterialGraph| {
+            let graph = graph.clone();
+            both_engines(name, move |scene| {
+                let program = graph.compile().expect("compiles");
+                scene.materials[0] = graph.material().clone();
+                *scene = std::mem::replace(scene, tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2))
+                    .with_programs(vec![Some(Arc::new(program))], Arc::new(tequila_render_core::shade::TextureTable::new()));
+            })
+        };
+        // One channel of the ball, averaged.
+        let channel = |image: &[u8], c: usize| {
+            let only: Vec<u8> = image.chunks_exact(4).flat_map(|p| [p[c], 0, 0, 255]).collect();
+            mean_and_spread(&inside_the_sphere(&only)).0
+        };
+        let colour = |image: &[u8]| [channel(image, 0), channel(image, 1), channel(image, 2)];
+        let stacked = render("blend-stack", &graph);
+        let mixed = grey * 0.25 + red * 0.25 + blue * 0.5;
+        let one = render("blend-one-surface", &MaterialGraph::from_material(matte(mixed)));
+        for (engine, (blend, flat)) in ["Tequila", "Cycles"].into_iter().zip(stacked.iter().zip(&one)) {
+            let ([r, g, b], [fr, fg, fb]) = (colour(blend), colour(flat));
+            // (As the picture shows them, which is closer than the light is.)
+            assert!(b > r * 1.05 && r > g * 1.3, "{engine}: the stack is {r:.0} red, {g:.0} green, {b:.0} blue");
+            for (name, got, want) in [("red", r, fr), ("green", g, fg), ("blue", b, fb)] {
+                assert!((got - want).abs() < want * 0.1 + 4.0, "{engine}: {got:.1} {name}, and one surface of the stack's shares is {want:.1}");
+            }
+        }
+    }
+
     /// The standard library's presets come out of Cycles as out of
     /// Tequila's renderer: their patterns on the same pixels, and the
     /// bumps their node graphs raise tilting the surface the same way.
