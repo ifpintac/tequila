@@ -122,6 +122,27 @@ fn perforated(name: &'static str, tags: &'static [&'static str], ior: &str, tint
     preset(name, "Metal", tags, MaterialType::Generic, r)
 }
 
+/// The same sheet coated: a speaker's or a vent's grille, punched and then
+/// powder coated, the coat a little thicker round each hole.
+pub fn perforated_coated(name: &'static str, tags: &'static [&'static str], colour: Spectrum, roughness: f32, pitch: f32, radius: f32, hole: Hole) -> Preset {
+    let mut r = Recipe::new(base(MaterialType::Generic, |m| {
+        m.base_color = colour;
+        m.base_metalness = 0.0;
+        m.specular_roughness = roughness;
+    }));
+    let blended = triplanar(&mut r, 8.0, |r, u, v, _| {
+        let d = staggered(r, u, v, pitch, hole);
+        let solid = r.smooth(d, (radius - pitch * 0.015, radius + pitch * 0.015), (0.0, 1.0));
+        let rim = r.smooth(d, (radius, radius + pitch * 0.12), (0.0, 1.0));
+        vec![solid, rim]
+    });
+    r.to(Param::Opacity, blended[0]);
+    r.bump(blended[1], 1.2e-4);
+    let gloss = wear(&mut r, roughness * 0.85, roughness * 1.15, 40.0);
+    r.to(Param::SpecularRoughness, gloss);
+    preset(name, "Metal", tags, MaterialType::Generic, r)
+}
+
 /// An extruded profile: rounded ribs `pitch` apart down its length, and the
 /// die lines the extrusion drew along it.
 fn ribbed(name: &'static str, tags: &'static [&'static str], tint: Spectrum, roughness: f32, pitch: f32) -> Preset {
@@ -163,7 +184,7 @@ fn knurled_straight(name: &'static str, tags: &'static [&'static str], ior: &str
 /// Spun: a disc turned against a polishing tool, fine grooves in rings
 /// about its axis - the face of a speaker cone, a knob, a watch dial - and
 /// the radial bow-tie of light they throw.
-fn spun(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, roughness: f32) -> Preset {
+pub fn spun(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, roughness: f32) -> Preset {
     let mut r = Recipe::new(metal(MaterialType::Anisotropic, ior, tint, roughness, 0.97));
     let rings = crate::pattern(&mut r, Procedural::BrushedRadial { axis: tequila_texture::projection::Axis::Y, frequency: 2600.0, stretch: 90.0 }, 5);
     r.bump(rings, 9e-7);
@@ -175,7 +196,7 @@ fn spun(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spec
 
 /// Turned on a lathe: the tool's feed marks, rings `feed` apart - round the
 /// side of the part, and across its face from the centre out.
-fn turned(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, roughness: f32, feed: f32) -> Preset {
+pub fn turned(name: &'static str, tags: &'static [&'static str], ior: &str, tint: Spectrum, roughness: f32, feed: f32) -> Preset {
     let mut r = Recipe::new(metal(MaterialType::Anisotropic, ior, tint, roughness, 0.95));
     let coords = r.node("texture_coordinate").out("Object");
     let normal = r.node("texture_coordinate").out("Normal");

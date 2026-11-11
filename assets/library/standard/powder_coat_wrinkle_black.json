@@ -205,13 +205,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.5
+              "float": 0.64
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.36
+              "float": 0.5
             }
           }
         ],
@@ -226,7 +226,7 @@
     "output": 1
   },
   "name": "Powder Coat Wrinkle Black",
-  "specular_roughness": 0.43,
+  "specular_roughness": 0.57,
   "tags": [
     "powder",
     "wrinkle",

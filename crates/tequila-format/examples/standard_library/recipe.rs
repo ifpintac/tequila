@@ -239,13 +239,6 @@ impl Recipe {
         Out(node, index as u8)
     }
 
-    /// How sharply the surface turns outward: one along an edge, nought on
-    /// a flat. `radius` is the bend, in metres, that counts as an edge.
-    pub fn edges(&mut self, radius: f32, contrast: f32) -> Out {
-        let id = self.graph.add_node(Node::new(NodeKind::Curvature { mode: tequila_materials::graph::CurvatureMode::Convex, radius, contrast }));
-        Out(id, 0)
-    }
-
     /// The material as it stands, for a parameter not wired.
     pub fn material_mut(&mut self) -> &mut Material {
         self.graph.material_mut()

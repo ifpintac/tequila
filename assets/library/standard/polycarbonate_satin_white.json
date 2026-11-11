@@ -1,7 +1,7 @@
 {
   "base_color": [0.80584306, 0.80663735, 0.7865861],
   "category": "Plastic",
-  "edge_radius": 0.00015,
+  "edge_radius": 0.00035,
   "graph": {
     "decals": [],
     "links": [
@@ -194,6 +194,7 @@
     "output": 1
   },
   "name": "Polycarbonate Satin White",
+  "specular_ior": 1.585,
   "specular_roughness": 0.35000002,
   "tags": [
     "polycarbonate",

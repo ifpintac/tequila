@@ -1,7 +1,7 @@
 {
   "base_color": [0.008, 0.008, 0.0085],
   "category": "Plastic",
-  "edge_radius": 0.0001,
+  "edge_radius": 0.0003,
   "graph": {
     "decals": [],
     "links": [
@@ -88,7 +88,7 @@
     "output": 1
   },
   "name": "Knob Plastic Gloss Black",
-  "specular_ior": 1.55,
+  "specular_ior": 1.566,
   "specular_roughness": 0.065,
   "tags": [
     "knob",

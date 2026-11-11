@@ -1,10 +1,10 @@
 {
-  "base_color": [0.011975326, 0.012268183, 0.0141490875],
+  "base_color": [0.007267729, 0.0074856766, 0.008910818],
   "category": "Paint",
-  "flake_color": [0.49076563, 0.5018933, 0.54513025],
+  "flake_color": [0.20852813, 0.21526463, 0.24195656],
   "flake_roughness": 0.18,
   "flake_size": 0.00006,
-  "flake_weight": 0.45,
+  "flake_weight": 0.22,
   "graph": {
     "decals": [],
     "links": [

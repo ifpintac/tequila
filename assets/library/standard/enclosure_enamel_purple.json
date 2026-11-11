@@ -1,7 +1,7 @@
 {
   "base_color": [0.08112162, 0.03139645, 0.19881165],
   "category": "Paint",
-  "edge_radius": 0.0002,
+  "edge_radius": 0.0004,
   "graph": {
     "decals": [],
     "links": [
@@ -87,13 +87,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.17
+              "float": 0.09
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.27
+              "float": 0.13
             }
           }
         ],
@@ -194,8 +194,8 @@
     "output": 1
   },
   "name": "Enclosure Enamel Purple",
-  "specular_ior": 1.55,
-  "specular_roughness": 0.22,
+  "specular_ior": 1.52,
+  "specular_roughness": 0.11,
   "tags": [
     "enamel",
     "pedal",

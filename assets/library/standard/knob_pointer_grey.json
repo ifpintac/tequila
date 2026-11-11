@@ -1,7 +1,7 @@
 {
   "base_color": [0.27415138, 0.2784199, 0.28615516],
   "category": "Plastic",
-  "edge_radius": 0.0001,
+  "edge_radius": 0.0003,
   "fuzz_color": [0.55, 0.55, 0.56],
   "fuzz_roughness": 0.5,
   "fuzz_weight": 0.18,
@@ -225,6 +225,7 @@
     "output": 1
   },
   "name": "Knob Pointer Grey",
+  "specular_ior": 1.566,
   "specular_roughness": 0.55,
   "tags": [
     "knob",

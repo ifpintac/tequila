@@ -1,7 +1,7 @@
 {
   "base_color": [0.7677796, 0.7609954, 0.7218453],
   "category": "Plastic",
-  "edge_radius": 0.00015,
+  "edge_radius": 0.00035,
   "graph": {
     "decals": [],
     "links": [
@@ -194,6 +194,7 @@
     "output": 1
   },
   "name": "HIPS Matte White",
+  "specular_ior": 1.59,
   "specular_roughness": 0.56,
   "tags": [
     "hips",

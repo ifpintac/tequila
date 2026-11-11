@@ -1,7 +1,7 @@
 {
   "base_color": [0.005, 0.005, 0.0055],
   "category": "Plastic",
-  "edge_radius": 0.0001,
+  "edge_radius": 0.0003,
   "graph": {
     "decals": [],
     "links": [
@@ -88,7 +88,7 @@
     "output": 1
   },
   "name": "Polycarbonate Gloss Black",
-  "specular_ior": 1.55,
+  "specular_ior": 1.585,
   "specular_roughness": 0.055,
   "tags": [
     "polycarbonate",

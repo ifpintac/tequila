@@ -1,10 +1,10 @@
 {
   "base_color": [0.6633943, 0.63346726, 0.5208346],
   "category": "Plastic",
-  "edge_radius": 0.0001,
+  "edge_radius": 0.0003,
   "fuzz_color": [0.55, 0.55, 0.56],
   "fuzz_roughness": 0.5,
-  "fuzz_weight": 0.18,
+  "fuzz_weight": 0.07,
   "graph": {
     "decals": [],
     "links": [
@@ -225,6 +225,7 @@
     "output": 1
   },
   "name": "Knob Plastic Cream",
+  "specular_ior": 1.566,
   "specular_roughness": 0.49,
   "tags": [
     "knob",
