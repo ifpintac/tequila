@@ -1,0 +1,204 @@
+{
+  "base_color": [0.97, 0.93, 0.87],
+  "category": "Metal",
+  "edge_radius": 0.0002,
+  "graph": {
+    "decals": [],
+    "links": [
+      {
+        "from": 2,
+        "socket": "input:0",
+        "to": 3
+      },
+      {
+        "from": 3,
+        "socket": "input:2",
+        "to": 5
+      },
+      {
+        "from": 4,
+        "socket": "input:0",
+        "to": 5
+      },
+      {
+        "from": 5,
+        "socket": "param:specular_roughness",
+        "to": 1
+      },
+      {
+        "from": 6,
+        "socket": "input:0",
+        "to": 7
+      },
+      {
+        "from": 7,
+        "socket": "param:bump",
+        "to": 1
+      }
+    ],
+    "nodes": [
+      {
+        "id": 2,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 35
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 4
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.55
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "id": 3,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.3
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.7
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 0.12
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.22
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": true,
+          "interpolation": "smoothstep"
+        },
+        "type": "map_range"
+      },
+      {
+        "group": "smudges",
+        "id": 4,
+        "kind": "group",
+        "literals": [
+          {
+            "socket": "input:0",
+            "value": {
+              "float": 9
+            }
+          },
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.55
+            }
+          },
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0]
+      },
+      {
+        "id": 5,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:1",
+            "value": {
+              "float": 0.16
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "clamp": false,
+          "operation": "multiply_add"
+        },
+        "type": "math"
+      },
+      {
+        "id": 6,
+        "kind": "node",
+        "literals": [
+          {
+            "socket": "input:2",
+            "value": {
+              "float": 16000
+            }
+          },
+          {
+            "socket": "input:3",
+            "value": {
+              "float": 2
+            }
+          },
+          {
+            "socket": "input:4",
+            "value": {
+              "float": 0.5
+            }
+          }
+        ],
+        "position": [0, 0],
+        "settings": {
+          "dimensions": "3D",
+          "normalize": true,
+          "type": "fBM"
+        },
+        "type": "noise_texture"
+      },
+      {
+        "depth": 0.0000006,
+        "id": 7,
+        "kind": "bump",
+        "position": [0, 0]
+      }
+    ],
+    "output": 1
+  },
+  "metal_preset": "Nickel",
+  "name": "Nickel Plated Handled",
+  "specular_roughness": 0.17,
+  "tags": [
+    "nickel",
+    "plated",
+    "connector",
+    "smudged",
+    "fingerprints",
+    "hardware"
+  ],
+  "type": "metal"
+}
+
