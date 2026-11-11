@@ -1780,12 +1780,15 @@ mod tests {
         let before = renderer.shared.image.lock().unwrap().samples;
         req.denoise = true;
         renderer.submit(req.clone());
-        let denoiser = Denoiser::shared().is_ok();
+        let denoiser = Denoiser::shared().is_ok() || tequila_denoise::GpuDenoiser::shared().is_ok();
         // Shown denoised, where there is a denoiser to show it with, and
-        // never starting again from the first samples.
+        // never starting again from the first samples on the way. Waited
+        // for rather than given a fixed time: the first denoise at a size
+        // makes the graphics card's filters for it, a third of a second on
+        // a quiet Mac and more on a busy one, which missed a window of 400 ms.
         let started = Instant::now();
         let mut shown_denoised = false;
-        while started.elapsed() < Duration::from_millis(400) {
+        while !shown_denoised && started.elapsed() < Duration::from_secs(if denoiser { 30 } else { 1 }) {
             let image = renderer.shared.image.lock().unwrap().clone();
             assert!(image.resolution_divisor == 1 && image.samples >= before, "the switch started the render again: {before} -> {}", image.samples);
             shown_denoised |= image.denoised;
