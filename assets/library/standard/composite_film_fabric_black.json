@@ -2855,13 +2855,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.08
+              "float": 0.04
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.04
+              "float": 0.02
             }
           }
         ],
@@ -2878,6 +2878,8 @@
   "name": "Composite Film Fabric Black",
   "specular_ior": 1.6,
   "specular_roughness": 0.34,
+  "subsurface_color": [0.507, 0.507, 0.5075],
+  "subsurface_weight": 0.08,
   "tags": [
     "composite",
     "film",
@@ -2894,7 +2896,7 @@
     "black"
   ],
   "transmission_color": [0.507, 0.507, 0.5075],
-  "transmission_weight": 0.08,
+  "transmission_weight": 0.04,
   "type": "generic"
 }
 

@@ -385,14 +385,19 @@ fn ripstop(name: &'static str, tags: &'static [&'static str], colour: Spectrum, 
 
 /// A ripstop so thin that light comes through it: a tent's fly, a
 /// kite, a wind jacket held to the sun. The same cloth, a thin sheet that
-/// passes half of what falls on it, softened.
+/// passes about half of what falls on it: most of that scattered by the
+/// fibres, so the whole sheet glows when lit from behind, in its own
+/// colour (a thin wall's subsurface), and a little straight through the
+/// gaps between the threads.
 fn ripstop_sheer(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
     let mut p = ripstop(name, tags, colour, 4200.0, 0.005, 0.42, 0.02, 9.0);
     p.ty = MaterialType::Generic;
     let m = p.recipe.material_mut();
     m.geometry_thin_walled = true;
-    m.transmission_weight = 0.5;
+    m.transmission_weight = 0.12;
     m.transmission_color = colour.lerp(Spectrum::ONE, 0.35);
+    m.subsurface_weight = 0.5;
+    m.subsurface_color = colour.lerp(Spectrum::ONE, 0.15);
     p
 }
 
@@ -471,8 +476,12 @@ fn composite_film(name: &'static str, tags: &'static [&'static str], film: Spect
         m.specular_ior = 1.6;
         m.specular_roughness = 0.34;
         m.geometry_thin_walled = true;
-        m.transmission_weight = through;
+        // Half straight through the films, half scattered by them and the
+        // filaments, so a backlit sheet glows milky all over.
+        m.transmission_weight = 0.5 * through;
         m.transmission_color = film.lerp(Spectrum::ONE, 0.5);
+        m.subsurface_weight = through;
+        m.subsurface_color = film.lerp(Spectrum::ONE, 0.5);
     }));
     let fibres = triplanar(&mut r, 6.0, |r, u, v, i| {
         let mut laid: Option<Out> = None;
@@ -516,7 +525,7 @@ fn composite_film(name: &'static str, tags: &'static [&'static str], film: Spect
     // Scuffed dull along a fold; and a filament stops some of the light.
     let sheen = r.range(folds, (0.0, 1.0), (0.32, 0.5));
     r.to(Param::SpecularRoughness, sheen);
-    let passes = r.range(fibres, (0.0, 1.0), (through, through * 0.5));
+    let passes = r.range(fibres, (0.0, 1.0), (0.5 * through, 0.25 * through));
     r.to(Param::TransmissionWeight, passes);
     preset(name, "Fabric", tags, MaterialType::Generic, r)
 }
@@ -532,9 +541,11 @@ fn spunbond(name: &'static str, tags: &'static [&'static str], colour: Spectrum,
         m.specular_ior = 1.5;
         m.specular_roughness = 0.5;
         m.specular_weight = 0.7;
+        // What it lets through it scatters, as paper does: it glows when
+        // lit from behind, and nothing behind it shows.
         m.geometry_thin_walled = through > 0.0;
-        m.transmission_weight = through;
-        m.transmission_color = colour;
+        m.subsurface_weight = 1.6 * through;
+        m.subsurface_color = colour;
     }));
     let swirl = |r: &mut Recipe, scale: f32, width: f32| {
         let field = r.node("noise_texture").f("Scale", scale).f("Detail", 2.0).f("Roughness", 0.5).f("Distortion", 4.0).out("Fac");

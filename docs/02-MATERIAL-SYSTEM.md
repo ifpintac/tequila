@@ -91,7 +91,7 @@ Mixing within the base is by weight, not by adding lobes: `base = lerp(dielectri
 | `emission_luminance` | ≥0 (nits) | Emission in physical units |
 | `emission_color` | RGB | Emission chromaticity |
 | `geometry_opacity` | 0–1 | Cutout transparency (not refractive) |
-| `geometry_thin_walled` | bool | Treat as an infinitely thin shell (no volume, no refraction offset) |
+| `geometry_thin_walled` | bool | Treat as an infinitely thin shell (no volume, no refraction offset). Its transmission passes straight through, clear or frosted; its subsurface is the light it scatters through to its far side, every way, in `subsurface_color` (OpenPBR's thin-walled subsurface): a sheer cloth, a film, paper, a lampshade, which glow all over when lit from behind. Alike in Cycles (a translucent shader under the specular layer). |
 | `geometry_normal` | vector | Shading normal after bump/normal mapping |
 | `geometry_coat_normal` | vector | Independent normal for the coat layer (orange peel over smooth base) |
 | `geometry_tangent` | vector | Anisotropy direction |

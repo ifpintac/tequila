@@ -2855,13 +2855,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.35
+              "float": 0.175
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.175
+              "float": 0.0875
             }
           }
         ],
@@ -2878,6 +2878,8 @@
   "name": "Composite Film Fabric Olive",
   "specular_ior": 1.6,
   "specular_roughness": 0.34,
+  "subsurface_color": [0.5516585, 0.5574337, 0.5290557],
+  "subsurface_weight": 0.35,
   "tags": [
     "composite",
     "film",
@@ -2895,7 +2897,7 @@
     "green"
   ],
   "transmission_color": [0.5516585, 0.5574337, 0.5290557],
-  "transmission_weight": 0.35,
+  "transmission_weight": 0.175,
   "type": "generic"
 }
 

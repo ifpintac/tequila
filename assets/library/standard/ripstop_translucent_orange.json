@@ -7389,6 +7389,8 @@
   "name": "Ripstop Translucent Orange",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.58853126, 0.28753042, 0.18307446],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7404,7 +7406,7 @@
     "orange"
   ],
   "transmission_color": [0.68534744, 0.4551703, 0.3752922],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 

@@ -739,6 +739,8 @@
   "name": "Spunbond Sheet Grey",
   "specular_roughness": 0.5,
   "specular_weight": 0.7,
+  "subsurface_color": [0.27415138, 0.2784199, 0.28615516],
+  "subsurface_weight": 0.128,
   "tags": [
     "spunbond",
     "nonwoven",
@@ -752,8 +754,6 @@
     "packaging",
     "grey"
   ],
-  "transmission_color": [0.27415138, 0.2784199, 0.28615516],
-  "transmission_weight": 0.08,
   "type": "generic"
 }
 

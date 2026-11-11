@@ -7389,6 +7389,8 @@
   "name": "Ripstop Translucent White",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.8384609, 0.8359368, 0.80736053],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7404,7 +7406,7 @@
     "white"
   ],
   "transmission_color": [0.8764701, 0.87453985, 0.8526875],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 
