@@ -3408,7 +3408,7 @@ impl TequilaApp {
                         ui.close_menu();
                         self.pick_substance();
                     }
-                    if ui.button("Import material file...").on_hover_text("A material package (.fsmat) or preset (.json) somebody shared, into your library").clicked() {
+                    if ui.button("Import material file...").on_hover_text("A material somebody shared, into your library: a package (.fsmat), a preset (.json), a KeyShot package (.kmp) or a MaterialX document (.mtlx)").clicked() {
                         ui.close_menu();
                         if let Some(path) = library_dialogs::pick_material_file() {
                             self.import_material_file(&path);

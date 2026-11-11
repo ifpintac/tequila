@@ -475,8 +475,9 @@ fn pack_name(path: &std::path::Path) -> String {
 pub fn pick_material_file() -> Option<PathBuf> {
     rfd::FileDialog::new()
         .set_title("Import a material")
-        .add_filter("Material", &["fsmat", "json", "zip", "kmp"])
+        .add_filter("Material", &["fsmat", "json", "zip", "kmp", "mtlx"])
         .add_filter("KeyShot material package", &["kmp"])
+        .add_filter("MaterialX document", &["mtlx"])
         .pick_file()
 }
 

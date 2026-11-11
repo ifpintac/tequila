@@ -246,6 +246,25 @@ impl crate::TequilaApp {
             }
             return;
         }
+        // A MaterialX document may hold several, and says what of each did
+        // not come across.
+        if tequila_import::materialx::is_mtlx(path) {
+            match tequila_import::materialx::import_to_library(path, &user_library_path(), |_| {}) {
+                Ok(saved) => {
+                    self.library.reload();
+                    self.library.show_mine();
+                    for (file, notes) in saved {
+                        let name = self.library_entry_at(&file.display().to_string()).map(|e| e.name).unwrap_or_default();
+                        self.toasts.info(format!("Added `{name}` to your library, from MaterialX"));
+                        for note in notes {
+                            self.toasts.warn(format!("{name}: {note}"));
+                        }
+                    }
+                }
+                Err(error) => self.toasts.warn(error.to_string()),
+            }
+            return;
+        }
         match library::import_material_file(path, &user_library_path(), |_| {}) {
             Ok(saved) => {
                 self.library.reload();
@@ -311,6 +330,22 @@ impl crate::TequilaApp {
                         self.toasts.warn(note);
                     }
                     Ok(saved)
+                } else if tequila_import::materialx::is_mtlx(&path) {
+                    // The first of the document's materials is the one
+                    // named; the rest come with it under their own names.
+                    let adjust = std::cell::RefCell::new(Some(adjust));
+                    let all = tequila_import::materialx::import_to_library(&path, &directory, |entry| {
+                        if let Some(adjust) = adjust.borrow_mut().take() {
+                            adjust(entry);
+                        }
+                    })
+                    .map_err(|e| e.to_string())?;
+                    for (_, notes) in &all {
+                        for note in notes {
+                            self.toasts.warn(note.clone());
+                        }
+                    }
+                    all.into_iter().next().map(|(saved, _)| saved).ok_or_else(|| tequila_format::FormatError::Invalid("the document has no material".into()))
                 } else {
                     library::import_material_file(&path, &directory, adjust)
                 }

@@ -489,6 +489,13 @@ Unlimited by default (configurable), with a visible history panel listing named 
 - **Favorites**, **recently used**, and **used in this project** as virtual folders.
 - Right-click: Apply to Selection · Rename · Duplicate · Edit in Material Graph · Show in File Browser · Delete · Export.
 
+*As built, November 11: MaterialX documents* (`crates/tequila-import/src/materialx.rs`). File › Import material file, a file dropped on the window and a script's `library` `import` take a `.mtlx`: the file V-Ray, Arnold, Karma, Redshift and Blender exchange a material in, and the one the free libraries publish in. Every material in the document goes into the user's library, its pictures copied in with it.
+
+- Read: the four surface models everything is written in - Autodesk Standard Surface, OpenPBR Surface (whose inputs are Tequila's parameters by name), glTF PBR and USD Preview Surface - and each input that is a picture (`image`, `tiledimage`, the glTF and USD picture nodes; straight, or through a `normalmap`, an `extract` or a node graph's output) as an Image node on that parameter, by the mesh's UVs with the picture's own tiling. A number read from a picture is read from the channel the document names.
+- Said, input by input, in a notice: an input driven by any other network of nodes, which keeps the value the model gives it; a picture that is missing; an input with no place here. A document from before MaterialX 1.38 is refused with that said.
+- Not read: V-Ray's own `.vrmat`, which there was no file to build against.
+- Tests: `a_standard_surface_comes_across_with_its_pictures`, `the_other_models_come_across_and_what_does_not_is_said`, `a_document_goes_into_a_library_with_its_pictures`.
+
 *As built, November 11: four ways to see the shelf* (`app/src/library_tab.rs`, `View`). Four small buttons beside the count choose it, each a drawing of what it gives, and Preferences › Interface › *Show materials as* is the same choice, kept between sessions (`interface.library_view`):
 - **Thumbnails**, as it was: pictures with their names, sized by the "…" menu's slider.
 - **Icons**: small pictures alone, four or more across, the name in the tooltip - the whole shelf at a glance.
