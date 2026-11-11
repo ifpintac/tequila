@@ -106,6 +106,25 @@ impl LightingTab {
         // where it is what there is to set. A section like every page's,
         // though it is this page's only one.
         let mut page = crate::sections::Page::new(ui, "lighting");
+        for section in page.order() {
+            match section {
+                "studio" => page.section(ui, section, "Add to the studio", |ui| studio_kit(ui, project)),
+                "settings" => self.settings(&mut page, ui, project, &lighting, custom),
+                _ => {}
+            }
+        }
+        page.finish(ui);
+    }
+
+    /// The Settings section: everything the presets set.
+    fn settings(
+        &mut self,
+        page: &mut crate::sections::Page,
+        ui: &mut egui::Ui,
+        project: &mut Project,
+        lighting: &tequila_render_core::settings::LightingSettings,
+        custom: bool,
+    ) {
         page.section(ui, "settings", "Settings", |ui| {
         crate::field::Fold::new("Settings")
             .id_salt("lighting-transport")
@@ -224,7 +243,56 @@ impl LightingTab {
                 }
             });
         });
-        page.finish(ui);
+    }
+}
+
+/// The photographer's kit, a piece a click (`tequila_scene::studio_kit`):
+/// sized to the product, placed for the camera, one step to undo, and
+/// selected so it can be moved or aimed at once.
+fn studio_kit(ui: &mut egui::Ui, project: &mut Project) {
+    use tequila_scene::studio_kit::Piece;
+    crate::field::Fold::new("Add to the studio").id_salt("lighting-kit").default_open(true).show(ui, |ui| {
+        crate::theme::note(
+            ui,
+            "Real lights and cards beside the product, sized to it and placed for the camera. Move one, or aim it at \
+             a highlight from its own page.",
+        );
+        ui.horizontal_wrapped(|ui| {
+            for piece in Piece::ALL {
+                if ui.button(piece.label()).on_hover_text(piece.description()).clicked() {
+                    // What went wrong is in the status line.
+                    let _ = add_to_studio(project, piece);
+                }
+            }
+        });
+    });
+}
+
+/// Add `piece` to the studio as one step, and select it. The node it
+/// added, or what went wrong.
+pub fn add_to_studio(project: &mut Project, piece: tequila_scene::studio_kit::Piece) -> Result<NodeId, String> {
+    let eye = project.document().cameras.active().camera.position();
+    let (commands, node) = tequila_scene::studio_kit::add(project.document(), piece, eye);
+    project.begin_group();
+    let mut failed = None;
+    for command in commands {
+        if let Err(error) = project.apply(command) {
+            failed = Some(error);
+            break;
+        }
+    }
+    match failed {
+        None => {
+            project.end_group();
+            project.selection.select_many([node], tequila_scene::selection::SelectionMode::Replace);
+            project.status = format!("Added a {}", piece.label().to_lowercase());
+            Ok(node)
+        }
+        Some(error) => {
+            project.abandon_group();
+            project.status = format!("Could not add the {}: {error}", piece.label().to_lowercase());
+            Err(project.status.clone())
+        }
     }
 }
 
@@ -313,7 +381,12 @@ pub fn add_light_menu(ui: &mut egui::Ui, parent: Option<NodeId>) -> Option<Comma
 }
 
 /// The properties of the selected light, if the selection is one.
-pub fn light_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn FnMut(&mut egui::Ui, &mut Project)) -> bool {
+pub fn light_panel(
+    ui: &mut egui::Ui,
+    project: &mut Project,
+    aim: &mut crate::pin_gizmo::PinGizmo,
+    templates: &mut dyn FnMut(&mut egui::Ui, &mut Project),
+) -> bool {
     let Some(node) = project.selection.active() else {
         return false;
     };
@@ -326,6 +399,18 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn
 
     crate::theme::section(ui, "Light");
     ui.add(crate::field::Checkbox::new(&mut light.enabled, "On"));
+    // Where a photographer starts: the highlight, not the numbers.
+    let aiming = aim.armed_light() == Some(node);
+    if ui
+        .add(egui::Button::new(if aiming { "Aiming: click the model" } else { "Aim at a highlight" }).selected(aiming))
+        .on_hover_text(
+            "Click the model where you want this light's highlight and the light moves there, keeping its \
+             distance and turning to face the spot. Escape when done.",
+        )
+        .clicked()
+    {
+        aim.toggle_light(node);
+    }
     ui.add_space(2.0);
 
     // The sections, in the person's own order.
@@ -587,4 +672,44 @@ fn linking_fold(
             }
             crate::theme::note(ui, note);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tequila_scene::studio_kit::Piece;
+
+    /// Each piece of the kit comes in as one step to undo, selected, placed
+    /// off the product facing it: a light for the softbox, the strip and
+    /// the card, a part the camera does not see for the flag.
+    #[test]
+    fn each_piece_of_the_kit_is_one_step_selected_and_facing_the_product() {
+        for piece in Piece::ALL {
+            let mut project = Project::with_document(
+                tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3),
+                std::sync::Arc::new(tequila_scene::demo::studio_environment()),
+            );
+            let nodes = project.document().tree.iter().count();
+            add_to_studio(&mut project, piece).expect("added");
+            let node = project.selection.active().unwrap_or_else(|| panic!("{piece:?} was not selected"));
+            let document = project.document();
+            let added = document.tree.get(node).expect("the node");
+            match piece {
+                Piece::Flag => {
+                    assert!(matches!(added.kind, NodeKind::Part { .. }), "the flag is a part");
+                    assert!(!added.rays.camera && added.rays.shadow && added.rays.glossy, "the flag: {:?}", added.rays);
+                }
+                _ => {
+                    let NodeKind::Light { settings } = &added.kind else { panic!("{piece:?} is not a light") };
+                    assert!(settings.edge_falloff > 0.0 && !settings.visibility.camera, "{piece:?}: {settings:?}");
+                }
+            }
+            let middle = tequila_scene::snapshot::visible_bounds(document).center();
+            let world = document.placements().world(node);
+            let at = world.point(tequila_core::math::Vec3::ZERO);
+            assert!((at - middle).length() > 0.01, "{piece:?} sits on the product");
+            project.undo();
+            assert_eq!(project.document().tree.iter().count(), nodes, "{piece:?}: one undo takes it all back");
+        }
+    }
 }

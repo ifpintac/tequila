@@ -48,6 +48,7 @@ pub mod shapes;
 pub mod snapshot;
 pub mod split;
 pub mod studio;
+pub mod studio_kit;
 pub mod templates;
 pub mod textures;
 pub mod tree;

@@ -65,6 +65,7 @@ the document; what needs the window is refused by name.
 | `material` | yes | yes |
 | `plugin` | yes | - |
 | `studio_preset` | yes | yes |
+| `studio_kit` | yes | yes |
 | `substance` | yes | yes |
 | `stop` | yes | - |
 | `ui` | yes | - |
