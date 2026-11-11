@@ -1,5 +1,6 @@
 {
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Silver machined with tiny pyramids in a regular grid: a glittering hobnail texture, as on a watch dial, case band or engine-turned panel.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -1438,7 +1439,21 @@
     "clous de paris",
     "hobnail",
     "guilloche",
-    "watch dial"
+    "watch dial",
+    "guilloché",
+    "pyramid",
+    "engine turned",
+    "checkered",
+    "diamond pattern",
+    "dial",
+    "engraved",
+    "decorative",
+    "sterling",
+    "horology",
+    "watches",
+    "jewellery",
+    "accessories",
+    "prototyping"
   ],
   "type": "metal"
 }

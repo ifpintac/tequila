@@ -163,6 +163,34 @@ pub struct OutputSpec {
     pub ty: SocketType,
 }
 
+/// A setting of a node in Blender, as Blender's Python API gives it: a
+/// menu's identifier (`"MULTIPLY_ADD"`), a switch, or a number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BlenderSetting<'a> {
+    Text(&'a str),
+    Bool(bool),
+    Int(i32),
+    Float(f32),
+}
+
+/// Whether Blender's identifier for a menu item names this Cycles name:
+/// the same word, whatever its case and underscores (`INVERSE_SQRT` is
+/// Cycles' `inversesqrt`), and the few Blender spells otherwise.
+fn blender_names(identifier: &str, cycles: &str) -> bool {
+    let plain = |s: &str| s.chars().filter(|c| *c != '_').flat_map(char::to_lowercase).collect::<String>();
+    let identifier = match identifier {
+        "FRACT" => "fraction",
+        "SIN" => "sine",
+        "SPHERICAL" => "diagonal",
+        other => other,
+    };
+    plain(identifier) == plain(cycles)
+}
+
+fn blender_choice<T: Copy>(all: &[T], name: impl Fn(T) -> (&'static str, &'static str), identifier: Option<&str>, default: T) -> T {
+    identifier.and_then(|id| all.iter().copied().find(|v| blender_names(id, name(*v).0))).unwrap_or(default)
+}
+
 /// A node setting that is not a socket.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Setting {
@@ -453,6 +481,121 @@ impl ShaderNode {
             ShaderNode::Mapping { kind } => vec![("mapping_type", Enum(kind.cycles()))],
             _ => Vec::new(),
         }
+    }
+
+    /// The node Blender calls `idname` (`ShaderNodeTexNoise`), set as
+    /// `setting` gives its settings by their Python names
+    /// (`noise_dimensions`, `operation`). `None` for a node that is not one
+    /// of these; a setting Blender has and Tequila does not keeps
+    /// Tequila's default. Legacy nodes Blender still reads - Mix RGB,
+    /// Separate and Combine RGB and HSV - come back as what replaced them,
+    /// their sockets in the same order.
+    pub fn from_blender<'s>(idname: &str, setting: &dyn Fn(&str) -> Option<BlenderSetting<'s>>) -> Option<ShaderNode> {
+        let text = |key: &str| match setting(key) {
+            Some(BlenderSetting::Text(t)) => Some(t),
+            _ => None,
+        };
+        let flag = |key: &str, default: bool| match setting(key) {
+            Some(BlenderSetting::Bool(b)) => b,
+            Some(BlenderSetting::Int(i)) => i != 0,
+            _ => default,
+        };
+        let int = |key: &str, default: i32| match setting(key) {
+            Some(BlenderSetting::Int(i)) => i,
+            Some(BlenderSetting::Float(f)) => f as i32,
+            _ => default,
+        };
+        let float = |key: &str, default: f32| match setting(key) {
+            Some(BlenderSetting::Float(f)) => f,
+            Some(BlenderSetting::Int(i)) => i as f32,
+            _ => default,
+        };
+        let dims = |key: &str| blender_choice(&DIMS, dims_name, text(key), 3);
+        Some(match idname {
+            "ShaderNodeTexCoord" => ShaderNode::TextureCoordinate,
+            "ShaderNodeNewGeometry" => ShaderNode::Geometry,
+            "ShaderNodeLayerWeight" => ShaderNode::LayerWeight,
+            "ShaderNodeFresnel" => ShaderNode::Fresnel,
+            "ShaderNodeObjectInfo" => ShaderNode::ObjectInfo,
+            "ShaderNodeLightPath" => ShaderNode::LightPath,
+            "ShaderNodeTexNoise" => ShaderNode::Noise {
+                dims: dims("noise_dimensions"),
+                fractal: blender_choice(&FractalKind::ALL, fractal_name, text("noise_type"), FractalKind::Fbm),
+                normalize: flag("normalize", true),
+            },
+            "ShaderNodeTexVoronoi" => ShaderNode::Voronoi {
+                dims: dims("voronoi_dimensions"),
+                feature: blender_choice(&VoronoiFeature::ALL, feature_name, text("feature"), VoronoiFeature::F1),
+                metric: blender_choice(&VoronoiMetric::ALL, metric_name, text("distance"), VoronoiMetric::Euclidean),
+                normalize: flag("normalize", false),
+            },
+            "ShaderNodeTexWave" => {
+                let kind = blender_choice(&WAVE_KINDS, wave_kind_name, text("wave_type"), WaveKind::Bands);
+                let direction = match kind {
+                    WaveKind::Bands => text("bands_direction"),
+                    WaveKind::Rings => text("rings_direction"),
+                };
+                ShaderNode::Wave {
+                    kind,
+                    direction: blender_choice(&WAVE_DIRECTIONS, wave_direction_name, direction, WaveDirection::X),
+                    profile: blender_choice(&WAVE_PROFILES, wave_profile_name, text("wave_profile"), WaveProfile::Sine),
+                }
+            }
+            "ShaderNodeTexMagic" => ShaderNode::Magic { depth: int("turbulence_depth", 2).clamp(0, 10) },
+            "ShaderNodeTexBrick" => ShaderNode::Brick {
+                offset: float("offset", 0.5),
+                offset_frequency: int("offset_frequency", 2),
+                squash: float("squash", 1.0),
+                squash_frequency: int("squash_frequency", 2),
+            },
+            "ShaderNodeTexChecker" => ShaderNode::Checker,
+            "ShaderNodeTexGradient" => ShaderNode::GradientTexture {
+                kind: blender_choice(&GradientKind::ALL, gradient_name, text("gradient_type"), GradientKind::Linear),
+            },
+            "ShaderNodeTexWhiteNoise" => ShaderNode::WhiteNoise { dims: dims("noise_dimensions") },
+            "ShaderNodeTexGabor" => ShaderNode::Gabor { kind: blender_choice(&GABOR_KINDS, gabor_kind_name, text("gabor_type"), GaborKind::Plane) },
+            "ShaderNodeMix" => ShaderNode::Mix {
+                data: match text("data_type") {
+                    Some("FLOAT") => MixData::Float,
+                    Some("VECTOR") => MixData::Vector,
+                    _ => MixData::Color,
+                },
+                blend: blender_choice(BlendMode::ALL, blend_name, text("blend_type"), BlendMode::Mix),
+                clamp_factor: flag("clamp_factor", true),
+                clamp_result: flag("clamp_result", false),
+            },
+            "ShaderNodeMixRGB" => ShaderNode::Mix {
+                data: MixData::Color,
+                blend: blender_choice(BlendMode::ALL, blend_name, text("blend_type"), BlendMode::Mix),
+                clamp_factor: true,
+                clamp_result: flag("use_clamp", false),
+            },
+            "ShaderNodeHueSaturation" => ShaderNode::HueSaturationValue,
+            "ShaderNodeBrightContrast" => ShaderNode::BrightContrast,
+            "ShaderNodeGamma" => ShaderNode::Gamma,
+            "ShaderNodeInvert" => ShaderNode::InvertColor,
+            "ShaderNodeBlackbody" => ShaderNode::Blackbody,
+            "ShaderNodeMath" => ShaderNode::Math {
+                op: blender_choice(MathOp::ALL, math_name, text("operation"), MathOp::Add),
+                clamp: flag("use_clamp", false),
+            },
+            "ShaderNodeVectorMath" => ShaderNode::VectorMath { op: blender_choice(VectorMathOp::ALL, vector_math_name, text("operation"), VectorMathOp::Add) },
+            "ShaderNodeMapRange" => ShaderNode::MapRange {
+                kind: blender_choice(&MapRangeKind::ALL, map_range_name, text("interpolation_type"), MapRangeKind::Linear),
+                clamp: flag("clamp", true),
+            },
+            "ShaderNodeClamp" => ShaderNode::Clamp { range: text("clamp_type") == Some("RANGE") },
+            "ShaderNodeSeparateXYZ" => ShaderNode::SeparateXyz,
+            "ShaderNodeCombineXYZ" => ShaderNode::CombineXyz,
+            "ShaderNodeSeparateColor" => ShaderNode::SeparateColor { model: blender_choice(&ColorModel::ALL, model_name, text("mode"), ColorModel::Rgb) },
+            "ShaderNodeCombineColor" => ShaderNode::CombineColor { model: blender_choice(&ColorModel::ALL, model_name, text("mode"), ColorModel::Rgb) },
+            "ShaderNodeSeparateRGB" => ShaderNode::SeparateColor { model: ColorModel::Rgb },
+            "ShaderNodeCombineRGB" => ShaderNode::CombineColor { model: ColorModel::Rgb },
+            "ShaderNodeSeparateHSV" => ShaderNode::SeparateColor { model: ColorModel::Hsv },
+            "ShaderNodeCombineHSV" => ShaderNode::CombineColor { model: ColorModel::Hsv },
+            "ShaderNodeMapping" => ShaderNode::Mapping { kind: blender_choice(&MappingKind::ALL, mapping_name, text("vector_type"), MappingKind::Point) },
+            _ => return None,
+        })
     }
 
     /// The node with this key, at its defaults.
@@ -1132,6 +1275,39 @@ fn fresnel_dielectric_cos(cosi: f32, eta: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Blender's nodes come back as Tequila's by their Python names, with
+    /// Blender's menu identifiers read as Cycles' names, the few spelt
+    /// otherwise included.
+    #[test]
+    fn blender_nodes_are_read_by_their_python_names() {
+        let settings = |pairs: &'static [(&'static str, &'static str)]| move |key: &str| pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| BlenderSetting::Text(v));
+        assert_eq!(
+            ShaderNode::from_blender("ShaderNodeMath", &settings(&[("operation", "INVERSE_SQRT")])),
+            Some(ShaderNode::Math { op: MathOp::InvSqrt, clamp: false })
+        );
+        assert_eq!(ShaderNode::from_blender("ShaderNodeMath", &settings(&[("operation", "FRACT")])), Some(ShaderNode::Math { op: MathOp::Fraction, clamp: false }));
+        assert_eq!(
+            ShaderNode::from_blender("ShaderNodeTexWave", &settings(&[("wave_type", "RINGS"), ("rings_direction", "SPHERICAL"), ("wave_profile", "SIN")])),
+            Some(ShaderNode::Wave { kind: WaveKind::Rings, direction: WaveDirection::Diagonal, profile: WaveProfile::Sine })
+        );
+        assert_eq!(
+            ShaderNode::from_blender("ShaderNodeTexNoise", &settings(&[("noise_dimensions", "4D"), ("noise_type", "RIDGED_MULTIFRACTAL")])),
+            Some(ShaderNode::Noise { dims: 4, fractal: FractalKind::RidgedMultifractal, normalize: true })
+        );
+        assert_eq!(
+            ShaderNode::from_blender("ShaderNodeTexVoronoi", &settings(&[("feature", "SMOOTH_F1"), ("distance", "CHEBYCHEV")])),
+            Some(ShaderNode::Voronoi { dims: 3, feature: VoronoiFeature::SmoothF1, metric: VoronoiMetric::Chebychev, normalize: false })
+        );
+        assert_eq!(
+            ShaderNode::from_blender("ShaderNodeMix", &settings(&[("data_type", "RGBA"), ("blend_type", "SOFT_LIGHT")])),
+            Some(ShaderNode::Mix { data: MixData::Color, blend: BlendMode::SoftLight, clamp_factor: true, clamp_result: false })
+        );
+        assert_eq!(ShaderNode::from_blender("ShaderNodeSeparateHSV", &settings(&[])), Some(ShaderNode::SeparateColor { model: ColorModel::Hsv }));
+        // Unknown identifiers keep the default; unknown nodes are none.
+        assert_eq!(ShaderNode::from_blender("ShaderNodeMath", &settings(&[("operation", "NOT_A_THING")])), Some(ShaderNode::Math { op: MathOp::Add, clamp: false }));
+        assert_eq!(ShaderNode::from_blender("ShaderNodeScript", &settings(&[])), None);
+    }
 
     /// Every node's settings survive a round trip through their keys, and
     /// every key names a node.

@@ -1,7 +1,8 @@
 {
   "base_color": [0.0075, 0.0075, 0.008],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A matte black rubber with a soft grainy surface, as on moulded feet and bumpers for equipment.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -218,7 +219,23 @@
     "feet",
     "bumper",
     "moulded",
-    "black"
+    "black",
+    "pad",
+    "non slip",
+    "anti slip",
+    "matte",
+    "soft",
+    "elastomer",
+    "support",
+    "leg",
+    "dark",
+    "epdm",
+    "molded",
+    "bumper foot",
+    "electronics",
+    "audio",
+    "appliances",
+    "furniture"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.22670381, 0.18567072, 0.106200665],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A pale gold-beige gloss with fine metallic flake under a clear coat, as on an executive saloon or an SUV.",
   "edge_radius": 0.0004,
   "flake_color": [0.7436205, 0.67867917, 0.46794853],
   "flake_roughness": 0.18,
@@ -66,7 +67,21 @@
     "metallic",
     "flake",
     "gold",
-    "beige"
+    "beige",
+    "champagne gold",
+    "sand",
+    "tan",
+    "cream metallic",
+    "metallic paint",
+    "clear coat",
+    "glossy",
+    "sprayed",
+    "baked",
+    "car paint",
+    "vehicle paint",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "metallic_paint"
 }

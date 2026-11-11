@@ -1,6 +1,7 @@
 {
   "base_color": [0.2802264, 0.04070658, 0.020458959],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A bold red powder coat with a satin sheen, as on machinery, fire equipment and safety guards.",
   "edge_radius": 0.0005,
   "graph": {
     "decals": [],
@@ -110,7 +111,21 @@
     "satin",
     "industrial",
     "red",
-    "machinery"
+    "machinery",
+    "safety red",
+    "traffic red",
+    "powder coated",
+    "baked",
+    "cured",
+    "electrostatic",
+    "semi-gloss",
+    "metal finish",
+    "steel",
+    "warning",
+    "fire extinguisher",
+    "tools",
+    "sporting goods",
+    "appliances"
   ],
   "type": "plastic"
 }

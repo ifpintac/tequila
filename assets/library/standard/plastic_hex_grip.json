@@ -1,6 +1,7 @@
 {
   "base_color": [0.0116771925, 0.011630686, 0.012804573],
   "category": "Plastic",
+  "description": "A moulded honeycomb pattern of small hexagons that gives a firm grip, as on tool handles and cases.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -3008,7 +3009,22 @@
     "grip",
     "textured",
     "tool",
-    "handle"
+    "handle",
+    "hexagonal",
+    "honeycomb",
+    "non slip",
+    "grip pattern",
+    "texture",
+    "patterned",
+    "moulded",
+    "molded",
+    "knurled",
+    "etched",
+    "tool grip",
+    "tools",
+    "sporting goods",
+    "outdoor gear",
+    "industrial"
   ],
   "type": "plastic"
 }

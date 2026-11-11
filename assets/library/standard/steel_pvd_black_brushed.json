@@ -1,6 +1,7 @@
 {
   "base_color": [0.05, 0.05, 0.055],
   "category": "Metal",
+  "description": "Steel with a black PVD coating over brushed metal: a dark satin black with fine linear lines, as on a watch case or tap.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -411,7 +412,23 @@
     "pvd",
     "black",
     "brushed",
-    "watch"
+    "watch",
+    "black pvd",
+    "physical vapor deposition",
+    "vacuum coated",
+    "satin black",
+    "dark",
+    "hairline",
+    "grain",
+    "case",
+    "bezel",
+    "tap",
+    "faucet",
+    "fixture",
+    "watches",
+    "accessories",
+    "kitchenware",
+    "interior"
   ],
   "type": "anisotropic"
 }

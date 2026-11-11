@@ -50,7 +50,7 @@ pub fn field(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, color: &mut 
     if ui.is_rect_visible(rect) {
         let p = crate::theme::p();
         let lit = response.hovered() || is_open(ui, &response);
-        let ink = |c: egui::Color32| if ui.is_enabled() { c } else { c.gamma_multiply(0.45) };
+        let ink = |c: egui::Color32| if ui.is_enabled() { c } else { crate::theme::disabled_ink(c) };
         let painter = ui.painter();
         painter.rect_filled(rect, 5.0, crate::field::well(&p, lit));
         let chip = egui::Rect::from_min_size(egui::pos2(rect.right() - 4.0 - 34.0, rect.top() + 4.0), egui::vec2(34.0, rect.height() - 8.0));

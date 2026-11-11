@@ -2,6 +2,7 @@
   "base_color": [0.012, 0.012, 0.013],
   "base_diffuse_roughness": 0.5,
   "category": "Plastic",
+  "description": "A black polypropylene driver cone with a fine matte grain, as on woofers and midrange drivers.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,21 @@
     "pp",
     "woofer",
     "driver",
-    "black"
+    "black",
+    "woofer cone",
+    "loudspeaker",
+    "diaphragm",
+    "matte",
+    "dark",
+    "moulded",
+    "molded",
+    "speaker driver",
+    "subwoofer",
+    "fine texture",
+    "audio",
+    "electronics",
+    "automotive",
+    "musical instruments"
   ],
   "type": "generic"
 }

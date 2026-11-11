@@ -1,6 +1,7 @@
 {
   "base_color": [0.0033621695, 0.0033509748, 0.0036335494],
   "category": "Plastic",
+  "description": "A deep mirror-polished black plastic, as on trim panels, speaker fronts and device bezels.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -140,7 +141,21 @@
     "gloss",
     "black",
     "trim",
-    "electronics"
+    "electronics",
+    "high gloss black",
+    "glossy black",
+    "shiny",
+    "mirror",
+    "lacquered",
+    "bezel",
+    "panel",
+    "gloss plastic",
+    "dark",
+    "polished",
+    "fingerprint magnet",
+    "automotive",
+    "audio",
+    "appliances"
   ],
   "type": "plastic"
 }

@@ -1,5 +1,6 @@
 {
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A frosted clear plastic that carries LED light along a pipe and glows softly at the tip, as on status indicators.",
   "edge_radius": 0.00025,
   "graph": {
     "decals": [],
@@ -64,7 +65,22 @@
     "led",
     "diffuser",
     "frosted",
-    "indicator"
+    "indicator",
+    "acrylic",
+    "polycarbonate",
+    "led window",
+    "glowing",
+    "translucent",
+    "satin",
+    "status light",
+    "cover",
+    "milky",
+    "diffusing",
+    "pmma",
+    "electronics",
+    "appliances",
+    "lighting",
+    "automotive"
   ],
   "transmission_color": [0.94, 0.95, 0.95],
   "type": "plastic_transparent"

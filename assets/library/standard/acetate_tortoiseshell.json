@@ -1,6 +1,7 @@
 {
   "base_color": [0.1796851, 0.08076473, 0.024035506],
   "category": "Plastic",
+  "description": "A cloudy amber and brown mottled cellulose acetate, polished, as used for spectacle frames and hair accessories.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -151,7 +152,20 @@
     "tortoiseshell",
     "eyewear",
     "amber",
-    "translucent"
+    "translucent",
+    "cellulose acetate",
+    "tortoise shell",
+    "havana",
+    "brown",
+    "mottled",
+    "polished",
+    "glossy",
+    "frame",
+    "hair clip",
+    "cast sheet",
+    "accessories",
+    "jewellery",
+    "cosmetics"
   ],
   "type": "plastic_cloudy"
 }

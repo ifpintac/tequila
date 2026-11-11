@@ -1,6 +1,7 @@
 {
   "base_color": [0.8, 0.8, 0.79],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Aluminium sheet embossed with a fine, irregular stucco texture: a dull silver surface of tiny bumps, as on appliance trim or cladding.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -193,7 +194,21 @@
     "stucco",
     "embossed",
     "appliance",
-    "cladding"
+    "cladding",
+    "embossed sheet",
+    "textured",
+    "orange peel",
+    "pebbled",
+    "stipple",
+    "dimpled",
+    "sheet",
+    "panel",
+    "aluminum",
+    "satin",
+    "appliances",
+    "architecture",
+    "interior",
+    "industrial"
   ],
   "type": "metal"
 }

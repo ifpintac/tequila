@@ -1,6 +1,7 @@
 {
   "base_color": [0.52, 0.53, 0.55],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Steel sheet with raised diamond-shaped ribs: a dull grey non-slip surface, as on a loading ramp, truck step or workshop floor.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -2172,7 +2173,22 @@
     "checker plate",
     "tread",
     "industrial",
-    "floor"
+    "floor",
+    "chequer plate",
+    "checkerplate",
+    "checker",
+    "non-slip",
+    "anti slip",
+    "raised",
+    "sheet",
+    "floor plate",
+    "ramp",
+    "embossed",
+    "rolled",
+    "grey",
+    "automotive",
+    "tools",
+    "architecture"
   ],
   "type": "metal"
 }

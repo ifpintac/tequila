@@ -90,7 +90,7 @@ pub fn swatch(document: &SceneDocument, option: &ConfigOption, choice: &Choice) 
 
 impl Wizard {
     pub fn show(&mut self, ui: &mut egui::Ui, project: &mut Project) -> Option<Action> {
-        ui.small(
+        crate::theme::note(ui,
             "Turns the variants, model sets and Snapshots above into a product \
              configurator: the choices a customer makes, the rules between them, \
              and a picker to present full screen or render every combination from.",
@@ -99,7 +99,7 @@ impl Wizard {
         if original.is_empty() {
             let draft = Configurator::draft(project.document());
             if draft.is_empty() {
-                ui.weak("Make a Multi-Material, two model sets or two Snapshots first: those are what a configurator's choices switch.");
+                crate::theme::note(ui, "Make a Multi-Material, two model sets or two Snapshots first: those are what a configurator's choices switch.");
                 return None;
             }
             if ui
@@ -293,10 +293,10 @@ fn rules_step(ui: &mut egui::Ui, document: &SceneDocument, c: &mut Configurator)
         .color(theme::p().text_dim),
     );
     if c.options.len() < 2 {
-        ui.weak("Rules are between two options; add a second option first.");
+        crate::theme::note(ui, "Rules are between two options; add a second option first.");
         return;
     }
-    ui.small("When a customer picks the first choice, the second is ruled out, or required.");
+    crate::theme::note(ui, "When a customer picks the first choice, the second is ruled out, or required.");
     let options: Vec<(u64, String, Vec<String>)> =
         c.options.iter().map(|o| (o.id, o.name.clone(), o.choices.iter().map(|c| c.label.clone()).collect())).collect();
     let mut remove = None;
@@ -371,7 +371,7 @@ fn layout_step(ui: &mut egui::Ui, c: &mut Configurator) {
     let places: Vec<(Placement, &str)> = Placement::ALL.iter().map(|p| (*p, p.label())).collect();
     theme::segmented(ui, &mut placement, &places);
     c.placement = placement;
-    ui.small("Each option's look - swatches, buttons or a list - is set with the option.");
+    crate::theme::note(ui, "Each option's look - swatches, buttons or a list - is set with the option.");
     ui.add_space(8.0);
     if ui.small_button("Remove the configurator").on_hover_text("Undo brings it back.").clicked() {
         *c = Configurator::default();

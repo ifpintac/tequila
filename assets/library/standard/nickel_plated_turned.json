@@ -1,6 +1,7 @@
 {
   "base_color": [0.99, 0.975, 0.95],
   "category": "Metal",
+  "description": "Nickel-plated metal turned on a lathe: a warm silver with faint, fine machining lines around the part, as on a bushing or threaded collar.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -472,7 +473,22 @@
     "bushing",
     "thread",
     "lathe",
-    "hardware"
+    "hardware",
+    "machined",
+    "cnc",
+    "lathe marks",
+    "tool marks",
+    "electroplated",
+    "silver",
+    "collar",
+    "sleeve",
+    "fitting",
+    "fastener",
+    "nut",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "anisotropic"
 }

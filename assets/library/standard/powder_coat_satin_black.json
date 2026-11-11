@@ -1,6 +1,7 @@
 {
   "base_color": [0.009, 0.009, 0.0095],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A black powder coat with a soft satin sheen, as on sheet steel covers, chassis and metal frames.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "chassis",
     "cover",
     "black",
-    "sheet steel"
+    "sheet steel",
+    "semi-gloss black",
+    "powder coated",
+    "baked",
+    "cured",
+    "electrostatic",
+    "metal finish",
+    "steel",
+    "low sheen",
+    "enclosure",
+    "panel",
+    "frame",
+    "electronics",
+    "audio",
+    "industrial",
+    "furniture"
   ],
   "type": "plastic"
 }

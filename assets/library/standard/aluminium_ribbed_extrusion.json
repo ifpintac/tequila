@@ -1,6 +1,7 @@
 {
   "base_color": [0.9734, 0.9734, 0.9734],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Extruded aluminium with parallel fins or flutes: a satin silver face with regular ribs, as on a heatsink, amplifier side or profile.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -450,7 +451,22 @@
     "ribbed",
     "fluted",
     "extruded",
-    "heatsink"
+    "heatsink",
+    "profile",
+    "fins",
+    "fin",
+    "heat sink",
+    "cooling",
+    "flutes",
+    "satin",
+    "silver",
+    "amplifier",
+    "aluminum",
+    "rib",
+    "electronics",
+    "audio",
+    "lighting",
+    "industrial"
   ],
   "type": "anisotropic"
 }

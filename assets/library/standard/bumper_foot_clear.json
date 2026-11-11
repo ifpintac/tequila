@@ -1,5 +1,6 @@
 {
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A clear soft polyurethane dome, as on stick-on feet that stop a device sliding or scratching a desk.",
   "edge_radius": 0.0004,
   "name": "Bumper Foot Clear",
   "specular_ior": 1.5,
@@ -11,7 +12,20 @@
     "stick-on",
     "polyurethane",
     "clear",
-    "dome"
+    "dome",
+    "clear rubber foot",
+    "adhesive foot",
+    "non-slip",
+    "transparent",
+    "soft",
+    "glossy",
+    "pad",
+    "dome foot",
+    "self adhesive",
+    "electronics",
+    "audio",
+    "appliances",
+    "furniture"
   ],
   "transmission_color": [0.88, 0.9, 0.88],
   "type": "plastic_transparent"

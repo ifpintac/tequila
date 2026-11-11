@@ -236,6 +236,8 @@ pub struct LibraryTab {
     query: String,
     shelf: Shelf,
     category: Option<String>,
+    /// What the materials shown are for, one of `library::USES`.
+    use_: Option<&'static str>,
     favorites: BTreeSet<String>,
     recent: Vec<String>,
     /// Where the two shelves are kept between launches; none in a test.
@@ -322,7 +324,7 @@ impl LibraryTab {
             library::read_directory_from(&user_library_path(), library::Source::User);
         entries.extend(mine);
         problems.append(&mut mine_problems);
-        entries.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
+        library::sort(&mut entries);
         let mut tab = LibraryTab {
             keys: entries.iter().map(entry_key).collect(),
             entries,
@@ -330,6 +332,7 @@ impl LibraryTab {
             query: String::new(),
             shelf: Shelf::All,
             category: None,
+            use_: None,
             favorites: BTreeSet::new(),
             recent: Vec::new(),
             shelf_files: None,
@@ -445,6 +448,7 @@ impl LibraryTab {
     pub fn show_mine(&mut self) {
         self.shelf = Shelf::Mine;
         self.category = None;
+        self.use_ = None;
         self.query.clear();
     }
 
@@ -487,7 +491,7 @@ impl LibraryTab {
             }));
             problems.append(&mut their_problems);
         }
-        entries.sort_by(|a, b| (&a.category, &a.name).cmp(&(&b.category, &b.name)));
+        library::sort(&mut entries);
         self.keys = entries.iter().map(entry_key).collect();
         self.entries = entries;
         self.problems = problems;
@@ -513,6 +517,7 @@ impl LibraryTab {
             .enumerate()
             .filter(|(_, e)| e.matches(&self.query))
             .filter(|(_, e)| self.category.as_ref().is_none_or(|c| &e.category == c))
+            .filter(|(_, e)| self.use_.is_none_or(|u| e.is_for(u)))
             .filter(|(_, e)| match self.shelf {
                 Shelf::All => true,
                 Shelf::Favorites => self.favorites.contains(&e.name),
@@ -552,71 +557,48 @@ impl LibraryTab {
         crate::theme::segmented(ui, &mut self.shelf, &shelves);
 
         ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("material-category")
-                .width(ui.available_width() - 76.0)
-                .selected_text(self.category.as_deref().unwrap_or("All categories"))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.category, None, "All categories");
-                    for category in library::categories(&self.entries) {
-                        ui.selectable_value(&mut self.category, Some(category.clone()), category);
-                    }
-                });
-            // The rest of the browser's settings, and the way in for
-            // downloaded materials: the place people look for materials is
-            // also the place they bring their own in.
-            let new = crate::icons::tip(
-                crate::icons::button(ui, crate::icons::Icon::Plus, false, 30.0, egui::Sense::click()),
-                "New material",
-                "Start from a type, the selected part, a texture pack or a file",
-                "",
-            );
-            if new.clicked() {
-                self.new_material.open(selected);
-            }
-            let more = crate::icons::button(ui, crate::icons::Icon::More, false, 30.0, egui::Sense::click())
-                .on_hover_text("Preview size, your library's folder, and importing");
-            let popup = ui.id().with("library-more");
-            if more.clicked() {
-                ui.memory_mut(|m| m.toggle_popup(popup));
-            }
-            egui::popup::popup_below_widget(ui, popup, &more, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                ui.set_min_width(200.0);
-                ui.set_max_width(240.0);
-                crate::theme::section(ui, "Previews");
-                ui.add(
-                    crate::field::Slider::new(&mut self.thumbnail_size, 40.0..=128.0)
-                        .text("Size")
-                        .show_value(false),
-                );
-                crate::theme::section(ui, "Your library");
-                if crate::icons::labelled(ui, crate::icons::Icon::Upload, "Import a material file…", false).clicked() {
-                    action = Some(LibraryAction::ImportFile);
-                    ui.memory_mut(|m| m.close_popup());
-                }
-                if crate::icons::labelled(ui, crate::icons::Icon::FolderOpen, "Open the folder", false)
-                    .on_hover_text("Presets dropped in here show up by themselves")
-                    .clicked()
-                {
-                    action = Some(LibraryAction::OpenFolder);
-                    ui.memory_mut(|m| m.close_popup());
-                }
-                if crate::icons::labelled(ui, crate::icons::Icon::Refresh, "Read it again", false).clicked() {
-                    self.reload();
-                    ui.memory_mut(|m| m.close_popup());
-                }
-                crate::theme::section(ui, "Import texture pack");
-                if let Some(folder) = crate::texture_pack::menu(ui) {
-                    action = Some(LibraryAction::ImportTexturePack(folder));
-                    ui.memory_mut(|m| m.close_popup());
-                }
-                crate::theme::section(ui, "Substance material");
-                if crate::icons::labelled(ui, crate::icons::Icon::Package, "From an .sbsar or .sbs file…", false)
-                    .on_hover_text("An Adobe Substance material with its settings, put on the selected parts. Its maps are rendered by Adobe's sbsrender when it is installed.")
-                    .clicked()
-                {
-                    action = Some(LibraryAction::ImportSubstance);
-                    ui.memory_mut(|m| m.close_popup());
-                }
+            // What it is and what it is for, side by side: a category, and a
+            // use the library's tags name ("bags", "electronics"), each with
+            // how many it holds, so an empty choice is not a surprise.
+            // The row is theirs, half each; a long choice is cut short
+            // rather than the row pushed past the panel.
+            let half = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(50.0);
+            let count = |f: &dyn Fn(&LibraryEntry) -> bool| self.entries.iter().filter(|e| f(e)).count();
+            // In egui a combo box's width is its least, and its label is cut
+            // against the room left in the row: each gets a slot of its own.
+            let slot = egui::vec2(half, ui.spacing().interact_size.y);
+            let left_to_right = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(slot, left_to_right, |ui| {
+                ui.set_max_width(half);
+                egui::ComboBox::from_id_salt("material-category")
+                    .width(half)
+                    .truncate()
+                    .selected_text(self.category.as_deref().unwrap_or("All categories"))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.category, None, format!("All categories  {}", self.entries.len()));
+                        for category in library::categories(&self.entries) {
+                            let n = count(&|e: &LibraryEntry| e.category == category);
+                            ui.selectable_value(&mut self.category, Some(category.clone()), format!("{category}  {n}"));
+                        }
+                    })
+                    .response
+                    .on_hover_text("What it is made of");
+            });
+            ui.allocate_ui_with_layout(slot, left_to_right, |ui| {
+                ui.set_max_width(half);
+                egui::ComboBox::from_id_salt("material-use")
+                    .width(half)
+                    .truncate()
+                    .selected_text(self.use_.map(capitalised).unwrap_or_else(|| "Any use".into()))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.use_, None, "Any use");
+                        for u in library::uses(&self.entries) {
+                            let n = count(&|e: &LibraryEntry| e.is_for(u));
+                            ui.selectable_value(&mut self.use_, Some(u), format!("{}  {n}", capitalised(u)));
+                        }
+                    })
+                    .response
+                    .on_hover_text("What it is used for");
             });
         });
 
@@ -627,7 +609,69 @@ impl LibraryTab {
                     .size(11.0)
                     .color(crate::theme::p().text_faint),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| view_switch(ui, &mut self.view));
+            // Right to left: the views at the end, then the settings and the
+            // add button beside them.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                view_switch(ui, &mut self.view);
+                ui.add_space(4.0);
+                // The rest of the browser's settings, and the way in for
+                // downloaded materials: the place people look for materials is
+                // also the place they bring their own in.
+                let new = crate::icons::tip(
+                    crate::icons::button(ui, crate::icons::Icon::Plus, false, 30.0, egui::Sense::click()),
+                    "New material",
+                    "Start from a type, the selected part, a texture pack or a file",
+                    "",
+                );
+                if new.clicked() {
+                    self.new_material.open(selected);
+                }
+                let more = crate::icons::button(ui, crate::icons::Icon::More, false, 30.0, egui::Sense::click())
+                    .on_hover_text("Preview size, your library's folder, and importing");
+                let popup = ui.id().with("library-more");
+                if more.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup));
+                }
+                egui::popup::popup_below_widget(ui, popup, &more, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.set_max_width(240.0);
+                    crate::theme::section(ui, "Previews");
+                    ui.add(
+                        crate::field::Slider::new(&mut self.thumbnail_size, 40.0..=128.0)
+                            .text("Size")
+                            .show_value(false),
+                    );
+                    crate::theme::section(ui, "Your library");
+                    if crate::icons::labelled(ui, crate::icons::Icon::Upload, "Import a material file…", false).clicked() {
+                        action = Some(LibraryAction::ImportFile);
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                    if crate::icons::labelled(ui, crate::icons::Icon::FolderOpen, "Open the folder", false)
+                        .on_hover_text("Presets dropped in here show up by themselves")
+                        .clicked()
+                    {
+                        action = Some(LibraryAction::OpenFolder);
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                    if crate::icons::labelled(ui, crate::icons::Icon::Refresh, "Read it again", false).clicked() {
+                        self.reload();
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                    crate::theme::section(ui, "Import texture pack");
+                    if let Some(folder) = crate::texture_pack::menu(ui) {
+                        action = Some(LibraryAction::ImportTexturePack(folder));
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                    crate::theme::section(ui, "Substance material");
+                    if crate::icons::labelled(ui, crate::icons::Icon::Package, "From an .sbsar or .sbs file…", false)
+                        .on_hover_text("An Adobe Substance material with its settings, put on the selected parts. Its maps are rendered by Adobe's sbsrender when it is installed.")
+                        .clicked()
+                    {
+                        action = Some(LibraryAction::ImportSubstance);
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                });
+            });
         });
         if visible.is_empty() {
             use crate::icons::Icon;
@@ -859,13 +903,17 @@ impl LibraryTab {
                             self.confirm_delete.ask(&self.entries[index]);
                         }
 
-                        let hover = format!(
-                            "{}\n{} · {}\nDouble-click to apply to the selection, or drag \
-                         onto a part.",
-                            entry.name,
-                            entry.material_type.label(),
-                            entry.category
-                        );
+                        let uses: Vec<&str> = library::USES.iter().copied().filter(|u| entry.is_for(u)).collect();
+                        let mut hover = format!("{}\n{} · {}", entry.name, entry.material_type.label(), entry.category);
+                        if !entry.description.is_empty() {
+                            hover.push_str("\n\n");
+                            hover.push_str(&entry.description);
+                        }
+                        if !uses.is_empty() {
+                            hover.push_str("\n\nFor ");
+                            hover.push_str(&uses.join(", "));
+                        }
+                        hover.push_str("\n\nDouble-click to apply to the selection, or drag onto a part.");
                         let response = response.on_hover_text(hover);
 
                         if response.double_clicked() {
@@ -1079,9 +1127,15 @@ fn row_star(ui: &egui::Ui, row: egui::Rect, hovered: bool, starred: bool) -> egu
     let star = egui::Rect::from_center_size(egui::pos2(row.right() - 14.0, row.center().y), egui::Vec2::splat(18.0));
     if starred || hovered {
         let colour = if starred { crate::theme::p().accent } else { crate::theme::p().text_faint };
-        ui.painter().add(egui::Shape::convex_polygon(star_points(star.center(), 6.0), colour, egui::Stroke::NONE));
+        paint_star(ui.painter(), star.center(), 14.0, starred, colour);
     }
     star
+}
+
+/// "outdoor gear" as "Outdoor gear", for a menu.
+fn capitalised(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 /// Whose a material is, in a word.
@@ -1139,11 +1193,18 @@ fn card_row(ui: &mut egui::Ui, width: f32, entry: &LibraryEntry, texture: Option
     let room = rect.right() - 30.0 - left;
     line(ui, egui::pos2(left, rect.top() + 9.0), &entry.name, crate::theme::strong(13.0), p.text, room);
     line(ui, egui::pos2(left, rect.top() + 28.0), &format!("{} · {}", entry.material_type.label(), entry.category), egui::FontId::proportional(11.5), p.text_dim, room);
-    let mut last = whose(entry.source).to_string();
-    if !entry.tags.is_empty() {
-        last.push_str(" · ");
-        last.push_str(&entry.tags.join(", "));
-    }
+    // What it is, in a sentence, where it has one: more use than its search
+    // words, which run to twenty.
+    let last = if entry.description.is_empty() {
+        let mut words = whose(entry.source).to_string();
+        if !entry.tags.is_empty() {
+            words.push_str(" · ");
+            words.push_str(&entry.tags.join(", "));
+        }
+        words
+    } else {
+        entry.description.clone()
+    };
     line(ui, egui::pos2(left, rect.top() + 46.0), &last, egui::FontId::proportional(11.0), p.text_faint, room + 20.0);
     let star = row_star(ui, egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.top() + 32.0)), hovered, starred);
     (response, star)
@@ -1175,15 +1236,8 @@ fn thumbnail_badges(ui: &egui::Ui, rect: egui::Rect, starred: bool, used: bool) 
     if starred || hovered {
         let centre = egui::pos2(rect.right() - 10.0, rect.top() + 10.0);
         painter.circle_filled(centre, 8.0, egui::Color32::from_black_alpha(110));
-        painter.add(egui::Shape::convex_polygon(
-            star_points(centre, 6.0),
-            if starred {
-                crate::theme::p().accent
-            } else {
-                egui::Color32::from_white_alpha(90)
-            },
-            egui::Stroke::NONE,
-        ));
+        let colour = if starred { crate::theme::p().accent } else { egui::Color32::from_white_alpha(150) };
+        paint_star(painter, centre, 12.0, starred, colour);
     }
 
     // A dot for "this material is already in the project" — §9's shelf shows
@@ -1198,18 +1252,32 @@ fn thumbnail_badges(ui: &egui::Ui, rect: egui::Rect, starred: bool, used: bool) 
     }
 }
 
-/// A five-pointed star, outer radius `r`.
-fn star_points(centre: egui::Pos2, r: f32) -> Vec<egui::Pos2> {
-    let mut points = Vec::with_capacity(10);
-    for i in 0..10 {
-        let angle = std::f32::consts::FRAC_PI_2 * -1.0 + i as f32 * std::f32::consts::PI / 5.0;
-        let radius = if i % 2 == 0 { r } else { r * 0.42 };
-        points.push(egui::pos2(
-            centre.x + angle.cos() * radius,
-            centre.y + angle.sin() * radius,
-        ));
+/// The favourite star, `size` points across: Lucide's star (ISC licence,
+/// `scripts/notices/lucide`), as every other icon in the application is,
+/// filled when set. A star is not convex, and filled as one - as it was -
+/// its inner corners came out ragged; the fill here is a fan from its
+/// middle, which a star is drawn round, laid under Lucide's outline at
+/// Lucide's own proportions (outer radius 10.5 of 24, inner half that,
+/// its middle half a unit below the box's).
+fn paint_star(painter: &egui::Painter, centre: egui::Pos2, size: f32, starred: bool, colour: egui::Color32) {
+    let rect = egui::Rect::from_center_size(centre, egui::Vec2::splat(size));
+    if starred {
+        let unit = size / 24.0;
+        let middle = centre + egui::vec2(0.0, 0.5 * unit);
+        let outer = 10.2 * unit;
+        let mut mesh = egui::epaint::Mesh::default();
+        mesh.colored_vertex(middle, colour);
+        for i in 0..10 {
+            let angle = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+            let radius = if i % 2 == 0 { outer } else { outer * 0.5 };
+            mesh.colored_vertex(middle + egui::vec2(angle.cos(), angle.sin()) * radius, colour);
+        }
+        for i in 0..10u32 {
+            mesh.add_triangle(0, 1 + i, 1 + (i + 1) % 10);
+        }
+        painter.add(egui::Shape::mesh(mesh));
     }
-    points
+    crate::icons::paint(painter, rect, crate::icons::Icon::Star, colour);
 }
 
 /// Where the user's own materials live.

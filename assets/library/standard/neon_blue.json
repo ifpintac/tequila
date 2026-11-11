@@ -1,5 +1,6 @@
 {
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A glowing blue gas-discharge tube with a bright core and a soft halo, as in bar signs and shop windows.",
   "emission_color": [0.15316983, 0.25568503, 0.8991125],
   "emission_luminance": 20,
   "name": "Neon Blue",
@@ -7,7 +8,22 @@
     "neon",
     "light",
     "blue",
-    "sign"
+    "sign",
+    "neon tube",
+    "neon sign",
+    "glowing",
+    "illuminated",
+    "gas discharge",
+    "glass tube",
+    "cyan",
+    "bright",
+    "emissive",
+    "bar sign",
+    "shop sign",
+    "led neon",
+    "signage",
+    "lighting",
+    "interior"
   ],
   "type": "emissive"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.6, 0.61, 0.62],
   "category": "Metal",
+  "description": "Pewter: a soft, dull bluish-grey tin alloy with a low, slightly waxy sheen, as on a tankard, tableware or decorative figure.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -234,7 +235,22 @@
     "tin",
     "tableware",
     "dull",
-    "grey"
+    "grey",
+    "tin alloy",
+    "gray",
+    "soft metal",
+    "tankard",
+    "goblet",
+    "plate",
+    "cutlery",
+    "figurine",
+    "ornament",
+    "antique",
+    "lead free",
+    "kitchenware",
+    "food & drink",
+    "accessories",
+    "interior"
   ],
   "type": "metal"
 }

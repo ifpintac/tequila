@@ -1,6 +1,7 @@
 {
   "base_color": [0.78, 0.77, 0.75],
   "category": "Metal",
+  "description": "Titanium blasted with fine beads: an even, soft matte grey with no direction, as on a watch case, tool or machined part.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -141,7 +142,23 @@
     "titanium",
     "blasted",
     "matte",
-    "watch"
+    "watch",
+    "bead blasted",
+    "sandblasted",
+    "grey",
+    "gray",
+    "satin",
+    "ti",
+    "grade 5",
+    "ti-6al-4v",
+    "case",
+    "machined",
+    "cnc",
+    "housing",
+    "watches",
+    "medical",
+    "tools",
+    "outdoor gear"
   ],
   "type": "metal"
 }

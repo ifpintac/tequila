@@ -90,7 +90,7 @@ fn nylon(name: &'static str, tags: &'static [&'static str], warp: Spectrum, weft
 /// interlocked loops, each loop's two legs leaning in towards the column's
 /// centre, so the face is rows of small Vs; a little fuzz, and the yarn's
 /// own shade varying column by column.
-fn jersey(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
+pub(crate) fn jersey(name: &'static str, tags: &'static [&'static str], colour: Spectrum) -> Preset {
     let mut r = Recipe::new(base(MaterialType::RealCloth, |m| {
         m.base_color = colour;
         m.fuzz_weight = 0.35;

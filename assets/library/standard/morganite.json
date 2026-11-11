@@ -1,12 +1,24 @@
 {
   "category": "Gem",
+  "description": "A soft peach-pink transparent beryl with gentle sparkle, as set in rose gold rings and pendants.",
   "name": "Morganite",
   "specular_ior": 1.577,
   "tags": [
     "morganite",
     "beryl",
     "pink",
-    "jewellery"
+    "jewellery",
+    "peach",
+    "blush",
+    "rose pink",
+    "pink gem",
+    "faceted",
+    "cut gemstone",
+    "transparent",
+    "rose gold",
+    "engagement ring",
+    "semi-precious",
+    "accessories"
   ],
   "transmission_color": [0.75677854, 0.57525545, 0.53728145],
   "transmission_dispersion_abbe": 70,

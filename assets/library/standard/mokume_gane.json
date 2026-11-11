@@ -2,6 +2,7 @@
   "base_color": [0.8, 0.6, 0.5],
   "base_metalness": 1,
   "category": "Metal",
+  "description": "Layered copper and silver forged and cut to show wood-grain-like swirls of orange and white metal, as on a wedding band or pendant.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -196,7 +197,21 @@
     "laminated",
     "copper",
     "silver",
-    "jewellery"
+    "jewellery",
+    "laminated metal",
+    "wood grain metal",
+    "layered",
+    "swirl",
+    "ring",
+    "band",
+    "pendant",
+    "handmade",
+    "bimetal",
+    "japanese",
+    "copper silver",
+    "watches",
+    "accessories",
+    "tools"
   ],
   "type": "generic"
 }

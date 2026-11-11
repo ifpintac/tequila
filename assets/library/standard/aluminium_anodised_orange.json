@@ -1,6 +1,7 @@
 {
   "base_color": [0.4708584, 0.18053432, 0.04680773],
   "category": "Metal",
+  "description": "Aluminium anodised bright orange: a smooth satin sheen with the colour in the metal, as on a bike part, tool body or accent trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -248,7 +249,21 @@
     "aluminium",
     "anodised",
     "orange",
-    "colour"
+    "colour",
+    "tangerine",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "bezel",
+    "case",
+    "sporting goods",
+    "tools",
+    "accessories"
   ],
   "type": "metal"
 }

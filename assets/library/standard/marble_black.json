@@ -1,6 +1,7 @@
 {
   "base_color": [0.028132407, 0.029384673, 0.028527156],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished black marble with fine white veins and a deep gloss, as on tabletops, floors and wall cladding.",
   "graph": {
     "decals": [],
     "links": [
@@ -2394,7 +2395,23 @@
     "polished",
     "black",
     "veined",
-    "nero marquina"
+    "nero marquina",
+    "black stone",
+    "polished stone",
+    "natural stone",
+    "white veins",
+    "glossy",
+    "slab",
+    "tile",
+    "tabletop",
+    "countertop",
+    "luxury",
+    "dark",
+    "italian marble",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

@@ -230,8 +230,8 @@ pub fn materials(document: &SceneDocument) -> Value {
 }
 
 /// The `library` query: every preset, the shipped ones and the user's own,
-/// with what a script needs to pick one - its name, category, tags, type -
-/// and where the user's own are kept.
+/// with what a script needs to pick one - its name, category, tags, type
+/// and what it is in a sentence - and where the user's own are kept.
 pub fn library(user: &std::path::Path) -> Value {
     use tequila_format::library::{read_libraries, standard_directory, Source};
     let (entries, problems) = read_libraries(&standard_directory(), user);
@@ -242,6 +242,7 @@ pub fn library(user: &std::path::Path) -> Value {
             out.set("name", entry.name.clone())
                 .set("category", entry.category.clone())
                 .set("tags", Value::Array(entry.tags.iter().map(|t| Value::String(t.clone())).collect()))
+                .set("description", entry.description.clone())
                 .set("type", entry.material_type.label())
                 .set("source", match entry.source {
                     Source::User => "user",

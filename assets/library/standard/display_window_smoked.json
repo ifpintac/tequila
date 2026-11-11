@@ -1,5 +1,6 @@
 {
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A dark smoked transparent acrylic window that hides the display until it lights, polished and flat.",
   "edge_radius": 0.0002,
   "name": "Display Window Smoked",
   "specular_roughness": 0.02,
@@ -10,7 +11,21 @@
     "smoked",
     "tinted",
     "acrylic",
-    "bezel"
+    "bezel",
+    "dark tint",
+    "screen cover",
+    "transparent",
+    "polished",
+    "glossy",
+    "grey",
+    "gray",
+    "black tint",
+    "front panel",
+    "pmma",
+    "electronics",
+    "appliances",
+    "audio",
+    "automotive"
   ],
   "transmission_color": [0.1, 0.1, 0.11],
   "type": "plastic_transparent"

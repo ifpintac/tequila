@@ -1,6 +1,7 @@
 {
   "base_color": [0.24669658, 0.042482987, 0.031733185],
   "category": "Metal",
+  "description": "Red anodised aluminium with fine linear brushing: a satin red face with directional streaks, as on a control panel or effects pedal plate.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -410,7 +411,21 @@
     "anodised",
     "brushed",
     "red",
-    "front panel"
+    "front panel",
+    "hairline",
+    "grain",
+    "linear grain",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "anisotropic"
 }

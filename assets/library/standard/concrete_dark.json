@@ -1,7 +1,8 @@
 {
   "base_color": [0.11613652, 0.112335965, 0.10366013],
   "base_diffuse_roughness": 0.6,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A dark charcoal cast concrete with a dull, slightly pitted surface, as on feature walls, countertops and plinths.",
   "graph": {
     "decals": [],
     "links": [
@@ -1109,7 +1110,20 @@
     "cast",
     "dark",
     "charcoal",
-    "grey"
+    "grey",
+    "cement",
+    "dark gray",
+    "anthracite",
+    "black concrete",
+    "exposed concrete",
+    "matte",
+    "rough",
+    "pitted",
+    "masonry",
+    "slate grey",
+    "architecture",
+    "interior",
+    "furniture"
   ],
   "type": "generic"
 }

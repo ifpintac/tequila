@@ -1,6 +1,7 @@
 {
   "base_color": [0.16040465, 0.16474625, 0.18176706],
   "category": "Plastic",
+  "description": "A mid-grey plastic with a moderate sheen from a paper-polished mould, as on enclosures and housings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -263,7 +264,21 @@
     "grey",
     "paper polish",
     "spi b",
-    "enclosure"
+    "enclosure",
+    "gray",
+    "satin",
+    "paper finish",
+    "housing",
+    "case",
+    "injection moulded",
+    "molded",
+    "casing",
+    "smooth",
+    "medium gloss",
+    "electronics",
+    "appliances",
+    "industrial",
+    "tools"
   ],
   "type": "plastic"
 }

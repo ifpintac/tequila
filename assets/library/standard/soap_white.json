@@ -1,6 +1,7 @@
 {
   "base_color": [0.8628, 0.8555, 0.8135],
-  "category": "Translucent",
+  "category": "Liquid & Wax",
+  "description": "A creamy white, slightly translucent bar with a smooth waxy surface, as in bathroom soap.",
   "graph": {
     "decals": [],
     "links": [
@@ -93,7 +94,21 @@
   "tags": [
     "soap",
     "bar",
-    "bathroom"
+    "bathroom",
+    "bar soap",
+    "hand soap",
+    "bath",
+    "toiletries",
+    "smooth",
+    "waxy",
+    "glycerin",
+    "cream",
+    "off-white",
+    "washing",
+    "translucent",
+    "cosmetics",
+    "appliances",
+    "packaging"
   ],
   "type": "translucent"
 }

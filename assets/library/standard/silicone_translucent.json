@@ -1,6 +1,7 @@
 {
   "base_color": [0.8201, 0.8082, 0.7804],
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft, milky-clear silicone with a smooth matte feel, as on seals, gaskets and flexible covers.",
   "name": "Silicone Translucent",
   "specular_roughness": 0.3,
   "subsurface_color": [0.9225, 0.8771, 0.8589],
@@ -8,7 +9,23 @@
   "tags": [
     "silicone",
     "soft",
-    "seal"
+    "seal",
+    "rubber",
+    "elastomer",
+    "flexible",
+    "clear silicone",
+    "cloudy",
+    "frosted",
+    "gasket",
+    "o-ring",
+    "moulded",
+    "molded",
+    "food safe",
+    "sleeve",
+    "medical",
+    "kitchenware",
+    "industrial",
+    "electronics"
   ],
   "type": "translucent"
 }

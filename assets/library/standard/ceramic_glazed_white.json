@@ -1,8 +1,9 @@
 {
   "base_color": [0.8784554, 0.87929106, 0.8581991],
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A smooth, glossy white glaze over fired ceramic, as on basins, toilets, tiles and tableware.",
   "graph": {
     "decals": [],
     "links": [
@@ -304,7 +305,22 @@
     "sanitary",
     "white",
     "tableware",
-    "gloss"
+    "gloss",
+    "porcelain",
+    "fired",
+    "glossy",
+    "sanitaryware",
+    "bathroom",
+    "toilet",
+    "sink",
+    "mug",
+    "plate",
+    "white china",
+    "tile",
+    "kitchenware",
+    "interior",
+    "architecture",
+    "appliances"
   ],
   "type": "generic"
 }

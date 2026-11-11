@@ -1,6 +1,7 @@
 {
   "base_color": [0.78648895, 0.78356963, 0.75052875],
   "category": "Plastic",
+  "description": "A white polypropylene with a slightly waxy low-sheen surface, as on housings, containers and utility mouldings.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -202,7 +203,21 @@
     "housing",
     "moulded",
     "case",
-    "white"
+    "white",
+    "waxy",
+    "satin",
+    "off white",
+    "injection moulded",
+    "molded",
+    "container",
+    "box",
+    "casing",
+    "flexible",
+    "tough",
+    "packaging",
+    "appliances",
+    "kitchenware",
+    "medical"
   ],
   "type": "plastic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.15118049, 0.14888452, 0.141534],
   "category": "Fabric",
+  "description": "A grey wool suiting cloth woven in a zig-zag herringbone twill with a soft, slightly fuzzy matte surface, for coats and jackets.",
   "fuzz_color": [0.26010922, 0.25830725, 0.24784507],
   "fuzz_weight": 0.55,
   "graph": {
@@ -5775,7 +5776,22 @@
     "wool",
     "woven",
     "suiting",
-    "grey"
+    "grey",
+    "textile",
+    "cloth",
+    "twill",
+    "zigzag",
+    "suit",
+    "coat",
+    "jacket",
+    "blazer",
+    "fibre",
+    "fiber",
+    "matte",
+    "gray",
+    "apparel",
+    "accessories",
+    "interior"
   ],
   "type": "real_cloth"
 }

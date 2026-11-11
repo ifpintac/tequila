@@ -622,6 +622,7 @@ fn convert_with(mtl: &Mtl, picture: &mut dyn FnMut(&str) -> Result<Option<PathBu
     let category = category(material_type, &mtl.name);
     let mut graph = build.graph;
     let entry = LibraryEntry {
+        description: String::new(),
         name: mtl.name.clone(),
         category,
         tags: vec!["KeyShot".into()],

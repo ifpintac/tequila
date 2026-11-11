@@ -1,6 +1,7 @@
 {
   "base_color": [0.86, 0.865, 0.87],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Steel with a diamond knurl pressed or cut into it: a grey grip surface of tiny crossing ridges, as on a handle, tool grip or adjusting knob.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -202,7 +203,22 @@
     "steel",
     "knurled",
     "grip",
-    "machined"
+    "machined",
+    "diamond knurl",
+    "knurling",
+    "ridged",
+    "knob",
+    "handle",
+    "cap",
+    "turned",
+    "lathe",
+    "cnc",
+    "grey",
+    "gray",
+    "tools",
+    "industrial",
+    "audio",
+    "automotive"
   ],
   "type": "metal"
 }

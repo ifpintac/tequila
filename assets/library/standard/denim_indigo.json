@@ -1,6 +1,7 @@
 {
   "base_color": [0.16270831, 0.17695172, 0.24709961],
   "category": "Fabric",
+  "description": "An indigo cotton twill with a visible diagonal weave and a faintly uneven, slightly rough face, for jeans, jackets and casual bags.",
   "fuzz_color": [0.28146186, 0.30726343, 0.41678116],
   "fuzz_weight": 0.3,
   "graph": {
@@ -5371,7 +5372,20 @@
     "apparel",
     "twill",
     "blue",
-    "jeans"
+    "jeans",
+    "textile",
+    "cloth",
+    "cotton",
+    "jacket",
+    "casual",
+    "jean",
+    "workwear",
+    "matte",
+    "diagonal",
+    "bag",
+    "dark blue",
+    "bags",
+    "shoes"
   ],
   "type": "real_cloth"
 }

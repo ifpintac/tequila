@@ -1,5 +1,6 @@
 {
-  "category": "Glass",
+  "category": "Glass & Clear Plastic",
+  "description": "A translucent acid-etched glass with a soft matte face that diffuses light, for panels, shades and doors.",
   "graph": {
     "decals": [],
     "links": [
@@ -62,7 +63,23 @@
     "glass",
     "frosted",
     "diffuser",
-    "etched"
+    "etched",
+    "opal",
+    "satin",
+    "matte",
+    "sandblasted",
+    "translucent",
+    "obscure",
+    "privacy",
+    "etched glass",
+    "lamp shade",
+    "panel",
+    "cloudy",
+    "diffusing",
+    "interior",
+    "architecture",
+    "lighting",
+    "packaging"
   ],
   "transmission_color": [0.9627, 0.9722, 0.9731],
   "type": "glass_solid"

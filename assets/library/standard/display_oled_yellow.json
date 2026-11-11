@@ -1,6 +1,7 @@
 {
   "base_color": [0.004, 0.004, 0.005],
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A glowing yellow pixel screen on a black background, as on a small gadget, synth or fitness band.",
   "emission_color": [1, 0.7, 0.03],
   "emission_luminance": 0.8,
   "name": "Display OLED Yellow",
@@ -12,7 +13,20 @@
     "screen",
     "pixels",
     "lit",
-    "yellow"
+    "yellow",
+    "oled screen",
+    "glowing",
+    "monochrome",
+    "pixel display",
+    "graphic display",
+    "amber",
+    "glow",
+    "small screen",
+    "ssd1306",
+    "dot matrix",
+    "electronics",
+    "watches",
+    "audio"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.6633943, 0.63346726, 0.5208346],
   "category": "Plastic",
+  "description": "A fine-grained matte cream ABS knob surface, as on vintage-style amplifier and radio dials.",
   "edge_radius": 0.0003,
   "fuzz_color": [0.55, 0.55, 0.56],
   "fuzz_roughness": 0.5,
@@ -233,7 +234,23 @@
     "fine grain",
     "textured",
     "cream",
-    "moulded"
+    "moulded",
+    "dial",
+    "control knob",
+    "potentiometer",
+    "rotary",
+    "matte",
+    "etched",
+    "off white",
+    "ivory",
+    "beige",
+    "retro",
+    "vintage",
+    "injection moulded",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "appliances"
   ],
   "type": "generic"
 }

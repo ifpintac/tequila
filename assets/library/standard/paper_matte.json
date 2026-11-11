@@ -1,7 +1,8 @@
 {
   "base_color": [0.8966, 0.8887, 0.8596],
   "base_diffuse_roughness": 0.35,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A plain off-white uncoated paper with a soft dull surface, as in prints, cartons and packaging sleeves.",
   "graph": {
     "decals": [],
     "links": [
@@ -123,7 +124,21 @@
   "tags": [
     "paper",
     "print",
-    "packaging"
+    "packaging",
+    "white paper",
+    "uncoated",
+    "printed",
+    "card",
+    "cardstock",
+    "carton",
+    "box",
+    "sheet",
+    "flat",
+    "leaflet",
+    "label",
+    "cardboard",
+    "accessories",
+    "prototyping"
   ],
   "type": "diffuse"
 }

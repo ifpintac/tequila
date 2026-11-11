@@ -1,6 +1,7 @@
 {
   "base_color": [0.09683672, 0.013785498, 0.0073668626],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A deep gloss candy red with fine metallic flake under a clear coat, glowing brighter where the light hits it, as on a sports car.",
   "edge_radius": 0.0004,
   "flake_color": [0.54851955, 0.19009098, 0.12135943],
   "flake_roughness": 0.18,
@@ -67,7 +68,21 @@
     "metallic",
     "flake",
     "red",
-    "candy"
+    "candy",
+    "candy apple",
+    "candy red",
+    "red paint",
+    "metallic paint",
+    "clear coat",
+    "glossy",
+    "sprayed",
+    "baked",
+    "sparkle",
+    "car paint",
+    "vehicle paint",
+    "automotive",
+    "appliances",
+    "industrial"
   ],
   "type": "metallic_paint"
 }

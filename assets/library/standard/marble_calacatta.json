@@ -1,6 +1,7 @@
 {
   "base_color": [0.86312973, 0.855602, 0.82041067],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished white marble with bold grey and gold veins and a bright gloss, as on kitchen islands and bathroom walls.",
   "graph": {
     "decals": [],
     "links": [
@@ -2395,7 +2396,23 @@
     "white",
     "veined",
     "calacatta",
-    "gold"
+    "gold",
+    "white stone",
+    "polished stone",
+    "natural stone",
+    "gold veins",
+    "bold veining",
+    "glossy",
+    "slab",
+    "tile",
+    "countertop",
+    "italian marble",
+    "luxury",
+    "bathroom",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

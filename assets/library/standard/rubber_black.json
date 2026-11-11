@@ -1,7 +1,8 @@
 {
   "base_color": [0.0061, 0.0061, 0.0065],
   "base_diffuse_roughness": 0.6,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A soft matte black rubber with a faintly grainy surface, as on seals, gaskets and grips.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "rubber",
     "epdm",
     "seal",
-    "grip"
+    "grip",
+    "elastomer",
+    "synthetic rubber",
+    "gasket",
+    "matte",
+    "soft",
+    "dark",
+    "flexible",
+    "moulded",
+    "molded",
+    "o-ring",
+    "dull",
+    "industrial",
+    "automotive",
+    "tools",
+    "appliances"
   ],
   "type": "generic"
 }

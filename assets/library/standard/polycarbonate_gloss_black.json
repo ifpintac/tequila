@@ -1,6 +1,7 @@
 {
   "base_color": [0.005, 0.005, 0.0055],
   "category": "Plastic",
+  "description": "A glossy black polycarbonate with a smooth deep shine, as on bezels, lens surrounds and device housings.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -96,7 +97,22 @@
     "gloss",
     "bezel",
     "lens surround",
-    "black"
+    "black",
+    "glossy",
+    "shiny",
+    "high gloss",
+    "dark",
+    "trim",
+    "injection moulded",
+    "molded",
+    "piano black",
+    "casing",
+    "frame",
+    "fascia",
+    "electronics",
+    "automotive",
+    "appliances",
+    "audio"
   ],
   "type": "plastic"
 }

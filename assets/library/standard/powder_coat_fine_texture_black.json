@@ -1,6 +1,7 @@
 {
   "base_color": [0.008, 0.008, 0.0085],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A black powder coat with a fine sandy texture and low sheen, as on rack units, chassis and equipment housings.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -142,7 +143,22 @@
     "sandy",
     "rack",
     "chassis",
-    "black"
+    "black",
+    "black paint",
+    "fine textured",
+    "sand texture",
+    "matte",
+    "low gloss",
+    "powder coated",
+    "baked",
+    "cured",
+    "sheet steel",
+    "rack mount",
+    "metal finish",
+    "electrostatic",
+    "electronics",
+    "audio",
+    "industrial"
   ],
   "type": "plastic"
 }

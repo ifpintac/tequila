@@ -1,6 +1,7 @@
 {
   "base_color": [0.8643, 0.8559, 0.8412],
   "category": "Metal",
+  "description": "Titanium with fine linear brush lines: a dark-silver satin with directional streaks, as on a watch case, phone frame or tool.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -409,7 +410,23 @@
   "tags": [
     "titanium",
     "brushed",
-    "watch"
+    "watch",
+    "hairline",
+    "grain",
+    "satin",
+    "grey",
+    "gray",
+    "ti",
+    "grade 5",
+    "case",
+    "bezel",
+    "frame",
+    "linear grain",
+    "machined",
+    "watches",
+    "electronics",
+    "tools",
+    "outdoor gear"
   ],
   "type": "anisotropic"
 }

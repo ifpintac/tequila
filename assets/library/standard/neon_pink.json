@@ -1,5 +1,6 @@
 {
-  "category": "Light",
+  "category": "Light & Display",
+  "description": "A glowing hot-pink gas-discharge tube with a bright core and a soft halo, as in bar signs and shop windows.",
   "emission_color": [0.64727986, 0.11939784, 0.35317233],
   "emission_luminance": 20,
   "name": "Neon Pink",
@@ -7,7 +8,22 @@
     "neon",
     "light",
     "pink",
-    "sign"
+    "sign",
+    "neon tube",
+    "neon sign",
+    "glowing",
+    "illuminated",
+    "gas discharge",
+    "glass tube",
+    "magenta",
+    "hot pink",
+    "bright",
+    "emissive",
+    "bar sign",
+    "led neon",
+    "signage",
+    "lighting",
+    "interior"
   ],
   "type": "emissive"
 }

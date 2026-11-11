@@ -1,5 +1,6 @@
 {
   "category": "Metal",
+  "description": "Copper with a soft satin finish: a muted orange-pink with a gentle sheen and little reflection, as on cookware, pipework or fittings.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -231,7 +232,22 @@
   "tags": [
     "copper",
     "warm",
-    "satin"
+    "satin",
+    "matte",
+    "orange",
+    "pink",
+    "reddish",
+    "brushed look",
+    "cookware",
+    "pipe",
+    "tap",
+    "faucet",
+    "trim",
+    "fitting",
+    "kitchenware",
+    "interior",
+    "lighting",
+    "furniture"
   ],
   "type": "metal"
 }

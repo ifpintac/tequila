@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "A glossy black twill weave of 3K carbon tow under clear resin, the classic carbon look of car trim and bicycle parts.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,22 @@
     "twill",
     "3k",
     "gloss",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "twill weave",
+    "black",
+    "woven",
+    "laminate",
+    "resin",
+    "clear coat",
+    "glossy",
+    "3k twill",
+    "autoclave",
+    "prepreg",
+    "automotive",
+    "sporting goods",
+    "electronics",
+    "prototyping"
   ],
   "type": "generic"
 }

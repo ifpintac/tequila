@@ -1,6 +1,7 @@
 {
   "base_color": [0.7988275, 0.7846266, 0.7124794],
   "category": "Plastic",
+  "description": "A sheet of recycled plastic flecked with bright colour chips on a dark ground, in the manner of terrazzo.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -885,7 +886,23 @@
     "hdpe",
     "terrazzo",
     "sheet",
-    "sustainable"
+    "sustainable",
+    "recycled hdpe",
+    "post consumer",
+    "terrazzo look",
+    "flecks",
+    "speckled",
+    "colourful",
+    "colorful",
+    "pressed sheet",
+    "eco",
+    "upcycled",
+    "chips",
+    "surface material",
+    "furniture",
+    "interior",
+    "accessories",
+    "architecture"
   ],
   "type": "plastic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.29708347, 0.041136257, 0.019745698],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A smooth gloss red enamel over a cast metal box, as on guitar effects pedals and small instruments.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -203,7 +204,22 @@
     "die-cast",
     "enclosure",
     "red",
-    "paint"
+    "paint",
+    "red paint",
+    "glossy",
+    "gloss paint",
+    "painted metal",
+    "sprayed",
+    "baked",
+    "effects pedal",
+    "guitar pedal",
+    "cast aluminium",
+    "cast aluminum",
+    "box",
+    "hammond",
+    "musical instruments",
+    "audio",
+    "electronics"
   ],
   "type": "plastic"
 }

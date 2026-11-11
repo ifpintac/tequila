@@ -1,6 +1,7 @@
 {
   "base_color": [0.27788448, 0.28648767, 0.30235377],
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A bright silver metallic paint with fine flakes on painted plastic, as on side panels, trim and small instrument cases.",
   "edge_radius": 0.0004,
   "flake_color": [0.8952009, 0.9037141, 0.9190341],
   "flake_roughness": 0.18,
@@ -68,7 +69,22 @@
     "side panel",
     "flake",
     "silver",
-    "paint"
+    "paint",
+    "aluminium look",
+    "aluminum look",
+    "grey",
+    "gray",
+    "light metallic",
+    "glossy",
+    "metal flake",
+    "painted metal",
+    "sprayed",
+    "baked",
+    "effects pedal",
+    "guitar pedal",
+    "electronics",
+    "audio",
+    "automotive"
   ],
   "type": "metallic_paint"
 }

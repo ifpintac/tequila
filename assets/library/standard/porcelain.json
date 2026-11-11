@@ -1,6 +1,7 @@
 {
   "base_color": [0.9119, 0.9128, 0.8912],
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
+  "description": "A smooth, glossy, slightly translucent white fired ceramic, as in cups, plates, figurines and bathroom ware.",
   "graph": {
     "decals": [],
     "links": [
@@ -309,7 +310,22 @@
     "ceramic",
     "china",
     "translucent",
-    "white"
+    "white",
+    "bone china",
+    "glazed",
+    "fired",
+    "tableware",
+    "plate",
+    "cup",
+    "vase",
+    "figurine",
+    "smooth",
+    "fine ceramic",
+    "glossy",
+    "kitchenware",
+    "interior",
+    "jewellery",
+    "medical"
   ],
   "type": "translucent"
 }

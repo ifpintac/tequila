@@ -1,7 +1,8 @@
 {
   "base_color": [0.0181, 0.0229, 0.0591],
-  "category": "Paint",
+  "category": "Paint & Coating",
   "coat_weight": 0.3,
+  "description": "A deep navy blue paint with a soft satin sheen, as on painted furniture, cabinets and doors.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -141,7 +142,20 @@
     "satin",
     "furniture",
     "navy",
-    "blue"
+    "blue",
+    "dark blue",
+    "midnight blue",
+    "blue paint",
+    "semi-gloss",
+    "low sheen",
+    "brushed",
+    "sprayed",
+    "cabinet",
+    "door",
+    "painted wood",
+    "interior paint",
+    "interior",
+    "architecture"
   ],
   "type": "generic"
 }

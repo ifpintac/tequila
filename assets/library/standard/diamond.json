@@ -1,12 +1,25 @@
 {
   "category": "Gem",
+  "description": "A colourless transparent stone with sharp facets that throw bright white and rainbow flashes, as set in rings and watch dials.",
   "name": "Diamond",
   "specular_ior": 2.417,
   "tags": [
     "diamond",
     "jewellery",
     "brilliant",
-    "fire"
+    "fire",
+    "colorless",
+    "clear",
+    "faceted",
+    "sparkle",
+    "brilliant cut",
+    "gemstone",
+    "solitaire",
+    "engagement ring",
+    "precious",
+    "transparent",
+    "watches",
+    "accessories"
   ],
   "type": "gem"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.62962383, 0.570471, 0.38603392],
   "category": "Metal",
+  "description": "Aluminium anodised a pale champagne gold: a soft satin sheen with the tint in the metal, as on a laptop lid or phone frame.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -249,7 +250,21 @@
     "anodised",
     "champagne",
     "gold",
-    "laptop"
+    "laptop",
+    "pale gold",
+    "sand",
+    "phone",
+    "anodized",
+    "anodised aluminum",
+    "sheet",
+    "extruded",
+    "cnc",
+    "enclosure",
+    "chassis",
+    "panel",
+    "electronics",
+    "accessories",
+    "audio"
   ],
   "type": "metal"
 }

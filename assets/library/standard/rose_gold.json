@@ -1,6 +1,7 @@
 {
   "base_color": [0.9854, 0.9979, 0.9561],
   "category": "Metal",
+  "description": "Rose gold: a warm pink-copper gold with a bright polish, as on a watch case, ring, pen or a phone-style trim.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -232,7 +233,22 @@
   "tags": [
     "gold",
     "rose",
-    "jewellery"
+    "jewellery",
+    "pink gold",
+    "red gold",
+    "pink",
+    "copper gold",
+    "precious metal",
+    "18k",
+    "polished",
+    "mirror",
+    "shiny",
+    "watch case",
+    "ring",
+    "jewelry",
+    "watches",
+    "accessories",
+    "electronics"
   ],
   "type": "metal"
 }

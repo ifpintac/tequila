@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.015,
   "coat_weight": 1,
+  "description": "Straight parallel carbon strands under clear resin, giving fine glossy streaks in one direction, as on tubes and structural parts.",
   "graph": {
     "decals": [],
     "links": [
@@ -3897,7 +3898,21 @@
     "unidirectional",
     "ud",
     "gloss",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "ud carbon",
+    "straight fibre",
+    "straight fiber",
+    "streaked",
+    "black",
+    "laminate",
+    "resin",
+    "glossy",
+    "tube",
+    "prepreg",
+    "automotive",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

@@ -1,6 +1,7 @@
 {
   "base_color": [0.8334548, 0.83069813, 0.7898523],
   "category": "Plastic",
+  "description": "A creamy opaque white acetal with a waxy surface, used for gears, sliders and machined parts.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -143,7 +144,21 @@
     "delrin",
     "white",
     "engineering",
-    "waxy"
+    "waxy",
+    "polyoxymethylene",
+    "acetal copolymer",
+    "low friction",
+    "engineering plastic",
+    "machined",
+    "satin",
+    "off white",
+    "bearing",
+    "bushing",
+    "cnc machined",
+    "industrial",
+    "tools",
+    "medical",
+    "automotive"
   ],
   "type": "plastic_cloudy"
 }

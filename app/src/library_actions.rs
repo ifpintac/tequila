@@ -79,7 +79,7 @@ impl crate::TequilaApp {
             }
             LibraryAction::EditDetails(details) => {
                 let Some(entry) = self.library_entry_at(&details.path) else { return };
-                match library::edit_details(&entry, &details.name, &details.category, &details.tags) {
+                match library::edit_details(&entry, &details.name, &details.category, &details.tags, &details.description) {
                     Ok(edited) => {
                         self.library.reload();
                         self.toasts.info(format!("Saved `{}`", edited.name));

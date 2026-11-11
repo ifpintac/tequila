@@ -1,7 +1,8 @@
 {
   "base_color": [0.544202, 0.54017174, 0.5560138],
   "base_diffuse_roughness": 0.2,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A honed, matte granite in rusty browns and greys with coarse grains, as on paving, walls and countertops.",
   "graph": {
     "decals": [],
     "links": [
@@ -1346,7 +1347,23 @@
     "rust",
     "brown",
     "grey",
-    "rustic"
+    "rustic",
+    "brown granite",
+    "gray",
+    "rust brown",
+    "honed stone",
+    "matte",
+    "leathered",
+    "speckled",
+    "natural stone",
+    "paving",
+    "cladding",
+    "earthy",
+    "warm",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "generic"
 }

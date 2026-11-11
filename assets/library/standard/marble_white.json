@@ -1,6 +1,7 @@
 {
   "base_color": [0.78899515, 0.8050877, 0.8270275],
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A polished white marble with soft grey veins and a bright gloss, as on tabletops, floors and bathroom surfaces.",
   "graph": {
     "decals": [],
     "links": [
@@ -2292,7 +2293,7 @@
           {
             "socket": "input:1",
             "value": {
-              "color": [0.46667528, 0.47810984, 0.5045607]
+              "color": [0.4666753, 0.47810984, 0.5045607]
             }
           },
           {
@@ -2394,7 +2395,23 @@
     "polished",
     "white",
     "veined",
-    "carrara"
+    "carrara",
+    "white stone",
+    "polished stone",
+    "natural stone",
+    "grey veins",
+    "gray veins",
+    "glossy",
+    "slab",
+    "tile",
+    "countertop",
+    "italian marble",
+    "bathroom",
+    "pale",
+    "architecture",
+    "interior",
+    "furniture",
+    "kitchenware"
   ],
   "type": "translucent"
 }

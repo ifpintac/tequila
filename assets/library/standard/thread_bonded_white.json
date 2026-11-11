@@ -1,6 +1,7 @@
 {
   "base_color": [0.82659894, 0.8156952, 0.7614952],
   "category": "Fabric",
+  "description": "A fine, smooth white nylon sewing thread with a slight sheen, used for visible stitching on bags, shoes and technical gear.",
   "fuzz_color": [0.8699492, 0.8617714, 0.8211214],
   "fuzz_weight": 0.15,
   "graph": {
@@ -553,7 +554,21 @@
     "seam",
     "sewing",
     "nylon",
-    "white"
+    "white",
+    "textile",
+    "yarn",
+    "sewing thread",
+    "polyester",
+    "fibre",
+    "fiber",
+    "sheen",
+    "topstitch",
+    "cord",
+    "off-white",
+    "bags",
+    "shoes",
+    "apparel",
+    "accessories"
   ],
   "type": "real_cloth"
 }

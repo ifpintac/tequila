@@ -4,6 +4,7 @@
   "category": "Metal",
   "coat_roughness": 0.25,
   "coat_weight": 0.3,
+  "description": "Zinc-plated steel with a black passivated coat: a satin black with a faint blue-green sheen, as on screws, brackets and small hardware.",
   "edge_radius": 0.0001,
   "graph": {
     "decals": [],
@@ -97,7 +98,21 @@
     "fastener",
     "black zinc",
     "passivated",
-    "hardware"
+    "hardware",
+    "black zinc plated",
+    "black passivate",
+    "dark",
+    "matte black",
+    "electroplated",
+    "bolt",
+    "bracket",
+    "washer",
+    "nut",
+    "sheet",
+    "industrial",
+    "electronics",
+    "automotive",
+    "furniture"
   ],
   "type": "generic"
 }

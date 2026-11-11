@@ -1,8 +1,9 @@
 {
   "base_color": [0.7255753, 0.69005674, 0.5710663],
-  "category": "Ceramic",
+  "category": "Stone & Ceramic",
   "coat_roughness": 0.06,
   "coat_weight": 0.85,
+  "description": "A cream stoneware glaze scattered with small dark speckles, as on handmade mugs, bowls and plates.",
   "graph": {
     "decals": [],
     "links": [
@@ -1262,7 +1263,21 @@
     "speckled",
     "glaze",
     "pottery",
-    "cream"
+    "cream",
+    "speckle glaze",
+    "off-white",
+    "glazed",
+    "fired",
+    "handmade",
+    "mug",
+    "bowl",
+    "plate",
+    "rustic",
+    "studio pottery",
+    "satin",
+    "kitchenware",
+    "interior",
+    "food & drink"
   ],
   "type": "generic"
 }

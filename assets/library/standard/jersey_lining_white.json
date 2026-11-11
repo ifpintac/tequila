@@ -1,6 +1,7 @@
 {
   "base_color": [0.7080237, 0.7015515, 0.6642381],
   "category": "Fabric",
+  "description": "A thin, smooth white knit with tiny interlocking stitches and a soft matte face, used inside shoes, bags and clothing.",
   "fuzz_color": [0.7810178, 0.77616364, 0.7481786],
   "fuzz_weight": 0.35,
   "graph": {
@@ -3142,7 +3143,19 @@
     "sneaker",
     "footwear",
     "tricot",
-    "white"
+    "white",
+    "textile",
+    "cloth",
+    "stretchy",
+    "polyester",
+    "matte",
+    "sneaker interior",
+    "bag lining",
+    "jacket lining",
+    "off-white",
+    "shoes",
+    "apparel",
+    "bags"
   ],
   "type": "real_cloth"
 }

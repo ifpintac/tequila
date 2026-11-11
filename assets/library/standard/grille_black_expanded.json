@@ -1,6 +1,7 @@
 {
   "base_color": [0.01, 0.01, 0.0105],
-  "category": "Metal",
+  "category": "Metal Pattern & Mesh",
+  "description": "Black-coated expanded metal: a diamond-shaped mesh of slit and stretched sheet with a matte finish, as on a guitar amplifier or speaker front.",
   "graph": {
     "decals": [],
     "links": [
@@ -3010,7 +3011,23 @@
     "diamond",
     "speaker",
     "amplifier",
-    "black"
+    "black",
+    "expanded mesh",
+    "diamond mesh",
+    "slit and stretched",
+    "black grille",
+    "black mesh",
+    "powder coated",
+    "matte black",
+    "grill",
+    "speaker grill",
+    "cover",
+    "screen",
+    "vent",
+    "audio",
+    "musical instruments",
+    "electronics",
+    "industrial"
   ],
   "type": "generic"
 }

@@ -1,7 +1,9 @@
 {
-  "base_color": [0.43888208, 0.3253616, 0.16559766],
+  "base_color": [0.4388821, 0.3253616, 0.16559766],
   "base_diffuse_roughness": 0.4,
   "category": "Wood",
+  "description": "White oak, oiled: light tan with a clear, open grain and a soft sheen, for flooring, cabinets, barrels and furniture.",
+  "edge_radius": 0.0005,
   "graph": {
     "decals": [],
     "links": [
@@ -638,7 +640,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.45
+              "float": 0.33
             }
           }
         ],
@@ -656,7 +658,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.2
+              "float": 0.33
             }
           }
         ],
@@ -827,15 +829,15 @@
           },
           {
             "at": 0.7525,
-            "color": [0.40982047, 0.30006567, 0.14959306]
+            "color": [0.4098205, 0.30006567, 0.14959306]
           },
           {
             "at": 0.955,
-            "color": [0.37107167, 0.26633775, 0.12825358]
+            "color": [0.37107173, 0.26633775, 0.12825358]
           },
           {
             "at": 1,
-            "color": [0.34138593, 0.24503073, 0.117993295]
+            "color": [0.341386, 0.24503073, 0.117993295]
           }
         ],
         "id": 21,
@@ -1836,7 +1838,7 @@
           {
             "socket": "input:1",
             "value": {
-              "float": 0.42
+              "float": 0.5
             }
           }
         ],
@@ -1885,13 +1887,29 @@
     "output": 1
   },
   "name": "Wood White Oak",
-  "specular_roughness": 0.42,
+  "specular_roughness": 0.5,
+  "specular_weight": 0.6,
   "tags": [
     "wood",
     "oak",
     "white oak",
     "furniture",
-    "light"
+    "light",
+    "timber",
+    "hardwood",
+    "solid wood",
+    "american white oak",
+    "pale",
+    "tan",
+    "natural",
+    "open pore",
+    "satin",
+    "oiled",
+    "flooring",
+    "cabinet",
+    "interior",
+    "architecture",
+    "food & drink"
   ],
   "type": "generic"
 }

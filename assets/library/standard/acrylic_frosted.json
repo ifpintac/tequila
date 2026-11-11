@@ -1,5 +1,6 @@
 {
-  "category": "Plastic",
+  "category": "Glass & Clear Plastic",
+  "description": "A translucent acrylic with a fine sandblasted face that scatters light softly, for diffusers and panels.",
   "edge_radius": 0.0002,
   "name": "Acrylic Frosted",
   "specular_roughness": 0.42,
@@ -8,7 +9,23 @@
     "pmma",
     "frosted",
     "sandblasted",
-    "diffuser"
+    "diffuser",
+    "plexiglass",
+    "perspex",
+    "matte",
+    "satin",
+    "translucent",
+    "opaline",
+    "etched",
+    "diffusing",
+    "cover",
+    "light panel",
+    "sheet",
+    "milky",
+    "lighting",
+    "signage",
+    "electronics",
+    "interior"
   ],
   "transmission_color": [0.95, 0.96, 0.96],
   "type": "plastic_transparent"

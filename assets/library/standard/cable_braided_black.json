@@ -1,6 +1,7 @@
 {
   "base_color": [0.012061637, 0.012024476, 0.012962447],
   "category": "Fabric",
+  "description": "A tight, round black braid of fine yarn with a diamond crossing pattern, wrapped around cables and cords.",
   "fuzz_color": [0.030154092, 0.030061191, 0.032406118],
   "fuzz_weight": 0.2,
   "graph": {
@@ -5270,7 +5271,22 @@
     "jacket",
     "instrument cable",
     "cloth",
-    "black"
+    "black",
+    "textile",
+    "sleeve",
+    "sleeving",
+    "braid",
+    "woven cable",
+    "cord",
+    "charging cable",
+    "headphone cable",
+    "guitar cable",
+    "diamond weave",
+    "fabric cable",
+    "dark",
+    "electronics",
+    "audio",
+    "accessories"
   ],
   "type": "real_cloth"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.06288564, 0.06462834, 0.06956336],
   "base_diffuse_roughness": 0.4,
-  "category": "Stone",
+  "category": "Stone & Ceramic",
+  "description": "A dark grey, finely layered natural stone with a dull, slightly rough split face, as on roof tiles, floor tiles and serving boards.",
   "graph": {
     "decals": [],
     "links": [
@@ -235,7 +236,7 @@
           },
           {
             "at": 0.45,
-            "color": [0.06016735, 0.06274358, 0.06929594]
+            "color": [0.06016735, 0.06274359, 0.06929594]
           },
           {
             "at": 1,
@@ -285,11 +286,11 @@
           },
           {
             "at": 0.5,
-            "color": [0.06458596, 0.06642237, 0.06979943]
+            "color": [0.06458597, 0.06642237, 0.06979943]
           },
           {
             "at": 1,
-            "color": [0.06296372, 0.07113181, 0.06391755]
+            "color": [0.06296372, 0.07113181, 0.063917555]
           }
         ],
         "id": 12,
@@ -392,7 +393,23 @@
     "slate",
     "stone",
     "dark",
-    "riven"
+    "riven",
+    "dark grey",
+    "dark gray",
+    "charcoal",
+    "split face",
+    "natural stone",
+    "matte",
+    "layered",
+    "roof tile",
+    "floor tile",
+    "coaster",
+    "cheese board",
+    "tile",
+    "architecture",
+    "interior",
+    "kitchenware",
+    "furniture"
   ],
   "type": "generic"
 }

@@ -1,7 +1,8 @@
 {
   "base_color": [0.009, 0.009, 0.0095],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A black rubber half-roll that flexibly joins a speaker cone to its basket, with a smooth matte surface.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -219,7 +220,22 @@
     "butyl",
     "rubber",
     "woofer",
-    "black"
+    "black",
+    "rubber roll",
+    "loudspeaker",
+    "driver",
+    "half roll",
+    "suspension",
+    "elastomer",
+    "soft",
+    "dark",
+    "matte",
+    "moulded",
+    "molded",
+    "audio",
+    "electronics",
+    "automotive",
+    "musical instruments"
   ],
   "type": "generic"
 }

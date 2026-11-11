@@ -1,6 +1,7 @@
 {
   "base_color": [0.2118, 0.2155, 0.2221],
   "category": "Plastic",
+  "description": "A neutral mid-grey ABS with a light satin finish, typical of equipment housings and appliance panels.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -199,7 +200,21 @@
   "tags": [
     "abs",
     "injection",
-    "grey"
+    "grey",
+    "gray",
+    "acrylonitrile butadiene styrene",
+    "satin",
+    "neutral",
+    "housing",
+    "casing",
+    "injection moulded",
+    "molded",
+    "thermoplastic",
+    "panel",
+    "electronics",
+    "appliances",
+    "industrial",
+    "tools"
   ],
   "type": "plastic"
 }

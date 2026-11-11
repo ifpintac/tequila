@@ -1,7 +1,8 @@
 {
   "base_color": [0.00804901, 0.008030523, 0.008497182],
   "base_diffuse_roughness": 0.8,
-  "category": "Other",
+  "category": "Paper & Cork",
+  "description": "A black paper cone with a treated, slightly shiny coating, as on woofers and instrument amplifier drivers.",
   "fuzz_color": [0.01609802, 0.016061045, 0.016994365],
   "fuzz_roughness": 0.6,
   "fuzz_weight": 0.2,
@@ -290,7 +291,20 @@
     "doped",
     "treated",
     "woofer",
-    "black"
+    "black",
+    "coated paper cone",
+    "doped cone",
+    "sealed cone",
+    "driver",
+    "loudspeaker",
+    "satin",
+    "dark",
+    "diaphragm",
+    "amp speaker",
+    "pulp",
+    "audio",
+    "electronics",
+    "musical instruments"
   ],
   "type": "generic"
 }

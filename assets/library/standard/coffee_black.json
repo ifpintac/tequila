@@ -1,11 +1,25 @@
 {
-  "category": "Liquid",
+  "category": "Liquid & Wax",
+  "description": "A dark brown, near-opaque liquid with a glossy surface, as in a cup, flask or bottle.",
   "name": "Coffee Black",
   "specular_ior": 1.34,
   "tags": [
     "coffee",
     "drink",
-    "dark"
+    "dark",
+    "black coffee",
+    "espresso",
+    "americano",
+    "beverage",
+    "hot drink",
+    "brown",
+    "cup fill",
+    "fluid",
+    "cafe",
+    "roast",
+    "dark brown",
+    "food & drink",
+    "packaging"
   ],
   "transmission_color": [0.2572, 0.1351, 0.0552],
   "transmission_depth": 0.004,

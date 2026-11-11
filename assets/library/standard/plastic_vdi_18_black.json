@@ -1,6 +1,7 @@
 {
   "base_color": [0.007044106, 0.0070092366, 0.00788939],
   "category": "Plastic",
+  "description": "A fine spark-eroded black plastic with a soft satin sheen, matching VDI 3400 grade 18 mould texture on enclosures.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -203,7 +204,23 @@
     "spark eroded",
     "fine",
     "satin",
-    "black"
+    "black",
+    "vdi 3400",
+    "electrical discharge machining",
+    "spark erosion",
+    "mould texture",
+    "mold texture",
+    "etched",
+    "fine grain",
+    "dark",
+    "enclosure",
+    "housing",
+    "satin black",
+    "injection moulded",
+    "electronics",
+    "audio",
+    "appliances",
+    "automotive"
   ],
   "type": "plastic"
 }

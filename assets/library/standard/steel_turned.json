@@ -1,6 +1,7 @@
 {
   "base_color": [0.78, 0.79, 0.8],
   "category": "Metal",
+  "description": "Steel turned on a lathe: a bright satin grey with fine concentric ridges around the part, as on a shaft, knob or machined fitting.",
   "edge_radius": 0.00015,
   "graph": {
     "decals": [],
@@ -470,7 +471,23 @@
     "turned",
     "lathe",
     "machined",
-    "rings"
+    "rings",
+    "cnc",
+    "lathe marks",
+    "tool marks",
+    "concentric",
+    "ridges",
+    "shaft",
+    "spindle",
+    "knob",
+    "fitting",
+    "grey",
+    "gray",
+    "satin",
+    "industrial",
+    "tools",
+    "automotive",
+    "audio"
   ],
   "type": "anisotropic"
 }

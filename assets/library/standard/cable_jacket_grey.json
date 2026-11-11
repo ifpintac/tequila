@@ -1,7 +1,8 @@
 {
   "base_color": [0.18740295, 0.1908219, 0.19703656],
   "base_diffuse_roughness": 0.5,
-  "category": "Plastic",
+  "category": "Rubber & Foam",
+  "description": "A matte mid-grey PVC cable sheath, soft and flexible, as on audio leads and appliance cords.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -134,7 +135,20 @@
     "pvc",
     "lead",
     "cord",
-    "grey"
+    "grey",
+    "gray",
+    "power cord",
+    "pvc cable",
+    "sheath",
+    "matte",
+    "soft plastic",
+    "extruded",
+    "flexible",
+    "insulation",
+    "electronics",
+    "audio",
+    "appliances",
+    "industrial"
   ],
   "type": "generic"
 }

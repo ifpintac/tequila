@@ -4,6 +4,7 @@
   "category": "Composite",
   "coat_roughness": 0.18,
   "coat_weight": 1,
+  "description": "A black 3K carbon twill under a satin clear coat, with a soft sheen between gloss and matte.",
   "graph": {
     "decals": [],
     "links": [
@@ -4402,7 +4403,21 @@
     "twill",
     "3k",
     "satin",
-    "cfrp"
+    "cfrp",
+    "carbon fiber",
+    "semi-gloss",
+    "semi gloss",
+    "twill weave",
+    "black",
+    "woven",
+    "laminate",
+    "resin",
+    "silky",
+    "low gloss",
+    "automotive",
+    "electronics",
+    "sporting goods",
+    "prototyping"
   ],
   "type": "generic"
 }

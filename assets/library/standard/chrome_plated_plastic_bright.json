@@ -1,6 +1,7 @@
 {
   "base_color": [0.98, 0.98, 0.99],
   "category": "Metal",
+  "description": "Chrome plating over moulded plastic: a bright mirror silver, slightly cooler and thinner-looking than solid metal, as on a button ring or logo.",
   "edge_radius": 0.00035,
   "graph": {
     "decals": [],
@@ -133,7 +134,23 @@
     "ring",
     "button",
     "logo",
-    "bright"
+    "bright",
+    "chromed plastic",
+    "chrome plastic",
+    "plastic chrome",
+    "vacuum metallised",
+    "vacuum metalized",
+    "vacuum metallized",
+    "mirror",
+    "shiny",
+    "silver",
+    "abs",
+    "bezel",
+    "badge",
+    "electronics",
+    "automotive",
+    "appliances",
+    "toys"
   ],
   "type": "metal"
 }

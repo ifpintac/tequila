@@ -1,6 +1,7 @@
 {
   "base_color": [0.7707178, 0.7680831, 0.72908425],
   "category": "Plastic",
+  "description": "A glossy white nylon or PBT connector body, as on sockets, plugs and terminal blocks.",
   "edge_radius": 0.0003,
   "graph": {
     "decals": [],
@@ -97,7 +98,22 @@
     "pbt",
     "nylon",
     "white",
-    "gloss"
+    "gloss",
+    "jack housing",
+    "plug body",
+    "insulator",
+    "polybutylene terephthalate",
+    "glossy",
+    "shiny",
+    "moulded",
+    "molded",
+    "port",
+    "terminal",
+    "light",
+    "electronics",
+    "audio",
+    "industrial",
+    "appliances"
   ],
   "type": "plastic"
 }

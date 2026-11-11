@@ -1,6 +1,7 @@
 {
   "base_color": [0.007059896, 0.007042794, 0.007474482],
   "category": "Fabric",
+  "description": "A fine, tight black woven silk-style cloth with a smooth matte face, formed into the small domes of tweeters and compression drivers.",
   "fuzz_color": [0.01764974, 0.017606985, 0.018686205],
   "fuzz_weight": 0.05,
   "graph": {
@@ -5270,7 +5271,20 @@
     "silk",
     "soft dome",
     "fabric",
-    "black"
+    "black",
+    "textile",
+    "cloth",
+    "fine weave",
+    "diaphragm",
+    "acoustic",
+    "treated",
+    "matte",
+    "hi-fi",
+    "driver",
+    "loudspeaker",
+    "dark",
+    "audio",
+    "electronics"
   ],
   "type": "real_cloth"
 }

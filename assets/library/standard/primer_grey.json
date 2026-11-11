@@ -1,7 +1,8 @@
 {
   "base_color": [0.2966, 0.2963, 0.3038],
   "base_diffuse_roughness": 0.5,
-  "category": "Paint",
+  "category": "Paint & Coating",
+  "description": "A flat, dull mid-grey primer coat, as on prototypes, model parts and bodywork before painting.",
   "edge_radius": 0.0004,
   "graph": {
     "decals": [],
@@ -141,7 +142,22 @@
     "primer",
     "matte",
     "prototype",
-    "grey"
+    "grey",
+    "gray",
+    "filler primer",
+    "undercoat",
+    "surface primer",
+    "sprayed",
+    "flat",
+    "test model",
+    "rapid prototype",
+    "3d print finish",
+    "sanded",
+    "unpainted",
+    "prototyping",
+    "automotive",
+    "industrial",
+    "toys"
   ],
   "type": "generic"
 }
