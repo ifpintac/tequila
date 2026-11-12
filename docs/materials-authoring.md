@@ -225,10 +225,17 @@ To add one:
 5. Before the release, `cargo test -p tequila-app --release
    ship_the_library_thumbnails -- --ignored` renders the thumbnails the
    library ships with (`assets/library/standard/thumbnails/look-N`, 240 px,
-   named by each preset's file and a hash of it). A preset with none, or
+   named by each preset's file and a hash of how it looks: everything in it
+   but its name, category, description, tags and uses, so writing those
+   keeps its thumbnail). It renders only the presets whose look has none
+   and takes away those no preset looks like any more, so a few changed
+   presets take minutes; `TEQUILA_SHIP_ALL=1` renders every one again, which
+   a change to the renderer or the preview that alters unchanged presets
+   needs (about three quarters of an hour on an M3 Max). A preset with none, or
    changed since its was made, still shows - rendered on the user's machine
    in the background - so a release without them is slower to fill the
-   shelf, not wrong. Run it again whenever `THUMBNAIL_LOOK` is raised.
+   shelf, not wrong. Run it with `TEQUILA_SHIP_ALL=1` whenever
+   `THUMBNAIL_LOOK` is raised.
 
 Presets must not copy a commercial swatch system's names or values (Pantone,
 RAL, Mold-Tech and the like); `assets/library/CREDITS.md` says where values

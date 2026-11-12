@@ -7272,6 +7272,8 @@ mod tests {
             disc: false,
             two_sided: false,
             spread: std::f32::consts::PI,
+            falloff: 0.0,
+            fade: 0.0,
         }))
         .with_visibility(Visibility::HIDDEN);
         let mut scene = SceneSnapshot::new(vec![Arc::new(sheet)], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))], vec![cloth], Arc::new(Environment::uniform(Spectrum::ZERO)))
