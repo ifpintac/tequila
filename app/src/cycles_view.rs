@@ -607,9 +607,9 @@ const FLOOR_SAMPLES: u32 = 256;
 /// blotches.
 ///
 /// A moving picture's layer is begun where the picture before it found the
-/// reflection, rather than from a look of its own, while the camera turns
-/// little between them ([`carried_from`]): the look was 6 ms of each
-/// picture on that PC. One that ran into its band's edge, or found nothing,
+/// reflection, rather than from a look of its own, while the camera moves
+/// little between them - turns, pans, dollies or zooms ([`carried_from`]):
+/// the look was 6 ms of each picture on that PC. One that ran into its band's edge, or found nothing,
 /// is looked for afresh at the next picture, and so is every ninth, for a
 /// reflection come into the frame away from the band.
 #[derive(Default)]
@@ -648,7 +648,7 @@ impl FloorLayers {
     /// makes the picture it goes over - a moving one if `moving`. A layer
     /// given up for `stop` is forgotten, to be begun again.
     pub fn prepare(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, moving: bool, stop: &(dyn Fn() -> bool + Sync)) {
-        let at = self.find_or_make(key, moving);
+        let at = self.find_or_make(key, moving, centre_of(intersector));
         if self.layers[at].passes > 0 {
             return;
         }
@@ -664,7 +664,7 @@ impl FloorLayers {
     /// pictures are of one sample), or it has all it takes. A sample given
     /// up for `stop` leaves what it had.
     pub fn for_frame(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, moving: bool, stop: &(dyn Fn() -> bool + Sync)) -> &Framebuffer {
-        let at = self.find_or_make(key, moving);
+        let at = self.find_or_make(key, moving, centre_of(intersector));
         let entry = &mut self.layers[at];
         let wanted = entry.passes == 0 || (!entry.fresh && !moving && entry.passes < FLOOR_SAMPLES);
         entry.fresh = false;
@@ -678,14 +678,14 @@ impl FloorLayers {
     /// the same view at another size found the reflection, or, a `moving`
     /// picture's, where the picture before it did ([`carried_from`]). Two
     /// are kept, the newest last: a full-size layer is 100 MB.
-    fn find_or_make(&mut self, key: FloorKey, moving: bool) -> usize {
+    fn find_or_make(&mut self, key: FloorKey, moving: bool, centre: Option<tequila_core::math::Vec3>) -> usize {
         if let Some(at) = self.layers.iter().position(|l| l.key == key) {
             return at;
         }
         let mut carried = 0;
         let mut guess = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.key.1 == key.1 && l.passes > 0).and_then(|l| l.found.map(|band| scaled(band, (l.key.2, l.key.3), (key.2, key.3))));
         if guess.is_none() && moving {
-            if let Some((band, from)) = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.passes > 0).and_then(|l| carried_from(l, key)) {
+            if let Some((band, from)) = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.passes > 0).and_then(|l| carried_from(l, key, centre)) {
                 guess = Some(band);
                 carried = from + 1;
             }
@@ -710,18 +710,56 @@ const CARRIED_AT_MOST: u32 = 8;
 /// margins, a fiftieth of the width each, round the band handed on.
 const CARRIED_TURN: f32 = 0.9945;
 
+/// The most the scene's centre may move across the picture between two
+/// moving pictures for the second to be begun where the first found the
+/// reflection, as a share of the picture: a pan moves the reflection with
+/// it. One of the two margins round the band handed on.
+const CARRIED_SHIFT: f32 = 0.02;
+
+/// The most the camera's distance to the scene's centre may change between
+/// them, as a share: a dolly grows or shrinks the picture about its middle,
+/// and 3% moves what is at its edge by a seventieth of its width, inside the
+/// band's margins.
+const CARRIED_DOLLY: f32 = 0.03;
+
 /// Where `before`'s samples found the reflection, as it falls on the moving
 /// picture of `key`, and how many pictures it has been handed on through:
 /// `None` where it has been handed on too often, found nothing (the next
-/// picture looks, rather than show nothing until the ninth), or was of a
-/// camera turned too far from this one.
-fn carried_from(before: &FloorLayer, key: FloorKey) -> Option<(tequila_render_cpu::floor::Band, u32)> {
+/// picture looks, rather than show nothing until the ninth), or where the
+/// camera moved so that the reflection may have left the band - turned too
+/// far, panned (the scene's `centre` moving across the picture), dollied
+/// (its distance to the centre changing) or zoomed (another lens). Orbiting
+/// the product turns the camera round the centre, which stays where it was
+/// in the picture and as far away.
+fn carried_from(before: &FloorLayer, key: FloorKey, centre: Option<tequila_core::math::Vec3>) -> Option<(tequila_render_cpu::floor::Band, u32)> {
     use tequila_render_cpu::floor::Band;
     let found = before.found?;
-    if before.carried >= CARRIED_AT_MOST || matches!(found, Band::Nowhere) || before.key.1.forward().dot(key.1.forward()) < CARRIED_TURN {
+    let (was, now) = (before.key.1, key.1);
+    if before.carried >= CARRIED_AT_MOST || matches!(found, Band::Nowhere) || was.forward().dot(now.forward()) < CARRIED_TURN {
         return None;
     }
+    if was.projection != now.projection || was.sensor_width_mm != now.sensor_width_mm {
+        return None;
+    }
+    if let Some(centre) = centre {
+        let aspect = key.2 as f32 / key.3.max(1) as f32;
+        match (was.project(centre, aspect), now.project(centre, aspect)) {
+            (Some(a), Some(b)) if (a - b).length() <= CARRIED_SHIFT => {}
+            _ => return None,
+        }
+        let (far, near) = ((was.position() - centre).length(), (now.position() - centre).length());
+        if (near / far.max(1e-6) - 1.0).abs() > CARRIED_DOLLY {
+            return None;
+        }
+    }
     Some((scaled(found, (before.key.2, before.key.3), (key.2, key.3)), before.carried))
+}
+
+/// The middle of everything in the scene, the floor's reflection's included:
+/// what a pan moves across the picture and an orbit keeps in place.
+fn centre_of(intersector: &dyn tequila_render_core::intersect::Intersector) -> Option<tequila_core::math::Vec3> {
+    let bounds = intersector.scene().bounds();
+    (!bounds.is_empty()).then(|| bounds.center())
 }
 
 /// Whether `layer`'s reflection, traced within `tile`, reached the tile's
@@ -1005,6 +1043,40 @@ mod floor_tests {
         assert!(layers.layers.last().unwrap().found.is_none(), "cut short, so not handed on");
         let (_, carried, _) = picture(&mut layers, 1.02);
         assert_eq!(carried, 0, "the next looks");
+    }
+
+    /// A small pan or dolly still begins a moving picture where the one
+    /// before found the reflection; a pan or a dolly further than its band's
+    /// margins allow, or a zoom however small, looks for it afresh, rather
+    /// than show the reflection cut at the band's edge for a picture.
+    #[test]
+    fn a_pan_dolly_or_zoom_looks_for_the_reflection_afresh() {
+        use tequila_render_core::camera::Projection;
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
+        let config = tequila_render_core::settings::IntegratorConfig::product();
+        let (eye, target) = (Vec3 { x: 5.0, y: 4.0, z: 1.0 }, Vec3::ZERO);
+        let forward = (target - eye).normalize();
+        let right = forward.cross(Vec3::Y).normalize();
+        let distance = (target - eye).length();
+        let panned = |by: f32| Camera::look_at(eye + right * (by * distance), target + right * (by * distance), Vec3::Y);
+        let dollied = |by: f32| Camera::look_at(eye + forward * (by * distance), target, Vec3::Y);
+        let mut layers = FloorLayers::default();
+        let mut picture = |camera: Camera| {
+            layers.for_frame(&intersector, (1, camera, 384, 288), &config, true, &|| false);
+            layers.layers.last().unwrap().carried
+        };
+        assert_eq!(picture(panned(0.0)), 0, "the first looks");
+        assert_eq!(picture(panned(0.002)), 1, "a small pan is handed the band");
+        assert_eq!(picture(panned(0.08)), 0, "a long pan looks afresh");
+        assert_eq!(picture(panned(0.081)), 1, "and the picture after it is handed its band");
+        assert_eq!(picture(dollied(0.01)), 0, "back from the long pan's camera is a long pan too");
+        assert_eq!(picture(dollied(0.015)), 1, "a small dolly is handed the band");
+        assert_eq!(picture(dollied(0.1)), 0, "a long dolly looks afresh");
+        let mut zoomed = dollied(0.1);
+        let Projection::Perspective { focal_length_mm } = zoomed.projection else { panic!("a perspective camera") };
+        zoomed.projection = Projection::Perspective { focal_length_mm: focal_length_mm * 1.01 };
+        assert_eq!(picture(zoomed), 0, "a zoom looks afresh");
     }
 
     /// The camera stops after a move, where no moving picture was: the still
