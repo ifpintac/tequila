@@ -1030,7 +1030,7 @@ fn render_loop(shared: Arc<Shared>) {
                             let key = (Arc::as_ptr(&state.request.scene) as usize, camera, width, height);
                             let still = view.size() == view.full_size() && !view.navigating();
                             let given_up = || still && news(&shared, seen_request);
-                            floors.prepare(state.intersector.as_ref(), key, &state.request.config, &given_up);
+                            floors.prepare(state.intersector.as_ref(), key, &state.request.config, !still, &given_up);
                         }
                     }
                     wait_for_news(&shared, seen_request, seen_style, Duration::from_millis(if view.awaiting_frame() { 3 } else { 15 }));

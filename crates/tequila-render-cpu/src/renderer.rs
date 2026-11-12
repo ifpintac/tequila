@@ -14,7 +14,7 @@ use tequila_render_core::integrator::caustics::{self, CausticMap};
 use tequila_render_core::integrator::{trace_path_with_caustics, PathAovs, PathResult};
 use tequila_render_core::intersect::Intersector;
 use tequila_render_core::preview;
-use tequila_render_core::scheduler::{tiles, ProgressiveSchedule, Tile};
+use tequila_render_core::scheduler::{tiles, tiles_of, ProgressiveSchedule, Tile, TILE_SIZE};
 use tequila_render_core::settings::IntegratorConfig;
 use rayon::prelude::*;
 
@@ -149,7 +149,16 @@ fn pass(
         return true;
     }
     let aspect = width as f32 / height as f32;
-    let work = tiles(width, height, context.region);
+    let mut work = tiles(width, height, context.region);
+    // A small region in big tiles leaves most threads waiting on the few
+    // that hold its busy pixels: a floor reflection's band, 200x50 of a
+    // 480x270 picture, was 52 tiles for sixteen threads with its reflecting
+    // pixels in a handful of them. In tiles of half the side it took 4.2 ms
+    // on an M3 Max instead of 5.6. Each pixel is its own, so the picture is
+    // the same whatever the tiles.
+    if work.len() < 8 * rayon::current_num_threads() {
+        work = tiles_of(width, height, context.region, TILE_SIZE / 2);
+    }
     if work.is_empty() {
         return true;
     }

@@ -270,6 +270,12 @@ impl Tile {
 /// than as a separate code path, exactly as that section requires — so a
 /// region render is the same renderer, just fed fewer tiles.
 pub fn tiles(width: usize, height: usize, region: Option<Tile>) -> Vec<Tile> {
+    tiles_of(width, height, region, TILE_SIZE)
+}
+
+/// The same, in tiles `size` pixels square.
+pub fn tiles_of(width: usize, height: usize, region: Option<Tile>, size: usize) -> Vec<Tile> {
+    let size = size.max(1);
     let mut out = Vec::new();
     let bound = region.unwrap_or(Tile {
         x0: 0,
@@ -289,12 +295,12 @@ pub fn tiles(width: usize, height: usize, region: Option<Tile>) -> Vec<Tile> {
             out.push(Tile {
                 x0: x,
                 y0: y,
-                x1: (x + TILE_SIZE).min(x1),
-                y1: (y + TILE_SIZE).min(y1),
+                x1: (x + size).min(x1),
+                y1: (y + size).min(y1),
             });
-            x += TILE_SIZE;
+            x += size;
         }
-        y += TILE_SIZE;
+        y += size;
     }
     out
 }

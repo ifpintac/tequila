@@ -422,7 +422,8 @@ impl CyclesView {
     pub fn prepare(&mut self) {
         if self.background_under && self.under_size != self.size {
             if let (Some(scene), Some(camera)) = (&self.scene, &self.camera) {
-                self.under = crate::profile::time("render: background under", || translate::background(scene, camera, self.size.0, self.size.1));
+                let quick = self.samples == MOVING_SAMPLES;
+                self.under = crate::profile::time("render: background under", || under(scene, camera, self.size, quick));
                 self.under_size = self.size;
             }
         }
@@ -449,7 +450,8 @@ impl CyclesView {
         // refines it after a change.
         if self.background_under && self.under_size != (frame.width, frame.height) {
             if let (Some(scene), Some(camera)) = (&self.scene, &self.camera) {
-                self.under = crate::profile::time("render: background under", || translate::background(scene, camera, frame.width, frame.height));
+                let quick = self.samples == MOVING_SAMPLES;
+                self.under = crate::profile::time("render: background under", || under(scene, camera, (frame.width, frame.height), quick));
                 self.under_size = (frame.width, frame.height);
             }
         }
@@ -553,6 +555,17 @@ impl CyclesView {
     }
 }
 
+/// The background that goes under a picture of `size`: a sample at each
+/// pixel's centre for a moving picture, which is of one sample itself, and
+/// four for a still one (`translate::background_quick`).
+fn under(scene: &tequila_render_core::scene::SceneSnapshot, camera: &Camera, size: (usize, usize), quick: bool) -> Vec<Spectrum> {
+    if quick {
+        translate::background_quick(scene, camera, size.0, size.1)
+    } else {
+        translate::background(scene, camera, size.0, size.1)
+    }
+}
+
 /// A picture this many pixels or more is worked on by every core; a
 /// smaller one, a moving picture, by the render thread alone
 /// (`CyclesView::take_frame`).
@@ -592,6 +605,13 @@ const FLOOR_SAMPLES: u32 = 256;
 /// 130. Traced at half its size each way instead, a moving picture's
 /// reflection had a sample for every four pixels, and its grain came out in
 /// blotches.
+///
+/// A moving picture's layer is begun where the picture before it found the
+/// reflection, rather than from a look of its own, while the camera turns
+/// little between them ([`carried_from`]): the look was 6 ms of each
+/// picture on that PC. One that ran into its band's edge, or found nothing,
+/// is looked for afresh at the next picture, and so is every ninth, for a
+/// reflection come into the frame away from the band.
 #[derive(Default)]
 pub struct FloorLayers {
     layers: Vec<FloorLayer>,
@@ -605,8 +625,16 @@ struct FloorLayer {
     /// Where it shows a reflection, found by a pass over the whole frame at
     /// its size: the only place it is traced after.
     band: Option<tequila_render_cpu::floor::Band>,
-    /// Where another size of the same view showed one, for its first pass.
+    /// Where another size of the same view showed one, or the picture before
+    /// it (`carried`), for its first pass.
     guess: Option<tequila_render_cpu::floor::Band>,
+    /// Where its samples found the reflection, and all of it: over the whole
+    /// frame, or within a guess whose edge it never reached. What the next
+    /// moving picture is begun from.
+    found: Option<tequila_render_cpu::floor::Band>,
+    /// How many pictures its guess has been handed on through since a look
+    /// or a pass over the whole frame.
+    carried: u32,
     /// Traced for the picture Cycles was making, and not yet laid over it.
     fresh: bool,
 }
@@ -617,10 +645,10 @@ impl FloorLayers {
     }
 
     /// The first sample of the layer for `key`, if it has none, while Cycles
-    /// makes the picture it goes over. A layer given up for `stop` is
-    /// forgotten, to be begun again.
-    pub fn prepare(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, stop: &(dyn Fn() -> bool + Sync)) {
-        let at = self.find_or_make(key);
+    /// makes the picture it goes over - a moving one if `moving`. A layer
+    /// given up for `stop` is forgotten, to be begun again.
+    pub fn prepare(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, moving: bool, stop: &(dyn Fn() -> bool + Sync)) {
+        let at = self.find_or_make(key, moving);
         if self.layers[at].passes > 0 {
             return;
         }
@@ -636,7 +664,7 @@ impl FloorLayers {
     /// pictures are of one sample), or it has all it takes. A sample given
     /// up for `stop` leaves what it had.
     pub fn for_frame(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, moving: bool, stop: &(dyn Fn() -> bool + Sync)) -> &Framebuffer {
-        let at = self.find_or_make(key);
+        let at = self.find_or_make(key, moving);
         let entry = &mut self.layers[at];
         let wanted = entry.passes == 0 || (!entry.fresh && !moving && entry.passes < FLOOR_SAMPLES);
         entry.fresh = false;
@@ -647,20 +675,63 @@ impl FloorLayers {
     }
 
     /// The layer for `key`, made if there is none: begun where a layer of
-    /// the same view at another size found the reflection. Two are kept,
-    /// the newest last: a full-size layer is 100 MB.
-    fn find_or_make(&mut self, key: FloorKey) -> usize {
+    /// the same view at another size found the reflection, or, a `moving`
+    /// picture's, where the picture before it did ([`carried_from`]). Two
+    /// are kept, the newest last: a full-size layer is 100 MB.
+    fn find_or_make(&mut self, key: FloorKey, moving: bool) -> usize {
         if let Some(at) = self.layers.iter().position(|l| l.key == key) {
             return at;
         }
-        let guess = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.key.1 == key.1 && l.passes > 0).and_then(|l| l.band.map(|band| scaled(band, (l.key.2, l.key.3), (key.2, key.3))));
+        let mut carried = 0;
+        let mut guess = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.key.1 == key.1 && l.passes > 0).and_then(|l| l.found.map(|band| scaled(band, (l.key.2, l.key.3), (key.2, key.3))));
+        if guess.is_none() && moving {
+            if let Some((band, from)) = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.passes > 0).and_then(|l| carried_from(l, key)) {
+                guess = Some(band);
+                carried = from + 1;
+            }
+        }
         self.layers.retain(|l| l.key.0 == key.0);
         if self.layers.len() >= 2 {
             self.layers.remove(0);
         }
-        self.layers.push(FloorLayer { key, layer: Framebuffer::new(key.2, key.3), passes: 0, band: None, guess, fresh: false });
+        self.layers.push(FloorLayer { key, layer: Framebuffer::new(key.2, key.3), passes: 0, band: None, guess, found: None, carried, fresh: false });
         self.layers.len() - 1
     }
+}
+
+/// How many moving pictures in a row are begun where the one before found
+/// the reflection, before one looks for it afresh.
+const CARRIED_AT_MOST: u32 = 8;
+
+/// The most the camera may turn between two moving pictures for the second
+/// to be begun where the first found the reflection: 6 degrees, as a cosine.
+/// Turning that far round a product that fills half the picture moves its
+/// reflection about a fortieth of the picture's width, inside the two
+/// margins, a fiftieth of the width each, round the band handed on.
+const CARRIED_TURN: f32 = 0.9945;
+
+/// Where `before`'s samples found the reflection, as it falls on the moving
+/// picture of `key`, and how many pictures it has been handed on through:
+/// `None` where it has been handed on too often, found nothing (the next
+/// picture looks, rather than show nothing until the ninth), or was of a
+/// camera turned too far from this one.
+fn carried_from(before: &FloorLayer, key: FloorKey) -> Option<(tequila_render_cpu::floor::Band, u32)> {
+    use tequila_render_cpu::floor::Band;
+    let found = before.found?;
+    if before.carried >= CARRIED_AT_MOST || matches!(found, Band::Nowhere) || before.key.1.forward().dot(key.1.forward()) < CARRIED_TURN {
+        return None;
+    }
+    Some((scaled(found, (before.key.2, before.key.3), (key.2, key.3)), before.carried))
+}
+
+/// Whether `layer`'s reflection, traced within `tile`, reached the tile's
+/// edge anywhere the frame's does not: it may go on past it.
+fn cut_short(layer: &Framebuffer, tile: tequila_render_core::scheduler::Tile) -> bool {
+    let shows = |x: usize, y: usize| layer.pixel(x, y).alpha() > 0.0;
+    (tile.x0 > 0 && (tile.y0..tile.y1).any(|y| shows(tile.x0, y)))
+        || (tile.x1 < layer.width && (tile.y0..tile.y1).any(|y| shows(tile.x1 - 1, y)))
+        || (tile.y0 > 0 && (tile.x0..tile.x1).any(|x| shows(x, tile.y0)))
+        || (tile.y1 < layer.height && (tile.x0..tile.x1).any(|x| shows(x, tile.y1 - 1)))
 }
 
 /// The long side of the quick look a layer with nothing to go by is begun
@@ -712,6 +783,9 @@ fn trace(entry: &mut FloorLayer, intersector: &dyn tequila_render_core::intersec
     let region = match known {
         Some(Band::Nowhere) => {
             entry.passes += 1;
+            if entry.band.is_some() {
+                entry.found = entry.band;
+            }
             return true;
         }
         Some(Band::Within(tile)) => Some(tile),
@@ -735,8 +809,19 @@ fn trace(entry: &mut FloorLayer, intersector: &dyn tequila_render_core::intersec
         started.elapsed().as_secs_f64() * 1000.0
     ));
     entry.passes += 1;
-    if entry.band.is_none() && region.is_none() {
-        entry.band = Some(tequila_render_cpu::floor::reflected_band(&entry.layer));
+    match region {
+        None => {
+            if entry.band.is_none() {
+                entry.band = Some(tequila_render_cpu::floor::reflected_band(&entry.layer));
+            }
+            entry.found = entry.band;
+        }
+        // Its first sample, within a guess: all of the reflection unless it
+        // ran into the guess's edge, beyond which it may go on.
+        Some(tile) if entry.passes == 1 && entry.band.is_none() => {
+            entry.found = (!cut_short(&entry.layer, tile)).then(|| tequila_render_cpu::floor::reflected_band(&entry.layer));
+        }
+        Some(_) => {}
     }
     true
 }
@@ -828,7 +913,7 @@ mod floor_tests {
         }
 
         // The same view twice the size: begun within where the first found it.
-        layers.prepare(&intersector, (1, camera, 192, 144), &config, &|| false);
+        layers.prepare(&intersector, (1, camera, 192, 144), &config, false, &|| false);
         let larger = layers.layers.last().unwrap();
         assert_eq!(larger.passes, 1);
         assert!(matches!(larger.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "guessed from the first size");
@@ -873,6 +958,55 @@ mod floor_tests {
         assert!(small.guess.is_none() && small.band.is_some(), "a small layer is traced over the whole frame");
     }
 
+    /// A moving picture is begun where the one before it found the
+    /// reflection, with no look of its own, and comes to the same reflection,
+    /// bit for bit, as a pass over the whole frame; after eight in a row, a
+    /// camera turned far, or a band the reflection ran out of, one looks.
+    #[test]
+    fn a_moving_picture_is_begun_where_the_one_before_found_the_reflection() {
+        use tequila_render_cpu::floor::Band;
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
+        let config = tequila_render_core::settings::IntegratorConfig::product();
+        let orbit = |turn: f32| Camera::look_at(Vec3 { x: 4.0 * turn.cos() + 1.0, y: 4.0, z: 4.0 * turn.sin() + 1.0 }, Vec3::ZERO, Vec3::Y);
+        let mut layers = FloorLayers::default();
+        let picture = |layers: &mut FloorLayers, turn: f32| {
+            let key = (1, orbit(turn), 384, 288);
+            let layer = layers.for_frame(&intersector, key, &config, true, &|| false).clone();
+            let entry = layers.layers.last().unwrap();
+            (layer, entry.carried, entry.found)
+        };
+        let (_, carried, found) = picture(&mut layers, 0.0);
+        assert_eq!(carried, 0, "the first looks");
+        assert!(matches!(found, Some(Band::Within(_))), "and finds it all: {found:?}");
+        for step in 1..=10 {
+            let turn = step as f32 * 0.02;
+            let (layer, carried, found) = picture(&mut layers, turn);
+            assert_eq!(carried, if step <= 8 { step } else { step - 9 }, "handed on, and looked for afresh after eight");
+            assert!(found.is_some(), "never ran into its band's edge");
+            let mut whole = Framebuffer::new(384, 288);
+            tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut whole, orbit(turn), &config, None, &|| false);
+            for (a, b) in layer.pixels().iter().zip(whole.pixels()) {
+                if b.alpha() > 0.0 {
+                    assert_eq!((a.sum.to_array(), a.coverage_sum), (b.sum.to_array(), b.coverage_sum), "the reflection is the whole frame's");
+                }
+            }
+        }
+        let (_, carried, _) = picture(&mut layers, 1.0);
+        assert_eq!(carried, 0, "a camera turned far looks afresh");
+
+        // A band too small for the reflection: its pass runs into the edge,
+        // and the picture after it looks.
+        let entry = layers.layers.last_mut().unwrap();
+        let tight = match entry.found { Some(Band::Within(tile)) => tequila_render_core::scheduler::Tile { x1: tile.x0 + (tile.x1 - tile.x0) / 2, ..tile }, other => panic!("{other:?}") };
+        let key = (1, orbit(1.01), 384, 288);
+        layers.layers.push(FloorLayer { key, layer: Framebuffer::new(384, 288), passes: 0, band: None, guess: Some(Band::Within(tight)), found: None, carried: 1, fresh: false });
+        layers.for_frame(&intersector, key, &config, true, &|| false);
+        assert!(layers.layers.last().unwrap().found.is_none(), "cut short, so not handed on");
+        let (_, carried, _) = picture(&mut layers, 1.02);
+        assert_eq!(carried, 0, "the next looks");
+    }
+
     /// The camera stops after a move, where no moving picture was: the still
     /// view's first sample goes where a quick look found the reflection,
     /// not over the whole frame, and after eight its reflection is the one
@@ -888,7 +1022,7 @@ mod floor_tests {
         let (full, moving) = ((384, 288), (192, 144));
         for step in 0..6 {
             let key = (1, orbit(step as f32 * 0.05), moving.0, moving.1);
-            layers.prepare(&intersector, key, &config, &|| false);
+            layers.prepare(&intersector, key, &config, true, &|| false);
             let layer = layers.for_frame(&intersector, key, &config, true, &|| false);
             assert_eq!(layer.pixels().iter().map(|p| p.samples).max(), Some(1), "one sample while moving");
         }

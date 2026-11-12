@@ -581,14 +581,21 @@ On the PC that gave 22 pictures a second instead of 15 (the floor 36.7 to 14.3 m
 
 - **A layer with nothing to go by is begun where a quick look found the reflection** (`cycles_view::scout`): a pass over the whole frame at a quarter of each side, its long side at most 160 pixels (`scout_size`; 2-4 ms here), whose band - two of its pixels round what it saw, and the layer's own margin - the layer's first sample is traced within. That is each moving picture's layer and the still view's where the mouse let go. A moving picture's reflection is traced at its full size again, with the grain the product has above it. A still view's second sample is over the whole frame, as it always was, and after eight its reflection is the one traced over the whole frame at every sample, bit for bit, where the camera stopped short of or past the last moving picture's (`the_still_view_after_a_move_has_the_reflection_it_always_had`). The reflection is laid pixel for pixel again: read between pixels, one by one on the render thread, it had taken 4.4 ms a picture on the PC instead of 1.2.
 
-Measured as before, sixteen let-gos a build in two rounds, against main with the half-size reflection:
+That alone cost pictures: on the PC 22.4 a second became 17.9, still at 480x270 (a look of 5.9 ms and a band of 21.3 ms against a half-size frame's 14.1), and on four threads here the view picked pictures a sixth narrower. A moving picture's time there is what the render thread does for it while Cycles makes it, and the floor is only part of that: on four threads here the background under the picture took 12.5 ms of it, the look 3, the band 16, developing and laying 3, against Cycles' own 21.6 ms. So:
 
-| Headphones, Cycles | Floor per moving picture | Moving pictures | Pixels a second | First full-size floor sample after letting go | Let go to full size |
-|---|---|---|---|---|---|
-| All cores | 8.8 -> 13.2 ms + 2.1 to look | 26.9 -> 26.9 a second, ~853 -> ~826 wide | 11.0 -> 10.3 million | within the band 9 -> 16 of 16 | 306 -> 280 ms |
-| Four threads | 13.3 -> 16.1 ms + 3.0 to look | 27.6 -> 28.3 a second, ~668 -> ~567 wide | 6.9 -> 5.1 million | within the band 6 -> 16 of 16, ~108 ms | 504 -> 414 ms |
+- **A moving picture is begun where the one before found the reflection** (`carried_from`), with no look of its own, while the camera has turned less than 6 degrees between them; one that ran into its band's edge (`cut_short`) or found nothing has the next picture look afresh, and so does every ninth. 9-13% of moving pictures look.
+- **The background under a moving picture is measured with a sample at each pixel's centre** (`translate::background_quick`), not four: a quarter of the time, for a backdrop shown a thirtieth of a second. A still picture's has four, as before.
+- **A small region is traced in tiles of 8 pixels rather than 16** (`renderer::pass`, `scheduler::tiles_of`), when it has fewer than eight tiles a thread: the band's few busy tiles left most of sixteen threads waiting, 5.6 ms where 4.2 do. The picture is the same, bit for bit: a 640x360 final render in both engines was checked against main's.
 
-A sharp reflection costs a part of what the half-size one saved, so on four threads the view picks pictures a sixth smaller; against the whole frame traced before either change (28.3 ms at 480x270 there), the moving pictures are still larger.
+Measured as before, against main (the half-size reflection), with any drag another program's work fell on left out (the harness now waits for quiet before each):
+
+| Headphones, Cycles | Moving pictures | Pixels a second | First full-size floor sample after letting go | Let go to full size |
+|---|---|---|---|---|
+| All cores | 26.9 a second either way, ~858 -> ~901 wide | 11.1 -> 12.3 million | within the band 5 -> 8 of 8 | 309 -> 268 ms |
+| Four threads | 28.3 -> 27.6 a second, ~670 -> ~699 wide | 7.2 -> 7.6 million | within the band 4 -> 16 of 16, ~114 ms | 525 -> 405 ms |
+| Two threads | 28.8 -> 28.3 a second, ~490 -> ~515 wide | 3.9 -> 4.2 million | within the band 1 -> 8 of 8 | 829 -> 583 ms |
+
+The still picture is the one it was (screenshots of the settled view differ by 0.03 of 255, Cycles' own noise).
 
 ### 9.3 Dirty-state taxonomy — what invalidates what
 
