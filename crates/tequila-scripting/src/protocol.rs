@@ -153,6 +153,11 @@ pub enum Operation {
     /// `install` or `export` a package, `delete` one, or `render_all`
     /// views. Carried as sent; the application reads its fields.
     StudioPreset(Value),
+    /// `studio_kit`: a photographer's piece added to the studio - `piece`
+    /// is `softbox`, `strip`, `card` or `flag` - sized to the product and
+    /// placed for the camera (`tequila_scene::studio_kit`), one step to
+    /// undo. Answers with the node it added.
+    StudioKit { piece: String },
     /// `assistant`: the built-in Assistant - `ask` it something, as though
     /// typed and sent; `stop` it; `open` its panel. Answers with what it is
     /// doing. A script's to drive, not the Assistant's own or a remote
@@ -278,6 +283,9 @@ pub struct LibraryRequest {
 
 /// The `studio_preset` operation's actions.
 pub const STUDIO_PRESET_ACTIONS: &[&str] = &["list", "apply", "save", "delete", "install", "export", "render_all"];
+
+/// What `studio_kit` adds (`tequila_scene::studio_kit::Piece::key`).
+pub const STUDIO_KIT_PIECES: &[&str] = &["softbox", "strip", "card", "flag"];
 
 /// What the `substance` operation does.
 pub const SUBSTANCE_ACTIONS: &[&str] = &["info", "open", "set", "status", "wait", "tools"];
@@ -1154,6 +1162,13 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
             Operation::StudioPreset(value.clone())
         }
+        "studio_kit" => {
+            let piece = string(value, "piece")?.trim().to_ascii_lowercase();
+            if !STUDIO_KIT_PIECES.contains(&piece.as_str()) {
+                return Err(ProtocolError(format!("`{piece}` is not a piece of the studio kit; the pieces are {}", STUDIO_KIT_PIECES.join(", "))));
+            }
+            Operation::StudioKit { piece }
+        }
         "assistant" => {
             if value.get("ask").is_some_and(|a| a.as_str().is_none_or(|t| t.trim().is_empty())) {
                 return Err(ProtocolError("`ask` must be the request, in words".into()));
@@ -1593,6 +1608,7 @@ impl Operation {
                 Some(id) => format!("studio preset {} {id}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
             },
+            Operation::StudioKit { piece } => format!("add a {piece} to the studio"),
             Operation::Assistant(request) => match request.get("ask").and_then(|a| a.as_str()) {
                 Some(text) => format!("ask the Assistant: {}", text.chars().take(60).collect::<String>()),
                 None if request.get("stop").and_then(Value::as_bool) == Some(true) => "stop the Assistant".into(),

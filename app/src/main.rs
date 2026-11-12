@@ -6303,7 +6303,7 @@ impl TequilaApp {
                 // whatever is selected: a section of whichever page shows.
                 let templates_panel = &mut self.templates_panel;
                 let mut templates = |ui: &mut egui::Ui, project: &mut Project| templates_panel.show(ui, project);
-                let is_light = lighting_tab::light_panel(ui, &mut self.project, &mut templates)
+                let is_light = lighting_tab::light_panel(ui, &mut self.project, &mut self.pin_gizmo, &mut templates)
                     || cutaway_panel::cutaway_panel(ui, &mut self.project, &mut templates);
                 if !is_light {
                     let mut tab = std::mem::take(&mut self.material_tab);

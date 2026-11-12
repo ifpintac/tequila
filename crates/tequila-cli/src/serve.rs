@@ -225,6 +225,7 @@ impl Session {
                 self.export(format, path, *live, *photos, (*columns, *rows, *tilt), *transparent)
             }
             Operation::StudioPreset(request) => self.studio_preset(request),
+            Operation::StudioKit { piece } => self.studio_kit(piece),
             Operation::Substance(request) => substance(request),
             Operation::Screenshot { .. }
             | Operation::Ui(_)
@@ -238,6 +239,27 @@ impl Session {
                 Reply::Failed(format!("`{}` needs the application's window; a headless session cannot do it", operation.summary()))
             }
         }
+    }
+
+    /// A piece of the studio kit, as the application adds it: placed for the
+    /// active camera, one undo step, answering with its node.
+    fn studio_kit(&mut self, piece: &str) -> Reply {
+        let Some(piece) = tequila_scene::studio_kit::Piece::from_key(piece) else {
+            return Reply::Failed(format!("`{piece}` is not a piece of the studio kit"));
+        };
+        let eye = self.document.cameras.active().camera.position();
+        let (commands, node) = tequila_scene::studio_kit::add(&self.document, piece, eye);
+        self.bus.begin_group();
+        for command in commands {
+            if let Err(error) = self.apply(command) {
+                let _ = self.bus.abandon_group(&mut self.document);
+                return Reply::Failed(format!("could not add the {}: {error}", piece.label().to_lowercase()));
+            }
+        }
+        self.bus.end_group();
+        let mut out = Object::new();
+        out.set("node", node.0 as f64);
+        Reply::Value(out.build())
     }
 
     /// Studio presets (`docs/studio-presets.md`), as the application answers

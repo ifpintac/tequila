@@ -265,6 +265,17 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::TextureSet { path, nodes } => texture_set(app, path, nodes),
         Operation::Library(request) => library(app, request),
         Operation::StudioPreset(request) => studio_preset(app, request),
+        Operation::StudioKit { piece } => match tequila_scene::studio_kit::Piece::from_key(piece) {
+            Some(piece) => match crate::lighting_tab::add_to_studio(&mut app.project, piece) {
+                Ok(node) => {
+                    let mut out = Object::new();
+                    out.set("node", node.0 as f64);
+                    Reply::Value(out.build())
+                }
+                Err(error) => Reply::Failed(error),
+            },
+            None => Reply::Failed(format!("`{piece}` is not a piece of the studio kit")),
+        },
         Operation::Assistant(request) => assistant(app, request),
         Operation::Substance(request) => substance(app, request),
         Operation::Preferences(request) => match crate::preferences::script(app, request) {
@@ -2978,6 +2989,20 @@ mod handler_tests {
     /// A script puts a page's sections in its own order, back in the
     /// default, and holds one part-way through a drag on its page; a name
     /// the page does not have changes nothing.
+    /// A script adds a flag to the studio as the Lighting page's button
+    /// does: a part the camera does not see, its node answered; and a
+    /// piece the kit has not is refused, naming those it has.
+    #[test]
+    fn a_script_adds_a_flag_to_the_studio() {
+        let mut app = TequilaApp::for_tests();
+        let reply = value(&mut app, r#"{"op":"studio_kit","piece":"flag"}"#);
+        let node = tequila_scene::tree::NodeId(reply.get("node").and_then(|n| n.as_index()).expect("a node") as u64);
+        let flag = app.project.document().tree.get(node).expect("the flag");
+        assert!(!flag.rays.camera, "the camera sees the flag");
+        let refused = tequila_scripting::protocol::parse_request(r#"{"op":"studio_kit","piece":"umbrella"}"#).unwrap_err();
+        assert!(refused.0.contains("softbox"), "{}", refused.0);
+    }
+
     #[test]
     fn a_script_orders_the_inspectors_sections_and_holds_a_drag() {
         let mut app = TequilaApp::for_tests();

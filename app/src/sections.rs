@@ -32,7 +32,7 @@ pub const PAGES: &[(&str, &[&str])] = &[
     ("light", &["shape", "brightness", "colour", "visibility", "light_linking", "shadow_linking", "templates"]),
     ("cutaway", &["templates"]),
     ("environment", &["turn", "background", "ground", "sky", "pins"]),
-    ("lighting", &["settings"]),
+    ("lighting", &["studio", "settings"]),
     ("camera", &["lens", "focus", "exposure", "guides", "match"]),
     ("image", &["adjust", "tones", "white_balance", "lens_effects", "output", "denoise"]),
     ("snapshots", &["turntable", "model_sets", "variants", "configurator"]),
