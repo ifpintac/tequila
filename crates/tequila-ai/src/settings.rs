@@ -94,7 +94,10 @@ impl Settings {
             .iter()
             .filter_map(|p| {
                 let kind = Kind::from_id(&text_of(p, "kind"))?;
-                let name = text_of(p, "name");
+                // The Custom starting point had a longer name, with an
+                // example in it: one added from it and never renamed is
+                // called what the starting point is called now.
+                let name = Some(text_of(p, "name")).filter(|name| !name.starts_with("Company AI (e.g.")).unwrap_or_else(|| "Custom".into());
                 let key = if let Some(stored) = p.get("key").and_then(|k| k.as_str()) {
                     match crate::secret::unprotect(stored) {
                         Ok(key) => Key::Stored(key),
@@ -172,17 +175,32 @@ mod tests {
 
     #[test]
     fn a_key_that_cannot_be_read_is_reported_not_lost_silently() {
-        let text = r#"{"providers":[{"id":"x","name":"Uliverse","kind":"openai","base_url":"https://u.example/v1","model":"m","key":"dpapi:!!!!"}]}"#;
+        let text = r#"{"providers":[{"id":"x","name":"Gateway","kind":"openai","base_url":"https://u.example/v1","model":"m","key":"dpapi:!!!!"}]}"#;
         let (settings, complaints) = Settings::from_json(text);
         assert_eq!(settings.providers.len(), 1, "the provider is kept");
         assert_eq!(settings.providers[0].key, Key::None);
-        assert!(complaints[0].contains("Uliverse"), "{complaints:?}");
+        assert!(complaints[0].contains("Gateway"), "{complaints:?}");
+    }
+
+    /// The Custom starting point was called "Company AI" with an example in
+    /// brackets. A provider saved under that name reads as Custom; one the
+    /// person named themselves keeps its name.
+    #[test]
+    fn a_provider_saved_under_the_old_starting_points_name_reads_as_custom() {
+        let text = r#"{"providers":[
+            {"id":"custom","name":"Company AI (e.g. Somewhere)","kind":"openai","base_url":"https://a.example/v1","model":"m"},
+            {"id":"mine","name":"Company AI","kind":"openai","base_url":"https://b.example/v1","model":"m"}]}"#;
+        let (settings, complaints) = Settings::from_json(text);
+        assert!(complaints.is_empty());
+        let names: Vec<&str> = settings.providers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Custom", "Company AI"]);
+        assert_eq!(Provider::preset("custom").unwrap().name, "Custom");
     }
 
     #[test]
     fn new_ids_do_not_collide() {
         let settings = Settings { providers: vec![Provider::preset("claude").unwrap()], active: None, ..Settings::default() };
         assert_eq!(settings.new_id("Claude"), "claude-2");
-        assert_eq!(settings.new_id("Uliverse AI"), "uliverse-ai");
+        assert_eq!(settings.new_id("Work AI"), "work-ai");
     }
 }
