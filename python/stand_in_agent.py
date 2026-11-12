@@ -18,7 +18,9 @@ and choose Claude in the Assistant. What it understands, anywhere in a
 message: `look` (a screenshot), `rename` (the first part), `save a copy`,
 `render`, `import`, `preference`, `write` (a file in the project's folder,
 asking first), `shell` (a command, which Tequila refuses), `slow` (takes its
-time, to try Stop). `STAND_IN_SIGNED_OUT=1` makes it ask to be signed in.
+time, to try Stop). `STAND_IN_SIGNED_OUT=1` makes it ask to be signed in: by a terminal way
+that does nothing, or by `ChatGPT`, which it carries out itself after a
+few seconds, as a sign-in in the browser would be.
 """
 
 import json
@@ -207,6 +209,7 @@ class Session:
 def main():
     threading.Thread(target=reader, daemon=True).start()
     session = None
+    signed_in = False
     while True:
         message = incoming.get()
         if message is None:
@@ -219,15 +222,23 @@ def main():
                     "protocolVersion": 1,
                     "agentCapabilities": {"promptCapabilities": {"image": True}, "sessionCapabilities": {"systemPrompt": {}}},
                     "agentInfo": {"name": "stand-in", "title": "Stand-in agent", "version": "1"},
-                    "authMethods": [{"id": "console-login", "name": "Anthropic Console (API usage billing)", "type": "terminal", "args": ["--version"]}],
+                    "authMethods": [
+                        {"id": "console-login", "name": "Anthropic Console", "type": "terminal", "args": ["--version"]},
+                        {"id": "chat-gpt", "name": "ChatGPT", "description": "Use ChatGPT to authenticate"},
+                        {"id": "api-key", "name": "API Key"},
+                    ],
                 }
             )
         elif method == "session/new":
-            if os.environ.get("STAND_IN_SIGNED_OUT"):
+            if os.environ.get("STAND_IN_SIGNED_OUT") and not signed_in:
                 send({"jsonrpc": "2.0", "id": request, "error": {"code": -32000, "message": "Authentication required"}})
                 continue
             session = Session(params)
             reply({"sessionId": session.id, "configOptions": SETTINGS})
+        elif method == "authenticate":
+            time.sleep(3)
+            signed_in = True
+            reply({})
         elif method == "session/set_config_option":
             for setting in SETTINGS:
                 if setting["id"] == params.get("configId"):

@@ -738,7 +738,14 @@ impl Agent {
                 events.push(Event::Notice("The assistant no longer has the earlier conversation, so it starts from what is written here.".into()));
                 self.open();
             }
-            Asked::Initialize | Asked::Open { .. } | Asked::Authenticate => {
+            // The sign-in did not go through: said, and the ways to sign in
+            // are offered again.
+            Asked::Authenticate => {
+                self.phase = Phase::SignedOut;
+                events.push(Event::Notice(if said.is_empty() { "Signing in did not go through.".into() } else { format!("Signing in did not go through: {said}") }));
+                events.push(Event::SignIn(self.sign_ins.clone()));
+            }
+            Asked::Initialize | Asked::Open { .. } => {
                 self.phase = Phase::Gone;
                 events.push(Event::Failed(if said.is_empty() { "The assistant could not be started.".into() } else { said }));
             }
@@ -1167,6 +1174,39 @@ mod tests {
         assert_eq!((ways[1].name.as_str(), &ways[1].terminal), ("Key", &None));
         assert_eq!(agent.phase(), Phase::SignedOut);
         assert!(agent.prompt(&[Block::Text("Hello".into())]).is_err());
+    }
+
+    /// A sign-in the agent carries out itself - ChatGPT's, in the browser -
+    /// is asked for by its name; when it is done the conversation opens,
+    /// and when it fails the ways to sign in are offered again.
+    #[test]
+    fn signing_in_through_the_agent_opens_the_conversation_or_says_why_not() {
+        let signed_in = Arc::new(Mutex::new(false));
+        let state = signed_in.clone();
+        let mut agent = stand_in(launch(), move |message, write| match message.get("method").and_then(Value::as_str) {
+            Some("initialize") => write(&format!(r#"{{"jsonrpc":"2.0","id":{},{INITIALIZED}}}"#, id(message))),
+            Some("session/new") if *state.lock().unwrap() => write(&format!(r#"{{"jsonrpc":"2.0","id":{},{OPENED}}}"#, id(message))),
+            Some("session/new") => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"Authentication required"}}}}"#, id(message))),
+            Some("authenticate") => match message.get("params").unwrap().get("methodId").and_then(Value::as_str) {
+                Some("key") => {
+                    *state.lock().unwrap() = true;
+                    write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{}}}}"#, id(message)));
+                }
+                _ => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32603,"message":"The window was closed"}}}}"#, id(message))),
+            },
+            _ => {}
+        });
+        assert!(matches!(until(&mut agent, |e| !e.is_empty()).as_slice(), [Event::SignIn(_)]));
+        agent.authenticate("login");
+        assert_eq!(agent.phase(), Phase::Starting);
+        let events = until(&mut agent, |e| e.len() == 2);
+        assert_eq!(events[0], Event::Notice("Signing in did not go through: The window was closed".into()));
+        assert!(matches!(&events[1], Event::SignIn(ways) if ways.len() == 2));
+        assert_eq!(agent.phase(), Phase::SignedOut);
+
+        agent.authenticate("key");
+        assert_eq!(until(&mut agent, |e| !e.is_empty()), [Event::Ready { resumed: false }]);
+        assert_eq!(agent.phase(), Phase::Idle);
     }
 
     /// The agent asks before a tool; the answer goes back as the choice it

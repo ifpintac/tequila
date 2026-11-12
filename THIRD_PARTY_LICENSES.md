@@ -25,6 +25,8 @@ computer's `npm` and puts the program in `~/.tequila/agents`
 |---|---|---|
 | [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) | Apache-2.0 | Claude as an agent, over the Agent Client Protocol |
 | Claude Code and the Claude Agent SDK, which that adapter installs and runs | Anthropic's own terms (proprietary) | The Claude program itself |
+| [`@agentclientprotocol/codex-acp`](https://github.com/agentclientprotocol/codex-acp) | Apache-2.0 | ChatGPT as an agent, over the Agent Client Protocol |
+| [`@openai/codex`](https://github.com/openai/codex), which that adapter installs and runs | Apache-2.0 | OpenAI's Codex program itself |
 
 Tequila speaks the Agent Client Protocol
 ([agentclientprotocol.com](https://agentclientprotocol.com), Apache-2.0)
