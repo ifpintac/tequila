@@ -58,7 +58,7 @@
       "up": [0, 0.0009999996, -0.9999995]
     }
   ],
-  "description": "Three softboxes on a seamless floor with a soft shadow and a short reflection: a hero three-quarter, front, side, back and top views, rendered as transparent 16-bit PNGs.",
+  "description": "Bright and soft: an overhead softbox, a key box, two edge strips and a fill card close to the product, cut out with a soft shadow and a short reflection. Hero, front, side, back and top views, as transparent 16-bit PNGs at 3000 by 2250.",
   "environment": {
     "background": {
       "color": [0.05, 0.05, 0.05],
@@ -78,10 +78,10 @@
       "reflection_alpha": "coverage",
       "reflection_blur": 0.05,
       "reflection_fade_by": "height",
-      "reflection_fade_distance": 0.03,
-      "reflection_fresnel": false,
-      "reflection_length": 1,
-      "reflections": 0.25,
+      "reflection_fade_distance": 0,
+      "reflection_fresnel": true,
+      "reflection_length": 0.45,
+      "reflections": 0.15,
       "shadow_color": [0, 0, 0],
       "shadows": true,
       "size": 0
@@ -90,49 +90,30 @@
     "image": null,
     "pins": [
       {
-        "angular_size": [0.8, 0.6],
-        "blend": "add",
+        "angular_size": [6.2831855, 6.2831855],
+        "blend": "over",
         "color": [1, 1, 1],
-        "direction": [0.52654076, 0.57357645, -0.62750685],
+        "direction": [0, 1, 0],
         "enabled": true,
-        "intensity": 14,
-        "kind": "light",
+        "intensity": 1,
+        "kind": "gradient",
         "lighting": true,
-        "name": "Key",
+        "name": "Room",
+        "radial": true,
         "roll": 0,
-        "shape": "rectangle",
+        "shape": "ellipse",
         "show_in_background": false,
-        "softness": 0.5
-      },
-      {
-        "angular_size": [1.1, 0.82500005],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [-0.8365163, 0.25881904, -0.48296288],
-        "enabled": true,
-        "intensity": 4,
-        "kind": "light",
-        "lighting": true,
-        "name": "Fill",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.8
-      },
-      {
-        "angular_size": [0.5, 0.375],
-        "blend": "add",
-        "color": [1, 1, 1],
-        "direction": [0.22414394, 0.5, 0.83651626],
-        "enabled": true,
-        "intensity": 18,
-        "kind": "light",
-        "lighting": true,
-        "name": "Rim",
-        "roll": 0,
-        "shape": "rectangle",
-        "show_in_background": false,
-        "softness": 0.3
+        "softness": 0,
+        "stops": [
+          {
+            "color": [0.06, 0.06, 0.06],
+            "t": 0
+          },
+          {
+            "color": [0.06, 0.06, 0.06],
+            "t": 1
+          }
+        ]
       }
     ],
     "rotation": 0,
@@ -142,8 +123,9 @@
   "format": "tequila.studio-preset",
   "framing": {
     "base_offset_m": 0,
+    "fill": 0.8,
     "reference_radius_m": 0.1,
-    "scale": "cameras"
+    "scale": "cameras_and_lights"
   },
   "id": "tequila-soft-studio",
   "image_style": {
@@ -182,12 +164,113 @@
     },
     "preset": "Product"
   },
-  "lights": [],
+  "lights": [
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.5,
+        "intensity": 4.5,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.7
+      },
+      "name": "Overhead",
+      "transform": [-1, 0, 0, 0, 0, 0.15596257, -0.9877629, 0.42, 0, -0.9877629, -0.15596257, 0.06, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.5,
+        "intensity": 6,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.4
+      },
+      "name": "Key",
+      "transform": [-0.5854905, 0.30453387, 0.75130546, -0.36, 0, 0.92676044, -0.37565273, 0.22, -0.81067926, -0.21994111, -0.54260945, 0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.45,
+        "enabled": true,
+        "height": 0.45,
+        "intensity": 9,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.09
+      },
+      "name": "Left strip",
+      "transform": [0.65493053, 0.25132716, 0.7126715, -0.3, 0, 0.943075, -0.3325801, 0.18, -0.7556891, 0.21781686, 0.6176486, -0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.45,
+        "enabled": true,
+        "height": 0.45,
+        "intensity": 9,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.09
+      },
+      "name": "Right strip",
+      "transform": [0.65493053, -0.25132716, -0.7126715, 0.3, 0, 0.943075, -0.3325801, 0.18, 0.7556891, 0.21781686, 0.6176486, -0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.2,
+        "enabled": true,
+        "height": 0.45,
+        "intensity": 1.8,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.45
+      },
+      "name": "Fill card",
+      "transform": [-0.6, -0.1263924, -0.78995246, 0.4, 0, 0.98744065, -0.15799049, 0.12, 0.8, -0.094794296, -0.5924644, 0.3, 0, 0, 0, 1]
+    }
+  ],
   "material_rules": [],
   "materials": [],
   "name": "Soft Studio",
   "notes": "Generated by crates/tequila-format/examples/builtin_studios.rs.",
-  "preset_version": "1",
+  "preset_version": "2",
   "render": {
     "adaptive": true,
     "adaptive_threshold": null,
@@ -205,7 +288,7 @@
     "jpeg_quality": 92,
     "kind": "photo",
     "layers": [],
-    "max_samples": 256,
+    "max_samples": 512,
     "max_seconds": null,
     "output_directory": "",
     "pixel_filter": null,
@@ -214,7 +297,7 @@
     "region": null,
     "reject_fireflies": true,
     "relight": false,
-    "resolution": [2000, 1500],
+    "resolution": [3000, 2250],
     "spectral": "auto",
     "wireframe": {
       "background_bottom": [0.11, 0.11, 0.115],

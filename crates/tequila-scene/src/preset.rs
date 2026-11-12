@@ -100,11 +100,20 @@ pub struct Framing {
     pub base_offset: f32,
     /// What follows the product's size.
     pub scale: FramingScale,
+    /// How much of the frame the product fills in each view, 0 to 1: every
+    /// view's camera aims at the middle of the product's box and moves along
+    /// its line of sight until the box, as that camera sees it, reaches this
+    /// share of the frame's height or its width, whichever it meets first.
+    /// A product photographer frames tight, and a sphere round a long or flat
+    /// product leaves it small in the frame. Zero frames by the sphere alone,
+    /// as a preset saved from a scene does, so one applied to the product it
+    /// was saved from gives the same picture back ([`filled_camera`]).
+    pub fill: f32,
 }
 
 impl Default for Framing {
     fn default() -> Self {
-        Framing { reference_radius: 0.1, base_offset: 0.0, scale: FramingScale::Cameras }
+        Framing { reference_radius: 0.1, base_offset: 0.0, scale: FramingScale::Cameras, fill: 0.0 }
     }
 }
 
@@ -280,17 +289,78 @@ pub fn scaled_camera(camera: &SavedCamera, s: f32) -> SavedCamera {
 
 /// The preset's views as the document's Studios, each camera scaled; each
 /// as it was made otherwise, so a preset saved and applied again is the
-/// same studio.
-pub fn views(preset: &StudioPreset, scale: f32) -> Vec<Studio> {
+/// same studio. With a [`Framing::fill`], each camera is then moved to fill
+/// the frame with `product`, the placed product's box, turned as the view
+/// turns it.
+pub fn views(preset: &StudioPreset, scale: f32, product: Option<&Aabb>) -> Vec<Studio> {
+    let aspect = preset.render.width.max(1) as f32 / preset.render.height.max(1) as f32;
     preset
         .studios
         .iter()
         .map(|studio| {
             let mut studio = studio.clone();
-            studio.camera = studio.camera.map(|c| scaled_camera(&c, scale));
+            studio.camera = studio.camera.map(|c| {
+                let scaled = scaled_camera(&c, scale);
+                match product {
+                    Some(bounds) if preset.framing.fill > 0.0 => {
+                        filled_camera(&scaled, &turned_corners(bounds, studio.product_yaw.unwrap_or(0.0)), aspect, preset.framing.fill)
+                    }
+                    _ => scaled,
+                }
+            });
             studio
         })
         .collect()
+}
+
+/// The corners of `bounds` turned `yaw` about the vertical line through
+/// its middle, right-handed about +Y, as a view turns the product.
+pub fn turned_corners(bounds: &Aabb, yaw: f32) -> [Vec3; 8] {
+    let middle = bounds.center();
+    let turn = Mat4::translation(middle) * Mat4::rotation(Vec3::Y, yaw) * Mat4::translation(-middle);
+    corners(bounds).map(|c| turn.transform_point(c))
+}
+
+/// `camera` aimed at the middle of the box with these `corners` and moved
+/// along its line of sight, keeping which way it looks and which way is up,
+/// until the box fills `fill` of a frame `aspect` wide for one high, in
+/// whichever of its height and width it meets first. Its focus follows.
+/// A camera that is not a perspective one is left as it is.
+pub fn filled_camera(camera: &SavedCamera, corners: &[Vec3; 8], aspect: f32, fill: f32) -> SavedCamera {
+    use tequila_render_core::camera::{Camera, Projection};
+    let mut out = camera.clone();
+    if !matches!(camera.camera.projection, Projection::Perspective { .. }) || !(fill > 0.0) {
+        return out;
+    }
+    let middle = corners.iter().fold(Vec3::ZERO, |sum, &c| sum + c) * (1.0 / 8.0);
+    let eye = camera.camera.position();
+    let Some(forward) = (camera.target - eye).try_normalize() else { return out };
+    let up = camera.camera.camera_to_world.transform_vector(Vec3::Y);
+    let Some(right) = forward.cross(up).try_normalize() else { return out };
+    let up = right.cross(forward);
+    let tan_v = (0.5 * camera.camera.vertical_fov(aspect)).tan() * fill.min(1.0);
+    let tan_h = tan_v * aspect;
+    // Each corner, seen at a distance `d` along the line of sight, must lie
+    // within the frame: its offset across over its depth no more than the
+    // frame's half-width (or height) at that depth.
+    let distance = corners
+        .iter()
+        .map(|&c| {
+            let offset = c - middle;
+            let depth = offset.dot(forward);
+            let across = offset.dot(right).abs() / tan_h;
+            let upward = offset.dot(up).abs() / tan_v;
+            across.max(upward) - depth
+        })
+        .fold(0.0f32, f32::max);
+    if !(distance.is_finite() && distance > 0.0) {
+        return out;
+    }
+    let placed = Camera::look_at(middle - forward * distance, middle, up);
+    out.camera.camera_to_world = placed.camera_to_world;
+    out.camera.focus_distance = distance;
+    out.target = middle;
+    out
 }
 
 /// The preset's render settings for `document`: the project keeps its
@@ -447,7 +517,7 @@ pub fn capture(document: &SceneDocument, id: &str, name: &str, family: &str, siz
             .iter()
             .map(|s| Studio { model_set: None, variants: Vec::new(), ..s.clone() })
             .collect(),
-        framing: Framing { reference_radius: radius, base_offset: base, scale: FramingScale::Cameras },
+        framing: Framing { reference_radius: radius, base_offset: base, scale: FramingScale::Cameras, fill: 0.0 },
         materials: Vec::new(),
         material_rules: Vec::new(),
         notes: String::new(),
@@ -456,6 +526,33 @@ pub fn capture(document: &SceneDocument, id: &str, name: &str, family: &str, siz
 
 #[cfg(test)]
 mod tests {
+
+    /// A long low box framed to fill four fifths of the frame: seen by the
+    /// filled camera, it reaches 0.8 of the frame in one direction and no
+    /// more than that in the other, centred, and the camera still looks the
+    /// way it did.
+    #[test]
+    fn a_filled_camera_frames_the_product_to_the_share_asked() {
+        use tequila_render_core::camera::{Camera, Projection};
+        let mut camera = Camera::look_at(vec3(0.6, 0.4, 0.7), vec3(0.0, 0.05, 0.0), Vec3::Y);
+        camera.projection = Projection::Perspective { focal_length_mm: 85.0 };
+        let saved = SavedCamera { name: "Hero".into(), camera, target: vec3(0.0, 0.05, 0.0) };
+        let bounds = Aabb { min: vec3(-0.02, 0.0, -0.05), max: vec3(0.02, 0.04, 0.05) };
+        let aspect = 4.0 / 3.0;
+        let filled = filled_camera(&saved, &turned_corners(&bounds, 0.0), aspect, 0.8);
+        let before = (saved.target - saved.camera.position()).normalize();
+        let after = (filled.target - filled.camera.position()).normalize();
+        assert!((before - after).length() < 1e-5, "it turned: {before:?} to {after:?}");
+        let (mut lo, mut hi) = (vec3(1.0, 1.0, 0.0), vec3(0.0, 0.0, 0.0));
+        for c in corners(&bounds) {
+            let film = filled.camera.project(c, aspect).expect("in view");
+            lo = vec3(lo.x.min(film.x), lo.y.min(film.y), 0.0);
+            hi = vec3(hi.x.max(film.x), hi.y.max(film.y), 0.0);
+        }
+        // Film runs 0 to 1 across and down: 0.8 of the frame is from 0.1 to 0.9.
+        let reach = ((0.5 - lo.x).max(hi.x - 0.5) * 2.0).max((0.5 - lo.y).max(hi.y - 0.5) * 2.0);
+        assert!((reach - 0.8).abs() < 0.01, "the box reaches {reach} of the frame: {lo:?} to {hi:?}");
+    }
     use super::*;
 
     /// A product twice the size gets cameras twice as far, centred on the
@@ -464,7 +561,7 @@ mod tests {
     fn framing_centres_the_product_and_scales_by_its_size() {
         let document = crate::demo::demo_document(crate::demo::DemoMaterial::Plastic, 0.2);
         let bounds = crate::snapshot::visible_bounds(&document);
-        let framing = Framing { reference_radius: bounds.bounding_radius() / 2.0, base_offset: 0.0003, scale: FramingScale::Cameras };
+        let framing = Framing { reference_radius: bounds.bounding_radius() / 2.0, base_offset: 0.0003, scale: FramingScale::Cameras, fill: 0.0 };
         let fit = fit(&document, &framing, &ApplyOptions::default());
         assert!((fit.scale - 2.0).abs() < 1e-4, "{}", fit.scale);
         let mut placed = document.clone();

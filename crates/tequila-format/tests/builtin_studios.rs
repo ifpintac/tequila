@@ -28,3 +28,53 @@ fn every_built_in_studio_reads_and_applies_in_one_step() {
         assert_eq!(document.environment, before.environment);
     }
 }
+
+/// Every built-in studio lights and frames a product ten times the size as
+/// it does a small one: its lights stand as many of the product's radii
+/// off, are as many radii across, and its camera sees it from as many
+/// radii away, so a mixer is lit and framed as a pedal is.
+#[test]
+fn every_built_in_studio_lights_a_large_product_as_a_small_one() {
+    use tequila_core::math::{vec3, Mat4, Transform, Vec3};
+    use tequila_scene::tree::NodeKind;
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/studios");
+    let (presets, _) = list_in(&[(folder, PresetSource::Builtin)]);
+    for file in presets {
+        let preset = &file.preset;
+        let studio = |size: f32| {
+            let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.3);
+            let mut bus = CommandBus::new();
+            let transforms = tequila_scene::studio::product_roots(&document)
+                .iter()
+                .filter_map(|&id| {
+                    let node = document.tree.get(id)?;
+                    Transform::from_matrix(Mat4::scale(vec3(size, size, size)) * node.transform.matrix).map(|t| (id, t))
+                })
+                .collect();
+            bus.apply(&mut document, Command::SetTransform { transforms }).unwrap();
+            bus.apply(&mut document, Command::ApplyStudioPreset { preset: Box::new(preset.clone()), options: Default::default() })
+                .unwrap_or_else(|e| panic!("{}: {e}", preset.id));
+            let bounds = tequila_scene::snapshot::visible_bounds(&document);
+            let (middle, radius) = (bounds.center(), bounds.bounding_radius());
+            let placed = document.placements();
+            let mut seen: Vec<f32> = Vec::new();
+            for node in document.tree.iter() {
+                if let NodeKind::Light { settings } = &node.kind {
+                    let world = placed.world(node.id);
+                    let off = (world.point(Vec3::ZERO) - middle) * (1.0 / radius);
+                    let extent = settings.emitter_extent();
+                    let across = world.vector(vec3(extent.x, extent.y, 0.0)).length() / radius;
+                    seen.extend([off.x, off.y, off.z, across]);
+                }
+            }
+            let eye = (document.cameras.active().camera.position() - middle) * (1.0 / radius);
+            seen.extend([eye.x, eye.y, eye.z]);
+            seen
+        };
+        let (small, large) = (studio(0.3), studio(3.0));
+        assert_eq!(small.len(), large.len(), "{}", preset.id);
+        for (a, b) in small.iter().zip(&large) {
+            assert!((a - b).abs() < 1e-3 * a.abs().max(1.0), "{}: {small:?} against {large:?}", preset.id);
+        }
+    }
+}

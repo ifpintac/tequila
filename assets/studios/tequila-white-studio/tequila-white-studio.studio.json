@@ -1,0 +1,429 @@
+{
+  "cameras": [
+    {
+      "basis": [0.72884816, 0, -0.68467546, -0.2880827, 0.9071729, -0.3066687, 0.62111896, 0.420758, 0.6611912],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.66939735,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Hero",
+      "position": [0.41577542, 0.3266543, 0.44259965],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [-0.2880827, 0.9071729, -0.3066687]
+    },
+    {
+      "basis": [1, 0, 0, 0, 0.99287677, -0.1191452, 0, 0.1191452, 0.99287677],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.66939735,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Front",
+      "position": [0, 0.12475549, 0.6646291],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [0, 0.99287677, -0.1191452]
+    },
+    {
+      "basis": [1, 0, 0, 0, 0.0009999995, -0.99999946, 0, 0.99999946, 0.0009999995],
+      "dof": {
+        "aperture": "Circular",
+        "enabled": false,
+        "f_number": 8,
+        "focus_distance": 0.6693974,
+        "keep_focus": false
+      },
+      "focal_length_mm": 85,
+      "iso": 100,
+      "name": "Top",
+      "position": [0, 0.7143971, 0.00066939706],
+      "sensor_width_mm": 36,
+      "shutter_speed_seconds": 0.01,
+      "target": [0, 0.044999998, 0],
+      "type": "Perspective",
+      "up": [0, 0.0009999995, -0.99999946]
+    }
+  ],
+  "description": "The web shop's picture: the product on pure white with a soft shadow under it and true colours, lit by an overhead softbox, a box either side in front and a strip behind. Hero, front, side, back and top views, as 16-bit PNGs at 3000 by 2250 on white.",
+  "environment": {
+    "background": {
+      "color": [1, 1, 1],
+      "image": null,
+      "mode": "Color"
+    },
+    "brightness": 1,
+    "contrast": 1,
+    "ground": {
+      "bounce": true,
+      "bounce_color": [1, 1, 1],
+      "bounce_contact_falloff": 0,
+      "bounce_strength": 1,
+      "enabled": true,
+      "flatten": false,
+      "occlusion_shadows": false,
+      "reflection_alpha": "coverage",
+      "reflection_blur": 0,
+      "reflection_fade_by": "height",
+      "reflection_fade_distance": 0,
+      "reflection_fresnel": false,
+      "reflection_length": 1,
+      "reflections": 0,
+      "shadow_color": [0, 0, 0],
+      "shadows": true,
+      "size": 0
+    },
+    "height": 0,
+    "image": null,
+    "pins": [
+      {
+        "angular_size": [6.2831855, 6.2831855],
+        "blend": "over",
+        "color": [1, 1, 1],
+        "direction": [0, 1, 0],
+        "enabled": true,
+        "intensity": 1,
+        "kind": "gradient",
+        "lighting": true,
+        "name": "Room",
+        "radial": true,
+        "roll": 0,
+        "shape": "ellipse",
+        "show_in_background": false,
+        "softness": 0,
+        "stops": [
+          {
+            "color": [0.12, 0.12, 0.12],
+            "t": 0
+          },
+          {
+            "color": [0.12, 0.12, 0.12],
+            "t": 1
+          }
+        ]
+      }
+    ],
+    "rotation": 0,
+    "size": 0
+  },
+  "family": "Tequila Studio",
+  "format": "tequila.studio-preset",
+  "framing": {
+    "base_offset_m": 0,
+    "fill": 0.86,
+    "reference_radius_m": 0.1,
+    "scale": "cameras_and_lights"
+  },
+  "id": "tequila-white-studio",
+  "image_style": {
+    "blacks": 0,
+    "bloom": 0,
+    "bloom_radius": 0.03,
+    "chromatic_aberration": 0,
+    "contrast": 1,
+    "display_transform": "sRGB",
+    "exposure": 0,
+    "highlights": 0,
+    "saturation": 1,
+    "shadows": 0,
+    "sharpening": 0,
+    "temperature": 6500,
+    "tint": 0,
+    "type": "Basic",
+    "vignette": 0,
+    "whites": 0
+  },
+  "lighting": {
+    "custom": {
+      "adaptive_sampling_threshold": 0.01,
+      "caustics": false,
+      "direct_lighting": true,
+      "global_illumination": true,
+      "ground_illumination": false,
+      "interior_mode": false,
+      "light_source_materials": true,
+      "max_bounces": 6,
+      "max_transmission_bounces": 8,
+      "regularization_roughness": 0.09,
+      "regularization_start_bounce": 2,
+      "russian_roulette_start_bounce": 3,
+      "shadows": true
+    },
+    "preset": "Product"
+  },
+  "lights": [
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.6,
+        "intensity": 4,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.8
+      },
+      "name": "Overhead",
+      "transform": [-1, 0, 0, 0, 0, 0.20601048, -0.9785497, 0.42, 0, -0.9785497, -0.20601048, 0.08, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.6,
+        "intensity": 4.5,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.5
+      },
+      "name": "Left box",
+      "transform": [-0.56468385, 0.27090216, 0.77957946, -0.38, 0, 0.94459295, -0.32824397, 0.2, -0.8253073, -0.18535407, -0.5333964, 0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.55,
+        "enabled": true,
+        "height": 0.6,
+        "intensity": 2.3,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.5
+      },
+      "name": "Right box",
+      "transform": [-0.5646839, -0.2400902, -0.789613, 0.38, 0, 0.95675033, -0.2909101, 0.18, 0.82530725, -0.16427225, -0.5402615, 0.26, 0, 0, 0, 1]
+    },
+    {
+      "light": {
+        "affects_diffuse": true,
+        "affects_specular": true,
+        "casts_shadows": true,
+        "color": [1, 1, 1],
+        "edge_falloff": 0.45,
+        "enabled": true,
+        "height": 0.08,
+        "intensity": 5,
+        "intensity_unit": "nits",
+        "layer": 0,
+        "shape": "Area",
+        "two_sided": false,
+        "visible_to_camera": false,
+        "width": 0.6
+      },
+      "name": "Back strip",
+      "transform": [1, 0, 0, 0, 0, 0.9429903, -0.33282012, 0.16, 0, 0.33282012, 0.9429903, -0.34, 0, 0, 0, 1]
+    }
+  ],
+  "material_rules": [],
+  "materials": [],
+  "name": "White Seamless",
+  "notes": "Generated by crates/tequila-format/examples/builtin_studios.rs.",
+  "preset_version": "2",
+  "render": {
+    "adaptive": true,
+    "adaptive_threshold": null,
+    "alpha_mode": "none",
+    "clamp_direct": null,
+    "clamp_indirect": null,
+    "denoise": true,
+    "denoise_cadence": 4,
+    "denoise_strength": 1,
+    "depth": "16",
+    "dpi": 300,
+    "engine": "cycles-gpu",
+    "filename_template": "{product}_{view}_{date}",
+    "format": "png",
+    "jpeg_quality": 92,
+    "kind": "photo",
+    "layers": [],
+    "max_samples": 512,
+    "max_seconds": null,
+    "output_directory": "",
+    "pixel_filter": null,
+    "prefilter_guides": true,
+    "preview_denoise": true,
+    "region": null,
+    "reject_fireflies": true,
+    "relight": false,
+    "resolution": [3000, 2250],
+    "spectral": "auto",
+    "wireframe": {
+      "background_bottom": [0.11, 0.11, 0.115],
+      "background_top": [0.2, 0.2, 0.21],
+      "edges": "mesh",
+      "hidden": "faint",
+      "line_colour": [0.82, 0.82, 0.84],
+      "line_width": 1.5
+    },
+    "write_passes": false,
+    "write_text_metadata": false,
+    "write_xmp": false
+  },
+  "size": "Medium",
+  "studios": [
+    {
+      "camera": {
+        "basis": [0.72884816, 0, -0.68467546, -0.2880827, 0.9071729, -0.3066687, 0.62111896, 0.420758, 0.6611912],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.66939735,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Hero",
+        "position": [0.41577542, 0.3266543, 0.44259965],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [-0.2880827, 0.9071729, -0.3066687]
+      },
+      "name": "Hero",
+      "product_yaw": 0,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.99287677, -0.1191452, 0, 0.1191452, 0.99287677],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.66939735,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Front",
+        "position": [0, 0.12475549, 0.6646291],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.99287677, -0.1191452]
+      },
+      "name": "Front",
+      "product_yaw": 0,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.99287677, -0.1191452, 0, 0.1191452, 0.99287677],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.66939735,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Front",
+        "position": [0, 0.12475549, 0.6646291],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.99287677, -0.1191452]
+      },
+      "name": "Side",
+      "product_yaw": -1.5707964,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.99287677, -0.1191452, 0, 0.1191452, 0.99287677],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.66939735,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Front",
+        "position": [0, 0.12475549, 0.6646291],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.99287677, -0.1191452]
+      },
+      "name": "Back",
+      "product_yaw": 3.1415927,
+      "variants": []
+    },
+    {
+      "camera": {
+        "basis": [1, 0, 0, 0, 0.0009999995, -0.99999946, 0, 0.99999946, 0.0009999995],
+        "dof": {
+          "aperture": "Circular",
+          "enabled": false,
+          "f_number": 8,
+          "focus_distance": 0.6693974,
+          "keep_focus": false
+        },
+        "focal_length_mm": 85,
+        "iso": 100,
+        "name": "Top",
+        "position": [0, 0.7143971, 0.00066939706],
+        "sensor_width_mm": 36,
+        "shutter_speed_seconds": 0.01,
+        "target": [0, 0.044999998, 0],
+        "type": "Perspective",
+        "up": [0, 0.0009999995, -0.99999946]
+      },
+      "name": "Top",
+      "product_yaw": 0,
+      "variants": []
+    }
+  ],
+  "tags": [
+    "product",
+    "e-commerce",
+    "white",
+    "seamless",
+    "packshot",
+    "shop",
+    "amazon",
+    "built-in"
+  ],
+  "thumbnail": "thumbnail.png",
+  "version": 1
+}
