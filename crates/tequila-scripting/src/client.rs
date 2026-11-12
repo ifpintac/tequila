@@ -56,6 +56,13 @@ impl Connection {
         Err("no running Tequila answered; is it open?".into())
     }
 
+    /// How long an answer is waited for; `None` for as long as it takes.
+    /// The built-in Assistant's bridge waits like that: a request the person
+    /// is being asked about is answered when they have answered.
+    pub fn set_patience(&mut self, patience: Option<Duration>) {
+        let _ = self.reader.get_ref().set_read_timeout(patience);
+    }
+
     pub fn request(&mut self, op: &str, fields: Vec<(&str, Value)>) -> Result<Value, String> {
         self.next += 1;
         let mut request = Object::new();

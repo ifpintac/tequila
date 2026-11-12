@@ -255,6 +255,13 @@ impl Channel {
         self.address.port()
     }
 
+    /// The file that names this instance and no other, where it has
+    /// announced itself: what a bridge started by this instance connects
+    /// through, so it reaches this window whichever was opened last.
+    pub fn own_file(&self) -> Option<std::path::PathBuf> {
+        self.announced.as_ref().map(|path| self.own_record(path))
+    }
+
     /// Answer everything that arrived since the last frame.
     ///
     /// The handler is the application: it is the only thing that can touch the
@@ -293,18 +300,35 @@ impl Channel {
     /// application finishes on another thread, as an import reads its model,
     /// while the window goes on drawing. The client waits as for any answer.
     pub fn drain_with_responders(&self, mut handler: impl FnMut(Arrived<'_>, Responder)) {
+        self.drain_taken(|taken, responder| match &taken {
+            Taken::Request(request) => handler(Arrived::Request(request), responder),
+            Taken::Own(value) => handler(Arrived::Own(value), responder),
+        });
+    }
+
+    /// The same, each request handed over to keep: one the application
+    /// holds until the person has agreed to it is carried out, and answered,
+    /// frames later.
+    pub fn drain_taken(&self, mut handler: impl FnMut(Taken, Responder)) {
         // Yield back to the UI even while clients continuously enqueue work.
         for _ in 0..16 {
             let Some(Pending { request, reply }) = self.pending.lock().ok().and_then(|mut q| q.pop_front()) else {
                 return;
             };
             let responder = Responder { id: request.id(), reply };
-            match &request {
-                Incoming::Request(request) => handler(Arrived::Request(request), responder),
-                Incoming::Own { value, .. } => handler(Arrived::Own(value), responder),
+            match request {
+                Incoming::Request(request) => handler(Taken::Request(request), responder),
+                Incoming::Own { value, .. } => handler(Taken::Own(value), responder),
             }
         }
     }
+}
+
+/// What [`Channel::drain_taken`] hands its handler: as [`Arrived`], to keep.
+#[derive(Debug)]
+pub enum Taken {
+    Request(Request),
+    Own(Value),
 }
 
 /// Where one request's answer goes ([`Channel::drain_with_responders`]).

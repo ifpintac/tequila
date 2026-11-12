@@ -2,41 +2,134 @@
 
 Click **Assistant** on the toolbar and describe what you want, for example
 *"make the strap black velvet, the lenses dark glass, and light it like a
-studio product shot"*. The AI you have connected does it in the open scene:
+studio product shot"*. The AI you have chosen does it in the open scene:
 - It finds the parts.
 - It changes materials, lighting and camera.
-- It switches the viewport to rendered and takes a screenshot to check its
-  own work, then adjusts.
+- It takes a screenshot to check its own work, then adjusts.
 
-Each step is listed in the panel as it happens. Each step also shows in the
-console (in amber, with the AI's name) and can be undone. **Undo request**
-takes back everything one request changed, as long as you haven't edited by
-hand since. **Stop** ends a request part-way, at once.
+## The chat
 
-While it works, the line under the conversation says what it is doing and
-for how long: *Loading the model*, *Reading the request*, *Thinking*,
-*Writing*, or *Calling* a tool, with a running count of what it has written
-and which step it is on. A model that reasons before it answers shows its
-reasoning as it comes, dimmed, under **Thinking**; click the heading to fold
-it away. Afterwards it is kept, folded, as *Thought for …*. The reply is
-waited for as long as the model keeps producing it. If something fails, the
-message says what helps, and the conversation is kept: ask again to carry
-on from where it stopped.
+The Assistant is a chat, docked on the right of the window. The button at
+its top right moves it into **a window of its own**, to put beside Tequila
+or on another display; the same button brings it back.
 
-The assistant works on the scene. It cannot import files, save anywhere but
-the project's own file, or quit. It saves or renders only when you ask it to.
+- **The conversation** shows your messages, the reply as it is written,
+  the model's reasoning folded away under *Thought for …*, and each step it
+  takes in the scene with a tick when it worked. A screenshot it took is
+  shown under its step.
+- **Past chats** are kept. The clock button at the top left lists them,
+  newest first; click one to read it and carry on. The pencil starts a
+  **new chat**.
+- **The message box**, from left to right: **+** attaches a picture (or
+  drop one on the box), the camera sends **the viewport as it is now**, and
+  **@** names a part, a material or the selection - or type `@` and the
+  first letters. On the right: how hard the model **thinks**, where it
+  offers that, the **model**, and Send. Enter sends; Shift+Enter is a new
+  line.
+- While it works, the line above the box says what it is doing and for how
+  long, and Send becomes **Stop**, which ends the request at once.
+- **Undo request** takes back everything one request changed, as long as
+  you haven't edited by hand since. Each step can also be undone on its
+  own, and shows in the console (in amber, with the assistant's name).
+
+If something fails, the message says what helps, and the conversation is
+kept: ask again to carry on from where it stopped.
+
+## What it may do
+
+The assistant may use Tequila's tools and the files in the open project's
+folder. It cannot run commands, reach the internet, or touch a file
+anywhere else on the computer.
+
+**Changes to the scene happen at once**, and can be undone. Before anything
+that leaves the scene, the chat asks, with **Allow** and **Deny**:
+
+- importing a file, or bringing in a texture pack;
+- saving the project to a new place (saving it where it already is does
+  not ask);
+- rendering to a file, and exporting the scene;
+- changing or resetting a preference;
+- writing, running or restarting a plugin (turning one on has its own
+  question, in the Plugins window);
+- saving to, importing into, exporting from or deleting from your library;
+- writing or changing a file in the project's folder. Reading there does
+  not ask.
+
+Tequila asks these itself, on the request as it arrives, whichever AI sent
+it and whatever that AI's own settings say. Deny tells the assistant you
+said no, and it carries on without. Stop refuses whatever was waiting.
 
 It can also make **materials of your own** from a description (*"blue
 terrazzo with brass flecks"*), showing you each try on a ball, and write
 **plugins** when you ask for one (*"a panel that renames the selected parts
 with a prefix"*). A plugin runs Python on your computer, so Tequila asks you
-before it starts - and asks again whenever the assistant changes the code of
-one that is on.
+before its code is written, and again before it starts.
 
-## Connecting an AI
+## Who answers
 
-Click **Providers…**, choose a starting point, fill in the form, and click
-**Test**:
+The model picker at the bottom right of the message box lists everything
+connected. There are two kinds.
+
+**An agent** is the AI company's own program, running on this computer:
+today, **Claude**. Tequila starts it, hands it Tequila's tools, and shows
+what it says and does. It is not shipped with Tequila: the first time you
+choose it, the chat offers **Install**, which downloads Anthropic's adapter
+(`@agentclientprotocol/claude-agent-acp`, Apache-2.0, about 400 MB with the
+Claude program it runs) into Tequila's own folder, `~/.tequila/agents`. It
+needs Node.js on the computer; the chat says so when it is missing. Delete
+that folder to remove it. One you installed yourself (`npm install -g`) is
+used as it is.
+
+**An API key or a model on this computer** is answered by Tequila's own
+loop: OpenAI, Claude, Gemini, OpenRouter, a company gateway, Ollama, LM
+Studio. See *API keys and models on this computer* below.
+
+You can switch in the middle of a chat. Whoever was not there for the
+earlier part is told how it went.
+
+### Claude, and how it is paid for
+
+Claude as an agent needs an account. Choose **Claude** and the chat says
+what is missing:
+
+- **Anthropic Console** opens Anthropic's own sign-in in a terminal window.
+  It is billed by use, like an API key. Tequila never sees the login.
+- **Add an API key…** connects an Anthropic key (console.anthropic.com).
+  A key you have already connected for Claude under *API keys* is used
+  without asking again.
+
+Then click **Try again**.
+
+**A Claude subscription (Pro, Max) is not used, and that is a choice, not a
+limit.** The adapter can sign in with one, through the same terminal
+window. But Anthropic's terms do not plainly allow it in an application
+that is not theirs:
+
+- The Agent SDK's documentation says: *"Unless previously approved,
+  Anthropic does not allow third party developers to offer claude.ai login
+  or rate limits for their products, including agents built on the Claude
+  Agent SDK."*
+- Their legal page forbids a third-party application offering Claude.ai
+  login or handling its credentials, and adds that this does not *"prevent
+  an end user from signing in to the unmodified Claude Code binary with
+  their own Claude subscription"*. Tequila would be doing the second - the
+  sign-in is Anthropic's program, in a terminal - but whether a button that
+  starts it counts as "offering" is not said.
+
+(Read on 2026-11-13: code.claude.com/docs/en/agent-sdk/overview and
+code.claude.com/docs/en/legal-and-compliance.)
+
+So Tequila starts the adapter with `--hide-claude-auth`, which makes it
+refuse a subscription even when one is signed in on the computer. To use
+yours anyway, at your own judgement of those terms, add
+`"claude_subscription": true` to `~/.tequila/assistant.json` and start
+Tequila again: the sign-in card then offers **Claude Subscription** as
+well. Nothing in the window turns it on.
+
+## API keys and models on this computer
+
+Open the model picker, click **Connections…**, choose a starting point,
+fill in the form, and click **Test**:
 
 | Provider | Type | Address | Key |
 |---|---|---|---|
@@ -57,8 +150,8 @@ screenshots: untick **The model can see images** for it. DeepSeek's and
 Groq's presets start that way.
 
 **Fetch models** asks the service which models it has; pick one from the
-list. Several providers can be connected at once. The drop-down at the top of
-the panel switches between them, even in the middle of a conversation.
+list. Several providers can be connected at once. The model picker switches
+between them, even in the middle of a conversation.
 
 An API key is not the same as a ChatGPT, Claude or Gemini subscription. The
 APIs are billed separately, per use, by each company.
@@ -294,3 +387,105 @@ slimmer catalog would let one work in 16k; LM Studio's context is not
 read, so only its error is explained; the Modelfile `num_ctx` fallback and the Anthropic stream are
 tested against stand-ins only; the estimate is calibrated on qwen3's
 counts; through a proxy, Stop takes effect at the next piece.
+
+## As built, November 13: a chat, and Claude as an agent
+
+The panel was a list of steps with a text box under it, answered only by
+Tequila's own loop. It is now a chat that an agent can answer as well,
+which is the first stage of letting the Assistant use the programs people
+already have: Claude here, then ChatGPT (`codex-acp`) and Gemini.
+
+**The pieces.**
+- `crates/tequila-ai/src/chat.rs`: the chat every backend writes into
+  (`Item`: You, Said, Thought, Step, Asked, Problem, Note), streamed into
+  with `say`, `think` and `step`, and kept as
+  `~/.tequila/chats/<id>.json` with its pictures as `<id>/N.png`.
+- `crates/tequila-ai/src/acp.rs`: a client for the Agent Client Protocol,
+  version 1 (agentclientprotocol.com), written against schema 1.31.0:
+  JSON-RPC, a message a line, over the agent's standard input and output.
+  `initialize`, `session/new` (or `session/resume`, `session/load`),
+  `session/prompt`, `session/cancel`, `session/set_config_option`, the
+  `session/update` notifications, and `session/request_permission`. It
+  never blocks: the agent is read on a thread and `Agent::poll` hands the
+  panel events once a frame. Files and terminals are not lent to the agent
+  (no `fs` or `terminal` capability).
+- `acp::judge` answers an agent asking to use a tool: Tequila's own tools
+  go ahead, reading inside the project's folder goes ahead, writing there
+  asks, and a command, the internet or a path outside the folder (through
+  `..` or a link) is refused.
+- `crates/tequila-scripting/src/approval.rs`: the questions. The bridge is
+  started for the agent as `tequila-cli --mcp --assistant MARK`, and every
+  request it sends carries the mark (`Request::agent`). The application
+  names those requests for the Assistant in the console, counts their
+  changes as the request's for Undo request, and keeps the ones
+  `approval::question` has a question for (`Channel::drain_taken`,
+  `Assistant::hold`) until the person answers. The bridge waits as long as
+  that takes (`Connection::set_patience`).
+- `app/src/assistant_agents.rs`: finding the adapter (Tequila's own
+  install, then the usual places for Node programs, since an application
+  opened from the Finder has a short `PATH`), installing it with npm,
+  opening its sign-in in a terminal, and Claude's options: no `Bash`,
+  `WebFetch`, `WebSearch`, sub-agents or skills; `Write` and `Edit` always
+  ask; the mode pinned to the one that asks (the adapter starts in `auto`,
+  where Claude decides for itself); bypass removed.
+- `app/src/assistant.rs` is the state and `app/src/assistant_panel.rs`
+  the panel. `python/stand_in_agent.py` is an agent with no model behind
+  it, for tests and for looking at the panel without an account
+  (`TEQUILA_ASSISTANT_AGENT`).
+
+**The MCP bridge covers Tequila already**, and was not rebuilt. What has a
+tool of its own: the scene, parts and materials; every command and batches;
+undo; selection, camera, panels; screenshots and quick renders; background
+renders to files; materials from recipes; studios; preferences; import;
+save and save as; plugins. What is reached only through `tequila_request`,
+the raw request: the material library (putting a preset on a part, saving,
+importing, exporting), exporting the scene (glTF, USD, web, spin), texture
+packs, updating a model from its file, the studio kit, Substance, and a
+new or another project. Worth tools of their own later, the library first.
+
+**Tried on this Mac (M3 Max), in a copy of the application with a home
+folder of its own:**
+- With the stand-in agent, through the real bridge and channel: a
+  screenshot shown in the chat; a part renamed and taken back with Undo
+  request; a save to a new place denied (nothing written, the agent told
+  so) and a 4K render allowed; a file written in the project's folder only
+  after Allow; a shell command refused without a question; the chat kept,
+  listed and reopened; the panel in its own window.
+- With Anthropic's adapter 0.106.0: **Install** put it in
+  `~/.tequila/agents` (385 MB); it started, opened a conversation with
+  Tequila's bridge, and listed its models (Default, Opus 5.5, Fable 5.2,
+  Sonnet 5.5, Haiku 5.5) and thinking levels in the pickers; signed out,
+  the chat showed the sign-in card with **Anthropic Console**, and a
+  message was answered *Authentication required* and kept for after.
+
+**Not tried:** a real conversation with Claude. That needs an Anthropic
+account, and signing in is the owner's to do. Until it is, what Claude's
+adapter sends for a tool call (its titles, how it names Tequila's tools,
+whether a screenshot comes back as a picture) is known from its source and
+the protocol, not from watching it. The terminal sign-in was not clicked.
+
+**Left:**
+- Pasting a picture from the clipboard (egui 0.29 hands over pasted text
+  only); attach and drop work.
+- A dropped picture was not tried with a real drag.
+- Reopening a chat carries on the agent's own conversation only where the
+  project's folder is the same; otherwise the agent is told how it went,
+  in words.
+- The Windows side is written (`node.exe`, `npm.cmd`, a console for the
+  sign-in, no console window behind the agent) and compiles in CI, but
+  nothing of it has run on a PC.
+- The Connections page (which programs are installed and signed in, with
+  Install and Sign in for each) is a later stage; today the chat's own
+  card says what Claude still needs.
+
+Held by tests: `tequila-ai` `acp::` (11, against a stand-in agent on a
+local socket: a whole turn, sign-in, permissions and Stop, resume and
+load, settings, the account, an agent that ends, reach) and `chat::` (7);
+`tequila-scripting` `approval::` (4); `tequila-cli`
+`for_the_assistant_every_tool_is_offered`; the app's
+`an_agent_answers_in_the_chat_and_is_held_to_its_reach`,
+`what_leaves_the_scene_waits_for_the_person` (the real channel, the
+bridge's own client), `stopping_refuses_what_was_waiting_for_an_answer`,
+`chats_are_kept_and_opened_again`,
+`an_agent_that_ends_as_it_starts_is_said_once`,
+`the_panel_draws_every_kind_of_thing`, and `assistant_agents::` (6).

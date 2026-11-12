@@ -26,7 +26,7 @@ packs need no Python.
 ## Making one with an AI app
 
 Tequila's own Assistant, the Claude app (connected with the Assistant's
-**Providers… → Connect the Claude app**), Claude Code, or any MCP client
+the Assistant's model picker, **Connections… → Connect** beside the Claude app), Claude Code, or any MCP client
 running `tequila-cli --mcp` can write a plugin for you from a description: *"make me
 a plugin with a panel that renames the selected parts with a prefix"*. It
 has six tools for it:

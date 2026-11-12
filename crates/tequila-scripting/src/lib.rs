@@ -21,6 +21,7 @@
 //! The read half is the part that did not exist. Commands only write, and a
 //! script that cannot ask what is in the scene can only act blind.
 
+pub mod approval;
 pub mod bindings;
 pub mod client;
 pub mod document;

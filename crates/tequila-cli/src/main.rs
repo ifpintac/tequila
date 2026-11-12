@@ -126,6 +126,9 @@ struct Options {
     mcp: bool,
     /// The bridge for something reached from outside this computer.
     restricted: bool,
+    /// With `--mcp`: the mark of the Tequila that started this for its
+    /// own Assistant.
+    assistant: Option<String>,
     /// Be a render node.
     worker: bool,
     /// Where a render node listens.
@@ -208,6 +211,7 @@ impl Default for Options {
             worker: false,
             mcp: false,
             restricted: false,
+            assistant: None,
             listen: None,
             worker_name: None,
             token: None,
@@ -340,6 +344,9 @@ Scripting:
                         open, over standard input and output
       --restricted      with --mcp: the open scene only - no importing, no
                         raw requests, no saving or rendering to chosen paths
+      --assistant MARK  with --mcp: started by Tequila for its own chat
+                        panel; requests carry MARK, and the application
+                        asks the person before one leaves the scene
 
 Testing this computer:
       --self-test       render a small built-in scene with every engine and
@@ -454,6 +461,7 @@ fn parse_args() -> Result<Options, String> {
             "--worker" => options.worker = true,
             "--mcp" => options.mcp = true,
             "--restricted" => options.restricted = true,
+            "--assistant" => options.assistant = Some(value()?),
             "--listen" => options.listen = Some(value()?),
             "--name" => options.worker_name = Some(value()?),
             "--token" => options.token = Some(value()?),
@@ -580,7 +588,7 @@ fn main() {
         None if options.self_test_references.is_some() => self_test::make_references(std::path::Path::new(options.self_test_references.as_deref().unwrap_or("."))),
         None if options.self_test => test_this_computer(&options),
         None if options.substance_info.is_some() => substance_info(options.substance_info.as_deref().unwrap_or_default()),
-        None if options.mcp => mcp::run(options.discovery.as_deref(), options.restricted),
+        None if options.mcp => mcp::run(options.discovery.as_deref(), options.restricted, options.assistant.as_deref()),
         None if options.serve => serve::run(&options),
         None if options.worker => farm::worker(&options),
         None => run(&options),

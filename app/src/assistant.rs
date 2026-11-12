@@ -2,36 +2,51 @@
 //! connected — Claude, OpenAI, a local model, your company's — does it in the
 //! open scene.
 //!
-//! [`tequila_ai`] holds the conversation and talks to the provider; this is
-//! the panel, and the part that carries out tool calls. A tool call becomes a
-//! scripting request and goes through [`crate::channel::handle`] like any
-//! other: validated, undoable, journalled, and written into the console with
-//! the assistant's name on it, so a person can watch it work.
+//! One chat, answered one of two ways:
+//!
+//! - **An agent**, a program of its maker's own reached over the Agent
+//!   Client Protocol ([`tequila_ai::acp`]): Claude, through its adapter. The
+//!   agent runs its own loop and gets Tequila's tools from the MCP bridge
+//!   Tequila hands it (`tequila-cli --mcp --assistant`), so what it does
+//!   arrives on the scripting channel like any script's, marked as the
+//!   Assistant's.
+//! - **Tequila's own loop** ([`tequila_ai::session`]) for an API key or a
+//!   model on this computer: the conversation is held here, and a tool call
+//!   becomes a scripting request that goes through
+//!   [`crate::channel::handle`].
+//!
+//! Either way a step is validated, undoable, journalled, and written into
+//! the console with the assistant's name on it, so a person can watch it
+//! work; and what leaves the scene - a file brought in or written, a render
+//! saved - waits for the person to agree in the chat
+//! ([`tequila_scripting::approval`]).
+//!
+//! This file is the Assistant's state and what moves it along each frame;
+//! the panel is drawn in [`crate::assistant_panel`], and the agents are
+//! found and started in [`crate::assistant_agents`].
 
+use crate::assistant_agents::{self as agents, Found, Missing};
 use crate::TequilaApp;
-use tequila_ai::{session, tools, Call, Key, Kind, Part, Phase, Progress, Provider, Session, Settings};
-use tequila_scripting::protocol::{parse_request, Reply};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
+use tequila_ai::acp::{self, Agent, Block};
+use tequila_ai::chat::{self, Asked, Chat, Item, Picture, Status, StepNews};
+use tequila_ai::{session, tools, Call, Key, Kind, Part, Phase, Progress, Provider, Session, Settings};
+use tequila_scripting::approval::Question;
+use tequila_scripting::protocol::{parse_request, Operation, Reply, Request};
+use tequila_scripting::server::Responder;
 
 /// The longest side of a screenshot sent to a model. Larger costs tokens
 /// without helping it judge a material or a composition.
 const SENT_SIZE: usize = 1024;
 
-/// What the panel shows. Separate from the conversation, which holds what the
-/// model is sent: the panel shows every picture, the model only the newest.
-enum Entry {
-    You(String),
-    Said(String),
-    /// What the model reasoned before a reply, and for how long: folded
-    /// away, to open when wanted.
-    Thought { text: String, seconds: f32 },
-    Step { text: String, ok: bool, detail: String },
-    Picture(egui::TextureHandle),
-    Problem(String),
-    Note(String),
-}
+/// The name Tequila's MCP bridge is given to an agent under.
+const TOOLS: &str = "tequila";
+
+/// How much of an earlier conversation is retold to a backend that was not
+/// there for it: the end of it, which is what the next request leans on.
+const RETOLD: usize = 6000;
 
 /// A screenshot the assistant asked for, waiting for the window to draw it.
 struct Shot {
@@ -83,21 +98,126 @@ enum KeyMode {
     Env,
 }
 
+/// Who answers the chat.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Backend {
+    Agent(agents::Kind),
+    Provider(Provider),
+}
+
+impl Backend {
+    /// Its name in the settings and in a chat's file.
+    pub fn id(&self) -> String {
+        match self {
+            Backend::Agent(kind) => kind.id().to_string(),
+            Backend::Provider(provider) => provider.id.clone(),
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            Backend::Agent(kind) => kind.name().to_string(),
+            Backend::Provider(provider) => provider.name.clone(),
+        }
+    }
+}
+
+/// What the Assistant needs to know of the application around it to start
+/// a request.
+#[derive(Clone, Debug, Default)]
+pub struct Around {
+    /// How many steps the undo history holds.
+    pub depth: usize,
+    /// The open project's folder, once it has been saved somewhere.
+    pub folder: Option<PathBuf>,
+    /// The file that names this window's scripting channel.
+    pub channel: Option<PathBuf>,
+    /// Tequila's command-line program, which is also its MCP bridge.
+    pub program: Option<PathBuf>,
+}
+
+/// What stands between the person and an agent that answers.
+pub enum Setup {
+    /// The agent's program is not on this computer; whether Node is, to
+    /// install it with.
+    Missing { node: bool },
+    Installing(Receiver<Result<String, String>>),
+    /// It wants signing in, and these are its ways. `subscription` when it
+    /// found a Claude subscription signed in and was told not to use one.
+    SignIn { ways: Vec<acp::SignIn>, subscription: bool },
+    /// Something went wrong setting it up, to read and try again.
+    Failed(String),
+}
+
+/// A request of the Assistant's own bridge, kept until the person has said
+/// whether it may go ahead.
+struct Held {
+    question: u64,
+    request: Request,
+    responder: Responder,
+}
+
+/// What a question in the chat is waiting to settle.
+enum Waiting {
+    /// The agent's own question, by its number there.
+    Agent(u64),
+    /// A request held here ([`Held`]).
+    Held,
+}
+
 pub enum Action {
     None,
-    Ask(String),
+    /// Send a message: what the person wrote, what the panel adds for the
+    /// model about the things they mentioned, and the pictures attached.
+    Ask { text: String, context: String, pictures: Vec<Picture> },
     Stop,
     UndoTurn,
+    /// The person's answer to a question in the chat.
+    Answer { question: u64, allow: bool },
+    NewChat,
+    OpenChat(String),
+    DeleteChat(String),
+    /// Attach a picture of the viewport as it is now.
+    SendViewport,
+    /// Into a window of its own, or back beside the viewport.
+    Detach(bool),
+    Close,
 }
 
 #[derive(Default)]
 pub struct Assistant {
     pub open: bool,
-    settings: Settings,
+    /// Shown in a window of its own rather than docked.
+    pub detached: bool,
+    pub(crate) settings: Settings,
     settings_path: Option<PathBuf>,
+    /// Where chats are kept.
+    pub(crate) store: Option<chat::Store>,
+    /// The chat that is open.
+    pub(crate) chat: Chat,
+    /// Tequila's own loop, for a provider: the conversation as the model is
+    /// sent it.
     session: Option<Session>,
-    transcript: Vec<Entry>,
-    input: String,
+    /// The agent that is running, and where it works.
+    pub(crate) agent: Option<(agents::Kind, Agent)>,
+    agent_found: Option<Found>,
+    agent_folder: PathBuf,
+    pub(crate) setup: Option<Setup>,
+    /// Who the agent is signed in as, or what pays for it.
+    pub(crate) account: Option<(String, String)>,
+    /// A message waiting for the agent to be ready for it.
+    queued: Option<Vec<Block>>,
+    /// The agent's program left while it had nothing to do: it is started
+    /// again when next asked, not at once.
+    pub(crate) rested: bool,
+    /// The mark this window's Assistant gives its bridge.
+    mark: String,
+    held: Vec<Held>,
+    waiting: HashMap<u64, Waiting>,
+    next_question: u64,
+    /// The window, for an agent's reader to wake.
+    window: Option<egui::Context>,
+    pub(crate) input: String,
     calls: VecDeque<Call>,
     results: Vec<Part>,
     shot: Option<Shot>,
@@ -111,7 +231,7 @@ pub struct Assistant {
     turn_end: Option<(usize, u64)>,
     providers_open: bool,
     draft: Option<Draft>,
-    focus_input: bool,
+    pub(crate) focus_input: bool,
     /// Each AI app: whether it is installed and lists Tequila, and when that
     /// was last looked at. Their settings files are read every few seconds
     /// while the window is open, not every frame.
@@ -119,26 +239,34 @@ pub struct Assistant {
     /// What connecting an app last said.
     apps_message: Option<Result<String, String>>,
     /// When the request being worked on was asked, for the time shown.
-    asked: Option<std::time::Instant>,
-    /// The reply on its way, as last looked at: what the panel shows of it.
-    live: Option<Progress>,
+    pub(crate) asked: Option<std::time::Instant>,
+    /// The reply on its way from Tequila's own loop, as last looked at.
+    pub(crate) live: Option<Progress>,
+    /// When the chat was last written down.
+    saved: Option<std::time::Instant>,
+    /// A picture of the viewport the person asked to attach, on its way.
+    viewport: Option<(PathBuf, std::time::Instant)>,
+    /// What the panel keeps between frames.
+    pub(crate) panel: crate::assistant_panel::State,
 }
 
 impl Assistant {
-    /// Load the connected providers from `path`.
+    /// Load the connected providers from `path`, and find the chats kept
+    /// beside it.
     pub fn load(&mut self, path: PathBuf) {
         let (settings, complaints) = Settings::load(&path);
         self.settings = settings;
+        self.store = path.parent().map(|home| chat::Store::new(home.join("chats")));
         self.settings_path = Some(path);
         for complaint in complaints {
-            self.transcript.push(Entry::Problem(complaint));
+            self.chat.push(Item::Problem(complaint));
         }
     }
 
-    fn save_settings(&mut self) {
+    pub(crate) fn save_settings(&mut self) {
         if let Some(path) = &self.settings_path {
             if let Err(error) = self.settings.save(path) {
-                self.transcript.push(Entry::Problem(error));
+                self.chat.push(Item::Problem(error));
             }
         }
     }
@@ -148,29 +276,294 @@ impl Assistant {
         self.focus_input = self.open;
     }
 
-    fn working(&self) -> bool {
-        self.session.as_ref().is_some_and(Session::busy) || !self.calls.is_empty() || self.shot.is_some() || self.plugin_wait.is_some()
+    /// Who answers: the agent or provider chosen, or the first provider
+    /// connected where nothing has been.
+    pub fn backend(&self) -> Option<Backend> {
+        let chosen = self.settings.active.as_deref().unwrap_or_default();
+        if let Some(kind) = agents::Kind::from_id(chosen) {
+            return Some(Backend::Agent(kind));
+        }
+        self.settings.active().cloned().map(Backend::Provider)
     }
 
-    /// Start a request: called by the application, which knows the undo depth.
-    pub fn ask(&mut self, text: String, depth: usize) {
-        let Some(provider) = self.settings.active().cloned() else {
-            self.transcript.push(Entry::Problem("Connect an AI first: Providers…".into()));
+    /// Choose who answers. The chat goes on: whoever was not there for it
+    /// is told how it went.
+    pub(crate) fn choose(&mut self, backend: &Backend) {
+        if self.working() || self.backend().as_ref() == Some(backend) {
+            return;
+        }
+        self.settings.active = Some(backend.id());
+        self.save_settings();
+        self.session = None;
+        self.end_agent();
+        self.setup = None;
+    }
+
+    /// Choose who answers by name, for a script: `claude`, or a connected
+    /// provider's name or id.
+    pub fn use_named(&mut self, name: &str) -> Result<(), String> {
+        let wanted = name.trim().to_lowercase();
+        let backend = agents::Kind::ALL
+            .into_iter()
+            .find(|kind| kind.name().to_lowercase() == wanted || kind.id() == wanted)
+            .map(Backend::Agent)
+            .or_else(|| self.settings.providers.iter().find(|p| p.id == wanted || p.name.to_lowercase() == wanted).cloned().map(Backend::Provider))
+            .ok_or_else(|| format!("nothing called {name:?} is connected to the Assistant"))?;
+        if self.working() {
+            return Err("the Assistant is still working on the last request; stop it first (stop=true)".into());
+        }
+        self.choose(&backend);
+        Ok(())
+    }
+
+    fn agent_working(&self) -> bool {
+        self.agent.as_ref().is_some_and(|(_, agent)| agent.phase() == acp::Phase::Working)
+    }
+
+    fn working(&self) -> bool {
+        self.session.as_ref().is_some_and(Session::busy)
+            || !self.calls.is_empty()
+            || self.shot.is_some()
+            || self.plugin_wait.is_some()
+            || self.agent_working()
+            // Asked, and the agent still starting.
+            || (self.queued.is_some() && self.setup.is_none())
+    }
+
+    /// The conversation so far, in words, for a backend that was not there
+    /// for it: one chosen part-way, or an agent that no longer has it.
+    fn retold(&self) -> Option<String> {
+        let mut lines = Vec::new();
+        // All but the message being sent now.
+        for item in self.chat.items.iter().take(self.chat.items.len().saturating_sub(1)) {
+            match item {
+                Item::You { text, .. } => lines.push(format!("Person: {text}")),
+                Item::Said(text) => lines.push(format!("Assistant: {text}")),
+                Item::Step(step) if step.status == Status::Done => lines.push(format!("(Assistant did: {})", step.title)),
+                _ => {}
+            }
+        }
+        if lines.is_empty() {
+            return None;
+        }
+        let mut told = lines.join("\n");
+        if told.len() > RETOLD {
+            let mut from = told.len() - RETOLD;
+            while !told.is_char_boundary(from) {
+                from += 1;
+            }
+            told = format!("\u{2026}{}", &told[from..]);
+        }
+        Some(format!("This conversation so far, which you were not part of. The scene may have changed since, so look before you rely on it.\n\n{told}\n\nThe person's new message follows."))
+    }
+
+    /// Start a request: called by the application, which knows what is
+    /// around ([`Around`]).
+    pub fn ask(&mut self, text: String, context: &str, pictures: Vec<Picture>, around: &Around) {
+        if self.working() {
+            return;
+        }
+        let Some(backend) = self.backend() else {
+            self.chat.push(Item::Problem("Connect an AI first: Connections\u{2026}".into()));
             self.providers_open = true;
             return;
         };
+        self.chat.push(Item::You { text: text.clone(), pictures: pictures.clone() });
+        self.chat.backend = backend.id();
+        let sent = if context.is_empty() { text } else { format!("{text}\n\n{context}") };
+        self.turn_start = Some(around.depth);
+        self.turn_end = None;
+        self.asked = Some(std::time::Instant::now());
+        match backend {
+            Backend::Provider(provider) => self.ask_provider(provider, sent, &pictures),
+            Backend::Agent(kind) => {
+                let mut blocks = vec![Block::Text(sent)];
+                blocks.extend(pictures.iter().map(|picture| Block::Picture(picture.png.to_vec())));
+                self.ask_agent(kind, blocks, around);
+            }
+        }
+        self.keep_chat();
+    }
+
+    fn ask_provider(&mut self, provider: Provider, sent: String, pictures: &[Picture]) {
+        self.chat.model = provider.model.clone();
+        let retold = if self.session.is_none() { self.retold() } else { None };
         let session = self.session.get_or_insert_with(|| Session::new(provider.clone()));
         // The conversation is kept in a neutral form, so switching provider
         // mid-conversation just sends it to the other one.
         session.provider = provider;
-        self.transcript.push(Entry::You(text.clone()));
-        match session.ask(&text) {
-            Ok(()) => {
-                self.turn_start = Some(depth);
-                self.turn_end = None;
-                self.asked = Some(std::time::Instant::now());
+        let sent = match retold {
+            Some(retold) => format!("{retold}\n\n{sent}"),
+            None => sent,
+        };
+        let pictures: Vec<String> = pictures.iter().filter_map(|picture| prepare_image(&picture.png)).map(|png| tequila_ai::base64::encode(&png)).collect();
+        if let Err(error) = session.ask_with(&sent, &pictures) {
+            self.chat.push(Item::Problem(error));
+            self.asked = None;
+        }
+    }
+
+    fn ask_agent(&mut self, kind: agents::Kind, blocks: Vec<Block>, around: &Around) {
+        // Nobody signed in: the message waits for that, and goes when the
+        // person has signed in and tried again.
+        if matches!(self.setup, Some(Setup::SignIn { .. })) {
+            self.queued = Some(blocks);
+            self.asked = None;
+            return;
+        }
+        let ready = self.agent.as_ref().is_some_and(|(running, agent)| *running == kind && agent.phase() == acp::Phase::Idle);
+        if ready {
+            self.prompt(blocks);
+            return;
+        }
+        self.queued = Some(blocks);
+        let starting = self.agent.as_ref().is_some_and(|(running, agent)| *running == kind && agent.phase() == acp::Phase::Starting);
+        if !starting && self.setup.is_none() {
+            self.start_agent(kind, around);
+        }
+    }
+
+    fn prompt(&mut self, blocks: Vec<Block>) {
+        let Some((_, agent)) = &mut self.agent else { return };
+        if blocks.iter().any(|b| matches!(b, Block::Picture(_))) && !agent.takes_pictures() {
+            self.chat.push(Item::Note("This assistant does not take pictures: the ones attached were left out.".into()));
+        }
+        if let Err(error) = agent.prompt(&blocks) {
+            self.chat.push(Item::Problem(format!("The message was not sent: {error}.")));
+            self.asked = None;
+        }
+    }
+
+    /// The mark this window's Assistant gives its bridge, made once.
+    fn mark(&mut self) -> String {
+        if self.mark.is_empty() {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+            self.mark = format!("{nanos:x}-{:x}", std::process::id());
+        }
+        self.mark.clone()
+    }
+
+    /// Whether a request that came in over the scripting channel is this
+    /// window's Assistant's.
+    pub fn is_its(&self, agent: &str) -> bool {
+        !agent.is_empty() && agent == self.mark
+    }
+
+    /// The name the console gives the Assistant's requests.
+    pub fn peer(&self) -> String {
+        format!("assistant \u{b7} {}", self.backend().map(|b| b.name()).unwrap_or_default())
+    }
+
+    /// Start the agent, if what it needs is here; say what is missing if not.
+    pub(crate) fn start_agent(&mut self, kind: agents::Kind, around: &Around) {
+        self.end_agent();
+        self.account = None;
+        self.rested = false;
+        let found = match agents::find_agent(kind) {
+            Ok(found) => found,
+            Err(Missing::Adapter { node }) => {
+                self.setup = Some(Setup::Missing { node });
+                return;
             }
-            Err(error) => self.transcript.push(Entry::Problem(error)),
+        };
+        let (Some(program), Some(channel)) = (&around.program, &around.channel) else {
+            let what = if around.program.is_none() {
+                "Tequila's command-line program is not beside the application"
+            } else {
+                "the scripting channel is not open"
+            };
+            self.setup = Some(Setup::Failed(format!("{} cannot reach the scene from here: {what}.", kind.name())));
+            return;
+        };
+        // An unsaved project has no folder of its own: the agent is given
+        // an empty one of Tequila's, and has no files to look at.
+        let folder = around.folder.clone().filter(|f| f.is_dir()).unwrap_or_else(|| {
+            let folder = tequila_format::library::home_directory().join("assistant-workspace");
+            let _ = std::fs::create_dir_all(&folder);
+            folder
+        });
+        let mut args = found.args.clone();
+        let mut env = found.env.clone();
+        if kind == agents::Kind::Claude {
+            // An API key the person has connected for Claude is what pays,
+            // where there is one.
+            let key = self
+                .settings
+                .providers
+                .iter()
+                .filter(|p| p.kind == Kind::Anthropic && tequila_ai::provider::host(&p.base_url).as_deref() == Some("api.anthropic.com"))
+                .find_map(|p| p.key.resolve().ok().flatten());
+            if let Some(key) = key {
+                env.push(("ANTHROPIC_API_KEY".into(), key));
+            }
+            // A Claude subscription is not used unless the person has said
+            // so: see `Settings::claude_subscription`.
+            if !self.settings.claude_subscription {
+                args.push("--hide-claude-auth".into());
+            }
+        }
+        // The earlier conversation, where this chat had one with this agent
+        // in this folder.
+        let resume = self.chat.session.clone().filter(|_| self.chat.backend == kind.id() && self.chat.folder.as_deref() == Some(folder.as_path()));
+        let launch = acp::Launch {
+            program: found.program.clone(),
+            args,
+            env,
+            folder: folder.clone(),
+            servers: vec![acp::McpServer {
+                name: TOOLS.into(),
+                command: program.clone(),
+                args: vec!["--mcp".into(), "--assistant".into(), self.mark(), "--discovery".into(), channel.to_string_lossy().into_owned()],
+                env: Vec::new(),
+            }],
+            resume,
+            instructions: agents::INSTRUCTIONS.into(),
+            meta: agents::options(kind),
+            version: env!("CARGO_PKG_VERSION").into(),
+        };
+        let window = self.window.clone();
+        let wake = move || {
+            if let Some(window) = &window {
+                window.request_repaint();
+            }
+        };
+        match Agent::start(launch, wake) {
+            Ok(agent) => {
+                self.agent = Some((kind, agent));
+                self.agent_found = Some(found);
+                self.agent_folder = folder;
+                self.setup = None;
+            }
+            Err(error) => self.setup = Some(Setup::Failed(error)),
+        }
+    }
+
+    /// Let the agent go: its program is ended, and anything held for the
+    /// person's answer is refused.
+    fn end_agent(&mut self) {
+        self.agent = None;
+        self.refuse_held("The assistant was closed before the person answered.");
+        self.waiting.clear();
+    }
+
+    /// Install the agent's program, when the person asks.
+    pub(crate) fn install(&mut self, kind: agents::Kind) {
+        self.setup = Some(Setup::Installing(agents::install(kind)));
+    }
+
+    /// Open one of the agent's own sign-ins, in a terminal.
+    pub(crate) fn sign_in(&mut self, way: &acp::SignIn) {
+        let Some(found) = &self.agent_found else { return };
+        if let Err(error) = agents::sign_in(found, way) {
+            self.setup = Some(Setup::Failed(error));
+        }
+    }
+
+    /// Try the agent again: after installing it, or signing in.
+    pub(crate) fn retry(&mut self, around: &Around) {
+        self.setup = None;
+        if let Some(Backend::Agent(kind)) = self.backend() {
+            self.start_agent(kind, around);
         }
     }
 
@@ -178,13 +571,21 @@ impl Assistant {
         if let Some(session) = &mut self.session {
             session.cancel();
         }
+        if let Some((_, agent)) = &mut self.agent {
+            agent.cancel();
+        }
+        self.refuse_held("The person stopped the request.");
+        self.waiting.clear();
+        self.queued = None;
         self.calls.clear();
         self.results.clear();
         self.shot = None;
         self.plugin_wait = None;
         self.live = None;
         self.asked = None;
-        self.transcript.push(Entry::Note("Stopped.".into()));
+        self.chat.settle();
+        self.chat.push(Item::Note("Stopped.".into()));
+        self.keep_chat();
     }
 
     /// Whether a request is being worked on: waiting for the model, or
@@ -193,13 +594,37 @@ impl Assistant {
         self.working()
     }
 
+    /// Whether the person has a question to answer before it goes on.
+    pub fn is_asking(&self) -> bool {
+        !self.waiting.is_empty()
+    }
+
     /// What it is doing, in a few words, and the same as a word for a script.
     fn doing(&self) -> (String, &'static str) {
+        if self.is_asking() {
+            return ("Waiting for your answer".into(), "asking");
+        }
         if self.shot.is_some() {
             return ("Looking at the scene".into(), "looking");
         }
         if self.plugin_wait.is_some() {
             return ("Running the plugin".into(), "tools");
+        }
+        if let Some((kind, agent)) = &self.agent {
+            if agent.phase() == acp::Phase::Starting {
+                return (format!("Starting {}", kind.name()), "loading");
+            }
+            if agent.phase() == acp::Phase::Working {
+                return match self.chat.items.last() {
+                    Some(Item::Thought { .. }) if self.chat.is_thinking() => ("Thinking".into(), "thinking"),
+                    Some(Item::Said(_)) => ("Writing".into(), "writing"),
+                    Some(Item::Step(step)) if step.status == Status::Running => (step.title.clone(), "calling"),
+                    _ => ("Working".into(), "reading"),
+                };
+            }
+        }
+        if self.queued.is_some() {
+            return ("Starting".into(), "loading");
         }
         let waiting = self.session.as_ref().is_some_and(Session::busy);
         match (&self.live, waiting) {
@@ -217,7 +642,7 @@ impl Assistant {
 
     /// The line under the conversation while it works: what it is doing,
     /// how much it has written, which step.
-    fn status_line(&self) -> String {
+    pub(crate) fn status_line(&self) -> String {
         let (doing, phase) = self.doing();
         let mut line = doing;
         if let Some(live) = &self.live {
@@ -237,9 +662,36 @@ impl Assistant {
     pub fn status(&self) -> tequila_format::json::Value {
         use tequila_format::json::Value;
         let mut out = tequila_format::json_write::Object::new();
-        out.set("open", self.open).set("working", self.working());
-        if let Some(provider) = self.settings.active() {
-            out.set("provider", provider.name.clone()).set("model", provider.model.clone());
+        out.set("open", self.open).set("working", self.working()).set("chat", self.chat.id.clone()).set("title", self.chat.title.clone());
+        match self.backend() {
+            Some(Backend::Provider(provider)) => {
+                out.set("provider", provider.name.clone()).set("model", provider.model.clone());
+            }
+            Some(Backend::Agent(kind)) => {
+                out.set("provider", kind.name());
+                if let Some(model) = self.agent.as_ref().and_then(|(_, agent)| agent.setting("model")) {
+                    out.set("model", model.current.clone());
+                }
+            }
+            None => {}
+        }
+        if let Some((kind, label)) = &self.account {
+            out.set("account", format!("{kind} {label}").trim().to_string());
+        }
+        if let Some((_, agent)) = &self.agent {
+            let settings: Vec<Value> = agent.settings().iter().map(|setting| Value::String(format!("{}={}", setting.category, setting.current))).collect();
+            out.set("settings", Value::Array(settings));
+        }
+        if let Some(setup) = &self.setup {
+            out.set(
+                "setup",
+                match setup {
+                    Setup::Missing { .. } => "missing",
+                    Setup::Installing(_) => "installing",
+                    Setup::SignIn { .. } => "sign in",
+                    Setup::Failed(_) => "failed",
+                },
+            );
         }
         if self.working() {
             let (doing, phase) = self.doing();
@@ -250,24 +702,39 @@ impl Assistant {
                 out.set("tokens", live.tokens as f64);
             }
         }
-        let entries: Vec<Value> = self
-            .transcript
-            .iter()
-            .map(|entry| {
-                let (kind, text) = match entry {
-                    Entry::You(text) => ("you", text.clone()),
-                    Entry::Said(text) => ("said", text.clone()),
-                    Entry::Thought { text, .. } => ("thought", text.clone()),
-                    Entry::Step { text, ok, .. } => (if *ok { "step" } else { "failed step" }, text.clone()),
-                    Entry::Picture(_) => ("picture", String::new()),
-                    Entry::Problem(text) => ("problem", text.clone()),
-                    Entry::Note(text) => ("note", text.clone()),
-                };
-                let mut item = tequila_format::json_write::Object::new();
-                item.set("kind", kind).set("text", text);
-                item.build()
-            })
-            .collect();
+        let mut entries = Vec::new();
+        let entry = |kind: &str, text: &str| {
+            let mut item = tequila_format::json_write::Object::new();
+            item.set("kind", kind).set("text", text);
+            item
+        };
+        for item in &self.chat.items {
+            match item {
+                Item::You { text, pictures } => {
+                    entries.push(entry("you", text).build());
+                    entries.extend(pictures.iter().map(|_| entry("picture", "").build()));
+                }
+                Item::Said(text) => entries.push(entry("said", text).build()),
+                Item::Thought { text, .. } => entries.push(entry("thought", text).build()),
+                Item::Step(step) => {
+                    let kind = match step.status {
+                        Status::Running => "running step",
+                        Status::Done => "step",
+                        Status::Failed => "failed step",
+                    };
+                    entries.push(entry(kind, &step.title).build());
+                    entries.extend(step.pictures.iter().map(|_| entry("picture", "").build()));
+                }
+                Item::Asked(asked) => {
+                    let mut item = entry("asked", &asked.title);
+                    item.set("id", asked.id).set("detail", asked.detail.clone());
+                    item.set_some("answer", asked.answer);
+                    entries.push(item.build());
+                }
+                Item::Problem(text) => entries.push(entry("problem", text).build()),
+                Item::Note(text) => entries.push(entry("note", text).build()),
+            }
+        }
         out.set("transcript", Value::Array(entries));
         out.build()
     }
@@ -303,12 +770,357 @@ impl Assistant {
             app.camera.adopt(app.project.camera());
         }
         self.turn_end = None;
-        self.transcript.push(Entry::Note("Took back everything that request changed.".into()));
+        self.chat.push(Item::Note("Took back everything that request changed.".into()));
+    }
+
+    /// Take the viewport's picture as it is now, for the message being
+    /// written.
+    pub fn send_viewport(&mut self, app: &mut TequilaApp) {
+        if app.pending_screenshot.is_some() || self.viewport.is_some() {
+            return;
+        }
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("tequila-assistant-viewport-{}-{nanos}.png", std::process::id()));
+        app.pending_screenshot = Some(path.clone());
+        app.screenshot_viewport = true;
+        self.viewport = Some((path, std::time::Instant::now()));
+    }
+
+    /// Attach the viewport's picture once the window has written it.
+    fn collect_viewport(&mut self) {
+        let Some((path, asked)) = &self.viewport else { return };
+        match std::fs::read(path).ok().filter(|bytes| bytes.ends_with(b"IEND\xaeB`\x82")) {
+            Some(bytes) => {
+                let _ = std::fs::remove_file(path);
+                self.viewport = None;
+                self.attach(&bytes);
+            }
+            None if asked.elapsed() > std::time::Duration::from_secs(10) => self.viewport = None,
+            None => {}
+        }
+    }
+
+    // ---- chats -----------------------------------------------------------------------
+
+    /// Write the open chat down, if it has changed.
+    fn keep_chat(&mut self) {
+        if !self.chat.unsaved {
+            return;
+        }
+        if let Some(store) = &self.store {
+            if let Err(error) = store.save(&mut self.chat) {
+                // Said once, not on every frame it fails.
+                self.chat.items.push(Item::Problem(error));
+            }
+        }
+        self.chat.unsaved = false;
+        self.saved = Some(std::time::Instant::now());
+    }
+
+    /// Put away what belongs to the open chat, before another takes its
+    /// place.
+    fn close_chat(&mut self) {
+        if self.working() {
+            self.stop();
+        }
+        self.keep_chat();
+        self.session = None;
+        self.end_agent();
+        self.queued = None;
+        self.turn_start = None;
+        self.turn_end = None;
+        self.asked = None;
+        self.live = None;
+        if matches!(self.setup, Some(Setup::Failed(_))) {
+            self.setup = None;
+        }
+    }
+
+    pub fn new_chat(&mut self) {
+        self.close_chat();
+        self.chat = Chat::new();
+        self.focus_input = true;
+    }
+
+    /// Open a past chat, to read and to carry on. It goes on with whoever
+    /// answered it, where they are still connected.
+    pub fn open_chat(&mut self, id: &str) {
+        let Some(store) = self.store.clone() else { return };
+        if id == self.chat.id {
+            return;
+        }
+        match store.load(id) {
+            Ok(chat) => {
+                self.close_chat();
+                let was = chat.backend.clone();
+                let known = agents::Kind::from_id(&was).is_some() || self.settings.providers.iter().any(|p| p.id == was);
+                if known && self.settings.active.as_deref() != Some(was.as_str()) {
+                    self.settings.active = Some(was);
+                    self.save_settings();
+                    self.setup = None;
+                }
+                self.chat = chat;
+                self.focus_input = true;
+            }
+            Err(error) => self.chat.push(Item::Problem(error)),
+        }
+    }
+
+    pub fn delete_chat(&mut self, id: &str) {
+        if id == self.chat.id {
+            self.close_chat();
+            self.chat = Chat::new();
+        }
+        if let Some(store) = &self.store {
+            let _ = store.delete(id);
+        }
+    }
+
+    // ---- questions the person answers ---------------------------------------------------
+
+    fn question(&mut self, title: String, detail: String, waiting: Waiting) -> u64 {
+        self.next_question += 1;
+        let id = self.next_question;
+        self.waiting.insert(id, waiting);
+        self.chat.push(Item::Asked(Asked { id, title, detail, answer: None }));
+        id
+    }
+
+    /// Keep a request of the Assistant's own until the person has said
+    /// whether it may go ahead.
+    pub fn hold(&mut self, request: Request, responder: Responder, question: Question) {
+        // A file in the project's folder is named as it is known there.
+        let folder = format!("{}{}", self.agent_folder.display(), std::path::MAIN_SEPARATOR);
+        let detail = if folder.len() > 1 { question.detail.replace(&folder, "") } else { question.detail };
+        let question = self.question(question.title, detail, Waiting::Held);
+        self.held.push(Held { question, request, responder });
+        self.open = true;
+    }
+
+    fn refuse_held(&mut self, why: &str) {
+        for held in std::mem::take(&mut self.held) {
+            held.responder.answer(&Reply::Failed(why.to_string()));
+        }
+    }
+
+    /// The person's answer to a question in the chat: the agent is told, or
+    /// the request that was held is carried out - or refused, in words the
+    /// agent can pass on.
+    pub fn answer(&mut self, app: &mut TequilaApp, question: u64, allow: bool) {
+        if !self.chat.answer(question, allow) {
+            return;
+        }
+        let ctx = self.window.clone().unwrap_or_default();
+        match self.waiting.remove(&question) {
+            Some(Waiting::Agent(permission)) => {
+                if let Some((_, agent)) = &mut self.agent {
+                    agent.permit(permission, allow);
+                }
+            }
+            Some(Waiting::Held) => {
+                let Some(at) = self.held.iter().position(|held| held.question == question) else { return };
+                let held = self.held.remove(at);
+                if !allow {
+                    let reply = Reply::Failed("The person said no to this. Do not try it another way; tell them it was not done.".into());
+                    crate::channel::log_reply(app, &held.request.peer, held.request.operation.summary(), &[], &reply);
+                    held.responder.answer(&reply);
+                    return;
+                }
+                match &held.request.operation {
+                    Operation::Import { path, parent, .. } => crate::channel::begin_import(app, &held.request, path, *parent, held.responder, &ctx),
+                    _ => held.responder.answer(&crate::channel::handle(app, &held.request)),
+                }
+                self.touched(app.project.bus());
+            }
+            None => {}
+        }
+    }
+
+    /// One of the Assistant's requests has been carried out: what it
+    /// changed is the request's, for "Undo request" to take back.
+    pub fn touched(&mut self, bus: &tequila_scene::CommandBus) {
+        if self.turn_start.is_some_and(|start| bus.depth() > start) {
+            self.turn_end = Some((bus.depth(), bus.changes()));
+        }
+    }
+
+    // ---- moving along ------------------------------------------------------------------
+
+    /// What an agent has to say, taken into the chat.
+    pub(crate) fn agent_events(&mut self, app: &mut TequilaApp) {
+        let Some((kind, agent)) = &mut self.agent else { return };
+        let kind = *kind;
+        let events = agent.poll();
+        for event in events {
+            match event {
+                acp::Event::Ready { resumed } => {
+                    let Some((_, agent)) = &mut self.agent else { continue };
+                    self.chat.session = agent.session().map(str::to_string);
+                    self.chat.folder = Some(self.agent_folder.clone());
+                    // What Tequila chooses for the agent - that it always
+                    // asks - and the model and thinking level the person
+                    // chose last.
+                    let pinned = agents::pinned(kind);
+                    let wanted: Vec<(String, String)> = agent
+                        .settings()
+                        .iter()
+                        .filter_map(|setting| {
+                            let chosen = match pinned.iter().find(|(category, _)| *category == setting.category) {
+                                Some((_, value)) => value.to_string(),
+                                None => self.settings.choices.get(&format!("{}/{}", kind.id(), setting.category))?.clone(),
+                            };
+                            (chosen != setting.current && setting.choices.iter().any(|c| c.value == chosen)).then(|| (setting.id.clone(), chosen))
+                        })
+                        .collect();
+                    for (setting, value) in wanted {
+                        agent.set(&setting, &value);
+                    }
+                    // A message waiting goes now - unless nobody is signed
+                    // in, when it waits for that.
+                    let signed_out = matches!(self.setup, Some(Setup::SignIn { .. }));
+                    let waiting = if signed_out { None } else { self.queued.take() };
+                    if let Some(mut blocks) = waiting {
+                        if !resumed {
+                            if let Some(retold) = self.retold() {
+                                blocks.insert(0, Block::Text(retold));
+                            }
+                        }
+                        self.prompt(blocks);
+                    }
+                }
+                acp::Event::SignIn(ways) => {
+                    let subscription = self.agent.as_ref().is_some_and(|(_, agent)| agent.signed_out_because == "claude_subscription_not_supported");
+                    self.setup = Some(Setup::SignIn { ways, subscription });
+                    self.asked = None;
+                }
+                acp::Event::Account { kind, label } => {
+                    // Nobody signed in: said now, with the ways to, rather
+                    // than when the first message fails.
+                    if kind == "none" && self.setup.is_none() {
+                        let ways = self.agent.as_ref().map(|(_, agent)| agent.sign_ins().to_vec()).unwrap_or_default();
+                        self.setup = Some(Setup::SignIn { ways, subscription: false });
+                    }
+                    self.account = Some((kind, label));
+                }
+                acp::Event::Said(text) => self.chat.say(&text),
+                acp::Event::Thought(text) => self.chat.think(&text),
+                acp::Event::Tool(tool) => self.chat.step(step_news(&tool)),
+                acp::Event::Permission(permission) => {
+                    self.chat.step(step_news(&permission.tool));
+                    match acp::judge(&permission.tool, &self.agent_folder, TOOLS) {
+                        acp::Verdict::Allow => {
+                            if let Some((_, agent)) = &mut self.agent {
+                                agent.permit(permission.id, true);
+                            }
+                        }
+                        acp::Verdict::Deny(why) => {
+                            if let Some((_, agent)) = &mut self.agent {
+                                agent.permit(permission.id, false);
+                            }
+                            self.chat.step(StepNews { id: permission.tool.id.clone(), status: Some(Status::Failed), detail: Some(why), ..StepNews::default() });
+                        }
+                        acp::Verdict::Ask { title, detail } => {
+                            self.question(title, detail, Waiting::Agent(permission.id));
+                        }
+                    }
+                }
+                acp::Event::Plan(_) | acp::Event::Settings => {}
+                acp::Event::Title(title) => {
+                    self.chat.title = title;
+                    self.chat.unsaved = true;
+                }
+                acp::Event::Notice(text) => self.chat.push(Item::Note(text)),
+                acp::Event::Finished(stop) => {
+                    self.refuse_held("The request ended before the person answered.");
+                    self.waiting.clear();
+                    self.chat.settle();
+                    match stop {
+                        acp::Stop::Done | acp::Stop::Stopped => {}
+                        acp::Stop::MaxTokens => self.chat.push(Item::Note("It ran out of room for its reply. Ask again to carry on.".into())),
+                        acp::Stop::MaxSteps => self.chat.push(Item::Note("It stopped after as many steps as one request may take. Ask again to let it continue.".into())),
+                        acp::Stop::Refused => self.chat.push(Item::Note("It declined this request.".into())),
+                        acp::Stop::Other(why) => self.chat.push(Item::Note(format!("It stopped: {why}."))),
+                    }
+                    self.finish_turn(app);
+                    self.asked = None;
+                    self.keep_chat();
+                }
+                acp::Event::Failed(error) => {
+                    self.refuse_held("The request failed before the person answered.");
+                    self.waiting.clear();
+                    self.chat.settle();
+                    if self.agent.as_ref().is_some_and(|(_, agent)| agent.phase() == acp::Phase::Gone) {
+                        // It could not be started at all: said on the card
+                        // with Try again, not tried again every frame.
+                        self.agent = None;
+                        self.setup = Some(Setup::Failed(error));
+                    } else {
+                        self.chat.push(Item::Problem(error));
+                        self.chat.push(Item::Note("The conversation is kept: ask again to carry on.".into()));
+                    }
+                    self.queued = None;
+                    self.asked = None;
+                    self.keep_chat();
+                }
+                acp::Event::Exited(said) => {
+                    self.refuse_held("The assistant's program stopped before the person answered.");
+                    self.waiting.clear();
+                    let was_working = self.asked.is_some() || self.queued.is_some();
+                    let opened = self.agent.as_ref().is_some_and(|(_, agent)| agent.session().is_some());
+                    self.chat.settle();
+                    // Left quietly while idle, it is started again when next
+                    // asked; mid-request, the person is told; and one that
+                    // ended before it had opened a conversation would only
+                    // do so again, so that is said on the card instead.
+                    if !opened {
+                        let said = said.trim();
+                        self.setup = Some(Setup::Failed(if said.is_empty() {
+                            format!("{}'s program stopped as it started.", kind.name())
+                        } else {
+                            format!("{}'s program stopped as it started: {said}", kind.name())
+                        }));
+                    } else if was_working {
+                        let said = said.trim();
+                        self.chat.push(Item::Problem(if said.is_empty() {
+                            format!("{}'s program stopped.", kind.name())
+                        } else {
+                            format!("{}'s program stopped: {said}", kind.name())
+                        }));
+                        self.chat.push(Item::Note("The conversation is kept: ask again to carry on.".into()));
+                    }
+                    self.agent = None;
+                    self.rested = opened;
+                    // A message that never reached it waits for Try again.
+                    if opened {
+                        self.queued = None;
+                    }
+                    self.asked = None;
+                    self.keep_chat();
+                }
+            }
+        }
+    }
+
+    /// How an install the person asked for went.
+    fn installing(&mut self, around: &Around) {
+        let Some(Setup::Installing(receiver)) = &self.setup else { return };
+        match receiver.try_recv() {
+            Ok(Ok(_)) => self.retry(around),
+            Ok(Err(error)) => self.setup = Some(Setup::Failed(error)),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.setup = Some(Setup::Failed("The install stopped before it finished.".into())),
+        }
     }
 
     /// Move the conversation along: collect replies, carry out tool calls,
     /// send results. Called every frame.
     pub fn pump(&mut self, app: &mut TequilaApp, ctx: &egui::Context) {
+        self.window = Some(ctx.clone());
+        self.agent_events(app);
+        if matches!(self.setup, Some(Setup::Installing(_))) {
+            self.installing(&app.around());
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
         // What the request has come to, and what it is doing; then the
         // session is let go of, for the rest to touch the panel.
         let (polled, live, notes) = match &mut self.session {
@@ -327,17 +1139,17 @@ impl Assistant {
                     .map(|l| if l.thought_for.is_zero() { l.since.elapsed() } else { l.thought_for }.as_secs_f32())
                     .unwrap_or(0.0);
                 if !turn.reasoning.trim().is_empty() {
-                    self.transcript.push(Entry::Thought { text: turn.reasoning.trim().to_string(), seconds });
+                    self.chat.push(Item::Thought { text: turn.reasoning.trim().to_string(), seconds });
                 }
                 let said = !turn.text.is_empty();
                 for text in turn.text {
-                    self.transcript.push(Entry::Said(text));
+                    self.chat.push(Item::Said(text));
                 }
                 self.calls.extend(turn.calls);
                 if self.calls.is_empty() {
                     if !said {
-                        self.transcript.push(Entry::Note(
-                            "It finished without an answer: it may have run out of room for its reply (Providers…, Edit, Advanced: Longest reply). Ask again to carry on.".into(),
+                        self.chat.push(Item::Note(
+                            "It finished without an answer: it may have run out of room for its reply (Connections\u{2026}, Edit, Advanced: Longest reply). Ask again to carry on.".into(),
                         ));
                     }
                     self.finish_turn(app);
@@ -348,19 +1160,23 @@ impl Assistant {
                 self.live = None;
                 if error != tequila_ai::http::STOPPED {
                     let again = error.to_lowercase().contains("ask again");
-                    self.transcript.push(Entry::Problem(error));
+                    self.chat.push(Item::Problem(error));
                     if !again {
-                        self.transcript.push(Entry::Note("The conversation is kept: ask again to carry on.".into()));
+                        self.chat.push(Item::Note("The conversation is kept: ask again to carry on.".into()));
                     }
                 }
             }
             None => self.live = live,
         }
         for note in notes {
-            self.transcript.push(Entry::Note(note));
+            self.chat.push(Item::Note(note));
         }
 
-        self.collect_screenshot(ctx);
+        self.collect_screenshot();
+        self.collect_viewport();
+        if self.viewport.is_some() {
+            ctx.request_repaint();
+        }
         self.collect_plugin_run(app);
         while self.shot.is_none() && self.plugin_wait.is_none() {
             let Some(call) = self.calls.pop_front() else { break };
@@ -375,7 +1191,7 @@ impl Assistant {
             let results = std::mem::take(&mut self.results);
             if let Some(session) = &mut self.session {
                 if let Err(error) = session.answer(results) {
-                    self.transcript.push(Entry::Problem(error));
+                    self.chat.push(Item::Problem(error));
                 }
             }
         }
@@ -383,10 +1199,21 @@ impl Assistant {
             // Replies arrive on another thread; keep looking for them even
             // when nobody is moving the mouse.
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            // Written down now and then while it works, so a crash loses
+            // seconds of a long request, not all of it.
+            if self.saved.is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(5)) {
+                self.keep_chat();
+            }
         } else {
             self.asked = None;
             self.live = None;
+            self.keep_chat();
         }
+    }
+
+    /// A tool call of Tequila's own loop, as a step in the chat.
+    fn stepped(&mut self, call: &Call, label: String, status: Status, detail: String) {
+        self.chat.step(StepNews { id: call.id.clone(), title: Some(label), status: Some(status), detail: Some(detail), ..StepNews::default() });
     }
 
     fn finish_turn(&mut self, app: &TequilaApp) {
@@ -421,7 +1248,7 @@ impl Assistant {
                 ));
                 app.pending_screenshot = Some(path.clone());
                 app.screenshot_viewport = viewport;
-                self.transcript.push(Entry::Step { text: label, ok: true, detail: String::new() });
+                self.stepped(&call, label, Status::Running, String::new());
                 self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: "The screenshot, as the application shows it now.".into() });
             }
             Ok(tools::Plan::Material { json, picture }) => {
@@ -473,7 +1300,7 @@ impl Assistant {
                 if self.turn_start.is_some_and(|start| depth > start) {
                     self.turn_end = Some((depth, app.project.bus().changes()));
                 }
-                self.transcript.push(Entry::Step { text: label, ok: true, detail: String::new() });
+                self.stepped(&call, label, if shown { Status::Running } else { Status::Done }, String::new());
                 if shown {
                     self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: answer });
                 } else {
@@ -500,7 +1327,7 @@ impl Assistant {
                         self.result(call, tools::describe(&tools::Shape::Raw, &value), None, false, label)
                     }
                     _ => {
-                        self.transcript.push(Entry::Step { text: label, ok: true, detail: String::new() });
+                        self.stepped(&call, label, Status::Running, String::new());
                         self.plugin_wait = Some(PluginWait { call, plugin, command, before, asked: std::time::Instant::now() });
                     }
                 }
@@ -533,7 +1360,7 @@ impl Assistant {
     fn result(&mut self, call: Call, text: String, image: Option<String>, is_error: bool, label: String) {
         let detail = if is_error { text.clone() } else { String::new() };
         if image.is_none() {
-            self.transcript.push(Entry::Step { text: label, ok: !is_error, detail });
+            self.stepped(&call, label, if is_error { Status::Failed } else { Status::Done }, detail);
         }
         self.results.push(Part::Result { id: call.id, name: call.name, text, image, is_error });
     }
@@ -563,11 +1390,12 @@ impl Assistant {
             out.set("note", if stopped { "the plugin is not running; tequila_plugin_list says why" } else { "still running; tequila_plugin_log shows more later" });
         }
         let text = tequila_format::json_write::to_string(&out.build());
+        self.chat.step(StepNews { id: wait.call.id.clone(), status: Some(Status::Done), ..StepNews::default() });
         self.results.push(Part::Result { id: wait.call.id, name: wait.call.name, text, image: None, is_error: false });
     }
 
     /// Hand a finished screenshot to the model, and show it here.
-    fn collect_screenshot(&mut self, ctx: &egui::Context) {
+    fn collect_screenshot(&mut self) {
         let Some(shot) = &self.shot else { return };
         let ready = std::fs::read(&shot.path).ok().filter(|bytes| bytes.ends_with(b"IEND\xaeB`\x82"));
         let Some(bytes) = ready else {
@@ -580,199 +1408,31 @@ impl Assistant {
         let shot = self.shot.take().expect("checked above");
         let _ = std::fs::remove_file(&shot.path);
         match prepare_image(&bytes) {
-            Some((png, image)) => {
-                let texture = ctx.load_texture(format!("assistant-shot-{}", self.transcript.len()), image, egui::TextureOptions::LINEAR);
-                self.transcript.push(Entry::Picture(texture));
-                self.results.push(Part::Result { id: shot.call.id, name: shot.call.name, text: shot.caption, image: Some(png), is_error: false });
+            Some(png) => {
+                let sent = tequila_ai::base64::encode(&png);
+                self.chat.step(StepNews { id: shot.call.id.clone(), status: Some(Status::Done), pictures: vec![Picture::new(png)], ..StepNews::default() });
+                self.results.push(Part::Result { id: shot.call.id, name: shot.call.name, text: shot.caption, image: Some(sent), is_error: false });
             }
             None => self.result(shot.call, "the screenshot could not be read".into(), None, true, "screenshot".into()),
         }
     }
 
-    // ---- the panel ---------------------------------------------------------------
-
-    pub fn show(&mut self, ui: &mut egui::Ui, can_undo_turn: bool) -> Action {
-        let mut action = Action::None;
-
-        egui::TopBottomPanel::top("assistant-header").show_inside(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Assistant").strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Providers…").on_hover_text("Connect OpenAI, Claude, Gemini, a local model or your company's AI").clicked() {
-                        self.providers_open = true;
-                    }
-                    if ui.small_button("New chat").on_hover_text("Start a fresh conversation").clicked() && !self.working() {
-                        self.session = None;
-                        self.transcript.clear();
-                        self.turn_start = None;
-                        self.turn_end = None;
-                    }
-                });
-            });
-            if !self.settings.providers.is_empty() {
-                let current = self.settings.active().map(|p| format!("{} · {}", p.name, p.model)).unwrap_or_else(|| "Choose an AI".into());
-                egui::ComboBox::from_id_salt("assistant-provider")
-                    .selected_text(current)
-                    .width(ui.available_width())
-                    .show_ui(ui, |ui| {
-                        let mut chosen = None;
-                        for provider in &self.settings.providers {
-                            let active = self.settings.active.as_deref() == Some(provider.id.as_str());
-                            if ui.selectable_label(active, format!("{} · {}", provider.name, provider.model)).clicked() {
-                                chosen = Some(provider.id.clone());
-                            }
-                        }
-                        if let Some(id) = chosen {
-                            self.settings.active = Some(id);
-                            self.save_settings();
-                        }
-                    });
-            }
-            ui.add_space(4.0);
-        });
-
-        egui::TopBottomPanel::bottom("assistant-prompt").show_inside(ui, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // While it works, how long it has been at it; after, the
-                    // way to take it back.
-                    match self.asked.filter(|_| self.working()) {
-                        Some(asked) => {
-                            ui.label(egui::RichText::new(clock(asked.elapsed())).monospace().color(crate::theme::dim()))
-                                .on_hover_text("How long it has been working on this request");
-                        }
-                        None => {
-                            if ui
-                                .add_enabled(can_undo_turn, egui::Button::new("Undo request").small())
-                                .on_hover_text("Take back everything the last request changed")
-                                .clicked()
-                            {
-                                action = Action::UndoTurn;
-                            }
-                        }
-                    }
-                    // What it is doing, in the room left.
-                    if self.working() {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.spinner();
-                            ui.add(egui::Label::new(egui::RichText::new(self.status_line()).color(crate::theme::dim())).truncate());
-                        });
-                    }
-                });
-            });
-            let id = ui.make_persistent_id("assistant-input");
-            // Enter sends; Shift+Enter is a new line.
-            let enter = ui.memory(|m| m.has_focus(id))
-                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-            let response = ui.add(
-                egui::TextEdit::multiline(&mut self.input)
-                    .id(id)
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Ask for anything — \"make the strap black velvet and light it like a studio shot\""),
-            );
-            if std::mem::take(&mut self.focus_input) {
-                response.request_focus();
-            }
-            ui.horizontal(|ui| {
-                if self.working() {
-                    if ui.button("Stop").clicked() {
-                        action = Action::Stop;
-                    }
-                } else {
-                    let send = ui.add_enabled(!self.input.trim().is_empty(), egui::Button::new(egui::RichText::new("Send").strong()));
-                    if (send.clicked() || enter) && !self.input.trim().is_empty() {
-                        action = Action::Ask(std::mem::take(&mut self.input).trim().to_string());
-                    }
-                }
-                ui.label(egui::RichText::new("Enter to send · Shift+Enter for a new line").small().color(crate::theme::dim()));
-            });
-            ui.add_space(4.0);
-        });
-
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-                if self.settings.providers.is_empty() && self.transcript.is_empty() {
-                    ui.add_space(12.0);
-                    ui.label("Describe what you want, and an AI sets it up in the scene: materials, textures, lighting, camera.");
-                    ui.add_space(6.0);
-                    ui.label(egui::RichText::new("It works with Claude, OpenAI, a model running on this computer (Ollama), or your company's own AI.").color(crate::theme::dim()));
-                    ui.add_space(8.0);
-                    if ui.button("Connect an AI…").clicked() {
-                        self.providers_open = true;
-                    }
-                    return;
-                }
-                for (index, entry) in self.transcript.iter().enumerate() {
-                    match entry {
-                        Entry::You(text) => {
-                            ui.add_space(6.0);
-                            egui::Frame::none().fill(crate::theme::p().card).rounding(8.0).inner_margin(8.0).show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(text);
-                            });
-                        }
-                        Entry::Said(text) => {
-                            ui.add_space(4.0);
-                            ui.add(egui::Label::new(text.as_str()).wrap());
-                        }
-                        Entry::Thought { text, seconds } => {
-                            ui.add_space(4.0);
-                            let title = egui::RichText::new(format!("Thought for {}", spoken(*seconds))).small().color(crate::theme::dim());
-                            egui::CollapsingHeader::new(title).id_salt(("assistant-thought", index)).default_open(false).show(ui, |ui| {
-                                reasoning(ui, text);
-                            });
-                        }
-                        Entry::Step { text, ok, detail } => {
-                            let colour = if *ok { crate::theme::dim() } else { crate::theme::p().danger };
-                            let mark = if *ok { "·" } else { "×" };
-                            let label = ui.label(egui::RichText::new(format!("{mark} {text}")).small().monospace().color(colour));
-                            if !detail.is_empty() {
-                                label.on_hover_text(detail);
-                            }
-                        }
-                        Entry::Picture(texture) => {
-                            let size = texture.size_vec2();
-                            let width = ui.available_width().min(size.x).min(320.0);
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(width, width * size.y / size.x.max(1.0))).rounding(4.0));
-                        }
-                        Entry::Problem(text) => {
-                            ui.add(egui::Label::new(egui::RichText::new(text).color(crate::theme::p().danger)).wrap());
-                        }
-                        Entry::Note(text) => {
-                            ui.add(egui::Label::new(egui::RichText::new(text).small().italics().color(crate::theme::dim())).wrap());
-                        }
-                    }
-                }
-                // The reply on its way: its reasoning as it streams, dimmed
-                // and folding away, then its words.
-                if let Some(live) = self.live.as_ref().filter(|_| self.session.as_ref().is_some_and(Session::busy)) {
-                    ui.add_space(4.0);
-                    if !live.reasoning.trim().is_empty() {
-                        let title = if live.phase == Phase::Thinking { "Thinking…" } else { "Its reasoning" };
-                        let title = egui::RichText::new(title).small().color(crate::theme::dim());
-                        egui::CollapsingHeader::new(title).id_salt("assistant-live-reasoning").default_open(true).show(ui, |ui| {
-                            egui::ScrollArea::vertical().id_salt("assistant-live-reasoning-text").max_height(150.0).stick_to_bottom(true).show(ui, |ui| {
-                                reasoning(ui, &live.reasoning);
-                            });
-                        });
-                    }
-                    if !live.text.trim().is_empty() {
-                        ui.add(egui::Label::new(live.text.trim()).wrap());
-                    }
-                }
-            });
-        });
-        action
-    }
 
     // ---- connecting providers -------------------------------------------------------
 
     /// Whether the Connect an AI window is open.
     pub fn providers_open(&self) -> bool {
         self.providers_open
+    }
+
+    /// Open the Connect an AI window on a new provider from a starting
+    /// point: `claude`, for an Anthropic API key.
+    pub(crate) fn add_provider(&mut self, preset: &str) {
+        if let Some(mut provider) = Provider::preset(preset) {
+            provider.id = self.settings.new_id(&provider.name);
+            self.draft = Some(Draft::of(None, provider));
+            self.providers_open = true;
+        }
     }
 
     /// Open or close the Connect an AI window.
@@ -1257,54 +1917,83 @@ impl Draft {
     }
 }
 
-/// Reasoning, as the panel shows it: small and dimmed, beside the answer
-/// rather than part of it.
-fn reasoning(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(text.trim()).small().italics().color(crate::theme::dim())).wrap());
-}
-
-/// `0:42`, `12:05`, `1:02:03`.
-fn clock(elapsed: std::time::Duration) -> String {
-    let seconds = elapsed.as_secs();
-    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
-}
-
-/// `8 s`, `2 min 5 s`.
-fn spoken(seconds: f32) -> String {
-    let whole = seconds.round().max(1.0) as u64;
-    match (whole / 60, whole % 60) {
-        (0, s) => format!("{s} s"),
-        (m, 0) => format!("{m} min"),
-        (m, s) => format!("{m} min {s} s"),
-    }
-}
-
-/// A short line for the panel: what the assistant is doing.
+/// A short line for the panel: what the assistant is doing, in words a
+/// person who has never seen a tool's name can read.
 fn step_label(call: &Call) -> String {
     let name = call.name.trim_start_matches("tequila_");
     let arguments = call.arguments.as_ref().ok();
-    let detail = match name {
-        "apply" => arguments.and_then(|a| a.get("command")).and_then(|c| c.get("command")).and_then(|c| c.as_str()).map(str::to_string),
-        "batch" => arguments.and_then(|a| a.get("ops")).map(|ops| format!("{} changes as one step", ops.as_array().len())),
-        "nodes" => arguments.and_then(|a| a.get("filter")).and_then(|f| f.as_str()).map(|f| format!("\"{f}\"")),
-        "look" => arguments.and_then(|a| a.get("view")).and_then(|v| v.as_str()).map(str::to_string),
-        "ui" => arguments.and_then(|a| a.get("viewport")).and_then(|v| v.as_str()).map(|v| format!("viewport {v}")),
-        _ => None,
+    let word = |key: &str| arguments.and_then(|a| a.get(key)).and_then(|v| v.as_str()).map(str::to_string);
+    // `material.set_type` as "Material: set type".
+    let spoken = |command: &str| {
+        let (about, what) = command.split_once('.').unwrap_or(("", command));
+        let what = what.replace('_', " ");
+        let mut about: Vec<char> = about.chars().collect();
+        if let Some(first) = about.first_mut() {
+            *first = first.to_ascii_uppercase();
+        }
+        let about: String = about.into_iter().collect();
+        if about.is_empty() { what } else { format!("{about}: {what}") }
     };
-    match detail {
-        Some(detail) => format!("{name} {detail}"),
-        None => name.to_string(),
+    match name {
+        "scene" => "Read the scene".into(),
+        "nodes" => match word("filter") {
+            Some(filter) => format!("Found parts named \"{filter}\""),
+            None => "Read the parts".into(),
+        },
+        "materials" => "Read the materials".into(),
+        "api" => "Read the command catalog".into(),
+        "query" => format!("Read {}", word("what").unwrap_or_else(|| "the scene".into())),
+        "apply" => arguments.and_then(|a| a.get("command")).and_then(|c| c.get("command")).and_then(|c| c.as_str()).map(spoken).unwrap_or_else(|| "Changed the scene".into()),
+        "batch" => match arguments.and_then(|a| a.get("ops")).map(|ops| ops.as_array().len()) {
+            Some(count) => format!("{count} changes as one step"),
+            None => "Several changes as one step".into(),
+        },
+        "undo" => "Undid a step".into(),
+        "redo" => "Redid a step".into(),
+        "select" => "Selected parts".into(),
+        "frame" => "Framed the model".into(),
+        "look" => match word("view") {
+            Some(view) => format!("Camera: {view} view"),
+            None => "Moved the camera".into(),
+        },
+        "screenshot" => "Looked at the viewport".into(),
+        "render" => "Rendered a quick look".into(),
+        "queue" => "Render to a file".into(),
+        "jobs" => "Checked the renders".into(),
+        "stop" => "Stopped the render".into(),
+        "ui" => match word("viewport") {
+            Some(mode) => format!("Viewport: {mode}"),
+            None => "Changed what is on screen".into(),
+        },
+        "material_guide" => "Read the material guide".into(),
+        "material_preview" => "Tried a material on a ball".into(),
+        "material_create" => "Made a material".into(),
+        "material_update" => "Changed a material".into(),
+        "material_recipe" => "Read a material".into(),
+        "material_save" => "Save a material to the library".into(),
+        "studio_presets" => "Read the studios".into(),
+        "studio_preset_apply" => "Applied a studio".into(),
+        "studio_preset_save" => "Save a studio".into(),
+        "studio_render_all" => "Render every studio".into(),
+        "preferences" => "Preferences".into(),
+        "import" => "Import a file".into(),
+        "save" => "Save the project".into(),
+        "plugin_guide" => "Read the plugin guide".into(),
+        "plugin_list" => "Read the plugins".into(),
+        "plugin_write" => "Write a plugin".into(),
+        "plugin_enable" => "Turn a plugin on".into(),
+        "plugin_run" => "Run a plugin".into(),
+        "plugin_log" => "Read a plugin's log".into(),
+        "request" => match arguments.and_then(|a| a.get("request")).and_then(|r| r.get("op")).and_then(|op| op.as_str()) {
+            Some(op) => format!("Request: {}", op.replace('_', " ")),
+            None => "Request".into(),
+        },
+        other => other.replace('_', " "),
     }
 }
 
-/// A PNG screenshot shrunk for sending, as base64 for the model and as an
-/// image for the panel.
-fn prepare_image(png_bytes: &[u8]) -> Option<(String, egui::ColorImage)> {
+/// A PNG shrunk for sending to a model, as a PNG again.
+pub(crate) fn prepare_image(png_bytes: &[u8]) -> Option<Vec<u8>> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().ok()?;
@@ -1322,8 +2011,30 @@ fn prepare_image(png_bytes: &[u8]) -> Option<(String, egui::ColorImage)> {
         let mut writer = encoder.write_header().ok()?;
         writer.write_image_data(&rgba).ok()?;
     }
-    let image = egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba);
-    Some((tequila_ai::base64::encode(&encoded), image))
+    Some(encoded)
+}
+
+/// What an agent says of a tool call, as the chat shows it: Tequila's own
+/// tools under the names a person knows them by, the agent's as it titles
+/// them.
+fn step_news(tool: &acp::ToolNews) -> StepNews {
+    let ours = tool.name.as_deref().or(tool.title.as_deref()).and_then(|name| {
+        let name = name.rsplit("__").next().unwrap_or(name);
+        name.strip_prefix("tequila_").map(|short| Call { id: String::new(), name: format!("tequila_{short}"), arguments: tool.input.clone().ok_or_else(String::new) })
+    });
+    let title = match (&ours, &tool.title) {
+        // Only where there is something to title it from: news of a call
+        // already listed leaves its title alone.
+        (Some(call), _) if tool.title.is_some() || tool.input.is_some() => Some(step_label(call)),
+        (_, title) => title.clone(),
+    };
+    // What it said is worth keeping when it failed; when it worked, the
+    // chat has the assistant's own words for it.
+    let detail = match (tool.status, &tool.text) {
+        (Some(Status::Failed), Some(text)) if !text.trim().is_empty() => Some(text.trim().to_string()),
+        _ => None,
+    };
+    StepNews { id: tool.id.clone(), title, status: tool.status, detail, pictures: tool.pictures.iter().cloned().map(Picture::new).collect() }
 }
 
 #[cfg(test)]
@@ -1472,7 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn a_screenshot_is_shrunk_and_encoded_for_the_model() {
+    fn a_picture_is_shrunk_for_the_model() {
         let (w, h) = (2048u32, 1024u32);
         let mut png_bytes = Vec::new();
         {
@@ -1481,20 +2192,16 @@ mod tests {
             encoder.set_depth(png::BitDepth::Eight);
             encoder.write_header().unwrap().write_image_data(&vec![128; (w * h * 4) as usize]).unwrap();
         }
-        let (encoded, image) = prepare_image(&png_bytes).expect("prepared");
-        assert!(image.size[0] <= SENT_SIZE && image.size[1] <= SENT_SIZE, "{:?}", image.size);
-        let decoded = tequila_ai::base64::decode(&encoded).unwrap();
-        assert!(decoded.starts_with(b"\x89PNG"));
-    }
-
-    #[test]
-    fn times_read_at_a_glance() {
-        assert_eq!(clock(std::time::Duration::from_secs(42)), "0:42");
-        assert_eq!(clock(std::time::Duration::from_secs(725)), "12:05");
-        assert_eq!(clock(std::time::Duration::from_secs(3723)), "1:02:03");
-        assert_eq!(spoken(7.6), "8 s");
-        assert_eq!(spoken(125.0), "2 min 5 s");
-        assert_eq!(spoken(120.0), "2 min");
+        let shrunk = prepare_image(&png_bytes).expect("prepared");
+        assert!(shrunk.starts_with(b"\x89PNG"));
+        let size = png::Decoder::new(std::io::Cursor::new(&shrunk)).read_info().unwrap().info().size();
+        assert!(size.0 as usize <= SENT_SIZE && size.1 as usize <= SENT_SIZE, "{size:?}");
+        // Attached to a message, it is what the message box holds.
+        let mut assistant = Assistant::default();
+        assistant.attach(&png_bytes);
+        assert_eq!(assistant.panel.attached.len(), 1);
+        assistant.attach(b"not a picture");
+        assert_eq!(assistant.panel.attached.len(), 1, "what cannot be read is not attached");
     }
 
     /// The panel while a reply streams in, drawn for real: its reasoning
@@ -1514,9 +2221,9 @@ mod tests {
         let mut assistant = Assistant::default();
         assistant.open = true;
         let provider = Provider { model: "test".into(), base_url: url, ..Provider::preset("ollama").unwrap() };
-        assistant.settings = Settings { providers: vec![provider.clone()], active: Some(provider.id.clone()) };
-        assistant.ask("Make the strap velvet".into(), 0);
-        assistant.transcript.push(Entry::Thought { text: "Earlier.".into(), seconds: 3.0 });
+        assistant.settings = Settings { providers: vec![provider.clone()], active: Some(provider.id.clone()), ..Settings::default() };
+        assistant.ask("Make the strap velvet".into(), "", Vec::new(), &Around::default());
+        assistant.chat.push(Item::Thought { text: "Earlier.".into(), seconds: 3.0 });
         assistant.live = Some(Progress {
             phase: Phase::Thinking,
             since: std::time::Instant::now(),
@@ -1530,7 +2237,7 @@ mod tests {
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                assistant.show(ui, false);
+                assistant.show(ui, false, &Around::default(), &Vec::new);
             });
         });
         let status = assistant.status();
@@ -1544,8 +2251,356 @@ mod tests {
 
     #[test]
     fn steps_are_labelled_for_people() {
-        assert_eq!(step_label(&call("tequila_apply", r#"{"command":{"command":"material.set_type"}}"#)), "apply material.set_type");
-        assert_eq!(step_label(&call("tequila_batch", r#"{"ops":[{},{},{}]}"#)), "batch 3 changes as one step");
-        assert_eq!(step_label(&call("tequila_look", r#"{"view":"front"}"#)), "look front");
+        assert_eq!(step_label(&call("tequila_apply", r#"{"command":{"command":"material.set_type"}}"#)), "Material: set type");
+        assert_eq!(step_label(&call("tequila_batch", r#"{"ops":[{},{},{}]}"#)), "3 changes as one step");
+        assert_eq!(step_label(&call("tequila_look", r#"{"view":"front"}"#)), "Camera: front view");
+        assert_eq!(step_label(&call("tequila_nodes", r#"{"filter":"grille"}"#)), "Found parts named \"grille\"");
+        assert_eq!(step_label(&call("tequila_screenshot", "{}")), "Looked at the viewport");
+        assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"studio_kit","piece":"softbox"}}"#)), "Request: studio kit");
+        // One added later still reads as words.
+        assert_eq!(step_label(&call("tequila_something_new", "{}")), "something new");
+    }
+
+    /// A stand-in agent on a local socket: `script` is handed each message
+    /// Tequila sends and a way to write back.
+    fn stand_in(mut script: impl FnMut(&json::Value, &mut dyn FnMut(&str)) + Send + 'static) -> Agent {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut writer = stream.try_clone().unwrap();
+            let mut write = move |line: &str| {
+                let _ = writeln!(writer, "{line}");
+            };
+            for line in std::io::BufReader::new(stream).lines().map_while(Result::ok) {
+                script(&json::parse(line.as_bytes()).unwrap(), &mut write);
+            }
+        });
+        let stream = std::net::TcpStream::connect(address).unwrap();
+        Agent::over(acp::Launch { folder: std::env::temp_dir(), ..acp::Launch::default() }, stream.try_clone().unwrap(), stream, || {})
+    }
+
+    fn id_of(message: &json::Value) -> String {
+        tequila_format::json_write::to_string(message.get("id").unwrap_or(&json::Value::Null)).trim().to_string()
+    }
+
+    fn kinds(assistant: &Assistant) -> Vec<String> {
+        let status = assistant.status();
+        status.get("transcript").unwrap().as_array().iter().filter_map(|e| e.get("kind").and_then(|k| k.as_str()).map(str::to_string)).collect()
+    }
+
+    /// Pump until `done`, or ten seconds.
+    fn pump_until(assistant: &mut Assistant, app: &mut TequilaApp, done: impl Fn(&Assistant) -> bool) {
+        let ctx = egui::Context::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done(assistant) && std::time::Instant::now() < deadline {
+            assistant.pump(app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(done(assistant), "{:?}", kinds(assistant));
+    }
+
+    /// A message to an agent that is still starting waits for it; its reply
+    /// streams into the chat; its own tools go ahead, a file written in the
+    /// project's folder asks, and a command is refused without asking.
+    #[test]
+    fn an_agent_answers_in_the_chat_and_is_held_to_its_reach() {
+        let folder = std::env::temp_dir().join(format!("tequila-assistant-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        let inside = folder.join("notes.txt").to_string_lossy().replace('\\', "/");
+        let answers = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let heard = answers.clone();
+        let agent = stand_in(move |message, write| {
+            let update = |body: &str| format!(r#"{{"jsonrpc":"2.0","method":"session/update","params":{{"sessionId":"s","update":{body}}}}}"#);
+            let ask = |id: &str, call: &str| {
+                format!(r#"{{"jsonrpc":"2.0","id":"{id}","method":"session/request_permission","params":{{"sessionId":"s","toolCall":{call},"options":[{{"optionId":"yes","name":"Allow","kind":"allow_once"}},{{"optionId":"no","name":"Reject","kind":"reject_once"}}]}}}}"#)
+            };
+            match message.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":1,"agentCapabilities":{{"promptCapabilities":{{"image":true}}}}}}}}"#, id_of(message))),
+                Some("session/new") => write(&format!(
+                    r#"{{"jsonrpc":"2.0","id":{},"result":{{"sessionId":"s","configOptions":[{{"id":"model","name":"Model","category":"model","type":"select","currentValue":"a","options":[{{"value":"a","name":"Sonnet"}},{{"value":"b","name":"Opus"}}]}}]}}}}"#,
+                    id_of(message)
+                )),
+                Some("session/prompt") => {
+                    write(&update(r#"{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Which part?"}}"#));
+                    write(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Looking "}}"#));
+                    write(&update(r#"{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"now."}}"#));
+                    write(&ask("p1", r#"{"toolCallId":"t1","title":"mcp__tequila__tequila_nodes","name":"mcp__tequila__tequila_nodes","kind":"other","rawInput":{"filter":"grille"}}"#));
+                    write(&ask("p2", r#"{"toolCallId":"t2","title":"ls","name":"Bash","kind":"execute","rawInput":{"command":"ls"}}"#));
+                    write(&ask("p3", &format!(r#"{{"toolCallId":"t3","title":"Write notes.txt","name":"Write","kind":"edit","locations":[{{"path":"{inside}"}}]}}"#)));
+                }
+                None => {
+                    let outcome = message.get("result").and_then(|r| r.get("outcome")).map(|o| o.get("optionId").and_then(|v| v.as_str()).unwrap_or("cancelled").to_string());
+                    if let Some(outcome) = outcome {
+                        let mut heard = heard.lock().unwrap();
+                        heard.push(format!("{}={outcome}", id_of(message).trim_matches('"')));
+                        if heard.len() == 3 {
+                            write(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"}"#));
+                            write(&update(r#"{"sessionUpdate":"tool_call_update","toolCallId":"t3","status":"completed"}"#));
+                            write(r#"{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}"#);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        assistant.agent = Some((agents::Kind::Claude, agent));
+        assistant.agent_folder = folder.clone();
+        assert_eq!(assistant.backend(), Some(Backend::Agent(agents::Kind::Claude)));
+
+        assistant.ask("Find the grille".into(), "(In this scene: @Grille is the part with id 12.)", Vec::new(), &app.around());
+        assert!(assistant.is_working(), "asked, and waiting for the agent to be ready");
+        pump_until(&mut assistant, &mut app, |a| a.is_asking());
+        // Its own tool went ahead and the command was refused, both without
+        // a question; the file is the one thing asked about.
+        assert_eq!(kinds(&assistant), ["you", "thought", "said", "running step", "failed step", "running step", "asked"]);
+        // (The agent hears them a moment after they are sent.)
+        let heard_by = |count: usize| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while answers.lock().unwrap().len() < count && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            answers.lock().unwrap().clone()
+        };
+        assert_eq!(heard_by(2), ["p1=yes", "p2=no"]);
+        assert!(matches!(&assistant.chat.items[3], Item::Step(step) if step.title == "Found parts named \"grille\""), "{:?}", assistant.chat.items[3]);
+        assert!(matches!(&assistant.chat.items[4], Item::Step(step) if step.detail.contains("does not run commands")));
+        let Item::Asked(asked) = assistant.chat.items[6].clone() else { panic!() };
+        assert_eq!(asked.title, "Change a file in the project's folder?");
+        assert!(asked.detail.ends_with("notes.txt"), "{}", asked.detail);
+        assert_eq!(assistant.status().get("phase").and_then(|p| p.as_str()), Some("asking"));
+
+        assistant.answer(&mut app, asked.id, true);
+        pump_until(&mut assistant, &mut app, |a| !a.is_working());
+        assert_eq!(heard_by(3), ["p1=yes", "p2=no", "p3=yes"]);
+        assert_eq!(kinds(&assistant), ["you", "thought", "said", "step", "failed step", "step", "asked"]);
+        assert_eq!(assistant.chat.items[2], Item::Said("Looking now.".into()));
+        assert_eq!((assistant.chat.session.as_deref(), assistant.chat.backend.as_str()), (Some("s"), "agent:claude"));
+        // The agent's models are what the picker offers.
+        assert_eq!(assistant.answering(), "Claude Sonnet");
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// An agent whose program ends before it has opened a conversation is
+    /// said on the card, with Try again - not started again every frame.
+    #[test]
+    fn an_agent_that_ends_as_it_starts_is_said_once() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || drop(listener.accept()));
+        let stream = std::net::TcpStream::connect(address).unwrap();
+        let agent = Agent::over(acp::Launch::default(), stream.try_clone().unwrap(), stream, || {});
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        assistant.agent = Some((agents::Kind::Claude, agent));
+        assistant.ask("Hello".into(), "", Vec::new(), &app.around());
+        pump_until(&mut assistant, &mut app, |a| a.setup.is_some());
+        assert!(matches!(&assistant.setup, Some(Setup::Failed(text)) if text.contains("stopped as it started")));
+        assert!(assistant.agent.is_none() && !assistant.is_working());
+        // The panel leaves it there until the person tries again.
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                assistant.show(ui, false, &Around::default(), &Vec::new);
+            });
+        });
+        assert!(assistant.agent.is_none() && matches!(assistant.setup, Some(Setup::Failed(_))));
+    }
+
+    /// The Assistant's own bridge, over the real channel: a scene edit goes
+    /// straight through, named for the Assistant and counted as the
+    /// request's own; a save to a new place waits for the person, is
+    /// refused in words when they say no, and is done when they say yes.
+    #[test]
+    fn what_leaves_the_scene_waits_for_the_person() {
+        let root = std::env::temp_dir().join(format!("tequila-assistant-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let discovery = root.join("channel.json");
+        let mut app = TequilaApp::for_tests();
+        app.channel = Some(tequila_scripting::server::Channel::start_at(&discovery).unwrap());
+        let node = app.project.document().tree.iter().next().unwrap().id.0;
+        let mark = app.assistant.mark();
+        app.assistant.turn_start = Some(app.project.bus().depth());
+        let copy = root.join("copy.tequila");
+
+        let (said, heard) = std::sync::mpsc::channel();
+        let (sent_mark, sent_copy, record) = (mark.clone(), copy.to_string_lossy().into_owned(), app.channel.as_ref().unwrap().own_file().unwrap());
+        std::thread::spawn(move || {
+            let mut bridge = tequila_scripting::client::Connection::connect(&record).unwrap();
+            bridge.set_patience(None);
+            let mut command = tequila_format::json_write::Object::new();
+            command.set("command", "scene.rename").set("node", node as f64).set("name", "By the agent");
+            let _ = said.send(bridge.request("apply", vec![("command", command.build()), ("agent", sent_mark.as_str().into())]).map(|_| "renamed".to_string()));
+            for _ in 0..2 {
+                let _ = said.send(bridge.request("save", vec![("path", sent_copy.as_str().into()), ("agent", sent_mark.as_str().into())]).map(|_| "saved".to_string()));
+            }
+            let _ = said.send(bridge.request("query", vec![("what", "scene".into())]).map(|_| "looked".to_string()));
+        });
+        let ctx = egui::Context::default();
+        let serve_until = |app: &mut TequilaApp, done: &dyn Fn(&TequilaApp) -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !done(app) && std::time::Instant::now() < deadline {
+                app.serve_channel(&ctx);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(done(app), "timed out");
+        };
+
+        serve_until(&mut app, &|app| app.assistant.is_asking());
+        assert_eq!(heard.recv().unwrap(), Ok("renamed".into()));
+        // While a request is being served the channel is out of the
+        // application's hands; where it is stays known all the same, for a
+        // script's request that starts the agent.
+        let taken = app.channel.take();
+        assert_eq!(app.around().channel, taken.as_ref().unwrap().own_file());
+        app.channel = taken;
+        assert_eq!(app.project.document().tree.get(tequila_scene::tree::NodeId(node)).unwrap().name, "By the agent");
+        assert!(app.console.text().contains("assistant"), "the console names the Assistant");
+        assert!(app.assistant.can_undo_turn(app.project.bus()), "its change is the request's to take back");
+        let question = |app: &TequilaApp| app.assistant.chat.items.iter().rev().find_map(|item| if let Item::Asked(asked) = item { Some(asked.clone()) } else { None }).unwrap();
+        let asked = question(&app);
+        assert_eq!((asked.title.as_str(), asked.detail.as_str(), asked.answer), ("Save the project to a new place?", copy.to_string_lossy().as_ref(), None));
+        // Inside the folder the agent works in, a file is named as it is
+        // known there.
+        app.assistant.agent_folder = root.clone();
+        assert!(heard.try_recv().is_err(), "held, not answered");
+        assert!(app.assistant.open, "the panel opens on a question");
+
+        // No: refused in words the agent can pass on, and nothing written.
+        let mut assistant = std::mem::take(&mut app.assistant);
+        assistant.answer(&mut app, asked.id, false);
+        app.assistant = assistant;
+        let refused = heard.recv().unwrap().unwrap_err();
+        assert!(refused.contains("said no"), "{refused}");
+        assert!(!copy.exists());
+
+        // Asked again, and yes this time: done.
+        serve_until(&mut app, &|app| app.assistant.is_asking());
+        let asked = question(&app);
+        assert_eq!(asked.detail, "copy.tequila");
+        let mut assistant = std::mem::take(&mut app.assistant);
+        assistant.answer(&mut app, asked.id, true);
+        app.assistant = assistant;
+        assert_eq!(heard.recv().unwrap(), Ok("saved".into()));
+        assert!(copy.exists(), "the project was saved where it asked");
+        // A request without the mark is any script's: answered, nobody asked.
+        let looked = std::cell::RefCell::new(None);
+        serve_until(&mut app, &|_| {
+            let mut looked = looked.borrow_mut();
+            *looked = looked.take().or_else(|| heard.try_recv().ok());
+            looked.is_some()
+        });
+        assert_eq!(looked.into_inner(), Some(Ok("looked".into())));
+        assert_eq!(app.assistant.chat.items.iter().filter(|item| matches!(item, Item::Asked(_))).count(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Stop answers what is held, so the agent's tool call ends instead of
+    /// waiting for an answer that will not come.
+    #[test]
+    fn stopping_refuses_what_was_waiting_for_an_answer() {
+        let root = std::env::temp_dir().join(format!("tequila-assistant-stop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.channel = Some(tequila_scripting::server::Channel::start_at(&root.join("channel.json")).unwrap());
+        let mark = app.assistant.mark();
+        let record = app.channel.as_ref().unwrap().own_file().unwrap();
+        let (said, heard) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bridge = tequila_scripting::client::Connection::connect(&record).unwrap();
+            let _ = said.send(bridge.request("import", vec![("path", "/models/speaker.step".into()), ("agent", mark.as_str().into())]));
+        });
+        let ctx = egui::Context::default();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !app.assistant.is_asking() && std::time::Instant::now() < deadline {
+            app.serve_channel(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.assistant.is_asking());
+        app.assistant.stop();
+        assert!(heard.recv().unwrap().unwrap_err().contains("stopped"));
+        assert!(!app.assistant.is_asking());
+        assert!(matches!(app.assistant.chat.items.first(), Some(Item::Asked(asked)) if asked.answer == Some(false)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A chat is kept as it goes, listed, opened again with what was said,
+    /// and a new one started beside it.
+    #[test]
+    fn chats_are_kept_and_opened_again() {
+        let home = std::env::temp_dir().join(format!("tequila-assistant-chats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let mut assistant = Assistant::default();
+        assistant.load(home.join("assistant.json"));
+        assistant.chat.push(Item::You { text: "Make the strap velvet".into(), pictures: Vec::new() });
+        assistant.chat.push(Item::Said("Done.".into()));
+        assistant.chat.backend = agents::Kind::Claude.id().into();
+        let first = assistant.chat.id.clone();
+        assistant.new_chat();
+        assert!(assistant.chat.is_empty() && assistant.chat.id != first);
+        assistant.chat.push(Item::You { text: "Light it like a studio".into(), pictures: Vec::new() });
+        assistant.new_chat();
+
+        let store = assistant.store.clone().unwrap();
+        let mut titles: Vec<String> = store.list().into_iter().map(|c| c.title).collect();
+        titles.sort();
+        assert_eq!(titles, ["Light it like a studio", "Make the strap velvet"]);
+
+        assistant.open_chat(&first);
+        assert_eq!(assistant.chat.items.len(), 2);
+        // It goes on with whoever answered it.
+        assert_eq!(assistant.backend(), Some(Backend::Agent(agents::Kind::Claude)));
+        // And whoever picks it up later is told how it went.
+        assistant.chat.push(Item::You { text: "Now the lenses".into(), pictures: Vec::new() });
+        let retold = assistant.retold().unwrap();
+        assert!(retold.contains("Person: Make the strap velvet") && retold.contains("Assistant: Done.") && !retold.contains("Now the lenses"), "{retold}");
+
+        assistant.delete_chat(&first);
+        assert_eq!(store.list().len(), 1);
+        assert!(assistant.chat.is_empty(), "the open chat, deleted, leaves a new one");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The whole panel drawn with everything a chat can hold - and the list
+    /// of past chats - without a frame going wrong.
+    #[test]
+    fn the_panel_draws_every_kind_of_thing() {
+        let mut assistant = Assistant::default();
+        assistant.open = true;
+        assistant.chat.push(Item::You { text: "Make @Grille brushed aluminium".into(), pictures: Vec::new() });
+        assistant.chat.push(Item::Thought { text: "The grille is part 12.".into(), seconds: 6.0 });
+        assistant.chat.push(Item::Said("The **grille** is `part 12`.\n\n- one\n- two\n\n```\ncode\n```\n# Done".into()));
+        assistant.chat.step(StepNews { id: "a".into(), title: Some("nodes \"grille\"".into()), status: Some(Status::Done), ..StepNews::default() });
+        assistant.chat.step(StepNews { id: "b".into(), title: Some("screenshot".into()), status: Some(Status::Running), ..StepNews::default() });
+        assistant.chat.step(StepNews { id: "c".into(), title: Some("ls".into()), status: Some(Status::Failed), detail: Some("no commands".into()), ..StepNews::default() });
+        assistant.chat.push(Item::Asked(Asked { id: 1, title: "Render to a file?".into(), detail: "Renders/front.png, 3840 \u{d7} 2160".into(), answer: None }));
+        assistant.chat.push(Item::Asked(Asked { id: 2, title: "Import a file?".into(), detail: "a.step".into(), answer: Some(false) }));
+        assistant.chat.push(Item::Problem("It stopped.".into()));
+        assistant.chat.push(Item::Note("Ask again.".into()));
+        assistant.setup = Some(Setup::SignIn { ways: vec![acp::SignIn { id: "console".into(), name: "Anthropic Console".into(), description: String::new(), terminal: Some((Vec::new(), Vec::new())) }], subscription: true });
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        let ctx = egui::Context::default();
+        let things = || vec![crate::assistant_panel::Thing { label: "Grille".into(), kind: "part".into(), context: "@Grille is the part with id 12".into() }];
+        for history in [false, true] {
+            assistant.input = "Now @gr".into();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    assistant.show(ui, true, &Around::default(), &things);
+                });
+            });
+            assistant.panel.toggle_history();
+            let _ = history;
+        }
+        // Nothing is beside a test's application for an agent to reach the
+        // scene through, and the panel says so rather than starting one.
+        assert!(assistant.agent.is_none());
     }
 }

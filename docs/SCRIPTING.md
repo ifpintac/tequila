@@ -250,10 +250,33 @@ does: `{"op":"assistant","ask":"make the strap black velvet"}` sends a
 request as though typed, `{"op":"assistant","stop":true}` stops it,
 `{"op":"assistant","open":true}` shows the panel, and `{"op":"assistant"}`
 alone answers with what it is doing: `working`, `phase` (`loading`,
-`reading`, `thinking`, `writing`, `calling`, `tools` or `looking`), `doing`
-in words, `step`, `seconds`, `tokens`, and the `transcript` as the panel
-shows it. Neither the Assistant's own tools nor a restricted MCP
-connection can send it, and it cannot be part of a batch.
+`reading`, `thinking`, `writing`, `calling`, `tools`, `looking` or
+`asking`), `doing` in words, `step`, `seconds`, `tokens`, the `chat`'s id
+and `title`, who answers (`provider`, `model`, an agent's `settings` and
+`account`), what an agent still needs (`setup`: `missing`, `installing`,
+`sign in` or `failed`), and the `transcript` as the panel shows it. Each
+entry of the transcript has a `kind` (`you`, `said`, `thought`, `step`,
+`running step`, `failed step`, `picture`, `asked`, `problem`, `note`) and
+its `text`; an `asked` one has its `id`, `detail` and, once answered, its
+`answer`.
+
+More for a script to set the panel up with, all optional and in one
+request if wanted:
+
+| Field | What it does |
+|---|---|
+| `use` | who answers: `"claude"`, or a connected provider's name or id |
+| `new_chat` | `true` starts a new chat |
+| `chat` | opens a past chat by its id |
+| `answer` | `{"id": N, "allow": true}`: the person's answer to a question |
+| `draft` | puts words in the message box, without sending them |
+| `viewport` | `true` attaches the viewport's picture to the message |
+| `history` | shows or hides the list of past chats |
+| `window` | `true` moves the panel into a window of its own (`screenshot` takes it as `"window": "assistant"`) |
+| `install`, `retry` | the buttons of the card that says what an agent still needs |
+
+Neither the Assistant's own tools nor a restricted MCP connection can send
+it, and it cannot be part of a batch.
 
 ## Plugins
 
@@ -277,8 +300,13 @@ background renders, screenshots, procedural materials from recipes
 assistant sees the result of what it did. Everything it
 sends also appears in Tequila's console as it happens.
 
-**Connecting an app:** in Tequila, open the Assistant, click **Connect an
-AI…**. Under *AI apps on this computer*, each app Tequila finds has a
+`tequila-cli --mcp --assistant MARK` is how Tequila's own chat panel starts
+the bridge for an agent it runs: each request carries the mark, and
+Tequila asks the person before one leaves the scene (`docs/ASSISTANT.md`).
+It is not for other apps.
+
+**Connecting an app:** in Tequila, open the Assistant, open the model
+picker and click **Connections…**. Under *AI apps on this computer*, each app Tequila finds has a
 **Connect** button that adds Tequila to that app's settings, keeping
 everything else there. The original is kept beside it as
 `<file>.before-tequila`. A settings file that is not plain JSON, one with

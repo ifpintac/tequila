@@ -202,6 +202,12 @@ impl Session {
 
     /// Ask something new.
     pub fn ask(&mut self, text: &str) -> Result<(), String> {
+        self.ask_with(text, &[])
+    }
+
+    /// Ask something new, with pictures the person attached: PNGs,
+    /// base64-encoded.
+    pub fn ask_with(&mut self, text: &str, pictures: &[String]) -> Result<(), String> {
         if self.busy() {
             return Err("the assistant is still working on the last request".into());
         }
@@ -215,6 +221,9 @@ impl Session {
         match self.messages.last_mut() {
             Some(last) if last.role == Role::User => last.parts.push(Part::Text(text.to_string())),
             _ => self.messages.push(Message::user(text)),
+        }
+        if let Some(last) = self.messages.last_mut() {
+            last.parts.extend(pictures.iter().cloned().map(Part::Image));
         }
         self.send();
         Ok(())

@@ -16,7 +16,9 @@
 //!   other service speaks: local servers such as Ollama and LM Studio,
 //!   OpenRouter, Azure-style gateways, and most companies' internal models.
 
+pub mod acp;
 pub mod base64;
+pub mod chat;
 pub mod conversation;
 pub mod http;
 pub mod ollama;

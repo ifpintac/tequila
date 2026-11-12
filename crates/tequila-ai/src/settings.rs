@@ -8,8 +8,18 @@ use std::path::Path;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
     pub providers: Vec<Provider>,
-    /// The id of the provider the assistant uses.
+    /// What the assistant uses: a provider's id, or an agent's
+    /// (`agent:claude`).
     pub active: Option<String>,
+    /// Whether Claude, run as an agent, may be signed in with a Claude
+    /// subscription rather than an API key. Off unless the person turns it
+    /// on in the file: Anthropic's terms do not plainly allow an
+    /// application that is not theirs to offer it (`docs/ASSISTANT.md`).
+    pub claude_subscription: bool,
+    /// What the person last chose of an agent's own settings - its model,
+    /// how hard it thinks - by `agent:claude/model`, to choose again in the
+    /// next conversation.
+    pub choices: std::collections::BTreeMap<String, String>,
 }
 
 impl Settings {
@@ -59,6 +69,12 @@ impl Settings {
         let mut out = Object::new();
         out.set("providers", Value::Array(list));
         out.set_some("active", self.active.clone());
+        if self.claude_subscription {
+            out.set("claude_subscription", true);
+        }
+        if !self.choices.is_empty() {
+            out.set("choices", Value::Object(self.choices.iter().map(|(key, value)| (key.clone(), Value::String(value.clone()))).collect()));
+        }
         Ok(json_write::to_string(&out.build()))
     }
 
@@ -106,7 +122,12 @@ impl Settings {
             })
             .collect();
         let active = value.get("active").and_then(|a| a.as_str()).map(str::to_string);
-        (Settings { providers, active }, complaints)
+        let claude_subscription = value.get("claude_subscription").and_then(|v| v.as_bool()).unwrap_or(false);
+        let choices = match value.get("choices") {
+            Some(Value::Object(map)) => map.iter().filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string()))).collect(),
+            _ => Default::default(),
+        };
+        (Settings { providers, active, claude_subscription, choices }, complaints)
     }
 
     pub fn load(path: &Path) -> (Settings, Vec<String>) {
@@ -137,7 +158,7 @@ mod tests {
         claude.key = Key::Stored("sk-ant-very-secret".into());
         let mut local = Provider::preset("ollama").unwrap();
         local.key = Key::Env("OLLAMA_KEY".into());
-        let settings = Settings { providers: vec![claude, local], active: Some("claude".into()) };
+        let settings = Settings { providers: vec![claude, local], active: Some("claude".into()), ..Settings::default() };
 
         let text = settings.to_json().unwrap();
         if crate::secret::encrypted() {
@@ -160,7 +181,7 @@ mod tests {
 
     #[test]
     fn new_ids_do_not_collide() {
-        let settings = Settings { providers: vec![Provider::preset("claude").unwrap()], active: None };
+        let settings = Settings { providers: vec![Provider::preset("claude").unwrap()], active: None, ..Settings::default() };
         assert_eq!(settings.new_id("Claude"), "claude-2");
         assert_eq!(settings.new_id("Uliverse AI"), "uliverse-ai");
     }
