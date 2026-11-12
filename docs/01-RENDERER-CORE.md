@@ -562,6 +562,21 @@ A final render begun from the Rendered view no longer runs beside the viewport's
 
 Beside another program's render on twelve cores the differences were larger: the Headphones' first picture in Cycles 1.2 s before and 75 ms after, and palma P8 in Tequila's renderer showed nothing at all while moving before, 24 pictures a second after. Still slow: palma P8 in Cycles moves at 13 pictures a second, held by Cycles' own 65-75 ms for a sample of it at the smallest moving size, whether or not its optimized kernels are ready; and importing the 236 MB STEP file takes 90 s, 65 of them in OpenCASCADE turning the file into shapes, on one core.
 
+*As built, November 12, later: the floor reflection while orbiting.* On the owner's PC (RTX 2060, Cycles on CUDA) orbiting the Headphones gave 14.7 pictures a second with the graphics card at about 30%: each moving picture, at the smallest size (480x270), waited 37.5 ms for Tequila's floor reflection. On the M3 Max the same pass took 22 ms of each 36 ms picture. Alone, at 480x270, it took 11.8 ms on all cores, 20 on six and 103 on one: about half of it a camera ray (and, on the floor, a mirror ray) for each of 130,000 pixels, the other half the 4,000 that show a reflection, at 11 us of path each - their first hit's shading, not their bounces. Tracing only within the band the reflection fills saved only half (the reflecting pixels stay), so:
+
+- **A moving picture's reflection is traced at half its size each way** (`cycles_view::floor_size`), a quarter of the rays, and laid over the picture read between its four nearest pixels (`cycles_view::Reflection`). It is a little softer for the thirtieth of a second it shows. Whether a picture is a moving one is the picture's own (`CyclesView::moving_picture`), so the layer traced while Cycles makes it is the one laid over it. A still view's is traced at its full size as before, and begun where the moving pictures found it: after a move its reflection comes to the one traced over the whole frame at every sample, bit for bit (`the_still_view_after_a_move_has_the_reflection_it_always_had`).
+- **The floor-only pass skips what it cannot use** (`trace_path_with_caustics`, `floor_reflection`): a camera ray that does not meet the floor first, and a mirror ray that meets nothing, are known from one intersection before a path is set up for them. The same picture bit for bit - checked on a 640x360 final render in both engines and on the layer itself - and a fifth off a still view's sample over its whole frame (89 to 72 ms at 1448x814); little at the moving sizes.
+- **A drag let go of while a moving picture was on its way** lost its let-go: the call that was held behind the picture cleared it, so the mouse's last position went to Cycles as one more moving picture and the view settled 150 ms later. Since the graphics card is busier now, that was nearly every time. The let-go waits with the change (`CyclesView::sync`).
+
+Measured with the same drag, eight times a build, release builds on the M3 Max (four threads stands in for a smaller processor, `RAYON_NUM_THREADS=4`). The view chooses its moving pictures' size by how long they take, so the time the floor gave back went to larger pictures more than to more of them:
+
+| Headphones, Cycles | Floor pass | Moving pictures | Pixels a second | Move's first picture | Let go to full size |
+|---|---|---|---|---|---|
+| All cores | 22.6 -> 10.2 ms | 27.6 -> 26.3 a second, ~660 -> ~885 wide | 6.8 -> 11.6 million | 50 -> 69 ms | 440 -> 324 ms |
+| Four threads | 28.3 -> 13.4 ms | 24.5 -> 27.6 a second, 480 (the smallest) -> ~670 wide | 3.2 -> 7.0 million | 60 -> 48 ms | 548 -> 508 ms |
+
+Tequila's renderer is unchanged (64 pictures a second moving, 0.68 s to a clean picture). The move's first picture on all cores is now Cycles' own: larger, it comes 50 to 83 ms after the camera moves, with the floor's layer ready at 25 to 33.
+
 ### 9.3 Dirty-state taxonomy — what invalidates what
 
 This table is the heart of feeling fast. Naively restarting accumulation on every change makes the app feel worse than KeyShot regardless of raw ray throughput.

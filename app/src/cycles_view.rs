@@ -141,6 +141,8 @@ pub struct CyclesView {
     /// The samples Cycles was asked for: [`VIEW_SAMPLES`], or
     /// [`MOVING_SAMPLES`] while the view moves.
     samples: u32,
+    /// Whether the picture Cycles is making was asked for as a moving one.
+    moving: bool,
     navigation: Navigation,
     frame: tequila_render_cycles::FrameBuffers,
     seen: u64,
@@ -199,6 +201,7 @@ impl CyclesView {
             size: (0, 0),
             full: (0, 0),
             samples: 0,
+            moving: false,
             navigation: Navigation::default(),
             frame: Default::default(),
             seen: 0,
@@ -292,7 +295,7 @@ impl CyclesView {
         // rather than `SETTLE` after the last move - which kept the first
         // clean picture 150 ms further from the hand letting go.
         let let_go = !request.interacting && self.navigation.dragging_since.is_some_and(|since| now.duration_since(since) >= DRAGGED_AT_LEAST);
-        self.navigation.dragging_since = if request.interacting { self.navigation.dragging_since.or(Some(now)) } else { None };
+        let dragging_since = if request.interacting { self.navigation.dragging_since.or(Some(now)) } else { None };
         if let_go {
             self.navigation.moved_at = None;
         }
@@ -303,6 +306,7 @@ impl CyclesView {
         let samples = if navigating { MOVING_SAMPLES } else { view_samples() };
         let recamera = self.camera != Some(request.camera) || self.size != size || self.samples != samples;
         if !rescene && !moved && repainted.is_none() && !recamera {
+            self.navigation.dragging_since = dragging_since;
             return Ok(false);
         }
         // A change that comes before Cycles has shown its picture of the last
@@ -313,9 +317,18 @@ impl CyclesView {
         // Not behind a still view's first picture, though: the camera moving
         // again just after it stopped waited for a full-size sample nobody
         // would see - the move's first picture a sample at the view's size late.
+        // A drag let go of while held is still one when the change goes in:
+        // forgotten here, the mouse's last position went to Cycles as another
+        // moving picture and the view settled a moment after it - 150 ms more
+        // before the first clean picture, and the more often the busier the
+        // graphics card, which is the more often a picture is on its way.
+        if request.interacting {
+            self.navigation.dragging_since = dragging_since;
+        }
         if !self.answered && self.samples == MOVING_SAMPLES && self.restarted.elapsed() < HELD_AT_MOST {
             return Ok(false);
         }
+        self.navigation.dragging_since = dragging_since;
         // Parts imported or deleted, on a graphics card with memory of its
         // own (NVIDIA's CUDA and OptiX, AMD's HIP): a session made afresh,
         // the old one ended first, rather than the scene cleared and built
@@ -394,6 +407,7 @@ impl CyclesView {
         self.size = size;
         self.full = full;
         self.samples = samples;
+        self.moving = navigating;
         // Whatever moved, the background behind it is measured again, while
         // Cycles renders (`prepare`), rather than once its picture is in and
         // the next camera waits for it. A first picture of another size (a
@@ -506,6 +520,15 @@ impl CyclesView {
         self.size != self.full || self.navigation.moved_at.is_some_and(|at| at.elapsed() < SETTLE)
     }
 
+    /// Whether the picture Cycles is making now was asked for as a moving
+    /// one: of one sample, gone as soon as the next camera is in. Unlike
+    /// [`navigating`](Self::navigating) it holds for the picture, not for
+    /// the moment, so the floor reflection traced while Cycles makes it and
+    /// the one laid over it once it is in are of the same kind.
+    pub fn moving_picture(&self) -> bool {
+        self.moving
+    }
+
     /// Whether a picture of the last restart is still to come: the render
     /// loop then looks for it often.
     pub fn awaiting_frame(&self) -> bool {
@@ -549,8 +572,96 @@ impl CyclesView {
 pub const PARALLEL_PIXELS: usize = 512 * 1024;
 
 /// What a floor reflection layer is of: the scene (by pointer), the camera
-/// and the size of the pictures it goes over.
+/// and the size it is traced at ([`floor_size`]).
 pub type FloorKey = (usize, Camera, usize, usize);
+
+/// The size the floor reflection under a picture of `size` is traced at:
+/// the picture's own for a still view's, and half of it each way for a
+/// moving picture's, which is gone as soon as the next camera is in.
+///
+/// Measured on the Headphones sample, a moving picture's reflection over
+/// its whole frame - 700x400 on an M3 Max, 480x270 on an RTX 2060's PC -
+/// took 22 ms of every 36 ms picture on the Mac and 37 ms on the PC, where
+/// it alone held orbiting to fifteen pictures a second with the graphics
+/// card two-thirds idle. Half of each side is a quarter of the rays: the
+/// reflection in a moving picture, up for a thirtieth of a second, is a
+/// little softer but where it should be, and the still view's, which
+/// refines, is traced at its full size as it always was.
+pub fn floor_size(size: (usize, usize), moving: bool) -> (usize, usize) {
+    if moving {
+        (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1))
+    } else {
+        size
+    }
+}
+
+/// A floor reflection layer as it falls on the pixels of a picture: one of
+/// the picture's own size pixel for pixel, as a still view's is, and a
+/// moving picture's half-size one ([`floor_size`]) read between its four
+/// nearest pixels - premultiplied, as the layer is, so the reflection's
+/// edge fades out rather than darkening.
+pub enum Reflection<'a> {
+    Same(&'a Framebuffer),
+    Scaled {
+        /// The picture's width and height.
+        size: (usize, usize),
+        /// The layer's width and height.
+        layer: (usize, usize),
+        /// Each of the layer's pixels: its premultiplied colour and share.
+        texels: Vec<(Spectrum, f32)>,
+    },
+}
+
+impl<'a> Reflection<'a> {
+    pub fn over(layer: &'a Framebuffer, size: (usize, usize)) -> Reflection<'a> {
+        if (layer.width, layer.height) == size {
+            return Reflection::Same(layer);
+        }
+        // A pixel with no share lays nothing, as a still view's does not, so
+        // it brings no colour to its neighbours either.
+        let texels = layer
+            .pixels()
+            .iter()
+            .map(|p| match p.alpha() {
+                share if share > 0.0 => (p.mean(), share),
+                _ => (Spectrum::ZERO, 0.0),
+            })
+            .collect();
+        Reflection::Scaled { size, layer: (layer.width, layer.height), texels }
+    }
+
+    /// The reflection's colour, premultiplied, and its share of pixel `i`
+    /// of the picture.
+    #[inline]
+    pub fn at(&self, i: usize) -> (Spectrum, f32) {
+        match self {
+            Reflection::Same(layer) => {
+                let pixel = &layer.pixels()[i];
+                (pixel.mean(), pixel.alpha())
+            }
+            Reflection::Scaled { size, layer, texels } => {
+                if texels.is_empty() {
+                    return (Spectrum::ZERO, 0.0);
+                }
+                let (x, y) = (i % size.0, i / size.0);
+                // Where the pixel's centre falls among the layer's.
+                let between = |at: usize, to: usize, from: usize| {
+                    let p = ((at as f32 + 0.5) * from as f32 / to as f32 - 0.5).clamp(0.0, (from - 1) as f32);
+                    let low = p.floor() as usize;
+                    (low, (low + 1).min(from - 1), p - low as f32)
+                };
+                let (x0, x1, tx) = between(x, size.0, layer.0);
+                let (y0, y1, ty) = between(y, size.1, layer.1);
+                let at = |x: usize, y: usize| texels[y * layer.0 + x];
+                let corners = [(at(x0, y0), (1.0 - tx) * (1.0 - ty)), (at(x1, y0), tx * (1.0 - ty)), (at(x0, y1), (1.0 - tx) * ty), (at(x1, y1), tx * ty)];
+                if corners.iter().all(|((_, share), _)| *share <= 0.0) {
+                    return (Spectrum::ZERO, 0.0);
+                }
+                corners.iter().fold((Spectrum::ZERO, 0.0), |(colour, share), ((c, s), w)| (colour + *c * *w, share + s * w))
+            }
+        }
+    }
+}
 
 /// The most samples a still view's floor reflection takes: past them it is
 /// as clean as the picture it goes over.
@@ -775,6 +886,94 @@ mod floor_tests {
         assert!(larger.layer.pixels().iter().any(|p| p.samples == 0), "only within the guess");
     }
 
+    /// A moving picture's reflection is traced at half its size each way,
+    /// and laid over the whole picture: about where, and about as strong
+    /// as, the reflection traced at the picture's own size, with no pixel
+    /// stronger than any of its four. A still picture's layer is laid
+    /// pixel for pixel.
+    #[test]
+    fn a_moving_pictures_reflection_is_traced_at_half_its_size() {
+        assert_eq!(floor_size((96, 72), true), (48, 36));
+        assert_eq!(floor_size((97, 73), true), (49, 37), "an odd side rounds up");
+        assert_eq!(floor_size((1, 1), true), (1, 1));
+        assert_eq!(floor_size((96, 72), false), (96, 72), "a still view's at its own size");
+
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
+        let config = tequila_render_core::settings::IntegratorConfig::product();
+        let camera = Camera::look_at(Vec3::splat(4.0), Vec3::ZERO, Vec3::Y);
+        let traced = |width, height| {
+            let mut layer = Framebuffer::new(width, height);
+            for _ in 0..16 {
+                tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut layer, camera, &config, None, &|| false);
+            }
+            layer
+        };
+        let (full, half) = (traced(96, 72), traced(48, 36));
+        let own = Reflection::over(&full, (96, 72));
+        assert!(matches!(own, Reflection::Same(_)));
+        for (i, pixel) in full.pixels().iter().enumerate() {
+            assert_eq!(own.at(i), (pixel.mean(), pixel.alpha()), "a layer of the picture's size is laid as it is");
+        }
+        let laid = Reflection::over(&half, (96, 72));
+        let (mut wanted, mut got, mut wanted_area, mut got_area) = (0.0, 0.0, 0usize, 0usize);
+        for (i, pixel) in full.pixels().iter().enumerate() {
+            let (colour, share) = laid.at(i);
+            wanted += pixel.alpha();
+            got += share;
+            wanted_area += usize::from(pixel.alpha() > 0.0);
+            got_area += usize::from(share > 0.0);
+            let strongest = half.pixels().iter().map(|p| p.alpha()).fold(0.0, f32::max);
+            assert!(share <= strongest + 1e-6 && colour.to_array().iter().all(|c| c.is_finite() && *c >= 0.0));
+        }
+        assert!(wanted > 0.0, "the floor reflects the sphere");
+        assert!((got - wanted).abs() < wanted * 0.15, "as strong overall: {got} laid from half size, {wanted} traced at full");
+        assert!(got_area.abs_diff(wanted_area) < wanted_area / 4 + 8, "over about the same pixels: {got_area} and {wanted_area}");
+    }
+
+    /// The camera stops after a move: the still view's reflection, begun
+    /// where the moving pictures' half-size layers found it, comes to the
+    /// very one traced over the whole frame at every sample, bit for bit,
+    /// wherever it shows.
+    #[test]
+    fn the_still_view_after_a_move_has_the_reflection_it_always_had() {
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
+        let config = tequila_render_core::settings::IntegratorConfig::product();
+        let orbit = |turn: f32| Camera::look_at(Vec3 { x: 4.0 * turn.cos() + 1.0, y: 4.0, z: 4.0 * turn.sin() + 1.0 }, Vec3::ZERO, Vec3::Y);
+        let mut layers = FloorLayers::default();
+        let (full, moving) = ((192, 144), (96, 72));
+        for step in 0..6 {
+            let camera = orbit(step as f32 * 0.05);
+            let (width, height) = floor_size(moving, true);
+            layers.prepare(&intersector, (1, camera, width, height), &config, &|| false);
+            let layer = layers.for_frame(&intersector, (1, camera, width, height), &config, true, &|| false);
+            assert_eq!((layer.width, layer.height, layer.pixels().iter().map(|p| p.samples).max()), (48, 36, Some(1)), "one sample at half size");
+        }
+        let camera = orbit(0.25);
+        let key = (1, camera, full.0, full.1);
+        assert_eq!(floor_size(full, false), full);
+        for _ in 0..8 {
+            layers.for_frame(&intersector, key, &config, false, &|| false);
+        }
+        let still = layers.for_frame(&intersector, key, &config, true, &|| false).clone();
+        let begun = layers.layers.last().unwrap();
+        assert!(matches!(begun.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "begun where the moving pictures found it");
+        assert_eq!(begun.passes, 8);
+        let mut whole = Framebuffer::new(full.0, full.1);
+        for _ in 0..8 {
+            tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut whole, camera, &config, None, &|| false);
+        }
+        let mut shown = 0;
+        for (a, b) in still.pixels().iter().zip(whole.pixels()) {
+            if a.alpha() > 0.0 || b.alpha() > 0.0 {
+                shown += 1;
+                assert_eq!((a.sum.to_array(), a.coverage_sum, a.samples), (b.sum.to_array(), b.coverage_sum, b.samples), "the still view's reflection is the whole frame's");
+            }
+        }
+        assert!(shown > 100, "the floor reflects the sphere: {shown} pixels");
+    }
+
     /// A camera moving on before Cycles has shown a still view's first
     /// picture goes in at once; one moving on before Cycles has shown a
     /// moving picture waits for it, so a moving view shows anything at all.
@@ -870,6 +1069,29 @@ mod floor_tests {
         view.sync(&req).expect("synced");
         assert!(!view.navigating(), "let go, the move is over");
         assert_eq!(view.size(), (1000, 750), "and the view is at its size at once");
+
+        // Let go while the move's last picture is still being made: the
+        // let-go waits behind it, as any change does, and then the view is
+        // at its size at once - not after another moving picture of where
+        // the mouse stopped and a moment of settling.
+        req.interacting = true;
+        req.camera = at(0.35);
+        view.sync(&req).expect("synced");
+        assert!(view.moving_picture() && view.awaiting_frame(), "a moving picture on its way");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        req.interacting = false;
+        req.camera = at(0.4);
+        assert!(!view.sync(&req).expect("synced"), "held behind the moving picture");
+        let mut shown = Framebuffer::new(1, 1);
+        while view.awaiting_frame() {
+            assert!(std::time::Instant::now() < deadline, "Cycles never drew the move");
+            view.take_frame(&mut shown);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(view.sync(&req).expect("synced"), "the let-go goes in");
+        assert!(!view.navigating() && !view.moving_picture(), "let go behind a picture, the move is over");
+        assert_eq!((view.size(), view.camera()), ((1000, 750), Some(at(0.4))), "at its size, where the mouse stopped");
+        settle(&mut view, &req);
 
         // A notch: moving, and a frame later not, still settling. (Not
         // waiting for its picture, which on a busy processor takes longer
