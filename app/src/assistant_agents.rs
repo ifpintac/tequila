@@ -120,9 +120,9 @@ impl Kind {
     pub fn caveat(self) -> Option<&'static str> {
         match self {
             Kind::Claude => None,
-            // Codex looks at files by running read-only commands in its
-            // own sandbox, which Tequila is not asked about.
-            Kind::ChatGpt => Some("ChatGPT's own program can read files elsewhere on this computer. It cannot change them, run other commands or reach the internet without Tequila being asked, and Tequila says no."),
+            // Without its command tool Codex has no way to open a file:
+            // worth saying, since Claude can read in the project's folder.
+            Kind::ChatGpt => Some("ChatGPT works through Tequila's tools alone here: it cannot read the files in the project's folder, run commands or reach the internet."),
             Kind::Gemini => None,
         }
     }
@@ -136,6 +136,10 @@ fn connected_key(settings: &Settings, wire: Wire, host: &str) -> Option<String> 
         .filter(|p| p.kind == wire && tequila_ai::provider::host(&p.base_url).as_deref() == Some(host))
         .find_map(|p| p.key.resolve().ok().flatten())
 }
+
+/// Codex's settings for a conversation in Tequila, merged into its own by
+/// its adapter: no command tool, no web search.
+const CODEX_CONFIG: &str = r#"{"features":{"shell_tool":false},"web_search":"disabled"}"#;
 
 /// What an agent's program is started with besides its own arguments:
 /// more arguments, and more of an environment.
@@ -155,11 +159,15 @@ pub fn start_with(kind: Kind, settings: &Settings) -> (Vec<String>, Vec<(String,
             }
         }
         Kind::ChatGpt => {
-            // Codex starts where it may only read: a change to a file or a
-            // command that needs more asks, and Tequila answers. Its web
-            // search is its maker's, on their servers, and is turned off.
+            // The rules Claude is held to: no shell, no internet. Codex
+            // looks at files by running commands, in a sandbox Tequila is
+            // not asked about and that reads the whole disk, so its command
+            // tool is taken away altogether (`features.shell_tool`), and
+            // its web search, which is its maker's, on their servers. What
+            // is left is Tequila's tools and a change to a file, which
+            // asks: it starts where it may only read.
             env.push(("INITIAL_AGENT_MODE".to_string(), "read-only".to_string()));
-            env.push(("CODEX_CONFIG".to_string(), r#"{"web_search":"disabled"}"#.to_string()));
+            env.push(("CODEX_CONFIG".to_string(), CODEX_CONFIG.to_string()));
             // A connected OpenAI key signs it in without a question.
             if let Some(key) = connected_key(settings, Wire::OpenAi, "api.openai.com") {
                 env.push(("OPENAI_API_KEY".to_string(), key));
@@ -582,7 +590,13 @@ mod tests {
         let mut settings = Settings::default();
         let (args, env) = start_with(Kind::ChatGpt, &settings);
         assert!(args.is_empty());
-        assert_eq!(env, [("INITIAL_AGENT_MODE".to_string(), "read-only".to_string()), ("CODEX_CONFIG".to_string(), r#"{"web_search":"disabled"}"#.to_string())]);
+        assert_eq!(env[0], ("INITIAL_AGENT_MODE".to_string(), "read-only".to_string()));
+        // No command tool and no web search, in the words Codex reads.
+        let config = tequila_format::json::parse(env[1].1.as_bytes()).unwrap();
+        assert_eq!(env[1].0, "CODEX_CONFIG");
+        assert_eq!(config.get("features").unwrap().get("shell_tool"), Some(&Value::Bool(false)));
+        assert_eq!(config.get("web_search").and_then(Value::as_str), Some("disabled"));
+        assert_eq!(env.len(), 2);
         assert_eq!(pinned(Kind::ChatGpt), [("mode", "read-only")]);
 
         let gateway = Provider { key: Key::Stored("sk-company".into()), base_url: "https://ai.example.com/v1".into(), ..Provider::preset("openai").unwrap() };
