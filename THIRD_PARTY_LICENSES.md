@@ -28,6 +28,11 @@ computer's `npm` and puts the program in `~/.tequila/agents`
 | [`@agentclientprotocol/codex-acp`](https://github.com/agentclientprotocol/codex-acp) | Apache-2.0 | ChatGPT as an agent, over the Agent Client Protocol |
 | [`@openai/codex`](https://github.com/openai/codex), which that adapter installs and runs | Apache-2.0 | OpenAI's Codex program itself |
 
+Gemini's agent is Google's Antigravity CLI. **Install** runs Google's own
+installer (antigravity.google/cli), which puts it in the person's home
+folder; it is Google's, under Google's terms (antigravity.google/terms),
+and no part of it is in Tequila.
+
 Tequila speaks the Agent Client Protocol
 ([agentclientprotocol.com](https://agentclientprotocol.com), Apache-2.0)
 with code of its own (`crates/tequila-ai/src/acp.rs`); no SDK is linked.

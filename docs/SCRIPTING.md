@@ -267,7 +267,7 @@ request if wanted:
 
 | Field | What it does |
 |---|---|
-| `use` | who answers: `"claude"`, `"chatgpt"`, or a connected provider's name or id |
+| `use` | who answers: `"claude"`, `"chatgpt"`, `"gemini"`, or a connected provider's name or id |
 | `new_chat` | `true` starts a new chat |
 | `chat` | opens a past chat by its id |
 | `answer` | `{"id": N, "allow": true}`: the person's answer to a question |
