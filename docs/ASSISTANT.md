@@ -68,7 +68,21 @@ before its code is written, and again before it starts.
 ## Who answers
 
 The model picker at the bottom right of the message box lists everything
-connected. There are two kinds.
+connected, and **Connections…** at its foot opens the page where each is
+set up:
+
+- **Subscriptions and agents**: Claude and ChatGPT, each on a card that
+  says where it stands - *Not on this computer*, *Installed, not signed
+  in*, *Signed in · paid for by a subscription* or *by an API key* - with
+  the button for the next step (**Install**, **Sign in**, **Check
+  again**) and, once it is signed in, its models to choose from.
+- **API keys and this computer**: the services and local models Tequila's
+  own loop talks to. Keys are kept in the Mac's Keychain, or encrypted to
+  your Windows account.
+- **AI apps that can use Tequila**, folded away: the other direction, for
+  the Claude app, Cursor and the rest to work in Tequila from outside.
+
+There are two kinds of answerer.
 
 **An agent** is the AI company's own program, running on this computer:
 **Claude** and **ChatGPT**. Tequila starts it, hands it Tequila's tools,
@@ -150,6 +164,17 @@ and Tequila refuses the command and the internet and puts a file in the
 project's folder to you. Its web search is turned off. The chat says this
 before you ask it anything. Closing the gap needs a Codex permission
 profile that keeps reading to the project, which is not built yet.
+
+### Gemini
+
+Gemini answers today with an API key, under *API keys and this computer*.
+Google's own agent is not built in. Its command-line program for a
+personal Google account is the Antigravity CLI (`agy`), which Google
+documents as speaking the same protocol (`agy acp`), but Antigravity's
+terms say that *"using third party software, tools, or services to access
+the Service ... is a breach of this Agreement"*, while its own guide says
+*"any ACP client can launch Antigravity CLI"*. Until that is settled, and
+until `agy acp` has been tried on a computer, it is left out.
 
 ## API keys and models on this computer
 
@@ -602,3 +627,43 @@ Held by tests: `the_own_loops_tools_that_leave_the_scene_ask_first`,
 `a_plugin_run_by_the_assistant_answers_with_its_log` (now through the
 question), and in `tequila-ai`
 `what_leaves_the_scene_is_a_request_the_application_can_ask_about`.
+
+## As built, November 13: the Connections page
+
+*Connect an AI* listed the AI apps first and the providers under them, and
+knew nothing of agents: what Claude still needed was said only in the
+chat. It is **Connections** now (`app/src/assistant_connections.rs`), with
+the agents first.
+
+- **Where an agent stands is asked of the agent.** While the page is open
+  each agent that is installed is started for a moment with nothing to
+  work on (`Connection::look`): it says who is signed in and what pays
+  (`_auth/status_update`), or refuses to open a conversation (Codex,
+  -32000), and lists its models; then it is let go. An agent the person is
+  signing in to through the agent itself (ChatGPT, in the browser) is kept
+  until that is done. Closing the page lets them all go, and the chat
+  looks again at what its own agent needs.
+- **Install** and the terminal sign-ins are the ones the chat's card uses
+  (`assistant_agents`). **Check again** asks the agent afresh, for after
+  a sign-in in a terminal, which Tequila cannot see finish.
+- **A model per agent**: the one chosen is kept
+  (`Settings::choices`, `agent:claude/model`) and set on the chat's own
+  agent at once if it is running, otherwise when it next starts.
+- API keys are where they were: the Mac's Keychain, or encrypted to the
+  Windows account (`secret.rs`).
+- Also here: Claude's sign-in card shows as its conversation opens again.
+  The ChatGPT change had put that off until the first message failed.
+
+Tried on this Mac, in a copy with a home folder of its own, with
+Anthropic's adapter installed and OpenAI's not: the page said *Claude:
+Installed, not signed in* with **Sign in: Anthropic Console**, and
+*ChatGPT: Not on this computer* with **Install**; an Ollama provider was
+listed under it.
+
+Not tried: a signed-in agent on the page (needs an account; the stand-in
+tests cover the states), and Windows.
+
+Held by tests: `assistant_connections::` (4: signed in with its models,
+signed out both ways and signed in through the agent, an agent that will
+not start, the page drawn in every state) and
+`an_agent_nobody_is_signed_in_to_says_so_as_it_opens`.

@@ -254,7 +254,9 @@ alone answers with what it is doing: `working`, `phase` (`loading`,
 `asking`), `doing` in words, `step`, `seconds`, `tokens`, the `chat`'s id
 and `title`, who answers (`provider`, `model`, an agent's `settings` and
 `account`), what an agent still needs (`setup`: `missing`, `installing`,
-`sign in` or `failed`), and the `transcript` as the panel shows it. Each
+`sign in`, `signing in` or `failed`), where each agent stands while the
+Connections window is open (`connections`; `{"op":"ui","connect":true}`
+opens it), and the `transcript` as the panel shows it. Each
 entry of the transcript has a `kind` (`you`, `said`, `thought`, `step`,
 `running step`, `failed step`, `picture`, `asked`, `problem`, `note`) and
 its `text`; an `asked` one has its `id`, `detail` and, once answered, its
