@@ -308,7 +308,7 @@ Tequila asks the person before one leaves the scene (`docs/ASSISTANT.md`).
 It is not for other apps.
 
 **Connecting an app:** in Tequila, open the Assistant, open the model
-picker and click **Connections…**. Under *AI apps on this computer*, each app Tequila finds has a
+picker and click **Connections…**. Under *AI apps that can use Tequila*, each app Tequila finds has a
 **Connect** button that adds Tequila to that app's settings, keeping
 everything else there. The original is kept beside it as
 `<file>.before-tequila`. A settings file that is not plain JSON, one with
@@ -358,7 +358,7 @@ people ask for, materials, recipes, scene work, configurators, plugins and
 scripts. It is an Agent Skill (a folder with a `SKILL.md`), which the Claude
 app, Claude Code, Codex and other apps read, and it ships as
 `Tequila-Skill.zip` beside Tequila. In the Claude app: **Settings →
-Capabilities → Skills → Upload skill** (the **Connect an AI…** window has
+Capabilities → Skills → Upload skill** (the **Connections** window has
 **Show the skill file**). For Claude Code and Codex, the window's **Add the
 skill** unpacks it into `~/.claude/skills/tequila` or
 `~/.codex/skills/tequila`.
