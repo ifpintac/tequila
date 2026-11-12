@@ -165,6 +165,8 @@ enum Waiting {
     Agent(u64),
     /// A request held here ([`Held`]).
     Held,
+    /// A tool call of Tequila's own loop, kept until answered.
+    Call,
 }
 
 pub enum Action {
@@ -215,6 +217,9 @@ pub struct Assistant {
     /// The mark this window's Assistant gives its bridge.
     mark: String,
     held: Vec<Held>,
+    /// A tool call of Tequila's own loop that the person is being asked
+    /// about, and the question's number.
+    call_waiting: Option<(u64, Call)>,
     waiting: HashMap<u64, Waiting>,
     next_question: u64,
     /// The window, for an agent's reader to wake.
@@ -327,6 +332,7 @@ impl Assistant {
             || !self.calls.is_empty()
             || self.shot.is_some()
             || self.plugin_wait.is_some()
+            || self.call_waiting.is_some()
             || self.agent_working()
             // Asked, and the agent still starting.
             || (self.queued.is_some() && self.setup.is_none())
@@ -572,6 +578,7 @@ impl Assistant {
         }
         self.refuse_held("The person stopped the request.");
         self.waiting.clear();
+        self.call_waiting = None;
         self.queued = None;
         self.calls.clear();
         self.results.clear();
@@ -929,6 +936,15 @@ impl Assistant {
                 }
                 self.touched(app.project.bus());
             }
+            Some(Waiting::Call) => {
+                let Some((_, call)) = self.call_waiting.take() else { return };
+                if allow {
+                    self.carry_out_agreed(app, call, true);
+                } else {
+                    let label = step_label(&call);
+                    self.result(call, "The person said no to this. Do not try it another way; tell them it was not done.".into(), None, true, label);
+                }
+            }
             None => {}
         }
     }
@@ -1179,7 +1195,7 @@ impl Assistant {
             ctx.request_repaint();
         }
         self.collect_plugin_run(app);
-        while self.shot.is_none() && self.plugin_wait.is_none() {
+        while self.shot.is_none() && self.plugin_wait.is_none() && self.call_waiting.is_none() {
             let Some(call) = self.calls.pop_front() else { break };
             if !self.carry_out(app, call) {
                 // Waiting on something outside the assistant; next frame.
@@ -1187,7 +1203,7 @@ impl Assistant {
             }
         }
 
-        let answered = self.calls.is_empty() && self.shot.is_none() && self.plugin_wait.is_none() && !self.results.is_empty();
+        let answered = self.calls.is_empty() && self.shot.is_none() && self.plugin_wait.is_none() && self.call_waiting.is_none() && !self.results.is_empty();
         if answered {
             let results = std::mem::take(&mut self.results);
             if let Some(session) = &mut self.session {
@@ -1226,6 +1242,11 @@ impl Assistant {
 
     /// Carry out one call. False when it has to wait for a later frame.
     fn carry_out(&mut self, app: &mut TequilaApp, call: Call) -> bool {
+        self.carry_out_agreed(app, call, false)
+    }
+
+    /// The same, `agreed` when the person has said yes to it already.
+    fn carry_out_agreed(&mut self, app: &mut TequilaApp, call: Call, agreed: bool) -> bool {
         let label = step_label(&call);
         let arguments = match call.arguments.clone() {
             Ok(arguments) => arguments,
@@ -1234,7 +1255,27 @@ impl Assistant {
                 return true;
             }
         };
-        match tools::plan(&call.name, &arguments) {
+        let planned = tools::plan(&call.name, &arguments).map(|plan| in_project(plan, app.project.path.as_deref().and_then(std::path::Path::parent)));
+        // What leaves the scene waits for the person, as it does for an
+        // agent: the same questions, asked of the same request.
+        if !agreed {
+            let request = match &planned {
+                Ok(tools::Plan::Request { json, .. } | tools::Plan::Material { json, .. } | tools::Plan::PluginRun { json, .. }) => parse_request(json).ok(),
+                _ => None,
+            };
+            if let Some(question) = request.and_then(|request| tequila_scripting::approval::question(&request.operation, &std::env::temp_dir())) {
+                self.stepped(&call, label, Status::Running, String::new());
+                let folder = app.project.path.as_deref().and_then(std::path::Path::parent).map(|f| format!("{}{}", f.display(), std::path::MAIN_SEPARATOR));
+                let detail = match folder {
+                    Some(folder) => question.detail.replace(&folder, ""),
+                    None => question.detail,
+                };
+                let asked = self.question(question.title, detail, Waiting::Call);
+                self.call_waiting = Some((asked, call));
+                return false;
+            }
+        }
+        match planned {
             Err(error) => self.result(call, error, None, true, label),
             Ok(tools::Plan::Screenshot { viewport }) => {
                 if app.pending_screenshot.is_some() {
@@ -1918,6 +1959,28 @@ impl Draft {
     }
 }
 
+/// A file a tool names without saying where is in the project's folder:
+/// left as written, it would be looked for wherever Tequila was started
+/// from.
+fn in_project(plan: tools::Plan, folder: Option<&std::path::Path>) -> tools::Plan {
+    let (tools::Plan::Request { json, shape }, Some(folder)) = (&plan, folder) else { return plan };
+    let Ok(tequila_format::json::Value::Object(mut fields)) = tequila_format::json::parse(json.as_bytes()) else { return plan };
+    let op = fields.get("op").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let keys: &[&str] = match op.as_str() {
+        "import" | "save" => &["path"],
+        "queue" => &["folder"],
+        _ => return plan,
+    };
+    for key in keys {
+        if let Some(tequila_format::json::Value::String(path)) = fields.get_mut(*key) {
+            if !std::path::Path::new(path.as_str()).is_absolute() {
+                *path = folder.join(path.as_str()).to_string_lossy().into_owned();
+            }
+        }
+    }
+    tools::Plan::Request { json: tequila_format::json_write::to_string(&tequila_format::json::Value::Object(fields)), shape: shape.clone() }
+}
+
 /// A short line for the panel: what the assistant is doing, in words a
 /// person who has never seen a tool's name can read.
 fn step_label(call: &Call) -> String {
@@ -1977,6 +2040,10 @@ fn step_label(call: &Call) -> String {
         "studio_preset_save" => "Save a studio".into(),
         "studio_render_all" => "Render every studio".into(),
         "preferences" => "Preferences".into(),
+        "library_apply" => match word("name") {
+            Some(name) => format!("Library: {name}"),
+            None => "Put a library material on parts".into(),
+        },
         "import" => "Import a file".into(),
         "save" => "Save the project".into(),
         "plugin_guide" => "Read the plugin guide".into(),
@@ -2123,7 +2190,11 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let mut assistant = Assistant::default();
-        assert!(assistant.carry_out(&mut app, call("tequila_plugin_run", r#"{"id":"test.echo","command":"go","values":{"n":3}}"#)));
+        // Running a plugin's code is the person's to allow.
+        assert!(!assistant.carry_out(&mut app, call("tequila_plugin_run", r#"{"id":"test.echo","command":"go","values":{"n":3}}"#)));
+        let Some(Item::Asked(asked)) = assistant.chat.items.last().cloned() else { panic!("no question") };
+        assert_eq!((asked.title.as_str(), asked.detail.as_str()), ("Run a plugin?", "test.echo: go"));
+        assistant.answer(&mut app, asked.id, true);
         assert!(assistant.plugin_wait.is_some(), "the run was answered before it ran");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while assistant.plugin_wait.is_some() && std::time::Instant::now() < deadline {
@@ -2137,6 +2208,56 @@ mod tests {
         let said: Vec<&str> = answer.get("log").map(|l| l.as_array().iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
         assert!(!is_error && finished == Some(true) && said.contains(&"hello 3"), "{text}");
         app.plugins.set_enabled("test.echo", false).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Tequila's own loop is asked about the same things an agent is: a
+    /// save to a new place waits for the person, is refused to the model in
+    /// words when they say no, and is done - in the project's folder, when
+    /// the model named no folder - when they say yes. A save to the
+    /// project's own file, and a preset from the library, ask nobody.
+    #[test]
+    fn the_own_loops_tools_that_leave_the_scene_ask_first() {
+        let root = std::env::temp_dir().join(format!("tequila-assistant-own-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.project.save(&root.join("project.tequila")).unwrap();
+        let mut assistant = Assistant::default();
+
+        assert!(!assistant.carry_out(&mut app, call("tequila_save", r#"{"path":"copy.tequila"}"#)), "it waits");
+        assert!(assistant.is_working() && assistant.is_asking() && assistant.results.is_empty());
+        let asked = |assistant: &Assistant| assistant.chat.items.iter().rev().find_map(|item| if let Item::Asked(asked) = item { Some(asked.clone()) } else { None }).unwrap();
+        let question = asked(&assistant);
+        assert_eq!((question.title.as_str(), question.detail.as_str()), ("Save the project to a new place?", "copy.tequila"));
+        assistant.answer(&mut app, question.id, false);
+        assert!(matches!(assistant.results.last(), Some(Part::Result { is_error: true, text, .. }) if text.contains("said no")));
+        assert!(!root.join("copy.tequila").exists() && !assistant.is_asking());
+
+        assert!(!assistant.carry_out(&mut app, call("tequila_save", r#"{"path":"copy.tequila"}"#)));
+        let question = asked(&assistant);
+        assistant.answer(&mut app, question.id, true);
+        assert!(matches!(assistant.results.last(), Some(Part::Result { is_error: false, .. })), "{:?}", assistant.results.last());
+        assert!(root.join("copy.tequila").exists(), "saved beside the project, not wherever Tequila was started");
+
+        // Nothing asked: the project's own file, a look, a library query.
+        let before = assistant.chat.items.len();
+        assert!(assistant.carry_out(&mut app, call("tequila_save", "{}")));
+        assert!(assistant.carry_out(&mut app, call("tequila_query", r#"{"what":"library"}"#)));
+        assert!(!assistant.chat.items[before..].iter().any(|item| matches!(item, Item::Asked(_))));
+        // Asked: an import, a render to a file, a preference.
+        for (tool, arguments, title) in [
+            ("tequila_import", r#"{"path":"model.glb"}"#, "Import a file?"),
+            ("tequila_queue", r#"{"width":1920,"height":1080}"#, "Render to a file?"),
+            ("tequila_preferences", r#"{"set":{"viewport.gizmo_size":150}}"#, "Change Tequila's preferences?"),
+        ] {
+            assert!(!assistant.carry_out(&mut app, call(tool, arguments)), "{tool}");
+            let question = asked(&assistant);
+            assert_eq!(question.title, title);
+            assistant.answer(&mut app, question.id, false);
+        }
+        // Reading the preferences is free.
+        assert!(assistant.carry_out(&mut app, call("tequila_preferences", "{}")));
         let _ = std::fs::remove_dir_all(&root);
     }
 

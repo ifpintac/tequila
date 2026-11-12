@@ -1,9 +1,12 @@
 //! What the assistant may do, and how each tool becomes a scripting request.
 //!
-//! The same surface the MCP bridge offers, less the parts that reach outside
-//! the scene: no importing arbitrary files, no saving to arbitrary paths, no
-//! quitting, and no raw requests. The assistant works on the open scene; the
-//! person decides what comes into it and where it goes.
+//! The same surface the MCP bridge offers, less quitting, opening another
+//! project and raw requests. The assistant works on the open scene. What
+//! leaves it - a file brought in, the project saved somewhere new, a render
+//! written to a file, a preference, the library - is a tool like the rest,
+//! and the application asks the person before it happens
+//! (`tequila_scripting::approval`): the person decides what comes into the
+//! scene and where it goes.
 
 use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
@@ -27,8 +30,10 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},
  {"name":"tequila_api","description":"The command catalog, every material parameter (key, kind, range) and every material type. Call once before editing materials, to use exact names.",
   "schema":{"type":"object","properties":{}}},
- {"name":"tequila_query","description":"A read-only query: selection, camera, commands, ui, jobs or history.",
-  "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history"]}},"required":["what"]}},
+ {"name":"tequila_query","description":"A read-only query: selection, camera, commands, ui, jobs, history, or library - every material preset in the person's library, by name, category, tags and type.",
+  "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history","library"]}},"required":["what"]}},
+ {"name":"tequila_library_apply","description":"Put a preset from the material library on parts, by the preset's exact name from tequila_query library. unlink=true gives the parts a copy of their own. Undoable. Prefer this to making a material when a preset fits.",
+  "schema":{"type":"object","properties":{"name":{"type":"string"},"nodes":{"type":"array","items":{"type":"integer"}},"unlink":{"type":"boolean"}},"required":["name","nodes"]}},
  {"name":"tequila_apply","description":"Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"} or {\"command\":\"material.set_parameter\",\"material\":2,\"parameter\":\"base_color\",\"value\":[0.1,0.1,0.12]}. Materials can be shared: use material.unlink on a part before changing its material alone. Colours: send a hex sRGB string (\"value\":\"#c0392b\") and it is converted for you; an array is linear RGB 0-1 in the rendering space, ACEScg, used as given.",
   "schema":{"type":"object","properties":{"command":{"type":"object","description":"A command: {\"command\":\"<name>\", ...fields}"}},"required":["command"]}},
  {"name":"tequila_batch","description":"Several operations as ONE undo step; if one fails, none of them stay. Each is an object with an \"op\": apply (with \"command\"), select (\"nodes\"), frame (\"all\"), look, ui. Prefer this for more than one edit.",
@@ -45,10 +50,14 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"viewport":{"type":"boolean"}}}},
  {"name":"tequila_ui","description":"Switch the viewport between 'rendered' (ray traced, shows real materials and light) and 'solid' (fast preview), and open panels.",
   "schema":{"type":"object","properties":{"viewport":{"type":"string","enum":["rendered","solid"]},"render_window":{"type":"boolean"},"tab":{"type":"string","enum":["scene","material","environment","lighting","camera","image"]}}}},
- {"name":"tequila_queue","description":"Start a final render in the background with the document's render settings. Only when asked for a render.",
-  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"}}}},
- {"name":"tequila_save","description":"Save the project to its own file. Only when asked to save.",
-  "schema":{"type":"object","properties":{}}}
+ {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. Only when asked for a render. The person is asked first.",
+  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"}}}},
+ {"name":"tequila_save","description":"Save the project: to its own file, or with path to a new place (the person is asked first). Only when asked to save.",
+  "schema":{"type":"object","properties":{"path":{"type":"string"}}}},
+ {"name":"tequila_import","description":"Bring a model file into the scene: glTF, OBJ, STEP and the others Tequila reads. A path that is not absolute is in the project's folder. The person is asked first.",
+  "schema":{"type":"object","properties":{"path":{"type":"string"},"up":{"type":"string","enum":["y","z"]}},"required":["path"]}},
+ {"name":"tequila_preferences","description":"Tequila's own settings. With nothing, every setting with its value and what it takes. set is an object of settings by name; reset is \"all\", a page or a setting. Changing one asks the person first. Only when asked to.",
+  "schema":{"type":"object","properties":{"set":{"type":"object"},"reset":{"type":"string"}}}}
 ]"##;
 
 /// The MCP bridge's tools, whose material ones the assistant offers as they
@@ -172,7 +181,7 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         "tequila_api" => raw(query("api")),
         "tequila_query" => {
             let what = arguments.get("what").and_then(|v| v.as_str()).ok_or("say what to query")?;
-            if !["selection", "camera", "commands", "ui", "jobs", "history"].contains(&what) {
+            if !["selection", "camera", "commands", "ui", "jobs", "history", "library"].contains(&what) {
                 return Err(format!("`{what}` is not one of the queries this tool offers"));
             }
             raw(query(what))
@@ -206,8 +215,17 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
             viewport: arguments.get("viewport").and_then(|v| v.as_bool()).unwrap_or(true),
         }),
         "tequila_ui" => raw(with("ui", pick(arguments, &["viewport", "render_window", "tab"]))),
-        "tequila_queue" => raw(with("queue", pick(arguments, &["name", "width", "height", "samples", "denoise"]))),
-        "tequila_save" => raw(request(vec![("op", text("save"))])),
+        "tequila_queue" => raw(with("queue", pick(arguments, &["name", "width", "height", "samples", "denoise", "folder", "filename"]))),
+        "tequila_save" => raw(with("save", pick(arguments, &["path"]))),
+        "tequila_import" => {
+            arguments.get("path").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).ok_or("say which file: its path")?;
+            raw(with("import", pick(arguments, &["path", "up"])))
+        }
+        "tequila_preferences" => raw(with("preferences", pick(arguments, &["set", "reset"]))),
+        "tequila_library_apply" => {
+            arguments.get("name").and_then(|v| v.as_str()).ok_or("say which preset: its name, from tequila_query library")?;
+            raw(with("library", [("action".to_string(), text("apply"))].into_iter().chain(pick(arguments, &["name", "nodes", "unlink"])).collect()))
+        }
         "tequila_material_guide" => raw(with("material", vec![("action".into(), text("guide"))])),
         "tequila_material_recipe" => raw(with("material", [("action".to_string(), text("recipe"))].into_iter().chain(pick(arguments, &["material"])).collect())),
         "tequila_material_save" => raw(with("material", [("action".to_string(), text("save"))].into_iter().chain(pick(arguments, &["material", "name", "category", "tags"])).collect())),
@@ -377,11 +395,13 @@ How to work:
 - Check your work: switch the viewport to rendered (tequila_ui viewport=rendered) and take a tequila_screenshot. Judge the picture, and fix what is wrong.
 - Units are metres; +Y is up. Give colours as hex sRGB strings (\"#c0392b\"): Tequila converts them into ACEScg, the rendering space. An array is taken as linear ACEScg as it is. Sizes are real: glass reaches its colour over its transmission depth in metres and pattern frequencies are per metre, so check a part's size in tequila_nodes before tuning either.
 - A liquid in a glass container is modelled a fraction of a millimetre into the glass wall; the Liquid type's higher priority makes it the medium there.
-- For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Prefer a library preset when one fits.
+- For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Prefer a library preset when one fits: tequila_query library lists them, tequila_library_apply puts one on parts.
 - To add to Tequila itself - a panel, a button, something done on every import - write a plugin: tequila_plugin_guide once, then tequila_plugin_write. The person turns it on in Tequila (tequila_plugin_enable asks them, and so does every change you make to one that is on); then tequila_plugin_run tries it and shows its log. Only when asked for one.
 - For a whole studio at once - lights, cameras and views, floor and look for a kind of product - list tequila_studio_presets and apply the suggested size with tequila_studio_preset_apply (one undo step). tequila_studio_render_all renders every view, only when asked for renders.
-- Only render (tequila_queue) or save (tequila_save) when asked to.
-- Everything you do is undoable and shown to the person as you do it. When you finish, say briefly what you changed.";
+- Only render (tequila_queue), save (tequila_save), import (tequila_import) or change a preference (tequila_preferences) when asked to.
+- Before anything that leaves the scene - importing a file, saving to a new place, rendering to a file, a preference, saving to the library, writing or running a plugin - Tequila asks the person itself. Call the tool and wait for its answer rather than asking first; if they said no, do not try another way.
+- A name written as @Name in a message is a part or a material of the scene, and its id follows in brackets.
+- Every change to the scene is undoable and shown to the person as you do it. When you finish, say briefly what you changed.";
 
 #[cfg(test)]
 mod tests {
@@ -419,6 +439,8 @@ mod tests {
                 "tequila_plugin_run" => args(r#"{"id":"my.x","command":"go"}"#),
                 "tequila_studio_preset_apply" => args(r#"{"preset":"studio"}"#),
                 "tequila_studio_preset_save" => args(r#"{"name":"Mine"}"#),
+                "tequila_import" => args(r#"{"path":"model.glb"}"#),
+                "tequila_library_apply" => args(r#"{"name":"Brushed Aluminium","nodes":[1]}"#),
                 _ => args("{}"),
             };
             plan(&tool.name, &arguments).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
@@ -451,21 +473,44 @@ mod tests {
         }
     }
 
-    /// Unlisted arguments are dropped, not forwarded: queue cannot be given a
-    /// folder to write to.
+    /// Unlisted arguments are dropped, not forwarded: a tool passes on what
+    /// it says it takes and nothing else.
     #[test]
     fn only_listed_arguments_pass_through() {
-        match plan("tequila_queue", &args(r#"{"samples":64,"folder":"C:/Windows"}"#)).unwrap() {
+        match plan("tequila_queue", &args(r#"{"samples":64,"folder":"renders","token":"x","configurations":true}"#)).unwrap() {
             Plan::Request { json, .. } => {
-                assert!(json.contains("samples"));
-                assert!(!json.contains("folder"), "{json}");
+                assert!(json.contains("samples") && json.contains("renders"));
+                assert!(!json.contains("token") && !json.contains("configurations"), "{json}");
             }
             other => panic!("{other:?}"),
         }
-        match plan("tequila_save", &args(r#"{"path":"C:/elsewhere.tequila"}"#)).unwrap() {
-            Plan::Request { json, .. } => assert!(!json.contains("elsewhere"), "{json}"),
+        match plan("tequila_import", &args(r#"{"path":"model.glb","parent":3}"#)).unwrap() {
+            Plan::Request { json, .. } => assert!(json.contains("model.glb") && !json.contains("parent"), "{json}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// What leaves the scene becomes the request the application asks the
+    /// person about: a save somewhere new, an import, a preference, a
+    /// preset from the library.
+    #[test]
+    fn what_leaves_the_scene_is_a_request_the_application_can_ask_about() {
+        let request = |tool: &str, arguments: &str| match plan(tool, &args(arguments)).unwrap() {
+            Plan::Request { json, .. } => args(&json),
+            other => panic!("{other:?}"),
+        };
+        let save = request("tequila_save", r#"{"path":"copy.tequila"}"#);
+        assert_eq!((save.get("op").and_then(Value::as_str), save.get("path").and_then(Value::as_str)), (Some("save"), Some("copy.tequila")));
+        assert!(request("tequila_save", "{}").get("path").is_none(), "its own file, when no path is given");
+        let import = request("tequila_import", r#"{"path":"model.glb","up":"z"}"#);
+        assert_eq!((import.get("op").and_then(Value::as_str), import.get("up").and_then(Value::as_str)), (Some("import"), Some("z")));
+        assert!(plan("tequila_import", &args("{}")).is_err());
+        let set = request("tequila_preferences", r#"{"set":{"viewport.gizmo_size":150}}"#);
+        assert_eq!(set.get("op").and_then(Value::as_str), Some("preferences"));
+        assert!(set.get("set").is_some());
+        let preset = request("tequila_library_apply", r#"{"name":"Brushed Aluminium","nodes":[4],"unlink":true}"#);
+        assert_eq!((preset.get("op").and_then(Value::as_str), preset.get("action").and_then(Value::as_str)), (Some("library"), Some("apply")));
+        assert!(plan("tequila_query", &args(r#"{"what":"library"}"#)).is_ok());
     }
 
     #[test]
