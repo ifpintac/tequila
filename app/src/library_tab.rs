@@ -1845,28 +1845,76 @@ mod tests {
         assert_eq!(crate::thumbnail::shipped_name("abs", b"{\r\n  \"a\": 1\r\n}"), crate::thumbnail::shipped_name("abs", b"{\n  \"a\": 1\n}"));
     }
 
+    /// A shipped thumbnail is kept by how its preset looks: a new name,
+    /// description, category, tags or uses keep it, and so does the file's
+    /// layout; a change to the material does not.
+    #[test]
+    fn a_shipped_thumbnail_outlives_a_new_description() {
+        let name = |text: &str| crate::thumbnail::shipped_name("abs", text.as_bytes());
+        let plain = name(r#"{"name": "ABS", "type": "plastic", "base_color": [0.1, 0.2, 0.3], "specular_roughness": 0.4, "tags": ["abs"]}"#);
+        let described = name(
+            r#"{
+              "name": "ABS Black", "type": "plastic", "category": "Plastic", "description": "A matte black ABS.",
+              "tags": ["abs", "black", "matte"], "uses": ["electronics"],
+              "base_color": [0.1, 0.2, 0.3], "specular_roughness": 0.4
+            }"#,
+        );
+        assert_eq!(plain, described, "a preset's details took its thumbnail with them");
+        assert_ne!(plain, name(r#"{"name": "ABS", "type": "plastic", "base_color": [0.1, 0.2, 0.3], "specular_roughness": 0.5}"#));
+        assert_ne!(plain, name(r#"{"name": "ABS", "type": "metal", "base_color": [0.1, 0.2, 0.3], "specular_roughness": 0.4}"#));
+        assert_ne!(plain, name(r#"{"name": "ABS", "type": "plastic", "base_color": [0.1, 0.2, 0.3], "specular_roughness": 0.4, "graph": {"nodes": []}}"#));
+        // A number is the number, however it is written.
+        assert_eq!(name(r#"{"specular_roughness": 0.40}"#), name(r#"{"specular_roughness":4e-1}"#));
+    }
+
     /// The thumbnails the library ships with, rendered as the shelf renders
     /// a tile, at [`crate::thumbnail::SHIPPED_PIXELS`]: `cargo test -p
     /// tequila-app --release ship_the_library_thumbnails -- --ignored`
-    /// before a release whose presets, renderer or preview changed. Writes
-    /// `thumbnails/look-N` beside the standard library, emptied first.
+    /// before a release whose presets changed. Writes `thumbnails/look-N`
+    /// beside the standard library: only the presets whose look has no
+    /// thumbnail there, and takes away those no preset looks like now, so a
+    /// handful of new or changed presets take minutes, not the whole
+    /// library's three quarters of an hour. With `TEQUILA_SHIP_ALL=1`, every
+    /// one again from an empty folder: after a change to the renderer or the
+    /// preview that alters presets whose files did not change.
     #[test]
     #[ignore]
     fn ship_the_library_thumbnails() {
         use rayon::prelude::*;
+        let all = std::env::var_os("TEQUILA_SHIP_ALL").is_some();
         let folder = standard_library_path().join("thumbnails").join(format!("look-{}", crate::thumbnail::THUMBNAIL_LOOK));
-        let _ = std::fs::remove_dir_all(standard_library_path().join("thumbnails"));
+        if all {
+            let _ = std::fs::remove_dir_all(standard_library_path().join("thumbnails"));
+        }
         std::fs::create_dir_all(&folder).expect("writable");
         let (entries, errors) = library::read_directory(&standard_library_path());
         assert!(errors.is_empty(), "{errors:?}");
+        // The file each preset's look is kept in.
+        let named: Vec<(&LibraryEntry, String)> = entries
+            .iter()
+            .map(|entry| {
+                let path = std::path::Path::new(&entry.path);
+                let preset = std::fs::read(path).expect("readable");
+                (entry, crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), &preset))
+            })
+            .collect();
+        // A thumbnail no preset looks like any more is taken away.
+        let wanted: BTreeSet<&str> = named.iter().map(|(_, name)| name.as_str()).collect();
+        let mut stale = 0;
+        for file in std::fs::read_dir(&folder).expect("readable").flatten() {
+            if file.file_name().to_str().is_some_and(|name| !wanted.contains(name)) {
+                std::fs::remove_file(file.path()).expect("removable");
+                stale += 1;
+            }
+        }
+        let to_make: Vec<&(&LibraryEntry, String)> = named.iter().filter(|(_, name)| all || !folder.join(name).is_file()).collect();
+        println!("{} presets: {} to render, {stale} out of date taken away", named.len(), to_make.len());
         let device = Device::shared().expect("embree");
         let environment = Arc::new(tequila_scene::demo::preview_environment());
         let settings = tile_settings(crate::thumbnail::SHIPPED_PIXELS);
         let done = std::sync::atomic::AtomicUsize::new(0);
-        entries.par_iter().for_each(|entry| {
-            let path = std::path::Path::new(&entry.path);
-            let preset = std::fs::read(path).expect("readable");
-            let name = crate::thumbnail::shipped_name(path.file_stem().unwrap().to_str().unwrap(), &preset);
+        to_make.par_iter().for_each(|(entry, name)| {
+            let name = name.clone();
             let settings = PreviewSettings { uv_unit: entry.preview_uv_unit, ..settings };
             let thumbnail = render_thumbnail_textured(&device, &entry.graph, picture_table(&entry.textures), environment.clone(), settings).expect("renders");
             // A clear material renders at twice the size, for its edges, and
@@ -1877,10 +1925,28 @@ mod tests {
             crate::thumbnail::DiskCache::write_png(&folder.join(name), image.size[0], image.size[1], &rgba).expect("writable");
             let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             if n % 25 == 0 {
-                println!("{n} of {}", entries.len());
+                println!("{n} of {}", to_make.len());
             }
         });
-        println!("wrote {} thumbnails to {}", entries.len(), folder.display());
+        println!("wrote {} thumbnails to {}", to_make.len(), folder.display());
+    }
+
+    /// Every preset the library ships finds the thumbnail shipped for it, as
+    /// it looks now: `cargo test -p tequila-app every_preset_finds_its_shipped_thumbnail
+    /// -- --ignored` after `ship_the_library_thumbnails`, or before a release,
+    /// to see none renders on the person's machine. Not run on every build:
+    /// a preset's look changed without its thumbnail made again is slower
+    /// to show, not wrong.
+    #[test]
+    #[ignore]
+    fn every_preset_finds_its_shipped_thumbnail() {
+        // The test shelf ships none; this one looks where the library does.
+        let mut tab = tab();
+        tab.shipped = shipped_folder();
+        tab.find_shipped();
+        let missing: Vec<&str> = tab.entries.iter().zip(&tab.shipped_files).filter(|(e, f)| e.source == library::Source::Standard && f.is_none()).map(|(e, _)| e.name.as_str()).collect();
+        assert!(tab.shipped.is_some(), "no shipped thumbnails for this look");
+        assert!(missing.is_empty(), "{} presets have no shipped thumbnail, such as {:?}", missing.len(), &missing[..missing.len().min(8)]);
     }
 
     /// A folder of its own for each test, emptied first.

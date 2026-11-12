@@ -204,18 +204,85 @@ pub fn decode_png(bytes: impl std::io::Read) -> Option<egui::ColorImage> {
 /// scaled down for any smaller tile; a larger one renders its own.
 pub const SHIPPED_PIXELS: usize = 240;
 
+/// A preset's details, which say what it is and where it is found but do
+/// not change how it looks.
+const DETAILS: [&str; 6] = ["name", "category", "description", "tags", "uses", "favorite"];
+
 /// The file a preset's shipped thumbnail is kept in: its own file's name,
-/// and a hash of what is in it, so a preset changed since the thumbnails
-/// were made finds none and renders its own. FNV-1a, which no compiler
-/// or platform changes, over the text with its line endings made one,
-/// since a checkout on Windows writes them two characters long.
+/// and a hash of how it looks, so a preset whose look changed since the
+/// thumbnails were made finds none and renders its own.
+///
+/// How it looks, not every byte of it: everything in the preset but its
+/// details ([`DETAILS`]), read as JSON, so neither its layout nor the line
+/// endings a Windows checkout writes count. Hashing the file whole, a
+/// description written for every preset took every shipped thumbnail with
+/// it, and the whole shelf was rendered again on the person's machine.
+/// FNV-1a, which no compiler or platform changes. A file that does not read
+/// as a JSON object is hashed as its text.
 pub fn shipped_name(stem: &str, preset: &[u8]) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &byte in preset.iter().filter(|&&b| b != b'\r') {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    use tequila_format::json::Value;
+    let mut hash = Fnv(0xcbf2_9ce4_8422_2325);
+    match tequila_format::json::parse(preset) {
+        Ok(Value::Object(fields)) => {
+            for (key, value) in fields.iter().filter(|(key, _)| !DETAILS.contains(&key.as_str())) {
+                hash.text(key);
+                hash.value(value);
+            }
+        }
+        _ => preset.iter().filter(|&&b| b != b'\r').for_each(|&b| hash.byte(b)),
     }
-    format!("{stem}-{hash:016x}.png")
+    format!("{stem}-{:016x}.png", hash.0)
+}
+
+/// FNV-1a, fed a JSON value as tagged parts, so `[1, 2]` and `["1", "2"]`
+/// and `{"a": 1}` and `{"a1": ""}` all differ.
+struct Fnv(u64);
+
+impl Fnv {
+    fn byte(&mut self, byte: u8) {
+        self.0 ^= u64::from(byte);
+        self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) {
+        bytes.iter().for_each(|&b| self.byte(b));
+    }
+
+    fn text(&mut self, text: &str) {
+        self.bytes(&(text.len() as u64).to_le_bytes());
+        self.bytes(text.as_bytes());
+    }
+
+    fn value(&mut self, value: &tequila_format::json::Value) {
+        use tequila_format::json::Value;
+        match value {
+            Value::Null => self.byte(0),
+            Value::Bool(b) => self.bytes(&[1, u8::from(*b)]),
+            Value::Number(n) => {
+                self.byte(2);
+                // Zero is zero, whichever sign it was written with.
+                self.bytes(&(if *n == 0.0 { 0.0f64 } else { *n }).to_bits().to_le_bytes());
+            }
+            Value::String(s) => {
+                self.byte(3);
+                self.text(s);
+            }
+            Value::Array(items) => {
+                self.byte(4);
+                self.bytes(&(items.len() as u64).to_le_bytes());
+                items.iter().for_each(|item| self.value(item));
+            }
+            Value::Object(fields) => {
+                // Its keys in order: the map keeps them sorted.
+                self.byte(5);
+                self.bytes(&(fields.len() as u64).to_le_bytes());
+                for (key, item) in fields {
+                    self.text(key);
+                    self.value(item);
+                }
+            }
+        }
+    }
 }
 
 /// `image` made `pixels` across, by averaging the pixels each new one
