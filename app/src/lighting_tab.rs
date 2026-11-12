@@ -355,6 +355,10 @@ pub fn light_panel(ui: &mut egui::Ui, project: &mut Project, templates: &mut dyn
                             ui.add(crate::field::Checkbox::new(two_sided, "Two sided"));
                             ui.add(crate::field::Slider::new(&mut light.spread_degrees, 1.0..=180.0).text("Spread"))
                                 .on_hover_text("How wide the light leaves the panel: 180 is a plain panel, less a softbox behind a grid, its light gathered into a narrower beam of the same power.");
+                            ui.add(crate::field::Slider::new(&mut light.edge_falloff, 0.0..=1.0).text("Edge falloff"))
+                                .on_hover_text("How much darker its edges are than its middle, as a softbox's front is: none is a bare panel, an even white shape with a hard edge in gloss paint and chrome; about half is a softbox, a sheen that fades towards its edges. The light gives the same, its middle brighter.");
+                            ui.add(crate::field::Slider::new(&mut light.fade, -1.0..=1.0).text("Fade"))
+                                .on_hover_text("Fades it from its top edge to its bottom, as a graduated scrim does: 1 leaves the bottom edge dark, -1 the top. What gives a bottle or a curved face a highlight that melts away at one end. The light gives the same.");
                         }
                         LightShape::Point { radius } => {
                             ui.add(

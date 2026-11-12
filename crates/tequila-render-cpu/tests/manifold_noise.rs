@@ -128,7 +128,7 @@ fn studio(glowing: bool) -> SceneSnapshot {
         add(Mesh::new(corners, vec![0, 1, 2, 0, 2, 3]).with_normals(vec![normal; 4]), radiance);
     } else {
         lights.push(Light::new(LightKind::Point(PointLight { position: lamp_at, intensity: Spectrum::splat(intensity), radius })));
-        lights.push(Light::new(LightKind::Area(AreaLight { position: box_at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI })));
+        lights.push(Light::new(LightKind::Area(AreaLight { position: box_at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 })));
     }
     SceneSnapshot::new(meshes, instances, materials, Arc::new(Environment::uniform(Spectrum::splat(0.025)))).with_lights(Arc::new(LightSet::new(lights)))
 }

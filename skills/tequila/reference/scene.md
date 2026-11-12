@@ -59,6 +59,7 @@ That puts node 5 1 cm up (+Y is up) from where an identity transform has it. For
 {"command": "scene.set_transform", "transforms": [{"node": 7, "matrix": [1,0,0,0, 0,0,-1,0.4, 0,1,0,0, 0,0,0,1]}]}
 ```
 
+- **A softbox's look:** on an `Area` or `Disc` light, `edge_falloff` (0 to 1) darkens its edges against its middle as a real softbox's front is - gloss paint and chrome then show a sheen fading to its edges instead of a hard white shape; 0.5 is a softbox. `fade` (-1 to 1) dims it from its top edge (local +Y) to its bottom, as a graduated scrim: 1 leaves the bottom dark, -1 the top. `spread_degrees` below 180 puts it behind a grid. None changes how much light it gives.
 - **Light and shadow linking:** a light's `links` keeps it to some parts, its `shadow_links` keeps its shadow to some: `{"exclude": false, "nodes": [3], "product": false}` (only these), `"exclude": true` (all but these), `"product": true` for the whole product. A light kept to the product lights nothing else, the floor included; shadow links leaving a prop out let the light through it.
 - `scene.set_light` changes everything but its place. Lights in the scene add to the environment; for most product shots the environment and a lighting preset are enough (`shots.md`).
 

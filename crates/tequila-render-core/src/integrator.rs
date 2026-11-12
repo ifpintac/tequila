@@ -1713,7 +1713,16 @@ fn trace<C: PathColour>(
                 (_, Some(seen)) => seen.weight_of_glow(intersector),
                 _ => 1.0,
             };
-            let contribution = throughput * colour.unbounded(material.emission()) * weight;
+            // A softbox's stand-in shows its face as the softbox lights,
+            // falling off to its edges.
+            let face = match scene.instances.get(hit.instance.0 as usize).and_then(|i| i.light) {
+                Some(light) => match scene.lights.lights().get(light as usize).map(|l| &l.kind) {
+                    Some(crate::light::LightKind::Area(area)) => area.face_at(hit.position),
+                    _ => 1.0,
+                },
+                None => 1.0,
+            };
+            let contribution = throughput * colour.unbounded(material.emission()) * (weight * face);
             radiance += contribution;
             // A light's visible stand-in is that light, and goes in its
             // layer; any other glowing surface is a group of its own.
@@ -5437,7 +5446,7 @@ mod tests {
         let up = facing.cross(across).normalize();
         // Wound so that it faces `facing`.
         let (half_u, half_v) = if across.cross(up).dot(facing) > 0.0 { (across * half, up * half) } else { (up * half, across * half) };
-        crate::light::AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI }
+        crate::light::AreaLight { position: at, half_u, half_v, radiance: Spectrum::splat(radiance), disc: false, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 }
     }
 
     fn with_lamps(scene: SceneSnapshot, lamps: Vec<crate::light::Light>) -> SceneSnapshot {

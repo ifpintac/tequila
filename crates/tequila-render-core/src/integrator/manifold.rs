@@ -727,9 +727,10 @@ fn lamp<'a>(scene: &'a SceneSnapshot, at: Vec3, normal: Vec3, two_sided: bool, r
     }
 }
 
-/// What a lamp's point sends along `towards` (from it to the path's last
-/// crossing): an area light's radiance that way, a point light's intensity.
-fn emitted(light: &Light, towards: Vec3) -> Spectrum {
+/// What a lamp's point `at` sends along `towards` (from it to the path's
+/// last crossing): an area light's radiance that way, as bright as its face
+/// is there, a point light's intensity.
+fn emitted(light: &Light, towards: Vec3, at: Vec3) -> Spectrum {
     match &light.kind {
         LightKind::Area(area) => {
             let cos = towards.dot(area.normal());
@@ -737,7 +738,7 @@ fn emitted(light: &Light, towards: Vec3) -> Spectrum {
             if cos <= 1e-6 {
                 Spectrum::ZERO
             } else {
-                area.radiance * area.spread_attenuation(cos)
+                area.radiance * (area.spread_attenuation(cos) * area.face_at(at))
             }
         }
         LightKind::Point(point) => point.intensity,
@@ -930,7 +931,7 @@ pub(super) fn solve(
                 LightKind::Area(area) => (y, facing(area.normal(), towards)),
                 _ => (last.p + (y - last.p) * (1.0 - 1e-3), towards),
             };
-            (emitted(light, towards), plane, target, target_normal)
+            (emitted(light, towards, y), plane, target, target_normal)
         }
         End::Direction(d) => {
             let frame = Onb::from_normal(d);

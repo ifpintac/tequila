@@ -438,7 +438,8 @@ pub fn snapshot_with(
                                     material_id,
                                 )
                                 .as_light_proxy()
-                                .with_light_layer(settings.layer),
+                                .with_light_layer(settings.layer)
+                                .standing_in_for(lights.len()),
                             );
                             instance_meshes.push(None);
                             // No part: what is picked or put in a layer

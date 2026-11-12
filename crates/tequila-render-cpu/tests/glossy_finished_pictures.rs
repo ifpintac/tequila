@@ -32,7 +32,7 @@ fn lamp(at: Vec3, facing: Vec3, half_u: f32, half_v: f32, radiance: f32, disc: b
     let across = if facing.y.abs() < 0.9 { Vec3::Y.cross(facing).normalize() } else { Vec3::X.cross(facing).normalize() };
     let up = facing.cross(across).normalize();
     let (u, v) = if across.cross(up).dot(facing) > 0.0 { (across * half_u, up * half_v) } else { (up * half_v, across * half_u) };
-    AreaLight { position: at, half_u: u, half_v: v, radiance: Spectrum::splat(radiance), disc, two_sided: false, spread: std::f32::consts::PI }
+    AreaLight { position: at, half_u: u, half_v: v, radiance: Spectrum::splat(radiance), disc, two_sided: false, spread: std::f32::consts::PI, falloff: 0.0, fade: 0.0 }
 }
 
 fn render(scene: SceneSnapshot, camera: tequila_render_core::camera::Camera, samples: u32) -> Vec<Spectrum> {
