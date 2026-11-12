@@ -564,7 +564,7 @@ Beside another program's render on twelve cores the differences were larger: the
 
 *As built, November 12, later: the floor reflection while orbiting.* On the owner's PC (RTX 2060, Cycles on CUDA) orbiting the Headphones gave 14.7 pictures a second with the graphics card at about 30%: each moving picture, at the smallest size (480x270), waited 37.5 ms for Tequila's floor reflection. On the M3 Max the same pass took 22 ms of each 36 ms picture. Alone, at 480x270, it took 11.8 ms on all cores, 20 on six and 103 on one: about half of it a camera ray (and, on the floor, a mirror ray) for each of 130,000 pixels, the other half the 4,000 that show a reflection, at 11 us of path each - their first hit's shading, not their bounces. Tracing only within the band the reflection fills saved only half (the reflecting pixels stay), so:
 
-- **A moving picture's reflection is traced at half its size each way** (`cycles_view::floor_size`), a quarter of the rays, and laid over the picture read between its four nearest pixels (`cycles_view::Reflection`). It is a little softer for the thirtieth of a second it shows. Whether a picture is a moving one is the picture's own (`CyclesView::moving_picture`), so the layer traced while Cycles makes it is the one laid over it. A still view's is traced at its full size as before, and begun where the moving pictures found it: after a move its reflection comes to the one traced over the whole frame at every sample, bit for bit (`the_still_view_after_a_move_has_the_reflection_it_always_had`).
+- **A moving picture's reflection was traced at half its size each way**, a quarter of the rays, and laid over the picture read between its four nearest pixels. A still view's was traced at its full size as before. (Replaced the same day: blotchy, see below.)
 - **The floor-only pass skips what it cannot use** (`trace_path_with_caustics`, `floor_reflection`): a camera ray that does not meet the floor first, and a mirror ray that meets nothing, are known from one intersection before a path is set up for them. The same picture bit for bit - checked on a 640x360 final render in both engines and on the layer itself - and a fifth off a still view's sample over its whole frame (89 to 72 ms at 1448x814); little at the moving sizes.
 - **A drag let go of while a moving picture was on its way** lost its let-go: the call that was held behind the picture cleared it, so the mouse's last position went to Cycles as one more moving picture and the view settled 150 ms later. Since the graphics card is busier now, that was nearly every time. The let-go waits with the change (`CyclesView::sync`).
 
@@ -576,6 +576,19 @@ Measured with the same drag, eight times a build, release builds on the M3 Max (
 | Four threads | 28.3 -> 13.4 ms | 24.5 -> 27.6 a second, 480 (the smallest) -> ~670 wide | 3.2 -> 7.0 million | 60 -> 48 ms | 548 -> 508 ms |
 
 Tequila's renderer is unchanged (64 pictures a second moving, 0.68 s to a clean picture). The move's first picture on all cores is now Cycles' own: larger, it comes 50 to 83 ms after the camera moves, with the floor's layer ready at 25 to 33.
+
+On the PC that gave 22 pictures a second instead of 15 (the floor 36.7 to 14.3 ms, the graphics card 33% to 45% busy), but two things showed there. At a sample for every four pixels the moving reflection's grain came out in bright blotches: the dark Headphones' earcups read as scattered dots, not shapes. And letting go took 410-472 ms to the first full-size picture, not the 390 hoped for: the moving picture still on its way as the mouse let go was of a camera before its last move, so no layer at the camera where it stopped had found the reflection, and the still view's first sample went over the whole frame - 210 ms there, against 130 within the band - in 10 of 16 let-gos.
+
+- **A layer with nothing to go by is begun where a quick look found the reflection** (`cycles_view::scout`): a pass over the whole frame at a quarter of each side, its long side at most 160 pixels (`scout_size`; 2-4 ms here), whose band - two of its pixels round what it saw, and the layer's own margin - the layer's first sample is traced within. That is each moving picture's layer and the still view's where the mouse let go. A moving picture's reflection is traced at its full size again, with the grain the product has above it. A still view's second sample is over the whole frame, as it always was, and after eight its reflection is the one traced over the whole frame at every sample, bit for bit, where the camera stopped short of or past the last moving picture's (`the_still_view_after_a_move_has_the_reflection_it_always_had`). The reflection is laid pixel for pixel again: read between pixels, one by one on the render thread, it had taken 4.4 ms a picture on the PC instead of 1.2.
+
+Measured as before, sixteen let-gos a build in two rounds, against main with the half-size reflection:
+
+| Headphones, Cycles | Floor per moving picture | Moving pictures | Pixels a second | First full-size floor sample after letting go | Let go to full size |
+|---|---|---|---|---|---|
+| All cores | 8.8 -> 13.2 ms + 2.1 to look | 26.9 -> 26.9 a second, ~853 -> ~826 wide | 11.0 -> 10.3 million | within the band 9 -> 16 of 16 | 306 -> 280 ms |
+| Four threads | 13.3 -> 16.1 ms + 3.0 to look | 27.6 -> 28.3 a second, ~668 -> ~567 wide | 6.9 -> 5.1 million | within the band 6 -> 16 of 16, ~108 ms | 504 -> 414 ms |
+
+A sharp reflection costs a part of what the half-size one saved, so on four threads the view picks pictures a sixth smaller; against the whole frame traced before either change (28.3 ms at 480x270 there), the moving pictures are still larger.
 
 ### 9.3 Dirty-state taxonomy — what invalidates what
 

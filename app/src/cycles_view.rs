@@ -141,8 +141,6 @@ pub struct CyclesView {
     /// The samples Cycles was asked for: [`VIEW_SAMPLES`], or
     /// [`MOVING_SAMPLES`] while the view moves.
     samples: u32,
-    /// Whether the picture Cycles is making was asked for as a moving one.
-    moving: bool,
     navigation: Navigation,
     frame: tequila_render_cycles::FrameBuffers,
     seen: u64,
@@ -201,7 +199,6 @@ impl CyclesView {
             size: (0, 0),
             full: (0, 0),
             samples: 0,
-            moving: false,
             navigation: Navigation::default(),
             frame: Default::default(),
             seen: 0,
@@ -407,7 +404,6 @@ impl CyclesView {
         self.size = size;
         self.full = full;
         self.samples = samples;
-        self.moving = navigating;
         // Whatever moved, the background behind it is measured again, while
         // Cycles renders (`prepare`), rather than once its picture is in and
         // the next camera waits for it. A first picture of another size (a
@@ -520,15 +516,6 @@ impl CyclesView {
         self.size != self.full || self.navigation.moved_at.is_some_and(|at| at.elapsed() < SETTLE)
     }
 
-    /// Whether the picture Cycles is making now was asked for as a moving
-    /// one: of one sample, gone as soon as the next camera is in. Unlike
-    /// [`navigating`](Self::navigating) it holds for the picture, not for
-    /// the moment, so the floor reflection traced while Cycles makes it and
-    /// the one laid over it once it is in are of the same kind.
-    pub fn moving_picture(&self) -> bool {
-        self.moving
-    }
-
     /// Whether a picture of the last restart is still to come: the render
     /// loop then looks for it often.
     pub fn awaiting_frame(&self) -> bool {
@@ -572,96 +559,8 @@ impl CyclesView {
 pub const PARALLEL_PIXELS: usize = 512 * 1024;
 
 /// What a floor reflection layer is of: the scene (by pointer), the camera
-/// and the size it is traced at ([`floor_size`]).
+/// and the size of the pictures it goes over.
 pub type FloorKey = (usize, Camera, usize, usize);
-
-/// The size the floor reflection under a picture of `size` is traced at:
-/// the picture's own for a still view's, and half of it each way for a
-/// moving picture's, which is gone as soon as the next camera is in.
-///
-/// Measured on the Headphones sample, a moving picture's reflection over
-/// its whole frame - 700x400 on an M3 Max, 480x270 on an RTX 2060's PC -
-/// took 22 ms of every 36 ms picture on the Mac and 37 ms on the PC, where
-/// it alone held orbiting to fifteen pictures a second with the graphics
-/// card two-thirds idle. Half of each side is a quarter of the rays: the
-/// reflection in a moving picture, up for a thirtieth of a second, is a
-/// little softer but where it should be, and the still view's, which
-/// refines, is traced at its full size as it always was.
-pub fn floor_size(size: (usize, usize), moving: bool) -> (usize, usize) {
-    if moving {
-        (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1))
-    } else {
-        size
-    }
-}
-
-/// A floor reflection layer as it falls on the pixels of a picture: one of
-/// the picture's own size pixel for pixel, as a still view's is, and a
-/// moving picture's half-size one ([`floor_size`]) read between its four
-/// nearest pixels - premultiplied, as the layer is, so the reflection's
-/// edge fades out rather than darkening.
-pub enum Reflection<'a> {
-    Same(&'a Framebuffer),
-    Scaled {
-        /// The picture's width and height.
-        size: (usize, usize),
-        /// The layer's width and height.
-        layer: (usize, usize),
-        /// Each of the layer's pixels: its premultiplied colour and share.
-        texels: Vec<(Spectrum, f32)>,
-    },
-}
-
-impl<'a> Reflection<'a> {
-    pub fn over(layer: &'a Framebuffer, size: (usize, usize)) -> Reflection<'a> {
-        if (layer.width, layer.height) == size {
-            return Reflection::Same(layer);
-        }
-        // A pixel with no share lays nothing, as a still view's does not, so
-        // it brings no colour to its neighbours either.
-        let texels = layer
-            .pixels()
-            .iter()
-            .map(|p| match p.alpha() {
-                share if share > 0.0 => (p.mean(), share),
-                _ => (Spectrum::ZERO, 0.0),
-            })
-            .collect();
-        Reflection::Scaled { size, layer: (layer.width, layer.height), texels }
-    }
-
-    /// The reflection's colour, premultiplied, and its share of pixel `i`
-    /// of the picture.
-    #[inline]
-    pub fn at(&self, i: usize) -> (Spectrum, f32) {
-        match self {
-            Reflection::Same(layer) => {
-                let pixel = &layer.pixels()[i];
-                (pixel.mean(), pixel.alpha())
-            }
-            Reflection::Scaled { size, layer, texels } => {
-                if texels.is_empty() {
-                    return (Spectrum::ZERO, 0.0);
-                }
-                let (x, y) = (i % size.0, i / size.0);
-                // Where the pixel's centre falls among the layer's.
-                let between = |at: usize, to: usize, from: usize| {
-                    let p = ((at as f32 + 0.5) * from as f32 / to as f32 - 0.5).clamp(0.0, (from - 1) as f32);
-                    let low = p.floor() as usize;
-                    (low, (low + 1).min(from - 1), p - low as f32)
-                };
-                let (x0, x1, tx) = between(x, size.0, layer.0);
-                let (y0, y1, ty) = between(y, size.1, layer.1);
-                let at = |x: usize, y: usize| texels[y * layer.0 + x];
-                let corners = [(at(x0, y0), (1.0 - tx) * (1.0 - ty)), (at(x1, y0), tx * (1.0 - ty)), (at(x0, y1), (1.0 - tx) * ty), (at(x1, y1), tx * ty)];
-                if corners.iter().all(|((_, share), _)| *share <= 0.0) {
-                    return (Spectrum::ZERO, 0.0);
-                }
-                corners.iter().fold((Spectrum::ZERO, 0.0), |(colour, share), ((c, s), w)| (colour + *c * *w, share + s * w))
-            }
-        }
-    }
-}
 
 /// The most samples a still view's floor reflection takes: past them it is
 /// as clean as the picture it goes over.
@@ -682,6 +581,17 @@ const FLOOR_SAMPLES: u32 = 256;
 /// moving pictures of the same view found it, so the clean picture is not
 /// kept waiting a whole frame's pass. Its second sample is over the whole
 /// frame again, and finds the reflection's place at that size for the rest.
+///
+/// A layer with nothing to go by - each moving picture's, at a camera no
+/// layer has been traced at, and the still view's where the mouse let go,
+/// whose moving pictures were all of cameras before - is begun where a
+/// quick look over the whole frame, a quarter of each side at most, found
+/// the reflection ([`scout_size`]). Over the whole frame, a moving picture's
+/// took 37 ms on an RTX 2060's PC, where a picture came every 74, and the
+/// still view's first sample there 210 ms where one within the band takes
+/// 130. Traced at half its size each way instead, a moving picture's
+/// reflection had a sample for every four pixels, and its grain came out in
+/// blotches.
 #[derive(Default)]
 pub struct FloorLayers {
     layers: Vec<FloorLayer>,
@@ -753,10 +663,51 @@ impl FloorLayers {
     }
 }
 
+/// The long side of the quick look a layer with nothing to go by is begun
+/// from ([`FloorLayers`]), at most: about a millisecond on an M3 Max.
+const SCOUT_LONG_SIDE: usize = 160;
+
+/// The size of that quick look at a layer of `size`: a quarter of each side,
+/// its long side no more than [`SCOUT_LONG_SIDE`]; `None` for a layer so
+/// small one would save nothing.
+fn scout_size(size: (usize, usize)) -> Option<(usize, usize)> {
+    let long = size.0.max(size.1);
+    let side = (long / 4).min(SCOUT_LONG_SIDE);
+    if side < 32 {
+        return None;
+    }
+    let scale = side as f32 / long as f32;
+    Some((((size.0 as f32 * scale).round() as usize).max(1), ((size.1 as f32 * scale).round() as usize).max(1)))
+}
+
+/// Where a quick look over the whole frame finds the reflection of layer
+/// `key`, as it falls on the layer: `Ok(None)` for a layer too small to need
+/// one, `Err` when it was given up for `stop`.
+fn scout(intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, stop: &(dyn Fn() -> bool + Sync)) -> Result<Option<tequila_render_cpu::floor::Band>, ()> {
+    let Some(small) = scout_size((key.2, key.3)) else { return Ok(None) };
+    let started = std::time::Instant::now();
+    let mut look = Framebuffer::new(small.0, small.1);
+    if !tequila_render_cpu::floor::render_floor_reflection_in(intersector, &mut look, key.1, config, None, stop) {
+        return Err(());
+    }
+    // Two of its pixels round what it saw, each of them several of the
+    // layer's; `scaled` adds the layer's own margin.
+    let band = scaled(tequila_render_cpu::floor::reflected_band_with_margin(&look, 2), small, (key.2, key.3));
+    crate::view_timing::trace(format_args!("floor reflection {}x{} looked for at {}x{} in {:.1} ms", key.2, key.3, small.0, small.1, started.elapsed().as_secs_f64() * 1000.0));
+    Ok(Some(band))
+}
+
 /// One sample of a layer: where its band says, or where the guess says on
-/// its first, or over the whole frame, after which the band is known.
+/// its first - another size of the same view's, or a quick look's - or over
+/// the whole frame, after which the band is known.
 fn trace(entry: &mut FloorLayer, intersector: &dyn tequila_render_core::intersect::Intersector, config: &tequila_render_core::settings::IntegratorConfig, stop: &(dyn Fn() -> bool + Sync)) -> bool {
     use tequila_render_cpu::floor::Band;
+    if entry.passes == 0 && entry.band.is_none() && entry.guess.is_none() {
+        match scout(intersector, entry.key, config, stop) {
+            Ok(found) => entry.guess = found,
+            Err(()) => return false,
+        }
+    }
     let known = entry.band.or(if entry.passes == 0 { entry.guess } else { None });
     let region = match known {
         Some(Band::Nowhere) => {
@@ -886,55 +837,47 @@ mod floor_tests {
         assert!(larger.layer.pixels().iter().any(|p| p.samples == 0), "only within the guess");
     }
 
-    /// A moving picture's reflection is traced at half its size each way,
-    /// and laid over the whole picture: about where, and about as strong
-    /// as, the reflection traced at the picture's own size, with no pixel
-    /// stronger than any of its four. A still picture's layer is laid
-    /// pixel for pixel.
+    /// A layer with nothing to go by is begun where a quick look over the
+    /// whole frame found the reflection: the same reflection, bit for bit,
+    /// as a first sample over the whole frame, for a part of its rays. One
+    /// too small to save anything is traced over the whole frame.
     #[test]
-    fn a_moving_pictures_reflection_is_traced_at_half_its_size() {
-        assert_eq!(floor_size((96, 72), true), (48, 36));
-        assert_eq!(floor_size((97, 73), true), (49, 37), "an odd side rounds up");
-        assert_eq!(floor_size((1, 1), true), (1, 1));
-        assert_eq!(floor_size((96, 72), false), (96, 72), "a still view's at its own size");
+    fn a_layer_with_nothing_to_go_by_is_begun_where_a_quick_look_found_it() {
+        assert_eq!(scout_size((480, 270)), Some((120, 68)));
+        assert_eq!(scout_size((1448, 814)), Some((160, 90)), "never more than 160 pixels long");
+        assert_eq!(scout_size((96, 72)), None, "too small to look first");
 
         let device = tequila_render_cpu::Device::shared().unwrap();
         let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
         let config = tequila_render_core::settings::IntegratorConfig::product();
         let camera = Camera::look_at(Vec3::splat(4.0), Vec3::ZERO, Vec3::Y);
-        let traced = |width, height| {
-            let mut layer = Framebuffer::new(width, height);
-            for _ in 0..16 {
-                tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut layer, camera, &config, None, &|| false);
+        let mut layers = FloorLayers::default();
+        let looked = layers.for_frame(&intersector, (1, camera, 384, 288), &config, true, &|| false).clone();
+        let first = layers.layers.last().unwrap();
+        assert!(matches!(first.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "begun where the quick look found it");
+        assert!(first.band.is_none(), "not yet found over the whole frame");
+        assert!(looked.pixels().iter().filter(|p| p.samples == 0).count() > 384 * 288 / 2, "most of the frame left alone");
+        let mut whole = Framebuffer::new(384, 288);
+        tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut whole, camera, &config, None, &|| false);
+        let mut shown = 0;
+        for (a, b) in looked.pixels().iter().zip(whole.pixels()) {
+            if b.alpha() > 0.0 {
+                shown += 1;
+                assert_eq!((a.sum.to_array(), a.coverage_sum, a.samples), (b.sum.to_array(), b.coverage_sum, b.samples), "the reflection is the whole frame's");
             }
-            layer
-        };
-        let (full, half) = (traced(96, 72), traced(48, 36));
-        let own = Reflection::over(&full, (96, 72));
-        assert!(matches!(own, Reflection::Same(_)));
-        for (i, pixel) in full.pixels().iter().enumerate() {
-            assert_eq!(own.at(i), (pixel.mean(), pixel.alpha()), "a layer of the picture's size is laid as it is");
         }
-        let laid = Reflection::over(&half, (96, 72));
-        let (mut wanted, mut got, mut wanted_area, mut got_area) = (0.0, 0.0, 0usize, 0usize);
-        for (i, pixel) in full.pixels().iter().enumerate() {
-            let (colour, share) = laid.at(i);
-            wanted += pixel.alpha();
-            got += share;
-            wanted_area += usize::from(pixel.alpha() > 0.0);
-            got_area += usize::from(share > 0.0);
-            let strongest = half.pixels().iter().map(|p| p.alpha()).fold(0.0, f32::max);
-            assert!(share <= strongest + 1e-6 && colour.to_array().iter().all(|c| c.is_finite() && *c >= 0.0));
-        }
-        assert!(wanted > 0.0, "the floor reflects the sphere");
-        assert!((got - wanted).abs() < wanted * 0.15, "as strong overall: {got} laid from half size, {wanted} traced at full");
-        assert!(got_area.abs_diff(wanted_area) < wanted_area / 4 + 8, "over about the same pixels: {got_area} and {wanted_area}");
+        assert!(shown > 100, "the floor reflects the sphere: {shown} pixels");
+
+        layers.for_frame(&intersector, (2, camera, 96, 72), &config, true, &|| false);
+        let small = layers.layers.last().unwrap();
+        assert!(small.guess.is_none() && small.band.is_some(), "a small layer is traced over the whole frame");
     }
 
-    /// The camera stops after a move: the still view's reflection, begun
-    /// where the moving pictures' half-size layers found it, comes to the
-    /// very one traced over the whole frame at every sample, bit for bit,
-    /// wherever it shows.
+    /// The camera stops after a move, where no moving picture was: the still
+    /// view's first sample goes where a quick look found the reflection,
+    /// not over the whole frame, and after eight its reflection is the one
+    /// traced over the whole frame at every sample, bit for bit, wherever
+    /// it shows.
     #[test]
     fn the_still_view_after_a_move_has_the_reflection_it_always_had() {
         let device = tequila_render_cpu::Device::shared().unwrap();
@@ -942,24 +885,25 @@ mod floor_tests {
         let config = tequila_render_core::settings::IntegratorConfig::product();
         let orbit = |turn: f32| Camera::look_at(Vec3 { x: 4.0 * turn.cos() + 1.0, y: 4.0, z: 4.0 * turn.sin() + 1.0 }, Vec3::ZERO, Vec3::Y);
         let mut layers = FloorLayers::default();
-        let (full, moving) = ((192, 144), (96, 72));
+        let (full, moving) = ((384, 288), (192, 144));
         for step in 0..6 {
-            let camera = orbit(step as f32 * 0.05);
-            let (width, height) = floor_size(moving, true);
-            layers.prepare(&intersector, (1, camera, width, height), &config, &|| false);
-            let layer = layers.for_frame(&intersector, (1, camera, width, height), &config, true, &|| false);
-            assert_eq!((layer.width, layer.height, layer.pixels().iter().map(|p| p.samples).max()), (48, 36, Some(1)), "one sample at half size");
+            let key = (1, orbit(step as f32 * 0.05), moving.0, moving.1);
+            layers.prepare(&intersector, key, &config, &|| false);
+            let layer = layers.for_frame(&intersector, key, &config, true, &|| false);
+            assert_eq!(layer.pixels().iter().map(|p| p.samples).max(), Some(1), "one sample while moving");
         }
-        let camera = orbit(0.25);
+        // Let go a little further on than the last moving picture.
+        let camera = orbit(0.3);
         let key = (1, camera, full.0, full.1);
-        assert_eq!(floor_size(full, false), full);
-        for _ in 0..8 {
+        layers.for_frame(&intersector, key, &config, false, &|| false);
+        let begun = layers.layers.last().unwrap();
+        assert!(matches!(begun.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "begun where a quick look found it");
+        assert!(begun.layer.pixels().iter().any(|p| p.samples == 0), "not over the whole frame");
+        for _ in 0..7 {
             layers.for_frame(&intersector, key, &config, false, &|| false);
         }
         let still = layers.for_frame(&intersector, key, &config, true, &|| false).clone();
-        let begun = layers.layers.last().unwrap();
-        assert!(matches!(begun.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "begun where the moving pictures found it");
-        assert_eq!(begun.passes, 8);
+        assert_eq!(layers.layers.last().unwrap().passes, 8);
         let mut whole = Framebuffer::new(full.0, full.1);
         for _ in 0..8 {
             tequila_render_cpu::floor::render_floor_reflection_in(&intersector, &mut whole, camera, &config, None, &|| false);
@@ -1077,7 +1021,7 @@ mod floor_tests {
         req.interacting = true;
         req.camera = at(0.35);
         view.sync(&req).expect("synced");
-        assert!(view.moving_picture() && view.awaiting_frame(), "a moving picture on its way");
+        assert!(view.traced_samples() == MOVING_SAMPLES && view.awaiting_frame(), "a moving picture on its way");
         std::thread::sleep(std::time::Duration::from_millis(120));
         req.interacting = false;
         req.camera = at(0.4);
@@ -1089,7 +1033,7 @@ mod floor_tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert!(view.sync(&req).expect("synced"), "the let-go goes in");
-        assert!(!view.navigating() && !view.moving_picture(), "let go behind a picture, the move is over");
+        assert!(!view.navigating() && view.traced_samples() != MOVING_SAMPLES, "let go behind a picture, the move is over");
         assert_eq!((view.size(), view.camera()), ((1000, 750), Some(at(0.4))), "at its size, where the mouse stopped");
         settle(&mut view, &req);
 
