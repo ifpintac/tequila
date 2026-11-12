@@ -9,6 +9,13 @@
 //! inside and on the shape of the part — and its samples carry
 //! [`BsdfFlags::SUBSURFACE`], which is how the integrator knows a path has
 //! entered the part's medium, or left it.
+//!
+//! A thin wall has no inside to walk in - a sheet of cloth, a lampshade, a
+//! film - and there OpenPBR's subsurface is the light the sheet scatters
+//! through to its far side: the same lobe, coloured, and no doorway
+//! ([`DiffuseTransmission::translucent`]). That is what makes a backlit
+//! sheet glow all over, where a thin wall's clear or frosted transmission
+//! shows the light behind only where it lines up with it.
 
 use crate::bsdf::{Bsdf, BsdfFlags, BsdfSample};
 use tequila_core::math::{Vec2, Vec3};
@@ -24,11 +31,20 @@ pub struct DiffuseTransmission {
     /// return — for the denoiser's albedo guide and the stack's lobe choice.
     /// The lobe's value does not use it.
     appearance: Spectrum,
+    /// A doorway into the part's walk, or a thin sheet's own light through.
+    walk: bool,
 }
 
 impl DiffuseTransmission {
+    /// The doorway into a walk: white, its samples crossing into the part.
     pub fn new(tint: Spectrum, appearance: Spectrum) -> Self {
-        DiffuseTransmission { tint, appearance }
+        DiffuseTransmission { tint, appearance, walk: true }
+    }
+
+    /// A thin sheet's light through it, `colour` and scattered every way
+    /// on its far side, the path carrying on where it was.
+    pub fn translucent(colour: Spectrum) -> Self {
+        DiffuseTransmission { tint: colour, appearance: colour, walk: false }
     }
 }
 
@@ -75,7 +91,11 @@ impl Bsdf for DiffuseTransmission {
     }
 
     fn flags(&self) -> BsdfFlags {
-        BsdfFlags::TRANSMISSION | BsdfFlags::DIFFUSE | BsdfFlags::SUBSURFACE
+        if self.walk {
+            BsdfFlags::TRANSMISSION | BsdfFlags::DIFFUSE | BsdfFlags::SUBSURFACE
+        } else {
+            BsdfFlags::TRANSMISSION | BsdfFlags::DIFFUSE
+        }
     }
 }
 
@@ -102,5 +122,24 @@ mod tests {
             let passed = total / n as f64;
             assert!((passed - 1.0).abs() < 1e-3, "{wo:?}: passed {passed}");
         }
+    }
+
+    /// A thin sheet passes its colour across, none back, and starts no
+    /// walk: the path carries on as through any other surface.
+    #[test]
+    fn a_thin_sheet_passes_its_colour_and_starts_no_walk() {
+        let colour = Spectrum { r: 0.8, g: 0.5, b: 0.2 };
+        let lobe = DiffuseTransmission::translucent(colour);
+        assert!(!lobe.flags().contains(BsdfFlags::SUBSURFACE));
+        let wo = vec3(0.3, 0.0, 0.95);
+        let n = 4096;
+        let mut total = Spectrum::ZERO;
+        for i in 0..n {
+            let u = Vec2 { x: (i as f32 + 0.5) / n as f32, y: ((i * 7919) % n) as f32 / n as f32 };
+            let s = lobe.sample(wo, u, 0.5).expect("a sample");
+            assert!(s.wi.z < 0.0 && !s.flags.contains(BsdfFlags::SUBSURFACE));
+            total = total + s.throughput_weight() * (1.0 / n as f32);
+        }
+        assert!((total.r - colour.r).abs() < 1e-3 && (total.b - colour.b).abs() < 1e-3, "{total:?}");
     }
 }

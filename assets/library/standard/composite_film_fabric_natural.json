@@ -2856,13 +2856,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.6
+              "float": 0.3
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.3
+              "float": 0.15
             }
           }
         ],
@@ -2879,6 +2879,8 @@
   "name": "Composite Film Fabric Natural",
   "specular_ior": 1.6,
   "specular_roughness": 0.34,
+  "subsurface_color": [0.87, 0.885, 0.865],
+  "subsurface_weight": 0.6,
   "tags": [
     "composite",
     "film",
@@ -2910,7 +2912,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.87, 0.885, 0.865],
-  "transmission_weight": 0.6,
+  "transmission_weight": 0.3,
   "type": "generic"
 }
 

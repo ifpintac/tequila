@@ -740,6 +740,8 @@
   "name": "Spunbond Sheet White",
   "specular_roughness": 0.5,
   "specular_weight": 0.7,
+  "subsurface_color": [0.8534668, 0.8545595, 0.8269787],
+  "subsurface_weight": 0.24000001,
   "tags": [
     "spunbond",
     "nonwoven",
@@ -766,8 +768,6 @@
     "apparel",
     "architecture"
   ],
-  "transmission_color": [0.8534668, 0.8545595, 0.8269787],
-  "transmission_weight": 0.15,
   "type": "generic"
 }
 

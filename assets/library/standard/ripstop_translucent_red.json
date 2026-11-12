@@ -7390,6 +7390,8 @@
   "name": "Ripstop Translucent Red",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.38917562, 0.18666764, 0.17208706],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7419,7 +7421,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.53289896, 0.37803996, 0.3668901],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 

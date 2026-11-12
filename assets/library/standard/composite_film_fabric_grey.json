@@ -2856,13 +2856,13 @@
           {
             "socket": "input:3",
             "value": {
-              "float": 0.4
+              "float": 0.2
             }
           },
           {
             "socket": "input:4",
             "value": {
-              "float": 0.2
+              "float": 0.1
             }
           }
         ],
@@ -2879,6 +2879,8 @@
   "name": "Composite Film Fabric Grey",
   "specular_ior": 1.6,
   "specular_roughness": 0.34,
+  "subsurface_color": [0.6038978, 0.6075283, 0.61425406],
+  "subsurface_weight": 0.4,
   "tags": [
     "composite",
     "film",
@@ -2909,7 +2911,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.6038978, 0.6075283, 0.61425406],
-  "transmission_weight": 0.4,
+  "transmission_weight": 0.2,
   "type": "generic"
 }
 

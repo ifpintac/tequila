@@ -740,6 +740,8 @@
   "name": "Spunbond Sheet Kraft",
   "specular_roughness": 0.5,
   "specular_weight": 0.7,
+  "subsurface_color": [0.40934485, 0.31957632, 0.16927521],
+  "subsurface_weight": 0.128,
   "tags": [
     "spunbond",
     "nonwoven",
@@ -768,8 +770,6 @@
     "apparel",
     "architecture"
   ],
-  "transmission_color": [0.40934485, 0.31957632, 0.16927521],
-  "transmission_weight": 0.08,
   "type": "generic"
 }
 

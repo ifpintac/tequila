@@ -7390,6 +7390,8 @@
   "name": "Ripstop Translucent Blue",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.20084146, 0.22653875, 0.47968882],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7419,7 +7421,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.38887873, 0.4085296, 0.6021149],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 

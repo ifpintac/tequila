@@ -7390,6 +7390,8 @@
   "name": "Ripstop Translucent Yellow",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.7025291, 0.5537253, 0.21182005],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7419,7 +7421,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.77252215, 0.6587311, 0.39727414],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 

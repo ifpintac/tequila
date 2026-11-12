@@ -7390,6 +7390,8 @@
   "name": "Ripstop Translucent Smoke",
   "specular_roughness": 0.42,
   "specular_roughness_anisotropy": 0.6,
+  "subsurface_color": [0.18715513, 0.18830632, 0.19285552],
+  "subsurface_weight": 0.5,
   "tags": [
     "ripstop",
     "nylon",
@@ -7421,7 +7423,7 @@
     "sporting goods"
   ],
   "transmission_color": [0.37841272, 0.37929305, 0.38277185],
-  "transmission_weight": 0.5,
+  "transmission_weight": 0.12,
   "type": "generic"
 }
 

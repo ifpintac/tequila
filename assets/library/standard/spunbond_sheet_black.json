@@ -739,6 +739,7 @@
   "name": "Spunbond Sheet Black",
   "specular_roughness": 0.5,
   "specular_weight": 0.7,
+  "subsurface_color": [0.010359685, 0.010338303, 0.010878041],
   "tags": [
     "spunbond",
     "nonwoven",
@@ -765,7 +766,6 @@
     "apparel",
     "architecture"
   ],
-  "transmission_color": [0.010359685, 0.010338303, 0.010878041],
   "type": "generic"
 }
 

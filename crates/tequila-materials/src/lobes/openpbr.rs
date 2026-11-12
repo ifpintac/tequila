@@ -437,15 +437,19 @@ impl OpenPbrBsdf {
                         diffuse_weight,
                     );
                 }
-                // The doorway into the random walk (§01 §6.4).
+                // The doorway into the random walk (§01 §6.4); on a thin
+                // wall, which has no inside, the light the sheet scatters
+                // through to its far side, in its subsurface colour - a
+                // backlit cloth or lampshade glowing all over (OpenPBR's
+                // thin-walled subsurface).
                 let walk_weight = remainder * subsurface;
                 if walk_weight > 1e-4 {
-                    push(
-                        Lobe::Subsurface(DiffuseTransmission::new(Spectrum::ONE, material.subsurface_color)),
-                        Depth::Substrate,
-                        base_scale,
-                        walk_weight,
-                    );
+                    let lobe = if material.geometry_thin_walled {
+                        DiffuseTransmission::translucent(material.subsurface_color)
+                    } else {
+                        DiffuseTransmission::new(Spectrum::ONE, material.subsurface_color)
+                    };
+                    push(Lobe::Subsurface(lobe), Depth::Substrate, base_scale, walk_weight);
                 }
             }
         }

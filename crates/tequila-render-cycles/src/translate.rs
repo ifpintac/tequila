@@ -3740,7 +3740,18 @@ impl Builder<'_> {
         } else {
             (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
         };
-        self.feed(shader, bsdf, "base_color", base, true)?;
+        // A thin wall's subsurface is the light it scatters through to its
+        // far side (`translucent_sheet`, below), not a solid's walk: the
+        // principled shader keeps the rest of the base for its diffuse.
+        let sheet = m.geometry_thin_walled && (m.subsurface_weight > 0.0 || driven.contains_key(&Param::SubsurfaceWeight));
+        let subsurface = value(Param::SubsurfaceWeight, Value::Float(m.subsurface_weight));
+        let diffuse_base = if sheet {
+            let rest = self.float_op(shader, "subtract", num(1.0), subsurface)?;
+            self.apply(shader, &NodeKind::Multiply, &[base, rest], 0)?
+        } else {
+            base
+        };
+        self.feed(shader, bsdf, "base_color", diffuse_base, true)?;
         self.feed(shader, bsdf, "metallic", metalness, false)?;
         self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
         self.feed(shader, bsdf, "roughness", roughness, false)?;
@@ -3769,7 +3780,9 @@ impl Builder<'_> {
         if !thin {
             self.feed(shader, bsdf, "transmission_weight", transmission, false)?;
         }
-        self.feed(shader, bsdf, "subsurface_weight", value(Param::SubsurfaceWeight, Value::Float(m.subsurface_weight)), false)?;
+        if !sheet {
+            self.feed(shader, bsdf, "subsurface_weight", subsurface, false)?;
+        }
         let radius = rgb(m.subsurface_radius);
         self.session.set_float3(bsdf, "subsurface_radius", radius)?;
         self.session.set_float(bsdf, "subsurface_scale", 1.0)?;
@@ -3904,9 +3917,15 @@ impl Builder<'_> {
         if let Some((node, socket)) = normal {
             self.session.connect(shader, node, socket, bsdf, "coat_normal")?;
         }
+        let principled = if sheet {
+            let colour = value(Param::SubsurfaceColor, Value::Color(m.subsurface_color));
+            self.translucent_sheet(shader, m, (bsdf, "BSDF"), (subsurface, colour), metalness, normal)?
+        } else {
+            (bsdf, "BSDF")
+        };
 
         if !thin {
-            let surface = if m.flake_weight > 1e-4 { self.flakes(shader, m, (bsdf, "BSDF"))? } else { (bsdf, "BSDF") };
+            let surface = if m.flake_weight > 1e-4 { self.flakes(shader, m, principled)? } else { principled };
             // Clear glass that disperses, where it is nothing more.
             let plain = transmissive
                 && m.transmission_weight >= 0.999
@@ -4034,7 +4053,7 @@ impl Builder<'_> {
         self.session.connect(shader, glossy, "BSDF", shell, "Closure2")?;
         let body = self.session.node(shader, "mix_closure")?;
         self.feed(shader, body, "Fac", transmission, false)?;
-        self.session.connect(shader, bsdf, "BSDF", body, "Closure1")?;
+        self.session.connect(shader, principled.0, principled.1, body, "Closure1")?;
         self.session.connect(shader, shell, "Closure", body, "Closure2")?;
         // Opacity last, over the lot: a hole is a hole in the shell too.
         let hole = self.session.node(shader, "transparent_bsdf")?;
@@ -4120,6 +4139,38 @@ impl Builder<'_> {
         self.session.connect(shader, surface.0, surface.1, mix, "Closure1")?;
         self.session.connect(shader, clear, "BSDF", mix, "Closure2")?;
         Ok((mix, "Closure"))
+    }
+
+    /// A thin sheet's light through it, as Tequila's renderer passes it
+    /// (`DiffuseTransmission::translucent`): the subsurface share of the
+    /// dielectric base, in the subsurface colour, scattered every way on the
+    /// far side - Cycles' translucent shader, added to `surface`. Under the
+    /// specular layer, which takes its average Fresnel's share first [Kulla
+    /// and Conty 2017], as Tequila's layering takes its albedo's.
+    fn translucent_sheet(
+        &mut self,
+        shader: Shader,
+        m: &Material,
+        surface: (Node, &'static str),
+        (subsurface, colour): (Slot, Slot),
+        metalness: Slot,
+        normal: Option<(Node, &'static str)>,
+    ) -> Result<(Node, &'static str), String> {
+        let ior = m.specular_ior.max(1.0);
+        let average_fresnel = ((ior - 1.0) / (4.08567 + 1.00071 * ior)).clamp(0.0, 1.0) * m.specular_weight.clamp(0.0, 1.0);
+        let weight = self.float_op(shader, "multiply", subsurface, num(1.0 - average_fresnel))?;
+        let dielectric = self.float_op(shader, "subtract", num(1.0), metalness)?;
+        let weight = self.mul(shader, weight, dielectric)?;
+        let colour = self.apply(shader, &NodeKind::Multiply, &[colour, weight], 0)?;
+        let through = self.session.node(shader, "translucent_bsdf")?;
+        self.feed(shader, through, "Color", colour, true)?;
+        if let Some((node, socket)) = normal {
+            self.session.connect(shader, node, socket, through, "Normal")?;
+        }
+        let add = self.session.node(shader, "add_closure")?;
+        self.session.connect(shader, surface.0, surface.1, add, "Closure1")?;
+        self.session.connect(shader, through, "BSDF", add, "Closure2")?;
+        Ok((add, "Closure"))
     }
 
     /// Light through a rough thin wall, as Tequila's renderer passes it: on

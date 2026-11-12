@@ -7234,6 +7234,80 @@ mod tests {
         softbox_over_a_glossy_floor(roughness, true)
     }
 
+    /// A thin translucent sheet - a sheer cloth, a film - lit from behind
+    /// glows all over in its subsurface colour, alike in Tequila's renderer
+    /// and Cycles, seen straight on and from the side: a thin wall's
+    /// subsurface is the light it scatters through to its far side
+    /// (`DiffuseTransmission::translucent`, `translate`'s
+    /// `translucent_sheet`). It was a walk into a part with no inside, and
+    /// a backlit sheer ripstop barely showed the light behind it. Skipped
+    /// where Cycles is not installed.
+    #[test]
+    fn a_thin_sheet_lit_from_behind_glows_alike_in_both_renderers() {
+        use tequila_core::ids::{InstanceId, MaterialId, MeshId};
+        use tequila_core::spectrum::Spectrum;
+        use tequila_materials::material_type::MaterialType;
+        use tequila_render_core::environment::{Background, Environment};
+        use tequila_render_core::light::{AreaLight, Light, LightKind, LightSet, Visibility};
+        use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
+        use tequila_scene::render::RenderEngine;
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let sheet = Mesh::new(vec![vec3(-0.3, -0.3, 0.0), vec3(0.3, -0.3, 0.0), vec3(0.3, 0.3, 0.0), vec3(-0.3, 0.3, 0.0)], vec![0, 1, 2, 0, 2, 3])
+            .with_normals(vec![Vec3::Z; 4]);
+        let mut cloth = MaterialType::Generic.defaults();
+        cloth.base_color = Spectrum { r: 0.6, g: 0.45, b: 0.3 };
+        cloth.geometry_thin_walled = true;
+        cloth.subsurface_weight = 0.6;
+        cloth.subsurface_color = Spectrum { r: 0.85, g: 0.5, b: 0.25 };
+        cloth.specular_roughness = 0.5;
+        // Behind the sheet, facing it and the camera beyond it.
+        let lamp = Light::new(LightKind::Area(AreaLight {
+            position: vec3(0.0, 0.0, -0.35),
+            half_u: Vec3::X * 0.25,
+            half_v: Vec3::Y * 0.25,
+            radiance: Spectrum::splat(2.0),
+            disc: false,
+            two_sided: false,
+            spread: std::f32::consts::PI,
+        }))
+        .with_visibility(Visibility::HIDDEN);
+        let mut scene = SceneSnapshot::new(vec![Arc::new(sheet)], vec![Instance::new(InstanceId(0), MeshId(0), MaterialId(0))], vec![cloth], Arc::new(Environment::uniform(Spectrum::ZERO)))
+            .with_lights(Arc::new(LightSet::new(vec![lamp])));
+        scene.background = Background::Environment;
+        let folder = scratch("tequila-thin-sheet");
+        let size = (320, 240);
+        let mut seen = Vec::new();
+        for (view, eye) in [("front", vec3(0.0, 0.0, 1.2)), ("side", vec3(0.85, 0.0, 0.85))] {
+            let shot = (scene.clone(), Camera::look_at(eye, Vec3::ZERO, Vec3::Y));
+            let middle = film_box(&shot, Vec3::ZERO, (20, 20), size);
+            let [tequila, cycles] = [RenderEngine::Tequila, RenderEngine::CyclesCpu].map(|engine| {
+                let image = picture_into(&folder, &format!("{view}-{}", engine.key()), &shot, engine, IntegratorConfig::product(), None, 64, size);
+                let (x0, y0, x1, y1) = middle;
+                let mut sum = [0.0f64; 3];
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = (y * size.0 + x) * 4;
+                        for c in 0..3 {
+                            sum[c] += f64::from(image[i + c]);
+                        }
+                    }
+                }
+                sum.map(|v| v / ((x1 - x0) * (y1 - y0)) as f64)
+            });
+            println!("{view}: the sheet {tequila:.1?} in Tequila's renderer, {cycles:.1?} in Cycles");
+            assert!(tequila[0] > 60.0, "{view}: the sheet barely glows: {tequila:.1?}");
+            assert!(tequila[0] > tequila[2] * 1.3, "{view}: the glow is not the sheet's colour: {tequila:.1?}");
+            for c in 0..3 {
+                assert!((tequila[c] - cycles[c]).abs() < 0.08 * tequila[0].max(40.0), "{view}: {tequila:.1?} in Tequila's renderer, {cycles:.1?} in Cycles");
+            }
+            seen.push(tequila[0]);
+        }
+        assert!(seen[1] > 0.75 * seen[0], "from the side the sheet glows {:.1} against {:.1} straight on", seen[1], seen[0]);
+    }
+
     /// The floor and softbox of [`ball_on_a_glossy_floor`], with the ball or
     /// without it.
     fn softbox_over_a_glossy_floor(roughness: f32, with_ball: bool) -> (tequila_render_core::scene::SceneSnapshot, Camera) {
