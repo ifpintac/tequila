@@ -719,7 +719,7 @@ Marked *(built)*: a setting that exists today, which moves here from where it is
 - Crash reports only when the person agrees; no telemetry.
 
 **Advanced**
-- Developer overlays and logs: the profile (`TEQUILA_PROFILE`), the Cycles trace (`TEQUILA_CYCLES_TRACE`).
+- Developer overlays and logs: the profile (`TEQUILA_PROFILE`), the Cycles trace (`TEQUILA_CYCLES_TRACE`), the viewport's answer times (`TEQUILA_VIEW_TRACE`).
 - Open the settings folder; reset everything.
 
 ---

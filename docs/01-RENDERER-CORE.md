@@ -537,6 +537,31 @@ Then, with Cycles' own status changes traced (`TEQUILA_CYCLES_TRACE` now prints 
 
 Orbiting the Headphones now gives 31 pictures a second, and pictures fast enough that the view chooses them larger, about 690x390: 8-8.8 million pixels a second against 2.4 million before (18 a second at 484x272). The 1.07-million-triangle STEP model gives 30 a second at 609x343, 6.3 million pixels a second against 3.0 (23 a second at 480x270). Counted as distinct pictures: Cycles hands over a finished render's last picture twice, as it updates and as it ends, and the trace shows both.
 
+*As built, November 12: the moment a move begins, and the moment it ends.* Measured with a made-up mouse drag over the viewport (`{"op":"ui","drag":...}`) and `TEQUILA_VIEW_TRACE`, which prints each picture put up and how long after it was asked for: release builds on an M3 Max, a 1448x814 Retina view, a 1.5 s orbit after three seconds still, four times each. The move's first picture came 71 ms after the camera moved on the Headphones in Cycles, 904 ms in Tequila's renderer, and the first clean picture 0.7 s and 2.4 s after letting go. What the move waited for was whatever a still picture was busy with:
+
+- **A still view's pass of Tequila's renderer**, a second or so over the screen's own pixels, ran to its end before the move's first picture began. It is given up between tiles now (`render_pass_until`) - a still view's only: given up for every new camera, a moving view's pass on a busy computer never finished, and the view showed nothing while it moved.
+- **A still picture's denoise.** Done on the render thread, 80 to 230 ms, it held the next camera back. It runs on a thread of its own and is given up the moment the camera moves (`Finisher`).
+- **The graphics card's denoiser committing its filters** - 110 to 400 ms, against 72 to 84 ms to denoise a frame - at every stop (Fast to Balanced), at a Cycles view's 32nd sample and at every step of Tequila's renderer's quarter-half-full ladder. A set is kept for each of a view's sizes (`GpuDenoiser`, `kept`), each size has one quality, and Tequila's renderer has its smaller sizes made ready while the view is still.
+- **Tequila's floor reflection under Cycles**, 90 to 120 ms a sample over the whole frame (200 to 300 beside Cycles) for the 3% of its pixels that show any reflection, after the picture had come in. A layer is now traced while Cycles renders its picture, and after one pass over the whole frame only within the band it found; the first full-size sample as the camera stops goes where the moving pictures found it (`cycles_view::FloorLayers`).
+- **Cycles holding a move behind a still view's first sample**, which nobody would see. Only a moving picture is waited for now. Nor is a still picture the camera has left put up, undenoised, before the move's first.
+
+And letting go of a drag ends the move there: a Cycles view goes back to its size at once, and Tequila's renderer starts refining, rather than 150 ms after the last move (a wheel's notch still settles); Tequila's renderer shows each size's first picture after one sample rather than four (0.8 s at a still view's full size); and a picture wakes the window as it is ready, so the window no longer polls sixty times a second over a still view - nor redraws the material graph's window, 7 to 10 ms a time, as often.
+
+| Case | Move's first picture | Pictures a second moving | Behind the mouse | Let go to a clean picture |
+|---|---|---|---|---|
+| Headphones, Cycles | 71 -> 50 ms | 26.9 -> 27.6 | 79 -> 46 ms | 678 -> 414 ms |
+| Headphones, Tequila | 904 -> 29 ms | 25.5 -> 69.8 | 29 -> 29 ms | 2432 -> 665 ms |
+| palma P8, Cycles | 114 -> 83 ms | 13.1 -> 13.1 | 112 -> 83 ms | 815 -> 464 ms |
+| palma P8, Tequila | 783 -> 29 ms | 29.6 -> 67.6 | 29 -> 17 ms | 2215 -> 600 ms |
+| 1.4M-triangle glTF, Cycles | 90 -> 50 ms | 26.6 -> 28.0 | 50 -> 46 ms | 582 -> 319 ms |
+| 1.4M-triangle glTF, Tequila | 656 -> 17 ms | 40 -> 72.5 | 16 -> 16 ms | 1888 -> 536 ms |
+| 1.07M-triangle STEP, Cycles | 45 -> 50 ms | 28.3 -> 26.7 | 50 -> 46 ms | 562 -> 370 ms |
+| 1.07M-triangle STEP, Tequila | 630 -> 17 ms | 42 -> 75 | 16 -> 16 ms | 1759 -> 541 ms |
+
+A final render begun from the Rendered view no longer runs beside the viewport's Cycles session and the graphics card's denoiser, both held paused through it: they are let go as it starts (`Orchestrator::let_go`). Rendering the Headphones at 1920x1080 and 128 samples, the application's memory peaked at 8.9 GB instead of 12.9, in the same 11 s; the Rendered view takes a second or so to start Cycles again afterwards. Holding the live view to fewer path states was measured too and left as it is: 2.6 million instead of 5.2 saved 0.9 GB and 0.6 s on entering the view, and refined a still view 16% slower; 1.3 million saved 1.4 GB and refined 36% slower.
+
+Beside another program's render on twelve cores the differences were larger: the Headphones' first picture in Cycles 1.2 s before and 75 ms after, and palma P8 in Tequila's renderer showed nothing at all while moving before, 24 pictures a second after. Still slow: palma P8 in Cycles moves at 13 pictures a second, held by Cycles' own 65-75 ms for a sample of it at the smallest moving size, whether or not its optimized kernels are ready; and importing the 236 MB STEP file takes 90 s, 65 of them in OpenCASCADE turning the file into shapes, on one core.
+
 ### 9.3 Dirty-state taxonomy — what invalidates what
 
 This table is the heart of feeling fast. Naively restarting accumulation on every change makes the app feel worse than KeyShot regardless of raw ray throughput.

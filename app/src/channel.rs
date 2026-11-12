@@ -846,6 +846,9 @@ fn ui(app: &mut TequilaApp, change: &tequila_scripting::protocol::UiChange) -> R
     if let Some(input) = &change.spacemouse {
         app.spacemouse.inject(&input.reports, input.seconds);
     }
+    if let Some(drag) = &change.drag {
+        app.scripted_drag = Some(crate::view_timing::ScriptedDrag::new(drag));
+    }
     if let Some(folder) = &change.screenshot_folder {
         app.screenshots.folder = (!folder.trim().is_empty()).then(|| std::path::PathBuf::from(folder.trim()));
         if let Err(error) = app.screenshots.save() {
@@ -2378,6 +2381,8 @@ impl TequilaApp {
             self.screenshot_requested = false;
             return;
         };
+        // Frames until it is in: the window draws only when asked.
+        ctx.request_repaint();
         // A window of its own is captured as it draws itself.
         if self.screenshot_window.is_some() {
             self.settle_window_capture();

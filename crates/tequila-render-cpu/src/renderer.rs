@@ -93,31 +93,65 @@ pub fn render_pass_with_aovs(
     schedule: &ProgressiveSchedule,
     samples_per_pixel: u32,
 ) {
+    pass(intersector, framebuffer, aovs, context, schedule, samples_per_pixel, None);
+}
+
+/// [`render_pass`], given up as soon as `stop` says so: it is asked before
+/// each tile, so a pass is left within a tile's time of being told, and the
+/// tiles not begun keep the samples they had. `false` when it stopped early.
+///
+/// The viewport's: a still view's pass over the screen's every pixel takes
+/// a good part of a second on a big model, and a camera that moved while
+/// one ran waited for all of it before its picture was begun.
+pub fn render_pass_until(
+    intersector: &dyn Intersector,
+    framebuffer: &mut Framebuffer,
+    context: &RenderContext,
+    schedule: &ProgressiveSchedule,
+    samples_per_pixel: u32,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> bool {
+    pass(intersector, framebuffer, None, context, schedule, samples_per_pixel, Some(stop))
+}
+
+fn pass(
+    intersector: &dyn Intersector,
+    framebuffer: &mut Framebuffer,
+    aovs: Option<(&mut AovBuffers, &AovSet)>,
+    context: &RenderContext,
+    schedule: &ProgressiveSchedule,
+    samples_per_pixel: u32,
+    stop: Option<&(dyn Fn() -> bool + Sync)>,
+) -> bool {
     // With caustics on, one sample at a time: each gets its own photons and
     // its own, smaller radius. Sharing one set across a batch would give a
     // render an eighth as many photon passes as samples.
     if context.config.photon_caustics() && samples_per_pixel > 1 {
         let mut aovs = aovs;
         for _ in 0..samples_per_pixel {
-            render_pass_with_aovs(
+            let whole = pass(
                 intersector,
                 framebuffer,
                 aovs.as_mut().map(|(buffers, set)| (&mut **buffers, *set)),
                 context,
                 schedule,
                 1,
+                stop,
             );
+            if !whole {
+                return false;
+            }
         }
-        return;
+        return true;
     }
     let (width, height) = (framebuffer.width, framebuffer.height);
     if width == 0 || height == 0 {
-        return;
+        return true;
     }
     let aspect = width as f32 / height as f32;
     let work = tiles(width, height, context.region);
     if work.is_empty() {
-        return;
+        return true;
     }
     // The pixel's angular size, for this camera at this resolution, so a
     // texture is looked up at the level that matches a pixel of *this*
@@ -186,7 +220,14 @@ pub fn render_pass_with_aovs(
         tequila_render_core::spectral::prewarm();
     }
 
+    let stopped = std::sync::atomic::AtomicBool::new(false);
     work.par_iter().for_each(|tile| {
+        if let Some(stop) = stop {
+            if stopped.load(std::sync::atomic::Ordering::Relaxed) || stop() {
+                stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+        }
         let base = &base;
         for y in tile.y0..tile.y1 {
             for x in tile.x0..tile.x1 {
@@ -256,9 +297,11 @@ pub fn render_pass_with_aovs(
         }
     });
 
-    if schedule.adaptive_sampling_active(framebuffer.max_samples()) {
+    let stopped = stopped.into_inner();
+    if !stopped && schedule.adaptive_sampling_active(framebuffer.max_samples()) {
         framebuffer.update_adaptive_retirement(threshold, 16);
     }
+    !stopped
 }
 
 /// Trace a pass's caustic photons and index them: `None` where the scene
@@ -480,6 +523,27 @@ mod tests {
             region: None,
             ..Default::default()
         }
+    }
+
+    /// A pass told to stop leaves the tiles it had not begun as they were,
+    /// and says it stopped; one never told is the same as `render_pass`.
+    #[test]
+    fn a_pass_can_be_stopped_between_tiles() {
+        let schedule = ProgressiveSchedule::default();
+        let mut stopped = Framebuffer::new(48, 32);
+        assert!(!render_pass_until(&test_scene(), &mut stopped, &context(), &schedule, 4, &|| true));
+        assert_eq!(stopped.max_samples(), 0, "nothing traced once told to stop");
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mut partly = Framebuffer::new(48, 32);
+        let whole = render_pass_until(&test_scene(), &mut partly, &context(), &schedule, 4, &|| calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 2);
+        assert!(!whole);
+        assert_eq!(partly.min_samples(), 0, "the tiles not begun have none");
+        assert_eq!(partly.max_samples(), 4, "the tiles begun are whole");
+        let mut kept = Framebuffer::new(48, 32);
+        let mut plain = Framebuffer::new(48, 32);
+        assert!(render_pass_until(&test_scene(), &mut kept, &context(), &schedule, 4, &|| false));
+        render_pass(&test_scene(), &mut plain, &context(), &schedule, 4);
+        assert!(kept.pixels().iter().zip(plain.pixels()).all(|(a, b)| a.sum == b.sum && a.samples == b.samples));
     }
 
     #[test]

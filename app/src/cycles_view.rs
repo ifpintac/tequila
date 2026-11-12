@@ -40,6 +40,11 @@ const HELD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(3);
 /// not cost a full-size restart, short enough to feel immediate.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// How long the view has to have been dragged for its letting go to end the
+/// move there and then (`CyclesView::sync`): longer than a wheel's notch,
+/// which the window counts as a moment's drag.
+const DRAGGED_AT_LEAST: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// How long a picture should take while the camera moves: about thirty a
 /// second, which is what an orbit needs to follow the hand.
 const NAVIGATION_TARGET: std::time::Duration = std::time::Duration::from_millis(33);
@@ -86,11 +91,13 @@ struct Navigation {
     divider: f32,
     /// When the camera last moved.
     moved_at: Option<std::time::Instant>,
+    /// Since when the person has been dragging the view, while they are.
+    dragging_since: Option<std::time::Instant>,
 }
 
 impl Default for Navigation {
     fn default() -> Self {
-        Navigation { divider: 2.0, moved_at: None }
+        Navigation { divider: 2.0, moved_at: None, dragging_since: None }
     }
 }
 
@@ -124,6 +131,8 @@ pub struct CyclesView {
     /// the scene, and must move Cycles' camera rather than translate again.
     scene: Option<std::sync::Arc<tequila_render_core::scene::SceneSnapshot>>,
     camera: Option<Camera>,
+    /// When the request Cycles last restarted for was made.
+    asked: Option<std::time::Instant>,
     /// The size Cycles renders now: `full`, or smaller while the camera
     /// moves.
     size: (usize, usize),
@@ -186,6 +195,7 @@ impl CyclesView {
             engine,
             scene: None,
             camera: None,
+            asked: None,
             size: (0, 0),
             full: (0, 0),
             samples: 0,
@@ -278,6 +288,14 @@ impl CyclesView {
         if changed && self.camera.is_some() && self.full == full {
             self.navigation.moved_at = Some(now);
         }
+        // A drag let go of is over: the view goes back to its size then,
+        // rather than `SETTLE` after the last move - which kept the first
+        // clean picture 150 ms further from the hand letting go.
+        let let_go = !request.interacting && self.navigation.dragging_since.is_some_and(|since| now.duration_since(since) >= DRAGGED_AT_LEAST);
+        self.navigation.dragging_since = if request.interacting { self.navigation.dragging_since.or(Some(now)) } else { None };
+        if let_go {
+            self.navigation.moved_at = None;
+        }
         let navigating = request.interacting || self.navigation.moved_at.is_some_and(|at| now.duration_since(at) < SETTLE);
         let size = if navigating { divided(full, self.navigation.divider) } else { full };
         // Still again at the same size - a small view, never divided - goes
@@ -292,7 +310,10 @@ impl CyclesView {
         // Restarting at every move of the mouse cancelled each picture before
         // it was made, and an orbit showed nothing until the mouse stopped.
         // The caller asks again, so the newest change is the one that goes in.
-        if !self.answered && self.restarted.elapsed() < HELD_AT_MOST {
+        // Not behind a still view's first picture, though: the camera moving
+        // again just after it stopped waited for a full-size sample nobody
+        // would see - the move's first picture a sample at the view's size late.
+        if !self.answered && self.samples == MOVING_SAMPLES && self.restarted.elapsed() < HELD_AT_MOST {
             return Ok(false);
         }
         // Parts imported or deleted, on a graphics card with memory of its
@@ -369,23 +390,32 @@ impl CyclesView {
         self.scene = Some(request.scene.clone());
         self.lighting = lighting;
         self.camera = Some(request.camera);
+        self.asked = Some(request.submitted);
         self.size = size;
         self.full = full;
         self.samples = samples;
-        // Whatever moved, the background behind it is measured again: now,
-        // at the size asked for, while Cycles renders, rather than once its
-        // picture is in and the next camera waits for it. A first picture
-        // of another size (a library whose Cycles still divides it) has it
-        // measured again then.
+        // Whatever moved, the background behind it is measured again, while
+        // Cycles renders (`prepare`), rather than once its picture is in and
+        // the next camera waits for it. A first picture of another size (a
+        // library whose Cycles still divides it) has it measured again then.
         self.under_size = (0, 0);
-        if self.background_under {
-            self.under = crate::profile::time("render: background under", || translate::background(&request.scene, &request.camera, size.0, size.1));
-            self.under_size = size;
-        }
         if self.paused {
             self.session.set_paused(true);
         }
         Ok(true)
+    }
+
+    /// What the picture Cycles is making needs from Tequila, done while
+    /// Cycles makes it: the background that goes under it, measured at its
+    /// size. Measured as Cycles restarted, it held up the picture before,
+    /// which went up only after.
+    pub fn prepare(&mut self) {
+        if self.background_under && self.under_size != self.size {
+            if let (Some(scene), Some(camera)) = (&self.scene, &self.camera) {
+                self.under = crate::profile::time("render: background under", || translate::background(scene, camera, self.size.0, self.size.1));
+                self.under_size = self.size;
+            }
+        }
     }
 
     /// Put the newest frame into `framebuffer`, resized to it, as pixels whose
@@ -415,7 +445,14 @@ impl CyclesView {
         }
         let under = (self.background_under && self.under.len() == frame.width * frame.height).then_some(&self.under);
         let buffers = &self.frame;
-        for (i, pixel) in framebuffer.pixels_mut().iter_mut().enumerate() {
+        // A row per task for a full-size frame, a million pixels and more;
+        // a moving picture's on this thread, as a loop shared out waits for
+        // its slowest share, and with the computer busy that was tens of
+        // milliseconds for a picture one core does in two.
+        use rayon::prelude::*;
+        let width = frame.width.max(1);
+        let shared_out = frame.width * frame.height >= PARALLEL_PIXELS;
+        let fill = |(i, pixel): (usize, &mut Pixel)| {
             let rgba = &buffers.rgba[i * 4..i * 4 + 4];
             let albedo = &buffers.albedo[i * 3..i * 3 + 3];
             let normal = &buffers.normal[i * 3..i * 3 + 3];
@@ -440,6 +477,15 @@ impl CyclesView {
                 first_instance,
                 ..Pixel::default()
             };
+        };
+        if shared_out {
+            framebuffer.pixels_mut().par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+                for (x, pixel) in row.iter_mut().enumerate() {
+                    fill((y * width + x, pixel));
+                }
+            });
+        } else {
+            framebuffer.pixels_mut().iter_mut().enumerate().for_each(fill);
         }
         Some(frame)
     }
@@ -447,6 +493,11 @@ impl CyclesView {
     /// The camera Cycles renders from now.
     pub fn camera(&self) -> Option<Camera> {
         self.camera
+    }
+
+    /// When the request Cycles renders now was made.
+    pub fn asked(&self) -> Option<std::time::Instant> {
+        self.asked
     }
 
     /// Whether the view is following a moving camera: a smaller picture, or
@@ -467,10 +518,10 @@ impl CyclesView {
     }
 
     /// The size Cycles is asked to render now.
-    #[cfg(test)]
-    pub fn traced_size(&self) -> (usize, usize) {
+    pub fn size(&self) -> (usize, usize) {
         self.size
     }
+
 
     /// The samples Cycles is asked for now.
     #[cfg(test)]
@@ -490,6 +541,157 @@ impl CyclesView {
             self.session.set_paused(paused);
         }
     }
+}
+
+/// A picture this many pixels or more is worked on by every core; a
+/// smaller one, a moving picture, by the render thread alone
+/// (`CyclesView::take_frame`).
+pub const PARALLEL_PIXELS: usize = 512 * 1024;
+
+/// What a floor reflection layer is of: the scene (by pointer), the camera
+/// and the size of the pictures it goes over.
+pub type FloorKey = (usize, Camera, usize, usize);
+
+/// The most samples a still view's floor reflection takes: past them it is
+/// as clean as the picture it goes over.
+const FLOOR_SAMPLES: u32 = 256;
+
+/// Tequila's floor reflection under Cycles' pictures
+/// (`tequila_render_cpu::floor`), a layer for each view it goes over: the
+/// one Cycles is making now, traced while Cycles renders it, and the one
+/// before.
+///
+/// Measured on the Headphones sample at a 1448x814 view, a sample of the
+/// reflection over the whole frame took 90 to 120 ms (200 to 300 in the
+/// application, beside Cycles), for the 3% of the pixels that show any
+/// of it: the rest are a camera ray and a mirror ray each, a million of them.
+/// So once a pass over the whole frame has found where the reflection is,
+/// the samples after it are traced only there; and the first picture at a
+/// view's full size, as the camera stops, takes its first sample where the
+/// moving pictures of the same view found it, so the clean picture is not
+/// kept waiting a whole frame's pass. Its second sample is over the whole
+/// frame again, and finds the reflection's place at that size for the rest.
+#[derive(Default)]
+pub struct FloorLayers {
+    layers: Vec<FloorLayer>,
+}
+
+struct FloorLayer {
+    key: FloorKey,
+    layer: Framebuffer,
+    /// Samples it has.
+    passes: u32,
+    /// Where it shows a reflection, found by a pass over the whole frame at
+    /// its size: the only place it is traced after.
+    band: Option<tequila_render_cpu::floor::Band>,
+    /// Where another size of the same view showed one, for its first pass.
+    guess: Option<tequila_render_cpu::floor::Band>,
+    /// Traced for the picture Cycles was making, and not yet laid over it.
+    fresh: bool,
+}
+
+impl FloorLayers {
+    pub fn clear(&mut self) {
+        self.layers.clear();
+    }
+
+    /// The first sample of the layer for `key`, if it has none, while Cycles
+    /// makes the picture it goes over. A layer given up for `stop` is
+    /// forgotten, to be begun again.
+    pub fn prepare(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, stop: &(dyn Fn() -> bool + Sync)) {
+        let at = self.find_or_make(key);
+        if self.layers[at].passes > 0 {
+            return;
+        }
+        if crate::profile::time("render: floor reflection", || trace(&mut self.layers[at], intersector, config, stop)) {
+            self.layers[at].fresh = true;
+        } else {
+            self.layers.remove(at);
+        }
+    }
+
+    /// The layer to lay over the picture of `key`, with a sample more unless
+    /// it was traced for this very picture, the view is moving (its
+    /// pictures are of one sample), or it has all it takes. A sample given
+    /// up for `stop` leaves what it had.
+    pub fn for_frame(&mut self, intersector: &dyn tequila_render_core::intersect::Intersector, key: FloorKey, config: &tequila_render_core::settings::IntegratorConfig, moving: bool, stop: &(dyn Fn() -> bool + Sync)) -> &Framebuffer {
+        let at = self.find_or_make(key);
+        let entry = &mut self.layers[at];
+        let wanted = entry.passes == 0 || (!entry.fresh && !moving && entry.passes < FLOOR_SAMPLES);
+        entry.fresh = false;
+        if wanted {
+            crate::profile::time("render: floor reflection", || trace(entry, intersector, config, stop));
+        }
+        &self.layers[at].layer
+    }
+
+    /// The layer for `key`, made if there is none: begun where a layer of
+    /// the same view at another size found the reflection. Two are kept,
+    /// the newest last: a full-size layer is 100 MB.
+    fn find_or_make(&mut self, key: FloorKey) -> usize {
+        if let Some(at) = self.layers.iter().position(|l| l.key == key) {
+            return at;
+        }
+        let guess = self.layers.iter().rev().find(|l| l.key.0 == key.0 && l.key.1 == key.1 && l.passes > 0).and_then(|l| l.band.map(|band| scaled(band, (l.key.2, l.key.3), (key.2, key.3))));
+        self.layers.retain(|l| l.key.0 == key.0);
+        if self.layers.len() >= 2 {
+            self.layers.remove(0);
+        }
+        self.layers.push(FloorLayer { key, layer: Framebuffer::new(key.2, key.3), passes: 0, band: None, guess, fresh: false });
+        self.layers.len() - 1
+    }
+}
+
+/// One sample of a layer: where its band says, or where the guess says on
+/// its first, or over the whole frame, after which the band is known.
+fn trace(entry: &mut FloorLayer, intersector: &dyn tequila_render_core::intersect::Intersector, config: &tequila_render_core::settings::IntegratorConfig, stop: &(dyn Fn() -> bool + Sync)) -> bool {
+    use tequila_render_cpu::floor::Band;
+    let known = entry.band.or(if entry.passes == 0 { entry.guess } else { None });
+    let region = match known {
+        Some(Band::Nowhere) => {
+            entry.passes += 1;
+            return true;
+        }
+        Some(Band::Within(tile)) => Some(tile),
+        Some(Band::Everywhere) | None => None,
+    };
+    let camera = entry.key.1;
+    let started = std::time::Instant::now();
+    if !tequila_render_cpu::floor::render_floor_reflection_in(intersector, &mut entry.layer, camera, config, region, stop) {
+        crate::view_timing::trace(format_args!("floor reflection {}x{} given up after {:.1} ms", entry.key.2, entry.key.3, started.elapsed().as_secs_f64() * 1000.0));
+        return false;
+    }
+    crate::view_timing::trace(format_args!(
+        "floor reflection {}x{} sample {} {} in {:.1} ms",
+        entry.key.2,
+        entry.key.3,
+        entry.passes + 1,
+        match region {
+            Some(t) => format!("within {}x{}", t.width(), t.height()),
+            None => "over the whole frame".to_string(),
+        },
+        started.elapsed().as_secs_f64() * 1000.0
+    ));
+    entry.passes += 1;
+    if entry.band.is_none() && region.is_none() {
+        entry.band = Some(tequila_render_cpu::floor::reflected_band(&entry.layer));
+    }
+    true
+}
+
+/// A band found at size `from` as it falls on size `to`, with a margin of
+/// a fiftieth of the long side, as the band's own.
+fn scaled(band: tequila_render_cpu::floor::Band, from: (usize, usize), to: (usize, usize)) -> tequila_render_cpu::floor::Band {
+    use tequila_render_cpu::floor::Band;
+    let Band::Within(tile) = band else { return band };
+    let (sx, sy) = (to.0 as f32 / from.0.max(1) as f32, to.1 as f32 / from.1.max(1) as f32);
+    let margin = (to.0.max(to.1) / 50).max(8);
+    Band::Within(tequila_render_core::scheduler::Tile {
+        x0: ((tile.x0 as f32 * sx).floor() as usize).saturating_sub(margin),
+        y0: ((tile.y0 as f32 * sy).floor() as usize).saturating_sub(margin),
+        x1: ((tile.x1 as f32 * sx).ceil() as usize + margin).min(to.0),
+        y1: ((tile.y1 as f32 * sy).ceil() as usize + margin).min(to.1),
+    })
 }
 
 #[cfg(test)]
@@ -525,3 +727,159 @@ mod navigation_tests {
         assert_eq!(divided((64, 48), 2.0), (64, 48), "a view smaller than that is not divided");
     }
 }
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+    use tequila_core::math::Vec3;
+
+    fn mirrored_demo() -> tequila_render_core::scene::SceneSnapshot {
+        let mut scene = tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        scene.instances[1].shadow_catcher = Some(tequila_render_core::scene::ShadowCatcher { reflections: 1.0, ..Default::default() });
+        scene
+    }
+
+    /// A still view's floor reflection, traced only where its first pass
+    /// found it, comes to the same picture as one traced over the whole
+    /// frame at every sample; and the first sample of another size of the
+    /// same view goes where the first size found it.
+    #[test]
+    fn the_floor_reflection_is_traced_where_it_shows() {
+        let device = tequila_render_cpu::Device::shared().unwrap();
+        let intersector = tequila_render_cpu::EmbreeIntersector::build(&device, mirrored_demo()).unwrap();
+        let config = tequila_render_core::settings::IntegratorConfig::product();
+        let camera = Camera::look_at(Vec3::splat(4.0), Vec3::ZERO, Vec3::Y);
+        let mut layers = FloorLayers::default();
+        let key = (1usize, camera, 96, 72);
+        for _ in 0..6 {
+            layers.for_frame(&intersector, key, &config, false, &|| false);
+        }
+        let banded = layers.for_frame(&intersector, key, &config, true, &|| false).clone();
+        let band = layers.layers[0].band.expect("found by the first pass");
+        let tequila_render_cpu::floor::Band::Within(tile) = band else { panic!("the reflection is a band under the sphere, not {band:?}") };
+        assert!(tile.pixel_count() < 96 * 72, "the band is smaller than the frame");
+        let mut whole = Framebuffer::new(96, 72);
+        tequila_render_cpu::floor::render_floor_reflection(&intersector, &mut whole, camera, &config, 6);
+        assert!(whole.pixels().iter().any(|p| p.alpha() > 0.0), "the floor reflects the sphere");
+        for (a, b) in banded.pixels().iter().zip(whole.pixels()) {
+            assert!((a.alpha() - b.alpha()).abs() < 1e-5 && a.mean().to_array().iter().zip(b.mean().to_array()).all(|(x, y)| (x - y).abs() < 1e-4), "the banded reflection differs from the whole one");
+        }
+
+        // The same view twice the size: begun within where the first found it.
+        layers.prepare(&intersector, (1, camera, 192, 144), &config, &|| false);
+        let larger = layers.layers.last().unwrap();
+        assert_eq!(larger.passes, 1);
+        assert!(matches!(larger.guess, Some(tequila_render_cpu::floor::Band::Within(_))), "guessed from the first size");
+        assert!(larger.band.is_none(), "not found here until a pass over the whole frame");
+        assert!(larger.layer.pixels().iter().any(|p| p.alpha() > 0.0), "and the reflection is there");
+        assert!(larger.layer.pixels().iter().any(|p| p.samples == 0), "only within the guess");
+    }
+
+    /// A camera moving on before Cycles has shown a still view's first
+    /// picture goes in at once; one moving on before Cycles has shown a
+    /// moving picture waits for it, so a moving view shows anything at all.
+    /// Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn a_move_is_not_held_behind_a_still_pictures_first_sample() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = CyclesView::new(RenderEngine::CyclesCpu).expect("a Cycles session");
+        let scene = std::sync::Arc::new(tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2));
+        let at = |a: f32| Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+        let mut req = RenderRequest {
+            camera: at(0.0),
+            width: 1000,
+            height: 750,
+            config: tequila_render_core::settings::IntegratorConfig::product(),
+            scene,
+            scene_generation: 1,
+            denoise: false,
+            denoise_strength: 1.0,
+            denoise_cadence: 1,
+            prefilter_guides: None,
+            reject_fireflies: true,
+            clamp_sample: None,
+            interacting: false,
+            gpu_solid: false,
+            shading: crate::orchestrator::Shading::Rendered,
+            engine: RenderEngine::CyclesCpu,
+            pixels_per_point: 1.0,
+            checker: None,
+            submitted: std::time::Instant::now(),
+        };
+        assert!(view.sync(&req).expect("synced"), "the first view goes in");
+        req.camera = at(0.3);
+        assert!(view.sync(&req).expect("synced"), "a move goes in before the still view's first picture");
+        assert_eq!(view.traced_samples(), MOVING_SAMPLES);
+        req.camera = at(0.6);
+        assert!(!view.sync(&req).expect("synced"), "the next waits for the moving picture");
+    }
+
+    /// A drag let go of puts the view back to its full size at once; a
+    /// wheel's notch, a moment's drag, waits for the camera to settle.
+    /// Skipped where Cycles is not installed (`TEQUILA_CYCLES`).
+    #[test]
+    fn letting_go_of_a_drag_goes_back_to_full_size_at_once() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = CyclesView::new(RenderEngine::CyclesCpu).expect("a Cycles session");
+        let at = |a: f32| Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+        let mut req = RenderRequest {
+            camera: at(0.0),
+            width: 1000,
+            height: 750,
+            config: tequila_render_core::settings::IntegratorConfig::product(),
+            scene: std::sync::Arc::new(tequila_scene::demo::demo_scene(tequila_scene::demo::DemoMaterial::Plastic, 0.2)),
+            scene_generation: 1,
+            denoise: false,
+            denoise_strength: 1.0,
+            denoise_cadence: 1,
+            prefilter_guides: None,
+            reject_fireflies: true,
+            clamp_sample: None,
+            interacting: false,
+            gpu_solid: false,
+            shading: crate::orchestrator::Shading::Rendered,
+            engine: RenderEngine::CyclesCpu,
+            pixels_per_point: 1.0,
+            checker: None,
+            submitted: std::time::Instant::now(),
+        };
+        let mut framebuffer = Framebuffer::new(1, 1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut settle = |view: &mut CyclesView, req: &RenderRequest| {
+            view.sync(req).expect("synced");
+            while view.awaiting_frame() {
+                assert!(std::time::Instant::now() < deadline, "Cycles never drew the change");
+                view.take_frame(&mut framebuffer);
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                view.sync(req).expect("synced");
+            }
+        };
+        settle(&mut view, &req);
+        req.interacting = true;
+        req.camera = at(0.3);
+        settle(&mut view, &req);
+        assert!(view.size().0 < 1000, "moving, a smaller picture");
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        req.interacting = false;
+        view.sync(&req).expect("synced");
+        assert!(!view.navigating(), "let go, the move is over");
+        assert_eq!(view.size(), (1000, 750), "and the view is at its size at once");
+
+        // A notch: moving, and a frame later not, still settling. (Not
+        // waiting for its picture, which on a busy processor takes longer
+        // than a notch.)
+        req.interacting = true;
+        req.camera = at(0.6);
+        view.sync(&req).expect("synced");
+        req.interacting = false;
+        view.sync(&req).expect("synced");
+        assert!(view.navigating(), "a moment's drag still settles");
+    }
+}
+

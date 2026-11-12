@@ -417,7 +417,7 @@ impl GraphEditor {
                         .default_width(224.0)
                         .width_range(180.0..=360.0)
                         .show_inside(ui, |ui| {
-                            committed |= self.browser_panel(ui, project, library, &mut graph, &exposed, key);
+                            committed |= crate::profile::time("graph: browser", || self.browser_panel(ui, project, library, &mut graph, &exposed, key));
                         });
                 }
                 if self.show_settings {
@@ -428,10 +428,10 @@ impl GraphEditor {
                         .show_inside(ui, |ui| {
                             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                                 ui.add_space(4.0);
-                                self.swatch_panel(ui, &graph, project);
+                                crate::profile::time("graph: swatch", || self.swatch_panel(ui, &graph, project));
                                 ui.add_space(4.0);
                                 ui.separator();
-                                committed |= self.properties(ui, project, &mut graph);
+                                committed |= crate::profile::time("graph: properties", || self.properties(ui, project, &mut graph));
                             });
                         });
                 }
@@ -453,7 +453,7 @@ impl GraphEditor {
                         self.toolbar(ui, &name, &mut graph, &exposed, &mut committed);
                     });
                 egui::CentralPanel::default().frame(egui::Frame::none().fill(ink::canvas())).show_inside(ui, |ui| {
-                    committed |= self.canvas(ui, project, &mut graph, &exposed);
+                    committed |= crate::profile::time("graph: canvas", || self.canvas(ui, project, &mut graph, &exposed));
                 });
                 // Read here, from the window's own input: in a window of its
                 // own, the main window's pointer is not the one dragging.
@@ -524,10 +524,10 @@ impl GraphEditor {
         exposed: &[Param],
         key: MaterialKey,
     ) -> bool {
-        let entries = menu::entries(project);
+        let entries = crate::profile::time("graph: entries", || menu::entries(project));
         let materials: Vec<(MaterialKey, String)> = project.document().materials.iter().map(|(key, definition)| (key, definition.name.clone())).collect();
         let shelf: Vec<(&str, &str)> = library.entries.iter().map(|entry| (entry.name.as_str(), entry.category.as_str())).collect();
-        let sections = browser::sections(&entries, &materials, &shelf, Some(key), &self.browser.query);
+        let sections = crate::profile::time("graph: sections", || browser::sections(&entries, &materials, &shelf, Some(key), &self.browser.query));
         // What each row's picture is kept under: the material's graph, the
         // library's own key, a node as it is first set.
         let pictured = |item: &browser::Item| -> Option<u64> {
@@ -540,7 +540,7 @@ impl GraphEditor {
             }
         };
         self.thumbs.collect(ui.ctx());
-        let act = self.browser.show(ui, &sections, self.canvas_rect, &mut self.thumbs, &pictured);
+        let act = crate::profile::time("graph: browser rows", || self.browser.show(ui, &sections, self.canvas_rect, &mut self.thumbs, &pictured));
         // The rows that came into view without one: the library's own
         // picture if it has it, and the worker for the rest.
         let wanted = self.thumbs.take_wanted();

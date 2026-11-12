@@ -72,8 +72,30 @@ pub fn render_floor_reflection_until(
     }
 }
 
+/// One sample of the floor's reflection into `layer`, within `region` (the
+/// whole frame for `None`), given up as soon as `stop` says so (between
+/// tiles). `false` when it stopped. The viewport's, a sample at a time
+/// beside the frames it goes over ([`reflected_band`] gives the region).
+pub fn render_floor_reflection_in(
+    intersector: &dyn Intersector,
+    layer: &mut Framebuffer,
+    camera: Camera,
+    config: &IntegratorConfig,
+    region: Option<Tile>,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> bool {
+    let context = RenderContext {
+        camera,
+        config: IntegratorConfig { floor_reflection_only: true, ..config.clone() },
+        region,
+        ..RenderContext::default()
+    };
+    crate::render_pass_until(intersector, layer, &context, &ProgressiveSchedule::default(), 1, stop)
+}
+
 /// Where a first pass of the floor's reflection found any.
-enum Band {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Band {
     Nowhere,
     /// Inside this rectangle, with a margin, so a faint edge the first
     /// samples missed still gets the rest.
@@ -82,7 +104,9 @@ enum Band {
     Everywhere,
 }
 
-fn reflected_band(layer: &Framebuffer) -> Band {
+/// Where `layer` shows any of the floor's reflection: what a pass of it
+/// over the whole frame found, for the passes after it to trace only there.
+pub fn reflected_band(layer: &Framebuffer) -> Band {
     let (width, height) = (layer.width, layer.height);
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
     for y in 0..height {

@@ -96,6 +96,7 @@ mod ui_capture;
 mod update;
 mod windows;
 mod material_lab;
+mod view_timing;
 
 use eframe::egui;
 use tequila_color::ImageStyle;
@@ -280,6 +281,10 @@ fn main() -> eframe::Result<()> {
                     app.toasts.info("Brought your materials, plugins and settings across from Freeshot".to_string());
                 }
                 app.solid = solid_gpu::SolidView::new(cc.gl.is_some());
+                // A picture is put up as soon as it is ready, not at the
+                // window's next look for one, up to 16 ms later.
+                let waking = cc.egui_ctx.clone();
+                app.orchestrator.set_waker(move || waking.request_repaint());
                 if let Some(gl) = &cc.gl {
                     use eframe::glow::HasContext;
                     // SAFETY: plain queries on the window's own context.
@@ -548,6 +553,13 @@ struct TequilaApp {
     /// open: where, and whether the press has gone in (the release follows
     /// a frame later, as a mouse's does).
     menu_click: Option<(egui::Pos2, bool)>,
+    /// A drag across the viewport a script asked for (`ui drag`), under way.
+    scripted_drag: Option<view_timing::ScriptedDrag>,
+    /// Whether a final render was running at the last frame: its start is
+    /// when the viewport lets go of the graphics card (`Orchestrator::let_go`).
+    final_render_running: bool,
+    /// How long the viewport's pictures take to answer (`view_timing`).
+    answers: view_timing::Answers,
     /// The UV editor window: a part's layout, and a label placed on it.
     uv_editor: uv_editor::UvEditor,
     /// What went wrong last time, or in a worker just now, or from Help.
@@ -1138,6 +1150,9 @@ impl TequilaApp {
             show_about: false,
             menu_buttons: Vec::new(),
             menu_click: None,
+            scripted_drag: None,
+            final_render_running: false,
+            answers: view_timing::Answers::default(),
             uv_editor: uv_editor::UvEditor::default(),
             crash_window: crash::CrashWindow::default(),
             self_test: self_test::SelfTest::default(),
@@ -1297,6 +1312,7 @@ impl TequilaApp {
         let checker = self.cpu_checker();
         self.cpu_checker_submitted = checker.as_ref().map(|c| c.0);
         self.settings_submitted = Some(viewport_reads(&settings));
+        let now = std::time::Instant::now();
         self.orchestrator.submit(RenderRequest {
             camera: self.camera.camera,
             width,
@@ -1322,7 +1338,9 @@ impl TequilaApp {
             engine: settings.engine,
             pixels_per_point,
             checker,
+            submitted: now,
         });
+        self.answers.asked(self.camera.camera, now);
         self.gpu_solid_submitted = self.gpu_solid();
     }
 
@@ -1479,6 +1497,12 @@ impl eframe::App for TequilaApp {
     /// A script's click on a menu (`menu_click`), as the mouse would give
     /// it: pressed on one frame, released on the next.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some(drag) = self.scripted_drag.as_mut() {
+            if !drag.frame(self.viewport_rect, std::time::Instant::now(), raw_input) {
+                self.scripted_drag = None;
+            }
+            ctx.request_repaint();
+        }
         let Some((pos, pressed)) = self.menu_click else { return };
         let modifiers = egui::Modifiers::default();
         if pressed {
@@ -1507,7 +1531,9 @@ impl eframe::App for TequilaApp {
         struct FrameTimer(std::time::Instant);
         impl Drop for FrameTimer {
             fn drop(&mut self) {
-                profile::record("ui: frame", self.0.elapsed().as_secs_f64() * 1000.0);
+                let ms = self.0.elapsed().as_secs_f64() * 1000.0;
+                profile::record("ui: frame", ms);
+                view_timing::frame_took(ms);
             }
         }
         let _frame = FrameTimer(frame_started);
@@ -1673,6 +1699,7 @@ impl eframe::App for TequilaApp {
         }
         if let Some(image) = self.orchestrator.take_image(&mut self.seen_generation) {
             profile::record("ui: images shown", 0.0);
+            self.answers.shown(image.asked, (image.width, image.height), image.samples, image.denoised);
             if image.width > 0 && image.height > 0 {
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(
                     [image.width, image.height],
@@ -1959,6 +1986,13 @@ impl eframe::App for TequilaApp {
             || (self.batch.is_running() && self.shading != orchestrator::Shading::Fast)
             || ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         self.orchestrator.set_paused(suspended);
+        // A final render begun: the viewport lets go of its Cycles session
+        // and its denoiser on the graphics card, for the render's own.
+        let rendering = self.batch.is_running();
+        if rendering && !self.final_render_running {
+            self.orchestrator.let_go();
+        }
+        self.final_render_running = rendering;
         // On the GPU a Solid frame is finished the moment it is drawn; on the
         // CPU, once the renderer has reached its sample cap. Waiting for the
         // cap in GPU mode — which never traces, so never reaches it — kept the
@@ -1969,9 +2003,15 @@ impl eframe::App for TequilaApp {
         if suspended || settled {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         } else {
-            // Input still repaints immediately. Polling for render frames
-            // at 60 Hz avoids driving the entire UI at the monitor's maximum.
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            // Input still repaints immediately, and each picture the render
+            // thread finishes wakes the window itself (`Orchestrator::
+            // set_waker`), so this is only for what changes with neither -
+            // Cycles saying what it prepares. Polled at 60 Hz, as it was,
+            // a still view drew the window sixty times a second over a
+            // picture that changed a few times, and each window of its own
+            // open with it: the material graph's took 7-8 ms to draw each
+            // time, on the processor and the graphics card Cycles was using.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         self.ui_capture.update(ctx);
     }
