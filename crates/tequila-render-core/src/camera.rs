@@ -149,13 +149,19 @@ impl Camera {
     }
 
     /// Aperture radius in scene units, from the physical relationship
-    /// `radius = focal_length / (2 * N)`.
+    /// `radius = focal_length / (2 * N)` (`docs/01` §8.1): the lens's own
+    /// opening, its focal length in millimetres taken as the length it is,
+    /// in metres, as every length in a scene is (`tequila_scene::units`).
+    /// A real 85 mm lens at f/4 opens 10.6 mm across its radius, and so does
+    /// this, as Blender's and KeyShot's cameras do.
     ///
-    /// The focal length is converted from millimetres via the *sensor* scale
-    /// rather than being treated as a scene length: what governs the blur
-    /// circle is the ratio of aperture to sensor, and the sensor's size in the
-    /// scene is set by the focus distance and field of view.
-    pub fn aperture_radius(&self, aspect: f32) -> f32 {
+    /// It was converted through the sensor as seen at the focus plane, which
+    /// grows the opening by the focus distance over the focal length - about
+    /// six times for an 85 mm lens focused at half a metre - so f/4 blurred
+    /// as a real lens does at f/0.7, and only the camera's top stops gave
+    /// the depth of field a product shot wants. `aspect` no longer changes
+    /// it; it is kept so the callers need not change.
+    pub fn aperture_radius(&self, _aspect: f32) -> f32 {
         if !self.f_number.is_finite() || self.f_number <= 0.0 {
             return 0.0;
         }
@@ -163,15 +169,7 @@ impl Camera {
             Projection::Perspective { focal_length_mm }
             | Projection::Shift {
                 focal_length_mm, ..
-            } => {
-                let radius_mm = focal_length_mm / (2.0 * self.f_number);
-                // Scene units per millimetre of sensor, at the focus plane.
-                let sensor_to_scene = self.sensor_height_mm(aspect).recip()
-                    * 2.0
-                    * self.focus_distance
-                    * (self.vertical_fov(aspect) * 0.5).tan();
-                radius_mm * sensor_to_scene
-            }
+            } => focal_length_mm * 1e-3 / (2.0 * self.f_number),
             _ => 0.0,
         }
     }
@@ -469,6 +467,24 @@ mod tests {
         let narrow = cam.aperture_radius(1.5);
         assert!((wide / narrow - 2.0).abs() < 1e-3, "{wide} vs {narrow}");
         assert!(wide > 0.0);
+    }
+
+    /// The opening is the lens's own: an 85 mm lens at f/4 is 85 / 8 mm
+    /// across its radius, in metres, wherever it is focused and whatever
+    /// the picture's shape - as a real lens, Blender's camera and KeyShot's
+    /// are. Made through the sensor at the focus plane it was the focus
+    /// distance over the focal length too big: six times, focused at half a
+    /// metre.
+    #[test]
+    fn the_aperture_is_the_lens_opening_not_the_framing() {
+        let mut cam = Camera::look_at(vec3(0.0, 0.0, 0.5), Vec3::ZERO, Vec3::Y);
+        cam.projection = Projection::Perspective { focal_length_mm: 85.0 };
+        cam.f_number = 4.0;
+        for (focus, aspect) in [(0.5, 1.5), (2.0, 1.5), (0.5, 16.0 / 9.0), (10.0, 1.0)] {
+            cam.focus_distance = focus;
+            let radius = cam.aperture_radius(aspect);
+            assert!((radius - 0.010625).abs() < 1e-6, "focus {focus}, aspect {aspect}: {radius}");
+        }
     }
 
     /// Stopping down two stops must darken by exactly two stops.
