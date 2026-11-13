@@ -106,11 +106,16 @@ fn copy_runtime_libraries(bin: &Path, windows: bool) {
     let Ok(out_dir) = std::env::var("OUT_DIR") else {
         return;
     };
-    // OUT_DIR is `target/<profile>/build/<pkg>-<hash>/out`; the binaries live
-    // three levels up.
+    // OUT_DIR is under `target/<profile>/build`, and the binaries live in
+    // `target/<profile>`: the folder that holds `build`. How deep under
+    // `build` is Cargo's business - `<pkg>-<hash>/out` up to Rust 1.99,
+    // `<pkg>/<hash>/out` from 1.100 - and counting levels up put the
+    // libraries in `build` itself there, where nothing looks for them.
     let Some(target_dir) = Path::new(&out_dir)
         .ancestors()
-        .nth(3)
+        .skip(1)
+        .find(|folder| folder.file_name().is_some_and(|name| name == "build"))
+        .and_then(Path::parent)
         .map(Path::to_path_buf)
     else {
         return;
@@ -127,10 +132,12 @@ fn copy_runtime_libraries(bin: &Path, windows: bool) {
         let Some(name) = path.file_name() else {
             continue;
         };
-        for destination in [target_dir.join(name), target_dir.join("deps").join(name)] {
-            if let Some(parent) = destination.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
+        // Beside the programs, and beside the tests where they have a
+        // folder of their own (`deps`, which Rust 1.100 no longer makes for
+        // them: its tests find the libraries beside the programs).
+        let beside_tests = target_dir.join("deps");
+        let destinations = [Some(target_dir.join(name)), beside_tests.is_dir().then(|| beside_tests.join(name))];
+        for destination in destinations.into_iter().flatten() {
             // Only copy when missing or stale, so incremental builds stay fast.
             let stale = std::fs::metadata(&destination)
                 .and_then(|d| d.modified())
