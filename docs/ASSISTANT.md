@@ -904,7 +904,8 @@ Not changed here, and worth doing:
   Seen in that session, cause not found.
 - **Tinting a library preset whose colour is set inside a pattern** still
   means reading the material and rewriting that pattern. A plain "make
-  this preset this colour" would save it.
+  this preset this colour" would save it. (Built since: "one step to
+  recolour a material", below.)
 - **The viewport keeping a stale mesh under a reused key** is worked
   around for scripts, not fixed where it happens.
 - An assistant still cannot read the library's files directly, which is as
@@ -921,6 +922,167 @@ Held by test: `the_library_is_searched_in_a_size_an_ai_reads`,
 `a_screenshot_waits_for_the_picture_to_finish`, and in the bridge
 `the_library_comes_first` and
 `a_screenshot_says_whether_its_picture_had_finished`.
+
+## As built, November 13: whose a moved view is
+
+The first real session's assistant said, three times, that the view had
+"zoomed in on its own" after a material change, never found why, and
+framed the model again each time. The cause was looked for and found: no
+material change moves the camera. The person at the window had turned and
+zoomed the view to look at each new material, between two of the
+assistant's looks, and the assistant framed it away again.
+
+**How that was established:**
+- About forty material changes replayed over the scripting channel in a
+  copy with a home folder of its own, in the quick view and in the
+  Rendered one: presets put on parts, materials made, shown on a ball,
+  remade, set, unlinked and assigned, batches, a batch taken back, undo and
+  redo. The camera was read before and after each, and the model's outline
+  measured in each screenshot. Nothing moved.
+- The session's chat keeps every step and picture. Before each of the
+  three remarks there is no camera request: no frame, no look, no undo.
+- Its pictures show a hand's moves - a small turn and a step back, closer
+  and lower, turned and off-centre, a fourfold push in - and a switch to
+  the Rendered view that the assistant had not asked for and Tequila does
+  not make unasked.
+
+**What changed:**
+- **Tequila says when the person has moved the view.** Every scripted
+  request passes through `channel::handle`, and what one does to the
+  camera it has done by the time it answers; so a view found somewhere
+  else when the next arrives was moved by hand (`channel::note_view`).
+  `query ui` counts those as `view_moves_by_hand`. Each bridge keeps the
+  count from its last screenshot, and when it has risen says with the
+  picture: "The person has moved the view since your last look: it is
+  where they want it, so leave it there." Never at a first look, and once
+  for however far the person went. Tequila's own loop says the same.
+- **The instructions say whose the view is**, for the looks in between:
+  nothing done to a material moves the camera, a view that differs from
+  the last look is the person's, and a camera moved to check something is
+  put back. `tequila_frame` says it is not for after a material edit.
+
+**Tried on this Mac, in a copy with a home folder of its own, through the
+real bridge** (`tequila --mcp`), with a drag across the viewport made as a
+mouse makes one (`ui` `drag`): a first look, a look after a library
+preset, after the assistant's own `tequila_frame` and after its undo said
+nothing of the view; the look after the drag said the person had moved
+it; the next, untouched, said nothing; a material made and a second drag,
+and the look said it again. `view_moves_by_hand` stood at 2.
+
+**Known limits:**
+- What the person types in Tequila's console is a request like any other,
+  so a `look` typed there is not counted as theirs.
+- The person's orbit is an undo step like any other: an assistant's undo
+  after they have moved the view takes back their orbit, not its own last
+  edit.
+
+Held by test: `a_material_change_leaves_the_view_where_it_was`,
+`a_view_moved_between_requests_is_counted_as_the_persons`, and
+`a_look_says_when_the_person_moved_the_view` and
+`a_moved_view_is_the_persons` in the bridges and in Tequila's own loop.
+
+## As built, November 13: one step to recolour a material
+
+In the same first session the assistant put a library leather on a part
+and then held back from making it dark green. It was right to: that
+leather's brown is not in `base_color` but inside the node that multiplies
+its grain, so setting `base_color` would have changed nothing, and the
+only other way was to read the whole material and rewrite its pattern.
+More than half of the library is like that: of 599 shipped presets, 316
+keep their colour in a pattern (a multiplied colour, the colours threads
+are mixed from, the stops of a ramp), and 283 in a plain value.
+
+What changed:
+
+- **`tequila_material_tint`** takes a material's id and a hex colour and
+  makes it the same material in that colour, wherever the colour is kept.
+  The colour asked for becomes the material's main colour; the other
+  colours of the same family keep their relation to it, so a pattern keeps
+  its contrast; colours of another family (white threads in a blue cloth,
+  rust on a grey steel) are left exactly as they are. Pattern, grain,
+  roughness and bump are not touched. It is one command on the bus, so
+  one undo step. The rule is written out in `docs/SCRIPTING.md` under
+  "Tinting a material", and is `tequila_materials::tint`.
+- **Its answer says what it did**: the colour it was and is, each
+  parameter changed with how many colours and whether they were in a
+  pattern or a plain value, how many colours it left alone, and in words
+  anything worth knowing - that other parts share the material and changed
+  too, or that a metal could not be as bright as the colour asked for. It
+  comes back with a picture of the material on the ball, as
+  `tequila_material_update` does.
+- **A material with no colour to change is refused in a sentence** that
+  names it and says why: a thin film, whose colours come from its
+  thickness, or a colour that is a picture's. Nothing is changed.
+- **`tequila_library_apply` takes `color`**, to put a preset on already
+  tinted: a material of its own named for the colour
+  (`Leather Tan #1f4d2b`). It also answers with the material's id now, so
+  the next step need not look it up.
+- The instructions every assistant is given, both tools' descriptions,
+  Tequila's own loop for API keys and local models, and the Tequila skill
+  all say to use the tint and not `base_color` for "the same material in
+  another colour". The request on the scripting channel is `material` with
+  the action `tint`; in Python `material.tint('#1f4d2b')` and
+  `fs.library.apply(name, part, color='#1f4d2b')`.
+
+Three things the survey of the library decided:
+
+- **Which colour is "the" colour of a weave.** The value a preset names is
+  often a blend of its threads, nearer the white thread of an Oxford cloth
+  than the blue one. So under a pattern the main colour is the pattern's
+  own colour nearest that value among those at least as vivid: the blue
+  thread, which comes out exactly the colour asked for.
+- **A colour that is only a grey level.** Two presets (Cast Iron, Steel
+  Galvanised) wire a pattern of numbers straight into the colour, with no
+  colour anywhere. A tint puts one between them, so that what is seen is
+  unchanged until it is tinted and every later tint finds it.
+- **A clear material's colour is not the colour it looks.** It is what one
+  transmission depth lets through, a pale blue for an acrylic that looks
+  deep blue on a part five times as thick. Given the amber asked for as it
+  stood, that acrylic rendered nearly black. So a clear material that has a
+  colour keeps its clarity - the new colour thinned as a dye is, to take as
+  much out of the light as the old one did - and only a colourless one
+  takes the colour as given. The answer says when this was done and what
+  the colour came to.
+
+**Tried on this Mac (M3 Max):** every one of the 599 shipped presets tinted
+dark green in a test, each held to come out that colour (a metal as near as
+the metal allows), to compile, to read back from its own file, and to stay
+put when tinted the same colour again. Twenty presets rendered on the
+library's ball before and after, and looked at: leathers, suede, denim,
+Oxford cloth, felt, walnut, marble, terrazzo, a carbon and aramid weave,
+rusted steel, plastic, anodised aluminium, chrome, a metallic paint, tinted
+acrylic, clear glass, an amethyst, a gummy sweet, a neon tube and a backlit
+button.
+
+Not tried: an assistant using the tool in a real session. The tool's
+description is the only thing that tells it to, and whether it reaches for
+it unprompted is for the next session to show.
+
+Not changed here:
+
+- **A tint is not offered in the Material tab.** The rule is in a crate
+  the window can call (`tequila_materials::tint::tint`); a "Tint..." beside
+  a patterned material's colour would be the same step by hand.
+- **A material keeps its name when it is tinted**, as it does when its
+  colour is changed by hand, so a `Leather Tan` made green is still called
+  that. Applied already tinted, it is named for the colour.
+- **The pattern's light and dark keep how light they look, not how much
+  light they reflect**, so a deep blue made a red of the same lightness
+  reflects more. That is the point of working in Oklab, and is what a
+  person means by the same contrast.
+
+Held by test: in `tequila-materials`, the `tint::tests` (a plain value, a
+colour times a pattern, a ramp's contrast, grey beside a colour, a colour
+on a grey, a black pattern, a sheen, glass and glow, a tinted clear
+material, a metal, a grey-level pattern, the refusals, a second tint); in `tequila-format`,
+`every_shipped_preset_tints_or_says_why_not`; on the channel,
+`a_plain_preset_is_tinted_in_its_value`,
+`a_patterned_leather_is_tinted_in_its_pattern`,
+`a_cloth_keeps_its_weave_in_the_new_colour`,
+`a_preset_is_applied_already_tinted`,
+`a_material_with_no_colour_is_refused_plainly` and
+`a_tint_carries_a_material_and_a_colour`; and `a_tint_is_one_tool` in each
+bridge.
 
 ## As built, November 13: a guide to the whole application
 
@@ -954,7 +1116,7 @@ all of it, yes. What stood in the way:
 **What was built.**
 
 - **The guide in layers** (`skills/tequila`, built into the binary by
-  `tequila_scripting::guide`): a core under 7,000 characters, and nineteen
+  `tequila_scripting::guide`): a core under 7,200 characters, and nineteen
   pages under 12,000 each - materials, recipes, graph, textures, labels,
   uv, scene, lighting, camera, variants, rendering, image, animation,
   fixing, files, plugins, app, scripting, shots. A page teaches the work
@@ -1010,6 +1172,13 @@ conversation ended there - with the old instructions as with the new.
 (Read as the call it is since: see the next section.)
 
 Not tried with Claude, ChatGPT or Gemini on this build.
+
+**Merged with the two sections above.** The core carries their rules, short:
+whose a moved view is, in what holds everywhere, with the rest on the
+`camera` page (`view_moves_by_hand`, and how to put a view back); and the
+tint, in the core's materials paragraph, with the rest on `materials`. The
+core came to 7,059 characters with them, and its test holds it under
+7,200.
 
 ## As built, November 13: calls written as text, and what the own loop could not reach
 

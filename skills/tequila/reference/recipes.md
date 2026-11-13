@@ -4,6 +4,8 @@ When nothing in the library fits - terrazzo in the brand's colours, a galaxy res
 
 This page is enough to write recipes. `tequila_material_guide` is the long version (every pattern's defaults and 16 tested examples, about 30,000 characters): ask it only when a pattern here will not come right.
 
+For a library preset in another colour you do not need a recipe at all: `tequila_material_tint` (page `materials`) recolours it in one step and keeps its pattern.
+
 ## The loop
 
 1. **Start from an example** below, or read a library preset already on a part with `tequila_material_recipe {"material": <id>}`, and change it.

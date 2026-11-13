@@ -189,6 +189,7 @@ with tequila.connect() as fs:                      # the open application
     metals = fs.library.presets(category='Metal')
     lid = fs.find(name='lid')[0]
     fs.library.apply('Aluminium Spun', lid)          # one undo step
+    fs.library.apply('Leather Tan', lid, color='#1f4d2b')   # the preset, in another colour
     fs.library.save(fs.materials['Paint'], 'Signal Orange', category='Paint', tags=['safety'])
     fs.library.import_('C:/Downloads/Leather037_1K-JPG.zip', size=0.2)
     fs.library.export('Signal Orange', 'signal_orange.fsmat')

@@ -107,6 +107,13 @@ pub enum Band {
 /// Where `layer` shows any of the floor's reflection: what a pass of it
 /// over the whole frame found, for the passes after it to trace only there.
 pub fn reflected_band(layer: &Framebuffer) -> Band {
+    reflected_band_with_margin(layer, (layer.width.max(layer.height) / 50).max(8))
+}
+
+/// The same, with a margin of `margin` pixels: a small first look at the
+/// frame, each of whose pixels stands for several of the picture's, wants
+/// one of a pixel or two.
+pub fn reflected_band_with_margin(layer: &Framebuffer, margin: usize) -> Band {
     let (width, height) = (layer.width, layer.height);
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
     for y in 0..height {
@@ -122,7 +129,6 @@ pub fn reflected_band(layer: &Framebuffer) -> Band {
     if x0 == usize::MAX {
         return Band::Nowhere;
     }
-    let margin = (width.max(height) / 50).max(8);
     let tile = Tile {
         x0: x0.saturating_sub(margin),
         y0: y0.saturating_sub(margin),

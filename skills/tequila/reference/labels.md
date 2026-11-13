@@ -24,7 +24,7 @@ Then read the part's new material id with `tequila_nodes {"filter": "<its name>"
 
 ## 3. Look
 
-`tequila_ui {"viewport": "rendered"}`, point the camera at that face (`tequila_look`, page `camera`), then `tequila_screenshot`. Check three things: is it on the face that was meant, is it the right size, is it the right way round.
+`tequila_ui {"viewport": "rendered"}`, then `tequila_screenshot`. If the face is out of sight, read the view, point the camera at the face with `tequila_look`, look, and put the view back (page `camera`). Check three things: is it on the face that was meant, is it the right size, is it the right way round.
 
 ## 4. Move it, size it, turn it
 

@@ -9,8 +9,8 @@ Tequila renders products photographically. It is open on the person's computer, 
 
 ## How to work
 
-1. **Open the guide's page first.** Your first call for any job is `tequila_guide {"topic": "<page>"}`, with the page from the table below. Do not work from what you know of other software: Tequila has its own ways (the background and the floor are settings of the environment, not a plane you add; a material comes from the library, not from parameters you make up). A page is short, in the order the work is done, and its examples are tested against this build.
-2. **Use the tools, never the screen.** No clicking or screenshotting the desktop to operate Tequila, even if you can. With no `tequila_*` tools, say how to connect and stop: in Tequila, **Assistant → Connect an AI…**, then quit the AI app completely and open it again. If a tool says Tequila is not open, ask the person to open it.
+1. **Open the guide's page first.** Your first call for any job is `tequila_guide {"topic": "<page>"}`, with the page from the table below. Do not work from what you know of other software: Tequila has its own ways (the background and the floor are settings of the environment, not a plane you add; a material comes from the library, not from parameters you make up).
+2. **Use the tools, never the screen.** No clicking or screenshotting the desktop to operate Tequila, even if you can. With no `tequila_*` tools, say how to connect and stop: in Tequila, **Assistant → Connect an AI…**, then quit the AI app completely and open it again.
 3. **Look before you change.** `tequila_scene` for the overview; `tequila_nodes` (with `parts_only: true` and a `filter` word) for parts with their ids, materials, sizes and centres; `tequila_materials` for materials. Ids come only from these answers: never guess one.
 4. **Never guess a field.** Before a command you have not used here, ask `tequila_command {"command": "<name>"}`: it answers with the exact fields and an example to copy. A field that is not in the example is not read.
 5. **Read a block before you send it back.** Many commands replace a whole block (the render settings, the image style, a camera, a light). `tequila_read {"what": "render"}` reads that one block, `tequila_read {"node": 12}` one node with its transform; change what was asked and send all of it back. Never read the whole project (`tequila_query` `context`, `api`, `library`): tens of thousands of characters.
@@ -18,24 +18,24 @@ Tequila renders products photographically. It is open on the person's computer, 
 7. **Check the picture.** After changing how something looks: `tequila_ui {"viewport": "rendered"}`, then `tequila_screenshot`. It says whether the picture had finished; if not, ask again with a longer `settle` rather than judging the grain. Compare with what was asked, and fix what is off.
 8. **Undo freely.** `tequila_undo` takes back the last step, one edit or one whole batch.
 9. **Stay in the scene unless asked.** Import, save, render to a file, export, change a preference or write a plugin only when the person asks.
-10. **Say what you did**, briefly, in the person's words: which parts, which materials, what changed.
+10. **Say what you did**, briefly: which parts, which materials, what changed.
 
 ## Materials: the library first
 
-For any material, **search the library before anything else**: several hundred finished presets (metals, plastics, woods, fabrics, leathers, glass, paints, stones) plus the person's own.
+For any material, **search the library before anything else**: several hundred finished presets, plus the person's own.
 
 ```json
 tequila_library {"search": "brushed aluminium"}
 tequila_library_apply {"name": "Aluminium Brushed", "nodes": [12, 14]}
 ```
 
-Every word of `search` must match: try fewer if nothing comes back. Close but not right? Put the preset on and change it (page `materials`). Make one from nothing only when the library has nothing close (page `recipes`). Parts can share a material: `material.unlink` a part before changing its material alone.
+Every word of `search` must match: try fewer if nothing comes back. Wrong colour? `tequila_material_tint {"material": 7, "color": "#1f4d2b"}`, or `color` on `tequila_library_apply` - not `base_color`, which many presets do not use. Otherwise close? Put it on and change it (page `materials`). Make one from nothing only when the library has nothing close (page `recipes`). Parts can share a material: `material.unlink` a part before changing its material alone.
 
 ## Which page for which job
 
 | The person wants | Page |
 |---|---|
-| A real material on parts; a colour, finish or roughness changed | `materials` |
+| A real material on parts; the same one in another colour; a finish or roughness changed | `materials` |
 | A material of their own: terrazzo, camo, worn paint, a pattern | `recipes` |
 | One parameter driven by a pattern or a ramp; nodes in the material graph | `graph` |
 | A picture as a texture; a pack of PBR maps; a Substance file | `textures` |
@@ -60,6 +60,7 @@ Every word of `search` must match: try fewer if nothing comes back. Close but no
 - **Lengths are metres and +Y is up.** A phone is about 0.15; a hand tool 120 m long came from a file with no units (page `fixing`).
 - **Colours are hex sRGB strings** (`"#c0392b"`), converted for you into the rendering space. An array `[r, g, b]` is taken as linear ACEScg as it is: never send sRGB numbers as an array.
 - **A command** is `{"command": "<group>.<verb>", ...}` sent with `tequila_apply`, or as `{"op": "apply", "command": {...}}` inside `tequila_batch`. **A request** is `{"op": "<name>", ...}` sent with `tequila_request` where no tool of its own exists. Angles are radians in commands, degrees in `tequila_look`.
+- **The view is the person's as well.** They turn and zoom it while you work, and no material edit moves the camera, so a view unlike your last look is theirs: do not frame it or move it back. Move it only when asked or to see something out of sight, then put it back (page `camera`).
 - **Snapshots** in the window are `studios` in commands; a **studio preset** is a whole lighting set-up from the library.
 - Inside Tequila's Assistant, **Tequila asks the person itself** before a file is read or written: call the tool and wait. If they say no, do not try another way.
 
@@ -68,5 +69,4 @@ Every word of `search` must match: try fewer if nothing comes back. Close but no
 - A refused command says which field is wrong: fix that and send it again. Two refusals running mean you are guessing: ask `tequila_command`, or read the page.
 - A connection error means the outcome is unknown: check `tequila_query {"what": "history"}` and the scene before repeating an edit.
 - A change does not show: is the part hidden (`visible` in `tequila_nodes`), is it where you think (`center`, `size`), had the picture finished?
-- A pattern or texture looks like nothing: the model's size is wrong, or the pattern's `size` is far off the part's.
 - A page says a job is not possible through the tools yet: say so plainly and tell the person where it is in the window, rather than trying another way round.

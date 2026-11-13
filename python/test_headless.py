@@ -74,6 +74,44 @@ class HeadlessTests(unittest.TestCase):
             with self.assertRaises(TequilaError):
                 fs.library.apply('No Such Preset', part)
 
+    def test_a_preset_is_tinted_wherever_its_colour_is(self):
+        """A leather keeps its colour inside its pattern, where setting
+        base_color changes nothing: one request makes it green, each tint
+        is a step of its own to undo, the preset can be put on already
+        tinted, and a material with no colour says so."""
+        with tequila.open(MODEL) as fs:
+            part, other = fs.parts()[0], fs.parts()[-1]
+            applied = fs.library.apply('Leather Tan', part)
+            leather = fs.materials[applied['material']]
+            self.assertEqual(leather.name, 'Leather Tan')
+            untouched = fs.recipes.read(leather)
+
+            green = leather.tint('#1f4d2b')
+            self.assertEqual(green['color'], '#1f4d2b')
+            self.assertEqual(green['changed'], [{'parameter': 'base_color', 'colors': 1, 'in': 'pattern'}])
+            self.assertNotEqual(fs.recipes.read(leather), untouched)
+            red = fs.recipes.tint(leather, '#8c2f2a')
+            self.assertEqual((red['was'], red['color']), ('#1f4d2b', '#8c2f2a'))
+
+            # One undo is one tint: green again, then the library's tan.
+            self.assertEqual(fs.undo()['undone'], 'material.set_graph')
+            self.assertEqual(fs.recipes.tint(leather, '#1f4d2b')['was'], '#1f4d2b')
+            fs.undo()
+            fs.undo()
+            self.assertEqual(fs.recipes.read(leather), untouched)
+
+            tinted = fs.library.apply('Leather Tan', other, color='#1f4d2b')
+            self.assertEqual(tinted['material_name'], 'Leather Tan #1f4d2b')
+            self.assertEqual(fs.materials[tinted['material']].name, 'Leather Tan #1f4d2b')
+            self.assertNotEqual(tinted['material'], leather.id)
+
+            film = fs.recipes.create({'name': 'Soap Film', 'type': 'thin_film'})
+            with self.assertRaises(TequilaError) as refused:
+                fs.recipes.tint(film, '#1f4d2b')
+            self.assertIn('`Soap Film` has no colour to change', str(refused.exception))
+            with self.assertRaises(TequilaError):
+                leather.tint('dark green')
+
     def test_it_renders_and_exports_without_a_window(self):
         with tequila.open(MODEL) as fs:
             fs.frame()

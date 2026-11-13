@@ -27,7 +27,7 @@ tequila_library_apply {"name": "Leather Black", "nodes": [7, 8]}
 tequila_library_apply {"name": "Aluminium Brushed", "nodes": [21], "unlink": true}
 ```
 
-The name is exactly as the search gave it. The listed parts share one new material; `unlink` gives them a copy that is theirs alone. One undo step. Pick by what the part is made of in the real product.
+The name is exactly as the search gave it. The listed parts share one new material, whose id is in the answer; `unlink` gives them a copy that is theirs alone. `"color": "#1f4d2b"` puts it on in another colour (step 4). One undo step. Pick by what the part is made of in the real product.
 
 ## 4. Change it
 
@@ -37,18 +37,27 @@ The name is exactly as the search gave it. The listed parts share one new materi
 {"command": "material.unlink", "node": 12}
 ```
 
-**A colour, a finish, a number** - one parameter by its key:
+**A finish, a number, or a plain material's colour** - one parameter by its key:
 
 ```json
 {"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#c0392b"}
 {"command": "material.set_parameter", "material": 3, "parameter": "specular_roughness", "value": 0.25}
 ```
 
-**The colour did not change?** In many presets the colour comes from a pattern, not from `base_color` (leather's grain, wood's rings, a weave). `tequila_material {"id": 3}` reads the one material whole: if its `definition.graph.links` has a link whose `socket` is `param:base_color`, the colour is in the graph. Then recolour it by its recipe:
+**The same material in another colour** ("this leather, but dark green") - tint it. More than half of the library keeps its colour inside a pattern (a leather's brown multiplies its grain, a denim's blue is three thread colours, a wood's is a ramp), where setting `base_color` changes nothing you can see. One call recolours a material wherever its colour is kept, and keeps its pattern, grain and finish:
 
-1. `tequila_material_recipe {"material": 3}` answers with the material as a recipe.
-2. Change the `colors` of the patterns that drive `base_color` (keep their darks and lights the same distance apart, or the grain goes flat), or the colours inside its `graph`.
-3. `tequila_material_update {"material": 3, "recipe": {...}}` puts it back, and shows it on a ball.
+```json
+tequila_material_tint {"material": 7, "color": "#1f4d2b"}
+tequila_library_apply {"name": "Leather Tan", "nodes": [12], "color": "#1f4d2b"}
+```
+
+- The first changes a material already in the scene, on every part wearing it (`material.unlink` a part first to change it alone). The second puts a preset on already in that colour, as a material of its own named `Leather Tan #1f4d2b`.
+- The colour you give becomes the material's main colour. Its other colours keep their relation to it - creases stay darker, pale threads paler, a suede's sheen follows - and colours of another family are left alone: white threads stay white, rust on steel stays rust. Beside a grey or black main colour the family is the greys, so a black leather made green is green all through.
+- Tinted glass, acrylic, gems and drinks stay as clear as they were: a pale blue acrylic becomes a pale amber one, not a near-black one. A measured metal (chrome, copper, gold) is tinted, but cannot come out brighter than the metal reflects.
+- It answers with the colour it `was`, what it `changed` (each parameter, how many colours, whether they were in a pattern) and `notes`, with a picture of the material. Read the notes: they say when a colour could not be reached. One undo step.
+- A material with no colour of its own - a thin film, or one coloured by a picture - is refused with the reason. Say so to the person; do not try `base_color` instead.
+
+For one colour inside a pattern rather than the whole material (only the stitching, only the darkest ring), read the material as a recipe with `tequila_material_recipe {"material": 3}`, change those `colors`, and put it back with `tequila_material_update` (page `recipes`).
 
 **Another kind of material** - the type decides which parameters exist. Set the type first, then its parameters:
 

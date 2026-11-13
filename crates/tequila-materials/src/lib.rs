@@ -22,6 +22,7 @@ pub mod nodes;
 pub mod microfacet;
 pub mod openpbr;
 pub mod thin_film;
+pub mod tint;
 
 pub use bsdf::{Bsdf, BsdfFlags, BsdfSample};
 pub mod decal;

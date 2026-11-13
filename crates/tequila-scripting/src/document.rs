@@ -11,6 +11,7 @@ use tequila_core::math::{Aabb, Vec3};
 use tequila_format::json::Value;
 use tequila_format::json_write::Object;
 use tequila_scene::document::SceneDocument;
+use tequila_scene::Command;
 use tequila_scene::tree::{NodeId, NodeKind};
 
 /// The protocol revision, so a client can refuse an end it does not
@@ -563,9 +564,27 @@ pub fn library_request(
             if parts.is_empty() {
                 return Err("there are no parts in what was named: lights and empty groups take no material".into());
             }
-            let commands = library::apply_commands(entry, document, &parts, request.unlink);
+            // In another colour, when one is asked for: the preset tinted
+            // before it is put on, as a material of its own.
+            let tinted = match request.color {
+                Some(colour) => Some(entry.tinted(colour).map_err(|why| format!("`{}` {why}; apply it without `color`", entry.name))?),
+                None => None,
+            };
+            let wanted = tinted.as_ref().map(|(entry, _)| entry).unwrap_or(entry);
+            let commands = library::apply_commands(wanted, document, &parts, request.unlink);
             let mut out = Object::new();
             out.set("applied", entry.name.clone()).set("parts", parts.len() as f64);
+            // The material the parts now have, to change it further by id.
+            if let Some(Command::AssignMaterial { material, .. }) = commands.last() {
+                out.set("material", material.0 as f64);
+            }
+            if let Some((entry, done)) = &tinted {
+                out.set("material_name", entry.name.clone());
+                let notes = crate::material::tint_answer(&mut out, done);
+                if !notes.is_empty() {
+                    out.set("notes", Value::Array(notes.into_iter().map(Value::String).collect()));
+                }
+            }
             Ok(LibraryOutcome::Commands(commands, out.build()))
         }
         "save" => {
