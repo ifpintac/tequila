@@ -171,6 +171,17 @@ pub enum Operation {
     /// `help`: one command's fields and an example of it, or with no
     /// `command` the names of them all (`crate::document::help`).
     Help { command: Option<String> },
+    /// `guide`: one page of the guide to working in Tequila, by its `topic`
+    /// (`materials`, `uv`, `rendering`...), or with none the list of pages
+    /// (`crate::guide`). Text short enough to be read whole.
+    Guide { topic: Option<String> },
+    /// `read`: one part of the project as it is saved - `what` is `render`,
+    /// `image_style`, `environment`, `cameras`, `studios` and the rest
+    /// (`crate::document::read`) - or one node of the tree by its `node`
+    /// id, with its transform, light or cutaway. `index` takes one entry
+    /// of a part that is a list. With nothing, what there is to read. The
+    /// whole of it at once is `query context`, which is too long to read.
+    Read { what: Option<String>, node: Option<u64>, index: Option<usize> },
     /// `assistant`: the built-in Assistant - `ask` it something, as though
     /// typed and sent; `stop` it; `open` its panel. Answers with what it is
     /// doing. A script's to drive, not the Assistant's own or a remote
@@ -1333,6 +1344,12 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
         }
         "help" => Operation::Help { command: opt_string(value, "command")? },
+        "guide" => Operation::Guide { topic: opt_string(value, "topic")? },
+        "read" => Operation::Read {
+            what: opt_string(value, "what")?.map(|what| what.trim().to_ascii_lowercase()).filter(|what| !what.is_empty()),
+            node: opt_index(value, "node")?.map(|node| node as u64),
+            index: opt_index(value, "index")?,
+        },
         "assistant" => {
             if value.get("ask").is_some_and(|a| a.as_str().is_none_or(|t| t.trim().is_empty())) {
                 return Err(ProtocolError("`ask` must be the request, in words".into()));
@@ -1790,6 +1807,15 @@ impl Operation {
             Operation::Help { command } => match command {
                 Some(command) => format!("help {command}"),
                 None => "help".into(),
+            },
+            Operation::Guide { topic } => match topic {
+                Some(topic) => format!("guide {topic}"),
+                None => "guide".into(),
+            },
+            Operation::Read { node: Some(node), .. } => format!("read node {node}"),
+            Operation::Read { what, .. } => match what {
+                Some(what) => format!("read {what}"),
+                None => "read".into(),
             },
             Operation::Assistant(request) => match request.get("ask").and_then(|a| a.as_str()) {
                 Some(text) => format!("ask the Assistant: {}", text.chars().take(60).collect::<String>()),
@@ -2316,6 +2342,12 @@ mod control_tests {
 
         assert!(matches!(operation(r#"{"op":"help"}"#), Operation::Help { command: None }));
         assert!(matches!(operation(r#"{"op":"help","command":"scene.set_shape"}"#), Operation::Help { command: Some(c) } if c == "scene.set_shape"));
+        assert!(matches!(operation(r#"{"op":"guide"}"#), Operation::Guide { topic: None }));
+        assert!(matches!(operation(r#"{"op":"guide","topic":"uv"}"#), Operation::Guide { topic: Some(t) } if t == "uv"));
+        assert!(matches!(operation(r#"{"op":"read"}"#), Operation::Read { what: None, node: None, index: None }));
+        assert!(matches!(operation(r#"{"op":"read","what":" Render "}"#), Operation::Read { what: Some(w), .. } if w == "render"));
+        assert!(matches!(operation(r#"{"op":"read","what":"cameras","index":1}"#), Operation::Read { index: Some(1), .. }));
+        assert!(matches!(operation(r#"{"op":"read","node":12}"#), Operation::Read { node: Some(12), .. }));
 
         match operation(r#"{"op":"library","action":"search","search":"black leather","category":"Leather","limit":5}"#) {
             Operation::Library(request) => {

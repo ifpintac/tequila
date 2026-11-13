@@ -77,6 +77,8 @@ the document; what needs the window is refused by name.
 | `uv_layout` | yes | yes |
 | `add_shape` | yes | - |
 | `help` | yes | yes |
+| `guide` | yes | yes |
+| `read` | yes | yes |
 
 Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `materials`, `selection`, `camera`, `commands`, `ui`, `jobs`, `history`, `library`; a headless session answers all but `ui` and `jobs`.
 

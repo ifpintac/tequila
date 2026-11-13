@@ -259,6 +259,23 @@ class Client:
         name. A wrong name is refused with the ones it might have meant."""
         return self.request('help', command=command) if command else self.request('help')
 
+    def guide(self, topic=None):
+        """One page of the guide to working in Tequila, as text: 'materials',
+        'uv', 'rendering'... - `print(fs.guide('lighting'))`. Without a
+        topic, the list of pages. The same pages the Tequila skill carries
+        and the AI tools read (`tequila_guide`)."""
+        return self.request('guide', topic=topic) if topic else self.request('guide')
+
+    def read(self, what=None, *, node=None, index=None):
+        """One part of the project as it is saved, small enough to read:
+        `fs.read('render')['value']` is the render settings as
+        `render.set_settings` takes them back; also 'image_style',
+        'environment', 'cameras', 'studios' and the rest. `index` takes one
+        entry of a part that is a list. `fs.read(node=12)` is one node of the
+        scene with its transform. With nothing, what there is to read."""
+        fields = {k: v for k, v in dict(what=what, node=getattr(node, 'id', node), index=index).items() if v is not None}
+        return self.request('read', **fields)
+
     def add_shape(self, shape, *, width=None, depth=None, height=None, radius=None):
         """A simple shape as a new part, as Add > Shape adds one: 'plane',
         'cube', 'cylinder', 'sphere', 'disc', 'backdrop' or 'wall', of the

@@ -4,7 +4,7 @@ A plugin adds to Tequila itself: menu commands, small panels of fields that Tequ
 
 **Write a plugin when** the user wants something to stay: a button they will press again, an automation on every import, a batch job with settings. For a one-off change, just do it with the tools.
 
-`tequila_plugin_guide` returns the full reference for this build, its field types and events, and a template. Read it once before writing one.
+This page is enough for most plugins. `tequila_plugin_guide` is the long version (about 17,000 characters): this build's exact field types and events, and a template. Ask it before your first plugin in a conversation, or when a manifest is refused.
 
 ## The loop
 
@@ -115,11 +115,11 @@ def selection(fs, data):
 |---|---|
 | `fs.parts()`, `fs.nodes()`, `fs.find(name='screw', metadata={...}, kind='part')` | `Part`s: `id`, `name`, `kind`, `parent`, `material`, `metadata`, `bounds`, `visible`; `.rename()`, `.assign(material)`, `.show()`, `.hide()`, `.set_metadata()` |
 | `fs.materials['Paint']` / `fs.materials[3]` | a `Material`: read parameters as attributes; `m.base_color = '#c0392b'` sets one; `.set_type()`, `.rename()`, `.assign(*parts)` |
-| `fs.query(what)`, `fs.context()` | any query; the whole project (`fs.context()['document']`) |
+| `fs.query(what)`, `fs.read(what)`, `fs.read(node=id)` | any query; one part of the project (`fs.read('render')['value']`) or one node with its transform |
 | `fs.apply('scene.rename', node=5, name='Lid')`, `fs.commands.<group>.<verb>(...)` | any command |
 | `with fs.batch() as b:` | what is sent **through `b`** - `b.apply(...)`, `b.commands.<group>.<verb>(...)`, `b.add('library', action='apply', ...)`, `b.select()`, `b.look()` - is one undo step, all or nothing, sent when the block ends. Calls on `fs` inside the block still go one by one. |
 | `fs.library.apply('Chrome', *parts)`, `fs.library.presets()`, `fs.library.save(material, name)` | the material library |
-| `fs.recipes.create(recipe, *parts)`, `.preview(recipe)`, `.update(id, recipe)` | procedural materials from recipes (`recipes.md`) |
+| `fs.recipes.create(recipe, *parts)`, `.preview(recipe)`, `.update(id, recipe)` | procedural materials from recipes (page `recipes`) |
 | `fs.select(ids)`, `fs.frame()`, `fs.look(view='front')`, `fs.ui(viewport='rendered')` | the view |
 | `fs.queue(name=..., camera=i, samples=..., folder=...)`, `fs.jobs()`, `fs.render(path, ...)`, `fs.screenshot(path, viewport=True)` | rendering |
 | `fs.import_model(path)`, `fs.export('glb', path)`, `fs.save()` | files |
@@ -130,7 +130,7 @@ def selection(fs, data):
 - **Do something on every import:** `"events": ["imported"]`; use `data['parts']`; keep the user's choices with `save_settings` (a "Keep these settings" button), since a panel's values arrive only with its buttons. The bundled **Auto Materials** example does exactly this.
 - **Fill a panel when it opens:** `"panel_opened"`; `plugin.set_panel(...)` with saved settings or what the scene holds.
 - **A batch of renders:** `fs.queue(...)` returns at once, so queue them all in one command; `render_finished` tells you as each lands. The bundled **Render Every Camera** example.
-- **Colourways / variants:** make materials with `fs.library.apply(..., unlink=True)` or recipes, then `fs.apply('material.set_multi_materials', ...)` (`scene.md`).
+- **Colourways / variants:** make materials with `fs.library.apply(..., unlink=True)` or recipes, then `fs.apply('material.set_multi_materials', ...)` (page `variants`).
 - **Read a spreadsheet:** a `file` field with `"extensions": ["csv"]`, then `csv.reader`.
 - **Long work:** commands run one at a time; a slow one holds the next. Keep each command quick; report progress with `set_panel` as it goes.
 

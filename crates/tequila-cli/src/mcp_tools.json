@@ -1,5 +1,81 @@
 [
  {
+  "name": "tequila_guide",
+  "description": "How to do a job in Tequila: one page of the guide, short enough to read whole, with tested examples. READ THE PAGE for an area before working in it for the first time. Topics: start (how to work here: look, change, check the picture, undo), materials (the library, changing a preset, types, colours), recipes (a material of your own), graph (the material graph and its nodes), textures (picture maps, texture packs, Substance), labels (logos and decals), uv (UV layouts), scene (parts, groups, moving, shapes, units, cutaways), lighting (environment, lights, floor), camera (views, lens, depth of field, composition), variants (colourways, Snapshots, configurator, studio presets), rendering (quick look, final render, queue, format, transparency, layers), image (the look after the render), animation (turntable, spin), fixing (a model that came in wrong), files (import, update, save, export), plugins, app (panels and preferences), scripting (raw requests, Python), shots (whole shots step by step). With no topic, the list of pages.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "topic": {
+     "type": "string",
+     "enum": [
+      "start",
+      "materials",
+      "recipes",
+      "graph",
+      "textures",
+      "labels",
+      "uv",
+      "scene",
+      "lighting",
+      "camera",
+      "variants",
+      "rendering",
+      "image",
+      "animation",
+      "fixing",
+      "files",
+      "plugins",
+      "app",
+      "scripting",
+      "shots"
+     ]
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_read",
+  "description": "Read one part of the project, small enough to read: what is render (the render settings), image_style, color_management, environment (with its light pins and the floor), lighting, cameras, units, multi_materials (colourways), model_sets, studios (Snapshots), configurator, animation, product_turn, material_templates, measurements or textures - each as the command that sets it takes it back. index takes one entry of a list (one camera, one Snapshot). node reads one node of the scene by its id: its transform (place, turn and size), and a light's or a cutaway's settings. With nothing, what there is to read. Use it before any command that takes a whole block (render.set_settings, image.set_style, camera.set, studio.set, scene.set_light): read, change what was asked, send all of it back.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "what": {
+     "type": "string",
+     "enum": [
+      "render",
+      "image_style",
+      "color_management",
+      "environment",
+      "lighting",
+      "cameras",
+      "units",
+      "multi_materials",
+      "model_sets",
+      "studios",
+      "configurator",
+      "animation",
+      "product_turn",
+      "material_templates",
+      "measurements",
+      "textures"
+     ]
+    },
+    "index": {
+     "type": "integer",
+     "description": "One entry of a part that is a list, numbered from 0."
+    },
+    "node": {
+     "type": "integer",
+     "description": "A node's id, from tequila_nodes: read that node instead of a part."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
   "name": "tequila_scene",
   "description": "Counts, units, overall bounds and the file of the open scene.",
   "inputSchema": {
@@ -124,7 +200,7 @@
  },
  {
   "name": "tequila_add_shape",
-  "description": "Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall. It stands beside what is in the scene, on the floor, half its size unless sizes are given. Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). One undo step. Answers with the new part's id and its sizes.",
+  "description": "Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall. It stands beside what is in the scene, on the floor, half its size unless sizes are given. Not for the floor or the background, which the scene already has: those are settings of the environment (tequila_guide lighting). Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). One undo step. Answers with the new part's id and its sizes.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -161,7 +237,7 @@
  },
  {
   "name": "tequila_query",
-  "description": "Any read-only query.",
+  "description": "A read-only query. Short answers: scene, selection, camera, commands, ui, jobs, history. Long ones, tens of thousands of characters on a real scene, which the tool named does a page at a time: context (tequila_read), api (tequila_command; the materials page of tequila_guide), materials (tequila_materials, tequila_material), nodes (tequila_nodes), library (tequila_library).",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -191,7 +267,7 @@
  },
  {
   "name": "tequila_apply",
-  "description": "Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"}. tequila_command gives any command's exact fields and an example: ask it first. tequila_query what=api describes material parameters and types. One undo step. Colours may be hex sRGB strings (\"value\": \"#c0392b\"), converted for you; arrays are linear ACEScg.",
+  "description": "Apply one command, as the guide's page for the job shows it (tequila_guide first), e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"}. tequila_command gives any command's exact fields and an example: ask it first. tequila_query what=api describes material parameters and types. One undo step. Colours may be hex sRGB strings (\"value\": \"#c0392b\"), converted for you; arrays are linear ACEScg.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -516,6 +592,16 @@
     "settle": {
      "type": "number",
      "description": "Seconds to give the picture to finish (default 12; 0 takes it at once)."
+    },
+    "window": {
+     "type": "string",
+     "enum": [
+      "uv",
+      "graph",
+      "render",
+      "preferences"
+     ],
+     "description": "One of Tequila's other windows instead, which must be open: uv (the UV editor), graph (the Material Graph editor), render (the Render window), preferences."
     }
    },
    "required": [],
@@ -547,7 +633,7 @@
  },
  {
   "name": "tequila_queue",
-  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.",
+  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view; configurations=true every valid combination of the configurator.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -582,6 +668,19 @@
     "studios": {
      "type": "boolean",
      "description": "Every Studio, one render each, named for its view."
+    },
+    "engine": {
+     "type": "string",
+     "enum": [
+      "tequila",
+      "cycles-cpu",
+      "cycles-gpu"
+     ],
+     "description": "The engine for this render; the document's when left out."
+    },
+    "configurations": {
+     "type": "boolean",
+     "description": "One render for every valid combination of the configurator, named by its choices."
     }
    },
    "required": [],

@@ -1,16 +1,18 @@
 # Materials of your own: recipes
 
-When nothing in the library fits - terrazzo in the brand's colours, a galaxy resin, worn paint, a camouflage, speckled plastic - make the material from a **recipe**: a short JSON object of a type, the parameters it changes, and patterns. Tequila builds the node graph from it. `tequila_material_guide` is the full description (every pattern, its settings and defaults, the types, and 16 tested examples); read it once per conversation before writing recipes. This page is the working summary.
+When nothing in the library fits - terrazzo in the brand's colours, a galaxy resin, worn paint, a camouflage, speckled plastic - make the material from a **recipe**: a short JSON object of a type, the parameters it changes, and patterns. Tequila builds the node graph from it. Search the library first (page `materials`): a preset changed a little nearly always beats a material from nothing.
 
-For a library preset in another colour you do not need a recipe at all: `tequila_material_tint` (see `materials.md`) recolours it in one step and keeps its pattern.
+This page is enough to write recipes. `tequila_material_guide` is the long version (every pattern's defaults and 16 tested examples, about 30,000 characters): ask it only when a pattern here will not come right.
+
+For a library preset in another colour you do not need a recipe at all: `tequila_material_tint` (page `materials`) recolours it in one step and keeps its pattern.
 
 ## The loop
 
-1. **Start from an example** in the guide, or read a library preset already on a part with `tequila_material_recipe {"material": <id>}`, and change it.
+1. **Start from an example** below, or read a library preset already on a part with `tequila_material_recipe {"material": <id>}`, and change it.
 2. **Preview** with `tequila_material_preview {"recipe": {...}}`: you get a picture of it on a 5 cm ball, the scene untouched. Set `radius` to the part's real size (from `tequila_nodes`) when the pattern's scale matters. Look, adjust, preview again.
 3. **Create** with `tequila_material_create {"recipe": {...}, "nodes": [ids]}`: made and assigned as one undo step; it answers with the material id and a picture.
 4. **Look on the product** (`tequila_screenshot`, rendered viewport), then **update** with `tequila_material_update {"material": <id>, "recipe": {...}}` as often as needed - every part using it changes.
-5. **Save** it to the user's library with `tequila_material_save` when they like it (full connection only).
+5. **Save** it to the person's library with `tequila_material_save` when they ask.
 
 ## A recipe
 
@@ -29,7 +31,7 @@ For a library preset in another colour you do not need a recipe at all: `tequila
 }
 ```
 
-- `type`: the closest real material type (`plastic`, `metal`, `glass`, `paint`, `velvet`, … - the guide lists them). `metal_preset` picks a measured metal for `metal`: Aluminium, Silver, Gold, Copper, Chromium, Iron, Nickel, Titanium, Tungsten, Platinum.
+- `type`: the closest real material type (`plastic`, `metal`, `glass`, `paint`, `velvet`… - page `materials` lists them). `metal_preset` picks a measured metal for `metal`: Aluminium, Silver, Gold, Copper, Chromium, Iron, Nickel, Titanium, Tungsten, Platinum.
 - Any parameter as a fixed value, by its key. **Colours as hex sRGB** (`"#c0392b"`).
 - `patterns`, each driving one parameter (`param`): `base_color`, `specular_roughness`, `base_metalness`, `bump`, `coat_weight`, `transmission_weight`, `thin_film_thickness`, `geometry_opacity`, `emission_luminance`…
   - `procedural`: `{"kind": ..., settings}`; settings left out take their defaults.
@@ -40,10 +42,31 @@ For a library preset in another colour you do not need a recipe at all: `tequila
 
 ## Patterns
 
-noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. What each looks like, what it is good for and its settings are in the guide. The traps:
+Each is `{"kind": "<name>", ...settings}`; settings left out take sensible defaults, and `size` beside it (metres) replaces `frequency`.
+
+| Kind | Looks like | Settings worth changing |
+|---|---|---|
+| `noise` | Soft fractal clouds: mottling, variation, dirt | `octaves` 1-8, `gain` |
+| `noise_texture` | Blotches, hard-edged with contrast | `contrast` 1 soft to 4+, `bias` |
+| `ridged` | Sharp crests and creases | `octaves`, `gain` |
+| `cellular` | Voronoi cells | `output`: `distance` (dimples), `edges` (cracks), `id` (a random value per cell) |
+| `spots` | A round spot per cell, 1 in a spot | `coverage`, `variance`, `softness`, each 0-1 |
+| `granite` | Fine grain and flecks | `speckle`, `fine`, each 0-1 |
+| `marble` | Bands bent into veins | `distortion` 0 stripes, 2-4 marble; `axis` |
+| `wood` | Growth rings with grain | `axis` (the grain's direction), `distortion`, `grain` 0-1 |
+| `wood_advanced` | Real boards: ring widths, knots, planks | `latewood`, `contrast`, `flecks`, `knots`, `board_width` (metres) |
+| `brushed`, `brushed_radial` | Parallel streaks; streaks in circles about an `axis` | `stretch` 10-60 |
+| `scratches` | Thin scratches, 0 in a scratch | `width`, `density` 0-1, `spread` 0 parallel to 0.25 random |
+| `leather` | Pebbled grain with cracks (a height) | `crack_width`, `wrinkle`, each 0-1 |
+| `weave` | Threads over and under (a height) | `pattern`: `plain`, `twill`, `satin`; `width` 0-1 |
+| `camouflage` | Stacked blotches in steps | `layers` 2-5 |
+| `contour` | Lines at even heights | `width`, `softness`, `distortion` |
+| `mesh` | A perforated sheet, 0 in a hole | `shape`: `round`, `square`, `hex`; `size` of the hole |
+
+The traps:
 
 - noise-like patterns and marble run smoothly 0-1; **spots, mesh and contour are 1 on the feature**; **scratches are 1 except in a scratch** (so wear layers invert their mask, and a metalness range runs `[1, 0]`); weave and leather are heights.
-- marble's own frequency is radians per metre - give `size` and it is converted for you.
+- weave and mesh are flat: they lie in the part's own x-z plane.
 - Chips of different colours (terrazzo, confetti): colour a layer with `cellular` `"output": "id"` through a stepped ramp, masked by `spots` of the **same size and seed** - they share their cells.
 
 ## Rules of thumb
@@ -77,4 +100,4 @@ Red paint worn to bare steel (the same seed puts colour and metalness on the sam
   {"param": "specular_roughness", "procedural": {"kind": "noise_texture", "contrast": 2}, "size": 0.02, "range": [0.3, 0.5]}]}
 ```
 
-The guide has the rest: terrazzo, Carrara and Nero Marquina marble, brushed aluminium, carbon fibre, pebbled leather, concrete, hammered copper, galaxy resin, soft-touch rubber, desert camo, oil-slick iridescence, grey felt and a speaker grille.
+`tequila_material_guide` has the rest: terrazzo, Carrara and Nero Marquina marble, brushed aluminium, carbon fibre, pebbled leather, concrete, hammered copper, galaxy resin, soft-touch rubber, desert camo, oil-slick iridescence, grey felt and a speaker grille.

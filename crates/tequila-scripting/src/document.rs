@@ -19,7 +19,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout", "add_shape", "help"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout", "add_shape", "help", "guide", "read"];
 /// The application's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const APP_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];
@@ -28,7 +28,7 @@ pub const APP_LIMITS: &str = "No embedded Python interpreter. Screenshot complet
 
 /// What a headless session (`tequila --serve`) answers: what needs only
 /// the document.
-pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout", "help"];
+pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout", "help", "guide", "read"];
 /// The headless session's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const HEADLESS_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];
@@ -391,6 +391,102 @@ pub fn help(command: Option<&str>) -> Result<Value, String> {
     Ok(out.build())
 }
 
+/// The parts of a project that are read whole: each small, and each what
+/// one of the whole-block commands (`render.set_settings`,
+/// `image.set_style`, `camera.set`, `studio.set`...) takes back changed.
+/// With what they are, for the list.
+pub const SECTIONS: &[(&str, &str)] = &[
+    ("render", "the render settings: engine, size, samples, format, transparency, layers (render.set_settings)"),
+    ("image_style", "the look after the render: exposure, contrast, white balance (image.set_style)"),
+    ("color_management", "an OCIO display and view, or null for the built-in transforms (image.set_color_management)"),
+    ("environment", "the environment, its light pins, the background and the floor (environment.set_parameter, environment.set_pins)"),
+    ("lighting", "the lighting preset and its custom settings (lighting.set_preset, lighting.set_custom)"),
+    ("cameras", "the saved cameras, each whole, and which is active (camera.set, camera.add, camera.select)"),
+    ("units", "the unit lengths are shown in (scene.set_units)"),
+    ("multi_materials", "colourways: parts with several material variants (material.set_multi_materials)"),
+    ("model_sets", "which parts are shown together (scene.set_model_sets)"),
+    ("studios", "Snapshots: saved set-ups of environment, camera and variants (studio.set, studio.apply)"),
+    ("configurator", "the configurator's options, choices and rules (configurator.set)"),
+    ("animation", "the turntable, when there is one (animation.set)"),
+    ("product_turn", "how far a Snapshot or the turntable has turned the product"),
+    ("material_templates", "rules that put materials on parts by name (material.set_templates)"),
+    ("measurements", "the dimension lines (scene.set_measurements)"),
+    ("textures", "every picture file the materials use, by its id"),
+];
+
+/// One part of the project, small enough to be read: a section of it as it
+/// is saved, one entry of a section that is a list, or one node of the tree.
+/// With nothing asked for, what there is and how long each is. The whole
+/// project at once - `query context` - is tens of thousands of characters
+/// on a small scene, which nobody reads; but most of what changes a
+/// project's look takes its whole block back, so each block has to be
+/// readable by itself.
+pub fn read(document: &SceneDocument, what: Option<&str>, node: Option<u64>, index: Option<usize>) -> Result<Value, String> {
+    let description = tequila_format::scene_description(document);
+    let project = tequila_format::json::parse(description.as_bytes()).map_err(|_| "the project could not be read".to_string())?;
+    if let Some(id) = node {
+        let found = project.get("tree").map(Value::as_array).unwrap_or(&[]).iter().find(|entry| entry.get("id").and_then(Value::as_f64) == Some(id as f64));
+        let Some(Value::Object(fields)) = found else {
+            return Err(format!("there is no node {id}; the nodes query lists them"));
+        };
+        let mut fields = fields.clone();
+        // A part's material by the number the commands take, beside the
+        // name the file keeps it under.
+        if let Some(key) = document.tree.get(tequila_scene::tree::NodeId(id)).and_then(|node| node.material) {
+            fields.insert("material_id".into(), Value::Number(key.0 as f64));
+        }
+        fields.insert("note".into(), Value::String("`transform` is the node's 4 by 4 matrix, row by row, in metres, relative to its parent: the place is the 4th, 8th and 12th numbers. Send it back changed with scene.set_transform.".into()));
+        return Ok(Value::Object(fields));
+    }
+    let Some(what) = what else {
+        let mut sections = Object::new();
+        for (name, about) in SECTIONS {
+            let mut entry = Object::new();
+            entry.set("about", *about);
+            match project.get(name) {
+                Some(Value::Array(list)) => entry.set("entries", list.len()),
+                Some(Value::Null) | None => entry.set("there", false),
+                Some(_) => entry.set("there", true),
+            };
+            sections.set(name, entry.build());
+        }
+        let mut out = Object::new();
+        out.set("parts", sections.build());
+        out.set("how", "Ask again with `what` for one of these, with `index` too for one entry of a list, or with `node` for one node of the scene (its transform, light or cutaway). Parts and materials are listed by the nodes and materials queries.");
+        return Ok(out.build());
+    };
+    if what == "node" {
+        return Err("give the node's id as `node`: {\"node\": 12}".into());
+    }
+    if matches!(what, "tree" | "nodes" | "materials") {
+        return Err(format!("`{what}` is not read whole here: the nodes and materials queries list them, and `node` reads one node"));
+    }
+    let Some((name, _)) = SECTIONS.iter().find(|(name, _)| *name == what) else {
+        return Err(format!("there is no part of the project called `{what}`; there are {}", SECTIONS.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", ")));
+    };
+    let mut out = Object::new();
+    out.set("what", *name);
+    match (project.get(name), index) {
+        (None | Some(Value::Null), _) => {
+            out.set("value", Value::Null).set("note", "The project has none yet.");
+        }
+        (Some(Value::Array(list)), Some(index)) => match list.get(index) {
+            Some(entry) => {
+                out.set("index", index).set("of", list.len()).set("value", entry.clone());
+            }
+            None => return Err(format!("`{name}` has {} entries, numbered from 0; there is no {index}", list.len())),
+        },
+        (Some(_), Some(_)) => return Err(format!("`{name}` is not a list, so it has no `index`")),
+        (Some(value), None) => {
+            out.set("value", value.clone());
+        }
+    }
+    if *name == "cameras" {
+        out.set("active_camera", project.get("active_camera").cloned().unwrap_or(Value::Null));
+    }
+    Ok(out.build())
+}
+
 /// What a `library` request comes to.
 pub enum LibraryOutcome {
     /// Apply these to the document, in order, as one undo step, then answer
@@ -585,6 +681,16 @@ pub fn scene(document: &SceneDocument, path: Option<&std::path::Path>) -> Value 
     if let Some(path) = path {
         out.set("path", path.display().to_string());
     }
+    // Where to go from here, said where nearly every assistant starts: one
+    // that has looked at the scene and not at the guide goes on to do the
+    // job the way some other application would have it done.
+    out.set(
+        "guide",
+        format!(
+            "Before changing anything, read the guide's page for the job - the tequila_guide tool, or the guide operation, with its topic: {}.",
+            crate::guide::PAGES.iter().map(|page| page.topic).collect::<Vec<_>>().join(", ")
+        ),
+    );
     out.build()
 }
 
@@ -808,6 +914,45 @@ mod library_tests {
 mod bounds_tests {
     use super::*;
 
+    /// A project is read a part at a time: what there is, one block as the
+    /// command that sets it takes it, one camera of the list, one node with
+    /// its place - and never the whole of it.
+    #[test]
+    fn a_project_is_read_a_part_at_a_time() {
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        let parts = read(&document, None, None, None).unwrap();
+        let listed = parts.get("parts").unwrap();
+        for (name, _) in SECTIONS {
+            assert!(listed.get(name).is_some(), "{name}");
+        }
+        assert_eq!(listed.get("render").and_then(|r| r.get("there")).and_then(Value::as_bool), Some(true));
+        assert_eq!(listed.get("studios").and_then(|r| r.get("there")).and_then(Value::as_bool), Some(false), "none yet");
+        assert!(tequila_format::json_write::to_string(&parts).len() < 4000, "the list itself is short");
+
+        // The block is what the command takes back.
+        let render = read(&document, Some("render"), None, None).unwrap();
+        let mut command = Object::new();
+        command.set("command", "render.set_settings").set("render", render.get("value").unwrap().clone());
+        tequila_format::journal::decode(&tequila_format::json_write::to_string(&command.build())).expect("read, then sent back");
+
+        let cameras = read(&document, Some("cameras"), None, None).unwrap();
+        assert!(cameras.get("active_camera").is_some());
+        let first = read(&document, Some("cameras"), None, Some(0)).unwrap();
+        assert!(first.get("value").and_then(|camera| camera.get("focal_length_mm")).is_some());
+        assert!(read(&document, Some("cameras"), None, Some(99)).unwrap_err().contains("numbered from 0"));
+        assert!(read(&document, Some("render"), None, Some(0)).unwrap_err().contains("not a list"));
+        assert_eq!(read(&document, Some("studios"), None, None).unwrap().get("value"), Some(&Value::Null));
+
+        let part = document.tree.iter().find(|node| matches!(node.kind, NodeKind::Part { .. })).expect("the demo has a part");
+        let node = read(&document, None, Some(part.id.0), None).unwrap();
+        assert_eq!(node.get("transform").map(|t| t.as_array().len()), Some(16));
+        assert_eq!(node.get("material_id").and_then(Value::as_f64), part.material.map(|key| key.0 as f64));
+        assert!(read(&document, None, Some(9_999_999), None).unwrap_err().contains("no node"));
+
+        assert!(read(&document, Some("tree"), None, None).unwrap_err().contains("nodes and materials queries"));
+        assert!(read(&document, Some("teapots"), None, None).unwrap_err().contains("image_style"));
+    }
+
     /// A new, empty project answers with readable JSON: its bounds are
     /// `null`, not infinite corners. Before, the reply to `scene` (and to
     /// `context`, which carries it) did not parse, and the connection ended.
@@ -820,6 +965,9 @@ mod bounds_tests {
         assert!(matches!(bounds, Value::Null), "{bounds:?}");
 
         let demo = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        // And it says where to read before changing anything.
+        let guide = scene(&demo, None).get("guide").and_then(|g| g.as_str().map(str::to_string)).expect("the scene points at the guide");
+        assert!(guide.contains("tequila_guide") && crate::guide::PAGES.iter().all(|page| guide.contains(page.topic)), "{guide}");
         let size = scene(&demo, None).get("bounds").and_then(|b| b.get("size")).map(|s| s.as_array().len());
         assert_eq!(size, Some(3), "a scene with parts lost its bounds");
     }

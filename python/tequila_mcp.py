@@ -35,6 +35,9 @@ SERVER_INFO = {'name': 'tequila', 'version': '1.0.0'}
 INSTRUCTIONS = (
     'Tequila is a product-rendering application open on this computer, and these tools are the way to work in it: '
     'use them, not screenshots of the desktop, mouse clicks or any computer-use control - they are exact, fast and undoable. '
+    'Before working in an area for the first time, read its page of the guide with tequila_guide: materials, recipes, graph, textures, labels, uv, '
+    'scene, lighting, camera, variants, rendering, image, animation, fixing, files, plugins, app, scripting, shots - and start, the short guide to '
+    'working here, if you have no Tequila skill. Each page is short, and tested against this build. '
     'Start with tequila_scene, then tequila_nodes to find parts by name, material or size. '
     'For any material, look in the library first: tequila_library searches several hundred finished presets '
     '(leather, fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. '
@@ -45,6 +48,8 @@ INSTRUCTIONS = (
     'Materials may be shared between parts: unlink a part (material.unlink) before changing it alone. '
     'Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. '
     'Never guess a field name; a field that is not in the example is not read. '
+    'A command that takes a whole block back (render.set_settings, image.set_style, camera.set, studio.set...) starts from tequila_read, '
+    'which reads one part of the project or one node; never read the whole project to find one setting. '
     'Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. '
     'A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. '
     'Look at your work with tequila_screenshot: it waits for the picture to finish and says whether it had. '
@@ -76,7 +81,32 @@ def tool(name, description, properties=None, required=()):
     }
 
 
+# The pages of the guide (`crates/tequila-scripting/src/guide.rs`, which a
+# test holds this list to) and the parts of a project `read` answers with.
+GUIDE_TOPICS = ['start', 'materials', 'recipes', 'graph', 'textures', 'labels', 'uv', 'scene', 'lighting', 'camera', 'variants',
+                'rendering', 'image', 'animation', 'fixing', 'files', 'plugins', 'app', 'scripting', 'shots']
+PROJECT_PARTS = ['render', 'image_style', 'color_management', 'environment', 'lighting', 'cameras', 'units', 'multi_materials',
+                 'model_sets', 'studios', 'configurator', 'animation', 'product_turn', 'material_templates', 'measurements', 'textures']
+
 TOOLS = [
+    tool('tequila_guide', 'How to do a job in Tequila: one page of the guide, short enough to read whole, with tested examples. '
+         'READ THE PAGE for an area before working in it for the first time. Topics: start (how to work here: look, change, check the picture, undo), '
+         'materials (the library, changing a preset, types, colours), recipes (a material of your own), graph (the material graph and its nodes), '
+         'textures (picture maps, texture packs, Substance), labels (logos and decals), uv (UV layouts), scene (parts, groups, moving, shapes, units, cutaways), '
+         'lighting (environment, lights, floor), camera (views, lens, depth of field, composition), variants (colourways, Snapshots, configurator, studio presets), '
+         'rendering (quick look, final render, queue, format, transparency, layers), image (the look after the render), animation (turntable, spin), '
+         'fixing (a model that came in wrong), files (import, update, save, export), plugins, app (panels and preferences), scripting (raw requests, Python), '
+         'shots (whole shots step by step). With no topic, the list of pages.',
+         {'topic': {'type': 'string', 'enum': GUIDE_TOPICS}}),
+    tool('tequila_read', 'Read one part of the project, small enough to read: what is render (the render settings), image_style, color_management, environment '
+         '(with its light pins and the floor), lighting, cameras, units, multi_materials (colourways), model_sets, studios (Snapshots), configurator, animation, '
+         'product_turn, material_templates, measurements or textures - each as the command that sets it takes it back. index takes one entry of a list (one camera, one Snapshot). '
+         'node reads one node of the scene by its id: its transform (place, turn and size), and a light\'s or a cutaway\'s settings. '
+         'With nothing, what there is to read. Use it before any command that takes a whole block (render.set_settings, image.set_style, camera.set, studio.set, scene.set_light): '
+         'read, change what was asked, send all of it back.',
+         {'what': {'type': 'string', 'enum': PROJECT_PARTS},
+          'index': {'type': 'integer', 'description': 'One entry of a part that is a list, numbered from 0.'},
+          'node': {'type': 'integer', 'description': 'A node\'s id, from tequila_nodes: read that node instead of a part.'}}),
     tool('tequila_scene', 'Counts, units, overall bounds and the file of the open scene.'),
     tool('tequila_nodes', 'Parts and groups: id, name, material and world size. Filter by a word in the name or material name to keep the answer short.',
          {'filter': {'type': 'string', 'description': 'Only nodes whose name or material name contains this (case-insensitive).'},
@@ -104,14 +134,17 @@ TOOLS = [
          'With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields.',
          {'command': {'type': 'string', 'description': 'A command\'s name, e.g. "scene.set_visibility" or "environment.set_parameter".'}}),
     tool('tequila_add_shape', 'Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall. It stands beside what is in the scene, on the floor, half its size unless sizes are given. '
+         'Not for the floor or the background, which the scene already has: those are settings of the environment (tequila_guide lighting). '
          'Sizes are metres: width (a cylinder\'s, sphere\'s and disc\'s diameter), depth, height, radius (half a round shape\'s width; a backdrop\'s curve). One undo step. Answers with the new part\'s id and its sizes.',
          {'shape': {'type': 'string', 'enum': ['plane', 'cube', 'cylinder', 'sphere', 'disc', 'backdrop', 'wall']},
           'width': {'type': 'number'}, 'depth': {'type': 'number'}, 'height': {'type': 'number'}, 'radius': {'type': 'number'}},
          ['shape']),
-    tool('tequila_query', 'Any read-only query.',
+    tool('tequila_query', 'A read-only query. Short answers: scene, selection, camera, commands, ui, jobs, history. Long ones, tens of thousands of characters '
+         'on a real scene, which the tool named does a page at a time: context (tequila_read), api (tequila_command; the materials page of tequila_guide), '
+         'materials (tequila_materials, tequila_material), nodes (tequila_nodes), library (tequila_library).',
          {'what': {'type': 'string', 'enum': ['api', 'context', 'scene', 'nodes', 'materials', 'selection', 'camera', 'commands', 'ui', 'jobs', 'history', 'library']}},
          ['what']),
-    tool('tequila_apply', 'Apply one command, e.g. {"command":"material.set_type","material":2,"type":"velvet"}. '
+    tool('tequila_apply', 'Apply one command, as the guide\'s page for the job shows it (tequila_guide first), e.g. {"command":"material.set_type","material":2,"type":"velvet"}. '
          'tequila_command gives any command\'s exact fields and an example: ask it first. tequila_query what=api describes material parameters and types. One undo step.'
          ' Colours may be hex sRGB strings ("value": "#c0392b"), converted for you; arrays are linear ACEScg.',
          {'command': {'type': 'object', 'description': 'A journal command: {"command": "<name>", ...fields}.'}},
@@ -174,16 +207,21 @@ TOOLS = [
     tool('tequila_screenshot', 'See the application as it is now. Returns an image. After a change the rendered view is dark and grainy for a few seconds while it redraws: '
          'this waits for the picture to finish, up to settle seconds, and says with the image whether it had. Do not judge a look from one it calls unfinished: look again.',
          {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'},
-          'settle': {'type': 'number', 'description': 'Seconds to give the picture to finish (default 12; 0 takes it at once).'}}),
+          'settle': {'type': 'number', 'description': 'Seconds to give the picture to finish (default 12; 0 takes it at once).'},
+          'window': {'type': 'string', 'enum': ['uv', 'graph', 'render', 'preferences'],
+                     'description': 'One of Tequila\'s other windows instead, which must be open: uv (the UV editor), graph (the Material Graph editor), render (the Render window), preferences.'}}),
     tool('tequila_render', "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples). wireframe=true draws the model's edges instead, as the project's Wireframe settings say - no ray tracing, a second or two at any size.",
          {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'},
           'wireframe': {'type': 'boolean'}}),
-    tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view.',
+    tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view; '
+         'configurations=true every valid combination of the configurator.',
          {'name': {'type': 'string'}, 'width': {'type': 'integer'}, 'height': {'type': 'integer'},
           'samples': {'type': 'integer'}, 'folder': {'type': 'string'}, 'filename': {'type': 'string'},
           'denoise': {'type': 'boolean'}, 'camera': {'type': 'integer'},
           'studio': {'type': 'string', 'description': 'A Studio (a view) by name or index, applied for the render and taken back.'},
-          'studios': {'type': 'boolean', 'description': 'Every Studio, one render each, named for its view.'}}),
+          'studios': {'type': 'boolean', 'description': 'Every Studio, one render each, named for its view.'},
+          'engine': {'type': 'string', 'enum': ['tequila', 'cycles-cpu', 'cycles-gpu'], 'description': 'The engine for this render; the document\'s when left out.'},
+          'configurations': {'type': 'boolean', 'description': 'One render for every valid combination of the configurator, named by its choices.'}}),
     tool('tequila_jobs', 'The background render queue: state, progress and output file of each job.'),
     tool('tequila_studio_presets',
          'The studio presets installed: complete studios - lights, cameras and views, floor, look - for a kind of product, '
@@ -395,6 +433,13 @@ class Bridge:
         fields = {k: v for k, v in dict(nodes=nodes, unlink=unlink, color=color).items() if v is not None}
         return text(self.request('library', action='apply', name=name, **fields))
 
+    def tool_guide(self, topic=None):
+        return text(self.request('guide', **({'topic': topic} if topic else {})))
+
+    def tool_read(self, what=None, node=None, index=None):
+        fields = {k: v for k, v in dict(what=what, node=node, index=index).items() if v is not None}
+        return text(self.request('read', **fields))
+
     def tool_command(self, command=None):
         return text(self.request('help', **({'command': command} if command else {})))
 
@@ -506,9 +551,14 @@ class Bridge:
     def tool_look(self, **fields):
         return text(self.request('look', **fields))
 
-    def tool_screenshot(self, viewport=True, settle=12):
+    def tool_screenshot(self, viewport=True, settle=12, window=None):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-{time.time_ns()}.png'
         seconds = max(0.0, min(float(settle), 60.0))
+        if window:
+            # One of the windows of its own: the UV editor, the graph.
+            self.request('screenshot', path=str(path), viewport=False, window=window)
+            wait_for_png(path, 30)
+            return image(path, f'Tequila\'s {window} window')
         self.request('screenshot', path=str(path), viewport=viewport, settle=seconds)
         wait_for_png(path, 30 + seconds)
         ui = self.request('query', what='ui')

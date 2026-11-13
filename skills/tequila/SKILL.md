@@ -1,136 +1,72 @@
 ---
 name: tequila
-description: Work in Tequila, a product-rendering application (like KeyShot), through its tequila_* tools - inspect and organise the open scene, put library materials on parts, invent procedural materials from recipes, light it, set up floor reflections, cameras, studios and configurators, render, and check results with screenshots - and extend Tequila by writing plugins (panels, automations, batch jobs) or Python scripts for it. Use whenever the user mentions Tequila, a product render or shot, materials on a 3D model, a Tequila plugin or script, or asks for anything in an open 3D scene while tequila_* tools are available.
+description: Work in Tequila, a product-rendering application (like KeyShot), through its tequila_* tools - inspect and organise the open scene, put library materials on parts, make procedural materials, edit material graphs, labels and UVs, light it, set up the floor, cameras, colourways, Snapshots and configurators, render, tune the image, make turntables, fix models that came in wrong, import and export - and extend Tequila with plugins or Python scripts. Use whenever the user mentions Tequila, a product render or shot, materials on a 3D model, a Tequila plugin or script, or asks for anything in an open 3D scene while tequila_* tools are available.
 ---
 
 # Tequila
 
-Tequila renders products photographically. It is open on the user's computer, and you work in it through the `tequila_*` tools, which drive its scripting channel: every change is exact, undoable, and shows in Tequila's console as you make it.
-
-## The rule
-
-**Work through the `tequila_*` tools. Never click, type into or screenshot the desktop to operate Tequila** - no computer use, even if it is available. The tools do everything the window does, faster and undoably.
-
-If no `tequila_*` tools are available, do not fall back to controlling the screen. Tell the user how to connect, then stop:
-
-> In Tequila, open the **Assistant** (toolbar), click **Connect an AI…**, then **Connect the Claude app**. Quit Claude completely (right-click its icon by the clock → Quit) and open it again. Tequila must be open when you ask me.
-
-If a tool says Tequila does not seem to be open, ask the user to open it. If the plugin or `tequila_request` tools are missing, the connection is restricted (remote); say what you cannot do from there.
-
-## What you can do, and where to look
-
-| The user wants | Use | Read |
-|---|---|---|
-| To know what is in the scene | `tequila_scene`, `tequila_nodes`, `tequila_materials` | - |
-| A real material on parts (aluminium, walnut, leather, ABS...) | the library, first: `tequila_library` to search it, `tequila_library_apply` to put a preset on parts | `reference/materials.md` |
-| A simple shape: a pedestal, a backdrop, a floor plane | `tequila_add_shape` | `reference/scene.md` |
-| A material of their own: terrazzo, camo, worn paint, galaxy resin | recipes: `tequila_material_preview` → `create` → `update` | `reference/recipes.md` |
-| The same material in another colour ("this leather, but dark green") | `tequila_material_tint`, or `color` on `tequila_library_apply` - not `base_color` | `reference/materials.md` |
-| A finish or roughness changed, or a plain material's colour | `material.set_parameter` (colours as hex) | `reference/materials.md` |
-| A shot: studio, black, white e-commerce, cut-out, HDRI, jewellery | lighting, environment, floor, camera, image style | `reference/shots.md` |
-| Parts renamed, grouped, hidden, moved, split; units; lights; cutaways; measurements | `scene.*` commands | `reference/scene.md` |
-| Colourways, variants, studios, a configurator, renders of every option | multi-materials, studios, configurator, `tequila_queue` | `reference/scene.md` |
-| A render | `tequila_render` (quick look) or `tequila_queue` (final) | `reference/shots.md` |
-| A new button, panel, automation or batch job inside Tequila | a plugin: `tequila_plugin_*` | `reference/plugins.md` |
-| Work without the window, or a repeatable script | the Python client | `reference/scripting.md` |
-| Any command's exact fields | `tequila_command` (one command: its fields and an example) | `reference/commands.md` |
+Tequila renders products photographically. It is open on the person's computer, and you work in it through the `tequila_*` tools: every change is exact, shows in Tequila as you make it, and can be undone. This page is how to work; the rest of the guide is one page per area, opened with `tequila_guide` (in a skill folder, the same page is `reference/<page>.md`).
 
 ## How to work
 
-1. **Look first.** `tequila_scene` for the overview, then `tequila_nodes` (use `parts_only: true` and `filter` to keep it short) for parts with their ids, materials and sizes, and `tequila_materials` for materials. Ids come only from these answers - never guess one.
-2. **Plan, then change in batches.** Several edits that belong together go in one `tequila_batch` (one undo step; with `atomic` true, if one fails none stay).
-3. **Never guess a field.** Before a command you have not used here, ask `tequila_command` for it: it answers with the exact fields and an example to copy. A field that is not in the example is not read - `scene.set_visibility` takes `value`, not `visible`.
-4. **Look at the result.** `tequila_screenshot` with `viewport: true` shows just the picture. For a true-to-render check, switch the viewport with `tequila_ui {"viewport": "rendered"}` and screenshot again: it waits for the picture (up to `settle` seconds, 12 unless you say) and tells you whether it had finished. If it says the picture was still grainy, ask again with a longer `settle` rather than judging the grain. Compare against what was asked, and refine.
-5. **Undo freely.** `tequila_undo` takes back the last step - one edit, or one whole batch.
-6. **Say what you did**, briefly, in the user's terms: which parts, which materials, what changed.
+1. **Open the guide's page first.** Your first call for any job is `tequila_guide {"topic": "<page>"}`, with the page from the table below. Do not work from what you know of other software: Tequila has its own ways (the background and the floor are settings of the environment, not a plane you add; a material comes from the library, not from parameters you make up).
+2. **Use the tools, never the screen.** No clicking or screenshotting the desktop to operate Tequila, even if you can. With no `tequila_*` tools, say how to connect and stop: in Tequila, **Assistant → Connect an AI…**, then quit the AI app completely and open it again.
+3. **Look before you change.** `tequila_scene` for the overview; `tequila_nodes` (with `parts_only: true` and a `filter` word) for parts with their ids, materials, sizes and centres; `tequila_materials` for materials. Ids come only from these answers: never guess one.
+4. **Never guess a field.** Before a command you have not used here, ask `tequila_command {"command": "<name>"}`: it answers with the exact fields and an example to copy. A field that is not in the example is not read.
+5. **Read a block before you send it back.** Many commands replace a whole block (the render settings, the image style, a camera, a light). `tequila_read {"what": "render"}` reads that one block, `tequila_read {"node": 12}` one node with its transform; change what was asked and send all of it back. Never read the whole project (`tequila_query` `context`, `api`, `library`): tens of thousands of characters.
+6. **Change only what was asked, in batches.** Edits that belong together go in one `tequila_batch`: one undo step, and if one fails none stay. Leave the product's own materials, parts and camera alone unless the job is about them.
+7. **Check the picture.** After changing how something looks: `tequila_ui {"viewport": "rendered"}`, then `tequila_screenshot`. It says whether the picture had finished; if not, ask again with a longer `settle` rather than judging the grain. Compare with what was asked, and fix what is off.
+8. **Undo freely.** `tequila_undo` takes back the last step, one edit or one whole batch.
+9. **Stay in the scene unless asked.** Import, save, render to a file, export, change a preference or write a plugin only when the person asks.
+10. **Say what you did**, briefly: which parts, which materials, what changed.
 
-Do not import files, save, or render to a file unless the user asks.
+## Materials: the library first
 
-## Materials
-
-**Look in the library first, every time.** Tequila ships several hundred finished presets - procedural metals, plastics, woods, fabrics, stones, glass, gems, liquids, leathers, paints, composites - and the person may have saved their own. Search it with words for what is wanted, then put the one you choose on parts by its exact name:
+For any material, **search the library before anything else**: several hundred finished presets, plus the person's own.
 
 ```json
-tequila_library {"search": "black leather"}
+tequila_library {"search": "brushed aluminium"}
 tequila_library_apply {"name": "Aluminium Brushed", "nodes": [12, 14]}
 ```
 
-`tequila_library` with nothing lists the categories; `category` narrows to one; every word of `search` has to be in the preset's name, category, type, tags or description, so try fewer words if nothing comes back. Applying is one undo step. The listed parts share one material made from the preset; add `"unlink": true` to give them a separate copy.
+Every word of `search` must match: try fewer if nothing comes back. Wrong colour? `tequila_material_tint {"material": 7, "color": "#1f4d2b"}`, or `color` on `tequila_library_apply` - not `base_color`, which many presets do not use. Otherwise close? Put it on and change it (page `materials`). Make one from nothing only when the library has nothing close (page `recipes`). Parts can share a material: `material.unlink` a part before changing its material alone.
 
-**Right material, wrong colour?** Tint it. More than half of the library keeps its colour inside a pattern - a leather's brown multiplies its grain, a denim's blue is three thread colours, a wood's is a ramp - where setting `base_color` changes nothing you can see. One call recolours a material wherever its colour is kept, and keeps its pattern, grain and finish:
+## Which page for which job
 
-```json
-tequila_material_tint {"material": 7, "color": "#1f4d2b"}
-tequila_library_apply {"name": "Leather Tan", "nodes": [12], "color": "#1f4d2b"}
-```
+| The person wants | Page |
+|---|---|
+| A real material on parts; the same one in another colour; a finish or roughness changed | `materials` |
+| A material of their own: terrazzo, camo, worn paint, a pattern | `recipes` |
+| One parameter driven by a pattern or a ramp; nodes in the material graph | `graph` |
+| A picture as a texture; a pack of PBR maps; a Substance file | `textures` |
+| A logo, print or sticker on a part | `labels` |
+| A part unwrapped, its UVs cut, packed or exported for artwork | `uv` |
+| Parts renamed, grouped, hidden, moved, copied in a row; a pedestal or backdrop; a cutaway; a dimension | `scene` |
+| Lighting, an HDRI, a softbox, the background, the floor's shadow and reflection | `lighting` |
+| A view, a lens, depth of field, a saved camera, composition guides | `camera` |
+| Colourways, saved set-ups (Snapshots), a configurator, a whole studio at once | `variants` |
+| A render: quick or final, size, format, transparent background, layers, every view | `rendering` |
+| Brighter, more contrast, warmer, a vignette, a filmic look | `image` |
+| A turntable or a 360-degree spin | `animation` |
+| A model that came in too big, as one lump, faceted, lying down or with parts missing | `fixing` |
+| A file brought in, updated from its file, saved, or exported (glTF, USD, AR, web) | `files` |
+| A button, panel, batch job or automation inside Tequila | `plugins` |
+| A panel opened, the viewport mode, Tequila's own settings and shortcuts | `app` |
+| Something no tool covers; a script to run again; work with no window | `scripting` |
+| A whole shot from a description: clean studio, black, white, cut-out, jewellery | `shots` |
 
-The first changes a material already in the scene (every part wearing it: `material.unlink` a part first to change it alone); the second puts a preset on already in that colour, as a material of its own named `Leather Tan #1f4d2b`. The colour you give becomes the material's main colour. Its other colours keep their relation to it - creases stay darker, pale threads paler, a suede's sheen follows - and colours of another family are left alone: white threads stay white, rust on steel stays rust. The answer says what it changed (`changed`, with how many colours and whether they were in a pattern) and what it was (`was`); read its `notes`. A material with no colour of its own - a thin film, or one coloured by a picture - is refused with the reason: say so to the user and do not work around it. One undo step, and it returns a picture.
+## What holds everywhere
 
-**Close but not right in another way?** Put the preset on, then change it: its roughness or a pattern's scale (`tequila_material` reads one material whole). That is nearly always better than starting from nothing.
-
-**Nothing in the library is close?** Only then make one from a recipe - a type, a few parameters and procedural patterns, layered with masks - with the `tequila_material_*` tools. Read `tequila_material_guide` once (it has 16 tested examples to start from), preview on a ball, create it on the parts, look at it on the product, update. `reference/recipes.md` is the short version.
-
-**Parts share materials.** Two parts can wear one material; changing it changes both. Before editing one part's material alone, give it its own: `{"command": "material.unlink", "node": 12}`.
-
-**Editing a material** (after `tequila_materials` for its id):
-
-- `{"command": "material.set_type", "material": 3, "type": "metal"}` - plastic, metal, glass_solid, paint, velvet… (`reference/materials.md`)
-- `{"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#c0392b"}` - a plain material's colour. For a library preset use `tequila_material_tint`: its colour may not be in `base_color`.
-- `{"command": "material.set_parameter", "material": 3, "parameter": "specular_roughness", "value": 0.25}`
-- `{"command": "material.assign", "nodes": [12], "material": 3}` - put an existing material on parts.
-
-**Colours:** give material and environment colours as **hex sRGB strings** (`"#c0392b"`) - Tequila converts them into its rendering space (linear ACEScg). An array `[r, g, b]` is taken as ACEScg as it is, so never send sRGB numbers as an array.
-
-## Lighting, background and floor
-
-- **Lighting preset:** `{"command": "lighting.set_preset", "preset": "Product"}` - Performance, Basic, Product (default for products), Interior, Jewelry (gems and glass).
-- **Environment and floor:** `{"command": "environment.set_parameter", "parameter": "<key>", "value": <v>}`. Keys: `rotation` (radians), `brightness`, `contrast`, `background` (`"Environment"`, `"Color"`, `"Backplate"`), `background_color`, `image` (an HDRI path), `ground_enabled`, `ground_shadows`, `ground_shadow_color`, `ground_occlusion`, `ground_flatten`, `ground_size`.
-- **Floor reflections, V-Ray style** - the product mirrored on an invisible floor: `ground_reflections` 0-1 (0.3-0.6 typical), `ground_reflection_blur` 0-1 (0.05-0.2 polished), `ground_reflection_length` 0-1 (0.2-0.35 for the short faded launch-shot reflection), `ground_reflection_fresnel` true to fade it from above.
-
-Recipes for the shots people ask for are in `reference/shots.md`.
-
-## Camera
-
-- `tequila_frame` - fit everything (or, with `all: false`, the selection) in view.
-- `tequila_look` - a standard view (`front`, `back`, `left`, `right`, `top`, `bottom`, `iso`), or `yaw`/`pitch` in degrees around a target `at`, with `distance`, or an exact `from`; `focal_length` in millimetres (50 natural, 85-100 flatters products). Undoable.
-- Saved cameras (`camera.add`, `camera.select`, `camera.rename`) keep shots to come back to and render each: `reference/scene.md`.
-- The view is the user's as well. They turn and zoom it while you work, to look at what you changed, and nothing you do to a material moves the camera: a view that differs from your last screenshot is theirs, and `tequila_screenshot` says so when they have moved it. Work in it as it is - do not frame it or move it back. Move the camera only when asked for a view or when what you must check is out of sight, and then put it back: `tequila_query {"what": "camera"}` reads a view, and `tequila_look` with its `position` as `from` and its `target` as `at` returns to it.
-
-Lengths are metres. A part's `size` from `tequila_nodes` tells you how big it is: a phone is about 0.15 m. If a model is absurdly large - a hand tool 120 m long - it came from a file with no units (usually millimetres). Do not rescale it yourself; tell the user: **right-click the model in the Scene tab → Units of this model… → Millimetres**. Materials and recipes are sized for real objects, so this matters.
-
-## Rendering
-
-- **A quick look:** `tequila_render` with small values (`width` 640, `height` 400, `samples` 32) returns the image to you. It blocks Tequila while it runs - keep it small.
-- **A final render:** `tequila_queue` (optional `name`, `width`, `height`, `samples`, `denoise`, `camera` - a saved camera's index) renders in the background with the project's settings and writes the file; `tequila_jobs` shows progress and the output path. Tell the user where it went.
-- **Every option of a configurator:** `tequila_request {"request": {"op": "queue", "configurations": true}}`.
-- **Settings** (engine, size, format, transparency): `render.set_settings` replaces the *whole* block - read it from `tequila_query {"what": "context"}` (the document's `render`), change what you need, send all of it back. Same for `image.set_style`. `reference/shots.md`.
-
-## Plugins: extending Tequila
-
-When the user wants something Tequila does not have - a panel with a button, something that happens on every import, a batch job they will run again - write them a plugin. A plugin is a folder with `plugin.json` and a Python file; Tequila draws its panels and runs its code against the same API you use.
-
-1. `tequila_plugin_guide` once: the reference, this build's field types and events, and a template.
-2. `tequila_plugin_write` with `plugin.json` and `main.py` (id like `my.batch-renamer`).
-3. `tequila_plugin_enable` - Tequila asks the **user** to turn it on (it runs Python as them). Tell them to click **Turn it on** in Tequila, then check `tequila_plugin_list`.
-4. `tequila_plugin_run` a command: you get what it logged, `finished`, or the traceback. Fix, write again (a running plugin restarts with the new code), run again.
-
-`reference/plugins.md` has the manifest, the Python API, the panel fields and events, and patterns for the common plugins. Plugins need Python 3 on the user's computer; `tequila_plugin_list` says whether it was found.
+- **Lengths are metres and +Y is up.** A phone is about 0.15; a hand tool 120 m long came from a file with no units (page `fixing`).
+- **Colours are hex sRGB strings** (`"#c0392b"`), converted for you into the rendering space. An array `[r, g, b]` is taken as linear ACEScg as it is: never send sRGB numbers as an array.
+- **A command** is `{"command": "<group>.<verb>", ...}` sent with `tequila_apply`, or as `{"op": "apply", "command": {...}}` inside `tequila_batch`. **A request** is `{"op": "<name>", ...}` sent with `tequila_request` where no tool of its own exists. Angles are radians in commands, degrees in `tequila_look`.
+- **The view is the person's as well.** They turn and zoom it while you work, and no material edit moves the camera, so a view unlike your last look is theirs: do not frame it or move it back. Move it only when asked or to see something out of sight, then put it back (page `camera`).
+- **Snapshots** in the window are `studios` in commands; a **studio preset** is a whole lighting set-up from the library.
+- Inside Tequila's Assistant, **Tequila asks the person itself** before a file is read or written: call the tool and wait. If they say no, do not try another way.
 
 ## When something goes wrong
 
-- A refused command comes back as an error message naming the field: read it, fix the request, try again.
-- A connection error means the outcome of that request is unknown. Do not repeat edits blindly: check `tequila_query {"what": "history"}` and the scene first.
-- Something you changed does not show: check the simple causes first. Is the part hidden (`tequila_nodes` → `visible`)? Is it where you think (`center`, `size`)? Did the screenshot say the picture had finished?
-- A pattern or texture looks like nothing: the model's units are wrong, or the pattern `size` is far off the part's size.
-- Rendered view black, or "standing in for Cycles, which could not render": Cycles could not run (usually the graphics card or its driver); Tequila's own renderer draws the view on the processor instead. Suggest updating the graphics driver; carry on meanwhile.
-- A plugin "failed": `tequila_plugin_log` has the traceback; `tequila_plugin_list` shows `failure` (no Python, a syntax error, a crash).
-
-## Reference
-
-- `reference/materials.md` - library categories and names, material types, the parameters that matter.
-- `reference/recipes.md` - procedural materials from recipes: format, patterns, layering, rules of thumb.
-- `reference/shots.md` - the common shots, render settings, the image style.
-- `reference/scene.md` - the scene tree, transforms, lights, cutaways, measurements, cameras, colourways, studios, configurators, export.
-- `reference/plugins.md` - writing plugins: manifest, API, panels, events, patterns, pitfalls.
-- `reference/scripting.md` - the Python client and raw requests.
-- `reference/commands.md` - every command and operation with an example (generated from this build).
+- A refused command says which field is wrong: fix that and send it again. Two refusals running mean you are guessing: ask `tequila_command`, or read the page.
+- A connection error means the outcome is unknown: check `tequila_query {"what": "history"}` and the scene before repeating an edit.
+- A change does not show: is the part hidden (`visible` in `tequila_nodes`), is it where you think (`center`, `size`), had the picture finished?
+- A page says a job is not possible through the tools yet: say so plainly and tell the person where it is in the window, rather than trying another way round.

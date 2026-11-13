@@ -433,18 +433,25 @@ fn open_terminal(words: &[String], env: &[(String, String)]) -> Result<(), Strin
     Err(format!("No terminal could be opened. In one, run: {line}"))
 }
 
-/// What an agent is told about where it is, on top of its own instructions
-/// and the ones Tequila's tools come with.
-pub const INSTRUCTIONS: &str = "You are the assistant built into Tequila, a product-rendering application, and you work on the scene \
+/// What is said to an agent before the guide's core: where it is, who it
+/// is working for, and what it can and cannot reach from here.
+const WHERE: &str = "You are the assistant built into Tequila, a product-rendering application, and you work on the scene \
 that is open in it right now. The person is a designer, not a programmer: answer in plain words, briefly, and do what they ask in the \
 scene rather than describing how. Work through the tequila tools. Scene changes happen at once and the person can undo them; before \
 anything that leaves the scene - importing a file, saving to a new place, rendering to a file, changing a preference, writing or running \
 a plugin - Tequila asks the person itself, so call the tool and wait for its answer rather than asking first. You can read files in the \
 project's folder and, when the person agrees, write there. You cannot run commands, reach the internet, or touch files anywhere else, so \
-do not try. For any material, look in the library first (tequila_library, then tequila_library_apply): make one yourself only when \
-nothing there is close. Ask tequila_command for a command's exact fields before you use it for the first time, and never guess a field \
-name. After changing how something looks, check it with tequila_screenshot, which says whether the picture had finished. A name written \
-as @Name in a message is a part or a material of the scene, and its id follows in brackets.";
+do not try. A name written as @Name in a message is a part or a material of the scene, and its id follows in brackets.\n\n";
+
+/// What an agent is told about where it is and how to work, on top of its
+/// own instructions and the ones Tequila's tools come with: a few lines of
+/// its own, then the guide's core, the same text every assistant starts
+/// from (`tequila_scripting::guide`). The pages behind it are read through
+/// `tequila_guide`, one at a time.
+pub fn instructions() -> &'static str {
+    static TOLD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TOLD.get_or_init(|| format!("{WHERE}{}", tequila_scripting::guide::core()))
+}
 
 /// The agent's own options for a new conversation. For Claude: its shell,
 /// internet and sub-agent tools taken away, and its file-writing tools made
@@ -471,7 +478,7 @@ pub fn options(kind: Kind) -> Option<Value> {
         // Antigravity takes what it is told about where it is this way.
         Kind::Gemini => {
             let mut prompt = Object::new();
-            prompt.set("append", INSTRUCTIONS);
+            prompt.set("append", instructions());
             let mut antigravity = Object::new();
             antigravity.set("systemPrompt", prompt.build());
             let mut meta = Object::new();
@@ -509,6 +516,36 @@ mod tests {
     fn touch(path: &Path) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
+    }
+
+    /// An agent starts from the guide's core, after a few lines of where
+    /// it is: the rules every assistant has, and the pages it can open.
+    #[test]
+    fn an_agent_is_given_the_guides_core() {
+        let told = instructions();
+        assert!(told.starts_with("You are the assistant built into Tequila"));
+        assert!(told.ends_with(tequila_scripting::guide::core()));
+        for said in ["tequila_guide", "tequila_command", "tequila_read", "search the library before anything else", "Tequila asks the person itself"] {
+            assert!(told.contains(said), "{said}");
+        }
+        assert!(told.chars().count() < 8_200, "{} characters before the first message", told.chars().count());
+    }
+
+    /// The assistant Tequila runs itself, on an API key or a local model,
+    /// starts from the same core and is offered the same pages and the same
+    /// parts of a project to read as every other.
+    #[test]
+    fn the_own_loop_reads_the_same_guide() {
+        assert_eq!(tequila_ai::tools::core(), tequila_scripting::guide::core());
+        let tools = tequila_ai::tools::all();
+        let choices = |tool: &str, field: &str| -> Vec<String> {
+            let tool = tools.iter().find(|t| t.name == tool).unwrap_or_else(|| panic!("{tool} is offered"));
+            tool.schema.get("properties").and_then(|p| p.get(field)).and_then(|f| f.get("enum")).expect("its choices").as_array().iter().filter_map(|c| c.as_str().map(str::to_string)).collect()
+        };
+        let mut topics = vec![tequila_scripting::guide::START.to_string()];
+        topics.extend(tequila_scripting::guide::PAGES.iter().map(|page| page.topic.to_string()));
+        assert_eq!(choices("tequila_guide", "topic"), topics);
+        assert_eq!(choices("tequila_read", "what"), tequila_scripting::document::SECTIONS.iter().map(|(name, _)| name.to_string()).collect::<Vec<_>>());
     }
 
     /// With neither Node nor the adapter, what is missing is said, and

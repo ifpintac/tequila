@@ -205,9 +205,10 @@ fn answer_room(max_tokens: u32) -> u32 {
 
 /// Room for the conversation to grow, in a suggestion: as much as the
 /// longest answer a tool gives. That is the command catalog
-/// (`tequila_api`), about 16,000 tokens to qwen3, which a model reads before it
-/// edits materials: suggest only enough for the request in hand, and the
-/// very next one is refused again.
+/// (`tequila_api`), about 16,000 tokens to qwen3. The guide's pages are a
+/// quarter of that and are what a model is sent to first, but it may still
+/// ask for the catalog: suggest only enough for the request in hand, and
+/// the very next one is refused again.
 pub const GROWTH: u32 = 16_000;
 
 /// The context length to suggest for a request of `tokens`: room for it,
@@ -233,8 +234,8 @@ pub fn room_to_grow(info: &Info, tokens: u32, max_tokens: u32) -> Option<String>
     let step = suggestion(info, tokens, max_tokens);
     (context < step).then(|| {
         format!(
-            "Ollama gives {} {} tokens of context: enough to start, but the command catalog the Assistant reads before editing materials \
-             is about 16,000 tokens more. Set it to {} or more: {}.",
+            "Ollama gives {} {} tokens of context: enough to start, but a longer job - several pages of the guide, pictures, the \
+             command catalog - needs about 16,000 tokens more. Set it to {} or more: {}.",
             info.model,
             thousands(context),
             short(step),

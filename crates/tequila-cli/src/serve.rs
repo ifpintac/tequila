@@ -231,6 +231,14 @@ impl Session {
                 Ok(page) => Reply::Value(page),
                 Err(error) => Reply::Failed(error),
             },
+            Operation::Guide { topic } => match tequila_scripting::guide::page(topic.as_deref()) {
+                Ok(page) => Reply::Value(page),
+                Err(error) => Reply::Failed(error),
+            },
+            Operation::Read { what, node, index } => match tequila_scripting::document::read(&self.document, what.as_deref(), *node, *index) {
+                Ok(part) => Reply::Value(part),
+                Err(error) => Reply::Failed(error),
+            },
             Operation::Screenshot { .. }
             | Operation::AddShape { .. }
             | Operation::Ui(_)

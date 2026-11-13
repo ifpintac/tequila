@@ -9,3 +9,8 @@
 # Binary USD and USDZ packages: bytes, never line endings.
 *.usdc binary
 *.usdz binary
+
+# The Assistant's guide is built into the program from these pages; keep
+# them LF in every checkout, so every platform carries the same text at the
+# same length.
+skills/**/*.md text eol=lf

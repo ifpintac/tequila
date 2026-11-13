@@ -1080,3 +1080,99 @@ material, a metal, a grey-level pattern, the refusals, a second tint); in `tequi
 `a_material_with_no_colour_is_refused_plainly` and
 `a_tint_carries_a_material_and_a_colour`; and `a_tint_is_one_tool` in each
 bridge.
+
+## As built, November 13: a guide to the whole application
+
+The Tequila skill taught six subjects - materials, recipes, shots, the
+scene, plugins, scripts - and only AI apps outside Tequila were given it.
+The agents in Tequila's own chat had a paragraph, and the own loop for API
+keys and local models a list of tips. Asked for anything else - a label
+moved, a UV layout, a transparent PNG, a model that came in a thousand
+times too big - an assistant worked from what it knew of other software.
+
+**The audit.** Each area of the application was tried through the channel,
+for real, on a sample scene: could an assistant do the work today? Nearly
+all of it, yes. What stood in the way:
+
+- **Nothing of the project could be read in a size an AI reads.** A
+  command that takes a whole block back - the render settings, the image
+  style, a camera, a light - starts from reading that block, and the only
+  way was `query context`: 61,000 characters for a scene of 24 parts. The
+  skill told assistants to read it. Tequila's own loop could not read it
+  at all, so it could not change an image style or a camera except by
+  making one up.
+- **The UV editor and the Material Graph could not be looked at.** They
+  are windows of their own, and a screenshot took only the main one.
+- **Several answers are too long to be read**: the material guide 31,000
+  characters, the command catalog 44,000, the list of preferences 19,000.
+- **An assistant does not open a guide it is only told about.** The first
+  time a local model was given the new core and asked for a launch shot on
+  black, it looked at the scene, added a black plane, and put ABS Black on
+  every part of the headphones.
+
+**What was built.**
+
+- **The guide in layers** (`skills/tequila`, built into the binary by
+  `tequila_scripting::guide`): a core under 7,200 characters, and nineteen
+  pages under 12,000 each - materials, recipes, graph, textures, labels,
+  uv, scene, lighting, camera, variants, rendering, image, animation,
+  fixing, files, plugins, app, scripting, shots. A page teaches the work
+  in the order a person does it, points at `tequila_command` for exact
+  fields, and says what cannot be done through the tools yet and where it
+  is in the window.
+- **`tequila_guide`**, in both bridges and the own loop: a topic in, one
+  page out; no topic, the list. The built-in bridge answers from its own
+  copy, so the guide reads with Tequila closed.
+- **Every assistant starts from the same core.** The agents in the chat
+  (Claude, ChatGPT, Gemini) are given a few lines of where they are and
+  what they can reach, then the core (`assistant_agents::instructions`);
+  the own loop the same (`tequila_ai::tools::system`), in place of its
+  tips. The bridge's own instructions name the pages.
+- **`tequila_read`**: one part of the project, as the command that sets it
+  takes it back, or one node with its transform. 875 characters for the
+  render settings.
+- **`tequila_screenshot` takes `window`** (`uv`, `graph`, `render`,
+  `preferences`), and `tequila_queue` an `engine` and `configurations`. The
+  own loop's queue takes a camera, a Snapshot, every Snapshot, every
+  configuration and an engine as the agents' does; it has `tequila_redo` and
+  `tequila_stop`, and `tequila_ui` opens the Material Graph and the UV
+  editor.
+- **Three things make an assistant open the page.** The core's first rule
+  is to. The scene's overview, where nearly every assistant starts, ends
+  with a line saying so and naming the pages. And in the own loop, a
+  chat's first change is held back once, with where to read, until a page
+  has been opened (`assistant::changes`); sent again, it goes through, so
+  a job that needs no page is one step longer.
+
+**What still needs a tool first.** The pages say so where it applies:
+
+| Job | Why not yet |
+|---|---|
+| Adding a node of a new type to a material graph | Nothing lists a node type's inputs, outputs and settings, and a graph is only replaced whole |
+| Choosing where a UV seam goes, moving one particular island | The commands name mesh vertices and island numbers, and nothing says which is where |
+| Rendering a turntable's frames | A button in the window; the spin viewer does render through the tools |
+| Subdividing a mesh, shading it again | Only the Improve model window makes those changes |
+| Format, transparency and layers, for API keys, local models and remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's |
+| Export, updating a model, texture packs, the UV picture, for API keys and local models | The own loop has no raw requests |
+| Cancelling a queued render | `stop` stops only the one running |
+
+**The check.** In a copy of the application with a home of its own, on the
+Headphones sample, a model on this computer (qwen3.8:27b, through the own
+loop) was asked for three jobs in three new chats. It opened `shots` for a
+launch shot on black, read the environment, and set a black background and
+a short, blurred reflection in one step; `camera` for a three-quarter view
+through a longer lens with the background out of focus, and set 105 mm
+with depth of field at f/2.8; `image` for a warmer picture with a
+vignette, read the style and sent it back with two numbers changed.
+qwen3-coder is another matter: about half the time, through Ollama, it
+writes its tool call as text, which the own loop shows and the
+conversation ends there - with the old instructions as with the new.
+
+Not tried with Claude, ChatGPT or Gemini on this build.
+
+**Merged with the two sections above.** The core carries their rules, short:
+whose a moved view is, in what holds everywhere, with the rest on the
+`camera` page (`view_moves_by_hand`, and how to put a view back); and the
+tint, in the core's materials paragraph, with the rest on `materials`. The
+core came to 7,059 characters with them, and its test holds it under
+7,200.

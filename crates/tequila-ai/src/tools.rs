@@ -20,6 +20,10 @@ pub struct Tool {
 }
 
 const TOOLS: &str = r##"[
+ {"name":"tequila_guide","description":"How to do a job in Tequila: one page of the guide, short enough to read whole, with tested examples. READ THE PAGE for an area before working in it for the first time. Topics: materials, recipes (a material of your own), graph (the material graph and its nodes), textures (picture maps and packs), labels (logos and decals), uv, scene (parts, groups, moving, shapes, units, cutaways), lighting (environment, lights, floor), camera, variants (colourways, Snapshots, configurator, studio presets), rendering, image (the look after the render), animation (turntable, spin), fixing (a model that came in wrong), files (import, update, save, export), plugins, app (panels and preferences), scripting, shots (whole shots step by step). With no topic, the list of pages.",
+  "schema":{"type":"object","properties":{"topic":{"type":"string","enum":["start","materials","recipes","graph","textures","labels","uv","scene","lighting","camera","variants","rendering","image","animation","fixing","files","plugins","app","scripting","shots"]}}}},
+ {"name":"tequila_read","description":"Read one part of the project, small enough to read: what is render (the render settings), image_style, color_management, environment (with its light pins and the floor), lighting, cameras, units, multi_materials (colourways), model_sets, studios (Snapshots), configurator, animation, product_turn, material_templates, measurements or textures - each as the command that sets it takes it back. index takes one entry of a list. node reads one node of the scene by its id: its transform, and a light's or a cutaway's settings. With nothing, what there is to read. Use it before any command that takes a whole block (image.set_style, camera.set, studio.set, scene.set_light): read, change what was asked, send all of it back.",
+  "schema":{"type":"object","properties":{"what":{"type":"string","enum":["render","image_style","color_management","environment","lighting","cameras","units","multi_materials","model_sets","studios","configurator","animation","product_turn","material_templates","measurements","textures"]},"index":{"type":"integer"},"node":{"type":"integer"}}}},
  {"name":"tequila_scene","description":"Counts, units, overall bounds and the file of the open scene. A good first call.",
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_nodes","description":"Parts and groups: id, name, material and world size and centre. Filter by a word in the name or material name to keep the answer short.",
@@ -28,7 +32,7 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_material","description":"One material in full: every parameter value and texture.",
   "schema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},
- {"name":"tequila_api","description":"The command catalog, every material parameter (key, kind, range) and every material type. Call once before editing materials, to use exact names.",
+ {"name":"tequila_api","description":"The command catalog, every material parameter (key, kind, range), every material type and every pattern, all at once: tens of thousands of characters. The materials page of tequila_guide has the parameters that matter and tequila_command one command; ask this only for a parameter or a pattern neither names.",
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_query","description":"A read-only query: selection, camera, commands, ui, jobs or history.",
   "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history"]}},"required":["what"]}},
@@ -38,13 +42,15 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"name":{"type":"string"},"nodes":{"type":"array","items":{"type":"integer"}},"color":{"type":"string"},"unlink":{"type":"boolean"}},"required":["name","nodes"]}},
  {"name":"tequila_command","description":"How to write one command for tequila_apply: its exact fields and a working example. With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields: a field that is not in the example is not read.",
   "schema":{"type":"object","properties":{"command":{"type":"string"}}}},
- {"name":"tequila_add_shape","description":"Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall, beside what is in the scene and on the floor. Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). Undoable. Answers with the new part's id.",
+ {"name":"tequila_add_shape","description":"Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall, beside what is in the scene and on the floor. Not for the floor or the background, which the scene already has: those are settings of the environment (tequila_guide lighting). Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). Undoable. Answers with the new part's id.",
   "schema":{"type":"object","properties":{"shape":{"type":"string","enum":["plane","cube","cylinder","sphere","disc","backdrop","wall"]},"width":{"type":"number"},"depth":{"type":"number"},"height":{"type":"number"},"radius":{"type":"number"}},"required":["shape"]}},
- {"name":"tequila_apply","description":"Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"} or {\"command\":\"material.set_parameter\",\"material\":2,\"parameter\":\"base_color\",\"value\":[0.1,0.1,0.12]}. Materials can be shared: use material.unlink on a part before changing its material alone. Colours: send a hex sRGB string (\"value\":\"#c0392b\") and it is converted for you; an array is linear RGB 0-1 in the rendering space, ACEScg, used as given.",
+ {"name":"tequila_apply","description":"Apply one command, as the guide's page for the job shows it (tequila_guide first), e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"} or {\"command\":\"material.set_parameter\",\"material\":2,\"parameter\":\"base_color\",\"value\":[0.1,0.1,0.12]}. Materials can be shared: use material.unlink on a part before changing its material alone. Colours: send a hex sRGB string (\"value\":\"#c0392b\") and it is converted for you; an array is linear RGB 0-1 in the rendering space, ACEScg, used as given.",
   "schema":{"type":"object","properties":{"command":{"type":"object","description":"A command: {\"command\":\"<name>\", ...fields}"}},"required":["command"]}},
  {"name":"tequila_batch","description":"Several operations as ONE undo step; if one fails, none of them stay. Each is an object with an \"op\": apply (with \"command\"), select (\"nodes\"), frame (\"all\"), look, ui. Prefer this for more than one edit.",
   "schema":{"type":"object","properties":{"ops":{"type":"array","items":{"type":"object"}}},"required":["ops"]}},
  {"name":"tequila_undo","description":"Take back the last step: one edit or one whole batch.",
+  "schema":{"type":"object","properties":{}}},
+ {"name":"tequila_redo","description":"Put back the step tequila_undo last took away.",
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_select","description":"Select these node ids (replaces the selection).",
   "schema":{"type":"object","properties":{"nodes":{"type":"array","items":{"type":"integer"}}},"required":["nodes"]}},
@@ -54,14 +60,16 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"view":{"type":"string","enum":["front","back","left","right","top","bottom","iso"]},"at":{"type":"array","items":{"type":"number"}},"from":{"type":"array","items":{"type":"number"}},"yaw":{"type":"number"},"pitch":{"type":"number"},"distance":{"type":"number"},"focal_length":{"type":"number"}}}},
  {"name":"tequila_screenshot","description":"Look at the scene as it is now. Returns an image. viewport=true (default) shows only the 3D view. Switch the viewport to rendered first (tequila_ui) to judge materials and lighting.",
   "schema":{"type":"object","properties":{"viewport":{"type":"boolean"}}}},
- {"name":"tequila_ui","description":"Switch the viewport between 'rendered' (ray traced, shows real materials and light) and 'solid' (fast preview), and open panels.",
-  "schema":{"type":"object","properties":{"viewport":{"type":"string","enum":["rendered","solid"]},"render_window":{"type":"boolean"},"tab":{"type":"string","enum":["scene","material","environment","lighting","camera","image"]}}}},
- {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. Only when asked for a render. The person is asked first.",
-  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"}}}},
+ {"name":"tequila_ui","description":"Switch the viewport between 'rendered' (ray traced, shows real materials and light), 'material' and 'solid' (fast previews) and 'wireframe', and show the person a panel or a window: an Inspector tab, the Render window, the library, the Material Graph on a material (graph: its id), the UV editor on the selected part, the composition guides, the render's frame in the viewport.",
+  "schema":{"type":"object","properties":{"viewport":{"type":"string","enum":["rendered","material","solid","wireframe"]},"render_window":{"type":"boolean"},"tab":{"type":"string","enum":["scene","material","environment","lighting","camera","image"]},"inspector":{"type":"boolean"},"library":{"type":"boolean"},"library_section":{"type":"string","enum":["materials","studios"]},"graph":{"type":"integer"},"uv_editor":{"type":"boolean"},"guides":{"type":"boolean"},"frame":{"type":"boolean"},"edges":{"type":"boolean"},"statistics":{"type":"boolean"},"full_viewport":{"type":"boolean"}}}},
+ {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. camera is a saved camera's number (from 0); engine is tequila, cycles-cpu or cycles-gpu; studio renders one Snapshot by its name, studios=true every Snapshot, configurations=true every valid combination of the configurator. Only when asked for a render. The person is asked first. tequila_query what=jobs shows progress and where the file went.",
+  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"},"camera":{"type":"integer"},"engine":{"type":"string","enum":["tequila","cycles-cpu","cycles-gpu"]},"studio":{"type":"string"},"studios":{"type":"boolean"},"configurations":{"type":"boolean"}}}},
+ {"name":"tequila_stop","description":"Stop the render that is running in the background. It writes what it has.",
+  "schema":{"type":"object","properties":{}}},
  {"name":"tequila_save","description":"Save the project: to its own file, or with path to a new place (the person is asked first). Only when asked to save.",
   "schema":{"type":"object","properties":{"path":{"type":"string"}}}},
- {"name":"tequila_import","description":"Bring a model file into the scene: glTF, OBJ, STEP and the others Tequila reads. A path that is not absolute is in the project's folder. The person is asked first.",
-  "schema":{"type":"object","properties":{"path":{"type":"string"},"up":{"type":"string","enum":["y","z"]}},"required":["path"]}},
+ {"name":"tequila_import","description":"Bring a model file into the scene: glTF, OBJ, STEP and the others Tequila reads. A path that is not absolute is in the project's folder. up says which way up the file was drawn when it comes in lying down; lighting says what to do with a Blender file's own lights. The person is asked first.",
+  "schema":{"type":"object","properties":{"path":{"type":"string"},"up":{"type":"string","enum":["y","z"]},"lighting":{"type":"string","enum":["blender","tequila"]}},"required":["path"]}},
  {"name":"tequila_preferences","description":"Tequila's own settings. With nothing, every setting with its value and what it takes. set is an object of settings by name; reset is \"all\", a page or a setting. Changing one asks the person first. Only when asked to.",
   "schema":{"type":"object","properties":{"set":{"type":"object"},"reset":{"type":"string"}}}}
 ]"##;
@@ -118,6 +126,8 @@ pub enum Shape {
     Materials,
     /// One material out of the list.
     Material(u64),
+    /// Text as it is written: a page of the guide.
+    Text,
 }
 
 /// What carrying out a tool call means.
@@ -214,18 +224,29 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
             raw(request(vec![("op", text("batch")), ("ops", Value::Array(ops.clone()))]))
         }
         "tequila_undo" => raw(request(vec![("op", text("undo"))])),
+        "tequila_redo" => raw(request(vec![("op", text("redo"))])),
+        "tequila_stop" => raw(request(vec![("op", text("stop"))])),
+        // A page comes back as it is written, not as a JSON string.
+        "tequila_guide" => Ok(Plan::Request { json: with("guide", pick(arguments, &["topic"])), shape: Shape::Text }),
+        "tequila_read" => raw(with("read", pick(arguments, &["what", "node", "index"]))),
         "tequila_select" => raw(with("select", pick(arguments, &["nodes"]))),
         "tequila_frame" => raw(with("frame", pick(arguments, &["all"]))),
         "tequila_look" => raw(with("look", pick(arguments, &["view", "at", "from", "yaw", "pitch", "distance", "focal_length"]))),
         "tequila_screenshot" => Ok(Plan::Screenshot {
             viewport: arguments.get("viewport").and_then(|v| v.as_bool()).unwrap_or(true),
         }),
-        "tequila_ui" => raw(with("ui", pick(arguments, &["viewport", "render_window", "tab"]))),
-        "tequila_queue" => raw(with("queue", pick(arguments, &["name", "width", "height", "samples", "denoise", "folder", "filename"]))),
+        "tequila_ui" => raw(with(
+            "ui",
+            pick(arguments, &["viewport", "render_window", "tab", "inspector", "library", "library_section", "graph", "uv_editor", "guides", "frame", "edges", "statistics", "full_viewport"]),
+        )),
+        "tequila_queue" => raw(with(
+            "queue",
+            pick(arguments, &["name", "width", "height", "samples", "denoise", "folder", "filename", "camera", "engine", "studio", "studios", "configurations"]),
+        )),
         "tequila_save" => raw(with("save", pick(arguments, &["path"]))),
         "tequila_import" => {
             arguments.get("path").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).ok_or("say which file: its path")?;
-            raw(with("import", pick(arguments, &["path", "up"])))
+            raw(with("import", pick(arguments, &["path", "up", "lighting"])))
         }
         "tequila_preferences" => raw(with("preferences", pick(arguments, &["set", "reset"]))),
         "tequila_library" => raw(with("library", [("action".to_string(), text("search"))].into_iter().chain(pick(arguments, &["search", "category", "limit"])).collect())),
@@ -314,6 +335,10 @@ fn check_scene_command(command: &Value) -> Result<(), String> {
 /// An application answer, as text for the model.
 pub fn describe(shape: &Shape, answer: &Value) -> String {
     let shaped = match shape {
+        Shape::Text => match answer {
+            Value::String(text) => return text.clone(),
+            other => other.clone(),
+        },
         Shape::Raw => answer.clone(),
         Shape::Nodes { filter, parts_only } => slim_nodes(answer, filter.as_deref(), *parts_only),
         Shape::Materials => slim_materials(answer),
@@ -402,32 +427,41 @@ fn slim_materials(answer: &Value) -> Value {
     out.build()
 }
 
-/// What the assistant is told about the application and how to work in it.
-pub const SYSTEM: &str = "You are the assistant built into Tequila, a product-rendering application, and you work on the scene that is open in it right now, using your tools. \
-The person asks in plain language for scenes, materials, textures, lighting and camera work; you carry it out.
+/// The guide's core: the Tequila skill's first page, which every assistant
+/// is given whole (`tequila_scripting::guide::core` is the same text; a
+/// test in the application, which has both, holds the two together).
+const SKILL: &str = include_str!("../../../skills/tequila/SKILL.md");
 
-How to work:
-- Look before you change: tequila_scene, then tequila_nodes (filter by a word) to find parts by name, material or size. Never guess ids.
-- For any material, look in the library first: tequila_library searches several hundred finished presets, and tequila_library_apply puts one on parts. Make one yourself only when nothing there is close, or change a preset once it is on a part.
-- For the same material in another colour (\"this leather, but dark green\"), use tequila_material_tint on the material, or color on tequila_library_apply. Do not set base_color for this: many presets keep their colour inside a pattern, where base_color changes nothing. The tint keeps the pattern and finish, and its answer says what it changed.
-- Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example is not read. Change the ids, keys and values (the ones in the example are placeholders).
-- Call tequila_api once before editing a material's parameters, and use its exact parameter keys and material type ids.
-- A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape.
-- If something looks wrong, check the simple causes first with tequila_nodes - is the part hidden, is it where you think - and whether the screenshot said the picture had finished.
-- For patterns (noise, granite, leather, weave, perforated mesh and the rest), copy an entry from tequila_api's procedurals list into material.set_procedural with a param and a seed, and change its fields. On a colour parameter a ramp is added between them.
-- Materials can be shared by many parts. To change one part without the others, apply material.unlink to that part first, then read its new material id from tequila_nodes.
-- Put several edits in one tequila_batch: it is one undo step for the person, and if anything fails none of it stays.
-- Check your work: switch the viewport to rendered (tequila_ui viewport=rendered) and take a tequila_screenshot. Judge the picture, and fix what is wrong.
-- The view is the person's as well: they turn and zoom it while you work, to look at what you changed. Nothing you do to a material moves the camera, so a view that differs from your last look is theirs, and tequila_screenshot says so when they have moved it: work in it as it is, and do not frame it or move it back. Move the camera only when asked for a view, or when what you must check is out of sight - and then put it back: tequila_query camera reads a view, and tequila_look with its position as from and its target as at returns to it.
-- Units are metres; +Y is up. Give colours as hex sRGB strings (\"#c0392b\"): Tequila converts them into ACEScg, the rendering space. An array is taken as linear ACEScg as it is. Sizes are real: glass reaches its colour over its transmission depth in metres and pattern frequencies are per metre, so check a part's size in tequila_nodes before tuning either.
-- A liquid in a glass container is modelled a fraction of a millimetre into the glass wall; the Liquid type's higher priority makes it the medium there.
-- For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Only when tequila_library has nothing close.
-- To add to Tequila itself - a panel, a button, something done on every import - write a plugin: tequila_plugin_guide once, then tequila_plugin_write. The person turns it on in Tequila (tequila_plugin_enable asks them, and so does every change you make to one that is on); then tequila_plugin_run tries it and shows its log. Only when asked for one.
-- For a whole studio at once - lights, cameras and views, floor and look for a kind of product - list tequila_studio_presets and apply the suggested size with tequila_studio_preset_apply (one undo step). tequila_studio_render_all renders every view, only when asked for renders.
-- Only render (tequila_queue), save (tequila_save), import (tequila_import) or change a preference (tequila_preferences) when asked to.
-- Before anything that leaves the scene - importing a file, saving to a new place, rendering to a file, a preference, saving to the library, writing or running a plugin - Tequila asks the person itself. Call the tool and wait for its answer rather than asking first; if they said no, do not try another way.
+/// What is said before the core to an assistant that Tequila runs itself,
+/// through a provider's API or a model on this computer: where it is, who
+/// it is working for, and what the application asks the person first.
+const WHERE: &str = "You are the assistant built into Tequila, a product-rendering application, and you work on the scene that is open in it right now, using your tools. \
+The person is a designer, not a programmer: answer in plain words, briefly, and do what they ask in the scene rather than describing how.
+
+- Before anything that leaves the scene - importing a file, saving to a new place, rendering to a file, a preference, saving to the library, writing or running a plugin - Tequila asks the person itself. Call the tool and wait for its answer rather than asking first; if they said no, do not try another way. Only render, save, import or change a preference when asked to.
 - A name written as @Name in a message is a part or a material of the scene, and its id follows in brackets.
-- Every change to the scene is undoable and shown to the person as you do it. When you finish, say briefly what you changed.";
+- You have no tequila_request and no tequila_render tool. Where the guide sends a request through tequila_request (exporting, updating a model from its file, a texture pack, a UV layout picture), tell the person it is theirs to do in Tequila and where it is in the menus; for a quick look, switch the viewport to rendered and take a tequila_screenshot. render.set_settings is not yours either: tequila_queue takes the size, samples and engine.
+- tequila_query offers selection, camera, commands, ui, jobs and history; read anything else of the project with tequila_read.
+- Begin every request by calling tequila_guide with the page for the job. Only then look at the scene and change it.
+
+";
+
+/// What the assistant is told about the application and how to work in it:
+/// where it is, then the guide's core, as every assistant has it.
+pub fn system() -> &'static str {
+    static SYSTEM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SYSTEM.get_or_init(|| format!("{WHERE}{}", core()))
+}
+
+/// The skill's first page without the front matter a skill folder starts
+/// with.
+pub fn core() -> &'static str {
+    let Some(rest) = SKILL.strip_prefix("---") else { return SKILL };
+    match rest.split_once("\n---") {
+        Some((_, body)) => body.trim_start(),
+        None => SKILL,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -505,10 +539,10 @@ mod tests {
     /// it says it takes and nothing else.
     #[test]
     fn only_listed_arguments_pass_through() {
-        match plan("tequila_queue", &args(r#"{"samples":64,"folder":"renders","token":"x","configurations":true}"#)).unwrap() {
+        match plan("tequila_queue", &args(r#"{"samples":64,"folder":"renders","token":"x","network":true}"#)).unwrap() {
             Plan::Request { json, .. } => {
                 assert!(json.contains("samples") && json.contains("renders"));
-                assert!(!json.contains("token") && !json.contains("configurations"), "{json}");
+                assert!(!json.contains("token") && !json.contains("network"), "{json}");
             }
             other => panic!("{other:?}"),
         }
@@ -552,7 +586,7 @@ mod tests {
         );
         assert!(picture && tint.get("path").is_none());
         assert!(plan("tequila_material_tint", &args(r#"{"material":7}"#)).is_err(), "no colour, no tint");
-        assert!(SYSTEM.contains("tequila_material_tint"));
+        assert!(system().contains("tequila_material_tint"));
         // The library is searched, not handed over whole; a command is
         // looked up by its name; a shape is added by its own request.
         let search = request("tequila_library", r#"{"search":"black leather","limit":5,"path":"/elsewhere"}"#);
@@ -562,7 +596,43 @@ mod tests {
         let shape = request("tequila_add_shape", r#"{"shape":"cylinder","width":0.3,"height":0.15}"#);
         assert_eq!((shape.get("op").and_then(Value::as_str), shape.get("width").and_then(Value::as_f64)), (Some("add_shape"), Some(0.3)));
         assert!(plan("tequila_add_shape", &args("{}")).is_err());
-        assert!(SYSTEM.contains("look in the library first") && SYSTEM.contains("tequila_command"));
+        assert!(system().contains("ibrary first") && system().contains("tequila_command") && system().contains("tequila_guide"));
+    }
+
+    /// The assistant starts with the guide's core, not with a text of its
+    /// own, and reads the rest a page at a time; what the core sends it to
+    /// by a tool's name, it has - or has been told it has not.
+    #[test]
+    fn the_assistant_is_given_the_guides_core_and_reads_the_pages() {
+        let told = system();
+        assert!(told.starts_with("You are the assistant built into Tequila"));
+        assert!(told.ends_with(core()) && !core().starts_with("---"));
+        assert!(told.len() < 10_000, "{} characters before the first message", told.len());
+        let offered: Vec<String> = all().into_iter().map(|tool| tool.name).collect();
+        let mut named: Vec<&str> = core().split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|word| word.starts_with("tequila_")).collect();
+        named.sort_unstable();
+        named.dedup();
+        for tool in named {
+            assert!(offered.iter().any(|name| name == tool) || WHERE.contains(tool), "the core names {tool}, which this assistant has not and is not told so");
+        }
+        match plan("tequila_guide", &args(r#"{"topic":"uv","path":"/elsewhere"}"#)).unwrap() {
+            Plan::Request { json, shape } => {
+                assert_eq!(shape, Shape::Text);
+                let request = args(&json);
+                assert_eq!((request.get("op").and_then(Value::as_str), request.get("topic").and_then(Value::as_str)), (Some("guide"), Some("uv")));
+                assert!(request.get("path").is_none());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(describe(&Shape::Text, &Value::String("# UV\n\nA page.".into())), "# UV\n\nA page.");
+        match plan("tequila_read", &args(r#"{"what":"cameras","index":1}"#)).unwrap() {
+            Plan::Request { json, .. } => assert!(json.contains("\"read\"") && json.contains("cameras")),
+            other => panic!("{other:?}"),
+        }
+        match plan("tequila_queue", &args(r#"{"studios":true,"camera":1}"#)).unwrap() {
+            Plan::Request { json, .. } => assert!(json.contains("studios") && json.contains("camera")),
+            other => panic!("{other:?}"),
+        }
     }
 
     /// The person turns and zooms the view while the assistant works. One
@@ -571,7 +641,7 @@ mod tests {
     /// frames says what it is not for.
     #[test]
     fn a_moved_view_is_the_persons() {
-        assert!(SYSTEM.contains("The view is the person's as well") && SYSTEM.contains("do not frame it or move it back"));
+        assert!(system().contains("The view is the person's as well") && system().contains("do not frame it or move it back"));
         let frame = all().into_iter().find(|tool| tool.name == "tequila_frame").expect("the tool that frames");
         assert!(frame.description.contains("not after a material edit"), "{}", frame.description);
     }
