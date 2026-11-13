@@ -67,18 +67,18 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"wireframe":{"type":"boolean"}}}},
  {"name":"tequila_ui","description":"Switch the viewport between 'rendered' (ray traced, shows real materials and light), 'material' and 'solid' (fast previews) and 'wireframe', and show the person a panel or a window: an Inspector tab, the Render window, the library, the Material Graph on a material (graph: its id), the UV editor on the selected part, the composition guides, the render's frame in the viewport.",
   "schema":{"type":"object","properties":{"viewport":{"type":"string","enum":["rendered","material","solid","wireframe"]},"render_window":{"type":"boolean"},"tab":{"type":"string","enum":["scene","material","environment","lighting","camera","image"]},"inspector":{"type":"boolean"},"library":{"type":"boolean"},"library_section":{"type":"string","enum":["materials","studios"]},"graph":{"type":"integer"},"uv_editor":{"type":"boolean"},"guides":{"type":"boolean"},"frame":{"type":"boolean"},"edges":{"type":"boolean"},"statistics":{"type":"boolean"},"full_viewport":{"type":"boolean"}}}},
- {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. camera is a saved camera's number (from 0); engine is tequila, cycles-cpu or cycles-gpu; studio renders one Snapshot by its name, studios=true every Snapshot, configurations=true every valid combination of the configurator. Only when asked for a render. The person is asked first. tequila_query what=jobs shows progress and where the file went.",
-  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"},"camera":{"type":"integer"},"engine":{"type":"string","enum":["tequila","cycles-cpu","cycles-gpu"]},"studio":{"type":"string"},"studios":{"type":"boolean"},"configurations":{"type":"boolean"}}}},
+ {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. camera is a saved camera's number (from 0); engine is tequila, cycles-cpu or cycles-gpu; studio renders one Snapshot by its name, studios=true every Snapshot, configurations=true every valid combination of the configurator, frames=true every frame of the turntable (first and last narrow it; a frame already rendered is left out). Only when asked for a render. The person is asked first. tequila_query what=jobs shows progress and where the file went.",
+  "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"},"camera":{"type":"integer"},"engine":{"type":"string","enum":["tequila","cycles-cpu","cycles-gpu"]},"studio":{"type":"string"},"studios":{"type":"boolean"},"configurations":{"type":"boolean"},"frames":{"type":"boolean"},"first":{"type":"integer"},"last":{"type":"integer"}}}},
  {"name":"tequila_jobs","description":"The renders started with tequila_queue: each one's state, its progress and, when done, the file it wrote.",
   "schema":{"type":"object","properties":{}}},
- {"name":"tequila_stop","description":"Stop the render that is running in the background. It writes what it has.",
-  "schema":{"type":"object","properties":{}}},
+ {"name":"tequila_stop","description":"Stop the render that is running in the background: it writes what it has, and the jobs waiting behind it start. job stops one job by its id (tequila_query what=jobs): the one rendering is stopped, one still waiting is taken out of the queue. all=true stops the one rendering and takes out every job waiting: how to end a spin, a turntable or a batch of views early.",
+  "schema":{"type":"object","properties":{"job":{"type":"integer"},"all":{"type":"boolean"}}}},
  {"name":"tequila_save","description":"Save the project: to its own file, or with path to a new place (the person is asked first). Only when asked to save.",
   "schema":{"type":"object","properties":{"path":{"type":"string"}}}},
  {"name":"tequila_import","description":"Bring a model file into the scene: glTF, OBJ, STEP and the others Tequila reads. A path that is not absolute is in the project's folder. up says which way up the file was drawn when it comes in lying down; lighting says what to do with a Blender file's own lights. The person is asked first.",
   "schema":{"type":"object","properties":{"path":{"type":"string"},"up":{"type":"string","enum":["y","z"]},"lighting":{"type":"string","enum":["blender","tequila"]}},"required":["path"]}},
- {"name":"tequila_preferences","description":"Tequila's own settings. With nothing, every setting with its value and what it takes. set is an object of settings by name; reset is \"all\", a page or a setting. Changing one asks the person first. Only when asked to.",
-  "schema":{"type":"object","properties":{"set":{"type":"object"},"reset":{"type":"string"}}}},
+ {"name":"tequila_preferences","description":"Tequila's own settings, a page at a time. With nothing, the pages there are. page is general, interface, viewport, navigation, keyboard (the shortcuts), import, folders or updates: each of its settings with its key, value, default and what it takes. search finds settings by words. set is an object of settings by name; reset is \"all\", a page or a setting; both answer with what changed. Changing one asks the person first. Only when asked to.",
+  "schema":{"type":"object","properties":{"page":{"type":"string","enum":["general","interface","viewport","navigation","keyboard","import","folders","updates"]},"search":{"type":"string"},"set":{"type":"object"},"reset":{"type":"string"}}}},
  {"name":"tequila_request","description":"One request that has no tool of its own, written as the guide's page for the job shows it: {\"request\":{\"op\":\"export\",\"format\":\"glb\",\"path\":\"kettle.glb\"}}. The operations: export (glb, usd, usdz, web, spin), reimport (update a model from its file), texture_set (a folder or ZIP of picture maps as a material), substance, uv_layout (a part's UV layout as a picture), studio_kit, library (save, import, export, delete), studio_preset, queue (network rendering), plugin, screenshot and render (to a file the person named), and ui (the UV editor's and the graph editor's own controls). A path that is not absolute is in the project's folder. The person is asked before a file is read or written. Read the page first: a request is not guessed.",
   "schema":{"type":"object","properties":{"request":{"type":"object","description":"The request: {\"op\":\"<name>\", ...fields}"}},"required":["request"]}}
 ]"##;
@@ -91,9 +91,11 @@ const MCP_TOOLS: &str = include_str!("../../tequila-cli/src/mcp_tools.json");
 pub fn all() -> Vec<Tool> {
     let parsed = json::parse(TOOLS.as_bytes()).expect("the tool list is valid JSON");
     let bridge = json::parse(MCP_TOOLS.as_bytes()).expect("the bridge's tool list is valid JSON");
-    // The bridge's material and plugin tools, as they are: one description
-    // of each for every AI.
-    let shared = |name: &str| ["tequila_material_", "tequila_plugin_", "tequila_studio_"].iter().any(|p| name.starts_with(p));
+    // The bridge's material, graph, UV, model and plugin tools, as they
+    // are: one description of each for every AI.
+    let shared = |name: &str| {
+        ["tequila_material_", "tequila_plugin_", "tequila_studio_", "tequila_graph_", "tequila_uv_"].iter().any(|p| name.starts_with(p)) || ["tequila_improve", "tequila_model_units"].contains(&name)
+    };
     let materials = bridge.as_array().iter().filter(|t| t.get("name").and_then(|n| n.as_str()).is_some_and(shared)).map(|tool| {
         let mut entry = tool.clone();
         if let Value::Object(fields) = &mut entry {
@@ -191,7 +193,7 @@ pub const REQUESTS: [&str; 13] =
 /// The operations that have a tool whose arguments are the request's own
 /// fields: sent through `tequila_request`, they are that tool's call, held
 /// to what the tool allows.
-const REQUEST_TOOLS: [(&str, &str); 15] = [
+const REQUEST_TOOLS: [(&str, &str); 17] = [
     ("apply", "tequila_apply"),
     ("batch", "tequila_batch"),
     ("undo", "tequila_undo"),
@@ -207,6 +209,8 @@ const REQUEST_TOOLS: [(&str, &str); 15] = [
     ("guide", "tequila_guide"),
     ("read", "tequila_read"),
     ("help", "tequila_command"),
+    ("improve", "tequila_improve"),
+    ("model_units", "tequila_model_units"),
 ];
 
 /// What the person does themselves, and the assistant is told so.
@@ -306,6 +310,12 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
             if op == "material" {
                 return Err("a material request has tools of its own: tequila_material_guide, tequila_material_preview, tequila_material_create, tequila_material_update, tequila_material_tint, tequila_material_recipe and tequila_material_save".into());
             }
+            if op == "graph" {
+                return Err("a graph request has tools of its own: tequila_graph_nodes (the catalogue), tequila_graph_read and tequila_graph_edit".into());
+            }
+            if op == "uv" {
+                return Err("a UV request has tools of its own: tequila_uv_islands, tequila_uv_cut and tequila_uv_stitch".into());
+            }
             if !REQUESTS.contains(&op) {
                 return Err(format!("`{op}` is not a request this tool sends; it sends {}", REQUESTS.join(", ")));
             }
@@ -334,7 +344,7 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         }
         "tequila_undo" => raw(request(vec![("op", text("undo"))])),
         "tequila_redo" => raw(request(vec![("op", text("redo"))])),
-        "tequila_stop" => raw(request(vec![("op", text("stop"))])),
+        "tequila_stop" => raw(with("stop", pick(arguments, &["job", "all"]))),
         "tequila_jobs" => raw(query("jobs")),
         // A page comes back as it is written, not as a JSON string.
         "tequila_guide" => Ok(Plan::Request { json: with("guide", pick(arguments, &["topic"])), shape: Shape::Text }),
@@ -362,14 +372,15 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         )),
         "tequila_queue" => raw(with(
             "queue",
-            pick(arguments, &["name", "width", "height", "samples", "denoise", "folder", "filename", "camera", "engine", "studio", "studios", "configurations"]),
+            pick(arguments, &["name", "width", "height", "samples", "denoise", "folder", "filename", "camera", "engine", "studio", "studios", "configurations", "frames", "first", "last"]),
         )),
         "tequila_save" => raw(with("save", pick(arguments, &["path"]))),
         "tequila_import" => {
             arguments.get("path").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).ok_or("say which file: its path")?;
             raw(with("import", pick(arguments, &["path", "up", "lighting"])))
         }
-        "tequila_preferences" => raw(with("preferences", pick(arguments, &["set", "reset"]))),
+        // Briefly: every setting at once is nineteen thousand characters.
+        "tequila_preferences" => raw(with("preferences", [("brief".to_string(), Value::Bool(true))].into_iter().chain(pick(arguments, &["set", "reset", "page", "search"])).collect())),
         "tequila_library" => raw(with("library", [("action".to_string(), text("search"))].into_iter().chain(pick(arguments, &["search", "category", "limit"])).collect())),
         "tequila_command" => raw(with("help", pick(arguments, &["command"]))),
         "tequila_add_shape" => {
@@ -380,7 +391,42 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
             arguments.get("name").and_then(|v| v.as_str()).ok_or("say which preset: its name, from tequila_library")?;
             raw(with("library", [("action".to_string(), text("apply"))].into_iter().chain(pick(arguments, &["name", "nodes", "unlink", "color"])).collect()))
         }
-        "tequila_material_guide" => raw(with("material", vec![("action".into(), text("guide"))])),
+        // A part at a time: the whole guide is thirty thousand characters.
+        "tequila_material_guide" => {
+            let topic = arguments.get("topic").and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty()).unwrap_or("contents");
+            raw(with("material", vec![("action".into(), text("guide")), ("topic".into(), text(topic))]))
+        }
+        "tequila_graph_nodes" => raw(with("graph", [("action".to_string(), text("catalogue"))].into_iter().chain(pick(arguments, &["search", "family", "name", "page"])).collect())),
+        "tequila_graph_read" => {
+            arguments.get("material").and_then(|v| v.as_f64()).ok_or("say which material: its id")?;
+            raw(with("graph", [("action".to_string(), text("read"))].into_iter().chain(pick(arguments, &["material", "node", "page"])).collect()))
+        }
+        "tequila_graph_edit" => {
+            arguments.get("material").and_then(|v| v.as_f64()).ok_or("say which material: its id")?;
+            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            if !["add", "set", "connect", "disconnect", "remove"].contains(&action) {
+                return Err("say what to do, as action: add, set, connect, disconnect or remove".into());
+            }
+            raw(with("graph", pick(arguments, &["action", "material", "node", "settings", "fields", "inputs", "label", "muted", "from", "output", "to", "input"])))
+        }
+        "tequila_uv_islands" | "tequila_uv_cut" | "tequila_uv_stitch" => {
+            let action = name.trim_start_matches("tequila_uv_");
+            arguments.get("node").and_then(|v| v.as_f64()).ok_or("say which part: its id, as node")?;
+            let taken: &[&str] = match action {
+                "islands" => &["node", "set", "page"],
+                "cut" => &["node", "set", "path", "sharper_than", "islands", "pack", "reflatten", "across"],
+                _ => &["node", "set", "islands"],
+            };
+            raw(with("uv", [("action".to_string(), text(action))].into_iter().chain(pick(arguments, taken)).collect()))
+        }
+        "tequila_improve" => {
+            arguments.get("node").and_then(|v| v.as_f64()).ok_or("say which node: its id")?;
+            raw(with("improve", pick(arguments, &["node", "subdivide", "shade", "crease"])))
+        }
+        "tequila_model_units" => {
+            arguments.get("node").and_then(|v| v.as_f64()).ok_or("say which node: its id")?;
+            raw(with("model_units", pick(arguments, &["node", "unit", "read_as"])))
+        }
         "tequila_material_recipe" => raw(with("material", [("action".to_string(), text("recipe"))].into_iter().chain(pick(arguments, &["material"])).collect())),
         "tequila_material_save" => raw(with("material", [("action".to_string(), text("save"))].into_iter().chain(pick(arguments, &["material", "name", "category", "tags"])).collect())),
         "tequila_material_tint" => {
@@ -823,12 +869,52 @@ mod tests {
                 "tequila_import" => args(r#"{"path":"model.glb"}"#),
                 "tequila_library_apply" => args(r#"{"name":"Brushed Aluminium","nodes":[1]}"#),
                 "tequila_add_shape" => args(r#"{"shape":"cylinder","width":0.3,"height":0.15}"#),
+                "tequila_graph_read" => args(r#"{"material":2}"#),
+                "tequila_graph_edit" => args(r#"{"material":2,"action":"add","node":"bump"}"#),
+                "tequila_uv_islands" | "tequila_uv_cut" | "tequila_improve" | "tequila_model_units" => args(r#"{"node":3}"#),
+                "tequila_uv_stitch" => args(r#"{"node":3,"islands":[0,1]}"#),
                 "tequila_request" => args(r#"{"request":{"op":"export","format":"glb","path":"kettle.glb"}}"#),
                 _ => args("{}"),
             };
             plan(&tool.name, &arguments).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
             assert_eq!(tool.schema.get("type").and_then(|t| t.as_str()), Some("object"), "{}", tool.name);
         }
+    }
+
+    /// The tools for the jobs the window alone could do become their
+    /// requests, with nothing passed that the tool does not take; and the
+    /// two long answers are asked for a part at a time, whatever the model
+    /// leaves out.
+    #[test]
+    fn the_graph_uv_and_model_tools_become_requests() {
+        let sent = |name: &str, arguments: &str| match plan(name, &args(arguments)).unwrap_or_else(|e| panic!("{name}: {e}")) {
+            Plan::Request { json, .. } => json::parse(json.as_bytes()).unwrap(),
+            other => panic!("{name}: {other:?}"),
+        };
+        let text = |value: &Value, key: &str| value.get(key).and_then(|v| v.as_str()).map(str::to_string);
+        assert_eq!(text(&sent("tequila_graph_nodes", r#"{"search":"voronoi","path":"/etc"}"#), "action").as_deref(), Some("catalogue"));
+        assert!(sent("tequila_graph_nodes", r#"{"search":"voronoi","path":"/etc"}"#).get("path").is_none());
+        let wire = sent("tequila_graph_edit", r#"{"material":2,"action":"connect","from":3,"output":"Distance","input":"base_color"}"#);
+        assert_eq!((text(&wire, "op").as_deref(), wire.get("from").and_then(|v| v.as_f64())), (Some("graph"), Some(3.0)));
+        assert!(plan("tequila_graph_edit", &args(r#"{"material":2,"action":"catalogue"}"#)).is_err());
+        assert!(plan("tequila_graph_edit", &args(r#"{"action":"add","node":"bump"}"#)).is_err(), "a material is named");
+        assert_eq!(text(&sent("tequila_uv_cut", r#"{"node":3,"sharper_than":40}"#), "action").as_deref(), Some("cut"));
+        assert_eq!(text(&sent("tequila_uv_stitch", r#"{"node":3,"islands":[0,1]}"#), "action").as_deref(), Some("stitch"));
+        assert_eq!(text(&sent("tequila_improve", r#"{"node":3,"shade":30}"#), "op").as_deref(), Some("improve"));
+        assert_eq!(text(&sent("tequila_model_units", r#"{"node":3,"unit":"mm"}"#), "unit").as_deref(), Some("mm"));
+        assert_eq!(sent("tequila_queue", r#"{"frames":true,"last":11}"#).get("frames").and_then(|v| v.as_bool()), Some(true));
+        // Written as a raw request, each goes to its own tool or is told which.
+        assert_eq!(text(&sent("tequila_request", r#"{"request":{"op":"improve","node":3,"subdivide":1}}"#), "op").as_deref(), Some("improve"));
+        assert_eq!(text(&sent("tequila_request", r#"{"request":{"op":"model_units","node":3}}"#), "op").as_deref(), Some("model_units"));
+        let told = plan("tequila_request", &args(r#"{"request":{"op":"graph","action":"read","material":2}}"#)).unwrap_err();
+        assert!(told.contains("tequila_graph_edit"), "{told}");
+        let told = plan("tequila_request", &args(r#"{"request":{"op":"uv","action":"islands","node":3}}"#)).unwrap_err();
+        assert!(told.contains("tequila_uv_cut"), "{told}");
+        assert_eq!(sent("tequila_stop", r#"{"all":true}"#).get("all").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(text(&sent("tequila_material_guide", "{}"), "topic").as_deref(), Some("contents"));
+        assert_eq!(text(&sent("tequila_material_guide", r#"{"topic":"leather"}"#), "topic").as_deref(), Some("leather"));
+        assert_eq!(sent("tequila_preferences", "{}").get("brief").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(text(&sent("tequila_preferences", r#"{"page":"viewport"}"#), "page").as_deref(), Some("viewport"));
     }
 
     /// The assistant's plugin requests read as the application reads them,

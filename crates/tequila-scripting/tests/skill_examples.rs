@@ -166,6 +166,22 @@ fn as_request(tool: &str, arguments: &Value) -> Result<Option<Value>, String> {
         "tequila_studio_preset_apply" => with("studio_preset", &[("action", "apply")]),
         "tequila_studio_preset_save" => with("studio_preset", &[("action", "save")]),
         "tequila_studio_render_all" => with("studio_preset", &[("action", "render_all")]),
+        "tequila_graph_nodes" => with("graph", &[("action", "catalogue")]),
+        "tequila_graph_read" => with("graph", &[("action", "read")]),
+        "tequila_graph_edit" => with("graph", &[]),
+        "tequila_uv_islands" => with("uv", &[("action", "islands")]),
+        "tequila_uv_cut" => with("uv", &[("action", "cut")]),
+        "tequila_uv_stitch" => with("uv", &[("action", "stitch")]),
+        "tequila_improve" => with("improve", &[]),
+        "tequila_model_units" => with("model_units", &[]),
+        "tequila_stop" => with("stop", &[]),
+        // A part of the material guide asked for is one it has.
+        "tequila_material_guide" => {
+            if let Some(topic) = arguments.get("topic").and_then(Value::as_str) {
+                tequila_scripting::material::guide_topic(topic)?;
+            }
+            None
+        }
         "tequila_plugin_write" => plugin("write"),
         "tequila_plugin_enable" => plugin("enable"),
         "tequila_plugin_run" => plugin("run"),
@@ -234,6 +250,28 @@ fn check(file: &Path, tools: &[Value], tool: Option<&str>, value: &Value) -> Res
                 return Err(format!("`{what}` is no part of a project"));
             }
         }
+        // What the catalogue is asked for is in it, and a node added is
+        // one it has, with the settings, fields and inputs it is given.
+        if let tequila_scripting::protocol::Operation::Graph(graph) = &request.operation {
+            match graph.get("action").and_then(Value::as_str).unwrap_or_default() {
+                "catalogue" => {
+                    let answer = tequila_scripting::graph::catalogue_answer(graph)?;
+                    if answer.get("count").and_then(Value::as_index) == Some(0) {
+                        return Err("the catalogue has nothing by that search".into());
+                    }
+                }
+                "add" => {
+                    let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+                    let material = document.materials.iter().next().map(|(key, _)| key.0).expect("the demo has a material");
+                    let mut asked = graph.clone();
+                    if let Value::Object(fields) = &mut asked {
+                        fields.insert("material".into(), Value::Number(material as f64));
+                    }
+                    tequila_scripting::graph::request(&asked, &document).map(|_| ())?;
+                }
+                _ => {}
+            }
+        }
         // A recipe sent to be made is read as one.
         if let tequila_scripting::protocol::Operation::Material(material) = &request.operation {
             if let Some(recipe) = &material.recipe {
@@ -299,6 +337,56 @@ fn every_example_in_the_skill_is_read_by_tequila() {
     assert!(counts.get("recipe").copied().unwrap_or(0) >= 3, "{counts:?}");
     assert!(counts.contains_key("graph"), "{counts:?}");
     assert!(counts.contains_key("manifest"), "{counts:?}");
+}
+
+/// The graph page's walk through a graph - add, wire, set, take a wire
+/// off, remove - is carried out here as written, on a plain material: every
+/// step is taken, and what they build is a graph that works.
+#[test]
+fn the_graph_pages_steps_build_a_graph_that_works() {
+    use tequila_scripting::document::LibraryOutcome;
+    let tools = tools();
+    let text = std::fs::read_to_string(skill().join("reference/graph.md")).unwrap();
+    let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+    let mut bus = tequila_scene::CommandBus::new();
+    let material = document.materials.iter().next().map(|(key, _)| key).expect("the demo has a material");
+    let on_this_material = |tool: &str, arguments: &Value| {
+        check_arguments(&tools, tool, arguments).unwrap_or_else(|e| panic!("{e}"));
+        let mut request = as_request(tool, arguments).unwrap().expect("a graph tool sends a request");
+        if let Value::Object(fields) = &mut request {
+            fields.insert("material".into(), Value::Number(material.0 as f64));
+        }
+        request
+    };
+    let calls: Vec<(String, Value)> = json_blocks(&text).iter().flat_map(|block| examples(block)).filter_map(|(tool, value)| tool.map(|tool| (tool, value))).collect();
+    let mut steps = 0;
+    for (tool, arguments) in calls.iter().filter(|(tool, _)| tool == "tequila_graph_edit") {
+        let request = on_this_material(tool, arguments);
+        let said = tequila_format::json_write::to_string(arguments);
+        match tequila_scripting::graph::request(&request, &document).unwrap_or_else(|e| panic!("{said}: {e}")) {
+            LibraryOutcome::Commands(commands, answer) => {
+                for command in commands {
+                    bus.apply(&mut document, command).unwrap_or_else(|e| panic!("{said}: {e}"));
+                }
+                bus.end_interaction();
+                assert!(tequila_format::json_write::to_string(&answer).len() < 3_000, "{said} answers at length");
+            }
+            LibraryOutcome::Done(_) => panic!("{said} changed nothing"),
+        }
+        steps += 1;
+    }
+    assert!(steps >= 8, "the page walks through {steps} steps");
+    let graph = &document.materials.get(material).unwrap().graph;
+    assert!(graph.is_connected(tequila_materials::material_type::Param::BaseColor), "the walk leaves the colour driven");
+    graph.compile().expect("what the page builds compiles");
+    // And each was a step of its own to take back.
+    assert_eq!(bus.depth(), steps);
+    // The readings the page shows answer on the graph it built.
+    for (tool, arguments) in calls.iter().filter(|(tool, _)| tool == "tequila_graph_read") {
+        let request = on_this_material(tool, arguments);
+        let LibraryOutcome::Done(answer) = tequila_scripting::graph::request(&request, &document).unwrap_or_else(|e| panic!("{e}")) else { panic!("a reading changes nothing") };
+        assert!(tequila_format::json_write::to_string(&answer).len() < 3_000);
+    }
 }
 
 /// The core is short enough to be given whole to every assistant with

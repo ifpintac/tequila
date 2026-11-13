@@ -236,6 +236,48 @@ class BridgeTests(unittest.TestCase):
         sent = self.app.received[-1]
         self.assertEqual((sent['op'], sent['from'], sent['at']), ('look', [0, 1, 3], [0, 0, 0]))
 
+    def test_the_graph_uv_and_model_tools_send_their_requests(self):
+        sent = lambda: {k: v for k, v in self.app.received[-1].items() if k not in ('id', 'token')}
+        self.call('tequila_graph_nodes', {'search': 'voronoi'})
+        self.assertEqual(sent(), {'op': 'graph', 'action': 'catalogue', 'search': 'voronoi'})
+        self.call('tequila_graph_read', {'material': 3, 'node': 2})
+        self.assertEqual(sent(), {'op': 'graph', 'action': 'read', 'material': 3, 'node': 2})
+        # A wire's `from`, which Python cannot name an argument.
+        self.call('tequila_graph_edit', {'material': 3, 'action': 'connect', 'from': 2, 'output': 'Distance', 'input': 'base_color'})
+        self.assertEqual(sent(), {'op': 'graph', 'action': 'connect', 'material': 3, 'from': 2, 'output': 'Distance', 'input': 'base_color'})
+        refused = self.call('tequila_graph_edit', {'material': 3, 'action': 'catalogue'})
+        self.assertTrue(refused['isError'])
+        self.call('tequila_uv_islands', {'node': 12})
+        self.assertEqual(sent(), {'op': 'uv', 'action': 'islands', 'node': 12})
+        self.call('tequila_uv_cut', {'node': 12, 'path': [[0, 0.2, 0], [0, 0, 0]], 'pack': True})
+        self.assertEqual(sent(), {'op': 'uv', 'action': 'cut', 'node': 12, 'path': [[0, 0.2, 0], [0, 0, 0]], 'pack': True})
+        self.call('tequila_uv_stitch', {'node': 12, 'islands': [2, 5]})
+        self.assertEqual(sent(), {'op': 'uv', 'action': 'stitch', 'node': 12, 'islands': [2, 5]})
+        self.call('tequila_improve', {'node': 3, 'subdivide': 1})
+        self.assertEqual(sent(), {'op': 'improve', 'node': 3, 'subdivide': 1})
+        self.call('tequila_model_units', {'node': 1, 'unit': 'mm'})
+        self.assertEqual(sent(), {'op': 'model_units', 'node': 1, 'unit': 'mm'})
+        self.call('tequila_queue', {'frames': True, 'first': 0, 'last': 11})
+        self.assertEqual(sent(), {'op': 'queue', 'frames': True, 'first': 0, 'last': 11})
+        self.call('tequila_stop', {'all': True})
+        self.assertEqual(sent(), {'op': 'stop', 'all': True})
+        self.call('tequila_stop')
+        self.assertEqual(sent(), {'op': 'stop'})
+
+    def test_the_long_answers_are_asked_for_a_part_at_a_time(self):
+        sent = lambda: {k: v for k, v in self.app.received[-1].items() if k not in ('id', 'token')}
+        # With nothing asked, what there is to ask for - never the whole.
+        self.call('tequila_material_guide')
+        self.assertEqual(sent(), {'op': 'material', 'action': 'guide', 'topic': 'contents'})
+        self.call('tequila_material_guide', {'topic': 'leather'})
+        self.assertEqual(sent()['topic'], 'leather')
+        self.call('tequila_preferences')
+        self.assertEqual(sent(), {'op': 'preferences', 'brief': True})
+        self.call('tequila_preferences', {'page': 'viewport'})
+        self.assertEqual(sent(), {'op': 'preferences', 'brief': True, 'page': 'viewport'})
+        self.call('tequila_preferences', {'set': {'viewport.gizmo_size': 120}})
+        self.assertEqual(sent(), {'op': 'preferences', 'brief': True, 'set': {'viewport.gizmo_size': 120}})
+
     def test_running_a_plugin_command_waits_for_what_it_logs(self):
         result = self.call('tequila_plugin_run', {'id': 'my.test', 'command': 'go', 'values': {'n': 2}})
         said = json.loads(result['content'][0]['text'])

@@ -150,8 +150,11 @@ TOOLS = [
          {'command': {'type': 'object', 'description': 'A journal command: {"command": "<name>", ...fields}.'}},
          ['command']),
     tool('tequila_material_guide',
-         'How to make procedural materials: the recipe format, every pattern kind with what it looks like and its settings and defaults, the material types, rules of thumb, and 16 tested example recipes (terrazzo, marble, brushed aluminium, walnut, carbon fibre, leather, concrete, hammered copper, galaxy resin, worn paint...). Read it before writing a recipe.',
-         {},
+         'How to make procedural materials, a part at a time. With no topic: how to work, and the patterns and examples there are. '
+         'topic recipe: the recipe format, the rules of thumb and the parameters that matter - read it before writing a first recipe. types: every material type; a type\'s id (plastic, metal, velvet...): the parameters it shows. '
+         'patterns: every pattern in a line; a pattern\'s kind (leather, weave, wood_advanced...): its settings and defaults. '
+         'examples: the 16 tested recipes in a line each; an example\'s name (Terrazzo, Walnut, Carbon Fibre...): its recipe, to change and preview.',
+         {'topic': {'type': 'string', 'description': 'contents, recipe, types, patterns, examples, a type\'s id, a pattern\'s kind or an example\'s name.'}},
          []),
     tool('tequila_material_preview',
          'Show a material recipe (or an existing material by id) on a ball, without changing the scene. Returns an image. The fastest way to try an idea: preview, adjust, preview again, then tequila_material_create. Recipe: {"name": "Speckled Stone", "type": "plastic" (or metal, glass, paint, velvet... see the guide), any parameter as a value ("specular_roughness": 0.3, "base_color": "#c0392b" - hex sRGB is fine), "patterns": [{"param": "base_color", "procedural": {"kind": "noise"}, "size": 0.01, "colors": [{"at": 0, "color": "#d8d4cc"}, {"at": 1, "color": "#a9a59c"}]}, {"param": "specular_roughness", "procedural": {"kind": "noise"}, "size": 0.02, "range": [0.2, 0.4]}, {"param": "bump", "procedural": {"kind": "leather"}, "size": 0.002, "depth": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: "blend" mix/multiply/add, "amount" 0-1, "mask" {"threshold": 0.5, "softness": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.',
@@ -214,14 +217,17 @@ TOOLS = [
          {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'},
           'wireframe': {'type': 'boolean'}}),
     tool('tequila_queue', 'Start a background render with the document\'s render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view; '
-         'configurations=true every valid combination of the configurator.',
+         'configurations=true every valid combination of the configurator; frames=true the frames of the turntable (animation.set), one render each, leaving out those already rendered.',
          {'name': {'type': 'string'}, 'width': {'type': 'integer'}, 'height': {'type': 'integer'},
           'samples': {'type': 'integer'}, 'folder': {'type': 'string'}, 'filename': {'type': 'string'},
           'denoise': {'type': 'boolean'}, 'camera': {'type': 'integer'},
           'studio': {'type': 'string', 'description': 'A Studio (a view) by name or index, applied for the render and taken back.'},
           'studios': {'type': 'boolean', 'description': 'Every Studio, one render each, named for its view.'},
           'engine': {'type': 'string', 'enum': ['tequila', 'cycles-cpu', 'cycles-gpu'], 'description': 'The engine for this render; the document\'s when left out.'},
-          'configurations': {'type': 'boolean', 'description': 'One render for every valid combination of the configurator, named by its choices.'}}),
+          'configurations': {'type': 'boolean', 'description': 'One render for every valid combination of the configurator, named by its choices.'},
+          'frames': {'type': 'boolean', 'description': 'One render for every frame of the turntable, the product turned to each frame\'s angle; the file name takes the frame\'s number.'},
+          'first': {'type': 'integer', 'description': 'With frames: the first frame to render (default 0).'},
+          'last': {'type': 'integer', 'description': 'With frames: the last frame to render (default the last there is).'}}),
     tool('tequila_jobs', 'The background render queue: state, progress and output file of each job.'),
     tool('tequila_studio_presets',
          'The studio presets installed: complete studios - lights, cameras and views, floor, look - for a kind of product, '
@@ -249,7 +255,10 @@ TOOLS = [
          ['name']),
     tool('tequila_studio_render_all',
          'Render every view (Studio) in the background, one image each, named for its view. Only when asked for renders.'),
-    tool('tequila_stop', 'Stop the running background render; it still writes its image.'),
+    tool('tequila_stop', 'Stop the running background render; it still writes its image, and the jobs waiting behind it start. job stops one job by its id from tequila_jobs: '
+         'the one rendering is stopped, one still waiting is taken out of the queue and writes nothing. all=true stops the one rendering and takes out every job waiting: '
+         'how to end a spin, a turntable or a batch of views early.',
+         {'job': {'type': 'integer'}, 'all': {'type': 'boolean'}}),
     tool('tequila_ui', 'Open or close panels and switch the viewport shading.',
          {'render_window': {'type': 'boolean'}, 'console': {'type': 'boolean'}, 'inspector': {'type': 'boolean'},
           'library': {'type': 'boolean'}, 'full_viewport': {'type': 'boolean'}, 'statistics': {'type': 'boolean'}, 'help': {'type': 'boolean'},
@@ -263,8 +272,12 @@ TOOLS = [
           'tab': {'type': 'string', 'enum': ['scene', 'material', 'environment', 'lighting', 'camera', 'image', 'studios', 'scripting']},
           'viewport': {'type': 'string', 'enum': ['wireframe', 'solid', 'material', 'rendered']}}),
     tool('tequila_preferences',
-         "Tequila's own settings, as Edit > Preferences shows them: with no arguments, every setting with its value, its default and what it takes, and every keyboard shortcut with its keys. They are the person's own and kept between sessions: change one only when asked to.",
-         {'set': {'type': 'object', 'description': 'Settings to change, by name: {"viewport.gizmo_size": 150, "navigation.invert_zoom": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {"shortcut.view.screenshot": "F12"}, a list of two keys, or "" for none.'},
+         "Tequila's own settings, as Edit > Preferences shows them, a page at a time. With no arguments, the pages there are. page is one of general, interface, viewport, navigation, "
+         "keyboard (the shortcuts), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. "
+         "set and reset answer with what changed. They are the person's own and kept between sessions: change one only when asked to.",
+         {'page': {'type': 'string', 'enum': ['general', 'interface', 'viewport', 'navigation', 'keyboard', 'import', 'folders', 'updates']},
+          'search': {'type': 'string', 'description': 'Words that must all be in a setting\'s key, label or help: "zoom", "autosave".'},
+          'set': {'type': 'object', 'description': 'Settings to change, by name: {"viewport.gizmo_size": 150, "navigation.invert_zoom": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {"shortcut.view.screenshot": "F12"}, a list of two keys, or "" for none.'},
           'reset': {'type': ['string', 'array'], 'items': {'type': 'string'},
                     'description': '"all", a page (general, interface, viewport, navigation, keyboard, import, folders, updates), a setting, a shortcut, or a list of settings, put back to their defaults.'}}),
     tool('tequila_import', 'Load a model file into the scene: STEP or IGES (CAD, divided into parts with their colours), Rhino .3dm (layers, materials, blocks), Blender .blend (read by the Blender installed here, materials node for node), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (.usda, .usdc or .usdz) or IFC.',
@@ -276,6 +289,90 @@ TOOLS = [
          ['path']),
     tool('tequila_save', 'Save the project, to its own file or to a new path.',
          {'path': {'type': 'string'}}),
+    tool('tequila_graph_nodes',
+         'The catalogue of nodes a material graph can hold: what each is for, with its inputs, outputs, settings and fields. '
+         'With nothing, the first page of them all, a line each, and the families. search takes words that must all match '
+         '("voronoi", "edge wear", "brushed"); family narrows to one (input, texture, pattern, group, color, converter, vector, shader, simple, layout). '
+         'Three or fewer answers come whole; name asks for one whole. LOOK A NODE UP HERE before adding it: never guess a node\'s name, an input or a setting.',
+         {'search': {'type': 'string'},
+          'family': {'type': 'string', 'enum': ['input', 'texture', 'pattern', 'group', 'color', 'converter', 'vector', 'shader', 'simple', 'layout']},
+          'name': {'type': 'string', 'description': "One node whole, by its name in the catalogue: voronoi_texture, gradient, pattern_leather, knurl."},
+          'page': {'type': 'integer', 'description': 'Which page of a long list, from 1.'}}),
+    tool('tequila_graph_read',
+         "A material's node graph in brief: each node on a line with its id, what it is and where its output goes, and which of the material's parameters the graph drives. "
+         'With node, that one node whole: its settings and fields, each input with its value or the wire into it, each output with where it goes. '
+         'A few hundred characters where the whole material (tequila_material) is thousands.',
+         {'material': {'type': 'integer', 'description': "The material's id, from tequila_materials or tequila_nodes."},
+          'node': {'type': ['integer', 'string'], 'description': 'A node\'s id from the brief reading, or "surface".'},
+          'page': {'type': 'integer', 'description': 'Which page of a graph with many nodes, from 1.'}},
+         ['material']),
+    tool('tequila_graph_edit',
+         "Change a material's node graph one step at a time, each one undo step; a graph that would not work is refused and nothing changes. action is: "
+         'add (node: a name from tequila_graph_nodes; settings, fields, inputs and label may come with it) - answers with the new node\'s id and its sockets; '
+         'set (node: an id; settings {key: value}, fields {the node\'s own fields, such as a bump\'s depth or a ramp\'s gradient}, inputs {an input\'s name: a number, "#rrggbb", [x, y, z] or null for its default}, label, muted); '
+         'connect (from: a node id, output: its name when the node has several, to: a node id or left out for the surface, input: the input\'s name, or on the surface a parameter\'s key such as base_color, specular_roughness, bump); '
+         'disconnect (node: an id or left out for the surface, input); remove (node: an id). '
+         'Every part that wears the material changes: material.unlink a part first to change it alone. Look with tequila_material_preview.',
+         {'material': {'type': 'integer'},
+          'action': {'type': 'string', 'enum': ['add', 'set', 'connect', 'disconnect', 'remove']},
+          'node': {'type': ['integer', 'string'], 'description': 'add: the name of the node to add. set, remove, disconnect: the id of a node in the graph, or "surface".'},
+          'settings': {'type': 'object', 'description': 'A general node\'s settings by key: {"feature": "f2"}.'},
+          'fields': {'type': 'object', 'description': 'The node\'s own fields, as tequila_graph_read shows them: {"depth": 0.0003}, {"gradient": [{"at": 0, "color": "#101010"}, {"at": 1, "color": "#d0d0d0"}]}, {"procedural": {"frequency": 900}}, {"value": 0.35}.'},
+          'inputs': {'type': 'object', 'description': 'Values for inputs nothing is wired into, by the input\'s name: {"Scale": 40, "Color1": "#202020"}.'},
+          'label': {'type': 'string'},
+          'muted': {'type': 'boolean'},
+          'from': {'type': 'integer', 'description': 'connect: the node the wire leaves.'},
+          'output': {'type': ['string', 'integer'], 'description': 'connect: which output of it, by name; the first when left out.'},
+          'to': {'type': ['integer', 'string'], 'description': 'connect: the node the wire goes into; the surface when left out.'},
+          'input': {'type': 'string', 'description': 'connect, disconnect: the input by its name, or a parameter\'s key on the surface.'}},
+         ['material', 'action']),
+    tool('tequila_uv_islands',
+         "A part's UV layout, island by island, largest first: each island's number (what the uv.* commands take), its box on the layout, how much of the part it is, "
+         'its area, how stretched it is, and where on the part it lies - centre and size in the world\'s metres and the way it faces. '
+         'How to tell which island is the front panel before moving, packing, cutting or stitching one. Numbers change after a cut or an unwrap: read again.',
+         {'node': {'type': 'integer', 'description': "The part's id, from tequila_nodes."},
+          'set': {'type': 'integer', 'description': 'Which UV set, from 0 (default 0).'},
+          'page': {'type': 'integer', 'description': 'Which page of a layout with many islands, from 1.'}},
+         ['node']),
+    tool('tequila_uv_cut',
+         "Cut a seam in a part's UV layout where you mean it, as one undo step. path is two or more points ON THE PART, each [x, y, z] in the world's metres "
+         '(tequila_nodes gives the part\'s centre and size; tequila_uv_islands each island\'s): the cut follows the part\'s own edges the shortest way from each point to the next - '
+         'down the back of a bottle is [[0, top, -r], [0, bottom, -r]]. A seam follows the mesh\'s edges: across a flat CAD face that has none it is refused, and says the way round. Or sharper_than: every edge inside an island that is sharper than that many degrees (islands narrows it to some). '
+         'The pieces are laid flat again in place; pack=true also packs the whole layout after. Answers with how many islands there were and are.',
+         {'node': {'type': 'integer'},
+          'set': {'type': 'integer'},
+          'path': {'type': 'array', 'items': VECTOR, 'minItems': 2, 'description': 'Points on the part, in the world\'s metres.'},
+          'sharper_than': {'type': 'number', 'description': 'Degrees: cut every edge inside an island that is sharper than this.'},
+          'islands': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'With sharper_than: only inside these islands.'},
+          'pack': {'type': 'boolean', 'description': 'Pack the whole layout into the square afterwards.'},
+          'reflatten': {'type': 'boolean', 'description': 'Lay the pieces the cut touches flat again (default true).'},
+          'across': {'type': 'boolean', 'description': 'With path: carry a cut that stops just short of the island\'s edge on to it, so it divides the island (default true). false cuts between the points exactly, for a slit.'}},
+         ['node']),
+    tool('tequila_uv_stitch',
+         "Join islands of a part's UV layout along the seams between them, as one undo step: two or more islands that meet on the part, by their numbers from tequila_uv_islands, "
+         'or one island to shut a seam inside it. The smaller is moved onto the larger. Islands that do not touch on the part are refused.',
+         {'node': {'type': 'integer'},
+          'set': {'type': 'integer'},
+          'islands': {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 1}},
+         ['node', 'islands']),
+    tool('tequila_improve',
+         'Improve model, for a model that came in coarse: the parts at and under a node made finer or shaded again, as one undo step. '
+         'subdivide (1 to 3) makes four triangles of every one each time, the new points following the curve of the surface, for curves that show their facets; '
+         'shade (degrees, 30 is usual) works the shading out again, smooth across edges gentler than that, for an STL or OBJ that looks faceted all over. '
+         'With neither, how many triangles there are and how many each would make. A CAD model (STEP, IGES) is better divided again from its exact surfaces: page fixing of tequila_guide.',
+         {'node': {'type': 'integer', 'description': 'A part, or a group: everything under it.'},
+          'subdivide': {'type': 'integer', 'minimum': 1, 'maximum': 3},
+          'shade': {'type': 'number', 'description': 'Degrees, 5 to 90: edges sharper than this stay sharp.'},
+          'crease': {'type': 'number', 'description': 'With subdivide, for a mesh that had no shading: edges sharper than this stay sharp (default 30).'}},
+         ['node']),
+    tool('tequila_model_units',
+         'Units of this model: put right a model that came in the wrong size because its file named no unit (an STL in millimetres is read as metres, a thousand times too large). '
+         'unit is what its numbers really are: mm, cm, in, ft or m. The whole model the node belongs to is scaled about the middle of its base, so it stands where it stood; one undo step. '
+         'With no unit, its size now and the size it would be in each unit: pick the one that reads as the real thing. read_as says what its numbers are read as now, when not metres.',
+         {'node': {'type': 'integer', 'description': 'Any node of the model.'},
+          'unit': {'type': 'string', 'enum': ['mm', 'cm', 'in', 'ft', 'm']},
+          'read_as': {'type': 'string', 'enum': ['mm', 'cm', 'in', 'ft', 'm']}},
+         ['node']),
     tool('tequila_plugin_guide',
          'How to write a Tequila plugin: the full reference (manifest, Python API, panels and their field types, events, material packs), a working template, and the way to work - write, ask the person to turn it on, run, read the log, fix. Read it once before writing a plugin.',
          {},
@@ -454,8 +551,42 @@ class Bridge:
         self.request('apply', command=command)
         return text({'ok': True, 'applied': command.get('command')})
 
-    def tool_material_guide(self):
-        return text(self.request('material', action='guide'))
+    def tool_material_guide(self, topic=None):
+        # A part at a time: the whole guide is thirty thousand characters.
+        return text(self.request('material', action='guide', topic=topic or 'contents'))
+
+    def tool_graph_nodes(self, search=None, family=None, name=None, page=None):
+        fields = {k: v for k, v in dict(search=search, family=family, name=name, page=page).items() if v is not None}
+        return text(self.request('graph', action='catalogue', **fields))
+
+    def tool_graph_read(self, material, node=None, page=None):
+        fields = {k: v for k, v in dict(node=node, page=page).items() if v is not None}
+        return text(self.request('graph', action='read', material=material, **fields))
+
+    def tool_graph_edit(self, material, action, **fields):
+        if action not in ('add', 'set', 'connect', 'disconnect', 'remove'):
+            raise TequilaError(f'`{action}` is not an edit: add, set, connect, disconnect or remove')
+        return text(self.request('graph', action=action, material=material, **{k: v for k, v in fields.items() if v is not None}))
+
+    def tool_uv_islands(self, node, set=None, page=None):
+        fields = {k: v for k, v in dict(set=set, page=page).items() if v is not None}
+        return text(self.request('uv', action='islands', node=node, **fields))
+
+    def tool_uv_cut(self, node, set=None, path=None, sharper_than=None, islands=None, pack=None, reflatten=None, across=None):
+        fields = {k: v for k, v in dict(set=set, path=path, sharper_than=sharper_than, islands=islands, pack=pack, reflatten=reflatten, across=across).items() if v is not None}
+        return text(self.request('uv', action='cut', node=node, **fields))
+
+    def tool_uv_stitch(self, node, islands, set=None):
+        fields = {'set': set} if set is not None else {}
+        return text(self.request('uv', action='stitch', node=node, islands=islands, **fields))
+
+    def tool_improve(self, node, subdivide=None, shade=None, crease=None):
+        fields = {k: v for k, v in dict(subdivide=subdivide, shade=shade, crease=crease).items() if v is not None}
+        return text(self.request('improve', node=node, **fields))
+
+    def tool_model_units(self, node, unit=None, read_as=None):
+        fields = {k: v for k, v in dict(unit=unit, read_as=read_as).items() if v is not None}
+        return text(self.request('model_units', node=node, **fields))
 
     def tool_material_preview(self, recipe=None, material=None, radius=None, shape=None):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-material-{time.time_ns()}.png'
@@ -594,19 +725,18 @@ class Bridge:
     def tool_studio_render_all(self):
         return text(self.request('studio_preset', action='render_all'))
 
-    def tool_stop(self):
-        return text(self.request('stop'))
+    def tool_stop(self, job=None, all=None):
+        fields = {k: v for k, v in dict(job=job, all=all).items() if v is not None}
+        return text(self.request('stop', **fields))
 
     def tool_ui(self, **changes):
         return text(self.request('ui', **changes))
 
-    def tool_preferences(self, set=None, reset=None):
-        fields = {}
-        if set is not None:
-            fields['set'] = set
-        if reset is not None:
-            fields['reset'] = reset
-        return text(self.request('preferences', **fields))
+    def tool_preferences(self, set=None, reset=None, page=None, search=None):
+        # Briefly: every setting at once is nineteen thousand characters,
+        # and was the answer to changing one.
+        fields = {k: v for k, v in dict(set=set, reset=reset, page=page, search=search).items() if v is not None}
+        return text(self.request('preferences', brief=True, **fields))
 
     def tool_import(self, path, up=None, lighting=None):
         fields = {k: v for k, v in (('up', up), ('lighting', lighting)) if v}

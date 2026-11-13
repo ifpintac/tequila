@@ -141,8 +141,11 @@ pub enum Operation {
     /// the document's render settings, so it writes what the Render window
     /// would have written.
     Queue(QueueRender),
-    /// Stop the running background render. It still writes what it has.
-    Stop,
+    /// Stop the running background render: it still writes what it has.
+    /// With `job`, that one job - stopped if it is the one rendering, taken
+    /// out of the queue if it is still waiting. With `all`, the one
+    /// rendering and every job waiting behind it.
+    Stop { job: Option<u64>, all: bool },
     /// Put the camera somewhere precise.
     ///
     /// `frame` gets the model into view; this is for the shot itself: a
@@ -182,6 +185,23 @@ pub enum Operation {
     /// of a part that is a list. With nothing, what there is to read. The
     /// whole of it at once is `query context`, which is too long to read.
     Read { what: Option<String>, node: Option<u64>, index: Option<usize> },
+    /// `graph`: a material's node graph a node at a time, and the catalogue
+    /// of nodes there are (`crate::graph`): `action` is `catalogue`, `read`,
+    /// `add`, `set`, `connect`, `disconnect` or `remove`. Each change is one
+    /// step to undo. Carried as sent.
+    Graph(Value),
+    /// `uv`: a part's UV layout read island by island, and its seams cut
+    /// and stitched by where they are on the part (`crate::uv`): `action`
+    /// is `islands`, `cut` or `stitch`. Carried as sent.
+    Uv(Value),
+    /// `improve`: the parts at and under a `node` made finer (`subdivide`)
+    /// or shaded again (`shade`), as the Improve model window does
+    /// (`crate::model::improve`). Carried as sent.
+    Improve(Value),
+    /// `model_units`: the model a `node` belongs to, its numbers read in
+    /// another `unit`, as Units of this model does
+    /// (`crate::model::units`). Carried as sent.
+    ModelUnits(Value),
     /// `assistant`: the built-in Assistant - `ask` it something, as though
     /// typed and sent; `stop` it; `open` its panel. Answers with what it is
     /// doing. A script's to drive, not the Assistant's own or a remote
@@ -247,6 +267,8 @@ pub struct PluginRequest {
 ///
 /// - `guide`: how to write a recipe - its fields, every pattern with what
 ///   it looks like and its settings, the material types, and examples.
+///   All of it is some thirty thousand characters; with `topic`, one part
+///   of it (`contents` says which there are).
 /// - `create`: a new material from `recipe`, put on `nodes` (the selection
 ///   when empty; on nothing when both are). Answers with its id.
 /// - `update`: the material `material` remade from `recipe`, where it is.
@@ -275,6 +297,10 @@ pub struct MaterialRequest {
     pub shape: Option<String>,
     pub radius: Option<f32>,
     pub path: Option<String>,
+    /// For `guide`: one part of it, short enough to be read whole -
+    /// `contents`, `recipe`, `types`, `patterns`, a pattern's kind,
+    /// `examples` or an example's name. The whole guide when absent.
+    pub topic: Option<String>,
 }
 
 /// What a `new` or `open` request does: see [`Operation::Project`].
@@ -999,6 +1025,12 @@ pub struct QueueRender {
     pub studio: Option<String>,
     /// Every Studio, one render each, named for its view.
     pub studios: Option<bool>,
+    /// The animation's frames, one render each, the product turned to each
+    /// frame's angle: a turntable. `first` and `last` narrow it to some of
+    /// them; a frame whose file is already there is left out.
+    pub frames: Option<bool>,
+    pub first: Option<u32>,
+    pub last: Option<u32>,
 }
 
 /// Where to put the camera. Every field is optional and starts from where
@@ -1343,6 +1375,30 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 radius: radius.filter(|_| !round),
             }
         }
+        "graph" => {
+            let action = string(value, "action")?.trim().to_ascii_lowercase();
+            if !crate::graph::ACTIONS.contains(&action.as_str()) && action != "catalog" {
+                return Err(ProtocolError(format!("`{action}` is not something `graph` does; its actions are {}", crate::graph::ACTIONS.join(", "))));
+            }
+            Operation::Graph(value.clone())
+        }
+        "uv" => {
+            let action = opt_string(value, "action")?.unwrap_or_else(|| "islands".into()).trim().to_ascii_lowercase();
+            if !crate::uv::ACTIONS.contains(&action.as_str()) {
+                return Err(ProtocolError(format!("`{action}` is not something `uv` does; its actions are {}", crate::uv::ACTIONS.join(", "))));
+            }
+            opt_index(value, "node")?;
+            Operation::Uv(value.clone())
+        }
+        "improve" => {
+            opt_index(value, "node")?;
+            Operation::Improve(value.clone())
+        }
+        "model_units" => {
+            opt_index(value, "node")?;
+            opt_string(value, "unit")?;
+            Operation::ModelUnits(value.clone())
+        }
         "help" => Operation::Help { command: opt_string(value, "command")? },
         "guide" => Operation::Guide { topic: opt_string(value, "topic")? },
         "read" => Operation::Read {
@@ -1456,6 +1512,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 shape: opt_string(value, "shape")?,
                 radius: opt_number(value, "radius")?,
                 path: opt_string(value, "path")?,
+                topic: opt_string(value, "topic")?,
             };
             let needs = |field: &str, present: bool| {
                 if present {
@@ -1725,8 +1782,11 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 _ => opt_string(value, "studio")?,
             },
             studios: opt_bool(value, "studios")?,
+            frames: opt_bool(value, "frames")?,
+            first: opt_index(value, "first")?.map(|n| n as u32),
+            last: opt_index(value, "last")?.map(|n| n as u32),
         }),
-        "stop" => Operation::Stop,
+        "stop" => Operation::Stop { job: opt_index(value, "job")?.map(|id| id as u64), all: opt_bool(value, "all")?.unwrap_or(false) },
         "look" => Operation::Look(Look {
             view: opt_string(value, "view")?,
             from: opt_vector(value, "from")?,
@@ -1836,7 +1896,33 @@ impl Operation {
                 Some(name) => format!("queue render {name}"),
                 None => "queue render".into(),
             },
-            Operation::Stop => "stop render".into(),
+            Operation::Stop { all: true, .. } => "stop every render".into(),
+            Operation::Stop { job: Some(job), .. } => format!("stop render {job}"),
+            Operation::Stop { .. } => "stop render".into(),
+            Operation::Graph(request) => {
+                let action = request.get("action").and_then(Value::as_str).unwrap_or("");
+                match (action, request.get("material").and_then(Value::as_index)) {
+                    ("catalogue" | "catalog", _) => "graph: look up a node".into(),
+                    (_, Some(material)) => format!("graph {action}, material {material}"),
+                    _ => format!("graph {action}"),
+                }
+            }
+            Operation::Uv(request) => {
+                let action = request.get("action").and_then(Value::as_str).unwrap_or("islands");
+                match request.get("node").and_then(Value::as_index) {
+                    Some(node) => format!("uv {action}, part {node}"),
+                    None => format!("uv {action}"),
+                }
+            }
+            Operation::Improve(request) => match (request.get("subdivide"), request.get("shade")) {
+                (Some(_), _) => "subdivide a model".into(),
+                (_, Some(_)) => "shade a model again".into(),
+                _ => "what would improve a model".into(),
+            },
+            Operation::ModelUnits(request) => match request.get("unit").and_then(Value::as_str) {
+                Some(unit) => format!("read a model's numbers as {unit}"),
+                None => "a model's size in each unit".into(),
+            },
             Operation::Library(request) => match &request.name {
                 Some(name) => format!("library {} {name}", request.action),
                 None => format!("library {}", request.action),
@@ -2342,6 +2428,27 @@ mod control_tests {
 
         assert!(matches!(operation(r#"{"op":"help"}"#), Operation::Help { command: None }));
         assert!(matches!(operation(r#"{"op":"help","command":"scene.set_shape"}"#), Operation::Help { command: Some(c) } if c == "scene.set_shape"));
+        assert!(matches!(operation(r#"{"op":"graph","action":"catalogue","search":"noise"}"#), Operation::Graph(_)));
+        assert!(matches!(operation(r#"{"op":"graph","action":"add","material":3,"node":"bump"}"#), Operation::Graph(_)));
+        assert!(parse_request(r#"{"op":"graph","action":"paint","material":3}"#).unwrap_err().to_string().contains("actions are"));
+        assert!(parse_request(r#"{"op":"graph","material":3}"#).is_err(), "a graph request says what it does");
+        assert!(matches!(operation(r#"{"op":"uv","node":12}"#), Operation::Uv(_)), "the layout is read when nothing else is asked");
+        assert!(matches!(operation(r#"{"op":"uv","action":"cut","node":12,"sharper_than":40}"#), Operation::Uv(_)));
+        assert!(parse_request(r#"{"op":"uv","action":"fold","node":12}"#).is_err());
+        assert!(parse_request(r#"{"op":"uv","node":"twelve"}"#).is_err());
+        assert!(matches!(operation(r#"{"op":"improve","node":3,"subdivide":1}"#), Operation::Improve(_)));
+        assert!(matches!(operation(r#"{"op":"model_units","node":3,"unit":"mm"}"#), Operation::ModelUnits(_)));
+        assert!(matches!(operation(r#"{"op":"stop"}"#), Operation::Stop { job: None, all: false }));
+        assert!(matches!(operation(r#"{"op":"stop","job":7}"#), Operation::Stop { job: Some(7), all: false }));
+        assert!(matches!(operation(r#"{"op":"stop","all":true}"#), Operation::Stop { job: None, all: true }));
+        match operation(r#"{"op":"queue","frames":true,"first":2,"last":5}"#) {
+            Operation::Queue(job) => assert_eq!((job.frames, job.first, job.last), (Some(true), Some(2), Some(5))),
+            other => panic!("{other:?}"),
+        }
+        match operation(r#"{"op":"material","action":"guide","topic":"leather"}"#) {
+            Operation::Material(request) => assert_eq!(request.topic.as_deref(), Some("leather")),
+            other => panic!("{other:?}"),
+        }
         assert!(matches!(operation(r#"{"op":"guide"}"#), Operation::Guide { topic: None }));
         assert!(matches!(operation(r#"{"op":"guide","topic":"uv"}"#), Operation::Guide { topic: Some(t) } if t == "uv"));
         assert!(matches!(operation(r#"{"op":"read"}"#), Operation::Read { what: None, node: None, index: None }));

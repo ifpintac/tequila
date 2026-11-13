@@ -34,6 +34,7 @@ pub mod livelink;
 pub mod material;
 pub mod measure;
 pub mod metadata;
+pub mod model_size;
 pub mod occlusion;
 pub mod proximity;
 pub mod orbit;

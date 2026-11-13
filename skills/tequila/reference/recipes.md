@@ -2,7 +2,7 @@
 
 When nothing in the library fits - terrazzo in the brand's colours, a galaxy resin, worn paint, a camouflage, speckled plastic - make the material from a **recipe**: a short JSON object of a type, the parameters it changes, and patterns. Tequila builds the node graph from it. Search the library first (page `materials`): a preset changed a little nearly always beats a material from nothing.
 
-This page is enough to write recipes. `tequila_material_guide` is the long version (every pattern's defaults and 16 tested examples, about 30,000 characters): ask it only when a pattern here will not come right.
+This page is enough to write recipes. `tequila_material_guide` has the rest, a part at a time: `{"topic": "leather"}` one pattern's settings and defaults, `{"topic": "Terrazzo"}` one of 16 tested recipes, `{"topic": "examples"}` what they are.
 
 For a library preset in another colour you do not need a recipe at all: `tequila_material_tint` (page `materials`) recolours it in one step and keeps its pattern.
 
@@ -100,4 +100,4 @@ Red paint worn to bare steel (the same seed puts colour and metalness on the sam
   {"param": "specular_roughness", "procedural": {"kind": "noise_texture", "contrast": 2}, "size": 0.02, "range": [0.3, 0.5]}]}
 ```
 
-`tequila_material_guide` has the rest: terrazzo, Carrara and Nero Marquina marble, brushed aluminium, carbon fibre, pebbled leather, concrete, hammered copper, galaxy resin, soft-touch rubber, desert camo, oil-slick iridescence, grey felt and a speaker grille.
+`tequila_material_guide {"topic": "Walnut"}` has each of the rest, by its name: terrazzo, Carrara and Nero Marquina marble, brushed aluminium, carbon fibre, pebbled leather, concrete, hammered copper, galaxy resin, soft-touch rubber, desert camo, oil-slick iridescence, grey felt and a speaker grille.

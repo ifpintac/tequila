@@ -66,6 +66,9 @@ pub fn question(operation: &Operation, temporary: &Path) -> Option<Question> {
             if job.configurations == Some(true) {
                 detail.push("every configuration".to_string());
             }
+            if job.frames == Some(true) {
+                detail.push("every frame of the turntable".to_string());
+            }
             ask("Render to a file?", detail.join(", "))
         }
         Operation::Export { format, path, .. } => ask("Export the scene to a file?", format!("{path} ({format})")),

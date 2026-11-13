@@ -19,7 +19,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout", "add_shape", "help", "guide", "read"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout", "add_shape", "help", "guide", "read", "graph", "uv", "improve", "model_units"];
 /// The application's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const APP_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];
@@ -28,7 +28,7 @@ pub const APP_LIMITS: &str = "No embedded Python interpreter. Screenshot complet
 
 /// What a headless session (`tequila --serve`) answers: what needs only
 /// the document.
-pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout", "help", "guide", "read"];
+pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout", "help", "guide", "read", "graph", "uv", "improve", "model_units"];
 /// The headless session's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const HEADLESS_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];

@@ -341,6 +341,10 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             Err(error) => Reply::Failed(error),
         },
         Operation::Material(request) => material(app, request),
+        Operation::Graph(request) => shared(app, tequila_scripting::graph::request(request, app.project.document())),
+        Operation::Uv(request) => shared(app, tequila_scripting::uv::request(request, app.project.document())),
+        Operation::Improve(request) => shared(app, tequila_scripting::model::improve(request, app.project.document())),
+        Operation::ModelUnits(request) => shared(app, tequila_scripting::model::units(request, app.project.document())),
         Operation::Plugin(request) => plugin(app, request),
         Operation::Project { action, save: saving, discard } => project(app, action, *saving, *discard),
         Operation::Reimport { node, path, tessellation } => reimport(app, *node, path.as_deref(), tessellation.as_deref()),
@@ -466,20 +470,84 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
                 Err(message) => Reply::Failed(message),
             }
         }
-        Operation::Stop => {
-            if !app.batch.is_running() {
-                return Reply::Failed("nothing is rendering in the background".into());
-            }
-            app.batch.cancel();
-            let mut out = Object::new();
-            out.set("stopping", true).set(
-                "note",
-                "the render writes what it has; query jobs to see when its file is ready",
-            );
-            Reply::Value(out.build())
-        }
+        Operation::Stop { job, all } => stop(app, *job, *all),
         Operation::Look(look) => self::look(app, look),
     }
+}
+
+/// What one of the requests the application and a headless session answer
+/// alike came to (`tequila_scripting::graph`, `uv`, `model`): its commands
+/// carried out as one step to undo, or its answer as it is.
+fn shared(app: &mut TequilaApp, outcome: Result<tequila_scripting::document::LibraryOutcome, String>) -> Reply {
+    match outcome {
+        Ok(outcome) => carry_out(app, outcome),
+        Err(error) => Reply::Failed(error),
+    }
+}
+
+/// `stop`: the render that is running - it still writes what it has - or
+/// with `job` that one job, stopped if it is the one rendering and taken
+/// out of the queue if it is still waiting; with `all`, the one rendering
+/// and every job waiting behind it. Finished jobs are left in the list,
+/// and so with `all` are jobs put on hold.
+fn stop(app: &mut TequilaApp, job: Option<u64>, all: bool) -> Reply {
+    use tequila_scene::render::JobState;
+    let waiting = |state: JobState| matches!(state, JobState::Queued | JobState::Held);
+    let mut out = Object::new();
+    if all {
+        // Not a job the person has put on hold: that one was parked to
+        // be kept, and is theirs to let go.
+        let ids: Vec<u64> = app.project.queue().jobs().iter().filter(|job| job.state == JobState::Queued).map(|job| job.id).collect();
+        let running = app.batch.is_running();
+        if ids.is_empty() && !running {
+            return Reply::Failed("nothing is rendering in the background, and nothing is waiting to".into());
+        }
+        for id in &ids {
+            app.project.queue_mut().remove(*id);
+        }
+        if !ids.is_empty() {
+            app.project.save_queue();
+        }
+        if running {
+            app.batch.cancel();
+        }
+        out.set("stopping", running).set("removed", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>());
+        out.set("note", "the render that was running writes what it has; the jobs waiting behind it were taken out of the queue and write nothing");
+        return Reply::Value(out.build());
+    }
+    if let Some(id) = job {
+        let Some(state) = app.project.queue().get(id).map(|job| job.state) else {
+            return Reply::Failed(format!("there is no job {id}; query jobs lists them"));
+        };
+        return match state {
+            JobState::Rendering => {
+                app.batch.cancel();
+                out.set("stopping", true).set("job", id as f64).set("note", "the render writes what it has; query jobs to see when its file is ready");
+                Reply::Value(out.build())
+            }
+            state if waiting(state) => {
+                app.project.queue_mut().remove(id);
+                app.project.save_queue();
+                out.set("removed", vec![Value::from(id as f64)]).set("note", "it was waiting, and was taken out of the queue: it writes nothing");
+                Reply::Value(out.build())
+            }
+            _ => Reply::Failed(format!("job {id} has already finished")),
+        };
+    }
+    if !app.batch.is_running() {
+        return Reply::Failed("nothing is rendering in the background".into());
+    }
+    app.batch.cancel();
+    let waiting = app.project.queue().jobs().iter().filter(|job| waiting(job.state)).count();
+    out.set("stopping", true).set("waiting", waiting);
+    out.set(
+        "note",
+        match waiting {
+            0 => "the render writes what it has; query jobs to see when its file is ready",
+            _ => "the render writes what it has, and the jobs waiting behind it start: stop with all to end those too",
+        },
+    );
+    Reply::Value(out.build())
 }
 
 /// The built-in Assistant, from a script: `open` its panel, `stop` it, `ask`
@@ -1390,6 +1458,36 @@ fn queue(app: &mut TequilaApp, job: &tequila_scripting::protocol::QueueRender) -
             .set("samples", samples as f64)
             .set("folder", folder.display().to_string())
             .set("note", "the Snapshot is captured now and the scene left as it was; query jobs for progress and the file");
+        return Reply::Value(out.build());
+    }
+    if job.frames == Some(true) {
+        let Some(animation) = app.project.document().animation.clone() else {
+            return Reply::Failed("there is no animation to render; set a turntable up first with animation.set".into());
+        };
+        if job.camera.is_some() {
+            return Reply::Failed("a turntable is rendered from the active camera; select the camera first (camera.select)".into());
+        }
+        let (first, last) = (job.first.unwrap_or(0), job.last.unwrap_or(u32::MAX));
+        let total = animation.range(first, last).count();
+        if total == 0 {
+            return Reply::Failed(format!("the animation has no frames from {first} to {last}"));
+        }
+        let folder = crate::render_window::output_directory(&settings, app.project.path.as_deref());
+        let (width, height, samples) = (settings.width, settings.height, settings.max_samples);
+        let window_was_open = app.render_window.open;
+        let ids = app.queue_frames(first, last, Some(settings));
+        // The window's button opens the Render window; a script's request
+        // leaves the windows as they were.
+        app.render_window.open = window_was_open;
+        let mut out = Object::new();
+        out.set("jobs", ids.iter().map(|&id| Value::from(id as f64)).collect::<Vec<_>>())
+            .set("count", ids.len() as f64)
+            .set("already_rendered", (total - ids.len()) as f64)
+            .set("width", width as f64)
+            .set("height", height as f64)
+            .set("samples", samples as f64)
+            .set("folder", folder.display().to_string())
+            .set("note", "one job a frame, the product turned to each frame's angle and captured now, the scene left as it was; a frame whose file is already in the folder is left out. query jobs for progress; stop with all ends the turntable early");
         return Reply::Value(out.build());
     }
     if job.configurations == Some(true) {
@@ -2944,6 +3042,125 @@ mod handler_tests {
         value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"scene.set_shape","node":{id},"mesh":{},"shape":{{"shape":"cylinder","width":0.3,"height":0.4}}}}}}"#, second.0));
         let third = mesh_of(&app);
         assert!(third != second && third != first, "reshaped under a mesh in use");
+    }
+
+    /// The jobs the window alone could do, over the channel: a material's
+    /// graph changed a node at a time, each a step to undo; a part's layout
+    /// read island by island; a model subdivided, and its numbers read in
+    /// another unit.
+    #[test]
+    fn a_script_edits_a_graph_reads_a_layout_and_improves_a_model() {
+        let mut app = TequilaApp::for_tests();
+        let materials = value(&mut app, r#"{"op":"query","what":"materials"}"#);
+        let material = materials.get("materials").unwrap().as_array()[0].get("id").and_then(Value::as_index).unwrap();
+        let depth = app.project.bus().depth();
+        let added = value(&mut app, &format!(r#"{{"op":"graph","action":"add","material":{material},"node":"noise_texture","inputs":{{"Scale":80}}}}"#));
+        let noise = added.get("added").and_then(Value::as_index).unwrap();
+        let wired = value(&mut app, &format!(r#"{{"op":"graph","action":"connect","material":{material},"from":{noise},"output":"Fac","input":"specular_roughness"}}"#));
+        assert_eq!(wired.get("connected").and_then(Value::as_str), Some(format!("{noise}.Fac > surface.specular_roughness").as_str()));
+        assert_eq!(app.project.bus().depth(), depth + 2, "each edit is a step of its own");
+        let read = value(&mut app, &format!(r#"{{"op":"graph","action":"read","material":{material}}}"#));
+        assert_eq!(read.get("driven").unwrap().as_array()[0].as_str(), Some("specular_roughness"));
+        value(&mut app, r#"{"op":"undo"}"#);
+        let read = value(&mut app, &format!(r#"{{"op":"graph","action":"read","material":{material}}}"#));
+        assert!(read.get("driven").unwrap().as_array().is_empty(), "one undo took the wire off and left the node");
+        assert_eq!(read.get("count").and_then(Value::as_index), Some(1));
+        // In a batch they are the batch's one step, and a wrong one takes
+        // the others back with it.
+        let message = failure(&mut app, &format!(r#"{{"op":"batch","ops":[{{"op":"graph","action":"add","material":{material},"node":"gradient"}},{{"op":"graph","action":"remove","material":{material},"node":99}}]}}"#));
+        assert!(message.contains("no node 99") && message.contains("taken back"), "{message}");
+        assert!(value(&mut app, r#"{"op":"graph","action":"catalogue","search":"leather"}"#).get("count").and_then(Value::as_index).unwrap() >= 1);
+
+        let nodes = value(&mut app, r#"{"op":"query","what":"nodes"}"#);
+        let part = nodes.get("nodes").unwrap().as_array().iter().find(|n| n.get("kind").and_then(Value::as_str) == Some("part")).and_then(|n| n.get("id")).and_then(Value::as_index).unwrap();
+        value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"scene.unwrap_uvs","node":{part}}}}}"#));
+        let layout = value(&mut app, &format!(r#"{{"op":"uv","node":{part}}}"#));
+        let islands = layout.get("islands").and_then(Value::as_index).unwrap();
+        assert!(islands >= 1 && layout.get("list").unwrap().as_array()[0].get("centre").is_some(), "{layout:?}");
+        // A cut along every sharp edge of a ball finds none, and says so.
+        assert!(failure(&mut app, &format!(r#"{{"op":"uv","action":"cut","node":{part},"sharper_than":80}}"#)).contains("nothing to cut"));
+
+        let was = value(&mut app, &format!(r#"{{"op":"improve","node":{part}}}"#)).get("triangles_before").and_then(Value::as_index).unwrap();
+        let finer = value(&mut app, &format!(r#"{{"op":"improve","node":{part},"subdivide":1}}"#));
+        assert_eq!(finer.get("triangles_after").and_then(Value::as_index), Some(was * 4));
+        value(&mut app, r#"{"op":"undo"}"#);
+        let sized = value(&mut app, &format!(r#"{{"op":"model_units","node":{part},"unit":"cm"}}"#));
+        assert!((sized.get("scaled_by").and_then(Value::as_f64).unwrap() - 0.01).abs() < 1e-9);
+        value(&mut app, r#"{"op":"undo"}"#);
+    }
+
+    /// A turntable's frames are queued over the channel, one job a frame,
+    /// and a queue is emptied by one request: the job named, or all.
+    #[test]
+    fn a_script_queues_a_turntable_and_stops_what_is_waiting() {
+        let mut app = TequilaApp::for_tests();
+        let directory = std::env::temp_dir().join(format!("tequila-channel-frames-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let folder = directory.display().to_string().replace('\\', "/");
+        assert!(failure(&mut app, r#"{"op":"queue","frames":true}"#).contains("animation.set"));
+        app.project
+            .apply(tequila_scene::Command::SetAnimation { animation: Some(Box::new(tequila_scene::animation::Animation::turntable(4, 24.0, 360.0))) })
+            .unwrap();
+        let before = app.project.document().product_turn;
+        let window = app.render_window.open;
+        let queued = value(&mut app, &format!(r#"{{"op":"queue","frames":true,"folder":"{folder}","filename":"turn","width":64,"height":48,"samples":1}}"#));
+        assert_eq!(queued.get("count").and_then(Value::as_index), Some(4), "{queued:?}");
+        assert_eq!(queued.get("already_rendered").and_then(Value::as_index), Some(0));
+        assert_eq!(app.project.document().product_turn, before, "queueing left the product turned");
+        assert_eq!(app.render_window.open, window, "a script's request opened the Render window");
+        let ids: Vec<u64> = queued.get("jobs").unwrap().as_array().iter().map(|id| id.as_f64().unwrap() as u64).collect();
+        // Some of them, by their numbers.
+        let some = value(&mut app, &format!(r#"{{"op":"queue","frames":true,"first":1,"last":2,"folder":"{folder}","filename":"turn","width":64,"height":48,"samples":1}}"#));
+        assert_eq!(some.get("count").and_then(Value::as_index), Some(2));
+
+        // One that is waiting is taken out; the rest stay.
+        let waiting = |app: &TequilaApp| app.project.queue().jobs().iter().filter(|job| job.state == tequila_scene::render::JobState::Queued).count();
+        let last = *ids.last().unwrap();
+        let state = app.project.queue().get(last).map(|job| job.state);
+        if state == Some(tequila_scene::render::JobState::Queued) {
+            let had = waiting(&app);
+            let stopped = value(&mut app, &format!(r#"{{"op":"stop","job":{last}}}"#));
+            assert_eq!(stopped.get("removed").unwrap().as_array()[0].as_f64(), Some(last as f64));
+            assert_eq!(waiting(&app), had - 1);
+            assert!(app.project.queue().get(last).is_none());
+        }
+        assert!(failure(&mut app, r#"{"op":"stop","job":99999}"#).contains("no job 99999"));
+        let all = value(&mut app, r#"{"op":"stop","all":true}"#);
+        assert!(!all.get("removed").unwrap().as_array().is_empty());
+        assert_eq!(waiting(&app), 0, "nothing is left waiting");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// Preferences are read a page at a time, and a change answers with
+    /// what changed: the whole list, which a script still gets by asking
+    /// for nothing, is too long for an assistant to read.
+    #[test]
+    fn preferences_are_read_a_page_at_a_time() {
+        let mut app = TequilaApp::for_tests();
+        let length = |value: &Value| tequila_scripting::client::one_line(value).len();
+        let whole = value(&mut app, r#"{"op":"preferences"}"#);
+        assert!(whole.get("settings").is_some() && whole.get("shortcuts").is_some());
+        let pages = value(&mut app, r#"{"op":"preferences","brief":true}"#);
+        let listed = pages.get("pages").unwrap().as_array();
+        assert!(listed.len() >= 8 && length(&pages) < 2_000, "{} characters", length(&pages));
+        let mut counted = 0;
+        for page in listed {
+            let name = page.get("page").and_then(Value::as_str).unwrap();
+            let one = value(&mut app, &format!(r#"{{"op":"preferences","brief":true,"page":"{name}"}}"#));
+            assert!(length(&one) < 12_000, "page {name} is {} characters", length(&one));
+            assert_eq!(one.get("count").and_then(Value::as_index), page.get("settings").and_then(Value::as_index), "{name}");
+            counted += one.get("count").and_then(Value::as_index).unwrap();
+        }
+        assert_eq!(counted, whole.get("settings").unwrap().as_array().len() + whole.get("shortcuts").unwrap().as_array().len(), "every setting is on a page");
+        let found = value(&mut app, r#"{"op":"preferences","brief":true,"search":"zoom speed"}"#);
+        assert!(found.get("settings").unwrap().as_array().iter().any(|s| s.get("key").and_then(Value::as_str) == Some("navigation.zoom_speed")));
+        let changed = value(&mut app, r#"{"op":"preferences","brief":true,"set":{"navigation.zoom_speed":2}}"#);
+        assert!(length(&changed) < 300, "{changed:?}");
+        let now = &changed.get("changed").unwrap().as_array()[0];
+        assert_eq!((now.get("key").and_then(Value::as_str), now.get("value").and_then(Value::as_f64)), (Some("navigation.zoom_speed"), Some(2.0)));
+        let reset = value(&mut app, r#"{"op":"preferences","brief":true,"reset":"navigation.zoom_speed"}"#);
+        assert_eq!(reset.get("changed").unwrap().as_array().len(), 1);
+        assert!(failure(&mut app, r#"{"op":"preferences","page":"colours"}"#).contains("`page` is one of"));
     }
 
     /// The library searched, a command looked up, and whether the picture

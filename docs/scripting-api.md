@@ -79,6 +79,10 @@ the document; what needs the window is refused by name.
 | `help` | yes | yes |
 | `guide` | yes | yes |
 | `read` | yes | yes |
+| `graph` | yes | yes |
+| `uv` | yes | yes |
+| `improve` | yes | yes |
+| `model_units` | yes | yes |
 
 Queries (`{"op":"query","what":...}`): `api`, `context`, `scene`, `nodes`, `materials`, `selection`, `camera`, `commands`, `ui`, `jobs`, `history`, `library`; a headless session answers all but `ui` and `jobs`.
 

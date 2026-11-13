@@ -40,7 +40,10 @@ pub fn material_request(
     user: &Path,
 ) -> Result<LibraryOutcome, String> {
     match request.action.as_str() {
-        "guide" => Ok(LibraryOutcome::Done(guide())),
+        "guide" => match request.topic.as_deref() {
+            None => Ok(LibraryOutcome::Done(guide())),
+            Some(topic) => guide_topic(topic).map(LibraryOutcome::Done),
+        },
         "create" => create(request, document, selection),
         "update" => update(request, document),
         "recipe" => {
@@ -363,9 +366,147 @@ pub fn guide() -> Value {
     guide
 }
 
+/// The longest a part of the guide may be: what is read whole.
+pub const GUIDE_TOPIC_LIMIT: usize = 8_000;
+
+/// One part of the guide, for a reader that skips an answer of thirty
+/// thousand characters: `contents` (how to work, and what parts there
+/// are), `recipe` (a recipe's fields, the tips, the parameters that
+/// matter), `types` (each in a line), one type by its id (the parameters
+/// it shows), `patterns` (each in a line), one pattern by its kind (its
+/// settings and defaults), `examples` (each in a line) and one example by
+/// its name (the recipe).
+pub fn guide_topic(topic: &str) -> Result<Value, String> {
+    let guide = guide();
+    let wanted = topic.trim().to_lowercase();
+    let part = |key: &str| guide.get(key).cloned().unwrap_or(Value::Null);
+    let patterns = guide.get("patterns").map(Value::as_array).unwrap_or(&[]);
+    let examples = guide.get("examples").map(Value::as_array).unwrap_or(&[]);
+    let types = guide.get("types").map(Value::as_array).unwrap_or(&[]);
+    let example_name = |example: &Value| example.get("recipe").and_then(|r| r.get("name")).and_then(Value::as_str).unwrap_or("").to_string();
+    let mut out = Object::new();
+    match wanted.as_str() {
+        "contents" | "" => {
+            let mut topics = Object::new();
+            topics
+                .set("recipe", "A recipe's fields, a pattern's fields, the rules of thumb and the parameters that matter. Read before writing a first recipe.")
+                .set("types", "Every material type, by its id.")
+                .set("<a type's id>", "The parameters that type shows. E.g. plastic, metal, glass, velvet.")
+                .set("patterns", "Every pattern in a line: what it looks like and what it is good for.")
+                .set("<a pattern's kind>", "One pattern whole: its settings and its defaults. E.g. leather, weave, wood_advanced.")
+                .set("examples", "The tested example recipes, each in a line.")
+                .set("<an example's name>", "One example's recipe, to change and preview. E.g. Terrazzo, Walnut.");
+            out.set("summary", part("summary")).set("workflow", part("workflow")).set("topics", topics.build());
+            out.set("patterns", Value::Array(patterns.iter().filter_map(|p| p.get("kind").cloned()).collect()));
+            out.set("examples", Value::Array(examples.iter().map(|e| Value::String(example_name(e))).collect()));
+        }
+        "recipe" => {
+            out.set("recipe", part("recipe")).set("pattern", part("pattern")).set("tips", part("tips")).set("parameters", part("parameters"));
+        }
+        "types" => {
+            let lines: Vec<Value> = types
+                .iter()
+                .map(|kind| {
+                    let mut line = Object::new();
+                    line.set_some("id", kind.get("id").cloned()).set_some("label", kind.get("label").cloned());
+                    line.build()
+                })
+                .collect();
+            out.set("types", Value::Array(lines)).set("note", "A recipe's `type` is one of these ids. Ask for one by its id for the parameters it shows.");
+        }
+        "patterns" => {
+            let lines: Vec<Value> = patterns
+                .iter()
+                .map(|pattern| {
+                    let mut line = Object::new();
+                    for key in ["kind", "looks_like", "good_for"] {
+                        line.set_some(key, pattern.get(key).cloned());
+                    }
+                    line.build()
+                })
+                .collect();
+            out.set("patterns", Value::Array(lines)).set("note", "Ask for one by its kind for its settings and defaults.");
+        }
+        "examples" => {
+            let lines: Vec<Value> = examples
+                .iter()
+                .map(|example| {
+                    let mut line = Object::new();
+                    line.set("name", example_name(example)).set_some("idea", example.get("idea").cloned());
+                    line.build()
+                })
+                .collect();
+            out.set("examples", Value::Array(lines)).set("note", "Ask for one by its name for the recipe.");
+        }
+        other => {
+            if let Some(pattern) = patterns.iter().find(|p| p.get("kind").and_then(Value::as_str) == Some(other)) {
+                return Ok(pattern.clone());
+            }
+            if let Some(example) = examples.iter().find(|e| example_name(e).to_lowercase() == other) {
+                return Ok(example.clone());
+            }
+            if let Some(kind) = types.iter().find(|t| t.get("id").and_then(Value::as_str) == Some(other)) {
+                return Ok(kind.clone());
+            }
+            let kinds: Vec<&str> = patterns.iter().filter_map(|p| p.get("kind").and_then(Value::as_str)).collect();
+            let names: Vec<String> = examples.iter().map(example_name).collect();
+            return Err(format!(
+                "the material guide has no part `{topic}`; its parts are contents, recipe, types, patterns, examples, a type's id, a pattern's kind ({}) or an example's name ({})",
+                kinds.join(", "),
+                names.join(", ")
+            ));
+        }
+    }
+    Ok(out.build())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every part of the guide is short enough to be read whole, and
+    /// between them they are the whole guide: nothing in it is only in
+    /// the long answer.
+    #[test]
+    fn the_guide_is_read_a_part_at_a_time() {
+        let whole = guide();
+        let mut topics: Vec<String> = ["contents", "recipe", "types", "patterns", "examples"].iter().map(|t| t.to_string()).collect();
+        topics.extend(whole.get("patterns").map(Value::as_array).unwrap().iter().filter_map(|p| p.get("kind").and_then(Value::as_str).map(str::to_string)));
+        topics.extend(whole.get("examples").map(Value::as_array).unwrap().iter().filter_map(|e| e.get("recipe")?.get("name")?.as_str().map(str::to_string)));
+        topics.extend(whole.get("types").map(Value::as_array).unwrap().iter().filter_map(|t| t.get("id").and_then(Value::as_str).map(str::to_string)));
+        // A name is one thing: no type is called what a pattern or an
+        // example is.
+        let lower: Vec<String> = topics.iter().map(|t| t.to_lowercase()).collect();
+        for (i, topic) in lower.iter().enumerate() {
+            assert!(!lower[..i].contains(topic), "two parts of the guide are called `{topic}`");
+        }
+        let mut said = String::new();
+        for topic in &topics {
+            let part = tequila_format::json_write::to_string(&guide_topic(topic).unwrap_or_else(|e| panic!("{topic}: {e}")));
+            assert!(part.len() < GUIDE_TOPIC_LIMIT, "`{topic}` is {} characters", part.len());
+            said.push_str(&part);
+        }
+        // Every string the whole guide holds is in one part or another.
+        fn strings(value: &Value, out: &mut Vec<String>) {
+            match value {
+                Value::String(text) => out.push(text.clone()),
+                Value::Array(items) => items.iter().for_each(|item| strings(item, out)),
+                Value::Object(fields) => fields.values().for_each(|field| strings(field, out)),
+                _ => {}
+            }
+        }
+        let mut all = Vec::new();
+        strings(&whole, &mut all);
+        for text in all {
+            let written = tequila_format::json_write::to_string(&Value::String(text.clone()));
+            assert!(said.contains(written.trim()), "no part of the guide says {text:?}");
+        }
+        // By an example's name however it is cased, and a wrong one says
+        // what there is.
+        assert!(guide_topic("terrazzo").unwrap().get("recipe").is_some());
+        assert!(guide_topic(" Leather ").unwrap().get("defaults").is_some());
+        assert!(guide_topic("granit").unwrap_err().contains("granite"));
+    }
 
     /// Every example in the guide reads and compiles, and every pattern the
     /// catalogue has is described there, and nothing else.
