@@ -30,10 +30,16 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}},
  {"name":"tequila_api","description":"The command catalog, every material parameter (key, kind, range) and every material type. Call once before editing materials, to use exact names.",
   "schema":{"type":"object","properties":{}}},
- {"name":"tequila_query","description":"A read-only query: selection, camera, commands, ui, jobs, history, or library - every material preset in the person's library, by name, category, tags and type.",
-  "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history","library"]}},"required":["what"]}},
- {"name":"tequila_library_apply","description":"Put a preset from the material library on parts, by the preset's exact name from tequila_query library. unlink=true gives the parts a copy of their own. Undoable. Prefer this to making a material when a preset fits.",
+ {"name":"tequila_query","description":"A read-only query: selection, camera, commands, ui, jobs or history.",
+  "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history"]}},"required":["what"]}},
+ {"name":"tequila_library","description":"Search the material library: several hundred finished presets. LOOK HERE FIRST for any material, before making one. With no arguments it lists the categories. search takes words that must all match the name, category, type, tags or description (\"black leather\", \"brushed aluminium\"); category narrows to one. Answers with name, category, type and a line about each: the name is what tequila_library_apply takes.",
+  "schema":{"type":"object","properties":{"search":{"type":"string"},"category":{"type":"string"},"limit":{"type":"integer"}}}},
+ {"name":"tequila_library_apply","description":"Put a preset from the material library on parts, by its exact name from tequila_library. unlink=true gives the parts a copy of their own. Undoable.",
   "schema":{"type":"object","properties":{"name":{"type":"string"},"nodes":{"type":"array","items":{"type":"integer"}},"unlink":{"type":"boolean"}},"required":["name","nodes"]}},
+ {"name":"tequila_command","description":"How to write one command for tequila_apply: its exact fields and a working example. With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields: a field that is not in the example is not read.",
+  "schema":{"type":"object","properties":{"command":{"type":"string"}}}},
+ {"name":"tequila_add_shape","description":"Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall, beside what is in the scene and on the floor. Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). Undoable. Answers with the new part's id.",
+  "schema":{"type":"object","properties":{"shape":{"type":"string","enum":["plane","cube","cylinder","sphere","disc","backdrop","wall"]},"width":{"type":"number"},"depth":{"type":"number"},"height":{"type":"number"},"radius":{"type":"number"}},"required":["shape"]}},
  {"name":"tequila_apply","description":"Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"} or {\"command\":\"material.set_parameter\",\"material\":2,\"parameter\":\"base_color\",\"value\":[0.1,0.1,0.12]}. Materials can be shared: use material.unlink on a part before changing its material alone. Colours: send a hex sRGB string (\"value\":\"#c0392b\") and it is converted for you; an array is linear RGB 0-1 in the rendering space, ACEScg, used as given.",
   "schema":{"type":"object","properties":{"command":{"type":"object","description":"A command: {\"command\":\"<name>\", ...fields}"}},"required":["command"]}},
  {"name":"tequila_batch","description":"Several operations as ONE undo step; if one fails, none of them stay. Each is an object with an \"op\": apply (with \"command\"), select (\"nodes\"), frame (\"all\"), look, ui. Prefer this for more than one edit.",
@@ -181,7 +187,7 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         "tequila_api" => raw(query("api")),
         "tequila_query" => {
             let what = arguments.get("what").and_then(|v| v.as_str()).ok_or("say what to query")?;
-            if !["selection", "camera", "commands", "ui", "jobs", "history", "library"].contains(&what) {
+            if !["selection", "camera", "commands", "ui", "jobs", "history"].contains(&what) {
                 return Err(format!("`{what}` is not one of the queries this tool offers"));
             }
             raw(query(what))
@@ -222,8 +228,14 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
             raw(with("import", pick(arguments, &["path", "up"])))
         }
         "tequila_preferences" => raw(with("preferences", pick(arguments, &["set", "reset"]))),
+        "tequila_library" => raw(with("library", [("action".to_string(), text("search"))].into_iter().chain(pick(arguments, &["search", "category", "limit"])).collect())),
+        "tequila_command" => raw(with("help", pick(arguments, &["command"]))),
+        "tequila_add_shape" => {
+            arguments.get("shape").and_then(|v| v.as_str()).ok_or("say which shape: plane, cube, cylinder, sphere, disc, backdrop or wall")?;
+            raw(with("add_shape", pick(arguments, &["shape", "width", "diameter", "depth", "height", "radius"])))
+        }
         "tequila_library_apply" => {
-            arguments.get("name").and_then(|v| v.as_str()).ok_or("say which preset: its name, from tequila_query library")?;
+            arguments.get("name").and_then(|v| v.as_str()).ok_or("say which preset: its name, from tequila_library")?;
             raw(with("library", [("action".to_string(), text("apply"))].into_iter().chain(pick(arguments, &["name", "nodes", "unlink"])).collect()))
         }
         "tequila_material_guide" => raw(with("material", vec![("action".into(), text("guide"))])),
@@ -388,14 +400,18 @@ The person asks in plain language for scenes, materials, textures, lighting and 
 
 How to work:
 - Look before you change: tequila_scene, then tequila_nodes (filter by a word) to find parts by name, material or size. Never guess ids.
-- Call tequila_api once before editing materials, and use its exact parameter keys and material type ids. Its command_examples has an example of every command: copy one, then change the ids, keys and values (the ones in it are placeholders).
+- For any material, look in the library first: tequila_library searches several hundred finished presets, and tequila_library_apply puts one on parts. Make one yourself only when nothing there is close, or change a preset once it is on a part.
+- Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example is not read. Change the ids, keys and values (the ones in the example are placeholders).
+- Call tequila_api once before editing a material's parameters, and use its exact parameter keys and material type ids.
+- A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape.
+- If something looks wrong, check the simple causes first with tequila_nodes - is the part hidden, is it where you think - and whether the screenshot said the picture had finished.
 - For patterns (noise, granite, leather, weave, perforated mesh and the rest), copy an entry from tequila_api's procedurals list into material.set_procedural with a param and a seed, and change its fields. On a colour parameter a ramp is added between them.
 - Materials can be shared by many parts. To change one part without the others, apply material.unlink to that part first, then read its new material id from tequila_nodes.
 - Put several edits in one tequila_batch: it is one undo step for the person, and if anything fails none of it stays.
 - Check your work: switch the viewport to rendered (tequila_ui viewport=rendered) and take a tequila_screenshot. Judge the picture, and fix what is wrong.
 - Units are metres; +Y is up. Give colours as hex sRGB strings (\"#c0392b\"): Tequila converts them into ACEScg, the rendering space. An array is taken as linear ACEScg as it is. Sizes are real: glass reaches its colour over its transmission depth in metres and pattern frequencies are per metre, so check a part's size in tequila_nodes before tuning either.
 - A liquid in a glass container is modelled a fraction of a millimetre into the glass wall; the Liquid type's higher priority makes it the medium there.
-- For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Prefer a library preset when one fits: tequila_query library lists them, tequila_library_apply puts one on parts.
+- For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Only when tequila_library has nothing close.
 - To add to Tequila itself - a panel, a button, something done on every import - write a plugin: tequila_plugin_guide once, then tequila_plugin_write. The person turns it on in Tequila (tequila_plugin_enable asks them, and so does every change you make to one that is on); then tequila_plugin_run tries it and shows its log. Only when asked for one.
 - For a whole studio at once - lights, cameras and views, floor and look for a kind of product - list tequila_studio_presets and apply the suggested size with tequila_studio_preset_apply (one undo step). tequila_studio_render_all renders every view, only when asked for renders.
 - Only render (tequila_queue), save (tequila_save), import (tequila_import) or change a preference (tequila_preferences) when asked to.
@@ -441,6 +457,7 @@ mod tests {
                 "tequila_studio_preset_save" => args(r#"{"name":"Mine"}"#),
                 "tequila_import" => args(r#"{"path":"model.glb"}"#),
                 "tequila_library_apply" => args(r#"{"name":"Brushed Aluminium","nodes":[1]}"#),
+                "tequila_add_shape" => args(r#"{"shape":"cylinder","width":0.3,"height":0.15}"#),
                 _ => args("{}"),
             };
             plan(&tool.name, &arguments).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
@@ -510,7 +527,16 @@ mod tests {
         assert!(set.get("set").is_some());
         let preset = request("tequila_library_apply", r#"{"name":"Brushed Aluminium","nodes":[4],"unlink":true}"#);
         assert_eq!((preset.get("op").and_then(Value::as_str), preset.get("action").and_then(Value::as_str)), (Some("library"), Some("apply")));
-        assert!(plan("tequila_query", &args(r#"{"what":"library"}"#)).is_ok());
+        // The library is searched, not handed over whole; a command is
+        // looked up by its name; a shape is added by its own request.
+        let search = request("tequila_library", r#"{"search":"black leather","limit":5,"path":"/elsewhere"}"#);
+        assert_eq!((search.get("op").and_then(Value::as_str), search.get("action").and_then(Value::as_str), search.get("search").and_then(Value::as_str)), (Some("library"), Some("search"), Some("black leather")));
+        assert!(search.get("path").is_none());
+        assert_eq!(request("tequila_command", r#"{"command":"scene.set_visibility"}"#).get("op").and_then(Value::as_str), Some("help"));
+        let shape = request("tequila_add_shape", r#"{"shape":"cylinder","width":0.3,"height":0.15}"#);
+        assert_eq!((shape.get("op").and_then(Value::as_str), shape.get("width").and_then(Value::as_f64)), (Some("add_shape"), Some(0.3)));
+        assert!(plan("tequila_add_shape", &args("{}")).is_err());
+        assert!(SYSTEM.contains("look in the library first") && SYSTEM.contains("tequila_command"));
     }
 
     #[test]

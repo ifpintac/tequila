@@ -36,11 +36,17 @@ INSTRUCTIONS = (
     'Tequila is a product-rendering application open on this computer, and these tools are the way to work in it: '
     'use them, not screenshots of the desktop, mouse clicks or any computer-use control - they are exact, fast and undoable. '
     'Start with tequila_scene, then tequila_nodes to find parts by name, material or size. '
+    'For any material, look in the library first: tequila_library searches several hundred finished presets '
+    '(leather, fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. '
+    'Make a material yourself only when the library has nothing close - tequila_material_guide, tequila_material_preview, '
+    'then tequila_material_create and tequila_material_update - or change a preset once it is on a part. '
     'Materials may be shared between parts: unlink a part (material.unlink) before changing it alone. '
+    'Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. '
+    'Never guess a field name; a field that is not in the example is not read. '
     'Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. '
-    'Look at your work with tequila_screenshot (viewport=true for just the picture). '
-    'For a material of your own, read tequila_material_guide, try recipes with tequila_material_preview, '
-    'then tequila_material_create and refine with tequila_material_update. '
+    'A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. '
+    'Look at your work with tequila_screenshot: it waits for the picture to finish and says whether it had. '
+    'If something looks wrong, first check the simple causes with tequila_nodes: is the part hidden, is it where you think. '
     'To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then '
     'tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. '
     'Every command is undoable, and the person watching sees each request in Tequila\'s console.'
@@ -67,12 +73,36 @@ TOOLS = [
     tool('tequila_nodes', 'Parts and groups: id, name, material and world size. Filter by a word in the name or material name to keep the answer short.',
          {'filter': {'type': 'string', 'description': 'Only nodes whose name or material name contains this (case-insensitive).'},
           'parts_only': {'type': 'boolean'}}),
-    tool('tequila_materials', 'Every material: id, type, how many parts use it, parameters and texture maps.'),
+    tool('tequila_materials', 'Every material in the scene, briefly: id, name, type, how many parts use it and how many texture maps it has. tequila_material gives one in full.'),
+    tool('tequila_material', 'One material of the scene in full: every parameter, pattern and texture map.',
+         {'id': {'type': 'integer', 'description': 'The material\'s id, from tequila_materials or tequila_nodes.'}},
+         ['id']),
+    tool('tequila_library', 'Search the material library: several hundred finished presets. LOOK HERE FIRST for any material, before making one. '
+         'With no arguments it lists the categories and how many presets each has. search takes words that must all match the name, category, type, tags or description '
+         '("black leather", "brushed aluminium", "translucent ripstop"); category narrows to one. Answers with name, category, type and a line about each: the name is what tequila_library_apply takes.',
+         {'search': {'type': 'string', 'description': 'Words to look for: a colour, a finish, what it is made of.'},
+          'category': {'type': 'string', 'description': 'One category, as the list with no arguments names them.'},
+          'limit': {'type': 'integer', 'description': 'How many presets to answer with at most (default 20).'}}),
+    tool('tequila_library_apply', 'Put a library preset on parts, by its exact name from tequila_library. One undo step. '
+         'unlink=true gives the parts a copy of their own, to change without changing the other parts that use the preset. '
+         'To change its colour afterwards, read it with tequila_material: a preset that sets its colour by a pattern needs the pattern\'s colours changed (tequila_material_recipe, then tequila_material_update), not base_color.',
+         {'name': {'type': 'string'},
+          'nodes': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Part ids to put it on; the selection when left out.'},
+          'unlink': {'type': 'boolean'}},
+         ['name']),
+    tool('tequila_command', 'How to write one command for tequila_apply: its exact fields and a working example, and for a setting-by-name command the names it takes. '
+         'With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields.',
+         {'command': {'type': 'string', 'description': 'A command\'s name, e.g. "scene.set_visibility" or "environment.set_parameter".'}}),
+    tool('tequila_add_shape', 'Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall. It stands beside what is in the scene, on the floor, half its size unless sizes are given. '
+         'Sizes are metres: width (a cylinder\'s, sphere\'s and disc\'s diameter), depth, height, radius (half a round shape\'s width; a backdrop\'s curve). One undo step. Answers with the new part\'s id and its sizes.',
+         {'shape': {'type': 'string', 'enum': ['plane', 'cube', 'cylinder', 'sphere', 'disc', 'backdrop', 'wall']},
+          'width': {'type': 'number'}, 'depth': {'type': 'number'}, 'height': {'type': 'number'}, 'radius': {'type': 'number'}},
+         ['shape']),
     tool('tequila_query', 'Any read-only query.',
          {'what': {'type': 'string', 'enum': ['api', 'context', 'scene', 'nodes', 'materials', 'selection', 'camera', 'commands', 'ui', 'jobs', 'history', 'library']}},
          ['what']),
     tool('tequila_apply', 'Apply one command, e.g. {"command":"material.set_type","material":2,"type":"velvet"}. '
-         'tequila_query what=commands lists them; what=api describes material parameters and types. One undo step.'
+         'tequila_command gives any command\'s exact fields and an example: ask it first. tequila_query what=api describes material parameters and types. One undo step.'
          ' Colours may be hex sRGB strings ("value": "#c0392b"), converted for you; arrays are linear ACEScg.',
          {'command': {'type': 'object', 'description': 'A journal command: {"command": "<name>", ...fields}.'}},
          ['command']),
@@ -85,7 +115,7 @@ TOOLS = [
          {"recipe": {"type": "object", "description": "The recipe to show."}, "material": {"type": "integer", "description": "Or an existing material's id."}, "radius": {"type": "number", "description": "The ball's radius in metres (default 0.025). Use the real part's size to judge pattern scale."}, "shape": {"type": "string", "enum": ["sphere", "slab"]}},
          []),
     tool('tequila_material_create',
-         'Make a new material from a recipe and put it on parts, as one undo step. Returns its id and a preview image. Recipe: {"name": "Speckled Stone", "type": "plastic" (or metal, glass, paint, velvet... see the guide), any parameter as a value ("specular_roughness": 0.3, "base_color": "#c0392b" - hex sRGB is fine), "patterns": [{"param": "base_color", "procedural": {"kind": "noise"}, "size": 0.01, "colors": [{"at": 0, "color": "#d8d4cc"}, {"at": 1, "color": "#a9a59c"}]}, {"param": "specular_roughness", "procedural": {"kind": "noise"}, "size": 0.02, "range": [0.2, 0.4]}, {"param": "bump", "procedural": {"kind": "leather"}, "size": 0.002, "depth": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: "blend" mix/multiply/add, "amount" 0-1, "mask" {"threshold": 0.5, "softness": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.',
+         'Make a new material from a recipe and put it on parts, as one undo step. Only when tequila_library has nothing close: search it first. Returns its id and a preview image. Recipe: {"name": "Speckled Stone", "type": "plastic" (or metal, glass, paint, velvet... see the guide), any parameter as a value ("specular_roughness": 0.3, "base_color": "#c0392b" - hex sRGB is fine), "patterns": [{"param": "base_color", "procedural": {"kind": "noise"}, "size": 0.01, "colors": [{"at": 0, "color": "#d8d4cc"}, {"at": 1, "color": "#a9a59c"}]}, {"param": "specular_roughness", "procedural": {"kind": "noise"}, "size": 0.02, "range": [0.2, 0.4]}, {"param": "bump", "procedural": {"kind": "leather"}, "size": 0.002, "depth": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: "blend" mix/multiply/add, "amount" 0-1, "mask" {"threshold": 0.5, "softness": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.',
          {"recipe": {"type": "object", "description": "The recipe."}, "nodes": {"type": "array", "items": {"type": "integer"}, "description": "Part ids to put it on; the selection when left out."}, "preview": {"type": "boolean", "description": "Return a preview image too (default true)."}},
          ['recipe']),
     tool('tequila_material_update',
@@ -118,8 +148,10 @@ TOOLS = [
           'pitch': {'type': 'number', 'description': 'Degrees above the horizon.'},
           'distance': {'type': 'number'},
           'focal_length': {'type': 'number', 'description': 'Millimetres.'}}),
-    tool('tequila_screenshot', 'See the application as it is now. Returns an image.',
-         {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'}}),
+    tool('tequila_screenshot', 'See the application as it is now. Returns an image. After a change the rendered view is dark and grainy for a few seconds while it redraws: '
+         'this waits for the picture to finish, up to settle seconds, and says with the image whether it had. Do not judge a look from one it calls unfinished: look again.',
+         {'viewport': {'type': 'boolean', 'description': 'true for just the 3D view, without panels (default true).'},
+          'settle': {'type': 'number', 'description': 'Seconds to give the picture to finish (default 12; 0 takes it at once).'}}),
     tool('tequila_render', "Render the current view to an image and return it. Blocks Tequila while it runs: keep it small (e.g. 640x400, 32 samples). wireframe=true draws the model's edges instead, as the project's Wireframe settings say - no ray tracing, a second or two at any size.",
          {'width': {'type': 'integer'}, 'height': {'type': 'integer'}, 'samples': {'type': 'integer'},
           'wireframe': {'type': 'boolean'}}),
@@ -316,7 +348,33 @@ class Bridge:
         return text({'count': len(slim), 'nodes': slim})
 
     def tool_materials(self):
-        return text(self.request('query', what='materials'))
+        # Briefly: every parameter of every material is hundreds of
+        # thousands of characters on a real scene.
+        materials = self.request('query', what='materials').get('materials', [])
+        slim = [{'id': m.get('id'), 'name': m.get('name'), 'type': m.get('type'), 'used_by': m.get('used_by'),
+                 'textures': len(m.get('textures') or [])} for m in materials]
+        return text({'count': len(slim), 'materials': slim})
+
+    def tool_material(self, id):
+        for material in self.request('query', what='materials').get('materials', []):
+            if material.get('id') == id:
+                return text(material)
+        raise TequilaError(f'there is no material {id}; tequila_materials lists them')
+
+    def tool_library(self, search=None, category=None, limit=None):
+        fields = {k: v for k, v in dict(search=search, category=category, limit=limit).items() if v is not None}
+        return text(self.request('library', action='search', **fields))
+
+    def tool_library_apply(self, name, nodes=None, unlink=None):
+        fields = {k: v for k, v in dict(nodes=nodes, unlink=unlink).items() if v is not None}
+        return text(self.request('library', action='apply', name=name, **fields))
+
+    def tool_command(self, command=None):
+        return text(self.request('help', **({'command': command} if command else {})))
+
+    def tool_add_shape(self, shape, width=None, depth=None, height=None, radius=None, diameter=None):
+        fields = {k: v for k, v in dict(width=width, diameter=diameter, depth=depth, height=height, radius=radius).items() if v is not None}
+        return text(self.request('add_shape', shape=shape, **fields))
 
     def tool_query(self, what):
         return text(self.request('query', what=what))
@@ -419,10 +477,12 @@ class Bridge:
     def tool_look(self, **fields):
         return text(self.request('look', **fields))
 
-    def tool_screenshot(self, viewport=True):
+    def tool_screenshot(self, viewport=True, settle=12):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-{time.time_ns()}.png'
-        self.client().screenshot(path, viewport=viewport)
-        return image(path, f'Tequila {"viewport" if viewport else "window"}')
+        seconds = max(0.0, min(float(settle), 60.0))
+        self.request('screenshot', path=str(path), viewport=viewport, settle=seconds)
+        wait_for_png(path, 30 + seconds)
+        return image(path, picture_caption(viewport, self.request('query', what='ui')))
 
     def tool_render(self, width=640, height=400, samples=32, wireframe=False):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-render-{time.time_ns()}.png'
@@ -495,6 +555,33 @@ def image(path, caption):
 
 
 # ---- JSON-RPC over stdio -----------------------------------------------------
+
+def wait_for_png(path, timeout):
+    """Wait until a PNG the application is writing has its end chunk."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if path.read_bytes().endswith(b'IEND\xaeB`\x82'):
+                return
+        except OSError:
+            pass
+        time.sleep(0.05)
+    raise TequilaError('the screenshot did not arrive')
+
+
+def picture_caption(viewport, ui):
+    """What a screenshot shows and whether its picture had finished, for
+    whoever is about to judge a look by it."""
+    what = 'Tequila viewport' if viewport else 'Tequila window'
+    mode = ui.get('viewport', '')
+    if mode != 'rendered':
+        return f'{what}, {mode} view (not ray traced: switch the viewport to rendered to judge materials and light).' if mode else what
+    samples = int(ui.get('picture_samples', 0))
+    if ui.get('picture_settled'):
+        return f'{what}, rendered, {samples} samples: finished enough to judge.'
+    return (f'{what}, rendered, only {samples} samples: NOT finished - it is still dark and grainy from redrawing. '
+            'Do not judge the look from this; take another screenshot.')
+
 
 def handle(bridge, message):
     """Answer one JSON-RPC message; None for a notification."""

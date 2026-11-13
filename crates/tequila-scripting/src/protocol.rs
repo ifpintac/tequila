@@ -75,7 +75,11 @@ pub enum Operation {
     /// `window` names one of the application's other windows — `render`,
     /// `graph`, `shortcuts`, `connect` — to capture that instead: they are
     /// windows of their own, outside the main one.
-    Screenshot { path: String, viewport: bool, window: Option<String> },
+    ///
+    /// `settle` is how many seconds to give a Rendered viewport to finish
+    /// the picture first: the capture is taken as soon as the picture of the
+    /// scene as it now stands is clear, or when the time is up.
+    Screenshot { path: String, viewport: bool, window: Option<String>, settle: Option<f32> },
     /// Render the document offline, at a quality the viewport does not have
     /// to sustain interactively.
     Render {
@@ -158,6 +162,14 @@ pub enum Operation {
     /// placed for the camera (`tequila_scene::studio_kit`), one step to
     /// undo. Answers with the node it added.
     StudioKit { piece: String },
+    /// `add_shape`: a new part of a simple shape - `plane`, `cube`,
+    /// `cylinder`, `sphere`, `disc`, `backdrop` or `wall` - as Add › Shape
+    /// adds one: beside what is in the scene and half its size, or of the
+    /// sizes given, in metres. One step to undo. Answers with its node.
+    AddShape { shape: String, width: Option<f32>, depth: Option<f32>, height: Option<f32>, radius: Option<f32> },
+    /// `help`: one command's fields and an example of it, or with no
+    /// `command` the names of them all (`crate::document::help`).
+    Help { command: Option<String> },
     /// `assistant`: the built-in Assistant - `ask` it something, as though
     /// typed and sent; `stop` it; `open` its panel. Answers with what it is
     /// doing. A script's to drive, not the Assistant's own or a remote
@@ -279,6 +291,10 @@ pub struct LibraryRequest {
     pub tags: Vec<String>,
     pub path: Option<String>,
     pub size: Option<f32>,
+    /// `search`: the words to look for, and how many presets to answer
+    /// with at most.
+    pub search: Option<String>,
+    pub limit: Option<usize>,
 }
 
 /// The `studio_preset` operation's actions.
@@ -349,6 +365,42 @@ fn guides_change(value: &Value) -> Result<GuidesChange, ProtocolError> {
     }
 }
 
+/// A `scene.set_shape` that names no mesh key is given the mark that asks
+/// the application for a new one ([`UNSET_MESH`]). A script has no way to
+/// know which keys are free, and one that reused the part's own key changed
+/// the shape on paper while the viewport went on drawing the old mesh.
+fn with_shape_mesh(mut command: Value) -> Value {
+    if command.get("command").and_then(|c| c.as_str()) == Some("scene.set_shape") && command.get("mesh").is_none() {
+        if let Value::Object(fields) = &mut command {
+            fields.insert("mesh".into(), Value::Number(UNSET_MESH as f64));
+        }
+    }
+    command
+}
+
+/// What is said of a command that could not be read, so that the next try
+/// is right: why, and the command as it is written - or, where there is no
+/// command of that name, the ones that might have been meant. An assistant
+/// told only "`scene.set_transform` has no transforms" tried three more
+/// guesses before it looked the command up.
+fn unread_command(command: &Value, error: &str) -> String {
+    let name = command.get("command").and_then(|c| c.as_str()).unwrap_or_default();
+    if name.is_empty() {
+        return format!("the command could not be read: {error}. A command is an object with its name under \"command\"; the `help` operation lists them");
+    }
+    match crate::document::help(Some(name)) {
+        Err(no_such) => format!("the command could not be read: {no_such}"),
+        Ok(page) => {
+            let example = page.get("example").map(json_write::to_string).filter(|example| example.len() <= 1500);
+            let mind = page.get("mind").and_then(|m| m.as_str()).map(|mind| format!(" {mind}")).unwrap_or_default();
+            match example {
+                Some(example) => format!("the command could not be read: {error}. It is written like this, with your own ids and values: {example}{mind}"),
+                None => format!("the command could not be read: {error}. The `help` operation shows how `{name}` is written.{mind}"),
+            }
+        }
+    }
+}
+
 fn with_preset(command: Value) -> Result<Value, ProtocolError> {
     if command.get("command").and_then(|c| c.as_str()) != Some("studio_preset.apply") {
         return Ok(command);
@@ -377,7 +429,11 @@ fn with_preset(command: Value) -> Result<Value, ProtocolError> {
 }
 
 /// The library's actions, for the protocol and its documentation.
-pub const LIBRARY_ACTIONS: &[&str] = &["apply", "save", "import", "export", "delete"];
+pub const LIBRARY_ACTIONS: &[&str] = &["search", "apply", "save", "import", "export", "delete"];
+
+/// The mesh key a `scene.set_shape` carries when the request left it out:
+/// the application gives the shape a mesh of its own.
+pub const UNSET_MESH: u64 = 9_007_199_254_740_991;
 
 /// A material brought into the Material Graph editor's graph whole.
 #[derive(Clone, Debug, PartialEq)]
@@ -1144,10 +1200,9 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             // reaching into the parsed value keeps exactly one decoder for
             // commands, which is what makes the journal's exhaustive
             // round-trip test cover this path too.
-            let command = with_preset(video_label(field(value, "command")?)?)?;
+            let command = with_shape_mesh(with_preset(video_label(field(value, "command")?)?)?);
             let text = json_write::to_string(&command);
-            let command = tequila_format::journal::decode(&text)
-                .map_err(|e| ProtocolError(format!("the command could not be read: {e}")))?;
+            let command = tequila_format::journal::decode(&text).map_err(|e| ProtocolError(unread_command(&command, &e.to_string())))?;
             Operation::Apply(Box::new(command))
         }
         "query" => {
@@ -1223,6 +1278,29 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             }
             Operation::StudioKit { piece }
         }
+        "add_shape" => {
+            let shape = string(value, "shape")?.trim().to_ascii_lowercase();
+            if tequila_scene::shapes::Shape::from_key(&shape).is_none() {
+                let known: Vec<&str> = tequila_scene::shapes::Shape::ALL.iter().map(|s| s.key()).collect();
+                return Err(ProtocolError(format!("`{shape}` is not a shape; the shapes are {}", known.join(", "))));
+            }
+            // A round shape's width is its diameter, and is as often
+            // asked for by that name or by its radius. `radius` is
+            // otherwise a backdrop's curve, which a round shape has none
+            // of: an assistant that gave a cylinder a radius got one of
+            // the size nobody asked for, four times running.
+            let round = matches!(shape.as_str(), "cylinder" | "sphere" | "disc");
+            let radius = opt_number(value, "radius")?;
+            let width = opt_number(value, "width")?.or(opt_number(value, "diameter")?).or(radius.filter(|_| round).map(|radius| radius * 2.0));
+            Operation::AddShape {
+                shape,
+                width,
+                depth: opt_number(value, "depth")?,
+                height: opt_number(value, "height")?,
+                radius: radius.filter(|_| !round),
+            }
+        }
+        "help" => Operation::Help { command: opt_string(value, "command")? },
         "assistant" => {
             if value.get("ask").is_some_and(|a| a.as_str().is_none_or(|t| t.trim().is_empty())) {
                 return Err(ProtocolError("`ask` must be the request, in words".into()));
@@ -1273,6 +1351,8 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 tags,
                 path: opt_string(value, "path")?,
                 size: opt_number(value, "size")?,
+                search: opt_string(value, "search")?,
+                limit: value.get("limit").and_then(|v| v.as_index()),
             };
             let needs = |field: &str, present: bool| {
                 if present {
@@ -1420,6 +1500,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
             // wants to look at the render rather than at the application.
             viewport: opt_bool(value, "viewport")?.unwrap_or(false),
             window: opt_string(value, "window")?,
+            settle: opt_number(value, "settle")?.map(|seconds| seconds.clamp(0.0, 60.0)),
         },
         "render" => Operation::Render {
             path: string(value, "path")?,
@@ -1664,6 +1745,14 @@ impl Operation {
                 None => format!("studio preset {}", request.get("action").and_then(|a| a.as_str()).unwrap_or("")),
             },
             Operation::StudioKit { piece } => format!("add a {piece} to the studio"),
+            Operation::AddShape { shape, width, depth, height, .. } => {
+                let sizes: Vec<String> = [("wide", width), ("deep", depth), ("high", height)].into_iter().filter_map(|(word, size)| size.map(|size| format!("{size} {word}"))).collect();
+                if sizes.is_empty() { format!("add a {shape}") } else { format!("add a {shape}, {}", sizes.join(", ")) }
+            }
+            Operation::Help { command } => match command {
+                Some(command) => format!("help {command}"),
+                None => "help".into(),
+            },
             Operation::Assistant(request) => match request.get("ask").and_then(|a| a.as_str()) {
                 Some(text) => format!("ask the Assistant: {}", text.chars().take(60).collect::<String>()),
                 None if request.get("stop").and_then(Value::as_bool) == Some(true) => "stop the Assistant".into(),
@@ -2124,6 +2213,72 @@ mod control_tests {
 
     fn operation(line: &str) -> Operation {
         parse_request(line).unwrap_or_else(|e| panic!("{line}: {e}")).operation
+    }
+
+    /// What was added so an assistant does not have to guess: a shape by
+    /// name, a command looked up, the library searched, a screenshot told
+    /// how long to wait, and a reshaping that names no mesh.
+    #[test]
+    fn the_requests_that_spare_a_guess_are_read() {
+        match operation(r#"{"op":"add_shape","shape":" Cylinder ","width":0.3,"height":0.15}"#) {
+            Operation::AddShape { shape, width, depth, height, radius } => {
+                assert_eq!((shape.as_str(), width, depth, height, radius), ("cylinder", Some(0.3), None, Some(0.15), None));
+            }
+            other => panic!("{other:?}"),
+        }
+        let refused = parse_request(r#"{"op":"add_shape","shape":"teapot"}"#).unwrap_err().to_string();
+        assert!(refused.contains("cylinder") && refused.contains("backdrop"), "{refused}");
+        assert!(parse_request(r#"{"op":"add_shape"}"#).is_err());
+        assert!(matches!(operation(r#"{"op":"add_shape","shape":"disc","diameter":0.4}"#), Operation::AddShape { width: Some(w), .. } if w == 0.4));
+        // A round shape asked for by its radius is twice that wide; a
+        // backdrop's radius is its curve, as it was.
+        let pedestal = operation(r#"{"op":"add_shape","shape":"cylinder","radius":0.15,"height":0.05}"#);
+        assert!(matches!(pedestal, Operation::AddShape { width: Some(w), radius: None, .. } if w == 0.3), "{pedestal:?}");
+        assert_eq!(pedestal.summary(), "add a cylinder, 0.3 wide, 0.05 high");
+        assert!(matches!(operation(r#"{"op":"add_shape","shape":"backdrop","radius":0.2}"#), Operation::AddShape { width: None, radius: Some(r), .. } if r == 0.2));
+
+        // A command that cannot be read is answered with how it is
+        // written, and a name that is no command with the ones it might be.
+        let refused = |line: &str| parse_request(line).unwrap_err().to_string();
+        let moved = refused(r#"{"op":"apply","command":{"command":"scene.set_transform","node":3,"translation":[0,0.1,0]}}"#);
+        assert!(moved.contains("has no transforms") && moved.contains("It is written like this") && moved.contains(r#""transforms":"#), "{moved}");
+        let hidden = refused(r#"{"op":"apply","command":{"command":"scene.set_visibility","states":[{"node":3,"visible":true}]}}"#);
+        assert!(hidden.contains(r#""value":"#) && hidden.contains("`value` is required"), "{hidden}");
+        let deleted = refused(r#"{"op":"apply","command":{"command":"scene.delete","nodes":[3]}}"#);
+        assert!(deleted.contains("scene.delete_nodes"), "{deleted}");
+        assert!(refused(r#"{"op":"apply","command":{"node":3}}"#).contains("under \"command\""));
+
+        assert!(matches!(operation(r#"{"op":"help"}"#), Operation::Help { command: None }));
+        assert!(matches!(operation(r#"{"op":"help","command":"scene.set_shape"}"#), Operation::Help { command: Some(c) } if c == "scene.set_shape"));
+
+        match operation(r#"{"op":"library","action":"search","search":"black leather","category":"Leather","limit":5}"#) {
+            Operation::Library(request) => {
+                assert_eq!((request.action.as_str(), request.search.as_deref(), request.category.as_deref(), request.limit), ("search", Some("black leather"), Some("Leather"), Some(5)));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(operation(r#"{"op":"library","action":"search"}"#), Operation::Library(request) if request.search.is_none() && request.limit.is_none()));
+
+        let settle = |line: &str| match operation(line) {
+            Operation::Screenshot { settle, .. } => settle,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(settle(r#"{"op":"screenshot","path":"a.png"}"#), None);
+        assert_eq!(settle(r#"{"op":"screenshot","path":"a.png","settle":8}"#), Some(8.0));
+        assert_eq!(settle(r#"{"op":"screenshot","path":"a.png","settle":600}"#), Some(60.0));
+        assert_eq!(settle(r#"{"op":"screenshot","path":"a.png","settle":-3}"#), Some(0.0));
+
+        // A reshaping that names no mesh asks the application for one; one
+        // that names a mesh keeps it.
+        let mesh = |line: &str| match operation(line) {
+            Operation::Apply(command) => match *command {
+                tequila_scene::Command::SetShape { mesh, .. } => mesh.0,
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(mesh(r#"{"op":"apply","command":{"command":"scene.set_shape","node":1,"shape":{"shape":"cylinder","width":0.3,"height":0.15}}}"#), UNSET_MESH);
+        assert_eq!(mesh(r#"{"op":"apply","command":{"command":"scene.set_shape","node":1,"mesh":7,"shape":{"shape":"cube","width":1,"depth":1,"height":1}}}"#), 7);
     }
 
     #[test]

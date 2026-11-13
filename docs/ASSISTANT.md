@@ -796,3 +796,125 @@ home of its own cannot see a Claude sign-in made in the real one
 sign-ins has to run on the real home.
 
 Held by test: `the_person_turns_their_claude_subscription_on_themselves`.
+
+## As built, November 13: the library first, and less to guess
+
+The first real session with Claude, the owner's, put materials on a
+product and stood it on a pedestal. It got there, and its own account
+of the way was a list of what Tequila made hard:
+
+- **It made materials from nothing instead of looking in the library.**
+  There was no tool for the library in the bridge the agents use. The only
+  way to see it was the raw request `query library`: every preset with its
+  tags and files, 355,000 characters for 602 presets, which the assistant
+  did not open.
+- **It guessed field names.** The whole catalog of commands is tens of
+  thousands of characters, so it wrote a state as `visible` where the
+  field is `value`. That read as false, hid the pedestal it meant to show,
+  and said nothing. The floor reflection's name (`ground_reflections`) it
+  found by trying.
+- **There was no way to add a cylinder.** It imported a stand-in and
+  reshaped it. The reshape read back right and the viewport went on
+  drawing the stand-in, because it named the mesh the part already had and
+  the viewport keeps what it built for a mesh by its key.
+- **It looked at pictures that had not finished**: grainy and dark, a
+  second after a change, and judged them.
+
+What changed:
+
+- **`tequila_library`** searches the library: words that must all be in a
+  preset's name, category, type, tags or description, the ones with them
+  in their name first, twenty unless more are asked for, each as a name, a
+  category, a type and a line about it. With nothing asked it lists the
+  categories. A search answers in a page (`document::library_search`; the
+  request is `library` with the action `search`). **`tequila_library_apply`**
+  puts a preset on parts by that name. The instructions every assistant is
+  given now say to look there first, the tool's own description says so,
+  and `tequila_material_create` says it is for when the library has
+  nothing close. The same in Tequila's own loop for API keys and local
+  models, and in the Tequila skill, which used to send an AI to the whole
+  list.
+- **`tequila_command`** answers for one command: its fields, an example
+  that is itself a valid command, and what the example cannot say - that a
+  state's `value` is required, the environment's parameter names, that a
+  reshape may leave its mesh out (`document::help`; the request `help`). A
+  wrong name is answered with the ones it might have meant. Every command
+  has a page under 12,000 characters.
+- **A command that cannot be read is answered with how it is written**:
+  the reason, then an example of that command, or for a name that is no
+  command the ones it might have meant (`scene.delete` → `scene.delete_nodes`).
+  A local model tried on the new build guessed `scene.set_transform` three
+  times before looking it up; the refusal now carries what the lookup
+  would have said (`protocol::unread_command`).
+- **A state with no `value` is refused**, with the shape it should have,
+  rather than read as false (`journal::read_flags`). Projects and journals
+  always wrote it, so nothing saved is affected.
+- **`tequila_add_shape`** adds a plane, cube, cylinder, sphere, disc,
+  backdrop or wall of given sizes as one undo step (the request
+  `add_shape`). A round shape may be sized by its `diameter` or `radius`
+  as well as its `width`: a model that gave a cylinder a radius, which
+  only a backdrop read, got the default size four times running.
+- **A reshaped part gets a mesh of its own** when a script names none, or
+  names the one the part has (`channel::with_fresh_mesh`). This is at the
+  channel, for scripts and assistants; the viewport's habit of keeping a
+  mesh by its key is unchanged.
+- **A screenshot waits for the picture.** `tequila_screenshot` gives the
+  viewport up to twelve seconds (`settle`; sixty at most) to finish: in the
+  Rendered view, until the picture shown is of that view, answers the
+  newest request - not the one from before the change - and has 64
+  samples, 16 when it denoises, or has mostly converged
+  (`channel::picture_settled`). It returns as soon as that is so.
+  It is taken as it is when the time runs out, and the tool says with the
+  picture whether it had finished and how many samples it had, so a grainy
+  one is not taken for the material. The Assistant's own screenshots wait
+  the same.
+- **`tequila_materials` is short**: ids, names, types and who wears them.
+  It answered 291,000 characters on that scene. **`tequila_material`**
+  reads one whole, for when a preset's colour turns out to be inside a
+  pattern.
+
+**Tried on this Mac (M3 Max), in a copy with a home folder of its own:**
+- Through the real bridge: the categories (552 characters), a search for
+  "black leather" (ten presets, 2,400 characters), a preset put on the
+  sphere, a cylinder added and reshaped with no mesh named and drawn at its
+  new size, a state written with `visible` refused with how it is written,
+  `scene.set_visible` answered with `scene.set_visibility`.
+- The screenshot: taken at once after switching to the Rendered view it
+  said "NOT finished"; given time after a material change it came back in
+  3 seconds at 20 denoised samples and said so. The first try called a
+  picture finished at 0 samples - the quick view's, still up a moment
+  after the switch - which is why a picture now has to be of the Rendered
+  view and answer the newest request. Cycles starting cold took longer
+  than the wait and was reported unfinished, correctly.
+- A model on this computer (qwen3-coder 30b, through Tequila's own loop),
+  asked for black leather on a low round walnut pedestal: it searched the
+  library for both and applied presets, before and after. Before the
+  refusals carried examples and a round shape took a radius, it took 27
+  steps with 9 refused; after, 15 with 1.
+
+Not tried: Claude, ChatGPT or Gemini on this build. The owner's session was
+with Claude on the build before, and is what this answers.
+
+Not changed here, and worth doing:
+
+- **The view moved closer to the product after some material changes.**
+  Seen in that session, cause not found.
+- **Tinting a library preset whose colour is set inside a pattern** still
+  means reading the material and rewriting that pattern. A plain "make
+  this preset this colour" would save it.
+- **The viewport keeping a stale mesh under a reused key** is worked
+  around for scripts, not fixed where it happens.
+- An assistant still cannot read the library's files directly, which is as
+  intended: they are outside the project's folder. The search is the way
+  in.
+
+Held by test: `the_library_is_searched_in_a_size_an_ai_reads`,
+`one_command_is_looked_up_by_its_name`,
+`the_requests_that_spare_a_guess_are_read`,
+`a_state_without_its_value_is_refused`,
+`a_script_adds_a_shape_of_a_size_as_one_step`,
+`a_reshaped_part_is_given_a_mesh_of_its_own`,
+`a_script_searches_the_library_and_looks_up_a_command`,
+`a_screenshot_waits_for_the_picture_to_finish`, and in the bridge
+`the_library_comes_first` and
+`a_screenshot_says_whether_its_picture_had_finished`.

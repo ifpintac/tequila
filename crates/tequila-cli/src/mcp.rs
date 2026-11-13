@@ -44,10 +44,16 @@ const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const INSTRUCTIONS: &str = "Tequila is a product-rendering application open on this computer, and these tools are \
 the way to work in it: use them, not screenshots of the desktop, mouse clicks or any computer-use control - they \
 are exact, fast and undoable. Start with tequila_scene, then tequila_nodes to find parts by name, material or size. \
-Materials may be shared between parts: unlink a part (material.unlink) before changing it alone. Use tequila_batch \
-for several edits: they become one undo step, and if one fails none of them stay. Look at your work with \
-tequila_screenshot (viewport=true for just the picture). For a material of your own, read tequila_material_guide, \
-try recipes with tequila_material_preview, then tequila_material_create and refine with tequila_material_update. \
+For any material, look in the library first: tequila_library searches several hundred finished presets (leather, \
+fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. Make a material yourself only \
+when the library has nothing close - tequila_material_guide, tequila_material_preview, then tequila_material_create \
+and tequila_material_update - or change a preset once it is on a part. Materials may be shared between parts: unlink \
+a part (material.unlink) before changing it alone. Before sending a command you have not used, ask tequila_command \
+for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example \
+is not read. Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. A \
+new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. Look at your work with \
+tequila_screenshot: it waits for the picture to finish and says whether it had. If something looks wrong, first \
+check the simple causes with tequila_nodes: is the part hidden, is it where you think. \
 To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then \
 tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. \
 Every command is undoable, and the person watching sees each request in Tequila's console.";
@@ -222,7 +228,74 @@ impl Bridge {
                 let nodes = self.request("query", vec![("what", "nodes".into())])?;
                 Ok(text_value(&slim_nodes(&nodes, arguments)))
             }
-            "tequila_materials" => self.request("query", vec![("what", "materials".into())]).map(|v| text_value(&v)),
+            // Briefly: every parameter of every material is hundreds of
+            // thousands of characters on a real scene.
+            "tequila_materials" => {
+                let all = self.request("query", vec![("what", "materials".into())])?;
+                let slim: Vec<Value> = all
+                    .get("materials")
+                    .map(Value::as_array)
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|material| {
+                        let mut entry = Object::new();
+                        for key in ["id", "name", "type", "used_by"] {
+                            if let Some(value) = material.get(key) {
+                                entry.set(key, value.clone());
+                            }
+                        }
+                        entry.set("textures", material.get("textures").map(Value::as_array).unwrap_or(&[]).len());
+                        entry.build()
+                    })
+                    .collect();
+                let mut out = Object::new();
+                out.set("count", slim.len()).set("materials", Value::Array(slim));
+                Ok(text_value(&out.build()))
+            }
+            "tequila_material" => {
+                let id = get("id").and_then(|v| v.as_f64()).ok_or("tequila_material needs `id`")?;
+                let all = self.request("query", vec![("what", "materials".into())])?;
+                all.get("materials")
+                    .map(Value::as_array)
+                    .unwrap_or(&[])
+                    .iter()
+                    .find(|material| material.get("id").and_then(Value::as_f64) == Some(id))
+                    .map(text_value)
+                    .ok_or_else(|| format!("there is no material {id}; tequila_materials lists them"))
+            }
+            "tequila_library" => {
+                let mut fields = vec![("action", Value::from("search"))];
+                for key in ["search", "category", "limit"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("library", fields).map(|v| text_value(&v))
+            }
+            "tequila_library_apply" => {
+                let name = get("name").ok_or("tequila_library_apply needs `name`")?;
+                let mut fields = vec![("action", Value::from("apply")), ("name", name)];
+                for key in ["nodes", "unlink"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("library", fields).map(|v| text_value(&v))
+            }
+            "tequila_command" => {
+                let fields = get("command").filter(|c| c.as_str().is_some_and(|c| !c.trim().is_empty())).map(|c| vec![("command", c)]).unwrap_or_default();
+                self.request("help", fields).map(|v| text_value(&v))
+            }
+            "tequila_add_shape" => {
+                let shape = get("shape").ok_or("tequila_add_shape needs `shape`")?;
+                let mut fields = vec![("shape", shape)];
+                for key in ["width", "diameter", "depth", "height", "radius"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("add_shape", fields).map(|v| text_value(&v))
+            }
             "tequila_query" => {
                 let what = get("what").ok_or("tequila_query needs `what`")?;
                 self.request("query", vec![("what", what)]).map(|v| text_value(&v))
@@ -313,10 +386,17 @@ impl Bridge {
             "tequila_look" => self.request("look", fields_of(arguments)).map(|v| text_value(&v)),
             "tequila_screenshot" => {
                 let viewport = get("viewport").and_then(|v| v.as_bool()).unwrap_or(true);
+                // Given time to finish its picture: after a change the
+                // rendered view is dark and grainy while it redraws.
+                let settle = get("settle").and_then(|v| v.as_f64()).unwrap_or(12.0).clamp(0.0, 60.0);
                 let path = temporary("tequila-mcp", "png");
-                self.request("screenshot", vec![("path", path.to_string_lossy().into_owned().into()), ("viewport", viewport.into())])?;
-                wait_for_png(&path, Duration::from_secs(30))?;
-                image(&path, if viewport { "Tequila viewport" } else { "Tequila window" })
+                self.request(
+                    "screenshot",
+                    vec![("path", path.to_string_lossy().into_owned().into()), ("viewport", viewport.into()), ("settle", Value::Number(settle))],
+                )?;
+                wait_for_png(&path, Duration::from_secs_f64(30.0 + settle))?;
+                let ui = self.request("query", vec![("what", "ui".into())]).unwrap_or(Value::Null);
+                image(&path, &picture_caption(viewport, &ui))
             }
             "tequila_render" => {
                 let path = temporary("tequila-mcp-render", "png");
@@ -516,6 +596,29 @@ fn slim_nodes(answer: &Value, arguments: &Value) -> Value {
     out.build()
 }
 
+/// What a screenshot shows and whether its picture had finished, for
+/// whoever is about to judge a look by it.
+fn picture_caption(viewport: bool, ui: &Value) -> String {
+    let what = if viewport { "Tequila viewport" } else { "Tequila window" };
+    let mode = ui.get("viewport").and_then(Value::as_str).unwrap_or_default();
+    if mode != "rendered" {
+        return if mode.is_empty() {
+            what.to_string()
+        } else {
+            format!("{what}, {mode} view (not ray traced: switch the viewport to rendered to judge materials and light).")
+        };
+    }
+    let samples = ui.get("picture_samples").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+    if ui.get("picture_settled").and_then(Value::as_bool) == Some(true) {
+        format!("{what}, rendered, {samples} samples: finished enough to judge.")
+    } else {
+        format!(
+            "{what}, rendered, only {samples} samples: NOT finished - it is still dark and grainy from redrawing. \
+             Do not judge the look from this; take another screenshot."
+        )
+    }
+}
+
 fn fields_of(value: &Value) -> Vec<(&str, Value)> {
     match value {
         Value::Object(map) => map.iter().map(|(k, v)| (k.as_str(), v.clone())).collect(),
@@ -640,7 +743,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 37);
+        assert_eq!(tools.len(), 42);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -648,7 +751,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 26);
+        assert_eq!(restricted.len(), 31);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }
@@ -679,7 +782,7 @@ mod tests {
         let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
         bridge.assistant = Some("mark".into());
         let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
-        assert_eq!(names.len(), 37);
+        assert_eq!(names.len(), 42);
         for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
             assert!(names.iter().any(|n| n == kept), "{kept}");
         }
@@ -695,6 +798,32 @@ mod tests {
         assert_eq!(result.get("isError").and_then(Value::as_bool), Some(true));
         let said = result.get("content").unwrap().as_array()[0].get("text").and_then(Value::as_str).unwrap();
         assert!(said.contains("does not seem to be open"), "{said}");
+    }
+
+    /// A screenshot's caption says whether its picture had finished, so a
+    /// dark, grainy one is not judged as the look.
+    #[test]
+    fn a_screenshot_says_whether_its_picture_had_finished() {
+        let ui = |text: &str| json::parse(text.as_bytes()).unwrap();
+        let finished = picture_caption(true, &ui(r#"{"viewport":"rendered","picture_samples":48,"picture_settled":true}"#));
+        assert!(finished.contains("48 samples") && finished.contains("finished enough"), "{finished}");
+        let grainy = picture_caption(true, &ui(r#"{"viewport":"rendered","picture_samples":3,"picture_settled":false}"#));
+        assert!(grainy.contains("NOT finished") && grainy.contains("another screenshot"), "{grainy}");
+        let solid = picture_caption(true, &ui(r#"{"viewport":"solid","picture_samples":1,"picture_settled":true}"#));
+        assert!(solid.contains("solid view") && solid.contains("not ray traced"), "{solid}");
+        assert_eq!(picture_caption(false, &Value::Null), "Tequila window");
+    }
+
+    /// The library is looked in before a material is made: the bridge says
+    /// so first thing, and in the two tools where the choice is made.
+    #[test]
+    fn the_library_comes_first() {
+        assert!(INSTRUCTIONS.contains("look in the library first"));
+        let tools = Bridge::new(None, false).tools();
+        let about = |name: &str| tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(name)).and_then(|t| t.get("description")).and_then(Value::as_str).unwrap_or_default().to_string();
+        assert!(about("tequila_library").contains("LOOK HERE FIRST"));
+        assert!(about("tequila_material_create").contains("Only when tequila_library has nothing close"));
+        assert!(about("tequila_apply").contains("tequila_command"));
     }
 
     #[test]

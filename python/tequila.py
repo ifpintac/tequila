@@ -252,6 +252,23 @@ class Client:
         return Library(self)
 
     @property
+    def help(self, command=None):
+        """One command, for someone about to send it: its fields, an example
+        exactly as apply() takes it, and what the example does not say -
+        `fs.help('scene.set_visibility')`. Without a name, every command's
+        name. A wrong name is refused with the ones it might have meant."""
+        return self.request('help', command=command) if command else self.request('help')
+
+    def add_shape(self, shape, *, width=None, depth=None, height=None, radius=None):
+        """A simple shape as a new part, as Add > Shape adds one: 'plane',
+        'cube', 'cylinder', 'sphere', 'disc', 'backdrop' or 'wall', of the
+        sizes given, in metres (`width` is a cylinder's, sphere's and disc's
+        diameter, and `radius` half of it; on a backdrop `radius` is its
+        curve). One undo step. Returns the
+        new part's `node` id and its `size`."""
+        sizes = {key: value for key, value in (('width', width), ('depth', depth), ('height', height), ('radius', radius)) if value is not None}
+        return self.request('add_shape', shape=shape, **sizes)
+
     def studios(self):
         """Studio presets - complete studios for a kind of product, by family
         and size: `fs.studios.apply('product-studio-medium')`,
@@ -259,15 +276,22 @@ class Client:
         `fs.studios.render_all()` for every view."""
         return StudioPresets(self)
 
-    def screenshot(self, path, *, viewport=False, window=None, timeout=30):
+    def screenshot(self, path, *, viewport=False, window=None, settle=None, timeout=30):
         """Wait for a new PNG of the window, or of just the viewport, or of
         another window: window='render', 'graph', 'shortcuts', 'connect' or
-        'uv' (the UV editor).
+        'uv' (the UV editor). `settle` is how many seconds (at most 60) to
+        give the viewport's picture to finish first - in the Rendered view,
+        to gather enough samples to look at; taken as it is when the time
+        runs out, and at once without it. `ui()['picture_settled']` says
+        whether it had finished.
         Refuse existing paths to avoid stale-image success."""
         path = Path(path).resolve()
         if path.exists():
             raise FileExistsError(path)
         extra = {'window': window} if window else {}
+        if settle is not None:
+            extra['settle'] = settle
+            timeout += settle
         result = self.request('screenshot', path=str(path), viewport=viewport, **extra)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -667,6 +691,21 @@ class Library:
         if mine:
             found = [p for p in found if p['source'] == 'user']
         return found
+
+    def search(self, words=None, *, category=None, limit=None):
+        """The presets that have every word in their name, category, type,
+        tags or description - `fs.library.search('black leather')` - those
+        with them in their name first, each as `name`, `category`, `type`
+        and a line `about` it. With nothing asked, the categories and how
+        many presets each holds. Short where presets() is everything."""
+        fields = {'action': 'search'}
+        if words:
+            fields['search'] = words
+        if category:
+            fields['category'] = category
+        if limit:
+            fields['limit'] = limit
+        return self._client.request('library', **fields)
 
     def folder(self):
         """Where the user's own presets are kept."""

@@ -6,6 +6,7 @@
 //! so a script reads the same shapes from either, and a client written
 //! against one works against the other.
 
+use std::collections::BTreeMap;
 use tequila_core::math::{Aabb, Vec3};
 use tequila_format::json::Value;
 use tequila_format::json_write::Object;
@@ -17,7 +18,7 @@ use tequila_scene::tree::{NodeId, NodeKind};
 pub const PROTOCOL: f64 = 1.0;
 
 /// What the application answers.
-pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout"];
+pub const APP_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "texture_set", "save", "frame", "look", "screenshot", "render", "queue", "export", "livelink", "library", "material", "plugin", "studio_preset", "studio_kit", "substance", "stop", "ui", "preferences", "assistant", "new", "open", "quit", "uv_layout", "add_shape", "help"];
 /// The application's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const APP_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];
@@ -26,7 +27,7 @@ pub const APP_LIMITS: &str = "No embedded Python interpreter. Screenshot complet
 
 /// What a headless session (`tequila --serve`) answers: what needs only
 /// the document.
-pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout"];
+pub const HEADLESS_OPERATIONS: &[&str] = &["ping", "query", "apply", "batch", "undo", "redo", "select", "import", "reimport", "save", "frame", "look", "render", "export", "library", "material", "studio_preset", "studio_kit", "substance", "new", "open", "quit", "uv_layout", "help"];
 /// The headless session's own operations, beyond the protocol's
 /// (`crate::server`): requests it answers whole, outside a batch.
 pub const HEADLESS_OWN_OPERATIONS: &[&str] = &[crate::uv_layout::OPERATION];
@@ -260,6 +261,135 @@ pub fn library(user: &std::path::Path) -> Value {
     out.build()
 }
 
+/// The library, searched, in a size an AI can read: the whole list is
+/// hundreds of presets with their tags and files, a third of a million
+/// characters, which an AI asked for a material would sooner not open than
+/// read - and so made its own.
+///
+/// `all` is [`library`]'s answer. With neither `search` nor `category` the
+/// answer is the categories and how many presets each holds, to choose from.
+/// Otherwise it is the presets that have every word of `search` somewhere in
+/// their name, category, type, tags or description, those with it in their
+/// name first, at most `limit` of them, each with only what is needed to
+/// pick one: its name (which is what applies it), category, type and a line
+/// about it.
+pub fn library_search(all: &Value, search: Option<&str>, category: Option<&str>, limit: usize) -> Value {
+    let empty = Vec::new();
+    let presets = match all.get("presets") {
+        Some(Value::Array(presets)) => presets,
+        _ => &empty,
+    };
+    let word = |preset: &Value, key: &str| preset.get(key).and_then(Value::as_str).unwrap_or_default().to_lowercase();
+    let mut out = Object::new();
+    out.set("total", presets.len());
+    let wanted: Vec<String> = search.unwrap_or_default().to_lowercase().split_whitespace().map(str::to_string).collect();
+    let category = category.map(|c| c.trim().to_lowercase()).filter(|c| !c.is_empty());
+    if wanted.is_empty() && category.is_none() {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for preset in presets {
+            *counts.entry(preset.get("category").and_then(Value::as_str).unwrap_or("Other").to_string()).or_default() += 1;
+        }
+        out.set("categories", Value::Object(counts.into_iter().map(|(name, count)| (name, Value::Number(count as f64))).collect()));
+        out.set("how", "Give `search` (words such as \"black leather\" or \"brushed aluminium\") or a `category` to see presets; apply one by its name.");
+        return out.build();
+    }
+    let mut found: Vec<(bool, &Value)> = presets
+        .iter()
+        .filter(|preset| category.as_ref().is_none_or(|c| word(preset, "category") == *c))
+        .filter_map(|preset| {
+            let name = word(preset, "name");
+            let tags = preset.get("tags").map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ").to_lowercase();
+            let rest = format!("{} {} {tags} {}", word(preset, "category"), word(preset, "type"), word(preset, "description"));
+            wanted.iter().all(|w| name.contains(w.as_str()) || rest.contains(w.as_str())).then(|| (wanted.iter().all(|w| name.contains(w.as_str())), preset))
+        })
+        .collect();
+    // In the name first; otherwise as the library orders them.
+    found.sort_by_key(|(in_name, _)| !in_name);
+    out.set("found", found.len());
+    let shown: Vec<Value> = found
+        .iter()
+        .take(limit.max(1))
+        .map(|(_, preset)| {
+            let mut entry = Object::new();
+            let about = preset.get("description").and_then(Value::as_str).unwrap_or_default();
+            let about = match about.char_indices().nth(110) {
+                Some((at, _)) => format!("{}\u{2026}", about[..at].trim_end()),
+                None => about.to_string(),
+            };
+            entry
+                .set("name", preset.get("name").and_then(Value::as_str).unwrap_or_default())
+                .set("category", preset.get("category").and_then(Value::as_str).unwrap_or_default())
+                .set("type", preset.get("type").and_then(Value::as_str).unwrap_or_default())
+                .set("about", about);
+            entry.build()
+        })
+        .collect();
+    if found.len() > shown.len() {
+        out.set("note", format!("{} more: add a word to narrow it, or raise `limit`.", found.len() - shown.len()));
+    }
+    if found.is_empty() {
+        out.set("note", "Nothing matches every word. Try fewer or other words (a colour, a finish, what it is made of), or a `category`.");
+    }
+    out.set("presets", Value::Array(shown));
+    out.build()
+}
+
+/// One command, for someone about to send it: an example exactly as `apply`
+/// takes it, the fields in it, and what is worth knowing that the example
+/// does not say. Without a name, every command's name. The whole catalog is
+/// tens of thousands of characters; this is the page of it that is wanted.
+pub fn help(command: Option<&str>) -> Result<Value, String> {
+    let names = tequila_scene::Command::CATALOG;
+    let mut out = Object::new();
+    let Some(wanted) = command.map(str::trim).filter(|c| !c.is_empty()) else {
+        out.set("commands", Value::Array(names.iter().map(|name| Value::String((*name).into())).collect()));
+        out.set("how", "Ask again with `command` for one command's fields and an example.");
+        return Ok(out.build());
+    };
+    let Some(name) = names.iter().find(|name| name.eq_ignore_ascii_case(wanted)) else {
+        // The nearest, by the words the two share: `scene.set_visible`
+        // finds `scene.set_visibility`, `scene.reshape` finds
+        // `scene.set_shape`. A word counts by its first letters, so an
+        // ending does not matter, and either way round, so a word run
+        // together with another still counts. Only the best are named.
+        let asked = wanted.to_lowercase();
+        let stems: Vec<String> = asked.split(['.', '_', ' ']).filter(|w| w.len() > 2).map(|w| w.chars().take(5).collect()).collect();
+        let score = |name: &str| stems.iter().filter(|stem| name.contains(stem.as_str())).count() + name.split(['.', '_']).filter(|word| word.len() > 3 && asked.contains(word)).count();
+        let best = names.iter().map(|name| score(name)).max().unwrap_or(0);
+        let near: Vec<&str> = if best == 0 { Vec::new() } else { names.iter().copied().filter(|name| score(name) == best).take(8).collect() };
+        return Err(if near.is_empty() {
+            format!("there is no command `{wanted}`; ask without a name for the list")
+        } else {
+            format!("there is no command `{wanted}`; did you mean one of: {}", near.join(", "))
+        });
+    };
+    out.set("command", *name);
+    if let Some((_, example)) = tequila_format::examples::by_name().into_iter().find(|(known, _)| known == name) {
+        if let Value::Object(fields) = &example {
+            out.set("fields", Value::Array(fields.keys().filter(|key| key.as_str() != "command").map(|key| Value::String(key.clone())).collect()));
+        }
+        out.set("example", example);
+        out.set("note", "Send it with apply. The ids, keys and values in the example are placeholders: read the real ones from the scene first. A field not in the example is not read.");
+    }
+    // What the example cannot say.
+    match *name {
+        "environment.set_parameter" => {
+            out.set("parameters", Value::Array(tequila_scene::command::EnvParam::ALL.iter().map(|p| Value::String(p.key().into())).collect()));
+        }
+        "scene.set_visibility" | "scene.set_locked" => {
+            out.set("mind", "Each state is {\"node\": id, \"value\": true or false}. `value` is required: true shows (or locks), false hides (or unlocks).");
+        }
+        "scene.set_shape" => {
+            out.set("mind", "Leave `mesh` out and Tequila gives the new shape a mesh of its own. To add a new shape rather than change one, use the add_shape operation.");
+        }
+        "material.set_parameter" => {
+            out.set("mind", "The parameter keys and their ranges are in query api under material_parameters; a colour may be a hex sRGB string.");
+        }
+        _ => {}
+    }
+    Ok(out.build())
+}
+
 /// What a `library` request comes to.
 pub enum LibraryOutcome {
     /// Apply these to the document, in order, as one undo step, then answer
@@ -286,6 +416,11 @@ pub fn library_request(
     user: &std::path::Path,
     pack: PackReader,
 ) -> Result<LibraryOutcome, String> {
+    // Looking, which changes nothing: before anything is asked of the name.
+    if request.action == "search" {
+        let words = request.search.as_deref().or(request.name.as_deref());
+        return Ok(LibraryOutcome::Done(library_search(&library(user), words, request.category.as_deref(), request.limit.unwrap_or(20))));
+    }
     use tequila_format::library::{self, LibraryEntry, Source};
     let user = user.to_path_buf();
     let (entries, _) = library::read_libraries(&library::standard_directory(), &user);
@@ -548,6 +683,105 @@ mod library_tests {
         assert!(library_request(&delete, &document, &[], &user, &no_packs).is_err());
         let _ = std::fs::remove_dir_all(&user);
         let _ = std::fs::remove_file(&package);
+    }
+
+    fn names(answer: &Value) -> Vec<String> {
+        answer.get("presets").map(Value::as_array).unwrap_or(&[]).iter().filter_map(|p| p.get("name").and_then(Value::as_str)).map(str::to_string).collect()
+    }
+
+    /// The library as an AI is shown it. The whole list is a third of a
+    /// million characters, which an assistant asked for leather did not
+    /// open, and made its own; a search answers in a page.
+    #[test]
+    fn the_library_is_searched_in_a_size_an_ai_reads() {
+        let user = std::env::temp_dir().join(format!("tequila-scripting-search-{}", std::process::id()));
+        let all = library(&user);
+        let whole = tequila_format::json_write::to_string(&all).len();
+
+        // Nothing asked: the categories, to choose from, and no presets.
+        let categories = library_search(&all, None, None, 20);
+        assert!(categories.get("categories").and_then(|c| c.get("Metal")).and_then(Value::as_f64).unwrap_or(0.0) > 20.0, "{categories:?}");
+        assert!(categories.get("presets").is_none());
+
+        // Words: every one has to be there, whatever their case, and a
+        // preset with them in its name comes before one that only mentions
+        // them.
+        let leather = library_search(&all, Some("Black LEATHER"), None, 20);
+        let found = names(&leather);
+        assert!(!found.is_empty(), "no black leather in the library");
+        assert!(found[0].to_lowercase().contains("leather"), "{found:?}");
+        let page = tequila_format::json_write::to_string(&leather).len();
+        assert!(page < 8_000 && page * 20 < whole, "a search answered {page} characters of {whole}");
+        for preset in leather.get("presets").unwrap().as_array() {
+            assert!(preset.get("category").is_some() && preset.get("type").is_some() && preset.get("about").is_some());
+            assert!(preset.get("file").is_none() && preset.get("tags").is_none(), "more than is needed to pick one");
+        }
+
+        // No more than asked for, and it says there are more.
+        let few = library_search(&all, Some("aluminium"), None, 3);
+        assert_eq!(names(&few).len(), 3);
+        assert!(few.get("found").and_then(Value::as_f64).unwrap() > 3.0);
+        assert!(few.get("note").and_then(Value::as_str).unwrap().contains("more"));
+
+        // One category.
+        let wood = library_search(&all, None, Some("wood"), 500);
+        let woods = wood.get("presets").unwrap().as_array();
+        assert!(woods.len() > 5 && woods.iter().all(|p| p.get("category").and_then(Value::as_str) == Some("Wood")));
+        assert!(wood.get("note").is_none());
+
+        // Nothing: said, with what to try.
+        let nothing = library_search(&all, Some("unobtainium zzz"), None, 20);
+        assert_eq!(nothing.get("found").and_then(Value::as_f64), Some(0.0));
+        assert!(nothing.get("note").and_then(Value::as_str).unwrap().contains("Nothing matches"));
+
+        // As a request, where it needs neither a name nor a part.
+        let document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        let mut search = request("search");
+        search.search = Some("spun".into());
+        let Ok(LibraryOutcome::Done(answer)) = library_request(&search, &document, &[], &user, &no_packs) else {
+            panic!("a search did not answer");
+        };
+        assert!(names(&answer).iter().any(|name| name == "Aluminium Spun"), "{answer:?}");
+        // The name it answers with is the one `apply` takes.
+        let mut apply = request("apply");
+        apply.name = Some(names(&answer)[0].clone());
+        let part = document.tree.iter().find(|n| n.mesh().is_some()).map(|n| n.id).expect("a part");
+        assert!(matches!(library_request(&apply, &document, &[part], &user, &no_packs), Ok(LibraryOutcome::Commands(..))));
+    }
+
+    /// A command looked up by its name: the fields, an example that is
+    /// itself a command, and what the example cannot say. An assistant that
+    /// guessed `visible` for a state's `value` hid the part it meant to
+    /// show; one that looks finds the word.
+    #[test]
+    fn one_command_is_looked_up_by_its_name() {
+        let list = help(None).unwrap();
+        let commands = list.get("commands").unwrap().as_array();
+        assert!(commands.len() > 50 && commands.iter().any(|c| c.as_str() == Some("scene.set_visibility")));
+
+        let one = help(Some(" Scene.Set_Visibility ")).unwrap();
+        assert_eq!(one.get("command").and_then(Value::as_str), Some("scene.set_visibility"));
+        assert!(one.get("fields").unwrap().as_array().iter().any(|f| f.as_str() == Some("states")));
+        assert!(one.get("mind").and_then(Value::as_str).unwrap().contains("`value` is required"));
+        let example = tequila_format::json_write::to_string(one.get("example").unwrap());
+        tequila_format::journal::decode(&example).unwrap_or_else(|e| panic!("{example}: {e:?}"));
+
+        // A near miss is answered with the names it might have meant.
+        let near = help(Some("scene.set_visible")).unwrap_err();
+        assert!(near.contains("scene.set_visibility"), "{near}");
+        assert!(help(Some("zz")).unwrap_err().contains("no command"));
+
+        // The environment's settings by their names, which no example lists.
+        let environment = help(Some("environment.set_parameter")).unwrap();
+        assert!(environment.get("parameters").unwrap().as_array().iter().any(|p| p.as_str() == Some("ground_reflections")));
+
+        // Every command has a page, short enough to read.
+        for name in tequila_scene::Command::CATALOG {
+            let page = help(Some(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(page.get("example").is_some(), "{name} has no example");
+            let length = tequila_format::json_write::to_string(&page).len();
+            assert!(length < 12_000, "{name}'s page is {length} characters");
+        }
     }
 }
 

@@ -22,7 +22,8 @@ If a tool says Tequila does not seem to be open, ask the user to open it. If the
 | The user wants | Use | Read |
 |---|---|---|
 | To know what is in the scene | `tequila_scene`, `tequila_nodes`, `tequila_materials` | - |
-| A real material on parts (aluminium, walnut, ABS...) | the library: `{"op": "library", "action": "apply", ...}` | `reference/materials.md` |
+| A real material on parts (aluminium, walnut, leather, ABS...) | the library, first: `tequila_library` to search it, `tequila_library_apply` to put a preset on parts | `reference/materials.md` |
+| A simple shape: a pedestal, a backdrop, a floor plane | `tequila_add_shape` | `reference/scene.md` |
 | A material of their own: terrazzo, camo, worn paint, galaxy resin | recipes: `tequila_material_preview` → `create` → `update` | `reference/recipes.md` |
 | A colour, finish or roughness changed | `material.set_parameter` (colours as hex) | `reference/materials.md` |
 | A shot: studio, black, white e-commerce, cut-out, HDRI, jewellery | lighting, environment, floor, camera, image style | `reference/shots.md` |
@@ -31,29 +32,33 @@ If a tool says Tequila does not seem to be open, ask the user to open it. If the
 | A render | `tequila_render` (quick look) or `tequila_queue` (final) | `reference/shots.md` |
 | A new button, panel, automation or batch job inside Tequila | a plugin: `tequila_plugin_*` | `reference/plugins.md` |
 | Work without the window, or a repeatable script | the Python client | `reference/scripting.md` |
-| Any command's exact fields | `tequila_query {"what": "commands"}` | `reference/commands.md` |
+| Any command's exact fields | `tequila_command` (one command: its fields and an example) | `reference/commands.md` |
 
 ## How to work
 
 1. **Look first.** `tequila_scene` for the overview, then `tequila_nodes` (use `parts_only: true` and `filter` to keep it short) for parts with their ids, materials and sizes, and `tequila_materials` for materials. Ids come only from these answers - never guess one.
 2. **Plan, then change in batches.** Several edits that belong together go in one `tequila_batch` (one undo step; with `atomic` true, if one fails none stay).
-3. **Look at the result.** `tequila_screenshot` with `viewport: true` shows just the picture. For a true-to-render check, switch the viewport with `tequila_ui {"viewport": "rendered"}`, wait a few seconds for it to settle, and screenshot again. Compare against what was asked, and refine.
-4. **Undo freely.** `tequila_undo` takes back the last step - one edit, or one whole batch.
-5. **Say what you did**, briefly, in the user's terms: which parts, which materials, what changed.
+3. **Never guess a field.** Before a command you have not used here, ask `tequila_command` for it: it answers with the exact fields and an example to copy. A field that is not in the example is not read - `scene.set_visibility` takes `value`, not `visible`.
+4. **Look at the result.** `tequila_screenshot` with `viewport: true` shows just the picture. For a true-to-render check, switch the viewport with `tequila_ui {"viewport": "rendered"}` and screenshot again: it waits for the picture (up to `settle` seconds, 12 unless you say) and tells you whether it had finished. If it says the picture was still grainy, ask again with a longer `settle` rather than judging the grain. Compare against what was asked, and refine.
+5. **Undo freely.** `tequila_undo` takes back the last step - one edit, or one whole batch.
+6. **Say what you did**, briefly, in the user's terms: which parts, which materials, what changed.
 
 Do not import files, save, or render to a file unless the user asks.
 
 ## Materials
 
-**Prefer the library.** Tequila ships 309 realistic presets - procedural metals, plastics, woods, fabrics, stones, glass, gems, liquids, leathers, paints, composites. List them with `tequila_query {"what": "library"}`, then put one on parts:
+**Look in the library first, every time.** Tequila ships several hundred finished presets - procedural metals, plastics, woods, fabrics, stones, glass, gems, liquids, leathers, paints, composites - and the person may have saved their own. Search it with words for what is wanted, then put the one you choose on parts by its exact name:
 
 ```json
-tequila_request {"request": {"op": "library", "action": "apply", "name": "Aluminium Brushed", "nodes": [12, 14]}}
+tequila_library {"search": "black leather"}
+tequila_library_apply {"name": "Aluminium Brushed", "nodes": [12, 14]}
 ```
 
-That is one undo step. The listed parts share one material made from the preset; add `"unlink": true` to give them a separate copy. Leaving out `nodes` uses the selection.
+`tequila_library` with nothing lists the categories; `category` narrows to one; every word of `search` has to be in the preset's name, category, type, tags or description, so try fewer words if nothing comes back. Applying is one undo step. The listed parts share one material made from the preset; add `"unlink": true` to give them a separate copy.
 
-**Nothing in the library fits?** Make one from a recipe - a type, a few parameters and procedural patterns, layered with masks - with the `tequila_material_*` tools. Read `tequila_material_guide` once (it has 16 tested examples to start from), preview on a ball, create it on the parts, look at it on the product, update. `reference/recipes.md` is the short version.
+**Close but not right?** Put the preset on, then change it: its colour, roughness or a pattern's scale (`tequila_material` reads one material whole, to see where its colour comes from - in some presets it is inside a pattern, not `base_color`). That is nearly always better than starting from nothing.
+
+**Nothing in the library is close?** Only then make one from a recipe - a type, a few parameters and procedural patterns, layered with masks - with the `tequila_material_*` tools. Read `tequila_material_guide` once (it has 16 tested examples to start from), preview on a ball, create it on the parts, look at it on the product, update. `reference/recipes.md` is the short version.
 
 **Parts share materials.** Two parts can wear one material; changing it changes both. Before editing one part's material alone, give it its own: `{"command": "material.unlink", "node": 12}`.
 
@@ -104,6 +109,7 @@ When the user wants something Tequila does not have - a panel with a button, som
 
 - A refused command comes back as an error message naming the field: read it, fix the request, try again.
 - A connection error means the outcome of that request is unknown. Do not repeat edits blindly: check `tequila_query {"what": "history"}` and the scene first.
+- Something you changed does not show: check the simple causes first. Is the part hidden (`tequila_nodes` → `visible`)? Is it where you think (`center`, `size`)? Did the screenshot say the picture had finished?
 - A pattern or texture looks like nothing: the model's units are wrong, or the pattern `size` is far off the part's size.
 - Rendered view black, or "standing in for Cycles, which could not render": Cycles could not run (usually the graphics card or its driver); Tequila's own renderer draws the view on the processor instead. Suggest updating the graphics driver; carry on meanwhile.
 - A plugin "failed": `tequila_plugin_log` has the traceback; `tequila_plugin_list` shows `failure` (no Python, a syntax error, a crash).

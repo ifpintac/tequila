@@ -227,7 +227,12 @@ impl Session {
             Operation::StudioPreset(request) => self.studio_preset(request),
             Operation::StudioKit { piece } => self.studio_kit(piece),
             Operation::Substance(request) => substance(request),
+            Operation::Help { command } => match tequila_scripting::document::help(command.as_deref()) {
+                Ok(page) => Reply::Value(page),
+                Err(error) => Reply::Failed(error),
+            },
             Operation::Screenshot { .. }
+            | Operation::AddShape { .. }
             | Operation::Ui(_)
             | Operation::Queue(_)
             | Operation::Stop

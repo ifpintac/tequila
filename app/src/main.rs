@@ -523,6 +523,9 @@ struct TequilaApp {
     /// the request would be repeated every frame until the event arrived,
     /// which is a queue of captures for one caller who wanted a picture.
     screenshot_requested: bool,
+    /// A screenshot that waits for the picture to finish: when it was asked
+    /// for, and how many seconds it is given.
+    screenshot_settle: Option<(std::time::Instant, f32)>,
     gizmo: gizmo_ui::GizmoUi,
     label_gizmo: label_gizmo::LabelGizmo,
     mapping_gizmo: mapping_gizmo::MappingGizmo,
@@ -1136,6 +1139,7 @@ impl TequilaApp {
             title_bar_dark: None,
             activity: scripting_tab::Activity::default(),
             screenshot_requested: false,
+            screenshot_settle: None,
             gizmo: gizmo_ui::GizmoUi::default(),
             label_gizmo: label_gizmo::LabelGizmo::default(),
             mapping_gizmo: mapping_gizmo::MappingGizmo::default(),

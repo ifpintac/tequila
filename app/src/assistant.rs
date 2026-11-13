@@ -1344,6 +1344,8 @@ impl Assistant {
                 ));
                 app.pending_screenshot = Some(path.clone());
                 app.screenshot_viewport = viewport;
+                // Given time to finish its picture, as the bridge's is.
+                app.screenshot_settle = Some((std::time::Instant::now(), 12.0));
                 self.stepped(&call, label, Status::Running, String::new());
                 self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: "The screenshot, as the application shows it now.".into() });
             }
@@ -1495,7 +1497,7 @@ impl Assistant {
         let Some(shot) = &self.shot else { return };
         let ready = std::fs::read(&shot.path).ok().filter(|bytes| bytes.ends_with(b"IEND\xaeB`\x82"));
         let Some(bytes) = ready else {
-            if shot.asked.elapsed() > std::time::Duration::from_secs(10) {
+            if shot.asked.elapsed() > std::time::Duration::from_secs(25) {
                 let shot = self.shot.take().expect("checked above");
                 self.result(shot.call, "the screenshot did not arrive".into(), None, true, "screenshot".into());
             }
@@ -2118,6 +2120,19 @@ fn step_label(call: &Call) -> String {
         "studio_preset_save" => "Save a studio".into(),
         "studio_render_all" => "Render every studio".into(),
         "preferences" => "Preferences".into(),
+        "library" => match word("search").or_else(|| word("category")) {
+            Some(words) => format!("Looked in the library for \"{words}\""),
+            None => "Looked in the library".into(),
+        },
+        "command" => match word("command") {
+            Some(command) => format!("Looked up {command}"),
+            None => "Read the commands".into(),
+        },
+        "add_shape" => match word("shape") {
+            Some(shape) => format!("Added a {shape}"),
+            None => "Added a shape".into(),
+        },
+        "material" => "Read a material".into(),
         "library_apply" => match word("name") {
             Some(name) => format!("Library: {name}"),
             None => "Put a library material on parts".into(),
@@ -2459,6 +2474,10 @@ mod tests {
         assert_eq!(step_label(&call("tequila_look", r#"{"view":"front"}"#)), "Camera: front view");
         assert_eq!(step_label(&call("tequila_nodes", r#"{"filter":"grille"}"#)), "Found parts named \"grille\"");
         assert_eq!(step_label(&call("tequila_screenshot", "{}")), "Looked at the viewport");
+        assert_eq!(step_label(&call("tequila_library", r#"{"search":"black leather"}"#)), "Looked in the library for \"black leather\"");
+        assert_eq!(step_label(&call("tequila_library_apply", r#"{"name":"Leather Black","nodes":[4]}"#)), "Library: Leather Black");
+        assert_eq!(step_label(&call("tequila_command", r#"{"command":"scene.set_shape"}"#)), "Looked up scene.set_shape");
+        assert_eq!(step_label(&call("tequila_add_shape", r#"{"shape":"cylinder"}"#)), "Added a cylinder");
         assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"studio_kit","piece":"softbox"}}"#)), "Request: studio kit");
         // One added later still reads as words.
         assert_eq!(step_label(&call("tequila_something_new", "{}")), "something new");

@@ -405,6 +405,12 @@ impl Orchestrator {
         }
     }
 
+    /// When the newest request was made: a picture stamped earlier
+    /// ([`DisplayImage::asked`]) is of something before it.
+    pub fn latest_asked(&self) -> Option<Instant> {
+        self.shared.request.lock().unwrap().as_ref().map(|request| request.submitted)
+    }
+
     /// Hand the render thread a new request.
     pub fn submit(&self, request: RenderRequest) {
         let mut slot = self.shared.request.lock().unwrap();

@@ -441,8 +441,10 @@ scene rather than describing how. Work through the tequila tools. Scene changes 
 anything that leaves the scene - importing a file, saving to a new place, rendering to a file, changing a preference, writing or running \
 a plugin - Tequila asks the person itself, so call the tool and wait for its answer rather than asking first. You can read files in the \
 project's folder and, when the person agrees, write there. You cannot run commands, reach the internet, or touch files anywhere else, so \
-do not try. After changing how something looks, check it with tequila_screenshot. A name written as @Name in a message is a part or a \
-material of the scene, and its id follows in brackets.";
+do not try. For any material, look in the library first (tequila_library, then tequila_library_apply): make one yourself only when \
+nothing there is close. Ask tequila_command for a command's exact fields before you use it for the first time, and never guess a field \
+name. After changing how something looks, check it with tequila_screenshot, which says whether the picture had finished. A name written \
+as @Name in a message is a part or a material of the scene, and its id follows in brackets.";
 
 /// The agent's own options for a new conversation. For Claude: its shell,
 /// internet and sub-agent tools taken away, and its file-writing tools made

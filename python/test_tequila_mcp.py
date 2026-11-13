@@ -13,6 +13,10 @@ from pathlib import Path
 import tequila_mcp
 from tequila_mcp import Bridge, handle, serve, TOOLS
 
+# What the stand-in application says of its window: the Rendered view,
+# its picture barely begun.
+UI = {'viewport': 'rendered', 'picture_samples': 3, 'picture_settled': False}
+
 # A 1x1 PNG, for a screenshot the fake application "takes".
 PNG = base64.b64decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==')
@@ -49,6 +53,10 @@ class FakeTequila:
                     elif op == 'screenshot':
                         Path(req['path']).write_bytes(PNG)
                         result = {'path': req['path'], 'pending': True}
+                    elif op == 'ui' or (op == 'query' and req.get('what') == 'ui'):
+                        result = dict(UI)
+                    elif op == 'library' and req.get('action') == 'search':
+                        result = {'total': 602, 'found': 1, 'presets': [{'name': 'Leather Black', 'category': 'Leather', 'type': 'plastic', 'about': 'Fine grain.'}]}
                     elif op == 'apply' and req['command'].get('command') == 'refuse':
                         ok, result = False, 'no such material'
                     elif op == 'plugin' and req['action'] == 'run':
@@ -141,7 +149,41 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(picture['type'], 'image')
         self.assertEqual(picture['mimeType'], 'image/png')
         self.assertEqual(base64.b64decode(picture['data']), PNG)
-        self.assertTrue(self.app.received[-1]['viewport'])
+        asked = next(r for r in self.app.received if r['op'] == 'screenshot')
+        self.assertTrue(asked['viewport'])
+        # It gives the picture time to finish, unless told otherwise, and
+        # says with the picture whether it had.
+        self.assertEqual(asked['settle'], 12)
+        self.assertIn('NOT finished', result['content'][1]['text'])
+        UI.update(picture_samples=64, picture_settled=True)
+        try:
+            result = self.call('tequila_screenshot', {'viewport': True, 'settle': 0})
+        finally:
+            UI.update(picture_samples=3, picture_settled=False)
+        self.assertEqual([r for r in self.app.received if r['op'] == 'screenshot'][-1]['settle'], 0)
+        self.assertIn('finished enough to judge', result['content'][1]['text'])
+
+    def test_the_library_comes_first(self):
+        """The library has a tool of its own, searched and short; the
+        instructions and the tools that make a material say to look there
+        first."""
+        from tequila_mcp import INSTRUCTIONS
+        self.assertIn('library first', INSTRUCTIONS)
+        described = {t['name']: t['description'] for t in TOOLS}
+        self.assertIn('LOOK HERE FIRST', described['tequila_library'])
+        self.assertIn('tequila_library', described['tequila_material_create'])
+        found = json.loads(self.call('tequila_library', {'search': 'black leather', 'limit': 5})['content'][0]['text'])
+        self.assertEqual(found['presets'][0]['name'], 'Leather Black')
+        sent = self.app.received[-1]
+        self.assertEqual((sent['op'], sent['action'], sent['search'], sent['limit']), ('library', 'search', 'black leather', 5))
+        self.call('tequila_library_apply', {'name': 'Leather Black', 'nodes': [360]})
+        sent = self.app.received[-1]
+        self.assertEqual((sent['op'], sent['action'], sent['name'], sent['nodes']), ('library', 'apply', 'Leather Black', [360]))
+        self.call('tequila_command', {'command': 'scene.set_visibility'})
+        self.assertEqual((self.app.received[-1]['op'], self.app.received[-1]['command']), ('help', 'scene.set_visibility'))
+        self.call('tequila_add_shape', {'shape': 'cylinder', 'width': 0.3, 'height': 0.15})
+        sent = self.app.received[-1]
+        self.assertEqual((sent['op'], sent['shape'], sent['width'], sent['height']), ('add_shape', 'cylinder', 0.3, 0.15))
 
     def test_look_passes_from_through(self):
         self.call('tequila_look', {'from': [0, 1, 3], 'at': [0, 0, 0]})
