@@ -1829,7 +1829,7 @@ impl Assistant {
                             ui.label(
                                 egui::RichText::new(
                                     "This could be an OpenAI key or one from a company gateway, which use the same start. \
-                                     If it came from Uliverse or your IT team, ask them for the API address too.",
+                                     If it came from your IT team, ask them for the API address too.",
                                 )
                                 .small()
                                 .color(crate::theme::dim()),
@@ -1873,11 +1873,12 @@ impl Assistant {
             });
         });
 
-        if provider.id == "custom" || provider.id.starts_with("company") || provider.name.to_lowercase().contains("uliverse") {
+        if provider.id.starts_with("custom") || provider.id.starts_with("company") {
             ui.label(
                 egui::RichText::new(
-                    "For a company AI such as Uliverse, ask your IT or AI team for: an OpenAI-compatible (or Anthropic-compatible) \
-                     API address, a model name, and an API key — and, if they use one, the name of the header the key goes in.",
+                    "For a service not listed, such as a company's own AI, ask whoever runs it for: an OpenAI-compatible (or \
+                     Anthropic-compatible) API address, a model name, and an API key — and, if they use one, the name of the \
+                     header the key goes in.",
                 )
                 .small()
                 .color(crate::theme::dim()),

@@ -218,7 +218,7 @@ fill in the form, and click **Test**:
 | **Groq** | OpenAI-compatible | `https://api.groq.com/openai/v1` | A Groq key (console.groq.com) |
 | **Ollama**, free, on this computer | OpenAI-compatible | `http://localhost:11434/v1` | None |
 | **LM Studio**, free, on this computer | OpenAI-compatible | `http://localhost:1234/v1` | None |
-| **Your company's AI** (e.g. Uliverse) | usually OpenAI-compatible | from your IT/AI team | from your IT/AI team |
+| **Custom**: a company's own AI, or any other compatible service | usually OpenAI-compatible | from whoever runs it | from whoever runs it |
 
 A model that cannot look at images still works, without checking its own
 screenshots: untick **The model can see images** for it. DeepSeek's and
@@ -289,7 +289,7 @@ to OpenAI to find out: click **It's an OpenAI key** if it is. Any other key
 does not say where it belongs, and the service's address has to come from
 whoever gave you the key.
 
-### Uliverse or another company AI
+### Custom: a company's AI or another service
 
 Most company AI platforms offer an **OpenAI-compatible** endpoint; some are
 Anthropic-compatible. Ask the team that runs it for:
@@ -301,7 +301,7 @@ Anthropic-compatible. Ask the team that runs it for:
    **Advanced → Key header**.
 
 If the model cannot look at images, untick **The model can see images**. It
-still works, but it cannot check its results visually. If Uliverse has its
+still works, but it cannot check its results visually. If the service has its
 own API that is neither format, Tequila needs a small adapter
 (`crates/tequila-ai/src/wire.rs`). Its API documentation is enough to write
 one.

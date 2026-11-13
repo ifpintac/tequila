@@ -120,7 +120,7 @@ pub fn recognise_key(key: &str) -> KeyLooks {
 pub struct Provider {
     /// Stable, for remembering which one is active.
     pub id: String,
-    /// What the person calls it: "Claude", "Uliverse".
+    /// What the person calls it: "Claude", "Work gateway".
     pub name: String,
     pub kind: Kind,
     /// For Anthropic, the API root (`https://api.anthropic.com`). For
@@ -168,7 +168,7 @@ impl Provider {
             make("groq", "Groq", Kind::OpenAi, "https://api.groq.com/openai/v1", "", false),
             make("ollama", "Ollama (on this computer)", Kind::OpenAi, "http://localhost:11434/v1", "", true),
             make("lmstudio", "LM Studio (on this computer)", Kind::OpenAi, "http://localhost:1234/v1", "", true),
-            make("custom", "Company AI (e.g. Uliverse)", Kind::OpenAi, "", "", true),
+            make("custom", "Custom", Kind::OpenAi, "", "", true),
         ]
     }
 
