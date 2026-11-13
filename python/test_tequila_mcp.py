@@ -185,6 +185,33 @@ class BridgeTests(unittest.TestCase):
         sent = self.app.received[-1]
         self.assertEqual((sent['op'], sent['shape'], sent['width'], sent['height']), ('add_shape', 'cylinder', 0.3, 0.15))
 
+    def test_a_moved_view_is_the_persons(self):
+        """The person turns and zooms the view while the AI works. An
+        assistant that found it closer after its material changes framed
+        the model again each time; the instructions say whose a moved view
+        is, and the tool that frames says what it is not for."""
+        from tequila_mcp import INSTRUCTIONS
+        self.assertIn("The view is the person's as well", INSTRUCTIONS)
+        self.assertIn('do not frame it or move it back', INSTRUCTIONS)
+        described = {t['name']: t['description'] for t in TOOLS}
+        self.assertIn('not after a material edit', described['tequila_frame'])
+
+    def test_a_look_says_when_the_person_moved_the_view(self):
+        """Tequila counts the person's own view moves; a screenshot says so
+        when the count has risen since the last one, once, and never at a
+        first look or from an application that does not count."""
+        said = lambda: self.call('tequila_screenshot', {'settle': 0})['content'][1]['text']
+        self.assertNotIn('moved the view', said())
+        try:
+            UI.update(view_moves_by_hand=2)
+            self.assertNotIn('moved the view', said(), 'a first count has nothing to differ from')
+            self.assertNotIn('moved the view', said())
+            UI.update(view_moves_by_hand=3)
+            self.assertIn('The person has moved the view since your last look', said())
+            self.assertNotIn('moved the view', said(), 'said once')
+        finally:
+            UI.pop('view_moves_by_hand', None)
+
     def test_a_tint_is_one_tool(self):
         """The same material in another colour is one call, on a material
         or as a preset is put on; the bridge says to use it rather than

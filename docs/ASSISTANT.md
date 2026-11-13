@@ -920,6 +920,64 @@ Held by test: `the_library_is_searched_in_a_size_an_ai_reads`,
 `the_library_comes_first` and
 `a_screenshot_says_whether_its_picture_had_finished`.
 
+## As built, November 13: whose a moved view is
+
+The first real session's assistant said, three times, that the view had
+"zoomed in on its own" after a material change, never found why, and
+framed the model again each time. The cause was looked for and found: no
+material change moves the camera. The person at the window had turned and
+zoomed the view to look at each new material, between two of the
+assistant's looks, and the assistant framed it away again.
+
+**How that was established:**
+- About forty material changes replayed over the scripting channel in a
+  copy with a home folder of its own, in the quick view and in the
+  Rendered one: presets put on parts, materials made, shown on a ball,
+  remade, set, unlinked and assigned, batches, a batch taken back, undo and
+  redo. The camera was read before and after each, and the model's outline
+  measured in each screenshot. Nothing moved.
+- The session's chat keeps every step and picture. Before each of the
+  three remarks there is no camera request: no frame, no look, no undo.
+- Its pictures show a hand's moves - a small turn and a step back, closer
+  and lower, turned and off-centre, a fourfold push in - and a switch to
+  the Rendered view that the assistant had not asked for and Tequila does
+  not make unasked.
+
+**What changed:**
+- **Tequila says when the person has moved the view.** Every scripted
+  request passes through `channel::handle`, and what one does to the
+  camera it has done by the time it answers; so a view found somewhere
+  else when the next arrives was moved by hand (`channel::note_view`).
+  `query ui` counts those as `view_moves_by_hand`. Each bridge keeps the
+  count from its last screenshot, and when it has risen says with the
+  picture: "The person has moved the view since your last look: it is
+  where they want it, so leave it there." Never at a first look, and once
+  for however far the person went. Tequila's own loop says the same.
+- **The instructions say whose the view is**, for the looks in between:
+  nothing done to a material moves the camera, a view that differs from
+  the last look is the person's, and a camera moved to check something is
+  put back. `tequila_frame` says it is not for after a material edit.
+
+**Tried on this Mac, in a copy with a home folder of its own, through the
+real bridge** (`tequila --mcp`), with a drag across the viewport made as a
+mouse makes one (`ui` `drag`): a first look, a look after a library
+preset, after the assistant's own `tequila_frame` and after its undo said
+nothing of the view; the look after the drag said the person had moved
+it; the next, untouched, said nothing; a material made and a second drag,
+and the look said it again. `view_moves_by_hand` stood at 2.
+
+**Known limits:**
+- What the person types in Tequila's console is a request like any other,
+  so a `look` typed there is not counted as theirs.
+- The person's orbit is an undo step like any other: an assistant's undo
+  after they have moved the view takes back their orbit, not its own last
+  edit.
+
+Held by test: `a_material_change_leaves_the_view_where_it_was`,
+`a_view_moved_between_requests_is_counted_as_the_persons`, and
+`a_look_says_when_the_person_moved_the_view` and
+`a_moved_view_is_the_persons` in the bridges and in Tequila's own loop.
+
 ## As built, November 13: one step to recolour a material
 
 In the same first session the assistant put a library leather on a part

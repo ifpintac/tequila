@@ -402,6 +402,11 @@ struct TequilaApp {
     /// Imports a script or an AI app asked for over the scripting channel,
     /// read on other threads as `imports` are (`channel::begin_import`).
     script_imports: Vec<channel::PendingImport>,
+    /// The view as the last scripted request left it, and how many times
+    /// one has since found it somewhere else: the person's own turns, pans
+    /// and zooms, for an assistant to be told of (`channel::note_view`).
+    view_left: Option<channel::View>,
+    view_moves_by_hand: u64,
     /// What the last model update found, shown until dismissed.
     update_report: Option<tequila_scene::reimport::ReimportReport>,
     /// The Model units window, when it is open.
@@ -1090,6 +1095,8 @@ impl TequilaApp {
             pending_unit: None,
             imports: Vec::new(),
             script_imports: Vec::new(),
+            view_left: None,
+            view_moves_by_hand: 0,
             update_report: None,
             model_units: None,
             lighting_offer: None,

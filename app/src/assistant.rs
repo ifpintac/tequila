@@ -231,6 +231,9 @@ pub struct Assistant {
     calls: VecDeque<Call>,
     results: Vec<Part>,
     shot: Option<Shot>,
+    /// Tequila's count of the person's own view moves at the assistant's
+    /// last screenshot, to say with the next that the view is theirs.
+    view_moves: Option<u64>,
     plugin_wait: Option<PluginWait>,
     /// The undo depth when the current request began, and after the
     /// assistant's last change — for taking back everything one request did.
@@ -1347,7 +1350,17 @@ impl Assistant {
                 // Given time to finish its picture, as the bridge's is.
                 app.screenshot_settle = Some((std::time::Instant::now(), 12.0));
                 self.stepped(&call, label, Status::Running, String::new());
-                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: "The screenshot, as the application shows it now.".into() });
+                // Whose the view is, when the person has moved it since
+                // the last look: said with the picture, as the bridge says
+                // it (`channel::note_view`).
+                let moves = crate::channel::view_moves_by_hand(app);
+                let moved = self.view_moves.is_some_and(|before| moves > before);
+                self.view_moves = Some(moves);
+                let mut caption = String::from("The screenshot, as the application shows it now.");
+                if moved {
+                    caption.push_str(" The person has moved the view since your last look: it is where they want it, so leave it there.");
+                }
+                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption });
             }
             Ok(tools::Plan::Material { json, picture }) => {
                 if self.shot.is_some() || app.pending_screenshot.is_some() {
@@ -2429,6 +2442,25 @@ mod tests {
         app.project.undo();
         app.project.apply(tequila_scene::Command::Rename { node, name: "By hand".into() }).unwrap();
         assert!(!assistant.can_undo_turn(app.project.bus()), "the button would undo the person's own edit");
+    }
+
+    /// The assistant's own screenshot says when the person has moved the
+    /// view since its last one, and not at its first look.
+    #[test]
+    fn a_look_says_when_the_person_moved_the_view() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let mut look = |app: &mut TequilaApp| {
+            assistant.carry_out(app, call("tequila_screenshot", "{}"));
+            let shot = assistant.shot.take().expect("a screenshot asked for");
+            app.pending_screenshot = None;
+            shot.caption
+        };
+        assert!(!look(&mut app).contains("moved the view"));
+        assert!(!look(&mut app).contains("moved the view"));
+        app.camera.zoom(2.0);
+        assert!(look(&mut app).contains("The person has moved the view since your last look"));
+        assert!(!look(&mut app).contains("moved the view"), "said once");
     }
 
     /// A script's screenshot already in flight makes the assistant's wait a
