@@ -28,7 +28,9 @@ tequila_request {"request": {"op": "batch", "atomic": true, "ops": [
 | `texture_set`, `substance` | PBR packs, Substance materials | `textures` |
 | `library` with `action`: `search`, `apply`, `save`, `import`, `export`, `delete` | The material library | `materials` |
 | `material` with `action`: `guide`, `preview`, `create`, `update`, `recipe`, `save` | Materials from recipes | `recipes` |
-| `uv_layout` | A part's UV layout as a picture | `uv` |
+| `graph` with `action`: `catalogue`, `read`, `add`, `set`, `connect`, `disconnect`, `remove` | A material's graph, a node at a time | `graph` |
+| `uv` with `action`: `islands`, `cut`, `stitch`; `uv_layout` | A part's UV layout read, its seams, and the layout as a picture | `uv` |
+| `improve`, `model_units` | A model made finer, shaded again, or its size put right | `fixing` |
 | `studio_preset` with `action`: `list`, `apply`, `save`, `install`, `export`, `delete`, `render_all`; `studio_kit` | Studios | `variants`, `lighting` |
 | `render`, `queue`, `stop`, `screenshot` | Pictures | `rendering` |
 | `ui` | Panels, windows, the UV and graph editors | `app` |

@@ -280,10 +280,15 @@
  },
  {
   "name": "tequila_material_guide",
-  "description": "How to make procedural materials: the recipe format, every pattern kind with what it looks like and its settings and defaults, the material types, rules of thumb, and 16 tested example recipes (terrazzo, marble, brushed aluminium, walnut, carbon fibre, leather, concrete, hammered copper, galaxy resin, worn paint...). Read it before writing a recipe.",
+  "description": "How to make procedural materials, a part at a time. With no topic: how to work, and the patterns and examples there are. topic recipe: the recipe format, the rules of thumb and the parameters that matter - read it before writing a first recipe. types: every material type; a type's id (plastic, metal, velvet...): the parameters it shows. patterns: every pattern in a line; a pattern's kind (leather, weave, wood_advanced...): its settings and defaults. examples: the 16 tested recipes in a line each; an example's name (Terrazzo, Walnut, Carbon Fibre...): its recipe, to change and preview.",
   "inputSchema": {
    "type": "object",
-   "properties": {},
+   "properties": {
+    "topic": {
+     "type": "string",
+     "description": "contents, recipe, types, patterns, examples, a type's id, a pattern's kind or an example's name."
+    }
+   },
    "required": [],
    "additionalProperties": false
   }
@@ -603,7 +608,7 @@
  },
  {
   "name": "tequila_queue",
-  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view; configurations=true every valid combination of the configurator.",
+  "description": "Start a background render with the document's render settings; returns a job id at once. Poll tequila_jobs. studio renders one view; studios=true renders every view; configurations=true every valid combination of the configurator; frames=true the frames of the turntable (animation.set), one render each, leaving out those already rendered.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -651,6 +656,18 @@
     "configurations": {
      "type": "boolean",
      "description": "One render for every valid combination of the configurator, named by its choices."
+    },
+    "frames": {
+     "type": "boolean",
+     "description": "One render for every frame of the turntable, the product turned to each frame's angle; the file name takes the frame's number."
+    },
+    "first": {
+     "type": "integer",
+     "description": "With frames: the first frame to render (default 0)."
+    },
+    "last": {
+     "type": "integer",
+     "description": "With frames: the last frame to render (default the last there is)."
     }
    },
    "required": [],
@@ -768,10 +785,17 @@
  },
  {
   "name": "tequila_stop",
-  "description": "Stop the running background render; it still writes its image.",
+  "description": "Stop the running background render; it still writes its image, and the jobs waiting behind it start. job stops one job by its id from tequila_jobs: the one rendering is stopped, one still waiting is taken out of the queue and writes nothing. all=true stops the one rendering and takes out every job waiting: how to end a spin, a turntable or a batch of views early.",
   "inputSchema": {
    "type": "object",
-   "properties": {},
+   "properties": {
+    "job": {
+     "type": "integer"
+    },
+    "all": {
+     "type": "boolean"
+    }
+   },
    "required": [],
    "additionalProperties": false
   }
@@ -859,10 +883,27 @@
  },
  {
   "name": "tequila_preferences",
-  "description": "Tequila's own settings, as Edit > Preferences shows them: with no arguments, every setting with its value, its default and what it takes, and every keyboard shortcut with its keys. They are the person's own and kept between sessions: change one only when asked to.",
+  "description": "Tequila's own settings, as Edit > Preferences shows them, a page at a time. With no arguments, the pages there are. page is one of general, interface, viewport, navigation, keyboard (the shortcuts), import, folders, updates: each of its settings with its key, value, default and what it takes. search finds settings by words in their name or help. set and reset answer with what changed. They are the person's own and kept between sessions: change one only when asked to.",
   "inputSchema": {
    "type": "object",
    "properties": {
+    "page": {
+     "type": "string",
+     "enum": [
+      "general",
+      "interface",
+      "viewport",
+      "navigation",
+      "keyboard",
+      "import",
+      "folders",
+      "updates"
+     ]
+    },
+    "search": {
+     "type": "string",
+     "description": "Words that must all be in a setting's key, label or help: \"zoom\", \"autosave\"."
+    },
     "set": {
      "type": "object",
      "description": "Settings to change, by name: {\"viewport.gizmo_size\": 150, \"navigation.invert_zoom\": true}. All are checked before any is taken. A keyboard shortcut is set the same way: {\"shortcut.view.screenshot\": \"F12\"}, a list of two keys, or \"\" for none."
@@ -931,6 +972,319 @@
     }
    },
    "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_graph_nodes",
+  "description": "The catalogue of nodes a material graph can hold: what each is for, with its inputs, outputs, settings and fields. With nothing, the first page of them all, a line each, and the families. search takes words that must all match (\"voronoi\", \"edge wear\", \"brushed\"); family narrows to one (input, texture, pattern, group, color, converter, vector, shader, simple, layout). Three or fewer answers come whole; name asks for one whole. LOOK A NODE UP HERE before adding it: never guess a node's name, an input or a setting.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "search": {
+     "type": "string"
+    },
+    "family": {
+     "type": "string",
+     "enum": [
+      "input",
+      "texture",
+      "pattern",
+      "group",
+      "color",
+      "converter",
+      "vector",
+      "shader",
+      "simple",
+      "layout"
+     ]
+    },
+    "name": {
+     "type": "string",
+     "description": "One node whole, by its name in the catalogue: voronoi_texture, gradient, pattern_leather, knurl."
+    },
+    "page": {
+     "type": "integer",
+     "description": "Which page of a long list, from 1."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_graph_read",
+  "description": "A material's node graph in brief: each node on a line with its id, what it is and where its output goes, and which of the material's parameters the graph drives. With node, that one node whole: its settings and fields, each input with its value or the wire into it, each output with where it goes. A few hundred characters where the whole material (tequila_material) is thousands.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer",
+     "description": "The material's id, from tequila_materials or tequila_nodes."
+    },
+    "node": {
+     "type": [
+      "integer",
+      "string"
+     ],
+     "description": "A node's id from the brief reading, or \"surface\"."
+    },
+    "page": {
+     "type": "integer",
+     "description": "Which page of a graph with many nodes, from 1."
+    }
+   },
+   "required": [
+    "material"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_graph_edit",
+  "description": "Change a material's node graph one step at a time, each one undo step; a graph that would not work is refused and nothing changes. action is: add (node: a name from tequila_graph_nodes; settings, fields, inputs and label may come with it) - answers with the new node's id and its sockets; set (node: an id; settings {key: value}, fields {the node's own fields, such as a bump's depth or a ramp's gradient}, inputs {an input's name: a number, \"#rrggbb\", [x, y, z] or null for its default}, label, muted); connect (from: a node id, output: its name when the node has several, to: a node id or left out for the surface, input: the input's name, or on the surface a parameter's key such as base_color, specular_roughness, bump); disconnect (node: an id or left out for the surface, input); remove (node: an id). Every part that wears the material changes: material.unlink a part first to change it alone. Look with tequila_material_preview.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer"
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "add",
+      "set",
+      "connect",
+      "disconnect",
+      "remove"
+     ]
+    },
+    "node": {
+     "type": [
+      "integer",
+      "string"
+     ],
+     "description": "add: the name of the node to add. set, remove, disconnect: the id of a node in the graph, or \"surface\"."
+    },
+    "settings": {
+     "type": "object",
+     "description": "A general node's settings by key: {\"feature\": \"f2\"}."
+    },
+    "fields": {
+     "type": "object",
+     "description": "The node's own fields, as tequila_graph_read shows them: {\"depth\": 0.0003}, {\"gradient\": [{\"at\": 0, \"color\": \"#101010\"}, {\"at\": 1, \"color\": \"#d0d0d0\"}]}, {\"procedural\": {\"frequency\": 900}}, {\"value\": 0.35}."
+    },
+    "inputs": {
+     "type": "object",
+     "description": "Values for inputs nothing is wired into, by the input's name: {\"Scale\": 40, \"Color1\": \"#202020\"}."
+    },
+    "label": {
+     "type": "string"
+    },
+    "muted": {
+     "type": "boolean"
+    },
+    "from": {
+     "type": "integer",
+     "description": "connect: the node the wire leaves."
+    },
+    "output": {
+     "type": [
+      "string",
+      "integer"
+     ],
+     "description": "connect: which output of it, by name; the first when left out."
+    },
+    "to": {
+     "type": [
+      "integer",
+      "string"
+     ],
+     "description": "connect: the node the wire goes into; the surface when left out."
+    },
+    "input": {
+     "type": "string",
+     "description": "connect, disconnect: the input by its name, or a parameter's key on the surface."
+    }
+   },
+   "required": [
+    "material",
+    "action"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_uv_islands",
+  "description": "A part's UV layout, island by island, largest first: each island's number (what the uv.* commands take), its box on the layout, how much of the part it is, its area, how stretched it is, and where on the part it lies - centre and size in the world's metres and the way it faces. How to tell which island is the front panel before moving, packing, cutting or stitching one. Numbers change after a cut or an unwrap: read again.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "node": {
+     "type": "integer",
+     "description": "The part's id, from tequila_nodes."
+    },
+    "set": {
+     "type": "integer",
+     "description": "Which UV set, from 0 (default 0)."
+    },
+    "page": {
+     "type": "integer",
+     "description": "Which page of a layout with many islands, from 1."
+    }
+   },
+   "required": [
+    "node"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_uv_cut",
+  "description": "Cut a seam in a part's UV layout where you mean it, as one undo step. path is two or more points ON THE PART, each [x, y, z] in the world's metres (tequila_nodes gives the part's centre and size; tequila_uv_islands each island's): the cut follows the part's own edges the shortest way from each point to the next - down the back of a bottle is [[0, top, -r], [0, bottom, -r]]. A seam follows the mesh's edges: across a flat CAD face that has none it is refused, and says the way round. Or sharper_than: every edge inside an island that is sharper than that many degrees (islands narrows it to some). The pieces are laid flat again in place; pack=true also packs the whole layout after. Answers with how many islands there were and are.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "node": {
+     "type": "integer"
+    },
+    "set": {
+     "type": "integer"
+    },
+    "path": {
+     "type": "array",
+     "items": {
+      "type": "array",
+      "items": {
+       "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+     },
+     "minItems": 2,
+     "description": "Points on the part, in the world's metres."
+    },
+    "sharper_than": {
+     "type": "number",
+     "description": "Degrees: cut every edge inside an island that is sharper than this."
+    },
+    "islands": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "description": "With sharper_than: only inside these islands."
+    },
+    "pack": {
+     "type": "boolean",
+     "description": "Pack the whole layout into the square afterwards."
+    },
+    "reflatten": {
+     "type": "boolean",
+     "description": "Lay the pieces the cut touches flat again (default true)."
+    },
+    "across": {
+     "type": "boolean",
+     "description": "With path: carry a cut that stops just short of the island's edge on to it, so it divides the island (default true). false cuts between the points exactly, for a slit."
+    }
+   },
+   "required": [
+    "node"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_uv_stitch",
+  "description": "Join islands of a part's UV layout along the seams between them, as one undo step: two or more islands that meet on the part, by their numbers from tequila_uv_islands, or one island to shut a seam inside it. The smaller is moved onto the larger. Islands that do not touch on the part are refused.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "node": {
+     "type": "integer"
+    },
+    "set": {
+     "type": "integer"
+    },
+    "islands": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "minItems": 1
+    }
+   },
+   "required": [
+    "node",
+    "islands"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_improve",
+  "description": "Improve model, for a model that came in coarse: the parts at and under a node made finer or shaded again, as one undo step. subdivide (1 to 3) makes four triangles of every one each time, the new points following the curve of the surface, for curves that show their facets; shade (degrees, 30 is usual) works the shading out again, smooth across edges gentler than that, for an STL or OBJ that looks faceted all over. With neither, how many triangles there are and how many each would make. A CAD model (STEP, IGES) is better divided again from its exact surfaces: page fixing of tequila_guide.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "node": {
+     "type": "integer",
+     "description": "A part, or a group: everything under it."
+    },
+    "subdivide": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 3
+    },
+    "shade": {
+     "type": "number",
+     "description": "Degrees, 5 to 90: edges sharper than this stay sharp."
+    },
+    "crease": {
+     "type": "number",
+     "description": "With subdivide, for a mesh that had no shading: edges sharper than this stay sharp (default 30)."
+    }
+   },
+   "required": [
+    "node"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_model_units",
+  "description": "Units of this model: put right a model that came in the wrong size because its file named no unit (an STL in millimetres is read as metres, a thousand times too large). unit is what its numbers really are: mm, cm, in, ft or m. The whole model the node belongs to is scaled about the middle of its base, so it stands where it stood; one undo step. With no unit, its size now and the size it would be in each unit: pick the one that reads as the real thing. read_as says what its numbers are read as now, when not metres.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "node": {
+     "type": "integer",
+     "description": "Any node of the model."
+    },
+    "unit": {
+     "type": "string",
+     "enum": [
+      "mm",
+      "cm",
+      "in",
+      "ft",
+      "m"
+     ]
+    },
+    "read_as": {
+     "type": "string",
+     "enum": [
+      "mm",
+      "cm",
+      "in",
+      "ft",
+      "m"
+     ]
+    }
+   },
+   "required": [
+    "node"
+   ],
    "additionalProperties": false
   }
  },

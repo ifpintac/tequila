@@ -1174,7 +1174,7 @@ mod tests {
         assert!(matches!(operation("quit"), Operation::Quit { save: false, discard: false }));
         assert!(matches!(operation("quit save"), Operation::Quit { save: true, .. }));
         assert!(matches!(operation("quit discard"), Operation::Quit { discard: true, .. }));
-        assert!(matches!(operation("stop"), Operation::Stop));
+        assert!(matches!(operation("stop"), Operation::Stop { job: None, all: false }));
         assert!(matches!(operation("jobs"), Operation::Query(Query::Jobs)));
         assert!(matches!(operation("changes"), Operation::Query(Query::History)));
         assert!(matches!(operation("ui"), Operation::Query(Query::Ui)));

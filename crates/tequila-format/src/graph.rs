@@ -136,7 +136,7 @@ pub(crate) fn decals_from_json(value: Option<&Value>) -> Result<Vec<tequila_mate
     }).collect()
 }
 
-fn node_to_json(id: NodeId, node: &Node) -> Value {
+pub(crate) fn node_to_json(id: NodeId, node: &Node) -> Value {
     let mut object = Object::new();
     object.set("id", id.0 as f64).set("kind", kind_name(&node.kind));
 
@@ -402,7 +402,7 @@ fn read_parameters(value: Option<&Value>) -> Material {
     material
 }
 
-fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
+pub(crate) fn read_node(value: &Value, name: &str) -> Result<Node, FormatError> {
     let kind_text = value
         .get("kind")
         .and_then(|v| v.as_str())
@@ -1155,14 +1155,14 @@ fn cell_output_name(output: tequila_texture::procedural::CellOutput) -> &'static
 }
 
 /// `param:base_color` or `input:2`.
-fn socket_name(socket: Socket) -> String {
+pub(crate) fn socket_name(socket: Socket) -> String {
     match socket {
         Socket::Param(p) => format!("param:{}", p.key()),
         Socket::Input(i) => format!("input:{i}"),
     }
 }
 
-fn socket_from_name(text: &str) -> Option<Socket> {
+pub(crate) fn socket_from_name(text: &str) -> Option<Socket> {
     let (tag, rest) = text.split_once(':')?;
     match tag {
         "param" => Param::from_key(rest).map(Socket::Param),

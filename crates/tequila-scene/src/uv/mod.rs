@@ -81,6 +81,7 @@ pub mod layout;
 pub mod least_stretch;
 pub mod offset;
 pub mod pack;
+pub mod path;
 pub mod pins;
 pub mod positions;
 pub mod project;
@@ -109,6 +110,7 @@ pub use layout::{weld, EdgeKind, Island, LayoutEdge, SurfaceHit, TriangleHit, Uv
 pub use arrange::{place_islands, Plan};
 pub use least_stretch::{stretch_left, Method};
 pub use pack::{pack, PackOptions, PackReport, UvRect};
+pub use path::{edges_along, PathEdges, PathError};
 pub use pins::UvPins;
 pub use positions::{set_positions, set_positions_from_lists};
 pub use reflatten::reflatten;

@@ -27,7 +27,7 @@ A picture instead of a pattern is `material.set_texture` (page `textures`).
 
 Patterns over one another with masks, a range for a number, a depth for a bump, all in one request: write a recipe and `tequila_material_update` the material with it (page `recipes`). `tequila_material_recipe {"material": 3}` reads any material back as a recipe to start from.
 
-## 3. Reading a graph
+## 3. A graph as it is saved
 
 `tequila_material {"id": 3}` reads one material whole. Its `definition` holds every parameter and, when it has nodes, `graph`:
 
@@ -46,32 +46,60 @@ Patterns over one another with masks, a range for a number, a depth for a bump, 
  "decals": []}
 ```
 
-- `output` is the surface itself (node 1, not in the list). A link into it names the parameter it drives: `param:base_color`. A link into any other node names that node's input by its number: `input:0`. A link's `output` (a number, left out for the first) picks which output of `from` it leaves by.
-- What the kinds are: `procedural` (a pattern and its `seed`), `gradient` (a colour ramp), `bump` (a height made a bump, `depth` in metres), `constant` (`value`: `{"float": 0.35}`, `{"color": [r, g, b]}`), `remap` (`from`, `to` ranges), `clamp`, `invert`, `mix`, `multiply`, `add`, `channel`, `image_texture` (a picture, by its texture id), `mapping_2d` (how a picture is laid on), `curvature`, `occlusion`, `distance`, `vertex_color`, `reroute`.
-- `"kind": "node"` is one of the general shader nodes, named by `type`: `noise_texture`, `voronoi_texture`, `wave_texture`, `brick_texture`, `checker_texture`, `gradient_texture`, `white_noise_texture`, `mapping`, `texture_coordinate`, `geometry`, `object_info`, `fresnel`, `layer_weight`, `mix`, `math`, `vector_math`, `map_range`, `clamp`, `hue_saturation`, `brightness_contrast`, `gamma`, `invert`, `blackbody`, `separate_xyz`, `combine_xyz`, `separate_color`, `combine_color` and a few more. Its fixed inputs are `literals` (`{"socket": "input:2", "value": {"float": 20}}`), its options `settings`.
-- `"kind": "group"` is a ready-made group (`fdm_layer_lines`, `blend_stack`, `herringbone`, `basketweave`, `stochastic_tiling`, knurls, dots, stripes…); `shader`, `mix_shader` and `add_shader` layer whole surfaces.
-- `decals` are the material's labels (page `labels`).
+- `output` is the surface itself (node 1, not in the list). A link into it names the parameter it drives (`param:base_color`); into any other node, that node's input by its number (`input:0`). A link's `output` picks which output of `from` it leaves by, left out for the first.
+- A node's `kind` is what it is; `"kind": "node"` is a general shader node named by `type`, `"kind": "group"` a ready-made group named by `group`. `literals` are the values of inputs nothing is wired into; `decals` are the material's labels (page `labels`).
 
-A preset's graph can be 5,000 to 10,000 characters. Read it when you need to know where a look comes from; do not read every material.
+A preset's graph is 5,000 to 10,000 characters this way. To see what a graph does, or to change it, read it as step 4 does: a few hundred characters.
 
-## 4. Changing nodes
+## 4. Changing a graph, a node at a time
 
-There is no command for one node. `material.set_graph` replaces the material's **whole definition**, so: read the material, change the `definition` you got, send all of it back.
+Three tools work on one material's graph the way a person does in the editor: look, look a node up, change one thing. Each change is one undo step, and a change that would leave a graph that does not work is refused in words, with nothing changed.
+
+**Look.** In brief, a line a node; then one node whole:
 
 ```json
-{"command": "material.set_graph", "material": 3, "definition": {…the definition as read, with your changes…}}
+tequila_graph_read {"material": 3}
+tequila_graph_read {"material": 3, "node": 2}
 ```
 
-What works well this way:
+The brief reading gives each node's `id`, what it is (`node`: its name in the catalogue) and `to`: where its output goes - `3.Position` is node 3's input Position, `surface.base_color` the material's own parameter. `driven` lists the parameters the graph drives. One node whole gives its `settings`, its `fields`, each input with its `value` or the wire it comes `from`, and each output with where it goes.
 
-- **A value in a node**: a pattern's `frequency` or settings, a ramp's stops (colours may be hex strings), a bump's `depth`, a `constant`'s value, a general node's `literals` and `settings`.
-- **A link moved**: change its `to` and `socket`, or remove it from `links`.
-- **A node removed**: take it out of `nodes` along with every link that touches it.
-- **A node copied** from elsewhere in the same graph or from another material you read: give it an `id` no other node has, and link it.
+**Look a node up before adding it.** The catalogue has every node there is, some ninety: say what you want in words, or ask for one by name.
 
-Keep every field you did not mean to change, and keep `id`s unique. Then look: `tequila_material_preview {"material": 3}` shows it on a ball.
+```json
+tequila_graph_nodes {"search": "voronoi"}
+tequila_graph_nodes {"family": "group"}
+tequila_graph_nodes {"name": "map_range"}
+```
 
-**Not possible through the tools yet:** adding a node of a new type from nothing. No tool lists what inputs, outputs and settings each node type has, so a graph written from memory is refused or wrong. Do not invent node types or socket numbers. Reach the same look with a pattern (step 1), a recipe (step 2) or by copying a node that already exists; or open the editor for the person (step 5) and say which node to add.
+A search that leaves three or fewer answers with them whole: what each is for, its inputs (name, type, default, range), outputs, `settings` with their options, and `fields`. More come a line each, a page at a time (`"page": 2`). The families: `input`, `texture`, `pattern` (the patterns of step 1, as `pattern_noise`, `pattern_leather`…), `group` (knurl, hexagons, hammered, cracks, herringbone…), `color`, `converter`, `vector`, `shader`, `simple`, `layout`. Never guess a node's name, an input or a setting: the answer has them exactly.
+
+**Change.** A plain plastic given cells that vary its colour and roughness, step by step (ids are as a first node added to a plain material gets them: read yours from each answer):
+
+```json
+tequila_graph_edit {"material": 3, "action": "add", "node": "voronoi_texture", "inputs": {"Scale": 60}}
+tequila_graph_edit {"material": 3, "action": "add", "node": "gradient", "fields": {"gradient": [{"at": 0, "color": "#2a2a2e"}, {"at": 1, "color": "#8c8c92"}]}}
+tequila_graph_edit {"material": 3, "action": "connect", "from": 2, "output": "Distance", "to": 3, "input": "Position"}
+tequila_graph_edit {"material": 3, "action": "connect", "from": 3, "input": "base_color"}
+tequila_graph_edit {"material": 3, "action": "add", "node": "map_range", "inputs": {"To Min": 0.25, "To Max": 0.6}}
+tequila_graph_edit {"material": 3, "action": "connect", "from": 2, "output": "Distance", "to": 4, "input": "Value"}
+tequila_graph_edit {"material": 3, "action": "connect", "from": 4, "input": "specular_roughness"}
+tequila_graph_edit {"material": 3, "action": "set", "node": 2, "settings": {"feature": "f2"}, "inputs": {"Scale": 90}}
+tequila_graph_edit {"material": 3, "action": "disconnect", "input": "specular_roughness"}
+tequila_graph_edit {"material": 3, "action": "remove", "node": 4}
+tequila_material_preview {"material": 3}
+```
+
+- `add` takes a `node` name from the catalogue, and may set it at once. It answers with the new node's `id` and its sockets. A new node drives nothing until it is connected.
+- `set` changes a node that is there: `settings` by key; `fields`, the node's own (`{"depth": 0.0003}` on a bump, `{"procedural": {"frequency": 900}}` on a pattern, `{"value": 0.35}` on a value, a ramp's `gradient`); `inputs` by the input's name - a number, `"#rrggbb"`, `[x, y, z]`, or `null` for its default; `label`; `muted`. What is not named stays as it is.
+- `connect` runs a wire `from` a node (its `output` by name when it has several) `to` another node's `input`; leave `to` out and the `input` is a parameter's key on the surface. An input takes one wire: a new one replaces the old, and the answer says what it replaced.
+- `disconnect` frees an `input` (of `node`, or of the surface); the parameter goes back to its own value. `remove` takes a `node` out with its wires.
+- The surface's own values are not set here: `material.set_parameter` (page `materials`).
+- Every part wearing the material changes. `material.unlink` a part first to change it alone.
+
+Look after every few steps: `tequila_material_preview {"material": 3}` shows the material on a ball; the viewport shows it on the product.
+
+The whole graph can still be replaced in one request - `material.set_graph` with the `definition` of step 3, changed - which is right for copying a graph from one material to another, and nothing else.
 
 ## 5. The editor, for the person to see
 
@@ -87,7 +115,7 @@ tequila_request {"request": {"op": "ui", "graph_bring": {"setup": "blend"}}}
 tequila_request {"request": {"op": "ui", "graph_search": "voronoi"}}
 ```
 
-The setups are `blend` (two materials mixed by a mask), `two_sided` (a different material on the back of a surface) and `composite` (layers stacked). They arrive wired; the person, or a `material.set_graph` after reading the material again, sets their values.
+The setups are `blend` (two materials mixed by a mask), `two_sided` (a different material on the back of a surface) and `composite` (layers stacked). They arrive wired; set their values with `tequila_graph_read` and `tequila_graph_edit`.
 
 To see the editor yourself: `tequila_screenshot {"window": "graph"}` returns a picture of that window while it is open.
 

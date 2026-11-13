@@ -1781,9 +1781,36 @@ fn path_label(ui: &mut egui::Ui, path: &str) {
 /// asked, every setting as it is; `set` an object of settings by name,
 /// all checked before any is taken; `reset` `"all"`, a page's name, or
 /// a list of settings. The reply is every setting afterwards.
+///
+/// Every setting is some nineteen thousand characters, which a script
+/// reads and an AI does not. `page` answers with one page's settings (the
+/// keyboard's are the shortcuts), `search` with those whose name, label or
+/// help has every word; and `brief` makes the answer short: after a change
+/// only what was changed, as it now is, and with nothing else asked the
+/// pages there are.
 pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Result<tequila_format::json::Value, String> {
     use tequila_format::json::Value as Json;
     use tequila_format::json_write::Object;
+    let brief = request.get("brief").and_then(Json::as_bool).unwrap_or(false);
+    let page = match request.get("page") {
+        None | Some(Json::Null) => None,
+        Some(named) => Some(named.as_str().and_then(Page::from_key).filter(|page| *page != Page::Advanced).ok_or_else(|| {
+            let pages: Vec<&str> = Page::ALL.into_iter().filter(|page| *page != Page::Advanced).map(|page| page.key()).collect();
+            format!("`page` is one of {}", pages.join(", "))
+        })?),
+    };
+    let words: Vec<String> = request.get("search").and_then(Json::as_str).map(|search| search.to_lowercase().split_whitespace().map(str::to_string).collect()).unwrap_or_default();
+    // What a change names, to answer with those alone.
+    let mut touched: Vec<String> = Vec::new();
+    if let Some(Json::Object(asked)) = request.get("set") {
+        touched.extend(asked.keys().cloned());
+    }
+    match request.get("reset") {
+        Some(Json::String(what)) if !what.eq_ignore_ascii_case("all") && Page::from_key(what).is_none() => touched.push(what.clone()),
+        Some(Json::Array(keys)) => touched.extend(keys.iter().filter_map(|key| key.as_str().map(str::to_string))),
+        _ => {}
+    }
+    let reset_many = matches!(request.get("reset"), Some(Json::String(what)) if what.eq_ignore_ascii_case("all") || Page::from_key(what).is_some());
     if let Some(set) = request.get("set") {
         let Json::Object(asked) = set else {
             return Err("`set` is an object of settings by name: {\"viewport.gizmo_size\": 150}".into());
@@ -1880,9 +1907,72 @@ pub fn script(app: &mut TequilaApp, request: &tequila_format::json::Value) -> Re
         })
         .collect();
     let mut out = Object::new();
-    out.set("settings", settings);
-    out.set("shortcuts", shortcuts);
-    out.set_some("file", app.prefs_file.as_ref().map(|f| f.display().to_string()));
+    let changing = request.get("set").is_some() || request.get("reset").is_some();
+    let narrowed = page.is_some() || !words.is_empty();
+    if !brief && !narrowed {
+        out.set("settings", settings);
+        out.set("shortcuts", shortcuts);
+        out.set_some("file", app.prefs_file.as_ref().map(|f| f.display().to_string()));
+        return Ok(out.build());
+    }
+    let key_of = |entry: &Json| entry.get("key").and_then(Json::as_str).unwrap_or("").to_string();
+    if narrowed {
+        let on_page = |entry: &Json, shortcut: bool| match page {
+            None => true,
+            Some(Page::Keyboard) => shortcut,
+            Some(page) => !shortcut && entry.get("page").and_then(Json::as_str) == Some(page.key()),
+        };
+        let matches = |entry: &Json| {
+            let hay = ["key", "label", "help", "group"].iter().filter_map(|field| entry.get(field).and_then(Json::as_str)).collect::<Vec<_>>().join(" ").to_lowercase();
+            words.iter().all(|word| hay.contains(word.as_str()))
+        };
+        let found_settings: Vec<Json> = settings.into_iter().filter(|entry| on_page(entry, false) && matches(entry)).collect();
+        let found_shortcuts: Vec<Json> = shortcuts.into_iter().filter(|entry| on_page(entry, true) && matches(entry)).collect();
+        out.set("count", found_settings.len() + found_shortcuts.len());
+        if !found_settings.is_empty() {
+            out.set("settings", found_settings);
+        }
+        if !found_shortcuts.is_empty() {
+            out.set("shortcuts", found_shortcuts);
+        }
+        return Ok(out.build());
+    }
+    if changing {
+        // What was changed, as it now is: a setting may hold a value to
+        // its range, so the answer is the value it took.
+        let now: Vec<Json> = settings
+            .iter()
+            .chain(shortcuts.iter())
+            .filter(|entry| touched.contains(&key_of(entry)))
+            .map(|entry| {
+                let mut line = Object::new();
+                line.set("key", key_of(entry));
+                line.set_some("value", entry.get("value").or(entry.get("keys")).cloned());
+                line.build()
+            })
+            .collect();
+        out.set("changed", now);
+        if reset_many {
+            out.set("reset", request.get("reset").cloned().unwrap_or(Json::Null));
+        }
+        return Ok(out.build());
+    }
+    // The pages there are, for one to be asked for.
+    let pages: Vec<Json> = Page::ALL
+        .into_iter()
+        .filter(|page| *page != Page::Advanced)
+        .map(|page| {
+            let count = match page {
+                Page::Keyboard => shortcuts.len(),
+                page => settings.iter().filter(|entry| entry.get("page").and_then(Json::as_str) == Some(page.key())).count(),
+            };
+            let mut line = Object::new();
+            line.set("page", page.key()).set("about", page.blurb()).set("settings", count);
+            line.build()
+        })
+        .collect();
+    out.set("pages", pages);
+    out.set("note", "Ask for one page's settings with `page`, or find a setting in words with `search`. Each answers with the setting's key, its value, its default and what it takes; `set` takes {key: value}.");
     Ok(out.build())
 }
 

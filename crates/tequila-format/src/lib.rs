@@ -56,6 +56,31 @@ pub fn procedural_to_json(procedural: &tequila_texture::procedural::Procedural) 
     graph::procedural_to_json(procedural)
 }
 
+/// One node of a material graph as the project file and `material.set_graph`
+/// write it: its `id`, its `kind`, that kind's own fields, its `literals`
+/// and where it sits. What the `graph` request shows of a node and reads
+/// back, so a node changed alone is read by the one reader a whole graph is.
+pub fn graph_node_to_json(id: tequila_materials::graph::NodeId, node: &tequila_materials::graph::Node) -> json::Value {
+    graph::node_to_json(id, node)
+}
+
+/// A node from what [`graph_node_to_json`] writes. Its `id` is not read: a
+/// graph numbers its own nodes.
+pub fn graph_node_from_json(value: &json::Value) -> Result<tequila_materials::graph::Node, FormatError> {
+    graph::read_node(value, "the node")
+}
+
+/// A socket's name in a graph: `param:base_color` on a surface, `input:2`
+/// on any other node.
+pub fn graph_socket_name(socket: tequila_materials::graph::Socket) -> String {
+    graph::socket_name(socket)
+}
+
+/// The socket a name written by [`graph_socket_name`] is.
+pub fn graph_socket_from_name(text: &str) -> Option<tequila_materials::graph::Socket> {
+    graph::socket_from_name(text)
+}
+
 use tequila_materials::material_type::{MaterialType, Param, ParamValue};
 
 use tequila_render_core::camera::{Aperture, Camera, Projection};

@@ -6,16 +6,17 @@ A model from a CAD system, a scanner or another renderer often needs a few repai
 
 Lengths are metres. A hand tool 120 m long, or a chair 2 mm tall, came from a file that did not say its units; nearly always its numbers were millimetres. Materials, patterns and studio presets are sized for real objects, so fix this first.
 
-Work out the factor from what the thing is: a pedal about 120 units wide is 120 mm, so the factor is 0.001 (inches: 0.0254; centimetres: 0.01). Then scale the model's **top node** - the group the import made, whose `parent` is absent - about the origin, by multiplying the first three numbers of each of the first three rows of its transform, and its place, by the factor:
+Ask what size the model would be in each unit, then say which its numbers are in:
 
 ```json
-tequila_read {"node": 1}
-{"command": "scene.set_transform", "transforms": [{"node": 1, "matrix": [0.001,0,0,0, 0,0.001,0,0, 0,0,0.001,0, 0,0,0,1]}]}
+tequila_model_units {"node": 1}
+tequila_model_units {"node": 1, "unit": "mm"}
 ```
 
-That example is for a top node whose transform read as the identity. Then `tequila_scene` again: are the `bounds` now the size of the real thing? `tequila_frame` to see it.
-
-The window has this as **Units of this model…** (right-click the model in the Scene tab), which also keeps the model standing on the floor. If the transform is not a plain one, or lights and cameras were already set up round the model, point the person to that instead.
+- The first changes nothing: it answers with the `size` now ("121 × 110 × 25 m") and, under `if_its_numbers_are`, the size in millimetres, centimetres, inches, feet and metres. Pick the one that reads as the real thing: a pedal is 12 cm, not 12 m.
+- The second scales the whole model the node belongs to (`node` is any node of it) about the middle of its base, so it stands where it stood. One undo step. This is the window's **Units of this model…**.
+- `"read_as": "mm"` says what the numbers are read as now, when not metres: a model read as millimetres that was drawn in inches is `{"unit": "in", "read_as": "mm"}`.
+- Then `tequila_frame`, and `tequila_scene`: are the `bounds` the size of the real thing? Lights and cameras set up round the old size stay where they were: apply the studio again, or frame again.
 
 Do not use `scene.set_units` for this: with `KeepSceneSize` it only changes how lengths are shown, and with `ScaleScene` it rescales the whole scene, lights and cameras too.
 
@@ -54,7 +55,15 @@ tequila_request {"request": {"op": "reimport", "node": 3, "tessellation": "high"
 ```
 
   `draft`, `medium` (the default), `high`, `ultra`. `node` is any node of the model. Materials, names and edits are kept. `ultra` on a large assembly makes millions of triangles and slows the viewport: use `high` unless a close-up needs more.
-- **A mesh (STL, OBJ) with no smooth shading.** The fix is in the window only - right-click the model, **Improve model…**: *Shade again* works out smooth shading across gentle edges, *Subdivide* adds triangles along the curve. **Not possible through the tools yet:** say so and point the person there.
+- **A mesh (STL, OBJ) that looks faceted.** This is the window's **Improve model…**, on a part or on a group and everything under it:
+
+```json
+tequila_improve {"node": 3}
+tequila_improve {"node": 3, "shade": 30}
+tequila_improve {"node": 3, "subdivide": 1}
+```
+
+  The first changes nothing and says how many triangles there are and how many a subdivision would make. `shade` works the shading out again, smooth across edges gentler than that many degrees and sharp across steeper ones: the fix for a file that had no normals, and the one to try first. `subdivide` (1 to 3) makes four triangles of every one each time, the new points following the curve of the surface, for curves that still show their facets; flat faces and sharp edges stay as they are. Each is one undo step. Look in the rendered view after: more than one subdivision is rarely needed, and each multiplies the triangles by four.
 
 A round part that looks faceted only in the Solid view may be fine: look in the rendered view first.
 

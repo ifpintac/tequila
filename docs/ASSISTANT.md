@@ -986,13 +986,61 @@ all of it, yes. What stood in the way:
 
 | Job | Why not yet |
 |---|---|
-| Adding a node of a new type to a material graph | Nothing lists a node type's inputs, outputs and settings, and a graph is only replaced whole |
-| Choosing where a UV seam goes, moving one particular island | The commands name mesh vertices and island numbers, and nothing says which is where |
-| Rendering a turntable's frames | A button in the window; the spin viewer does render through the tools |
-| Subdividing a mesh, shading it again | Only the Improve model window makes those changes |
+| A seam across the middle of a flat CAD face | A seam follows the mesh's own edges, and such a face has none across it; `tequila_uv_cut` says so, and the way round (cut along its edges, or subdivide first) |
+| Pinning and dragging single points of a UV layout | `uv.set_pins` and `uv.set_positions` name vertices of the mesh, which no tool lists |
 | Format, transparency and layers, for API keys, local models and remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's |
 | Export, updating a model, texture packs, the UV picture, for API keys and local models | The own loop has no raw requests |
-| Cancelling a queued render | `stop` stops only the one running |
+
+**The jobs the window alone could do.** The audit above found five that no
+tool reached; each now has a request in the protocol, a tool in both
+bridges and the own loop, and its page rewritten from "not possible yet"
+to how it is done.
+
+- **The material graph, a node at a time** (`crates/tequila-scripting/src/graph.rs`,
+  the `graph` request). `tequila_graph_nodes` is the catalogue: every node
+  a graph can hold, some ninety, searched in words, by family or by name,
+  a page of a line each or - three or fewer - whole: what it is for, its
+  inputs with their defaults and ranges, its outputs, its settings with
+  their options, its own fields. `tequila_graph_read` is a graph in brief
+  (a line a node, with where its output goes) or one node whole.
+  `tequila_graph_edit` adds, sets, connects, disconnects and removes one
+  node, each one `material.set_graph` and so one step to undo; a graph
+  that would not compile is refused in words and nothing changes. A node
+  added stands to the left of what it feeds, as one placed by hand.
+- **A UV layout read, and seams by where they are** (`uv.rs`, the `uv`
+  request). `tequila_uv_islands` lists the islands largest first: the
+  number the `uv.*` commands take, its box on the layout, how much of the
+  part it is, how stretched, and where on the part it lies - centre, size
+  and the way it faces. `tequila_uv_cut` cuts along a path of points on
+  the part, in the world's metres, following the mesh's edges the shortest
+  way and carried on to the island's edge (`tequila_scene::uv::path`), or
+  along every edge sharper than an angle; `tequila_uv_stitch` joins the
+  islands named.
+- **A turntable's frames**: `tequila_queue` with `frames`, and `first` and
+  `last` for some of them. A frame already rendered is left out.
+- **Improve model and Units of this model** (`model.rs`): `tequila_improve`
+  subdivides or shades again the parts at and under a node;
+  `tequila_model_units` reads a model's numbers in another unit, about the
+  middle of its base. Each, asked with nothing to do, says what there is
+  to choose from.
+- **A queue emptied**: `tequila_stop` takes a `job`, or `all`.
+
+And the two answers that were too long to be read are read a part at a
+time: `tequila_material_guide` by `topic` (contents, recipe, types,
+patterns, examples, or one type, pattern or example by its name; none
+over 5,100 characters where the whole is 31,000), `tequila_preferences`
+by `page` or `search`, with a change answered by what changed (89
+characters where it was 19,000). A script that asks for either with
+nothing still gets the whole.
+
+Tried in a copy of the application with a home of its own, through the
+built-in bridge, on the Perfume bottle sample: the cap given a knurl (a
+group looked up in the catalogue, a bump, two wires; then one input
+changed and that alone undone); the cap unwrapped, its ten islands read
+by the face each lies on, its front face cut in two down a line said in
+metres and stitched again; a six-frame turntable queued, one frame taken
+out of the queue, the rest rendered, the queue asked again (five left
+out, one queued) and emptied with two more renders behind it.
 
 **The check.** In a copy of the application with a home of its own, on the
 Headphones sample, a model on this computer (qwen3.8:27b, through the own

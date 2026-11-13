@@ -25,7 +25,7 @@ tequila_request {"request": {"op": "export", "format": "spin", "path": "C:/out/h
 - `transparent` true cuts the product out (PNG); false writes JPEGs on the scene's background.
 - It answers with the folder and the `jobs` it queued, one render each, at the project's render size and samples. They run in the background: `tequila_jobs` shows progress. **Say how many renders it is and roughly how long before starting**; a quick render of one frame (page `rendering`) gives the time for one.
 - The frames use the project's render settings: for a spin on a web page, 1000-1600 pixels and 128-256 samples are plenty. Set those first (`render.set_settings`, page `rendering`).
-- `tequila_stop` stops the frame that is rendering; the ones behind it start, so stop once for each to end the whole spin early.
+- `tequila_stop {"all": true}` ends the whole spin early: the frame that is rendering writes what it has, and the ones waiting are taken out of the queue.
 
 ## 3. A turntable for video
 
@@ -43,7 +43,22 @@ The animation is the product's angle at key frames:
 
 Setting it turns nothing until a frame is shown.
 
-**Rendering the frames is not possible through the tools yet.** The numbered frames are rendered from the window: the Snapshots tab's **Turntable** section, or the Render window. Set the animation up, tell the person it is ready and where that button is; a frame already rendered is left out, so a stopped turntable carries on where it left off. If they only need the product seen from all round rather than a video file, the spin viewer above does render through the tools.
+**Render the frames** with the queue, when the person asks for them:
+
+```json
+tequila_queue {"frames": true, "folder": "C:/out/turntable", "filename": "headphones"}
+tequila_queue {"frames": true, "first": 0, "last": 11}
+tequila_jobs {}
+tequila_stop {"all": true}
+```
+
+- One job a frame, the product turned to each frame's angle, from the active camera, at the project's render size and samples (or `width`, `height`, `samples` given here). It answers with the `jobs`, their `count` and the `folder`. The files are numbered: `headphones_0000.png`, `headphones_0001.png`…
+- **Say how many renders it is and roughly how long before starting**: 72 frames at two minutes each is two and a half hours. `first` and `last` render some of them - the first dozen to check the turn before the rest.
+- A frame whose file is already in the folder is left out (`already_rendered` counts them), so a turntable that was stopped carries on where it left off when queued again.
+- `tequila_jobs` shows progress; `tequila_stop {"all": true}` ends it early. The scene is left as it was: the product is not left turned.
+- The frames are pictures. Joining them into a video file is done outside Tequila.
+
+If the person only needs the product seen from all round on a web page, the spin viewer above is the shorter way.
 
 ## Good to know
 

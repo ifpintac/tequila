@@ -32,7 +32,7 @@ tequila_jobs {}
 - `tequila_jobs` lists every job with its `state` (`queued`, `rendering`, `done`, `failed`), `progress` from 0 to 1 and, when done, `output`: the file. **Tell the person where the file is.** A big render takes minutes: say it is running rather than waiting on it in silence.
 - Left out, `width`, `height` and `samples` are the project's own. `denoise` true or false; `engine` (`cycles-gpu`, `cycles-cpu`, `tequila`) for this render only.
 - `folder` and `filename` choose where it goes; left out, the project's render folder. Use them only with a place the person named.
-- `tequila_stop` stops the render that is running; it writes what it has. Queued jobs behind it then start, so stop again for each.
+- `tequila_stop` stops the render that is running; it writes what it has, and the jobs waiting behind it start. `tequila_stop {"job": 7}` stops one job by its id: the one rendering is stopped, one still waiting is taken out of the queue and writes nothing. `tequila_stop {"all": true}` stops the one rendering and takes out every job waiting.
 
 **More than one picture:**
 

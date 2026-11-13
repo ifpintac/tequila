@@ -444,8 +444,11 @@ class Client:
         configurator, named by its choices ({configuration} in filename).
         studio='Right' (a name or index) renders one view as that Studio
         says, leaving the scene as it was; studios=True renders every
-        view, one job each ({view} in filename). Returns at once; poll
-        jobs() or use wait_for_job()."""
+        view, one job each ({view} in filename). frames=True renders the
+        turntable's frames (`animation.set`), one job each, numbered by
+        {frame} in the file name, leaving out those already rendered;
+        first and last narrow it to some. Returns at once; poll jobs() or
+        use wait_for_job()."""
         return self.request('queue', **job)
 
     def jobs(self):
@@ -463,9 +466,76 @@ class Client:
             time.sleep(poll)
         raise TimeoutError(f'Job {job} has not finished')
 
-    def stop(self):
-        """Stop the running background render; it still writes its image."""
-        return self.request('stop')
+    def stop(self, job=None, *, all=False):
+        """Stop the running background render; it still writes its image,
+        and the jobs waiting behind it start. `job` stops one job by its
+        id: the one rendering is stopped, one still waiting is taken out of
+        the queue. `all=True` stops the one rendering and takes out every
+        job waiting."""
+        fields = {}
+        if job is not None:
+            fields['job'] = int(job)
+        if all:
+            fields['all'] = True
+        return self.request('stop', **fields)
+
+    def graph(self, action, material=None, **fields):
+        """A material's node graph a node at a time. `action` is
+        'catalogue' (search=, family=, name=, page=: the nodes there are),
+        'read' (the graph in brief, or with node= one node whole), 'add'
+        (node= a name from the catalogue, with settings=, fields=,
+        inputs=, label=), 'set' (node= an id), 'connect' (from_=, output=,
+        to=, input=), 'disconnect' (node=, input=) or 'remove' (node=).
+        Each change is one undo step:
+
+            cells = fs.graph('add', 3, node='voronoi_texture', inputs={'Scale': 60})['added']
+            fs.graph('connect', 3, from_=cells, output='Distance', input='specular_roughness')
+        """
+        if 'from_' in fields:
+            fields['from'] = fields.pop('from_')
+        if material is not None:
+            fields['material'] = getattr(material, 'id', material)
+        return self.request('graph', action=action, **fields)
+
+    def uv_islands(self, node, *, uv_set=0, page=1):
+        """A part's UV layout island by island, largest first: each one's
+        number, its box on the layout, how much of the part it is, how
+        stretched, and where on the part it lies."""
+        return self.request('uv', action='islands', node=getattr(node, 'id', node), set=uv_set, page=page)
+
+    def uv_cut(self, node, *, path=None, sharper_than=None, islands=None, uv_set=0, pack=False, across=True):
+        """Cut a seam in a part's UV layout: along `path`, points on the
+        part in the world's metres, following its mesh's edges; or along
+        every edge `sharper_than` an angle in degrees (inside `islands`,
+        or all of them). One undo step; `pack` packs the layout after."""
+        fields = {'node': getattr(node, 'id', node), 'set': uv_set, 'pack': pack}
+        if path is not None:
+            fields.update(path=[list(p) for p in path], across=across)
+        if sharper_than is not None:
+            fields['sharper_than'] = sharper_than
+        if islands is not None:
+            fields['islands'] = list(islands)
+        return self.request('uv', action='cut', **fields)
+
+    def uv_stitch(self, node, islands, *, uv_set=0):
+        """Join islands of a part's UV layout along the seams between
+        them. One undo step."""
+        return self.request('uv', action='stitch', node=getattr(node, 'id', node), islands=list(islands), set=uv_set)
+
+    def improve(self, node, *, subdivide=None, shade=None, crease=None):
+        """Improve model: the parts at and under `node` subdivided (1 to 3
+        times) or shaded again (smooth across edges gentler than `shade`
+        degrees). With neither, what there is to do. One undo step."""
+        fields = {k: v for k, v in dict(subdivide=subdivide, shade=shade, crease=crease).items() if v is not None}
+        return self.request('improve', node=getattr(node, 'id', node), **fields)
+
+    def model_units(self, node, unit=None, *, read_as=None):
+        """Units of this model: the model `node` belongs to, its numbers
+        read as `unit` ('mm', 'cm', 'in', 'ft', 'm') instead of metres (or
+        of `read_as`), scaled about the middle of its base. With no unit,
+        its size now and in each unit. One undo step."""
+        fields = {k: v for k, v in dict(unit=unit, read_as=read_as).items() if v is not None}
+        return self.request('model_units', node=getattr(node, 'id', node), **fields)
 
     def new_project(self, *, save=False, discard=False):
         """Start a new project. Refused while there is unsaved work unless
@@ -835,9 +905,14 @@ class Recipes:
     def __init__(self, client):
         self._client = client
 
-    def guide(self):
+    def guide(self, topic=None):
         """The recipe format, every pattern with what it looks like and its
-        settings, the material types, rules of thumb and tested examples."""
+        settings, the material types, rules of thumb and tested examples.
+        With `topic`, one part of it: 'contents', 'recipe', 'types',
+        'patterns', 'examples', or a type, a pattern or an example by its
+        name."""
+        if topic:
+            return self._client.request('material', action='guide', topic=topic)
         return self._client.request('material', action='guide')
 
     def examples(self):

@@ -44,7 +44,7 @@ tequila_preferences {"set": {"navigation.preset": "blender", "navigation.invert_
 tequila_preferences {"reset": "viewport.gizmo_size"}
 ```
 
-`tequila_preferences {}` lists every setting with its value, default and what it takes, and every keyboard shortcut. That answer is long (about 19,000 characters): the settings are these, so ask for the list only for a setting's exact range.
+A change answers with what changed, as it now is. The settings come a page at a time - `tequila_preferences {}` lists the pages, `{"page": "viewport"}` one page's settings with each one's value, default and what it takes, `{"search": "zoom"}` those with a word in their name or help. The ones asked for most:
 
 | Setting | Takes |
 |---|---|
@@ -83,7 +83,7 @@ tequila_preferences {"set": {"shortcut.view.screenshot": "F12"}}
 tequila_preferences {"reset": "shortcut.view.screenshot"}
 ```
 
-The value is the key written out (`"Ctrl + G"`, `"Shift + H"`, `"F12"`), a list of two keys, or `""` for none. A key given to one action is taken from the action that had it. The exact names are in `tequila_preferences {}` under `shortcuts`, each with its `label` and current `keys`; read that list before setting one, since the names cannot be guessed.
+The value is the key written out (`"Ctrl + G"`, `"Shift + H"`, `"F12"`), a list of two keys, or `""` for none. A key given to one action is taken from the action that had it. The exact names are in `tequila_preferences {"page": "keyboard"}`, each with its `label` and current `keys` (or `{"search": "screenshot"}` for one); read them before setting one, since the names cannot be guessed.
 
 ## 6. Things in the window that the tools do not reach
 
@@ -91,6 +91,5 @@ Say where these are rather than trying another way:
 
 - **Signing in to an AI service, API keys, which AI answers:** the Assistant's **Connect an AI…** window. Never ask for or handle a key.
 - **Installing updates:** **Help → Check for updates**.
-- **Rendering a turntable's frames:** the Snapshots tab (page `animation`).
-- **Improve model** (subdivide, shade again) and **Units of this model:** right-click the model in the Scene tab (page `fixing`).
+- **Joining a turntable's frames into a video:** done outside Tequila; the frames themselves render through the queue (page `animation`).
 - **Network render nodes:** set up in the Render window.

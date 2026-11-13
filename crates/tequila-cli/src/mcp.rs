@@ -326,7 +326,81 @@ impl Bridge {
                 out.set("ok", true).set("applied", applied);
                 Ok(text_value(&out.build()))
             }
-            "tequila_material_guide" => self.request("material", vec![("action", "guide".into())]).map(|v| text_value(&v)),
+            // A part at a time: the whole guide is thirty thousand
+            // characters.
+            "tequila_material_guide" => {
+                let topic = get("topic").filter(|t| t.as_str().is_some_and(|t| !t.trim().is_empty())).unwrap_or_else(|| "contents".into());
+                self.request("material", vec![("action", "guide".into()), ("topic", topic)]).map(|v| text_value(&v))
+            }
+            "tequila_graph_nodes" => {
+                let mut fields = vec![("action", Value::from("catalogue"))];
+                for key in ["search", "family", "name", "page"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("graph", fields).map(|v| text_value(&v))
+            }
+            "tequila_graph_read" => {
+                let material = get("material").ok_or("tequila_graph_read needs `material`")?;
+                let mut fields = vec![("action", Value::from("read")), ("material", material)];
+                for key in ["node", "page"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("graph", fields).map(|v| text_value(&v))
+            }
+            "tequila_graph_edit" => {
+                let material = get("material").ok_or("tequila_graph_edit needs `material`")?;
+                let action = get("action").ok_or("tequila_graph_edit needs `action`: add, set, connect, disconnect or remove")?;
+                if !action.as_str().is_some_and(|a| ["add", "set", "connect", "disconnect", "remove"].contains(&a)) {
+                    return Err("`action` is add, set, connect, disconnect or remove".into());
+                }
+                let mut fields = vec![("action", action), ("material", material)];
+                for key in ["node", "settings", "fields", "inputs", "label", "muted", "from", "output", "to", "input"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("graph", fields).map(|v| text_value(&v))
+            }
+            "tequila_uv_islands" | "tequila_uv_cut" | "tequila_uv_stitch" => {
+                let action = name.trim_start_matches("tequila_uv_");
+                let node = get("node").ok_or_else(|| format!("{name} needs `node`"))?;
+                let mut fields = vec![("action", Value::from(action)), ("node", node)];
+                let taken: &[&str] = match action {
+                    "islands" => &["set", "page"],
+                    "cut" => &["set", "path", "sharper_than", "islands", "pack", "reflatten", "across"],
+                    _ => &["set", "islands"],
+                };
+                for key in taken {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("uv", fields).map(|v| text_value(&v))
+            }
+            "tequila_improve" => {
+                let node = get("node").ok_or("tequila_improve needs `node`")?;
+                let mut fields = vec![("node", node)];
+                for key in ["subdivide", "shade", "crease"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("improve", fields).map(|v| text_value(&v))
+            }
+            "tequila_model_units" => {
+                let node = get("node").ok_or("tequila_model_units needs `node`")?;
+                let mut fields = vec![("node", node)];
+                for key in ["unit", "read_as"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("model_units", fields).map(|v| text_value(&v))
+            }
             "tequila_material_preview" => {
                 let mut fields = vec![("action", Value::from("preview"))];
                 for key in ["recipe", "material", "radius", "shape"] {
@@ -451,9 +525,27 @@ impl Bridge {
                 self.request("studio_preset", fields).map(|v| text_value(&v))
             }
             "tequila_studio_render_all" => self.request("studio_preset", vec![("action", "render_all".into())]).map(|v| text_value(&v)),
-            "tequila_stop" => self.request("stop", vec![]).map(|v| text_value(&v)),
+            "tequila_stop" => {
+                let mut fields = Vec::new();
+                for key in ["job", "all"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("stop", fields).map(|v| text_value(&v))
+            }
             "tequila_ui" => self.request("ui", fields_of(arguments)).map(|v| text_value(&v)),
-            "tequila_preferences" => self.request("preferences", fields_of(arguments)).map(|v| text_value(&v)),
+            // Briefly: every setting at once is nineteen thousand
+            // characters, and was the answer to changing one.
+            "tequila_preferences" => {
+                let mut fields = vec![("brief", Value::Bool(true))];
+                for key in ["set", "reset", "page", "search"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("preferences", fields).map(|v| text_value(&v))
+            }
             "tequila_import" => {
                 let path = get("path").and_then(|v| v.as_str().map(absolute)).ok_or("tequila_import needs `path`")?;
                 // Which way up, and what to do with a Blender file's lights,
@@ -767,7 +859,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 44);
+        assert_eq!(tools.len(), 52);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -775,7 +867,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 33);
+        assert_eq!(restricted.len(), 41);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }
@@ -806,7 +898,7 @@ mod tests {
         let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
         bridge.assistant = Some("mark".into());
         let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
-        assert_eq!(names.len(), 44);
+        assert_eq!(names.len(), 52);
         for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
             assert!(names.iter().any(|n| n == kept), "{kept}");
         }

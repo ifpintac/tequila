@@ -239,11 +239,15 @@ impl Session {
                 Ok(part) => Reply::Value(part),
                 Err(error) => Reply::Failed(error),
             },
+            Operation::Graph(request) => self.shared(tequila_scripting::graph::request(request, &self.document)),
+            Operation::Uv(request) => self.shared(tequila_scripting::uv::request(request, &self.document)),
+            Operation::Improve(request) => self.shared(tequila_scripting::model::improve(request, &self.document)),
+            Operation::ModelUnits(request) => self.shared(tequila_scripting::model::units(request, &self.document)),
             Operation::Screenshot { .. }
             | Operation::AddShape { .. }
             | Operation::Ui(_)
             | Operation::Queue(_)
-            | Operation::Stop
+            | Operation::Stop { .. }
             | Operation::TextureSet { .. }
             | Operation::LiveLink(_)
             | Operation::Plugin(_)
@@ -393,6 +397,14 @@ impl Session {
     fn material(&mut self, request: &tequila_scripting::protocol::MaterialRequest) -> Reply {
         let selection: Vec<NodeId> = self.selection.clone();
         match tequila_scripting::material::material_request(request, &self.document, &selection, &tequila_format::library::user_directory()) {
+            Ok(outcome) => self.carry_out(outcome),
+            Err(error) => Reply::Failed(error),
+        }
+    }
+
+    /// What a request the application answers the same way came to.
+    fn shared(&mut self, outcome: Result<tequila_scripting::document::LibraryOutcome, String>) -> Reply {
+        match outcome {
             Ok(outcome) => self.carry_out(outcome),
             Err(error) => Reply::Failed(error),
         }
