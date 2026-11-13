@@ -55,7 +55,8 @@ new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. 
 tequila_screenshot: it waits for the picture to finish and says whether it had. If something looks wrong, first \
 check the simple causes with tequila_nodes: is the part hidden, is it where you think. \
 The view is the person's as well: they turn and zoom it while you work, to look at what you changed. Nothing you do \
-to a material moves the camera, so a view that differs from your last look is theirs: work in it as it is, and do not \
+to a material moves the camera, so a view that differs from your last look is theirs, and \
+tequila_screenshot says so when they have moved it: work in it as it is, and do not \
 frame it or move it back. Move the camera only when asked for a view, or when what you must check is out of sight - \
 and then put it back: tequila_query camera reads a view, and tequila_look with its position as from and its target as \
 at returns to it. \
@@ -176,12 +177,15 @@ pub struct Bridge {
     /// The built-in Assistant's mark, when Tequila itself started this.
     pub assistant: Option<String>,
     channel: Option<Channel>,
+    /// Tequila's count of the person's own view moves at the last
+    /// screenshot, to say with the next one that the view is theirs.
+    view_moves: Option<u64>,
 }
 
 impl Bridge {
     pub fn new(discovery: Option<PathBuf>, restricted: bool) -> Bridge {
         let discovery = discovery.unwrap_or_else(tequila_scripting::server::discovery_path);
-        Bridge { discovery, restricted, assistant: None, channel: None }
+        Bridge { discovery, restricted, assistant: None, channel: None, view_moves: None }
     }
 
     pub fn tools(&self) -> Vec<Value> {
@@ -401,7 +405,8 @@ impl Bridge {
                 )?;
                 wait_for_png(&path, Duration::from_secs_f64(30.0 + settle))?;
                 let ui = self.request("query", vec![("what", "ui".into())]).unwrap_or(Value::Null);
-                image(&path, &picture_caption(viewport, &ui))
+                let moved = moved_by_hand(&mut self.view_moves, &ui);
+                image(&path, &format!("{}{}", picture_caption(viewport, &ui), if moved { MOVED_BY_HAND } else { "" }))
             }
             "tequila_render" => {
                 let path = temporary("tequila-mcp-render", "png");
@@ -624,6 +629,24 @@ fn picture_caption(viewport: bool, ui: &Value) -> String {
     }
 }
 
+/// Said with a screenshot when the person has moved the view since the
+/// last one: an assistant cannot see a hand on the mouse, and took a view
+/// it found closer for a fault to put right.
+const MOVED_BY_HAND: &str = " The person has moved the view since your last look: it is where they want it, so leave it there.";
+
+/// Whether the person has moved the view since the last look: Tequila's
+/// count of their moves (`view_moves_by_hand` in `query ui`) against the
+/// count `seen` then, which is brought up to date. Never at a first look,
+/// which has nothing to differ from.
+fn moved_by_hand(seen: &mut Option<u64>, ui: &Value) -> bool {
+    let Some(count) = ui.get("view_moves_by_hand").and_then(Value::as_f64).map(|count| count as u64) else {
+        return false;
+    };
+    let moved = seen.is_some_and(|before| count > before);
+    *seen = Some(count);
+    moved
+}
+
 fn fields_of(value: &Value) -> Vec<(&str, Value)> {
     match value {
         Value::Object(map) => map.iter().map(|(k, v)| (k.as_str(), v.clone())).collect(),
@@ -817,6 +840,22 @@ mod tests {
         let solid = picture_caption(true, &ui(r#"{"viewport":"solid","picture_samples":1,"picture_settled":true}"#));
         assert!(solid.contains("solid view") && solid.contains("not ray traced"), "{solid}");
         assert_eq!(picture_caption(false, &Value::Null), "Tequila window");
+    }
+
+    /// A screenshot says when the person has moved the view since the last
+    /// one: not at the first look, not while the count stands still, not
+    /// from an application that does not count.
+    #[test]
+    fn a_look_says_when_the_person_moved_the_view() {
+        let ui = |text: &str| json::parse(text.as_bytes()).unwrap();
+        let mut seen = None;
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":3}"#)), "a first look has nothing to differ from");
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":3}"#)));
+        assert!(moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":5}"#)));
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":5}"#)), "said once");
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"viewport":"solid"}"#)));
+        assert_eq!(seen, Some(5));
+        assert!(MOVED_BY_HAND.contains("leave it there"));
     }
 
     /// The library is looked in before a material is made: the bridge says

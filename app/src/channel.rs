@@ -37,13 +37,51 @@ use tequila_scripting::document::{APP_LIMITS as LIMITS, APP_OPERATIONS as OPERAT
 /// front of it is the last to know.
 pub fn handle(app: &mut TequilaApp, request: &Request) -> Reply {
     let summary = request.operation.summary();
+    note_view(app);
     let reply = perform(app, &request.operation);
+    // Wherever this request put the view is not the person's doing.
+    app.view_left = Some(view(app));
     let steps: Vec<String> = match &request.operation {
         Operation::Batch { operations, .. } => operations.iter().map(Operation::summary).collect(),
         _ => Vec::new(),
     };
     log_reply(app, &request.peer, summary, &steps, &reply);
     reply
+}
+
+/// The view as far as "has it moved" goes: where the camera stands and
+/// which way it looks, its lens, and the point it turns about. Not its
+/// focus or exposure, which change no framing.
+pub(crate) type View = (tequila_core::math::Mat4, tequila_render_core::camera::Projection, Vec3);
+
+fn view(app: &TequilaApp) -> View {
+    (app.camera.camera.camera_to_world, app.camera.camera.projection, app.camera.target)
+}
+
+/// Count the view as moved by hand if it is not where the last scripted
+/// request left it.
+///
+/// Every scripted request passes through [`handle`], and whatever one does
+/// to the camera it has done by the time it answers. So a view found
+/// somewhere else when the next one arrives was put there by the person:
+/// an orbit, a pan, a zoom, a Frame button, a studio they clicked, their
+/// own undo. An assistant cannot see a hand on the mouse, and without
+/// being told took the changed view for a fault and framed the model
+/// again, over the close look the person had just taken. `query ui` gives
+/// the count as `view_moves_by_hand`; whoever looks compares it with the
+/// count at their last look.
+pub(crate) fn note_view(app: &mut TequilaApp) {
+    let now = view(app);
+    if app.view_left.is_some_and(|left| left != now) {
+        app.view_moves_by_hand += 1;
+    }
+    app.view_left = Some(now);
+}
+
+/// How many times the view has been found moved by hand, as of now.
+pub(crate) fn view_moves_by_hand(app: &mut TequilaApp) -> u64 {
+    note_view(app);
+    app.view_moves_by_hand
 }
 
 /// Write down a request's outcome: in the console, for a request from
@@ -1001,6 +1039,9 @@ fn ui_state(app: &TequilaApp) -> Value {
         // How far along the viewport's picture is, for judging a screenshot.
         .set("picture_samples", app.image.samples as f64)
         .set("picture_settled", app.picture_settled(std::time::Duration::from_secs(1)))
+        // How many times the person has moved the view between two scripted
+        // requests: more than at the last look, and the view is theirs.
+        .set("view_moves_by_hand", app.view_moves_by_hand as f64)
         // How far the viewport's picture has got: its samples, and whether
         // Cycles is still preparing the graphics card and has shown nothing.
         .set("viewport_samples", app.image.samples as f64)
@@ -3574,6 +3615,41 @@ mod handler_tests {
                 same(&app, "a material change redone");
             }
         }
+    }
+
+    /// The view found somewhere else between two scripted requests was moved
+    /// by hand, and `query ui` counts it: once however far the person went,
+    /// and never for what a script did to the camera itself, or its undo.
+    #[test]
+    fn a_view_moved_between_requests_is_counted_as_the_persons() {
+        let mut app = TequilaApp::for_tests();
+        let count = |app: &mut TequilaApp| value(app, r#"{"op":"query","what":"ui"}"#).get("view_moves_by_hand").and_then(Value::as_f64);
+        assert_eq!(count(&mut app), Some(0.0));
+
+        // A script's own camera work, and taking it back.
+        value(&mut app, r#"{"op":"look","view":"top"}"#);
+        value(&mut app, r#"{"op":"frame","all":true}"#);
+        value(&mut app, r#"{"op":"undo"}"#);
+        let part = app.project.document().tree.iter().find(|n| n.mesh().is_some()).unwrap().id.0;
+        value(&mut app, &format!(r#"{{"op":"library","action":"apply","name":"Aluminium Spun","nodes":[{part}]}}"#));
+        assert_eq!(count(&mut app), Some(0.0), "nothing a script did is the person's");
+
+        // The person turns and zooms, over several frames, then stops.
+        app.camera.orbit((140.0, -60.0), 800.0);
+        app.sync_viewport_camera();
+        app.camera.zoom(2.0);
+        assert_eq!(count(&mut app), Some(1.0), "found moved, once");
+        assert_eq!(count(&mut app), Some(1.0), "and not again while it stays");
+
+        // Their Frame button, their undo.
+        app.frame(true);
+        value(&mut app, r#"{"op":"query","what":"camera"}"#);
+        app.undo();
+        assert_eq!(count(&mut app), Some(3.0));
+
+        // A change of focus is no move.
+        app.camera.camera.focus_distance += 0.1;
+        assert_eq!(count(&mut app), Some(3.0));
     }
 
     /// A network render with no farm set up says what is missing, rather

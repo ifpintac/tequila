@@ -196,6 +196,22 @@ class BridgeTests(unittest.TestCase):
         described = {t['name']: t['description'] for t in TOOLS}
         self.assertIn('not after a material edit', described['tequila_frame'])
 
+    def test_a_look_says_when_the_person_moved_the_view(self):
+        """Tequila counts the person's own view moves; a screenshot says so
+        when the count has risen since the last one, once, and never at a
+        first look or from an application that does not count."""
+        said = lambda: self.call('tequila_screenshot', {'settle': 0})['content'][1]['text']
+        self.assertNotIn('moved the view', said())
+        try:
+            UI.update(view_moves_by_hand=2)
+            self.assertNotIn('moved the view', said(), 'a first count has nothing to differ from')
+            self.assertNotIn('moved the view', said())
+            UI.update(view_moves_by_hand=3)
+            self.assertIn('The person has moved the view since your last look', said())
+            self.assertNotIn('moved the view', said(), 'said once')
+        finally:
+            UI.pop('view_moves_by_hand', None)
+
     def test_look_passes_from_through(self):
         self.call('tequila_look', {'from': [0, 1, 3], 'at': [0, 0, 0]})
         sent = self.app.received[-1]
