@@ -4,7 +4,7 @@ Everything the tools do is a request on Tequila's scripting channel. Two reasons
 
 ## 1. A raw request
 
-`tequila_request {"request": {"op": "<name>", ...}}` sends any request. It is offered on a full local connection; a restricted (remote) connection and an assistant running on an API key or a local model do not have it, and the jobs below are then the person's to do in the window.
+`tequila_request {"request": {"op": "<name>", ...}}` sends any request on a full local connection. An assistant running on an API key or a local model has it for the requests that have no tool of their own - `export`, `reimport`, `texture_set`, `substance`, `uv_layout`, `studio_kit`, `library`, `studio_preset`, `queue`, `plugin`, `screenshot`, `render` and `ui` - and is refused `new`, `open` and `quit`, which are the person's to do there. A restricted (remote) connection does not have it, and the jobs below are then the person's to do in the window.
 
 ```json
 tequila_request {"request": {"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}}
@@ -26,7 +26,8 @@ tequila_request {"request": {"op": "batch", "atomic": true, "ops": [
 | `add_shape` | A simple shape as a new part | `scene` |
 | `import`, `reimport`, `save`, `export`, `open`, `new` | Files | `files` |
 | `texture_set`, `substance` | PBR packs, Substance materials | `textures` |
-| `library` with `action`: `search`, `apply`, `save`, `import`, `export`, `delete` | The material library | `materials` |
+| `library` with `action`: `search`, `apply` (with `color`, in another colour), `save`, `import`, `export`, `delete` | The material library | `materials` |
+| `material` with `action`: `tint`, a `material` and a `color` | The same material in another colour | `materials` |
 | `material` with `action`: `guide`, `preview`, `create`, `update`, `recipe`, `save` | Materials from recipes | `recipes` |
 | `graph` with `action`: `catalogue`, `read`, `add`, `set`, `connect`, `disconnect`, `remove` | A material's graph, a node at a time | `graph` |
 | `uv` with `action`: `islands`, `cut`, `stitch`; `uv_layout` | A part's UV layout read, its seams, and the layout as a picture | `uv` |
@@ -67,7 +68,7 @@ with tequila.open('kettle.tequila') as fs:
 - **Finding things:** `fs.parts()`, `fs.find(name=..., metadata=...)`, `fs.materials['Name']` or `fs.materials[3]`.
 - **Reading:** `fs.query(what)`, `fs.read('render')['value']` (one part of the project), `fs.read(node=12)` (one node with its transform), `fs.help('scene.set_transform')`, `fs.guide('lighting')`.
 - **Changing:** `fs.apply('scene.rename', node=5, name='Lid')` or `fs.commands.scene.rename(node=5, name='Lid')`; `with fs.batch() as b:` makes what is sent through `b` one undo step.
-- **Materials:** `fs.library.apply(name, *parts)`, `fs.library.presets()`, `fs.recipes.create(recipe, *parts)`, `.preview(recipe)`, `.update(id, recipe)`.
+- **Materials:** `fs.library.apply(name, *parts)` (with `color='#1f4d2b'`, in another colour), `fs.materials['Seat'].tint('#1f4d2b')`, `fs.library.presets()`, `fs.recipes.create(recipe, *parts)`, `.preview(recipe)`, `.update(id, recipe)`.
 - **Pictures and files:** `fs.render(path, width=..., height=..., samples=...)`, `fs.queue(...)` with `fs.wait_for_job(id)`, `fs.screenshot(path)`, `fs.import_model(path)`, `fs.export('glb', path)`, `fs.save(path)`, `fs.undo()`.
 - `fs.request(op, **fields)` sends anything in the table above.
 - `tequila.srgb('#2D5DA8')` converts a swatch colour into the rendering space, though hex strings are accepted wherever a colour goes.

@@ -363,14 +363,14 @@ fn send_turn(provider: &Provider, messages: &[Message], job: &Job, headers: &[(S
     let url = provider.chat_url();
     if job.streams.load(Ordering::SeqCst) {
         match streamed(provider, &url, headers, body(true), job)? {
-            Some(reply) => return Ok(reply),
+            Some(reply) => return Ok(wire::with_written_calls(reply, &tools)),
             // Refused: ask for the whole reply, now and for the rest of
             // the conversation.
             None => job.streams.store(false, Ordering::SeqCst),
         }
     }
     let response = http::post_watched(&url, headers, body(false), job.limits.whole(), &job.hangup)?;
-    reply_of(provider, response.status, &response.body)
+    reply_of(provider, response.status, &response.body).map(|reply| wire::with_written_calls(reply, &tools))
 }
 
 /// Ask for the reply as a stream of events, and put it together as it
@@ -736,8 +736,41 @@ mod tests {
         assert!(turn.calls[1].arguments.is_ok());
     }
 
+    /// A call the model wrote into its words, which the server passed on
+    /// as words (`wire::with_written_calls`), goes round the loop like any
+    /// other: carried out, answered, and sent back as the call it was.
+    #[test]
+    fn a_call_written_into_the_answer_goes_round_the_loop() {
+        let (url, seen) = chat(vec![
+            events(&[
+                r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":"First, let me look at the scene."},"finish_reason":null}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":"\n\n\u003cfunction"},"finish_reason":null}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":"=tequila_scene\u003e"},"finish_reason":null}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":"\n\u003c/function\u003e"},"finish_reason":null}]}"#,
+                r#"{"choices":[{"index":0,"delta":{"content":"\n\u003c/tool_call\u003e"},"finish_reason":null}]}"#,
+                r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+                "[DONE]",
+            ]),
+            json(r#"{"choices":[{"message":{"role":"assistant","content":"There are 24 parts."},"finish_reason":"stop"}]}"#),
+        ]);
+        let mut session = session(url);
+        session.ask("What is in the scene?").unwrap();
+        let turn = wait(&mut session).unwrap();
+        assert_eq!(turn.text, ["First, let me look at the scene."]);
+        assert_eq!(turn.calls.len(), 1, "the turn does not end on the markup");
+        assert_eq!(turn.calls[0].name, "tequila_scene");
+        session
+            .answer(vec![Part::Result { id: turn.calls[0].id.clone(), name: "tequila_scene".into(), text: "{\"parts\":24}".into(), image: None, is_error: false }])
+            .unwrap();
+        assert_eq!(wait(&mut session).unwrap().text, ["There are 24 parts."]);
+        let sent = seen.lock().unwrap();
+        let second = &sent.iter().filter(|(path, _)| path.ends_with("/completions")).nth(1).expect("the result was sent").1;
+        assert!(second.contains("\"tool_calls\"") && second.contains("\"tool_call_id\""), "the call goes back as a call: {second}");
+        assert!(!second.contains("function="), "and none of the markup: {second}");
+    }
+
     /// Reasoning beside the answer, as Ollama sends it (`reasoning`) and as
-    /// others do (`reasoning_content`), and inside it, as `<think>`.
+    /// others do (`reasoning_content`), and inside it, as `<think>`."""
     #[test]
     fn reasoning_is_kept_apart_from_the_answer() {
         let (url, _) = chat(vec![

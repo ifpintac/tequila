@@ -402,6 +402,11 @@ struct TequilaApp {
     /// Imports a script or an AI app asked for over the scripting channel,
     /// read on other threads as `imports` are (`channel::begin_import`).
     script_imports: Vec<channel::PendingImport>,
+    /// The view as the last scripted request left it, and how many times
+    /// one has since found it somewhere else: the person's own turns, pans
+    /// and zooms, for an assistant to be told of (`channel::note_view`).
+    view_left: Option<channel::View>,
+    view_moves_by_hand: u64,
     /// What the last model update found, shown until dismissed.
     update_report: Option<tequila_scene::reimport::ReimportReport>,
     /// The Model units window, when it is open.
@@ -1090,6 +1095,8 @@ impl TequilaApp {
             pending_unit: None,
             imports: Vec::new(),
             script_imports: Vec::new(),
+            view_left: None,
+            view_moves_by_hand: 0,
             update_report: None,
             model_units: None,
             lighting_offer: None,
@@ -7272,14 +7279,19 @@ impl TequilaApp {
                     }
                 }
                 // The application's own operations: a part's UV layout
-                // written as a picture.
-                tequila_scripting::server::Taken::Own(value) => responder.answer(&match value.get("op").and_then(|v| v.as_str()) {
-                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), &value) {
-                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
-                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
-                    },
-                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
-                }),
+                // written as a picture. The Assistant's is held for the
+                // person's answer like any other file it would write.
+                tequila_scripting::server::Taken::Own(value, peer) => {
+                    let assistants = self.assistant.is_its(value.get("agent").and_then(|v| v.as_str()).unwrap_or_default());
+                    if assistants {
+                        if let Some(question) = tequila_scripting::approval::own_question(&value, &std::env::temp_dir()) {
+                            self.assistant.hold_own(value, responder, question);
+                            return;
+                        }
+                    }
+                    let peer = if assistants { self.assistant.peer() } else { peer };
+                    responder.answer(&channel::handle_own(self, &value, &peer));
+                }
             });
             self.channel = Some(open);
         }

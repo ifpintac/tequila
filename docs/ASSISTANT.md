@@ -204,8 +204,11 @@ to sign in with a personal account is yours to weigh. (Read 2026-11-13.)
 These are answered by Tequila's own loop, in the same chat, with the same
 questions before anything leaves the scene. Its tools are Tequila's own:
 the scene, materials and the library's presets, lighting, camera, studios,
-renders, import, save, preferences and plugins. It has no tools for files
-or commands at all.
+renders and the render settings, import, export, save, preferences and
+plugins, and `tequila_request` for the requests that have no tool of their
+own. It cannot quit Tequila, start or open another project, or change the
+folder and file name renders are written to: those are yours. It has no
+tools for files or commands at all.
 
 Open the model picker, click **Connections…**, choose a starting point,
 fill in the form, and click **Test**:
@@ -901,7 +904,8 @@ Not changed here, and worth doing:
   Seen in that session, cause not found.
 - **Tinting a library preset whose colour is set inside a pattern** still
   means reading the material and rewriting that pattern. A plain "make
-  this preset this colour" would save it.
+  this preset this colour" would save it. (Built since: "one step to
+  recolour a material", below.)
 - **The viewport keeping a stale mesh under a reused key** is worked
   around for scripts, not fixed where it happens.
 - An assistant still cannot read the library's files directly, which is as
@@ -918,6 +922,167 @@ Held by test: `the_library_is_searched_in_a_size_an_ai_reads`,
 `a_screenshot_waits_for_the_picture_to_finish`, and in the bridge
 `the_library_comes_first` and
 `a_screenshot_says_whether_its_picture_had_finished`.
+
+## As built, November 13: whose a moved view is
+
+The first real session's assistant said, three times, that the view had
+"zoomed in on its own" after a material change, never found why, and
+framed the model again each time. The cause was looked for and found: no
+material change moves the camera. The person at the window had turned and
+zoomed the view to look at each new material, between two of the
+assistant's looks, and the assistant framed it away again.
+
+**How that was established:**
+- About forty material changes replayed over the scripting channel in a
+  copy with a home folder of its own, in the quick view and in the
+  Rendered one: presets put on parts, materials made, shown on a ball,
+  remade, set, unlinked and assigned, batches, a batch taken back, undo and
+  redo. The camera was read before and after each, and the model's outline
+  measured in each screenshot. Nothing moved.
+- The session's chat keeps every step and picture. Before each of the
+  three remarks there is no camera request: no frame, no look, no undo.
+- Its pictures show a hand's moves - a small turn and a step back, closer
+  and lower, turned and off-centre, a fourfold push in - and a switch to
+  the Rendered view that the assistant had not asked for and Tequila does
+  not make unasked.
+
+**What changed:**
+- **Tequila says when the person has moved the view.** Every scripted
+  request passes through `channel::handle`, and what one does to the
+  camera it has done by the time it answers; so a view found somewhere
+  else when the next arrives was moved by hand (`channel::note_view`).
+  `query ui` counts those as `view_moves_by_hand`. Each bridge keeps the
+  count from its last screenshot, and when it has risen says with the
+  picture: "The person has moved the view since your last look: it is
+  where they want it, so leave it there." Never at a first look, and once
+  for however far the person went. Tequila's own loop says the same.
+- **The instructions say whose the view is**, for the looks in between:
+  nothing done to a material moves the camera, a view that differs from
+  the last look is the person's, and a camera moved to check something is
+  put back. `tequila_frame` says it is not for after a material edit.
+
+**Tried on this Mac, in a copy with a home folder of its own, through the
+real bridge** (`tequila --mcp`), with a drag across the viewport made as a
+mouse makes one (`ui` `drag`): a first look, a look after a library
+preset, after the assistant's own `tequila_frame` and after its undo said
+nothing of the view; the look after the drag said the person had moved
+it; the next, untouched, said nothing; a material made and a second drag,
+and the look said it again. `view_moves_by_hand` stood at 2.
+
+**Known limits:**
+- What the person types in Tequila's console is a request like any other,
+  so a `look` typed there is not counted as theirs.
+- The person's orbit is an undo step like any other: an assistant's undo
+  after they have moved the view takes back their orbit, not its own last
+  edit.
+
+Held by test: `a_material_change_leaves_the_view_where_it_was`,
+`a_view_moved_between_requests_is_counted_as_the_persons`, and
+`a_look_says_when_the_person_moved_the_view` and
+`a_moved_view_is_the_persons` in the bridges and in Tequila's own loop.
+
+## As built, November 13: one step to recolour a material
+
+In the same first session the assistant put a library leather on a part
+and then held back from making it dark green. It was right to: that
+leather's brown is not in `base_color` but inside the node that multiplies
+its grain, so setting `base_color` would have changed nothing, and the
+only other way was to read the whole material and rewrite its pattern.
+More than half of the library is like that: of 599 shipped presets, 316
+keep their colour in a pattern (a multiplied colour, the colours threads
+are mixed from, the stops of a ramp), and 283 in a plain value.
+
+What changed:
+
+- **`tequila_material_tint`** takes a material's id and a hex colour and
+  makes it the same material in that colour, wherever the colour is kept.
+  The colour asked for becomes the material's main colour; the other
+  colours of the same family keep their relation to it, so a pattern keeps
+  its contrast; colours of another family (white threads in a blue cloth,
+  rust on a grey steel) are left exactly as they are. Pattern, grain,
+  roughness and bump are not touched. It is one command on the bus, so
+  one undo step. The rule is written out in `docs/SCRIPTING.md` under
+  "Tinting a material", and is `tequila_materials::tint`.
+- **Its answer says what it did**: the colour it was and is, each
+  parameter changed with how many colours and whether they were in a
+  pattern or a plain value, how many colours it left alone, and in words
+  anything worth knowing - that other parts share the material and changed
+  too, or that a metal could not be as bright as the colour asked for. It
+  comes back with a picture of the material on the ball, as
+  `tequila_material_update` does.
+- **A material with no colour to change is refused in a sentence** that
+  names it and says why: a thin film, whose colours come from its
+  thickness, or a colour that is a picture's. Nothing is changed.
+- **`tequila_library_apply` takes `color`**, to put a preset on already
+  tinted: a material of its own named for the colour
+  (`Leather Tan #1f4d2b`). It also answers with the material's id now, so
+  the next step need not look it up.
+- The instructions every assistant is given, both tools' descriptions,
+  Tequila's own loop for API keys and local models, and the Tequila skill
+  all say to use the tint and not `base_color` for "the same material in
+  another colour". The request on the scripting channel is `material` with
+  the action `tint`; in Python `material.tint('#1f4d2b')` and
+  `fs.library.apply(name, part, color='#1f4d2b')`.
+
+Three things the survey of the library decided:
+
+- **Which colour is "the" colour of a weave.** The value a preset names is
+  often a blend of its threads, nearer the white thread of an Oxford cloth
+  than the blue one. So under a pattern the main colour is the pattern's
+  own colour nearest that value among those at least as vivid: the blue
+  thread, which comes out exactly the colour asked for.
+- **A colour that is only a grey level.** Two presets (Cast Iron, Steel
+  Galvanised) wire a pattern of numbers straight into the colour, with no
+  colour anywhere. A tint puts one between them, so that what is seen is
+  unchanged until it is tinted and every later tint finds it.
+- **A clear material's colour is not the colour it looks.** It is what one
+  transmission depth lets through, a pale blue for an acrylic that looks
+  deep blue on a part five times as thick. Given the amber asked for as it
+  stood, that acrylic rendered nearly black. So a clear material that has a
+  colour keeps its clarity - the new colour thinned as a dye is, to take as
+  much out of the light as the old one did - and only a colourless one
+  takes the colour as given. The answer says when this was done and what
+  the colour came to.
+
+**Tried on this Mac (M3 Max):** every one of the 599 shipped presets tinted
+dark green in a test, each held to come out that colour (a metal as near as
+the metal allows), to compile, to read back from its own file, and to stay
+put when tinted the same colour again. Twenty presets rendered on the
+library's ball before and after, and looked at: leathers, suede, denim,
+Oxford cloth, felt, walnut, marble, terrazzo, a carbon and aramid weave,
+rusted steel, plastic, anodised aluminium, chrome, a metallic paint, tinted
+acrylic, clear glass, an amethyst, a gummy sweet, a neon tube and a backlit
+button.
+
+Not tried: an assistant using the tool in a real session. The tool's
+description is the only thing that tells it to, and whether it reaches for
+it unprompted is for the next session to show.
+
+Not changed here:
+
+- **A tint is not offered in the Material tab.** The rule is in a crate
+  the window can call (`tequila_materials::tint::tint`); a "Tint..." beside
+  a patterned material's colour would be the same step by hand.
+- **A material keeps its name when it is tinted**, as it does when its
+  colour is changed by hand, so a `Leather Tan` made green is still called
+  that. Applied already tinted, it is named for the colour.
+- **The pattern's light and dark keep how light they look, not how much
+  light they reflect**, so a deep blue made a red of the same lightness
+  reflects more. That is the point of working in Oklab, and is what a
+  person means by the same contrast.
+
+Held by test: in `tequila-materials`, the `tint::tests` (a plain value, a
+colour times a pattern, a ramp's contrast, grey beside a colour, a colour
+on a grey, a black pattern, a sheen, glass and glow, a tinted clear
+material, a metal, a grey-level pattern, the refusals, a second tint); in `tequila-format`,
+`every_shipped_preset_tints_or_says_why_not`; on the channel,
+`a_plain_preset_is_tinted_in_its_value`,
+`a_patterned_leather_is_tinted_in_its_pattern`,
+`a_cloth_keeps_its_weave_in_the_new_colour`,
+`a_preset_is_applied_already_tinted`,
+`a_material_with_no_colour_is_refused_plainly` and
+`a_tint_carries_a_material_and_a_colour`; and `a_tint_is_one_tool` in each
+bridge.
 
 ## As built, November 13: a guide to the whole application
 
@@ -951,7 +1116,7 @@ all of it, yes. What stood in the way:
 **What was built.**
 
 - **The guide in layers** (`skills/tequila`, built into the binary by
-  `tequila_scripting::guide`): a core under 7,000 characters, and nineteen
+  `tequila_scripting::guide`): a core under 7,200 characters, and nineteen
   pages under 12,000 each - materials, recipes, graph, textures, labels,
   uv, scene, lighting, camera, variants, rendering, image, animation,
   fixing, files, plugins, app, scripting, shots. A page teaches the work
@@ -988,8 +1153,7 @@ all of it, yes. What stood in the way:
 |---|---|
 | A seam across the middle of a flat CAD face | A seam follows the mesh's own edges, and such a face has none across it; `tequila_uv_cut` says so, and the way round (cut along its edges, or subdivide first) |
 | Pinning and dragging single points of a UV layout | `uv.set_pins` and `uv.set_positions` name vertices of the mesh, which no tool lists |
-| Format, transparency and layers, for API keys, local models and remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's |
-| Export, updating a model, texture packs, the UV picture, for API keys and local models | The own loop has no raw requests |
+| Format, transparency and layers, for remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's (API keys and local models have it since: see *what the own loop could not reach* below) |
 
 **The jobs the window alone could do.** The audit above found five that no
 tool reached; each now has a request in the protocol, a tool in both
@@ -1051,7 +1215,153 @@ through a longer lens with the background out of focus, and set 105 mm
 with depth of field at f/2.8; `image` for a warmer picture with a
 vignette, read the style and sent it back with two numbers changed.
 qwen3-coder is another matter: about half the time, through Ollama, it
-writes its tool call as text, which the own loop shows and the
-conversation ends there - with the old instructions as with the new.
+writes its tool call as text, which the own loop showed and the
+conversation ended there - with the old instructions as with the new.
+(Read as the call it is since: see the next section.)
 
 Not tried with Claude, ChatGPT or Gemini on this build.
+
+**Merged with the two sections above.** The core carries their rules, short:
+whose a moved view is, in what holds everywhere, with the rest on the
+`camera` page (`view_moves_by_hand`, and how to put a view back); and the
+tint, in the core's materials paragraph, with the rest on `materials`. The
+core came to 7,059 characters with them, and its test holds it under
+7,200.
+
+## As built, November 13: calls written as text, and what the own loop could not reach
+
+Two findings of the audit above, both in Tequila's own loop (API keys and
+models on this computer).
+
+**A tool call written into the answer is read as the call.** A server for
+local models turns the model's own markup for a call into the format's
+`tool_calls`, and misses it when the model says a sentence first. Through
+Ollama 0.40, `qwen3-coder:30b` given the own loop's instructions and tools
+answered 6 of 12 requests that way:
+
+```text
+I'll warm up the image and add a slight vignette. First, let me check the current settings.
+
+<function=tequila_read>
+<parameter=what>
+image_style
+</parameter>
+</function>
+</tool_call>
+```
+
+The own loop showed that as the answer, and the request ended with nothing
+done. Now `wire::with_written_calls` reads it: a `<function=name>` with its
+`<parameter=key>` values, or a JSON object between `<tool_call>` tags (the
+other form local models write), naming one of the assistant's own tools,
+becomes the call; each value is read as the tool's schema says that
+argument is, since the markup has only text; and the markup leaves the
+words. While a reply is still coming, the chat shows the words before the
+markup and "calling" the tool, never the markup or its first letters
+(`wire::before_written_call`). Markup that names no tool of Tequila's is
+somebody explaining markup, and stays as written.
+
+Counted on a fresh sample of 36 replies (24 whole, 12 streamed), read with
+`cargo run -p tequila-ai --example replies`: 19 came as calls and 17
+written into the words; all 17 are now carried out as calls, none is left
+as markup. Before, those 17 would each have ended a request.
+
+Held by tests on the recorded replies:
+`wire::a_call_written_into_the_answer_is_read_as_the_call`,
+`written_arguments_are_read_as_the_tool_takes_them`,
+`a_call_written_as_json_between_tags_is_read_too`,
+`words_that_are_not_a_call_stay_words`,
+`a_call_being_written_into_a_stream_is_not_shown`, and
+`session::a_call_written_into_the_answer_goes_round_the_loop`.
+
+**What the own loop could not reach.** It had no raw requests, so an
+API-key or local model could not export, update a model from its file,
+bring a texture pack, open a Substance file, write a UV layout picture,
+add a studio-kit piece, move files in and out of the library, take a quick
+render or look at the UV and graph windows; and `render.set_settings` was
+refused whole, so it could not set a format, transparency or layers.
+
+The choice was between a named tool for each and one `tequila_request`
+held to a list. The list won: the guide is one for every assistant and
+writes these jobs as `tequila_request {"request": {...}}`, so the same
+page now works wherever the assistant runs, and a tool for each job would
+have been as many more descriptions for a local model to hold.
+
+- **`tequila_request`** (`tools::REQUESTS`) sends `export`, `reimport`,
+  `texture_set`, `substance`, `uv_layout`, `studio_kit`, `library`,
+  `studio_preset`, `queue`, `plugin`, `screenshot`, `render` and `ui` as
+  they are written. It is a list of what may pass, so an operation Tequila
+  learns later is not the assistant's until it is put there. `quit`,
+  `new`, `open`, `assistant` and `livelink` are refused in words (the
+  person's to do; the Assistant cannot drive itself). An operation that
+  has a tool - `apply`, `batch`, `save`, `import`, `query` and the rest -
+  becomes that tool's call, held to what the tool allows: a batch sent as
+  a request can hold no more than `tequila_batch` can. A plugin's code
+  written this way asks the person again before it runs, whatever the
+  request says of asking.
+- **The questions are the application's**, asked of the request itself
+  (`approval::question`), as before: an export, a texture pack, a
+  Substance file, a library file each wait for Allow. A path without a
+  folder is in the project's folder.
+- **`uv_layout` is asked about too.** It is answered outside the
+  protocol's own operations, so the gate never saw it: an agent could
+  write a picture anywhere unasked. `approval::own_question` asks ("Write
+  a UV layout to a file?") for the own loop and for an agent's bridge
+  alike, and the console now shows the request (`channel::handle_own`).
+- **`tequila_render`** returns a quick render as a picture, written to a
+  scratch file and removed; **`tequila_screenshot`** takes `window` (`uv`,
+  `graph`, `render`, `preferences`) and `settle`; **`tequila_jobs`** lists
+  the renders, as the guide's pages call it.
+- **The render settings, less where renders go.** `render.set_settings`
+  is no longer refused. The block the model sends is laid over the
+  project's own (`tools::render_settings_kept`): the fields it names
+  change and the rest stay, so a model that sends only `format` and
+  `alpha_mode` has not put everything else back to a new project's. A
+  block that would change `output_directory` or `filename_template` is
+  refused, alone or in a batch, and told that `tequila_queue` takes a
+  folder and a file name for one render, with the person's yes.
+
+Held by tests: in `tequila-ai`, `a_raw_request_is_one_of_a_list`,
+`output_paths_cannot_be_redirected_through_apply_or_batch`,
+`render_settings_change_only_what_was_sent`,
+`pictures_are_planned_with_their_sizes_and_windows`; in
+`tequila-scripting`, `approval::the_applications_own_operations_ask_too`;
+in the application,
+`the_own_loops_requests_ask_first_and_keep_out_of_what_is_the_persons`,
+`the_own_loop_sets_the_render_settings_but_not_where_renders_go`,
+`the_own_loop_takes_a_quick_render_and_looks_at_other_windows` and
+`an_agents_uv_layout_waits_for_the_person_too`.
+
+**The check.** In a copy of the application with a home of its own, on the
+Headphones sample, with the person's answers given by script
+(`{"op":"assistant","answer":{"id":…,"allow":true}}`), qwen3.8:27b through
+the own loop:
+
+| Asked | What happened |
+|---|---|
+| "Export the scene as a glb called headphones.glb, for the web team." | Opened `files`, sent the export; the chat asked *Export the scene to a file? headphones.glb (glb)*; allowed, and a 21 MB glb was written beside the project |
+| "Set the render up for a transparent PNG…" | Opened `rendering`, read the render settings, sent `alpha_mode` `straight` alone; the format, size, samples and folder stayed as they were |
+| "…renders written to /Users/Shared/elsewhere with the file name hero, and set 256 samples." | Sent the whole block with the folder and name changed: refused. Sent the samples alone: 256. Told the person the folder and name are theirs, and offered one render there through the queue |
+| "Export this as a USDZ called headphones.usdz." (answered Deny) | Asked, denied, nothing written; said it was not done |
+
+It also wrote a UV layout as an SVG when asked (*Write a UV layout to a
+file? cushion-uv.svg*, allowed; the part had no layout, so it unwrapped
+and packed it first and was asked again), and took a quick render at 480
+by 300, which came back as a picture in the chat.
+
+And qwen3-coder:30b, the model that writes its calls as text, was asked
+six things in six new chats through the own loop - what is in the scene,
+a warmer picture with a vignette, a three-quarter view through a longer
+lens, hiding the headband, the render settings, a launch shot on black.
+All six ran to an answer, 34 tool calls between them, and none of the
+chat's words held any markup. Before, about half of its first replies
+ended the request.
+
+One thing seen and left: a model set up as unable to see (no pictures are
+sent to it) described the quick render all the same, inventing what was
+in it. The picture in the chat is the real one.
+
+Still open: an agent (Claude, ChatGPT, Gemini) can move the render folder
+through `render.set_settings` over the Assistant's bridge, which the own
+loop and remote connections now cannot; and a remote connection still has
+no way to set format or transparency.

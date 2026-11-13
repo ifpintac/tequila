@@ -3479,6 +3479,15 @@ pub fn hex_colour(text: &str) -> Option<Spectrum> {
     Some(Spectrum::from_linear_srgb(tequila_core::math::vec3(linear(r), linear(g), linear(b))))
 }
 
+/// A colour as a hex sRGB string, `"#c0392b"`: [`hex_colour`] the other
+/// way, for an answer a person or a model reads. A colour outside what a
+/// screen shows is written as the nearest one inside.
+pub fn colour_hex(colour: Spectrum) -> String {
+    let v = colour.to_linear_srgb();
+    let byte = |c: f32| (tequila_core::spectrum::srgb_inverse_eotf(c.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8;
+    format!("#{:02x}{:02x}{:02x}", byte(v.x), byte(v.y), byte(v.z))
+}
+
 fn read_tree(
     root: &Value,
     document: &mut SceneDocument,

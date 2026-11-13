@@ -147,6 +147,21 @@ pub fn question(operation: &Operation, temporary: &Path) -> Option<Question> {
     }
 }
 
+/// The question to ask before one of the application's own operations,
+/// which arrive as the request's JSON and not as an [`Operation`]
+/// (`crate::server`): `uv_layout` writes a picture wherever it is told to,
+/// as an export does, and was answered unasked for being outside the
+/// protocol's list.
+pub fn own_question(request: &tequila_format::json::Value, temporary: &Path) -> Option<Question> {
+    match request.get("op").and_then(|op| op.as_str())? {
+        crate::uv_layout::OPERATION => {
+            let path = request.get("path").and_then(|path| path.as_str()).unwrap_or_default();
+            if scratch(path, temporary) { None } else { ask("Write a UV layout to a file?", path) }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,6 +226,25 @@ mod tests {
         ];
         for (request, title, detail) in cases {
             assert_eq!(asked(request), Some(Question { title: title.into(), detail: detail.into() }), "{request}");
+        }
+    }
+
+    /// Every operation the application answers is one this has looked at:
+    /// the protocol's, through [`question`], and its own beside them. A UV
+    /// layout written to a file asks, as an export does.
+    #[test]
+    fn the_applications_own_operations_ask_too() {
+        let temporary = std::env::temp_dir();
+        let own = |json: &str| own_question(&tequila_format::json::parse(json.as_bytes()).unwrap(), &temporary);
+        assert_eq!(
+            own(r#"{"op":"uv_layout","node":12,"path":"/work/bottle-uv.svg","size":4096}"#),
+            Some(Question { title: "Write a UV layout to a file?".into(), detail: "/work/bottle-uv.svg".into() })
+        );
+        assert!(own(r#"{"op":"uv_layout","node":12}"#).is_some(), "no path is not a scratch file");
+        let scratch = temporary.join("tequila-mcp-uv.png").to_string_lossy().replace('\\', "\\\\");
+        assert_eq!(own(&format!(r#"{{"op":"uv_layout","node":12,"path":"{scratch}"}}"#)), None, "a look, written where the tool reads it back");
+        for operation in crate::document::APP_OWN_OPERATIONS.iter().chain(crate::document::HEADLESS_OWN_OPERATIONS) {
+            assert!(own(&format!(r#"{{"op":"{operation}","path":"/work/out.png"}}"#)).is_some(), "`{operation}` is answered outside the protocol: say here what it asks");
         }
     }
 

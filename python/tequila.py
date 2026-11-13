@@ -798,10 +798,15 @@ class Library:
         """Where the user's own presets are kept."""
         return self._client.query('library')['user_folder']
 
-    def apply(self, name, *parts, unlink=False):
+    def apply(self, name, *parts, unlink=False, color=None):
         """Put the preset `name` on parts (or ids), the selection when none
-        are given, as one undo step - as a drop from the browser does."""
+        are given, as one undo step - as a drop from the browser does. With
+        `color` (a hex sRGB string such as '#1f4d2b', or three numbers in
+        the rendering space) the preset is put on in that colour, as a
+        material of its own named for it: see `Material.tint`."""
         fields = {'action': 'apply', 'name': name, 'unlink': unlink}
+        if color is not None:
+            fields['color'] = color
         nodes = _ids(parts)
         if nodes:
             fields['nodes'] = nodes
@@ -948,6 +953,16 @@ class Recipes:
         """Remake the material `material` from `recipe`, where it is."""
         return self._client.request('material', action='update', material=_ids([material])[0], recipe=recipe)
 
+    def tint(self, material, color):
+        """The material `material` made the same material in `color` (a hex
+        sRGB string such as '#1f4d2b', or three numbers in the rendering
+        space), wherever its colour is kept: a plain value, the colours in a
+        pattern, a ramp's stops. One undo step. Returns what was changed:
+        {'color': '#1f4d2b', 'was': '#8a5a2b', 'changed': [{'parameter':
+        'base_color', 'colors': 1, 'in': 'pattern'}], ...}. Raises
+        TequilaError for a material with no colour of its own."""
+        return self._client.request('material', action='tint', material=_ids([material])[0], color=_plain(color))
+
     def read(self, material):
         """Any material as a recipe, to change and update."""
         return self._client.request('material', action='recipe', material=_ids([material])[0])['recipe']
@@ -1021,6 +1036,14 @@ class Material:
     def rename(self, name):
         object.__setattr__(self, 'name', name)
         return self._client.apply('material.rename', material=self.id, name=name)
+
+    def tint(self, color):
+        """The same material in another colour: `leather.tint('#1f4d2b')`.
+        Unlike `leather.base_color = ...` it reaches a colour kept inside a
+        pattern, as most of the library's leathers, woods and cloths keep
+        theirs, and moves every colour of the pattern together. One undo
+        step; returns what was changed."""
+        return self._client.request('material', action='tint', material=self.id, color=_plain(color))
 
     def assign(self, *parts):
         """Put this material on parts (or their ids), linked."""

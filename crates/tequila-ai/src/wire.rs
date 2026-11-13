@@ -357,6 +357,168 @@ fn parse_arguments(text: &str) -> Result<Value, String> {
     json::parse(text.as_bytes()).map_err(|_| format!("the arguments were not valid JSON: {}", excerpt(text)))
 }
 
+// ---- Calls written into the answer ------------------------------------------------
+
+/// How a model opens a tool call it writes out, in the two forms local
+/// models are trained on: Qwen's coder models write
+/// `<function=name>` with a `<parameter=key>` for each argument, and the
+/// Hermes form, which many others share, is a JSON object in `<tool_call>`.
+const WRITTEN_FUNCTION: &str = "<function=";
+const WRITTEN_CALL: &str = "<tool_call>";
+const WRITTEN_CALL_END: &str = "</tool_call>";
+
+/// A reply whose tool calls were written into its words, read as the calls
+/// they are.
+///
+/// A server for local models turns the model's own markup for a call into
+/// the format's `tool_calls`, and misses it when the model says a sentence
+/// first: Ollama hands qwen3-coder's call back as text in a third to a half
+/// of its replies. Shown as the answer, the person reads
+/// `<function=tequila_scene>` and the request ends there, nothing done.
+///
+/// Only a call to one of `tools` counts, so a model explaining the markup
+/// is left its words; and the markup leaves the text, whether or not
+/// anything else was said.
+pub fn with_written_calls(mut reply: Reply, tools: &[Tool]) -> Reply {
+    let mut texts = Vec::new();
+    for text in std::mem::take(&mut reply.text) {
+        match written_calls(&text, tools) {
+            Some((rest, calls)) => {
+                for (name, arguments) in calls {
+                    reply.calls.push(Call { id: format!("call_{}", reply.calls.len()), name, arguments });
+                }
+                if !rest.is_empty() {
+                    texts.push(rest);
+                }
+            }
+            None => texts.push(text),
+        }
+    }
+    reply.text = texts;
+    reply
+}
+
+/// The calls written into `text` and the words around them, or None when
+/// it holds no call to one of `tools`.
+fn written_calls(text: &str, tools: &[Tool]) -> Option<(String, Vec<(String, Result<Value, String>)>)> {
+    let tool = |name: &str| tools.iter().find(|tool| tool.name == name);
+    let mut calls = Vec::new();
+    let mut kept = String::new();
+    let mut rest = text;
+    loop {
+        let function = rest.find(WRITTEN_FUNCTION);
+        let wrapped = rest.find(WRITTEN_CALL);
+        let at = match (function, wrapped) {
+            (Some(f), Some(w)) => f.min(w),
+            (Some(at), None) | (None, Some(at)) => at,
+            (None, None) => break,
+        };
+        kept.push_str(&rest[..at]);
+        let from = &rest[at..];
+        if let Some(after) = from.strip_prefix(WRITTEN_CALL) {
+            // A JSON object between the tags is the call; anything else -
+            // a `<function=`, usually - is read on the next round.
+            let end = after.find(WRITTEN_CALL_END).unwrap_or(after.len());
+            let inside = after[..end].trim();
+            let read = if inside.starts_with('{') { json::parse(inside.as_bytes()).ok() } else { None };
+            let named = read.as_ref().and_then(|call| Some((call.get("name")?.as_str()?, call)));
+            match named.filter(|(name, _)| tool(name).is_some()) {
+                Some((name, call)) => {
+                    let arguments = match call.get("arguments").or_else(|| call.get("parameters")) {
+                        Some(Value::String(text)) => parse_arguments(text),
+                        Some(Value::Null) | None => Ok(object(vec![])),
+                        Some(other) => Ok(other.clone()),
+                    };
+                    calls.push((name.to_string(), arguments));
+                    rest = &after[end..];
+                }
+                None => rest = after,
+            }
+            continue;
+        }
+        let after = &from[WRITTEN_FUNCTION.len()..];
+        let Some(close) = after.find('>') else {
+            kept.push_str(from);
+            rest = "";
+            break;
+        };
+        let name = after[..close].trim();
+        let body = &after[close + 1..];
+        let end = body.find("</function>");
+        let Some(tool) = tool(name) else {
+            // Not a tool of ours: words about markup, left as written.
+            kept.push_str(&from[..WRITTEN_FUNCTION.len() + close + 1]);
+            rest = body;
+            continue;
+        };
+        calls.push((name.to_string(), Ok(written_parameters(&body[..end.unwrap_or(body.len())], tool))));
+        rest = end.map(|end| &body[end + "</function>".len()..]).unwrap_or("");
+    }
+    kept.push_str(rest);
+    if calls.is_empty() {
+        return None;
+    }
+    // The tags a call sat in, of which the server often leaves only one.
+    let kept = kept.replace(WRITTEN_CALL_END, "").replace(WRITTEN_CALL, "");
+    Some((kept.trim().to_string(), calls))
+}
+
+/// The arguments of a call written as `<parameter=key>value</parameter>`,
+/// each read as the tool's schema says that argument is: the markup has
+/// only text, so a number and the name "12" look the same.
+fn written_parameters(body: &str, tool: &Tool) -> Value {
+    // Some write the arguments as one JSON object instead.
+    if !body.contains("<parameter=") {
+        if let Ok(arguments @ Value::Object(_)) = json::parse(body.trim().as_bytes()) {
+            return arguments;
+        }
+    }
+    let mut out = Object::new();
+    let mut rest = body;
+    while let Some(at) = rest.find("<parameter=") {
+        let after = &rest[at + "<parameter=".len()..];
+        let Some(close) = after.find('>') else { break };
+        let key = after[..close].trim();
+        let value = &after[close + 1..];
+        // Up to its end, or the next one's start where the end is missing.
+        let end = value.find("</parameter>").or_else(|| value.find("<parameter=")).unwrap_or(value.len());
+        let written = value[..end].trim();
+        let kind = tool.schema.get("properties").and_then(|p| p.get(key)).and_then(|p| p.get("type")).and_then(|t| t.as_str());
+        let read = match kind {
+            Some("string") => None,
+            _ => json::parse(written.as_bytes()).ok(),
+        };
+        out.set(key, read.unwrap_or_else(|| string(written)));
+        rest = &value[end..];
+    }
+    out.build()
+}
+
+/// The words of an answer without a call being written into them: what is
+/// shown while the reply is still coming, so the person never reads the
+/// markup - nor the first letters of it, a piece before the rest arrives.
+pub fn before_written_call(text: &str) -> &str {
+    let cut = [WRITTEN_FUNCTION, WRITTEN_CALL].iter().filter_map(|mark| text.find(mark)).min();
+    if let Some(at) = cut {
+        return &text[..at];
+    }
+    let partial = text.rfind('<').filter(|at| {
+        let tail = &text[*at..];
+        WRITTEN_FUNCTION.starts_with(tail) || WRITTEN_CALL.starts_with(tail)
+    });
+    match partial {
+        Some(at) => &text[..at],
+        None => text,
+    }
+}
+
+/// The tool a call being written into the answer names, once its name is
+/// whole.
+fn written_call_name(text: &str) -> Option<&str> {
+    let after = &text[text.find(WRITTEN_FUNCTION)? + WRITTEN_FUNCTION.len()..];
+    Some(after[..after.find('>')?].trim())
+}
+
 // ---- Streams ---------------------------------------------------------------------
 
 /// What a streaming reply is doing at the moment.
@@ -459,7 +621,12 @@ impl Assembler {
             }
             self.texts[0].push_str(piece);
             let (thought, rest) = split_thinking(&self.texts[0]);
-            self.activity = if thought.is_some() && rest.is_empty() { Activity::Thinking } else { Activity::Writing };
+            self.activity = match written_call_name(rest) {
+                // A call the server did not catch, written into the words.
+                Some(name) => Activity::Calling(name.to_string()),
+                None if thought.is_some() && rest.is_empty() => Activity::Thinking,
+                None => Activity::Writing,
+            };
         }
         for call in delta.get("tool_calls").map(|c| c.as_array()).unwrap_or(&[]) {
             let index = call.get("index").and_then(|i| i.as_f64()).map(|i| i as i64);
@@ -573,12 +740,13 @@ impl Assembler {
         }
     }
 
-    /// The answer's words so far.
+    /// The answer's words so far, without a call being written into them
+    /// ([`with_written_calls`]).
     pub fn text(&self) -> String {
         self.texts
             .iter()
             .enumerate()
-            .map(|(i, t)| if i == 0 && self.kind == Kind::OpenAi { split_thinking(t).1 } else { t.as_str() })
+            .map(|(i, t)| if i == 0 && self.kind == Kind::OpenAi { before_written_call(split_thinking(t).1) } else { t.as_str() })
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .collect::<Vec<_>>()
@@ -780,6 +948,143 @@ mod tests {
         let reply = parse_reply(Kind::OpenAi, r#"{"choices":[{"message":{"content":"<think>hm</think>Done.","reasoning_content":"first "}}]}"#).unwrap();
         assert_eq!(reply.text, ["Done."]);
         assert_eq!(reply.reasoning, "first hm");
+    }
+
+    /// Two replies as Ollama 0.40 sent them for qwen3-coder:30b, given the
+    /// assistant's own instructions and tools: the model said a sentence
+    /// and then wrote its call, and the server passed the call on as words.
+    /// Half of twelve replies came this way.
+    const WRITTEN_WITH_A_PARAMETER: &str = r#"{"id":"chatcmpl-287","object":"chat.completion","created":1794547649,"model":"qwen3-coder:30b","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"I'll warm up the image and add a slight vignette to make it feel less cold and flat. First, let me check what the current image style settings are.\n\n\u003cfunction=tequila_read\u003e\n\u003cparameter=what\u003e\nimage_style\n\u003c/parameter\u003e\n\u003c/function\u003e\n\u003c/tool_call\u003e"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9697,"prompt_tokens_details":{"cached_tokens":9673},"completion_tokens":57,"total_tokens":9754}}"#;
+    const WRITTEN_WITH_NONE: &str = r#"{"id":"chatcmpl-556","object":"chat.completion","created":1794547647,"model":"qwen3-coder:30b","system_fingerprint":"fp_ollama","choices":[{"index":0,"message":{"role":"assistant","content":"I need to create a premium launch shot for the headphones with a black background and a soft, short reflection on the floor. Let me first examine what we have in the scene.\n\n\u003cfunction=tequila_scene\u003e\n\u003c/function\u003e\n\u003c/tool_call\u003e"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9702,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens":48,"total_tokens":9750}}"#;
+
+    fn read_written(body: &str) -> Reply {
+        with_written_calls(parse_reply(Kind::OpenAi, body).unwrap(), &tools::all())
+    }
+
+    fn said(content: &str) -> Reply {
+        with_written_calls(Reply { text: vec![content.to_string()], ..Reply::default() }, &tools::all())
+    }
+
+    /// A call written into the answer is carried out as a call, and the
+    /// person is shown the sentence before it and none of the markup.
+    #[test]
+    fn a_call_written_into_the_answer_is_read_as_the_call() {
+        // As it arrives, it is words and no call: what used to end the turn.
+        let unread = parse_reply(Kind::OpenAi, WRITTEN_WITH_A_PARAMETER).unwrap();
+        assert!(unread.calls.is_empty() && unread.text[0].contains("<function=tequila_read>"));
+
+        let reply = read_written(WRITTEN_WITH_A_PARAMETER);
+        assert_eq!(reply.text, ["I'll warm up the image and add a slight vignette to make it feel less cold and flat. First, let me check what the current image style settings are."]);
+        assert_eq!(reply.calls.len(), 1);
+        assert_eq!((reply.calls[0].name.as_str(), reply.calls[0].id.as_str()), ("tequila_read", "call_0"));
+        assert_eq!(reply.calls[0].arguments.as_ref().unwrap().get("what").and_then(|w| w.as_str()), Some("image_style"));
+
+        let reply = read_written(WRITTEN_WITH_NONE);
+        assert_eq!(reply.text.len(), 1);
+        assert!(reply.text[0].ends_with("in the scene.") && !reply.text[0].contains('<'), "{:?}", reply.text);
+        assert_eq!(reply.calls[0].name, "tequila_scene");
+        assert_eq!(reply.calls[0].arguments, Ok(object(vec![])));
+    }
+
+    /// The markup has only text: each argument is read as the tool's schema
+    /// says it is, so a number is a number and a name that looks like one
+    /// stays a name.
+    #[test]
+    fn written_arguments_are_read_as_the_tool_takes_them() {
+        let reply = said("<tool_call>\n<function=tequila_read>\n<parameter=what>\ncameras\n</parameter>\n<parameter=index>\n1\n</parameter>\n</function>\n</tool_call>");
+        assert!(reply.text.is_empty(), "nothing but the call was said: {:?}", reply.text);
+        let arguments = reply.calls[0].arguments.as_ref().unwrap();
+        assert_eq!(arguments.get("index"), Some(&Value::Number(1.0)));
+        assert_eq!(arguments.get("what").and_then(|w| w.as_str()), Some("cameras"));
+
+        let reply = said("<function=tequila_nodes>\n<parameter=filter>\n12\n</parameter>\n<parameter=parts_only>\ntrue\n</parameter>\n</function>");
+        let arguments = reply.calls[0].arguments.as_ref().unwrap();
+        assert_eq!(arguments.get("filter"), Some(&Value::String("12".into())));
+        assert_eq!(arguments.get("parts_only"), Some(&Value::Bool(true)));
+
+        // An object and a list, written as JSON between the tags.
+        let reply = said("On it.\n<function=tequila_apply>\n<parameter=command>\n{\"command\": \"scene.rename\", \"node\": 4, \"name\": \"Cup\"}\n</parameter>\n</function>\n</tool_call>\n<function=tequila_select>\n<parameter=nodes>\n[4, 5]\n</parameter>\n</function>");
+        assert_eq!(reply.text, ["On it."]);
+        assert_eq!(reply.calls.iter().map(|call| (call.id.as_str(), call.name.as_str())).collect::<Vec<_>>(), [("call_0", "tequila_apply"), ("call_1", "tequila_select")]);
+        assert_eq!(reply.calls[0].arguments.as_ref().unwrap().get("command").and_then(|c| c.get("node")), Some(&Value::Number(4.0)));
+        assert_eq!(reply.calls[1].arguments.as_ref().unwrap().get("nodes").map(|n| n.as_array().len()), Some(2));
+
+        // The arguments as one object between the function's tags.
+        let reply = said("<function=tequila_look>{\"view\": \"top\", \"focal_length\": 85}</function>");
+        assert_eq!(reply.calls[0].arguments.as_ref().unwrap().get("focal_length"), Some(&Value::Number(85.0)));
+    }
+
+    /// The other form local models write: a JSON object in `<tool_call>`.
+    #[test]
+    fn a_call_written_as_json_between_tags_is_read_too() {
+        let reply = said("Let me look.\n<tool_call>\n{\"name\": \"tequila_look\", \"arguments\": {\"view\": \"front\"}}\n</tool_call>");
+        assert_eq!(reply.text, ["Let me look."]);
+        assert_eq!(reply.calls[0].name, "tequila_look");
+        assert_eq!(reply.calls[0].arguments.as_ref().unwrap().get("view").and_then(|v| v.as_str()), Some("front"));
+        // Beside a call the server did read, it is one more.
+        let mut reply = Reply { text: vec!["<tool_call>{\"name\":\"tequila_undo\"}</tool_call>".into()], ..Reply::default() };
+        reply.calls.push(Call { id: "call_0".into(), name: "tequila_scene".into(), arguments: Ok(object(vec![])) });
+        let reply = with_written_calls(reply, &tools::all());
+        assert_eq!(reply.calls.iter().map(|call| call.id.as_str()).collect::<Vec<_>>(), ["call_0", "call_1"]);
+        assert_eq!(reply.calls[1].name, "tequila_undo");
+    }
+
+    /// Words are left as they were said: markup that names no tool of
+    /// Tequila's is somebody explaining markup, and an angle bracket is an
+    /// angle bracket.
+    #[test]
+    fn words_that_are_not_a_call_stay_words() {
+        for words in [
+            "The strap is now velvet.",
+            "Widths under 2 mm (<2) are too thin to print.",
+            "A model writes <function=get_weather> and then <parameter=city>.",
+            "<tool_call>{\"name\": \"get_weather\", \"arguments\": {}}</tool_call>",
+            "<tool_call>not a call at all</tool_call>",
+        ] {
+            let reply = said(words);
+            assert!(reply.calls.is_empty(), "{words}");
+            assert_eq!(reply.text, [words]);
+        }
+    }
+
+    /// While a reply is coming, a call being written into it is never
+    /// shown: not the markup, and not the first letters of it. The pieces
+    /// are the end of a stream recorded from qwen3-coder:30b.
+    #[test]
+    fn a_call_being_written_into_a_stream_is_not_shown() {
+        let event = |content: &str| {
+            let mut delta = Object::new();
+            delta.set("content", content);
+            let mut choice = Object::new();
+            choice.set("index", 0.0).set("delta", delta.build());
+            let mut chunk = Object::new();
+            chunk.set("choices", Value::Array(vec![choice.build()]));
+            crate::sse::Event { name: String::new(), data: json_write::to_string(&chunk.build()) }
+        };
+        let said = "First, let me look at the scene to understand what we're working with.";
+        let mut stream = Assembler::new(Kind::OpenAi);
+        stream.event(&event(said)).unwrap();
+        for piece in ["\n\n<function", "=", "te", "quila", "_scene"] {
+            stream.event(&event(piece)).unwrap();
+            assert_eq!(stream.text(), said, "after {piece:?}");
+        }
+        assert_eq!(stream.activity(), &Activity::Writing);
+        for piece in [">", "\n</", "function", ">", "\n</tool_call>"] {
+            stream.event(&event(piece)).unwrap();
+            assert_eq!(stream.text(), said, "after {piece:?}");
+            assert_eq!(stream.activity(), &Activity::Calling("tequila_scene".into()));
+        }
+        stream.event(&crate::sse::Event { name: String::new(), data: r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#.into() }).unwrap();
+        let reply = with_written_calls(stream.finish().unwrap(), &tools::all());
+        assert_eq!(reply.text, [said]);
+        assert_eq!(reply.calls[0].name, "tequila_scene");
+
+        // The first letters of a tag are held back until they turn out to
+        // be something else.
+        assert_eq!(before_written_call("Cut here <fun"), "Cut here ");
+        assert_eq!(before_written_call("Cut here <tool_"), "Cut here ");
+        assert_eq!(before_written_call("Under 2 mm (<2) is thin"), "Under 2 mm (<2) is thin");
+        assert_eq!(before_written_call("a <b> tag"), "a <b> tag");
     }
 
     /// The live view of a stream: what it is doing, its words and its

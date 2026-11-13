@@ -155,8 +155,39 @@ pub enum Setup {
 /// whether it may go ahead.
 struct Held {
     question: u64,
-    request: Request,
+    request: Sent,
     responder: Responder,
+}
+
+/// A request as the application takes it: one of the protocol's, or one of
+/// the application's own operations, which it reads from the JSON itself
+/// (`tequila_scripting::server`).
+enum Sent {
+    Request(Request),
+    Own(tequila_format::json::Value),
+}
+
+impl Sent {
+    /// A request written as JSON, read as the channel would read it.
+    fn read(json: &str) -> Result<Sent, String> {
+        let error = match parse_request(json) {
+            Ok(request) => return Ok(Sent::Request(request)),
+            Err(error) => error.to_string(),
+        };
+        match tequila_format::json::parse(json.as_bytes()) {
+            Ok(value) if value.get("op").and_then(|op| op.as_str()).is_some_and(|op| tequila_scripting::document::APP_OWN_OPERATIONS.contains(&op)) => Ok(Sent::Own(value)),
+            _ => Err(error),
+        }
+    }
+
+    /// What to ask the person before it, if anything.
+    fn question(&self) -> Option<Question> {
+        let temporary = std::env::temp_dir();
+        match self {
+            Sent::Request(request) => tequila_scripting::approval::question(&request.operation, &temporary),
+            Sent::Own(value) => tequila_scripting::approval::own_question(value, &temporary),
+        }
+    }
 }
 
 /// What a question in the chat is waiting to settle.
@@ -237,6 +268,9 @@ pub struct Assistant {
     calls: VecDeque<Call>,
     results: Vec<Part>,
     shot: Option<Shot>,
+    /// Tequila's count of the person's own view moves at the assistant's
+    /// last screenshot, to say with the next that the view is theirs.
+    view_moves: Option<u64>,
     plugin_wait: Option<PluginWait>,
     /// The undo depth when the current request began, and after the
     /// assistant's last change — for taking back everything one request did.
@@ -933,12 +967,21 @@ impl Assistant {
     /// Keep a request of the Assistant's own until the person has said
     /// whether it may go ahead.
     pub fn hold(&mut self, request: Request, responder: Responder, question: Question) {
+        self.hold_sent(Sent::Request(request), responder, question);
+    }
+
+    fn hold_sent(&mut self, request: Sent, responder: Responder, question: Question) {
         // A file in the project's folder is named as it is known there.
         let folder = format!("{}{}", self.agent_folder.display(), std::path::MAIN_SEPARATOR);
         let detail = if folder.len() > 1 { question.detail.replace(&folder, "") } else { question.detail };
         let question = self.question(question.title, detail, Waiting::Held);
         self.held.push(Held { question, request, responder });
         self.open = true;
+    }
+
+    /// The same for one of the application's own operations.
+    pub fn hold_own(&mut self, request: tequila_format::json::Value, responder: Responder, question: Question) {
+        self.hold_sent(Sent::Own(request), responder, question);
     }
 
     fn refuse_held(&mut self, why: &str) {
@@ -966,13 +1009,20 @@ impl Assistant {
                 let held = self.held.remove(at);
                 if !allow {
                     let reply = Reply::Failed("The person said no to this. Do not try it another way; tell them it was not done.".into());
-                    crate::channel::log_reply(app, &held.request.peer, held.request.operation.summary(), &[], &reply);
+                    let (peer, summary) = match &held.request {
+                        Sent::Request(request) => (request.peer.clone(), request.operation.summary()),
+                        Sent::Own(value) => (self.peer(), value.get("op").and_then(|op| op.as_str()).unwrap_or_default().replace('_', " ")),
+                    };
+                    crate::channel::log_reply(app, &peer, summary, &[], &reply);
                     held.responder.answer(&reply);
                     return;
                 }
-                match &held.request.operation {
-                    Operation::Import { path, parent, .. } => crate::channel::begin_import(app, &held.request, path, *parent, held.responder, &ctx),
-                    _ => held.responder.answer(&crate::channel::handle(app, &held.request)),
+                match &held.request {
+                    Sent::Request(request) => match &request.operation {
+                        Operation::Import { path, parent, .. } => crate::channel::begin_import(app, request, path, *parent, held.responder, &ctx),
+                        _ => held.responder.answer(&crate::channel::handle(app, request)),
+                    },
+                    Sent::Own(value) => held.responder.answer(&crate::channel::handle_own(app, value, &self.peer())),
                 }
                 self.touched(app.project.bus());
             }
@@ -1334,15 +1384,28 @@ impl Assistant {
             self.result(call, READ_FIRST.to_string(), None, true, label);
             return true;
         }
-        let planned = tools::plan(&call.name, &arguments).map(|plan| in_project(plan, app.project.path.as_deref().and_then(std::path::Path::parent)));
+        let planned = tools::plan(&call.name, &arguments)
+            .and_then(|plan| match plan {
+                // The render settings are the assistant's to change, less
+                // where renders are written: its block is laid over the
+                // project's own, and one that moves the folder or the file
+                // name is refused here, before anything is sent.
+                tools::Plan::RenderSettings { json } => {
+                    let current = tequila_scripting::document::read(app.project.document(), Some("render"), None, None)?;
+                    let json = tools::keep_render_output(&json, current.get("value").unwrap_or(&tequila_format::json::Value::Null))?;
+                    Ok(tools::Plan::Request { json, shape: tools::Shape::Raw })
+                }
+                other => Ok(other),
+            })
+            .map(|plan| in_project(plan, app.project.path.as_deref().and_then(std::path::Path::parent)));
         // What leaves the scene waits for the person, as it does for an
         // agent: the same questions, asked of the same request.
         if !agreed {
             let request = match &planned {
-                Ok(tools::Plan::Request { json, .. } | tools::Plan::Material { json, .. } | tools::Plan::PluginRun { json, .. }) => parse_request(json).ok(),
+                Ok(tools::Plan::Request { json, .. } | tools::Plan::Material { json, .. } | tools::Plan::PluginRun { json, .. }) => Sent::read(json).ok(),
                 _ => None,
             };
-            if let Some(question) = request.and_then(|request| tequila_scripting::approval::question(&request.operation, &std::env::temp_dir())) {
+            if let Some(question) = request.and_then(|request| request.question()) {
                 self.stepped(&call, label, Status::Running, String::new());
                 let folder = app.project.path.as_deref().and_then(std::path::Path::parent).map(|f| format!("{}{}", f.display(), std::path::MAIN_SEPARATOR));
                 let detail = match folder {
@@ -1356,7 +1419,10 @@ impl Assistant {
         }
         match planned {
             Err(error) => self.result(call, error, None, true, label),
-            Ok(tools::Plan::Screenshot { viewport }) => {
+            // Planned away above; a plan that was not is not sent.
+            Ok(tools::Plan::RenderSettings { .. }) => self.result(call, "the render settings could not be read".into(), None, true, label),
+            Ok(tools::Plan::Screenshot { viewport, window, settle }) => {
+                app.settle_window_capture();
                 if app.pending_screenshot.is_some() {
                     // Someone else's capture is in flight; ask again next frame.
                     self.calls.push_front(call);
@@ -1367,12 +1433,54 @@ impl Assistant {
                     std::process::id(),
                     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
                 ));
-                app.pending_screenshot = Some(path.clone());
-                app.screenshot_viewport = viewport;
-                // Given time to finish its picture, as the bridge's is.
-                app.screenshot_settle = Some((std::time::Instant::now(), 12.0));
+                let caption = match window {
+                    // One of the windows of its own - the UV editor, the
+                    // graph - as a script's screenshot of it is taken.
+                    Some(window) => {
+                        let operation = Operation::Screenshot { path: path.display().to_string(), viewport: false, window: Some(window.clone()), settle: None };
+                        if let Reply::Failed(message) = crate::channel::handle(app, &self.own_request(operation)) {
+                            self.result(call, message, None, true, label);
+                            return true;
+                        }
+                        format!("Tequila's {window} window, as it is now.")
+                    }
+                    None => {
+                        app.pending_screenshot = Some(path.clone());
+                        app.screenshot_viewport = viewport;
+                        // Given time to finish its picture, as the bridge's is.
+                        app.screenshot_settle = Some((std::time::Instant::now(), settle));
+                        // Whose the view is, when the person has moved it
+                        // since the last look: said with the picture, as
+                        // the bridge says it (`channel::note_view`).
+                        let moves = crate::channel::view_moves_by_hand(app);
+                        let moved = self.view_moves.is_some_and(|before| moves > before);
+                        self.view_moves = Some(moves);
+                        let mut caption = String::from("The screenshot, as the application shows it now.");
+                        if moved {
+                            caption.push_str(" The person has moved the view since your last look: it is where they want it, so leave it there.");
+                        }
+                        caption
+                    }
+                };
                 self.stepped(&call, label, Status::Running, String::new());
-                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: "The screenshot, as the application shows it now.".into() });
+                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption });
+            }
+            Ok(tools::Plan::Render { width, height, samples, wireframe }) => {
+                // To a scratch file, read back and shown: nothing is kept.
+                let path = std::env::temp_dir().join(format!(
+                    "tequila-assistant-render-{}-{}.png",
+                    std::process::id(),
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+                ));
+                let operation = Operation::Render { path: path.display().to_string(), width, height, samples, wireframe };
+                match crate::channel::handle(app, &self.own_request(operation)) {
+                    Reply::Failed(message) => self.result(call, message, None, true, label),
+                    _ => {
+                        let caption = if wireframe { format!("The model's edges, {width} by {height}.") } else { format!("A quick render, {width} by {height} at {samples} samples.") };
+                        self.stepped(&call, label, Status::Running, String::new());
+                        self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption });
+                    }
+                }
             }
             Ok(tools::Plan::Material { json, picture }) => {
                 if self.shot.is_some() || app.pending_screenshot.is_some() {
@@ -1456,16 +1564,27 @@ impl Assistant {
                 }
             }
             Ok(tools::Plan::Request { json, shape }) => {
-                let mut request = match parse_request(&json) {
-                    Ok(request) => request,
+                // Named, so the console shows who is acting.
+                let name = self.session.as_ref().map(|s| s.provider.name.clone()).unwrap_or_default();
+                let peer = format!("assistant · {name}");
+                let mut request = match Sent::read(&json) {
+                    Ok(Sent::Request(request)) => request,
+                    // One of the application's own operations: a part's UV
+                    // layout written as a picture.
+                    Ok(Sent::Own(value)) => {
+                        match crate::channel::handle_own(app, &value, &peer) {
+                            Reply::Done => self.result(call, "done".into(), None, false, label),
+                            Reply::Value(value) => self.result(call, tools::describe(&shape, &value), None, false, label),
+                            Reply::Failed(message) => self.result(call, message, None, true, label),
+                        }
+                        return true;
+                    }
                     Err(error) => {
-                        self.result(call, error.to_string(), None, true, label);
+                        self.result(call, error, None, true, label);
                         return true;
                     }
                 };
-                // Named, so the console shows who is acting.
-                let name = self.session.as_ref().map(|s| s.provider.name.clone()).unwrap_or_default();
-                request.peer = format!("assistant · {name}");
+                request.peer = peer;
                 match crate::channel::handle(app, &request) {
                     Reply::Done => self.result(call, "done".into(), None, false, label),
                     Reply::Value(value) => self.result(call, tools::describe(&shape, &value), None, false, label),
@@ -1478,6 +1597,13 @@ impl Assistant {
             }
         }
         true
+    }
+
+    /// A request the own loop makes itself, for a picture it will read
+    /// back: named for the console like the rest.
+    fn own_request(&self, operation: Operation) -> Request {
+        let name = self.session.as_ref().map(|s| s.provider.name.clone()).unwrap_or_default();
+        Request { id: 0, token: String::new(), operation, peer: format!("assistant · {name}"), agent: String::new() }
     }
 
     fn result(&mut self, call: Call, text: String, image: Option<String>, is_error: bool, label: String) {
@@ -2072,7 +2198,7 @@ fn in_project(plan: tools::Plan, folder: Option<&std::path::Path>) -> tools::Pla
     let Ok(tequila_format::json::Value::Object(mut fields)) = tequila_format::json::parse(json.as_bytes()) else { return plan };
     let op = fields.get("op").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let keys: &[&str] = match op.as_str() {
-        "import" | "save" => &["path"],
+        "import" | "save" | "export" | "reimport" | "texture_set" | "uv_layout" | "screenshot" | "render" | "substance" | "library" | "studio_preset" => &["path"],
         "queue" => &["folder"],
         _ => return plan,
     };
@@ -2138,6 +2264,10 @@ fn step_label(call: &Call) -> String {
         "material_preview" => "Tried a material on a ball".into(),
         "material_create" => "Made a material".into(),
         "material_update" => "Changed a material".into(),
+        "material_tint" => match word("color") {
+            Some(colour) => format!("Tinted a material {colour}"),
+            None => "Tinted a material".into(),
+        },
         "material_recipe" => "Read a material".into(),
         "material_save" => "Save a material to the library".into(),
         "studio_presets" => "Read the studios".into(),
@@ -2158,9 +2288,10 @@ fn step_label(call: &Call) -> String {
             None => "Added a shape".into(),
         },
         "material" => "Read a material".into(),
-        "library_apply" => match word("name") {
-            Some(name) => format!("Library: {name}"),
-            None => "Put a library material on parts".into(),
+        "library_apply" => match (word("name"), word("color")) {
+            (Some(name), Some(colour)) => format!("Library: {name}, in {colour}"),
+            (Some(name), None) => format!("Library: {name}"),
+            (None, _) => "Put a library material on parts".into(),
         },
         "import" => "Import a file".into(),
         "save" => "Save the project".into(),
@@ -2171,6 +2302,13 @@ fn step_label(call: &Call) -> String {
         "plugin_run" => "Run a plugin".into(),
         "plugin_log" => "Read a plugin's log".into(),
         "request" => match arguments.and_then(|a| a.get("request")).and_then(|r| r.get("op")).and_then(|op| op.as_str()) {
+            Some("export") => "Export the scene".into(),
+            Some("reimport") => "Update the model from its file".into(),
+            Some("texture_set") => "Bring in a texture pack".into(),
+            Some("uv_layout") => "Write a UV layout".into(),
+            Some("studio_kit") => "Added a studio piece".into(),
+            Some("queue") => "Render to a file".into(),
+            Some("ui") => "Changed what is on screen".into(),
             Some(op) => format!("Request: {}", op.replace('_', " ")),
             None => "Request".into(),
         },
@@ -2251,10 +2389,12 @@ fn changes(tool: &str) -> bool {
             | "tequila_uv_stitch"
             | "tequila_improve"
             | "tequila_model_units"
+            | "tequila_material_tint"
             | "tequila_studio_preset_apply"
             | "tequila_queue"
             | "tequila_import"
             | "tequila_plugin_write"
+            | "tequila_request"
     )
 }
 
@@ -2311,6 +2451,50 @@ mod tests {
         let _ = std::fs::remove_file(&shot.path);
         // One step to take back.
         assert!(assistant.can_undo_turn(app.project.bus()));
+    }
+
+    /// "This leather, but dark green": a library preset put on a part, then
+    /// tinted, each by its own tool through the application's channel. The
+    /// leather's colour is inside its pattern, and that is where the green
+    /// goes; the answer says so, and comes with the leather on the ball.
+    #[test]
+    fn the_assistant_tints_a_library_preset_in_its_pattern() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let part = app.project.document().tree.iter().find(|n| n.mesh().is_some()).unwrap().id;
+        assistant.turn_start = Some(app.project.bus().depth());
+        assert!(assistant.carry_out(&mut app, call("tequila_library_apply", &format!(r#"{{"name":"Leather Tan","nodes":[{}]}}"#, part.0))));
+        let key = app.project.document().tree.get(part).unwrap().material.expect("the preset is on the part");
+        let applied = app.project.bus().depth();
+        let tan = app.project.document().materials.get(key).unwrap().graph.clone();
+        assert!(tan.is_connected(tequila_materials::material_type::Param::BaseColor));
+
+        assert!(assistant.carry_out(&mut app, call("tequila_material_tint", &format!(r##"{{"material":{},"color":"#1f4d2b"}}"##, key.0))));
+        let green = tequila_format::hex_colour("#1f4d2b").unwrap();
+        let leather = app.project.document().materials.get(key).unwrap();
+        assert_eq!(leather.name, "Leather Tan");
+        assert_eq!(leather.material().base_color, green);
+        let driver = leather.graph.driver_of(tequila_materials::material_type::Param::BaseColor).unwrap();
+        assert!(leather.graph.node(driver).unwrap().literals.values().any(|v| *v == tequila_materials::graph::Value::Color(green)), "the green is not in the pattern");
+        assert_eq!(leather.graph.topology_hash(), tan.topology_hash(), "the grain is as it was");
+        assert_eq!(app.project.bus().depth(), applied + 1, "a tint is one step");
+        let shot = assistant.shot.take().expect("its picture is on its way");
+        assert!(shot.path.exists(), "the preview was not written");
+        assert!(shot.caption.contains("\"in\": \"pattern\"") || shot.caption.contains("\"in\":\"pattern\""), "{}", shot.caption);
+        let _ = std::fs::remove_file(&shot.path);
+
+        // Already in a colour, as it goes on: a material of its own.
+        assert!(assistant.carry_out(&mut app, call("tequila_library_apply", &format!(r##"{{"name":"Leather Tan","nodes":[{}],"color":"#7a1f2b"}}"##, part.0))));
+        let other = app.project.document().tree.get(part).unwrap().material.unwrap();
+        assert_ne!(other, key);
+        assert_eq!(app.project.document().materials.get(other).unwrap().name, "Leather Tan #7a1f2b");
+
+        // A material with no colour says so, and is an error the model reads.
+        let film = r#"{"name": "Soap Film", "type": "thin_film"}"#;
+        assert!(assistant.carry_out(&mut app, call("tequila_material_create", &format!(r#"{{"recipe":{film},"preview":false}}"#))));
+        let film = app.project.document().materials.iter().find(|(_, d)| d.name == "Soap Film").map(|(key, _)| key).unwrap();
+        assert!(assistant.carry_out(&mut app, call("tequila_material_tint", &format!(r##"{{"material":{},"color":"#1f4d2b"}}"##, film.0))));
+        assert!(matches!(assistant.results.last(), Some(Part::Result { is_error: true, text, .. }) if text.contains("`Soap Film` has no colour to change")), "{:?}", assistant.results.last());
     }
 
     /// A plugin's command run by the assistant is answered once it has run,
@@ -2411,6 +2595,168 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// What the own loop could not reach, it sends through
+    /// `tequila_request`: an export and a UV layout wait for the person
+    /// and land in the project's folder, a studio piece is a change like
+    /// any other, and what closes the project or drives the Assistant is
+    /// refused without a question.
+    #[test]
+    fn the_own_loops_requests_ask_first_and_keep_out_of_what_is_the_persons() {
+        // Beside the test program, not in the folder for scratch files:
+        // a picture written there is a look, which nobody is asked about.
+        let root = std::env::current_exe().unwrap().with_file_name(format!("tequila-assistant-own-requests-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.project.save(&root.join("project.tequila")).unwrap();
+        let mut assistant = Assistant::default();
+        let asked = |assistant: &Assistant| assistant.chat.items.iter().rev().find_map(|item| if let Item::Asked(asked) = item { Some(asked.clone()) } else { None }).unwrap();
+        let questions = |assistant: &Assistant| assistant.chat.items.iter().filter(|item| matches!(item, Item::Asked(_))).count();
+        let said = |assistant: &Assistant| match assistant.results.last() {
+            Some(Part::Result { text, is_error, .. }) => (text.clone(), *is_error),
+            _ => panic!("no answer"),
+        };
+
+        // An export: asked, with the file named as it is known in the
+        // project's folder; no writes nothing, yes writes it there.
+        let export = || call("tequila_request", r#"{"request":{"op":"export","format":"glb","path":"out.glb"}}"#);
+        assert!(!assistant.carry_out(&mut app, export()), "it waits");
+        let question = asked(&assistant);
+        assert_eq!((question.title.as_str(), question.detail.as_str()), ("Export the scene to a file?", "out.glb (glb)"));
+        assistant.answer(&mut app, question.id, false);
+        assert!(said(&assistant).1 && said(&assistant).0.contains("said no") && !root.join("out.glb").exists());
+        assert!(!assistant.carry_out(&mut app, export()));
+        let question = asked(&assistant);
+        assistant.answer(&mut app, question.id, true);
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        assert!(std::fs::read(root.join("out.glb")).unwrap().starts_with(b"glTF"), "a glb beside the project");
+
+        // A UV layout is the application's own operation, outside the
+        // protocol's: asked about all the same, and written on a yes.
+        let part = app.project.document().tree.iter().find(|n| n.mesh().is_some()).unwrap().id.0;
+        assert!(assistant.carry_out(&mut app, call("tequila_apply", &format!(r#"{{"command":{{"command":"scene.unwrap_uvs","node":{part},"method":"conformal","crease_degrees":60,"margin":0.005}}}}"#))));
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        let layout = || call("tequila_request", &format!(r#"{{"request":{{"op":"uv_layout","node":{part},"path":"layout.svg","size":512}}}}"#));
+        assert!(!assistant.carry_out(&mut app, layout()), "it waits");
+        let question = asked(&assistant);
+        assert_eq!((question.title.as_str(), question.detail.as_str()), ("Write a UV layout to a file?", "layout.svg"));
+        assistant.answer(&mut app, question.id, false);
+        assert!(said(&assistant).1 && !root.join("layout.svg").exists());
+        assert!(!assistant.carry_out(&mut app, layout()));
+        let question = asked(&assistant);
+        assistant.answer(&mut app, question.id, true);
+        assert!(!said(&assistant).1 && said(&assistant).0.contains("islands"), "{}", said(&assistant).0);
+        assert!(std::fs::read_to_string(root.join("layout.svg")).unwrap().contains("<svg"));
+        assert!(app.console.text().contains("uv layout"), "the console shows it like any request");
+
+        // A piece of the studio kit changes the scene: nobody is asked, and
+        // it is the request's to take back.
+        let before = (questions(&assistant), app.project.document().tree.iter().count());
+        assistant.turn_start = Some(app.project.bus().depth());
+        assert!(assistant.carry_out(&mut app, call("tequila_request", r#"{"request":{"op":"studio_kit","piece":"softbox"}}"#)));
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        assert!(app.project.document().tree.iter().count() > before.1 && questions(&assistant) == before.0);
+        assert!(assistant.can_undo_turn(app.project.bus()));
+
+        // The person's alone: refused in words, nobody asked, nothing done.
+        for request in [
+            r#"{"op":"quit","discard":true}"#,
+            r#"{"op":"new","discard":true}"#,
+            r#"{"op":"open","path":"other.tequila","discard":true}"#,
+            r#"{"op":"assistant","answer":{"question":1,"allow":true}}"#,
+            r#"{"op":"livelink","message":{}}"#,
+        ] {
+            assert!(assistant.carry_out(&mut app, call("tequila_request", &format!(r#"{{"request":{request}}}"#))), "{request}: answered at once");
+            assert!(said(&assistant).1, "{request}: {}", said(&assistant).0);
+        }
+        assert_eq!(questions(&assistant), before.0);
+        assert!(!app.quit_requested && app.project.path.as_deref() == Some(root.join("project.tequila").as_path()));
+
+        // A plugin's code written through a request is asked about, as the
+        // tool's is, and the request itself then asks the person again
+        // before any of it runs.
+        assert!(!assistant.carry_out(&mut app, call("tequila_request", r#"{"request":{"op":"plugin","action":"write","plugin":"my.sneaky","files":{"main.py":"print(1)"},"ask":false}}"#)));
+        let question = asked(&assistant);
+        assert_eq!(question.title, "Write a plugin's code?");
+        assistant.answer(&mut app, question.id, false);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The own loop sets the render settings - a transparent PNG, the
+    /// samples - by sending the fields that change; it cannot move where
+    /// renders are written, alone or inside a batch.
+    #[test]
+    fn the_own_loop_sets_the_render_settings_but_not_where_renders_go() {
+        use tequila_scene::render::{AlphaMode, OutputFormat};
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let said = |assistant: &Assistant| match assistant.results.last() {
+            Some(Part::Result { text, is_error, .. }) => (text.clone(), *is_error),
+            _ => panic!("no answer"),
+        };
+        let before = app.project.document().render.clone();
+        assert!(before.alpha_mode == AlphaMode::None && before.format != OutputFormat::Tiff);
+
+        assistant.turn_start = Some(app.project.bus().depth());
+        assert!(assistant.carry_out(&mut app, call("tequila_apply", r#"{"command":{"command":"render.set_settings","render":{"format":"tiff","alpha_mode":"straight"}}}"#)));
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        let after = app.project.document().render.clone();
+        assert!(after.format == OutputFormat::Tiff && after.alpha_mode == AlphaMode::Straight);
+        assert_eq!((after.max_samples, after.width, after.height), (before.max_samples, before.width, before.height), "what was not sent stays");
+        assert_eq!((&after.output_directory, &after.filename_template), (&before.output_directory, &before.filename_template));
+        assert!(assistant.can_undo_turn(app.project.bus()), "one step to take back");
+        assert!(!assistant.chat.items.iter().any(|item| matches!(item, Item::Asked(_))), "a setting of the project is not asked about");
+
+        // The block as it is read, changed and sent back whole, as the
+        // guide teaches, goes through too.
+        assert!(assistant.carry_out(&mut app, call("tequila_read", r#"{"what":"render"}"#)));
+        let read = json::parse(said(&assistant).0.as_bytes()).unwrap();
+        let mut block = read.get("value").cloned().expect("the block");
+        if let json::Value::Object(fields) = &mut block {
+            fields.insert("max_samples".into(), json::Value::Number(64.0));
+        }
+        let whole = format!(r#"{{"command":{{"command":"render.set_settings","render":{}}}}}"#, tequila_format::json_write::to_string(&block));
+        assert!(assistant.carry_out(&mut app, call("tequila_apply", &whole)));
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        assert_eq!(app.project.document().render.max_samples, 64);
+
+        // Moving the folder or the file name is refused, and nothing of
+        // that block is set.
+        let moved = r#"{"command":"render.set_settings","render":{"max_samples":7,"output_directory":"/somewhere/else","filename_template":"mine"}}"#;
+        for (tool, arguments) in [
+            ("tequila_apply", format!(r#"{{"command":{moved}}}"#)),
+            ("tequila_batch", format!(r#"{{"ops":[{{"op":"apply","command":{moved}}}]}}"#)),
+            ("tequila_request", format!(r#"{{"request":{{"op":"batch","ops":[{{"op":"apply","command":{moved}}}]}}}}"#)),
+        ] {
+            assert!(assistant.carry_out(&mut app, call(tool, &arguments)), "{tool}");
+            let (told, refused) = said(&assistant);
+            assert!(refused && told.contains("the person's to choose") && told.contains("tequila_queue"), "{tool}: {told}");
+            let now = &app.project.document().render;
+            assert_eq!((&now.output_directory, &now.filename_template, now.max_samples), (&before.output_directory, &before.filename_template, 64), "{tool}");
+        }
+    }
+
+    /// A quick render comes back as a picture and keeps no file of the
+    /// person's; another window's screenshot says so when the window is
+    /// not open.
+    #[test]
+    fn the_own_loop_takes_a_quick_render_and_looks_at_other_windows() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assert!(assistant.carry_out(&mut app, call("tequila_render", r#"{"width":96,"height":64,"wireframe":true}"#)));
+        let shot = assistant.shot.as_ref().expect("the picture is on its way");
+        assert!(shot.path.starts_with(std::env::temp_dir()) && shot.path.exists(), "written to a scratch file");
+        let path = shot.path.clone();
+        assert!(!assistant.chat.items.iter().any(|item| matches!(item, Item::Asked(_))), "a look is not asked about");
+        assistant.collect_screenshot();
+        assert!(matches!(assistant.results.last(), Some(Part::Result { image: Some(_), is_error: false, text, .. }) if text.contains("96 by 64")), "{:?}", assistant.results.last().map(|_| "no picture"));
+        assert!(!path.exists(), "nothing is kept");
+
+        assert!(assistant.carry_out(&mut app, call("tequila_screenshot", r#"{"window":"uv"}"#)));
+        assert!(matches!(assistant.results.last(), Some(Part::Result { is_error: true, text, .. }) if text.contains("not open")), "the UV editor is closed");
+        assert!(assistant.shot.is_none() && app.pending_screenshot.is_none());
+    }
+
     /// Once the person has edited by hand, undoing "the request" would take
     /// their work too, so it is not offered.
     #[test]
@@ -2437,6 +2783,25 @@ mod tests {
         app.project.undo();
         app.project.apply(tequila_scene::Command::Rename { node, name: "By hand".into() }).unwrap();
         assert!(!assistant.can_undo_turn(app.project.bus()), "the button would undo the person's own edit");
+    }
+
+    /// The assistant's own screenshot says when the person has moved the
+    /// view since its last one, and not at its first look.
+    #[test]
+    fn a_look_says_when_the_person_moved_the_view() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let mut look = |app: &mut TequilaApp| {
+            assistant.carry_out(app, call("tequila_screenshot", "{}"));
+            let shot = assistant.shot.take().expect("a screenshot asked for");
+            app.pending_screenshot = None;
+            shot.caption
+        };
+        assert!(!look(&mut app).contains("moved the view"));
+        assert!(!look(&mut app).contains("moved the view"));
+        app.camera.zoom(2.0);
+        assert!(look(&mut app).contains("The person has moved the view since your last look"));
+        assert!(!look(&mut app).contains("moved the view"), "said once");
     }
 
     /// A script's screenshot already in flight makes the assistant's wait a
@@ -2579,13 +2944,17 @@ mod tests {
         assert_eq!(step_label(&call("tequila_apply", r#"{"command":{"command":"material.set_type"}}"#)), "Material: set type");
         assert_eq!(step_label(&call("tequila_batch", r#"{"ops":[{},{},{}]}"#)), "3 changes as one step");
         assert_eq!(step_label(&call("tequila_look", r#"{"view":"front"}"#)), "Camera: front view");
+        assert_eq!(step_label(&call("tequila_material_tint", r##"{"material":4,"color":"#1f4d2b"}"##)), "Tinted a material #1f4d2b");
+        assert_eq!(step_label(&call("tequila_library_apply", r##"{"name":"Leather Tan","color":"#1f4d2b"}"##)), "Library: Leather Tan, in #1f4d2b");
         assert_eq!(step_label(&call("tequila_nodes", r#"{"filter":"grille"}"#)), "Found parts named \"grille\"");
         assert_eq!(step_label(&call("tequila_screenshot", "{}")), "Looked at the viewport");
         assert_eq!(step_label(&call("tequila_library", r#"{"search":"black leather"}"#)), "Looked in the library for \"black leather\"");
         assert_eq!(step_label(&call("tequila_library_apply", r#"{"name":"Leather Black","nodes":[4]}"#)), "Library: Leather Black");
         assert_eq!(step_label(&call("tequila_command", r#"{"command":"scene.set_shape"}"#)), "Looked up scene.set_shape");
         assert_eq!(step_label(&call("tequila_add_shape", r#"{"shape":"cylinder"}"#)), "Added a cylinder");
-        assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"studio_kit","piece":"softbox"}}"#)), "Request: studio kit");
+        assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"studio_kit","piece":"softbox"}}"#)), "Added a studio piece");
+        assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"export","format":"glb","path":"a.glb"}}"#)), "Export the scene");
+        assert_eq!(step_label(&call("tequila_request", r#"{"request":{"op":"substance","action":"info"}}"#)), "Request: substance");
         // One added later still reads as words.
         assert_eq!(step_label(&call("tequila_something_new", "{}")), "something new");
     }
@@ -2961,6 +3330,80 @@ mod tests {
             looked.is_some()
         });
         assert_eq!(looked.into_inner(), Some(Ok("looked".into())));
+        assert_eq!(app.assistant.chat.items.iter().filter(|item| matches!(item, Item::Asked(_))).count(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A UV layout is answered outside the protocol's own operations, and
+    /// used to be written wherever an agent said without a word to the
+    /// person. Carrying the Assistant's mark, it waits like an export; a
+    /// script's own, without the mark, is answered as before.
+    #[test]
+    fn an_agents_uv_layout_waits_for_the_person_too() {
+        // Beside the test program, not in the folder for scratch files:
+        // a picture written there is a look, which nobody is asked about.
+        let root = std::env::current_exe().unwrap().with_file_name(format!("tequila-assistant-uv-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = TequilaApp::for_tests();
+        app.channel = Some(tequila_scripting::server::Channel::start_at_with(&root.join("channel.json"), tequila_scripting::document::APP_OWN_OPERATIONS).unwrap());
+        let part = app.project.document().tree.iter().find(|n| n.mesh().is_some()).unwrap().id;
+        app.project.apply(tequila_scene::Command::UnwrapUvs { node: part, options: Default::default() }).unwrap();
+        let mark = app.assistant.mark();
+        let (agents, scripts) = (root.join("agent.svg"), root.join("script.svg"));
+
+        let (said, heard) = std::sync::mpsc::channel();
+        let (record, to_agent, to_script) = (app.channel.as_ref().unwrap().own_file().unwrap(), agents.to_string_lossy().into_owned(), scripts.to_string_lossy().into_owned());
+        std::thread::spawn(move || {
+            let mut bridge = tequila_scripting::client::Connection::connect(&record).unwrap();
+            bridge.set_patience(None);
+            let layout = |path: &str| vec![("node", (part.0 as f64).into()), ("path", path.into()), ("size", 256.0.into())];
+            for _ in 0..2 {
+                let mut fields = layout(&to_agent);
+                fields.push(("agent", mark.as_str().into()));
+                let _ = said.send(bridge.request("uv_layout", fields).map(|_| "the agent's".to_string()));
+            }
+            let _ = said.send(bridge.request("uv_layout", layout(&to_script)).map(|_| "the script's".to_string()));
+        });
+        let ctx = egui::Context::default();
+        let serve_until = |app: &mut TequilaApp, done: &dyn Fn(&TequilaApp) -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !done(app) && std::time::Instant::now() < deadline {
+                app.serve_channel(&ctx);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(done(app), "timed out");
+        };
+        let question = |app: &TequilaApp| app.assistant.chat.items.iter().rev().find_map(|item| if let Item::Asked(asked) = item { Some(asked.clone()) } else { None }).unwrap();
+        let answer = |app: &mut TequilaApp, id: u64, allow: bool| {
+            let mut assistant = std::mem::take(&mut app.assistant);
+            assistant.answer(app, id, allow);
+            app.assistant = assistant;
+        };
+
+        serve_until(&mut app, &|app| app.assistant.is_asking());
+        let asked = question(&app);
+        assert_eq!((asked.title.as_str(), asked.detail.as_str()), ("Write a UV layout to a file?", agents.to_string_lossy().as_ref()));
+        assert!(heard.try_recv().is_err() && !agents.exists(), "held, not written");
+        answer(&mut app, asked.id, false);
+        assert!(heard.recv().unwrap().unwrap_err().contains("said no"));
+        assert!(!agents.exists());
+
+        serve_until(&mut app, &|app| app.assistant.is_asking());
+        let asked = question(&app);
+        answer(&mut app, asked.id, true);
+        assert_eq!(heard.recv().unwrap(), Ok("the agent's".into()));
+        assert!(agents.exists(), "written on a yes");
+
+        // Without the mark it is any script's: answered, nobody asked.
+        let answered = std::cell::RefCell::new(None);
+        serve_until(&mut app, &|_| {
+            let mut answered = answered.borrow_mut();
+            *answered = answered.take().or_else(|| heard.try_recv().ok());
+            answered.is_some()
+        });
+        assert_eq!(answered.into_inner(), Some(Ok("the script's".into())));
+        assert!(scripts.exists());
         assert_eq!(app.assistant.chat.items.iter().filter(|item| matches!(item, Item::Asked(_))).count(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
