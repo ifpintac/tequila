@@ -40,6 +40,8 @@ INSTRUCTIONS = (
     '(leather, fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. '
     'Make a material yourself only when the library has nothing close - tequila_material_guide, tequila_material_preview, '
     'then tequila_material_create and tequila_material_update - or change a preset once it is on a part. '
+    'For the same material in another colour ("this leather, but dark green") use tequila_material_tint, or color on tequila_library_apply: '
+    'many presets keep their colour inside a pattern, where setting base_color changes nothing. '
     'Materials may be shared between parts: unlink a part (material.unlink) before changing it alone. '
     'Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. '
     'Never guess a field name; a field that is not in the example is not read. '
@@ -89,11 +91,13 @@ TOOLS = [
          {'search': {'type': 'string', 'description': 'Words to look for: a colour, a finish, what it is made of.'},
           'category': {'type': 'string', 'description': 'One category, as the list with no arguments names them.'},
           'limit': {'type': 'integer', 'description': 'How many presets to answer with at most (default 20).'}}),
-    tool('tequila_library_apply', 'Put a library preset on parts, by its exact name from tequila_library. One undo step. '
+    tool('tequila_library_apply', 'Put a library preset on parts, by its exact name from tequila_library. One undo step. Answers with the material\'s id. '
+         'color applies it in another colour: the same leather, wood or plastic with its pattern and finish kept, as a material of its own named for the colour ("Leather Tan #1f4d2b"). '
          'unlink=true gives the parts a copy of their own, to change without changing the other parts that use the preset. '
-         'To change its colour afterwards, read it with tequila_material: a preset that sets its colour by a pattern needs the pattern\'s colours changed (tequila_material_recipe, then tequila_material_update), not base_color.',
+         'To change a preset\'s colour once it is on a part, use tequila_material_tint, not base_color: many presets keep their colour inside a pattern.',
          {'name': {'type': 'string'},
           'nodes': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'Part ids to put it on; the selection when left out.'},
+          'color': {'type': 'string', 'description': 'A hex sRGB colour, e.g. "#1f4d2b", to apply the preset in.'},
           'unlink': {'type': 'boolean'}},
          ['name']),
     tool('tequila_command', 'How to write one command for tequila_apply: its exact fields and a working example, and for a setting-by-name command the names it takes. '
@@ -128,6 +132,17 @@ TOOLS = [
          'Remake an existing material from a recipe, where it is: every part using it changes. One undo step; returns a preview image. Use it to refine a material after looking at it on the product. Recipe: {"name": "Speckled Stone", "type": "plastic" (or metal, glass, paint, velvet... see the guide), any parameter as a value ("specular_roughness": 0.3, "base_color": "#c0392b" - hex sRGB is fine), "patterns": [{"param": "base_color", "procedural": {"kind": "noise"}, "size": 0.01, "colors": [{"at": 0, "color": "#d8d4cc"}, {"at": 1, "color": "#a9a59c"}]}, {"param": "specular_roughness", "procedural": {"kind": "noise"}, "size": 0.02, "range": [0.2, 0.4]}, {"param": "bump", "procedural": {"kind": "leather"}, "size": 0.002, "depth": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: "blend" mix/multiply/add, "amount" 0-1, "mask" {"threshold": 0.5, "softness": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.',
          {"material": {"type": "integer", "description": "The material's id."}, "recipe": {"type": "object", "description": "The new recipe. Without a name the material keeps its own."}, "preview": {"type": "boolean", "description": "Return a preview image too (default true)."}},
          ['material', 'recipe']),
+    tool('tequila_material_tint',
+         'Make a material the same material in another colour, wherever its colour is kept: a plain value, the colours inside a pattern, the stops of a ramp. '
+         'THE way to recolour a library preset ("make this leather dark green", "that denim in red"): its pattern, grain, weave and finish stay, the colour asked for becomes its main colour, '
+         'and its other colours keep their relation to it - creases stay darker, pale threads paler - while colours of another family (white threads, rust on steel) are left alone. '
+         'Every part using the material changes; material.unlink a part first to change it alone. One undo step. '
+         'Answers with the colour it was, each parameter changed and how many colours, and a preview image. '
+         'Refuses a material with no colour of its own (its colour is a picture, or a thin film\'s) and says why.',
+         {"material": {"type": "integer", "description": "The material's id, from tequila_nodes, tequila_materials or tequila_library_apply."},
+          "color": {"type": "string", "description": "A hex sRGB colour, e.g. \"#1f4d2b\"."},
+          "preview": {"type": "boolean", "description": "Return a preview image too (default true)."}},
+         ['material', 'color']),
     tool('tequila_material_recipe',
          'Read any material - one you made, or a library preset already on a part - back as a recipe, to change it and send it to tequila_material_update or tequila_material_create.',
          {"material": {"type": "integer"}},
@@ -376,8 +391,8 @@ class Bridge:
         fields = {k: v for k, v in dict(search=search, category=category, limit=limit).items() if v is not None}
         return text(self.request('library', action='search', **fields))
 
-    def tool_library_apply(self, name, nodes=None, unlink=None):
-        fields = {k: v for k, v in dict(nodes=nodes, unlink=unlink).items() if v is not None}
+    def tool_library_apply(self, name, nodes=None, unlink=None, color=None):
+        fields = {k: v for k, v in dict(nodes=nodes, unlink=unlink, color=color).items() if v is not None}
         return text(self.request('library', action='apply', name=name, **fields))
 
     def tool_command(self, command=None):
@@ -420,6 +435,9 @@ class Bridge:
 
     def tool_material_update(self, material, recipe, preview=True):
         return self._material_and_picture('update', preview, material=material, recipe=recipe)
+
+    def tool_material_tint(self, material, color, preview=True):
+        return self._material_and_picture('tint', preview, material=material, color=color)
 
     def tool_material_recipe(self, material):
         return text(self.request('material', action='recipe', material=material))

@@ -16,6 +16,7 @@
 //! microseconds — and a client that has to wait for the render before it can
 //! ask anything else is a client that cannot poll progress.
 
+use tequila_core::spectrum::Spectrum;
 use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
 use tequila_scene::command::Command;
@@ -245,11 +246,16 @@ pub struct PluginRequest {
 ///   touched.
 /// - `save`: the material `material` into the user's library, as `name`
 ///   under `category`, with `tags`.
+/// - `tint`: the material `material` made the same material in `color`,
+///   wherever its colour is kept: a plain value, the colours of a pattern,
+///   a ramp's stops. One undo step. Answers with what was changed.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct MaterialRequest {
     pub action: String,
     pub recipe: Option<Value>,
     pub material: Option<u64>,
+    /// `tint`: the colour to make it, already in the rendering space.
+    pub color: Option<Spectrum>,
     pub nodes: Vec<u64>,
     pub name: Option<String>,
     pub category: Option<String>,
@@ -272,6 +278,8 @@ pub enum ProjectAction {
 ///
 /// - `apply`: the preset `name` onto `nodes` (the selection when empty), a
 ///   copy of its own with `unlink`. Undoable, like dropping it by hand.
+///   With `color`, the preset in that colour: a material of its own, named
+///   for the colour.
 /// - `save`: the document's material `material` into the user's library,
 ///   as `name` (its own when absent) under `category`, with `tags`.
 /// - `import`: the file at `path` into the user's library - a material
@@ -295,6 +303,9 @@ pub struct LibraryRequest {
     /// with at most.
     pub search: Option<String>,
     pub limit: Option<usize>,
+    /// `apply`: the colour to apply the preset in, already in the rendering
+    /// space.
+    pub color: Option<Spectrum>,
 }
 
 /// The `studio_preset` operation's actions.
@@ -1121,6 +1132,27 @@ fn opt_number(value: &Value, key: &str) -> Result<Option<f32>, ProtocolError> {
     optional(value, key, "a number", |v| v.as_f64().filter(|n| n.is_finite()).map(|n| n as f32))
 }
 
+/// A colour as a script or a model writes one: a hex sRGB string, converted
+/// as every picker converts it, or three numbers already in the rendering
+/// space. `color`, or `colour` for whoever spells it so.
+fn opt_colour(value: &Value) -> Result<Option<Spectrum>, ProtocolError> {
+    let Some(given) = value.get("color").or_else(|| value.get("colour")) else {
+        return Ok(None);
+    };
+    let bad = || ProtocolError("`color` is a hex sRGB string like \"#1f4d2b\", or three numbers 0 to 1, [r, g, b], linear in the rendering space".into());
+    let colour = match given {
+        Value::String(text) => tequila_format::hex_colour(text).ok_or_else(bad)?,
+        other => match other.as_array() {
+            [r, g, b] => {
+                let part = |v: &Value| v.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n as f32);
+                tequila_core::spectrum::spectrum(part(r).ok_or_else(bad)?, part(g).ok_or_else(bad)?, part(b).ok_or_else(bad)?)
+            }
+            _ => return Err(bad()),
+        },
+    };
+    Ok(Some(colour))
+}
+
 fn opt_vector(value: &Value, key: &str) -> Result<Option<[f32; 3]>, ProtocolError> {
     optional(value, key, "three numbers, [x, y, z]", |v| match v.as_array() {
         [x, y, z] => Some([x.as_f64()? as f32, y.as_f64()? as f32, z.as_f64()? as f32]),
@@ -1353,6 +1385,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 size: opt_number(value, "size")?,
                 search: opt_string(value, "search")?,
                 limit: value.get("limit").and_then(|v| v.as_index()),
+                color: opt_colour(value)?,
             };
             let needs = |field: &str, present: bool| {
                 if present {
@@ -1397,6 +1430,7 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                 action,
                 recipe: value.get("recipe").cloned(),
                 material: value.get("material").and_then(|v| v.as_index()).map(|i| i as u64),
+                color: opt_colour(value)?,
                 nodes: ids("nodes")?,
                 name: opt_string(value, "name")?,
                 category: opt_string(value, "category")?,
@@ -1420,6 +1454,10 @@ fn parse_operation_at(value: &Value, depth: usize) -> Result<Operation, Protocol
                     needs("recipe", request.recipe.is_some())?;
                 }
                 "recipe" | "save" => needs("material", request.material.is_some())?,
+                "tint" => {
+                    needs("material", request.material.is_some())?;
+                    needs("color", request.color.is_some())?;
+                }
                 "preview" => needs("recipe or material", request.recipe.is_some() || request.material.is_some())?,
                 _ => {}
             }
@@ -1980,6 +2018,34 @@ mod tests {
         let bare = parse_request(r#"{"op":"texture_set","path":"C:/packs/wood"}"#).expect("parses");
         assert!(matches!(bare.operation, Operation::TextureSet { ref nodes, .. } if nodes.is_empty()));
         assert!(parse_request(r#"{"op":"texture_set","path":"x","nodes":"all"}"#).is_err());
+    }
+
+    /// A tint names a material and a colour, and the colour is read as a
+    /// person or a model writes one: hex sRGB, converted into the rendering
+    /// space, or three numbers taken as they are.
+    #[test]
+    fn a_tint_carries_a_material_and_a_colour() {
+        let tint = parse_request(r##"{"op":"material","action":"tint","material":4,"color":"#1f4d2b"}"##).expect("parses");
+        let Operation::Material(request) = tint.operation else { panic!("not a material request") };
+        assert_eq!((request.action.as_str(), request.material), ("tint", Some(4)));
+        assert_eq!(request.color, tequila_format::hex_colour("#1f4d2b"));
+        let numbers = parse_request(r#"{"op":"material","action":"tint","material":4,"colour":[0.1,0.2,0.05]}"#).expect("parses");
+        let Operation::Material(request) = numbers.operation else { panic!() };
+        assert_eq!(request.color, Some(tequila_core::spectrum::spectrum(0.1, 0.2, 0.05)));
+        let apply = parse_request(r##"{"op":"library","action":"apply","name":"Leather Tan","nodes":[3],"color":"#1f4d2b"}"##).expect("parses");
+        let Operation::Library(request) = apply.operation else { panic!("not a library request") };
+        assert_eq!(request.color, tequila_format::hex_colour("#1f4d2b"));
+        for refused in [
+            r#"{"op":"material","action":"tint","material":4}"#,
+            r##"{"op":"material","action":"tint","color":"#1f4d2b"}"##,
+            r#"{"op":"material","action":"tint","material":4,"color":"dark green"}"#,
+            r#"{"op":"material","action":"tint","material":4,"color":[0.1,0.2]}"#,
+            r#"{"op":"material","action":"tint","material":4,"color":[0.1,-0.2,0.3]}"#,
+            r#"{"op":"library","action":"apply","name":"Leather Tan","color":"green"}"#,
+        ] {
+            let error = parse_request(refused).err().unwrap_or_else(|| panic!("{refused} was accepted"));
+            assert!(error.0.contains("color") || error.0.contains("needs `material`"), "{refused}: {}", error.0);
+        }
     }
 
     /// A library request says what to do and what with, and is refused

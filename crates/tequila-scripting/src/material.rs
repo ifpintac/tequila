@@ -9,7 +9,8 @@
 //! start from; `create` makes one and puts it on parts; `update` replaces a
 //! material's look in place, for trying again; `recipe` reads any material
 //! back as one; `preview` renders one on the library's ball without touching
-//! the scene; `save` keeps one in the person's library.
+//! the scene; `save` keeps one in the person's library; `tint` makes one the
+//! same material in another colour, wherever its colour is kept.
 
 use crate::document::LibraryOutcome;
 use crate::protocol::{LibraryRequest, MaterialRequest};
@@ -23,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 /// The actions, for the protocol and its documentation.
-pub const MATERIAL_ACTIONS: &[&str] = &["guide", "create", "update", "recipe", "preview", "save"];
+pub const MATERIAL_ACTIONS: &[&str] = &["guide", "create", "update", "recipe", "preview", "save", "tint"];
 
 /// The guide's hand-written half: how to write a recipe, what each pattern
 /// looks like, and examples. Each example is checked to read and compile.
@@ -52,6 +53,7 @@ pub fn material_request(
             Ok(LibraryOutcome::Done(out.build()))
         }
         "preview" => preview(request, document).map(LibraryOutcome::Done),
+        "tint" => tint(request, document),
         "save" => {
             let key = material_of(request, document)?;
             let save = LibraryRequest {
@@ -163,6 +165,76 @@ fn update(request: &MaterialRequest, document: &SceneDocument) -> Result<Library
         .set("nodes", entry.graph.len() as f64)
         .set("parts", document.tree.iter().filter(|n| n.material == Some(key)).count() as f64);
     Ok(LibraryOutcome::Commands(commands, out.build()))
+}
+
+/// The material `material` made the same material in `color`
+/// (`tequila_materials::tint`): one command, so one undo step, and an answer
+/// that says where the colour was found. A material shared between parts
+/// changes on all of them, as any edit to it does, and the answer says how
+/// many.
+fn tint(request: &MaterialRequest, document: &SceneDocument) -> Result<LibraryOutcome, String> {
+    let key = material_of(request, document)?;
+    let colour = request.color.ok_or("material tint needs `color`: a hex sRGB string like \"#1f4d2b\"")?;
+    let definition = document.materials.get(key).expect("checked");
+    let mut graph = definition.graph.clone();
+    let done = tequila_materials::tint::tint(&mut graph, definition.material_type, colour).map_err(|why| format!("`{}` {why}", definition.name))?;
+    let parts = document.tree.iter().filter(|n| n.material == Some(key)).count();
+    let mut out = Object::new();
+    out.set("material", key.0 as f64).set("name", definition.name.clone()).set("parts", parts as f64);
+    let mut notes = tint_answer(&mut out, &done);
+    if parts > 1 {
+        notes.push(format!("{parts} parts share this material and all of them changed; to change one alone, undo, material.unlink that part and tint its copy"));
+    }
+    if !notes.is_empty() {
+        out.set("notes", Value::Array(notes.into_iter().map(Value::String).collect()));
+    }
+    Ok(LibraryOutcome::Commands(vec![Command::SetGraph { material: key, graph: Box::new(graph) }], out.build()))
+}
+
+/// What a tint did, written into an answer: the colour it came out and the
+/// colour it was, as hex sRGB, and each parameter changed with how many
+/// colours and where they were. Returns what the caller should also be
+/// told, in words.
+pub(crate) fn tint_answer(out: &mut Object, done: &tequila_materials::tint::Tint) -> Vec<String> {
+    out.set("color", tequila_format::colour_hex(done.now)).set("was", tequila_format::colour_hex(done.was));
+    let changed: Vec<Value> = done
+        .changed
+        .iter()
+        .map(|change| {
+            let mut entry = Object::new();
+            entry
+                .set("parameter", change.param.key())
+                .set("colors", change.colors as f64)
+                .set("in", if change.pattern { "pattern" } else { "value" });
+            // Colours that are none of the main one's family - white
+            // threads, a rust - and stay as they are.
+            if change.kept > 0 {
+                entry.set("kept", change.kept as f64);
+            }
+            entry.build()
+        })
+        .collect();
+    out.set("changed", Value::Array(changed));
+    let mut notes = Vec::new();
+    if done.limited {
+        notes.push(format!(
+            "a metal reflects no more than the metal under the tint does, and the colour asked for is brighter than that: it came out {}, as near as it gets. For a brighter one set metal_ior to Aluminium or Silver and tint again",
+            tequila_format::colour_hex(done.now)
+        ));
+    }
+    if done.thinned {
+        notes.push(format!(
+            "a clear material is seen through its whole thickness, so it was kept as clear as it was: the colour asked for, thinned to {} at its transmission_depth. For a deeper colour shorten transmission_depth, or set transmission_color itself",
+            tequila_format::colour_hex(done.now)
+        ));
+    }
+    if done.pictures {
+        notes.push("part of its colour comes from a picture (a texture map), which was left as it is".into());
+    }
+    if done.computed {
+        notes.push("part of its colour is worked out by nodes that hold no colour, which were left as they are".into());
+    }
+    notes
 }
 
 /// The library's ball, lit as its tiles are; built once.
@@ -350,6 +422,282 @@ mod tests {
             };
             material_request(&request, &document, &[], &folder).unwrap_or_else(|e| panic!("{name}: {e}"));
             println!("rendered {name}");
+        }
+    }
+
+    fn colour(hex: &str) -> tequila_core::spectrum::Spectrum {
+        tequila_format::hex_colour(hex).unwrap()
+    }
+
+    /// A colour's hue in degrees, and whether it has one to speak of: red
+    /// near 0, green near 120, blue near 240.
+    fn hue(c: tequila_core::spectrum::Spectrum) -> (f32, bool) {
+        let v = c.to_linear_srgb();
+        let (max, min) = (v.x.max(v.y).max(v.z), v.x.min(v.y).min(v.z));
+        let spread = max - min;
+        if spread <= max * 0.08 {
+            return (0.0, false);
+        }
+        let hue = if max == v.x {
+            ((v.y - v.z) / spread).rem_euclid(6.0)
+        } else if max == v.y {
+            (v.z - v.x) / spread + 2.0
+        } else {
+            (v.x - v.y) / spread + 4.0
+        };
+        (hue * 60.0, true)
+    }
+
+    /// The colour a material shows through its pattern: its albedo on the
+    /// library's ball, averaged over the middle of the picture.
+    fn seen(graph: &MaterialGraph) -> tequila_core::spectrum::Spectrum {
+        use tequila_render_cpu::{render_thumbnail_textured, Device, PreviewSettings, PreviewShape};
+        let settings = PreviewSettings { size: 48, samples: 4, shape: PreviewShape::Sphere, radius: tequila_render_cpu::preview::PREVIEW_RADIUS, uv_unit: None };
+        let table = Arc::new(tequila_render_core::shade::TextureTable::new());
+        let picture = render_thumbnail_textured(&Device::shared().unwrap(), graph, table, preview_environment(), settings).unwrap();
+        let (mut sum, mut count) = ([0.0f32; 3], 0.0);
+        for y in picture.height * 3 / 8..picture.height * 5 / 8 {
+            for x in picture.width * 3 / 8..picture.width * 5 / 8 {
+                let at = (y * picture.width + x) * 3;
+                for (channel, total) in sum.iter_mut().enumerate() {
+                    *total += picture.albedo[at + channel];
+                }
+                count += 1.0;
+            }
+        }
+        tequila_core::spectrum::spectrum(sum[0] / count, sum[1] / count, sum[2] / count)
+    }
+
+    /// A shipped preset put on the demo's part, as `library apply` does it.
+    fn with_preset(name: &str, color: Option<&str>) -> (SceneDocument, tequila_scene::CommandBus, MaterialKey, Value) {
+        let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        let mut bus = tequila_scene::CommandBus::new();
+        let part = document.tree.iter().find(|n| n.mesh().is_some()).map(|n| n.id).expect("a part");
+        let apply = LibraryRequest { action: "apply".into(), name: Some(name.into()), nodes: vec![part.0], color: color.map(colour), ..Default::default() };
+        let user = std::env::temp_dir().join(format!("tequila-tint-{}", std::process::id()));
+        let outcome = crate::document::library_request(&apply, &document, &[], &user, &|_, _, _, _, _| Err("not a pack".into())).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let LibraryOutcome::Commands(commands, answer) = outcome else { panic!("apply is commands") };
+        for command in commands {
+            bus.apply(&mut document, command).unwrap();
+        }
+        let key = document.tree.get(part).unwrap().material.expect("the part has the preset");
+        assert_eq!(answer.get("material").and_then(Value::as_f64), Some(key.0 as f64), "apply says which material the parts now have");
+        (document, bus, key, answer)
+    }
+
+    /// `material tint`, carried out on the bus as the application does.
+    fn tinted(document: &mut SceneDocument, bus: &mut tequila_scene::CommandBus, key: MaterialKey, hex: &str) -> Value {
+        let request = MaterialRequest { action: "tint".into(), material: Some(key.0), color: Some(colour(hex)), ..Default::default() };
+        let LibraryOutcome::Commands(commands, answer) = material_request(&request, document, &[], Path::new("unused")).unwrap_or_else(|e| panic!("{e}")) else { panic!("tint is commands") };
+        assert_eq!(commands.len(), 1, "one command, so one step to undo");
+        for command in commands {
+            bus.apply(document, command).unwrap();
+        }
+        answer
+    }
+
+    fn changed(answer: &Value) -> Vec<(String, usize, String)> {
+        answer
+            .get("changed")
+            .map(Value::as_array)
+            .unwrap_or(&[])
+            .iter()
+            .map(|c| {
+                (
+                    c.get("parameter").and_then(Value::as_str).unwrap().to_string(),
+                    c.get("colors").and_then(Value::as_index).unwrap(),
+                    c.get("in").and_then(Value::as_str).unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// A plain preset: its colour is `base_color` and nothing else, and
+    /// that is what changes. One undo puts the red back.
+    #[test]
+    fn a_plain_preset_is_tinted_in_its_value() {
+        let (mut document, mut bus, key, _) = with_preset("ABS Red Gloss", None);
+        let before = document.materials.get(key).unwrap().graph.clone();
+        assert!(!before.is_connected(tequila_materials::material_type::Param::BaseColor), "ABS Red Gloss is no longer a plain preset: pick another");
+        let answer = tinted(&mut document, &mut bus, key, "#1f4d2b");
+        let after = document.materials.get(key).unwrap();
+        let green = colour("#1f4d2b");
+        let base = after.material().base_color;
+        assert!((base.r - green.r).abs() < 1e-5 && (base.g - green.g).abs() < 1e-5 && (base.b - green.b).abs() < 1e-5, "{base:?}");
+        assert_eq!(changed(&answer), vec![("base_color".to_string(), 1, "value".to_string())]);
+        assert_eq!(answer.get("color").and_then(Value::as_str), Some("#1f4d2b"));
+        assert!(matches!(hue(colour(answer.get("was").and_then(Value::as_str).unwrap())), (h, true) if !(20.0..340.0).contains(&h)), "it was red: {answer:?}");
+        assert_eq!(answer.get("name").and_then(Value::as_str), Some("ABS Red Gloss"));
+        // Everything but the colour is as it was.
+        assert_eq!(after.material().specular_roughness, before.material().specular_roughness);
+        assert_eq!(after.graph.topology_hash(), before.topology_hash());
+
+        bus.undo(&mut document).unwrap();
+        assert_eq!(document.materials.get(key).unwrap().graph.content_hash(), before.content_hash(), "one undo takes the tint back");
+    }
+
+    /// A leather: its tan is inside a node that multiplies a grain by it,
+    /// which `base_color` cannot reach. Tinted, the ball itself is green,
+    /// grain and all.
+    #[test]
+    fn a_patterned_leather_is_tinted_in_its_pattern() {
+        let (mut document, mut bus, key, _) = with_preset("Leather Tan", None);
+        let before = document.materials.get(key).unwrap().graph.clone();
+        assert!(before.is_connected(tequila_materials::material_type::Param::BaseColor), "Leather Tan no longer keeps its colour in a pattern: pick another");
+        let tan = seen(&before);
+        assert!(matches!(hue(tan), (h, true) if h > 15.0 && h < 50.0), "the leather starts tan: {tan:?}");
+
+        let answer = tinted(&mut document, &mut bus, key, "#1f4d2b");
+        let after = document.materials.get(key).unwrap().graph.clone();
+        assert_eq!(changed(&answer), vec![("base_color".to_string(), 1, "pattern".to_string())]);
+        let green = seen(&after);
+        assert!(matches!(hue(green), (h, true) if h > 115.0 && h < 165.0), "the leather is not green: {green:?}");
+        assert!(green.luminance() < tan.luminance() * 0.6, "a dark green is darker than the tan: {green:?} against {tan:?}");
+        // The colour itself sits where the tan sat, in the node the grain
+        // is multiplied by.
+        let driver = after.driver_of(tequila_materials::material_type::Param::BaseColor).unwrap();
+        let held = |graph: &MaterialGraph| graph.node(driver).unwrap().literals.values().find_map(|v| if let tequila_materials::graph::Value::Color(c) = v { Some(*c) } else { None }).unwrap();
+        assert_eq!(held(&before), before.material().base_color);
+        assert_eq!(held(&after), colour("#1f4d2b"));
+        // The same leather: its grain, bump and sheen untouched.
+        assert_eq!(after.topology_hash(), before.topology_hash());
+        assert_eq!(after.material().specular_roughness, before.material().specular_roughness);
+        after.compile().expect("the tinted leather compiles");
+
+        bus.undo(&mut document).unwrap();
+        assert_eq!(document.materials.get(key).unwrap().graph.content_hash(), before.content_hash());
+    }
+
+    /// A cloth woven of three blues: all three turn, the pale thread still
+    /// the palest and the dark still the darkest, so the weave still reads.
+    #[test]
+    fn a_cloth_keeps_its_weave_in_the_new_colour() {
+        use tequila_materials::graph::{NodeKind, Value as Literal};
+        let colours = |graph: &MaterialGraph| -> Vec<tequila_core::spectrum::Spectrum> {
+            let mut all = Vec::new();
+            for (_, node) in graph.nodes() {
+                if matches!(node.kind, NodeKind::Surface(_)) {
+                    continue;
+                }
+                all.extend(node.literals.values().filter_map(|v| if let Literal::Color(c) = v { Some(*c) } else { None }));
+                if let NodeKind::Gradient { gradient } = &node.kind {
+                    all.extend(gradient.stops().iter().map(|s| s.color));
+                }
+            }
+            all
+        };
+        let (mut document, mut bus, key, _) = with_preset("Denim Indigo", None);
+        let before = colours(&document.materials.get(key).unwrap().graph);
+        assert!(before.len() >= 3, "Denim Indigo no longer mixes several colours: pick another cloth");
+        let answer = tinted(&mut document, &mut bus, key, "#8c2f2a");
+        let after = colours(&document.materials.get(key).unwrap().graph);
+        // Its sheen is a paler blue in a parameter of its own, and follows.
+        assert_eq!(changed(&answer), vec![("base_color".to_string(), before.len(), "pattern".to_string()), ("fuzz_color".to_string(), 1, "value".to_string())]);
+        assert_eq!(after.len(), before.len());
+        for (was, now) in before.iter().zip(&after) {
+            assert!(matches!(hue(*was), (h, true) if h > 200.0 && h < 260.0), "a thread that was not blue: {was:?}");
+            assert!(matches!(hue(*now), (h, true) if !(25.0..335.0).contains(&h)), "a thread that is not red: {now:?}");
+        }
+        // The order from dark to pale is the weave: kept.
+        let order = |all: &[tequila_core::spectrum::Spectrum]| {
+            let mut order: Vec<usize> = (0..all.len()).collect();
+            order.sort_by(|a, b| all[*a].luminance().total_cmp(&all[*b].luminance()));
+            order
+        };
+        assert_eq!(order(&before), order(&after));
+        // And its contrast, palest against darkest. What is kept is how
+        // light each looks, which the tint's own tests measure; by the
+        // light it reflects a blue is darker than a red that looks as
+        // light, so here it is only held to stay a weave of the same depth.
+        let contrast = |all: &[tequila_core::spectrum::Spectrum]| {
+            let (low, high) = all.iter().fold((f32::MAX, 0.0f32), |(low, high), c| (low.min(c.luminance()), high.max(c.luminance())));
+            high / low
+        };
+        assert!(contrast(&after) > 3.0 && contrast(&after) / contrast(&before) > 0.6 && contrast(&after) / contrast(&before) < 1.6, "{} became {}", contrast(&before), contrast(&after));
+        let red = seen(&document.materials.get(key).unwrap().graph);
+        assert!(matches!(hue(red), (h, true) if !(25.0..335.0).contains(&h)), "the denim is not red: {red:?}");
+    }
+
+    /// `library apply` with a colour: the preset arrives tinted, as a
+    /// material named for the colour, and asking again reuses it.
+    #[test]
+    fn a_preset_is_applied_already_tinted() {
+        let (document, _, key, answer) = with_preset("Leather Tan", Some("#1f4d2b"));
+        let material = document.materials.get(key).unwrap();
+        assert_eq!(material.name, "Leather Tan #1f4d2b");
+        assert_eq!(answer.get("applied").and_then(Value::as_str), Some("Leather Tan"));
+        assert_eq!(answer.get("material_name").and_then(Value::as_str), Some("Leather Tan #1f4d2b"));
+        assert_eq!(changed(&answer), vec![("base_color".to_string(), 1, "pattern".to_string())]);
+        let green = seen(&material.graph);
+        assert!(matches!(hue(green), (h, true) if h > 115.0 && h < 165.0), "{green:?}");
+
+        let part = document.tree.iter().find(|n| n.mesh().is_some()).map(|n| n.id).unwrap();
+        let again = LibraryRequest { action: "apply".into(), name: Some("Leather Tan".into()), nodes: vec![part.0], color: Some(colour("#1f4d2b")), ..Default::default() };
+        let LibraryOutcome::Commands(commands, _) = crate::document::library_request(&again, &document, &[], Path::new("unused"), &|_, _, _, _, _| Err("not a pack".into())).unwrap() else { panic!() };
+        assert!(matches!(commands.as_slice(), [Command::AssignMaterial { material, .. }] if *material == key), "the same tint twice is one material");
+        // The library's own tan is another material, by another name.
+        let plain = LibraryRequest { color: None, ..again };
+        let LibraryOutcome::Commands(commands, _) = crate::document::library_request(&plain, &document, &[], Path::new("unused"), &|_, _, _, _, _| Err("not a pack".into())).unwrap() else { panic!() };
+        assert_eq!(commands.len(), 2);
+    }
+
+    /// A material with no colour of its own is refused in words that name
+    /// it and say why, and nothing is changed.
+    #[test]
+    fn a_material_with_no_colour_is_refused_plainly() {
+        let mut document = tequila_scene::demo::demo_document(tequila_scene::demo::DemoMaterial::Plastic, 0.2);
+        let mut bus = tequila_scene::CommandBus::new();
+        let film = json::parse(br#"{"name": "Soap Film", "type": "thin_film"}"#).unwrap();
+        let create = MaterialRequest { action: "create".into(), recipe: Some(film), ..Default::default() };
+        let LibraryOutcome::Commands(commands, answer) = material_request(&create, &document, &[], Path::new("unused")).unwrap() else { panic!() };
+        for command in commands {
+            bus.apply(&mut document, command).unwrap();
+        }
+        let key = answer.get("material").and_then(Value::as_index).unwrap() as u64;
+        let tint = MaterialRequest { action: "tint".into(), material: Some(key), color: Some(colour("#1f4d2b")), ..Default::default() };
+        let refused = material_request(&tint, &document, &[], Path::new("unused")).err().expect("a thin film has no colour");
+        assert!(refused.starts_with("`Soap Film` has no colour to change"), "{refused}");
+
+        let nobody = MaterialRequest { material: Some(9999), ..tint.clone() };
+        assert!(material_request(&nobody, &document, &[], Path::new("unused")).err().unwrap().contains("there is no material 9999"));
+        let no_colour = MaterialRequest { color: None, ..tint };
+        assert!(material_request(&no_colour, &document, &[], Path::new("unused")).err().unwrap().contains("needs `color`"));
+    }
+
+    /// Before and after, on the ball, for a person to look at:
+    /// `TEQUILA_TINT_SWATCHES=<folder> cargo test -p tequila-scripting
+    /// render_tint_swatches -- --ignored`. Each line of `swatches.txt` in
+    /// the folder is `preset name | #colour | ball radius in metres`.
+    #[test]
+    #[ignore = "renders tinted presets for a person to look at"]
+    fn render_tint_swatches() {
+        let folder = PathBuf::from(std::env::var("TEQUILA_TINT_SWATCHES").expect("TEQUILA_TINT_SWATCHES names a folder"));
+        let list = std::fs::read_to_string(folder.join("swatches.txt")).expect("swatches.txt lists what to render");
+        let (entries, _) = library::read_libraries(&library::standard_directory(), &folder.join("no-library"));
+        let document = SceneDocument::new();
+        for (index, line) in list.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            let fields: Vec<&str> = line.split('|').map(str::trim).collect();
+            let entry = entries.iter().find(|e| e.name.eq_ignore_ascii_case(fields[0])).unwrap_or_else(|| panic!("no preset `{}`", fields[0]));
+            let radius = fields.get(2).and_then(|r| r.parse::<f32>().ok());
+            let render = |entry: &LibraryEntry, file: String| {
+                let request = MaterialRequest {
+                    action: "preview".into(),
+                    recipe: Some(json::parse(library::write_entry(entry).as_bytes()).unwrap()),
+                    size: Some(360),
+                    radius,
+                    path: Some(folder.join(file).display().to_string()),
+                    ..Default::default()
+                };
+                material_request(&request, &document, &[], &folder).unwrap_or_else(|e| panic!("{}: {e}", entry.name));
+            };
+            render(entry, format!("{index:02}-before.png"));
+            match entry.tinted(colour(fields[1])) {
+                Ok((tinted, done)) => {
+                    render(&tinted, format!("{index:02}-after.png"));
+                    println!("{index:02} | {} | {} | {:?}", entry.name, fields[1], done.changed);
+                }
+                Err(why) => println!("{index:02} | {} | refused: it {why}", entry.name),
+            }
         }
     }
 

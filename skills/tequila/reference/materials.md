@@ -19,7 +19,26 @@ Several hundred presets, in these categories. `tequila_library {"search": "walnu
 | FDM 3D Print (11) | FDM PLA White, Black, Grey, Red, Blue, Yellow; FDM PLA Translucent Natural, Red, Orange, Green, Blue. Real 0.2 mm layer lines, seam and top raster, built along the part's own Z (STL, STEP); for a part drawn Y up (glTF, OBJ) set the FDM Layer Lines node's Build Along Z to 0 |
 | Others | Gem: Diamond, Ruby, Sapphire Blue. Liquid: Water, Coffee Black, Red Wine, Milk Whole. Ceramic: Porcelain, Ceramic Glazed White, Ceramic Matte. Translucent: Wax Candle, Jade, Soap White, Outsole Rubber Gum. Leather: Leather Black, Leather Tan, Leather Cognac, Fine Suede Sand, Roughout Suede Tobacco, Roughout Suede Cream (hairy suede, for boots and sneakers). Light: LED Warm White, LED Cool White, Screen Glow. Other: Cork, Paper Matte |
 
-Apply with `{"op": "library", "action": "apply", "name": "<exact name>", "nodes": [ids]}` through `tequila_request`. Pick by what the part is made of in the real product, then adjust colour or roughness if asked. A preset is far more realistic than a material built from scratch: its grain, brushing, weave or flakes are procedural and sized for real objects.
+Apply with `tequila_library_apply {"name": "<exact name>", "nodes": [ids]}` (the request is `{"op": "library", "action": "apply", ...}`). Pick by what the part is made of in the real product, then adjust colour or roughness if asked. For another colour add `"color": "#1f4d2b"` as you apply it, or use `tequila_material_tint {"material": <id>, "color": "#1f4d2b"}` afterwards: the preset's pattern and finish stay and its colours move together, wherever they are kept (see "Another colour" below). A preset is far more realistic than a material built from scratch: its grain, brushing, weave or flakes are procedural and sized for real objects.
+
+## Another colour
+
+`tequila_material_tint {"material": <id>, "color": "<hex>"}` makes a material the same material in another colour. Use it for every "same but in ..." request on a library preset, because where a preset keeps its colour varies and `base_color` is often not it:
+
+| The preset | Where its colour is | What a tint does |
+|---|---|---|
+| Plain plastics, paints, glass, gems, LEDs | one value (`base_color`, `transmission_color` for clear ones, `emission_color` for glowing ones) | sets it |
+| Leathers, anodised and brushed metals, carpets | one colour inside a node, multiplied by the grain | changes it there |
+| Denim, canvas, nylon, tweed, carbon weaves | the two or three colours the threads are mixed from | moves each, pale and dark kept apart |
+| Woods, stones, cork, concrete, ceramics | the stops of a colour ramp, sometimes several | moves every stop, the figure kept |
+| Suede, velvet, corduroy | the colour and a paler sheen (`fuzz_color`) | both, the sheen still paler |
+| Marble, jade, wax, gummy | the colour and what glows under the surface (`subsurface_color`) | both |
+| Tinted glass, acrylic, gems, drinks | `transmission_color`, the colour one `transmission_depth` lets through - paler than the part looks | the new colour thinned to be as clear as the old, so a pale blue acrylic becomes a pale amber one, not a near-black one; a colourless glass takes the colour as given |
+| Measured metals: chrome, copper, gold | the metal itself, tinted by `base_color` | tints the metal; it cannot come out brighter than the metal reflects, and the answer says when it could not |
+
+What it leaves alone, on purpose: a colour that is not of the main colour's family - white threads in a blue Oxford cloth, the black carbon beside yellow aramid, rust on grey steel - and everything that is not a colour. Beside a grey or black main colour the family is the greys, so a black leather made green is green all through.
+
+It answers `{"color": "#8c2f2a", "was": "#4c6390", "changed": [{"parameter": "base_color", "colors": 3, "in": "pattern"}, ...], "notes": [...]}` with a picture. It refuses a material with no colour to change (a thin film; a colour that comes from a picture) and says which: tell the user rather than trying `base_color`.
 
 ## Types, by what they are for
 

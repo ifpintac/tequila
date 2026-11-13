@@ -25,7 +25,8 @@ If a tool says Tequila does not seem to be open, ask the user to open it. If the
 | A real material on parts (aluminium, walnut, leather, ABS...) | the library, first: `tequila_library` to search it, `tequila_library_apply` to put a preset on parts | `reference/materials.md` |
 | A simple shape: a pedestal, a backdrop, a floor plane | `tequila_add_shape` | `reference/scene.md` |
 | A material of their own: terrazzo, camo, worn paint, galaxy resin | recipes: `tequila_material_preview` → `create` → `update` | `reference/recipes.md` |
-| A colour, finish or roughness changed | `material.set_parameter` (colours as hex) | `reference/materials.md` |
+| The same material in another colour ("this leather, but dark green") | `tequila_material_tint`, or `color` on `tequila_library_apply` - not `base_color` | `reference/materials.md` |
+| A finish or roughness changed, or a plain material's colour | `material.set_parameter` (colours as hex) | `reference/materials.md` |
 | A shot: studio, black, white e-commerce, cut-out, HDRI, jewellery | lighting, environment, floor, camera, image style | `reference/shots.md` |
 | Parts renamed, grouped, hidden, moved, split; units; lights; cutaways; measurements | `scene.*` commands | `reference/scene.md` |
 | Colourways, variants, studios, a configurator, renders of every option | multi-materials, studios, configurator, `tequila_queue` | `reference/scene.md` |
@@ -56,7 +57,16 @@ tequila_library_apply {"name": "Aluminium Brushed", "nodes": [12, 14]}
 
 `tequila_library` with nothing lists the categories; `category` narrows to one; every word of `search` has to be in the preset's name, category, type, tags or description, so try fewer words if nothing comes back. Applying is one undo step. The listed parts share one material made from the preset; add `"unlink": true` to give them a separate copy.
 
-**Close but not right?** Put the preset on, then change it: its colour, roughness or a pattern's scale (`tequila_material` reads one material whole, to see where its colour comes from - in some presets it is inside a pattern, not `base_color`). That is nearly always better than starting from nothing.
+**Right material, wrong colour?** Tint it. More than half of the library keeps its colour inside a pattern - a leather's brown multiplies its grain, a denim's blue is three thread colours, a wood's is a ramp - where setting `base_color` changes nothing you can see. One call recolours a material wherever its colour is kept, and keeps its pattern, grain and finish:
+
+```json
+tequila_material_tint {"material": 7, "color": "#1f4d2b"}
+tequila_library_apply {"name": "Leather Tan", "nodes": [12], "color": "#1f4d2b"}
+```
+
+The first changes a material already in the scene (every part wearing it: `material.unlink` a part first to change it alone); the second puts a preset on already in that colour, as a material of its own named `Leather Tan #1f4d2b`. The colour you give becomes the material's main colour. Its other colours keep their relation to it - creases stay darker, pale threads paler, a suede's sheen follows - and colours of another family are left alone: white threads stay white, rust on steel stays rust. The answer says what it changed (`changed`, with how many colours and whether they were in a pattern) and what it was (`was`); read its `notes`. A material with no colour of its own - a thin film, or one coloured by a picture - is refused with the reason: say so to the user and do not work around it. One undo step, and it returns a picture.
+
+**Close but not right in another way?** Put the preset on, then change it: its roughness or a pattern's scale (`tequila_material` reads one material whole). That is nearly always better than starting from nothing.
 
 **Nothing in the library is close?** Only then make one from a recipe - a type, a few parameters and procedural patterns, layered with masks - with the `tequila_material_*` tools. Read `tequila_material_guide` once (it has 16 tested examples to start from), preview on a ball, create it on the parts, look at it on the product, update. `reference/recipes.md` is the short version.
 
@@ -65,7 +75,7 @@ tequila_library_apply {"name": "Aluminium Brushed", "nodes": [12, 14]}
 **Editing a material** (after `tequila_materials` for its id):
 
 - `{"command": "material.set_type", "material": 3, "type": "metal"}` - plastic, metal, glass_solid, paint, velvet… (`reference/materials.md`)
-- `{"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#c0392b"}`
+- `{"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#c0392b"}` - a plain material's colour. For a library preset use `tequila_material_tint`: its colour may not be in `base_color`.
 - `{"command": "material.set_parameter", "material": 3, "parameter": "specular_roughness", "value": 0.25}`
 - `{"command": "material.assign", "nodes": [12], "material": 3}` - put an existing material on parts.
 

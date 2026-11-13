@@ -80,15 +80,16 @@ fn examples(block: &str) -> Vec<(Option<String>, Value)> {
 
 fn check(file: &Path, tool: Option<&str>, value: &Value) -> Result<&'static str, String> {
     // A library tool's arguments are the request it sends, less its
-    // operation and action.
-    let as_library = |action: &str| {
+    // operation and action; and a tint's likewise.
+    let as_request = |op: &str, action: &str| {
         let mut request = value.clone();
         if let Value::Object(fields) = &mut request {
-            fields.insert("op".into(), Value::String("library".into()));
+            fields.insert("op".into(), Value::String(op.into()));
             fields.insert("action".into(), Value::String(action.into()));
         }
         request
     };
+    let as_library = |action: &str| as_request("library", action);
     let sent;
     let value = match (tool, value.get("request")) {
         (Some("tequila_request"), Some(request)) => request,
@@ -98,6 +99,10 @@ fn check(file: &Path, tool: Option<&str>, value: &Value) -> Result<&'static str,
         }
         (Some("tequila_library_apply"), _) => {
             sent = as_library("apply");
+            &sent
+        }
+        (Some("tequila_material_tint"), _) => {
+            sent = as_request("material", "tint");
             &sent
         }
         _ => value,

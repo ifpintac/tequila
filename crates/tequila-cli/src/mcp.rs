@@ -47,7 +47,9 @@ are exact, fast and undoable. Start with tequila_scene, then tequila_nodes to fi
 For any material, look in the library first: tequila_library searches several hundred finished presets (leather, \
 fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. Make a material yourself only \
 when the library has nothing close - tequila_material_guide, tequila_material_preview, then tequila_material_create \
-and tequila_material_update - or change a preset once it is on a part. Materials may be shared between parts: unlink \
+and tequila_material_update - or change a preset once it is on a part. For the same material in another colour \
+(\"this leather, but dark green\") use tequila_material_tint, or color on tequila_library_apply: many presets keep \
+their colour inside a pattern, where setting base_color changes nothing. Materials may be shared between parts: unlink \
 a part (material.unlink) before changing it alone. Before sending a command you have not used, ask tequila_command \
 for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example \
 is not read. Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. A \
@@ -284,7 +286,7 @@ impl Bridge {
             "tequila_library_apply" => {
                 let name = get("name").ok_or("tequila_library_apply needs `name`")?;
                 let mut fields = vec![("action", Value::from("apply")), ("name", name)];
-                for key in ["nodes", "unlink"] {
+                for key in ["nodes", "unlink", "color"] {
                     if let Some(value) = get(key) {
                         fields.push((key, value));
                     }
@@ -337,6 +339,12 @@ impl Bridge {
                 }
                 let picture = get("preview").and_then(|v| v.as_bool()).unwrap_or(true);
                 self.material_with_picture(fields, picture)
+            }
+            "tequila_material_tint" => {
+                let material = get("material").ok_or("tequila_material_tint needs `material`")?;
+                let color = get("color").ok_or("tequila_material_tint needs `color`, a hex sRGB string like \"#1f4d2b\"")?;
+                let picture = get("preview").and_then(|v| v.as_bool()).unwrap_or(true);
+                self.material_with_picture(vec![("action", Value::from("tint")), ("material", material), ("color", color)], picture)
             }
             "tequila_material_recipe" => {
                 let material = get("material").ok_or("tequila_material_recipe needs `material`")?;
@@ -771,7 +779,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 42);
+        assert_eq!(tools.len(), 43);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -779,7 +787,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 31);
+        assert_eq!(restricted.len(), 32);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }
@@ -810,7 +818,7 @@ mod tests {
         let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
         bridge.assistant = Some("mark".into());
         let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
-        assert_eq!(names.len(), 42);
+        assert_eq!(names.len(), 43);
         for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
             assert!(names.iter().any(|n| n == kept), "{kept}");
         }
@@ -881,6 +889,23 @@ mod tests {
         let tools = Bridge::new(None, false).tools();
         let frame = tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some("tequila_frame")).and_then(|t| t.get("description")).and_then(Value::as_str).unwrap_or_default();
         assert!(frame.contains("not after a material edit"), "{frame}");
+    }
+
+    /// The same material in another colour is one tool, and the bridge
+    /// says to reach for it rather than for base_color.
+    #[test]
+    fn a_tint_is_one_tool() {
+        assert!(INSTRUCTIONS.contains("tequila_material_tint"));
+        let tools = Bridge::new(None, false).tools();
+        let tool = |name: &str| tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(name)).cloned().unwrap_or(Value::Null);
+        let tint = tool("tequila_material_tint");
+        let required: Vec<&str> = tint.get("inputSchema").and_then(|s| s.get("required")).map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str).collect();
+        assert_eq!(required, ["material", "color"]);
+        let apply = tool("tequila_library_apply");
+        assert!(apply.get("inputSchema").and_then(|s| s.get("properties")).and_then(|p| p.get("color")).is_some());
+        assert!(apply.get("description").and_then(Value::as_str).unwrap_or_default().contains("tequila_material_tint"));
+        // It changes only the open scene, so a restricted bridge offers it.
+        assert!(Bridge::new(None, true).tools().iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_tint")));
     }
 
     #[test]
