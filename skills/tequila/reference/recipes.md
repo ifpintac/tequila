@@ -2,6 +2,8 @@
 
 When nothing in the library fits - terrazzo in the brand's colours, a galaxy resin, worn paint, a camouflage, speckled plastic - make the material from a **recipe**: a short JSON object of a type, the parameters it changes, and patterns. Tequila builds the node graph from it. `tequila_material_guide` is the full description (every pattern, its settings and defaults, the types, and 16 tested examples); read it once per conversation before writing recipes. This page is the working summary.
 
+For a library preset in another colour you do not need a recipe at all: `tequila_material_tint` (see `materials.md`) recolours it in one step and keeps its pattern.
+
 ## The loop
 
 1. **Start from an example** in the guide, or read a library preset already on a part with `tequila_material_recipe {"material": <id>}`, and change it.

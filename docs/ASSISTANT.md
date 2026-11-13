@@ -901,7 +901,8 @@ Not changed here, and worth doing:
   Seen in that session, cause not found.
 - **Tinting a library preset whose colour is set inside a pattern** still
   means reading the material and rewriting that pattern. A plain "make
-  this preset this colour" would save it.
+  this preset this colour" would save it. (Built since: "one step to
+  recolour a material", below.)
 - **The viewport keeping a stale mesh under a reused key** is worked
   around for scripts, not fixed where it happens.
 - An assistant still cannot read the library's files directly, which is as
@@ -918,3 +919,106 @@ Held by test: `the_library_is_searched_in_a_size_an_ai_reads`,
 `a_screenshot_waits_for_the_picture_to_finish`, and in the bridge
 `the_library_comes_first` and
 `a_screenshot_says_whether_its_picture_had_finished`.
+
+## As built, November 13: one step to recolour a material
+
+In the same first session the assistant put a library leather on a part
+and then held back from making it dark green. It was right to: that
+leather's brown is not in `base_color` but inside the node that multiplies
+its grain, so setting `base_color` would have changed nothing, and the
+only other way was to read the whole material and rewrite its pattern.
+More than half of the library is like that: of 599 shipped presets, 316
+keep their colour in a pattern (a multiplied colour, the colours threads
+are mixed from, the stops of a ramp), and 283 in a plain value.
+
+What changed:
+
+- **`tequila_material_tint`** takes a material's id and a hex colour and
+  makes it the same material in that colour, wherever the colour is kept.
+  The colour asked for becomes the material's main colour; the other
+  colours of the same family keep their relation to it, so a pattern keeps
+  its contrast; colours of another family (white threads in a blue cloth,
+  rust on a grey steel) are left exactly as they are. Pattern, grain,
+  roughness and bump are not touched. It is one command on the bus, so
+  one undo step. The rule is written out in `docs/SCRIPTING.md` under
+  "Tinting a material", and is `tequila_materials::tint`.
+- **Its answer says what it did**: the colour it was and is, each
+  parameter changed with how many colours and whether they were in a
+  pattern or a plain value, how many colours it left alone, and in words
+  anything worth knowing - that other parts share the material and changed
+  too, or that a metal could not be as bright as the colour asked for. It
+  comes back with a picture of the material on the ball, as
+  `tequila_material_update` does.
+- **A material with no colour to change is refused in a sentence** that
+  names it and says why: a thin film, whose colours come from its
+  thickness, or a colour that is a picture's. Nothing is changed.
+- **`tequila_library_apply` takes `color`**, to put a preset on already
+  tinted: a material of its own named for the colour
+  (`Leather Tan #1f4d2b`). It also answers with the material's id now, so
+  the next step need not look it up.
+- The instructions every assistant is given, both tools' descriptions,
+  Tequila's own loop for API keys and local models, and the Tequila skill
+  all say to use the tint and not `base_color` for "the same material in
+  another colour". The request on the scripting channel is `material` with
+  the action `tint`; in Python `material.tint('#1f4d2b')` and
+  `fs.library.apply(name, part, color='#1f4d2b')`.
+
+Three things the survey of the library decided:
+
+- **Which colour is "the" colour of a weave.** The value a preset names is
+  often a blend of its threads, nearer the white thread of an Oxford cloth
+  than the blue one. So under a pattern the main colour is the pattern's
+  own colour nearest that value among those at least as vivid: the blue
+  thread, which comes out exactly the colour asked for.
+- **A colour that is only a grey level.** Two presets (Cast Iron, Steel
+  Galvanised) wire a pattern of numbers straight into the colour, with no
+  colour anywhere. A tint puts one between them, so that what is seen is
+  unchanged until it is tinted and every later tint finds it.
+- **A clear material's colour is not the colour it looks.** It is what one
+  transmission depth lets through, a pale blue for an acrylic that looks
+  deep blue on a part five times as thick. Given the amber asked for as it
+  stood, that acrylic rendered nearly black. So a clear material that has a
+  colour keeps its clarity - the new colour thinned as a dye is, to take as
+  much out of the light as the old one did - and only a colourless one
+  takes the colour as given. The answer says when this was done and what
+  the colour came to.
+
+**Tried on this Mac (M3 Max):** every one of the 599 shipped presets tinted
+dark green in a test, each held to come out that colour (a metal as near as
+the metal allows), to compile, to read back from its own file, and to stay
+put when tinted the same colour again. Twenty presets rendered on the
+library's ball before and after, and looked at: leathers, suede, denim,
+Oxford cloth, felt, walnut, marble, terrazzo, a carbon and aramid weave,
+rusted steel, plastic, anodised aluminium, chrome, a metallic paint, tinted
+acrylic, clear glass, an amethyst, a gummy sweet, a neon tube and a backlit
+button.
+
+Not tried: an assistant using the tool in a real session. The tool's
+description is the only thing that tells it to, and whether it reaches for
+it unprompted is for the next session to show.
+
+Not changed here:
+
+- **A tint is not offered in the Material tab.** The rule is in a crate
+  the window can call (`tequila_materials::tint::tint`); a "Tint..." beside
+  a patterned material's colour would be the same step by hand.
+- **A material keeps its name when it is tinted**, as it does when its
+  colour is changed by hand, so a `Leather Tan` made green is still called
+  that. Applied already tinted, it is named for the colour.
+- **The pattern's light and dark keep how light they look, not how much
+  light they reflect**, so a deep blue made a red of the same lightness
+  reflects more. That is the point of working in Oklab, and is what a
+  person means by the same contrast.
+
+Held by test: in `tequila-materials`, the `tint::tests` (a plain value, a
+colour times a pattern, a ramp's contrast, grey beside a colour, a colour
+on a grey, a black pattern, a sheen, glass and glow, a tinted clear
+material, a metal, a grey-level pattern, the refusals, a second tint); in `tequila-format`,
+`every_shipped_preset_tints_or_says_why_not`; on the channel,
+`a_plain_preset_is_tinted_in_its_value`,
+`a_patterned_leather_is_tinted_in_its_pattern`,
+`a_cloth_keeps_its_weave_in_the_new_colour`,
+`a_preset_is_applied_already_tinted`,
+`a_material_with_no_colour_is_refused_plainly` and
+`a_tint_carries_a_material_and_a_colour`; and `a_tint_is_one_tool` in each
+bridge.

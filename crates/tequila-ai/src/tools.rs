@@ -34,8 +34,8 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"what":{"type":"string","enum":["selection","camera","commands","ui","jobs","history"]}},"required":["what"]}},
  {"name":"tequila_library","description":"Search the material library: several hundred finished presets. LOOK HERE FIRST for any material, before making one. With no arguments it lists the categories. search takes words that must all match the name, category, type, tags or description (\"black leather\", \"brushed aluminium\"); category narrows to one. Answers with name, category, type and a line about each: the name is what tequila_library_apply takes.",
   "schema":{"type":"object","properties":{"search":{"type":"string"},"category":{"type":"string"},"limit":{"type":"integer"}}}},
- {"name":"tequila_library_apply","description":"Put a preset from the material library on parts, by its exact name from tequila_library. unlink=true gives the parts a copy of their own. Undoable.",
-  "schema":{"type":"object","properties":{"name":{"type":"string"},"nodes":{"type":"array","items":{"type":"integer"}},"unlink":{"type":"boolean"}},"required":["name","nodes"]}},
+ {"name":"tequila_library_apply","description":"Put a preset from the material library on parts, by its exact name from tequila_library. Answers with the material's id. color (hex sRGB, \"#1f4d2b\") applies it in another colour, pattern and finish kept, as a material of its own named for the colour. unlink=true gives the parts a copy of their own. To change a preset's colour once it is on a part use tequila_material_tint, not base_color: many presets keep their colour inside a pattern. Undoable.",
+  "schema":{"type":"object","properties":{"name":{"type":"string"},"nodes":{"type":"array","items":{"type":"integer"}},"color":{"type":"string"},"unlink":{"type":"boolean"}},"required":["name","nodes"]}},
  {"name":"tequila_command","description":"How to write one command for tequila_apply: its exact fields and a working example. With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields: a field that is not in the example is not read.",
   "schema":{"type":"object","properties":{"command":{"type":"string"}}}},
  {"name":"tequila_add_shape","description":"Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall, beside what is in the scene and on the floor. Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). Undoable. Answers with the new part's id.",
@@ -236,11 +236,19 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         }
         "tequila_library_apply" => {
             arguments.get("name").and_then(|v| v.as_str()).ok_or("say which preset: its name, from tequila_library")?;
-            raw(with("library", [("action".to_string(), text("apply"))].into_iter().chain(pick(arguments, &["name", "nodes", "unlink"])).collect()))
+            raw(with("library", [("action".to_string(), text("apply"))].into_iter().chain(pick(arguments, &["name", "nodes", "unlink", "color"])).collect()))
         }
         "tequila_material_guide" => raw(with("material", vec![("action".into(), text("guide"))])),
         "tequila_material_recipe" => raw(with("material", [("action".to_string(), text("recipe"))].into_iter().chain(pick(arguments, &["material"])).collect())),
         "tequila_material_save" => raw(with("material", [("action".to_string(), text("save"))].into_iter().chain(pick(arguments, &["material", "name", "category", "tags"])).collect())),
+        "tequila_material_tint" => {
+            arguments.get("material").and_then(|v| v.as_f64()).ok_or("say which material: its id, as material")?;
+            arguments.get("color").and_then(|v| v.as_str()).ok_or("say which colour: a hex sRGB string like \"#1f4d2b\", as color")?;
+            Ok(Plan::Material {
+                json: with("material", [("action".to_string(), text("tint"))].into_iter().chain(pick(arguments, &["material", "color"])).collect()),
+                picture: arguments.get("preview").and_then(|v| v.as_bool()).unwrap_or(true),
+            })
+        }
         "tequila_material_preview" => Ok(Plan::Material {
             json: with("material", [("action".to_string(), text("preview"))].into_iter().chain(pick(arguments, &["recipe", "material", "radius", "shape"])).collect()),
             picture: true,
@@ -401,6 +409,7 @@ The person asks in plain language for scenes, materials, textures, lighting and 
 How to work:
 - Look before you change: tequila_scene, then tequila_nodes (filter by a word) to find parts by name, material or size. Never guess ids.
 - For any material, look in the library first: tequila_library searches several hundred finished presets, and tequila_library_apply puts one on parts. Make one yourself only when nothing there is close, or change a preset once it is on a part.
+- For the same material in another colour (\"this leather, but dark green\"), use tequila_material_tint on the material, or color on tequila_library_apply. Do not set base_color for this: many presets keep their colour inside a pattern, where base_color changes nothing. The tint keeps the pattern and finish, and its answer says what it changed.
 - Before sending a command you have not used, ask tequila_command for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example is not read. Change the ids, keys and values (the ones in the example are placeholders).
 - Call tequila_api once before editing a material's parameters, and use its exact parameter keys and material type ids.
 - A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape.
@@ -450,6 +459,7 @@ mod tests {
                 "tequila_material_create" => args(r#"{"recipe":{"type":"plastic"}}"#),
                 "tequila_material_update" => args(r#"{"material":2,"recipe":{"type":"plastic"}}"#),
                 "tequila_material_recipe" | "tequila_material_save" => args(r#"{"material":2}"#),
+                "tequila_material_tint" => args(r##"{"material":2,"color":"#1f4d2b"}"##),
                 "tequila_plugin_write" => args(r#"{"id":"my.x","files":{"main.py":""}}"#),
                 "tequila_plugin_enable" | "tequila_plugin_log" => args(r#"{"id":"my.x"}"#),
                 "tequila_plugin_run" => args(r#"{"id":"my.x","command":"go"}"#),
@@ -527,6 +537,21 @@ mod tests {
         assert!(set.get("set").is_some());
         let preset = request("tequila_library_apply", r#"{"name":"Brushed Aluminium","nodes":[4],"unlink":true}"#);
         assert_eq!((preset.get("op").and_then(Value::as_str), preset.get("action").and_then(Value::as_str)), (Some("library"), Some("apply")));
+        // In another colour: as the preset goes on, or on the material
+        // afterwards - a request of its own, not base_color.
+        let tinted = request("tequila_library_apply", r##"{"name":"Leather Tan","nodes":[4],"color":"#1f4d2b"}"##);
+        assert_eq!(tinted.get("color").and_then(Value::as_str), Some("#1f4d2b"));
+        let Plan::Material { json: tint, picture } = plan("tequila_material_tint", &args(r##"{"material":7,"color":"#1f4d2b","path":"/elsewhere"}"##)).unwrap() else {
+            panic!("a tint is a material request");
+        };
+        let tint = args(&tint);
+        assert_eq!(
+            (tint.get("op").and_then(Value::as_str), tint.get("action").and_then(Value::as_str), tint.get("material").and_then(Value::as_f64), tint.get("color").and_then(Value::as_str)),
+            (Some("material"), Some("tint"), Some(7.0), Some("#1f4d2b"))
+        );
+        assert!(picture && tint.get("path").is_none());
+        assert!(plan("tequila_material_tint", &args(r#"{"material":7}"#)).is_err(), "no colour, no tint");
+        assert!(SYSTEM.contains("tequila_material_tint"));
         // The library is searched, not handed over whole; a command is
         // looked up by its name; a shape is added by its own request.
         let search = request("tequila_library", r#"{"search":"black leather","limit":5,"path":"/elsewhere"}"#);

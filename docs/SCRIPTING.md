@@ -209,6 +209,7 @@ is available from the console, the wire protocol and the Python client.
 | `jobs` / `stop` | `{"op":"query","what":"jobs"}` / `{"op":"stop"}` | Shows queue progress and output files, or stops the current job. A stopped job still saves its image. |
 | `changes` | `{"op":"query","what":"history"}` | Shows what undo and redo would do, and whether there is unsaved work. |
 | | `{"op":"material","action":"guide"}` | Materials of your own from a short JSON recipe: `guide` (the format, every pattern, tested examples), `preview` (a picture of a recipe on a ball, the scene untouched), `create`, `update`, `recipe` (any material back as one) and `save`. Python: `fs.recipes`. See `docs/materials-authoring.md`. |
+| | `{"op":"material","action":"tint","material":4,"color":"#1f4d2b"}` | The same material in another colour, wherever its colour is kept. One undo step. See [Tinting a material](#tinting-a-material). Python: `fs.materials['Seat'].tint('#1f4d2b')`. |
 | | `{"op":"plugin","action":"write","plugin":"my.x","files":{...}}` | Plugins made and driven by a script or an AI app (`plugin` names it): `guide`, `list`, `write` (files into the person's plugins folder; a running one restarts), `enable` (asks the person, who confirms in the Plugins window), `run` (a command, with panel `values`), `log` (`lines`, and `total` for how many it has logged) and `restart`. Window only. See `docs/plugins.md`. |
 | | `{"op":"open","path":"C:/work/kettle.tequila","discard":true}` / `{"op":"new"}` | Opens a project in place of this one (and lists it under File > Open recent), or starts a new one - the starter scene in the window, an empty one headless. Like `quit`, refused over unsaved work unless `save` or `discard` says what to do with it. Python: `fs.open_project(path)`, `fs.new_project()`. |
 | `quit save` / `quit discard` | `{"op":"quit","save":true}` | Closes Tequila cleanly. It refuses while there is unsaved work unless you say which option to take. |
@@ -290,6 +291,106 @@ library is reachable from scripts too: `docs/materials-authoring.md`.
 
 ## Connecting an AI app (MCP)
 
+### Tinting a material
+
+"This leather, but dark green" is one request:
+
+```json
+{"op": "material", "action": "tint", "material": 4, "color": "#1f4d2b"}
+```
+
+It is there because a material's colour is often not in `base_color`. Of
+the 599 presets the library ships, 316 keep theirs inside a pattern: a
+leather's brown is in a node that multiplies its grain, a denim's blue is
+the three colours its threads are mixed from, a wood's is the stops of a
+ramp. On those, `material.set_parameter` with `base_color` changes a value
+nothing reads. `tint` finds every colour the material is seen by and moves
+them together, and leaves everything else - the pattern, the grain, the
+roughness, the bump - as it was.
+
+The rule:
+
+- **The colour asked for becomes the material's main colour.** That is what
+  it glows with if it glows (`emission_color`), what it lets through if it
+  is clear (`transmission_color`), and its `base_color` otherwise. Under a
+  pattern it is the pattern's own colour nearest the value the material
+  names - the blue thread of an Oxford cloth, not the white one.
+- **The rest of the family keeps its relation to it**: as much lighter or
+  darker, as much more or less saturated, as far round the colour wheel.
+  A leather's creases stay darker, a denim's pale threads paler, a suede's
+  sheen (`fuzz_color`) and a wax's inner glow (`subsurface_color`) follow.
+  A pattern keeps its contrast and is not flattened to one colour.
+- **A colour of another family is left exactly as it is.** Beside a
+  coloured main colour the family is what shares its hue, so white threads
+  stay white and the black carbon in a carbon-and-aramid weave stays black.
+  Beside a grey one the family is the greys, so a black leather made green
+  is green in its creases too, and the rust on a grey steel stays rust.
+- **A metal is matched as it is seen**: its measured metal times its base
+  colour. A metal reflects no more than the metal under the tint does, so a
+  colour brighter than that comes out as near as it gets, and the answer
+  says so.
+- **A clear material stays as clear as it was.** Its colour is what one
+  `transmission_depth` of it lets through, and a part several times that
+  thick is far darker. So one that already has a colour has the new colour
+  thinned, as a dye is, until it takes as much out of the light as the old
+  one did: a pale blue acrylic asked for in amber is a pale amber acrylic,
+  and the answer gives the colour it came to. A clear glass, with no depth
+  of colour to keep, takes the colour as given.
+- **A colour that is only a grey level** - a pattern of numbers wired
+  straight into the colour, as a cast iron's mottle is - is given a colour
+  node to hold the tint, and looks the same until it is tinted.
+
+`color` is a hex sRGB string, converted as every colour picker converts
+it, or three numbers already in the rendering space.
+
+The answer says what was changed:
+
+```json
+{"material": 4, "name": "Denim Indigo", "parts": 1,
+ "color": "#8c2f2a", "was": "#4c6390",
+ "changed": [{"parameter": "base_color", "colors": 3, "in": "pattern"},
+             {"parameter": "fuzz_color", "colors": 1, "in": "value"}]}
+```
+
+`color` is the main colour now and `was` what it was, as hex sRGB.
+`changed` lists each parameter with how many of its colours moved and
+whether they sit `in` the `pattern` driving it or in its own `value`;
+`kept` counts colours of another family that were left. `notes`, when
+there is anything to say, says it in words: that several parts share the
+material and all changed (`material.unlink` a part first to change it
+alone), that a metal could not be as bright as asked, that a clear material
+was kept as clear as it was, that part of the colour is a picture's and was
+left.
+
+A material with no colour of its own is refused, and nothing is changed:
+
+    `Soap Film` has no colour to change: a Thin Film material has no colour of its own
+    `Label` has no colour to change: its `base_color` comes from a picture (a texture map), which a tint does not repaint
+
+To put a preset on already tinted, give `library` `apply` a `color`:
+
+```json
+{"op": "library", "action": "apply", "name": "Leather Tan", "nodes": [12], "color": "#1f4d2b"}
+```
+
+The parts get a material of their own named for the colour
+(`Leather Tan #1f4d2b`), so it is told from the library's own tan beside
+it, and the same tint asked for twice is one material. The answer carries
+the same `color`, `was` and `changed`, and the `material` id.
+
+In Python:
+
+```python
+seat = fs.materials['Leather Tan']
+seat.tint('#1f4d2b')                                   # one undo step
+fs.library.apply('Denim Indigo', strap, color='#8c2f2a')
+```
+
+The arithmetic is `tequila_materials::tint`, done in Oklab so that equal
+steps look equal. `every_shipped_preset_tints_or_says_why_not` tints all
+599 shipped presets and holds each to come out the colour asked for, still
+compile, and stay put when tinted the same colour again.
+
 Tequila's command-line program is a Model Context Protocol server:
 `tequila-cli --mcp`. It lets an AI app use Tequila directly, and needs
 nothing else installed - no Python. MCP apps that launch local servers can
@@ -297,7 +398,9 @@ start it: the Claude app, Claude Code, Cursor, VS Code with GitHub Copilot,
 OpenAI's Codex, Gemini CLI, Windsurf, LM Studio and others. Its tools
 cover reading the scene, applying commands and batches, undo, camera, panels,
 background renders, screenshots, the material library (`tequila_library`
-searches it, `tequila_library_apply` puts a preset on parts), one command's
+searches it, `tequila_library_apply` puts a preset on parts, in another
+colour with `color`), a material in another colour wherever its colour is
+kept (`tequila_material_tint`), one command's
 fields and example (`tequila_command`), simple shapes (`tequila_add_shape`),
 procedural materials from recipes (`tequila_material_*`) and writing
 plugins (`tequila_plugin_*`).
@@ -430,7 +533,7 @@ Operations:
 | `screenshot` | `path`, optional `viewport` or `window`, optional `settle` (seconds, at most 60) | Deferred window PNG; one pending capture at a time. With `settle`, the capture waits that long at most for the viewport's picture to finish: in the Rendered view, until the picture shown is of that view, answers the newest request (so not the one from before the last change), and has gathered enough samples to look at (64, or 16 when the viewport denoises) or has mostly converged; a moment otherwise. When the time runs out it is taken as it is. `query ui` says how far the picture is: `picture_samples` and `picture_settled`. Python: `fs.screenshot('a.png', viewport=True, settle=12)`. |
 | `add_shape` | `shape`: `plane`, `cube`, `cylinder`, `sphere`, `disc`, `backdrop` or `wall`; optional `width`, `depth`, `height`, `radius` (metres) | A simple shape as a new part, as Add › Shape adds one: beside what is in the scene, on the floor, sized to it unless sizes are given (`width` is a cylinder's, sphere's and disc's diameter, and may be written `diameter`, or as half of it, `radius`; on a backdrop `radius` is its curve). One undo step. The reply is the new part's `node` and its `size`. The window only. Python: `fs.add_shape('cylinder', width=0.3, height=0.15)`. |
 | `help` | optional `command` | One command, for someone about to send it: its `fields`, an `example` exactly as `apply` takes it, and under `mind` or `parameters` what the example cannot say (a state's `value` is required; the environment's parameter names). Without `command`, every command's name. A wrong name is refused with the ones it might have meant. A page where `query commands` is the whole catalog. Python: `fs.help('scene.set_visibility')`. |
-| `library` | `action`: `search` (optional `search`, `category`, `limit`), `apply`, `save`, `import`, `export`, `delete` | The material library. `search` answers with the presets that have every word of `search` in their name, category, type, tags or description, those with them in their name first, 20 unless `limit` says: each as `name`, `category`, `type` and a line `about` it, with `found` and a `note` when there are more. With neither `search` nor `category`, the `categories` and how many presets each holds. It is the short way to find a preset: `query library` is every preset with its tags and files, a third of a million characters. The others are in `docs/materials-authoring.md`. Python: `fs.library.search('black leather')`. |
+| `library` | `action`: `search` (optional `search`, `category`, `limit`), `apply`, `save`, `import`, `export`, `delete` | The material library. `search` answers with the presets that have every word of `search` in their name, category, type, tags or description, those with them in their name first, 20 unless `limit` says: each as `name`, `category`, `type` and a line `about` it, with `found` and a `note` when there are more. With neither `search` nor `category`, the `categories` and how many presets each holds. It is the short way to find a preset: `query library` is every preset with its tags and files, a third of a million characters. The others are in `docs/materials-authoring.md`. Python: `fs.library.search('black leather')`. `apply` takes `name`, `nodes` (the selection without), `unlink` and `color`: with `color` the preset is put on in that colour, as under [Tinting a material](#tinting-a-material). It answers with the `material` the parts now have. |
 | `render` | `path`, `width`, `height`, `samples`, `wireframe` | Synchronous PNG render. `"wireframe": true` draws the model's edges instead, with the project's Wireframe settings (`render.set_settings` → `wireframe: {edges: mesh\|model, hidden: faint\|hidden\|shown, line_width, line_colour, background_top, background_bottom}`): no ray tracing, a second or two at any size. The console's `render out.png 1920x1080 wireframe` and Python's `render(path, wireframe=True)` say the same. |
 | `undo`, `redo` | none | Existing document history |
 

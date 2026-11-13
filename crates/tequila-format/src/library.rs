@@ -229,6 +229,20 @@ impl LibraryEntry {
         }
     }
 
+    /// The same preset in another colour (`tequila_materials::tint`): its
+    /// pattern, finish and everything else kept, and every colour it is seen
+    /// by moved together so that its main one is `colour`. Named for the
+    /// colour - `Leather Tan #1f4d2b` - so that it is told from the
+    /// library's own beside it in a scene, and so that the same tint asked
+    /// for twice is one material.
+    pub fn tinted(&self, colour: tequila_core::spectrum::Spectrum) -> Result<(LibraryEntry, tequila_materials::tint::Tint), tequila_materials::tint::Refused> {
+        let mut entry = self.clone();
+        let done = tequila_materials::tint::tint(&mut entry.graph, entry.material_type, colour)?;
+        entry.material = entry.graph.material().clone();
+        entry.name = format!("{} {}", self.name, crate::colour_hex(colour));
+        Ok((entry, done))
+    }
+
     /// Whether it is tagged as used for `use_`, one of [`USES`].
     pub fn is_for(&self, use_: &str) -> bool {
         self.tags.iter().any(|t| t.eq_ignore_ascii_case(use_))
@@ -2416,6 +2430,52 @@ mod tests {
             "presets set parameters their type does not show, which is usually a \
              typo rather than an intention:\n{surprises:#?}"
         );
+    }
+
+    /// Every preset the library ships can be asked for in another colour:
+    /// it comes out that colour, still compiles, and its file would still
+    /// read - or it is refused, and the only ones refused are those with no
+    /// colour of their own.
+    #[test]
+    fn every_shipped_preset_tints_or_says_why_not() {
+        let green = crate::hex_colour("#1f4d2b").unwrap();
+        let (entries, problems) = read_directory(&library_path());
+        assert!(problems.is_empty(), "{problems:?}");
+        let (mut refused, mut patterned, mut partly, mut moved_again) = (Vec::new(), 0, Vec::new(), Vec::new());
+        for entry in &entries {
+            match entry.tinted(green) {
+                Ok((tinted, done)) => {
+                    tinted.graph.compile().unwrap_or_else(|e| panic!("{}: {e:?}", entry.name));
+                    read_entry(&write_entry(&tinted), &tinted.name).unwrap_or_else(|e| panic!("{}: {e}", entry.name));
+                    assert_eq!(tinted.name, format!("{} #1f4d2b", entry.name));
+                    assert!(!done.changed.is_empty(), "{}: nothing changed", entry.name);
+                    // A metal may be unable to reach it, and a clear
+                    // material that had a colour is kept as clear;
+                    // everything else is the colour asked for.
+                    if !done.limited && !done.thinned {
+                        let (now, want) = (done.now, green);
+                        assert!((now.r - want.r).abs() < 2e-3 && (now.g - want.g).abs() < 2e-3 && (now.b - want.b).abs() < 2e-3, "{}: came out {now:?}", entry.name);
+                    }
+                    patterned += done.changed.iter().any(|c| c.pattern) as usize;
+                    if done.pictures || done.computed {
+                        partly.push(entry.name.clone());
+                    }
+                    // A second time changes nothing more.
+                    let (again, _) = tinted.tinted(green).unwrap();
+                    if again.graph.content_hash() != tinted.graph.content_hash() {
+                        moved_again.push(entry.name.clone());
+                    }
+                }
+                Err(why) => refused.push(format!("{}: {why}", entry.name)),
+            }
+        }
+        if std::env::var_os("TEQUILA_TINT_SURVEY").is_some() {
+            println!("{} presets, {patterned} with their colour in a pattern, {} partly left: {partly:?}\nrefused: {refused:#?}", entries.len(), partly.len());
+        }
+        assert!(patterned > 250, "{patterned} presets keep their colour in a pattern: the library's graphs are not being read");
+        assert!(refused.is_empty(), "presets the library ships that cannot be tinted:\n{refused:#?}");
+        assert!(partly.is_empty(), "presets with a colour a tint leaves behind:\n{partly:#?}");
+        assert!(moved_again.is_empty(), "presets a second tint of the same colour moved again:\n{moved_again:#?}");
     }
 
     /// A malformed preset is reported by name and does not take the library

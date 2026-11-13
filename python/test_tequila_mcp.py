@@ -185,6 +185,25 @@ class BridgeTests(unittest.TestCase):
         sent = self.app.received[-1]
         self.assertEqual((sent['op'], sent['shape'], sent['width'], sent['height']), ('add_shape', 'cylinder', 0.3, 0.15))
 
+    def test_a_tint_is_one_tool(self):
+        """The same material in another colour is one call, on a material
+        or as a preset is put on; the bridge says to use it rather than
+        base_color, and sends the colour as it was given."""
+        from tequila_mcp import INSTRUCTIONS
+        self.assertIn('tequila_material_tint', INSTRUCTIONS)
+        tools = {t['name']: t for t in TOOLS}
+        self.assertEqual(tools['tequila_material_tint']['inputSchema']['required'], ['material', 'color'])
+        self.assertIn('color', tools['tequila_library_apply']['inputSchema']['properties'])
+        self.assertIn('tequila_material_tint', tools['tequila_library_apply']['description'])
+        self.call('tequila_material_tint', {'material': 2, 'color': '#1f4d2b', 'preview': False})
+        sent = self.app.received[-1]
+        self.assertEqual((sent['op'], sent['action'], sent['material'], sent['color']), ('material', 'tint', 2, '#1f4d2b'))
+        self.call('tequila_library_apply', {'name': 'Leather Tan', 'nodes': [360], 'color': '#1f4d2b'})
+        sent = self.app.received[-1]
+        self.assertEqual((sent['action'], sent['name'], sent['color']), ('apply', 'Leather Tan', '#1f4d2b'))
+        self.call('tequila_library_apply', {'name': 'Leather Tan', 'nodes': [360]})
+        self.assertNotIn('color', self.app.received[-1])
+
     def test_look_passes_from_through(self):
         self.call('tequila_look', {'from': [0, 1, 3], 'at': [0, 0, 0]})
         sent = self.app.received[-1]

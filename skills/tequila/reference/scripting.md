@@ -14,8 +14,9 @@ Everything the tools do is a request on Tequila's scripting channel. For what no
 | `{"op": "frame", "all": true}`, `{"op": "look", ...}` | the view |
 | `{"op": "import", "path": ...}`, `{"op": "reimport", "node": 3, "tessellation": "high"}` | models |
 | `{"op": "texture_set", "path": ..., "nodes": [...]}` | a PBR texture pack onto parts |
-| `{"op": "library", "action": "apply" / "save" / "import" / "export" / "delete", ...}` | the material library (`materials.md`) |
+| `{"op": "library", "action": "search" / "apply" / "save" / "import" / "export" / "delete", ...}` | the material library (`materials.md`); `apply` with `"color": "#1f4d2b"` puts the preset on in that colour |
 | `{"op": "material", "action": "guide" / "preview" / "create" / "update" / "recipe" / "save", ...}` | materials from recipes (`recipes.md`) |
+| `{"op": "material", "action": "tint", "material": 4, "color": "#1f4d2b"}` | the same material in another colour, wherever its colour is kept (`materials.md`) |
 | `{"op": "plugin", "action": "guide" / "list" / "write" / "enable" / "run" / "log" / "restart", "plugin": "my.x", ...}` | plugins (`plugins.md`); `plugin` names it, as `id` is every request's own number |
 | `{"op": "render", "path": ..., "width": ..., "height": ..., "samples": ...}` | a render now, blocking |
 | `{"op": "queue", ...}` | a background render: `name`, `width`, `height`, `samples`, `folder`, `filename`, `denoise`, `camera`, `engine` (`tequila`, `cycles-cpu`, `cycles-gpu`), `configurations: true` (every configurator combination), `network: true` (the render nodes) |
@@ -51,6 +52,7 @@ with tequila.open('kettle.tequila') as fs:
 
 - `fs.parts()`, `fs.find(name=..., metadata=...)`, `fs.materials[...]`, `fs.commands.<group>.<verb>(...)`, `fs.apply(name, **fields)`, `fs.query(...)`, `fs.context()`, `fs.request(op, **fields)`.
 - `with fs.batch() as b:` - what is sent through `b` is one undo step.
+- `fs.materials['Seat'].tint('#1f4d2b')` recolours a material wherever its colour is kept (a library preset's is often inside a pattern, where `.base_color = ...` changes nothing); `fs.library.apply('Leather Tan', part, color='#1f4d2b')` puts one on already tinted.
 - `fs.library`, `fs.recipes`, `fs.render`, `fs.queue` / `fs.wait_for_job`, `fs.screenshot`, `fs.export`, `fs.save`, `fs.undo`.
 - A headless session refuses what needs a window (screenshots, the queue, panels, plugins) by name, and ends unsaved: `fs.save(path)` first.
 - `tequila.srgb('#2D5DA8')` converts a swatch colour into the rendering space, though hex strings are accepted directly.
