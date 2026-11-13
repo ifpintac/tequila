@@ -87,7 +87,7 @@ tequila_request {"request": {"op": "open", "path": "C:/work/lamp.tequila", "save
 tequila_request {"request": {"op": "new", "discard": true}}
 ```
 
-Each is refused over unsaved work unless it says `save` or `discard`. Never `discard` without the person saying so.
+Each is refused over unsaved work unless it says `save` or `discard`. Never `discard` without the person saying so. An assistant running on an API key or a local model is refused both requests: there, opening and starting a project are the person's to do, in the File menu.
 
 ## Good to know
 

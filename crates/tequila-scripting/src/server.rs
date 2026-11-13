@@ -54,7 +54,7 @@ struct Pending {
 /// operations, as it came.
 enum Incoming {
     Request(Request),
-    Own { id: u64, value: Value },
+    Own { id: u64, value: Value, peer: String },
 }
 
 impl Incoming {
@@ -302,7 +302,7 @@ impl Channel {
     pub fn drain_with_responders(&self, mut handler: impl FnMut(Arrived<'_>, Responder)) {
         self.drain_taken(|taken, responder| match &taken {
             Taken::Request(request) => handler(Arrived::Request(request), responder),
-            Taken::Own(value) => handler(Arrived::Own(value), responder),
+            Taken::Own(value, _) => handler(Arrived::Own(value), responder),
         });
     }
 
@@ -318,7 +318,7 @@ impl Channel {
             let responder = Responder { id: request.id(), reply };
             match request {
                 Incoming::Request(request) => handler(Taken::Request(request), responder),
-                Incoming::Own { value, .. } => handler(Taken::Own(value), responder),
+                Incoming::Own { value, peer, .. } => handler(Taken::Own(value, peer), responder),
             }
         }
     }
@@ -328,7 +328,8 @@ impl Channel {
 #[derive(Debug)]
 pub enum Taken {
     Request(Request),
-    Own(Value),
+    /// One of the session's own operations, as its JSON, and who sent it.
+    Own(Value, String),
 }
 
 /// Where one request's answer goes ([`Channel::drain_with_responders`]).
@@ -448,7 +449,7 @@ fn serve(stream: TcpStream, queue: Arc<Mutex<VecDeque<Pending>>>, wake: Waker, e
             }
             Err(ProtocolError(message)) => match own_operation(&line, own) {
                 Some((id, token, _)) if token != expected => Err((id, mismatch())),
-                Some((id, _, value)) => Ok(Incoming::Own { id, value }),
+                Some((id, _, value)) => Ok(Incoming::Own { id, value, peer: peer.clone() }),
                 None => Err((request_id(&line), Reply::Failed(message))),
             },
         };

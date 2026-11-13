@@ -1,12 +1,15 @@
 //! What the assistant may do, and how each tool becomes a scripting request.
 //!
 //! The same surface the MCP bridge offers, less quitting, opening another
-//! project and raw requests. The assistant works on the open scene. What
-//! leaves it - a file brought in, the project saved somewhere new, a render
-//! written to a file, a preference, the library - is a tool like the rest,
-//! and the application asks the person before it happens
-//! (`tequila_scripting::approval`): the person decides what comes into the
-//! scene and where it goes.
+//! project, a modelling application's link and the Assistant's own
+//! controls. The assistant works on the open scene. What leaves it - a file
+//! brought in or written, the project saved somewhere new, a render, a
+//! preference, the library - is a tool like the rest, or a request sent
+//! through `tequila_request` ([`REQUESTS`]), and the application asks the
+//! person before it happens (`tequila_scripting::approval`): the person
+//! decides what comes into the scene and where it goes. Where renders are
+//! written is theirs alone: the render settings can be changed, but not
+//! their folder or file name ([`keep_render_output`]).
 
 use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
@@ -58,12 +61,16 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{"all":{"type":"boolean"}}}},
  {"name":"tequila_look","description":"Place the camera: a standard view; or yaw/pitch in degrees and distance around a target 'at'; or an exact eye 'from' looking at 'at'. Optional focal_length in mm. Undoable. The view is the person's too: read it first (tequila_query camera) if you mean to put it back.",
   "schema":{"type":"object","properties":{"view":{"type":"string","enum":["front","back","left","right","top","bottom","iso"]},"at":{"type":"array","items":{"type":"number"}},"from":{"type":"array","items":{"type":"number"}},"yaw":{"type":"number"},"pitch":{"type":"number"},"distance":{"type":"number"},"focal_length":{"type":"number"}}}},
- {"name":"tequila_screenshot","description":"Look at the scene as it is now. Returns an image. viewport=true (default) shows only the 3D view. Switch the viewport to rendered first (tequila_ui) to judge materials and lighting.",
-  "schema":{"type":"object","properties":{"viewport":{"type":"boolean"}}}},
+ {"name":"tequila_screenshot","description":"Look at the scene as it is now. Returns an image. viewport=true (default) shows only the 3D view. Switch the viewport to rendered first (tequila_ui) to judge materials and lighting; settle is how many seconds the picture is given to finish (12). window looks at one of Tequila's other windows instead, which must be open: uv (the UV editor), graph (the Material Graph), render, preferences.",
+  "schema":{"type":"object","properties":{"viewport":{"type":"boolean"},"settle":{"type":"number"},"window":{"type":"string","enum":["uv","graph","render","preferences"]}}}},
+ {"name":"tequila_render","description":"A quick true render of the view, returned as an image; nothing is kept. Tequila is busy until it is done, so keep it small: up to about 800 pixels and 64 samples (640 by 400 at 32 when left out). wireframe=true draws the model's edges instead, in a second.",
+  "schema":{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"wireframe":{"type":"boolean"}}}},
  {"name":"tequila_ui","description":"Switch the viewport between 'rendered' (ray traced, shows real materials and light), 'material' and 'solid' (fast previews) and 'wireframe', and show the person a panel or a window: an Inspector tab, the Render window, the library, the Material Graph on a material (graph: its id), the UV editor on the selected part, the composition guides, the render's frame in the viewport.",
   "schema":{"type":"object","properties":{"viewport":{"type":"string","enum":["rendered","material","solid","wireframe"]},"render_window":{"type":"boolean"},"tab":{"type":"string","enum":["scene","material","environment","lighting","camera","image"]},"inspector":{"type":"boolean"},"library":{"type":"boolean"},"library_section":{"type":"string","enum":["materials","studios"]},"graph":{"type":"integer"},"uv_editor":{"type":"boolean"},"guides":{"type":"boolean"},"frame":{"type":"boolean"},"edges":{"type":"boolean"},"statistics":{"type":"boolean"},"full_viewport":{"type":"boolean"}}}},
  {"name":"tequila_queue","description":"Start a final render to a file, in the background, with the document's render settings. folder and filename choose where; left out, it goes to the project's render folder. camera is a saved camera's number (from 0); engine is tequila, cycles-cpu or cycles-gpu; studio renders one Snapshot by its name, studios=true every Snapshot, configurations=true every valid combination of the configurator. Only when asked for a render. The person is asked first. tequila_query what=jobs shows progress and where the file went.",
   "schema":{"type":"object","properties":{"name":{"type":"string"},"width":{"type":"integer"},"height":{"type":"integer"},"samples":{"type":"integer"},"denoise":{"type":"boolean"},"folder":{"type":"string"},"filename":{"type":"string"},"camera":{"type":"integer"},"engine":{"type":"string","enum":["tequila","cycles-cpu","cycles-gpu"]},"studio":{"type":"string"},"studios":{"type":"boolean"},"configurations":{"type":"boolean"}}}},
+ {"name":"tequila_jobs","description":"The renders started with tequila_queue: each one's state, its progress and, when done, the file it wrote.",
+  "schema":{"type":"object","properties":{}}},
  {"name":"tequila_stop","description":"Stop the render that is running in the background. It writes what it has.",
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_save","description":"Save the project: to its own file, or with path to a new place (the person is asked first). Only when asked to save.",
@@ -71,7 +78,9 @@ const TOOLS: &str = r##"[
  {"name":"tequila_import","description":"Bring a model file into the scene: glTF, OBJ, STEP and the others Tequila reads. A path that is not absolute is in the project's folder. up says which way up the file was drawn when it comes in lying down; lighting says what to do with a Blender file's own lights. The person is asked first.",
   "schema":{"type":"object","properties":{"path":{"type":"string"},"up":{"type":"string","enum":["y","z"]},"lighting":{"type":"string","enum":["blender","tequila"]}},"required":["path"]}},
  {"name":"tequila_preferences","description":"Tequila's own settings. With nothing, every setting with its value and what it takes. set is an object of settings by name; reset is \"all\", a page or a setting. Changing one asks the person first. Only when asked to.",
-  "schema":{"type":"object","properties":{"set":{"type":"object"},"reset":{"type":"string"}}}}
+  "schema":{"type":"object","properties":{"set":{"type":"object"},"reset":{"type":"string"}}}},
+ {"name":"tequila_request","description":"One request that has no tool of its own, written as the guide's page for the job shows it: {\"request\":{\"op\":\"export\",\"format\":\"glb\",\"path\":\"kettle.glb\"}}. The operations: export (glb, usd, usdz, web, spin), reimport (update a model from its file), texture_set (a folder or ZIP of picture maps as a material), substance, uv_layout (a part's UV layout as a picture), studio_kit, library (save, import, export, delete), studio_preset, queue (network rendering), plugin, screenshot and render (to a file the person named), and ui (the UV editor's and the graph editor's own controls). A path that is not absolute is in the project's folder. The person is asked before a file is read or written. Read the page first: a request is not guessed.",
+  "schema":{"type":"object","properties":{"request":{"type":"object","description":"The request: {\"op\":\"<name>\", ...fields}"}},"required":["request"]}}
 ]"##;
 
 /// The MCP bridge's tools, whose material ones the assistant offers as they
@@ -135,8 +144,18 @@ pub enum Shape {
 pub enum Plan {
     /// Send this scripting request, and shape its answer.
     Request { json: String, shape: Shape },
-    /// Take a screenshot: deferred, because the window has to be drawn first.
-    Screenshot { viewport: bool },
+    /// Take a screenshot: deferred, because the window has to be drawn
+    /// first. Of the main window, given `settle` seconds for its picture to
+    /// finish, or of one of the others (`window`).
+    Screenshot { viewport: bool, window: Option<String>, settle: f32 },
+    /// A quick render of the view, answered with the picture; the
+    /// application says where its scratch file goes.
+    Render { width: usize, height: usize, samples: u32, wireframe: bool },
+    /// An `apply` or a `batch` (`json`) that changes the render settings.
+    /// Before it is sent, the application lays each block over the
+    /// project's own with [`keep_render_output`], which refuses one that
+    /// would move where renders are written.
+    RenderSettings { json: String },
     /// A material request (`{"op":"material",...}`), answered with the
     /// material on the preview ball when `picture`: a preview always, a
     /// create or update unless asked not to.
@@ -160,6 +179,48 @@ fn text(value: &str) -> Value {
 
 /// The operations a batch from the assistant may contain.
 const BATCH_OPS: [&str; 5] = ["apply", "select", "frame", "look", "ui"];
+
+/// The operations `tequila_request` sends as they are written: what has no
+/// tool of its own. A list of what may pass, not of what may not, so an
+/// operation Tequila learns later is not the assistant's until it is put
+/// here. Each is asked about by the application where it reads or writes a
+/// file (`tequila_scripting::approval`).
+pub const REQUESTS: [&str; 13] =
+    ["export", "reimport", "texture_set", "substance", "uv_layout", "studio_kit", "library", "studio_preset", "queue", "plugin", "screenshot", "render", "ui"];
+
+/// The operations that have a tool whose arguments are the request's own
+/// fields: sent through `tequila_request`, they are that tool's call, held
+/// to what the tool allows.
+const REQUEST_TOOLS: [(&str, &str); 15] = [
+    ("apply", "tequila_apply"),
+    ("batch", "tequila_batch"),
+    ("undo", "tequila_undo"),
+    ("redo", "tequila_redo"),
+    ("stop", "tequila_stop"),
+    ("select", "tequila_select"),
+    ("frame", "tequila_frame"),
+    ("look", "tequila_look"),
+    ("save", "tequila_save"),
+    ("import", "tequila_import"),
+    ("preferences", "tequila_preferences"),
+    ("add_shape", "tequila_add_shape"),
+    ("guide", "tequila_guide"),
+    ("read", "tequila_read"),
+    ("help", "tequila_command"),
+];
+
+/// What the person does themselves, and the assistant is told so.
+const NOT_THE_ASSISTANTS: [(&str, &str); 5] = [
+    ("quit", "Quitting Tequila is the person's to do"),
+    ("new", "Starting a new project closes the open one, and is the person's to do: File > New"),
+    ("open", "Opening another project closes the open one, and is the person's to do: File > Open"),
+    ("assistant", "The Assistant cannot drive itself"),
+    ("livelink", "A modelling application's link is that application's to send"),
+];
+
+/// The fields of a render settings block that say where renders are
+/// written: the person's, and never the assistant's to change.
+pub const RENDER_OUTPUT: [&str; 2] = ["output_directory", "filename_template"];
 
 /// Only the listed keys, so a tool cannot be used to pass anything else.
 fn pick(arguments: &Value, keys: &[&str]) -> Vec<(String, Value)> {
@@ -204,28 +265,77 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         }
         "tequila_apply" => {
             let command = arguments.get("command").ok_or("give a command")?;
-            check_scene_command(command)?;
             if !matches!(command, Value::Object(_)) {
                 return Err("the command must be an object: {\"command\":\"<name>\", ...}".into());
             }
-            raw(request(vec![("op", text("apply")), ("command", command.clone())]))
+            let json = request(vec![("op", text("apply")), ("command", command.clone())]);
+            if sets_render(command) { Ok(Plan::RenderSettings { json }) } else { raw(json) }
         }
         "tequila_batch" => {
             let Some(Value::Array(ops)) = arguments.get("ops") else {
                 return Err("give ops: an array of operations".into());
             };
             for (i, op) in ops.iter().enumerate() {
-                if let Some(command) = op.get("command") { check_scene_command(command)?; }
                 let kind = op.get("op").and_then(|v| v.as_str()).unwrap_or("(none)");
                 if !BATCH_OPS.contains(&kind) {
                     return Err(format!("operation {} is `{kind}`; a batch here may hold {}", i + 1, BATCH_OPS.join(", ")));
                 }
             }
-            raw(request(vec![("op", text("batch")), ("ops", Value::Array(ops.clone()))]))
+            let json = request(vec![("op", text("batch")), ("ops", Value::Array(ops.clone()))]);
+            if ops.iter().any(|op| op.get("command").is_some_and(sets_render)) { Ok(Plan::RenderSettings { json }) } else { raw(json) }
+        }
+        "tequila_request" => {
+            let request = arguments.get("request").filter(|r| matches!(r, Value::Object(_))).ok_or("give the request: an object with an \"op\"")?;
+            let op = request.get("op").and_then(|v| v.as_str()).ok_or("the request needs an \"op\": {\"op\":\"<name>\", ...}")?;
+            if let Some((_, why)) = NOT_THE_ASSISTANTS.iter().find(|(name, _)| *name == op) {
+                return Err(format!("{why}. Tell them so; do not try it another way."));
+            }
+            // A tool's own job stays that tool's, with what it allows.
+            if let Some((_, tool)) = REQUEST_TOOLS.iter().find(|(name, _)| *name == op) {
+                return plan(tool, request);
+            }
+            if op == "query" {
+                let what = request.get("what").and_then(|v| v.as_str()).unwrap_or_default();
+                return match what {
+                    "scene" | "nodes" | "materials" | "api" => plan(&format!("tequila_{what}"), request),
+                    "library" => Err("the library is searched, not read whole: tequila_library".into()),
+                    "context" => Err("the project is read a part at a time: tequila_read".into()),
+                    _ => plan("tequila_query", request),
+                };
+            }
+            if op == "material" {
+                return Err("a material request has tools of its own: tequila_material_guide, tequila_material_preview, tequila_material_create, tequila_material_update, tequila_material_tint, tequila_material_recipe and tequila_material_save".into());
+            }
+            if !REQUESTS.contains(&op) {
+                return Err(format!("`{op}` is not a request this tool sends; it sends {}", REQUESTS.join(", ")));
+            }
+            // As written, less what only the connection itself may say: the
+            // request's number, the token, and the mark of an agent.
+            let mut fields: Vec<(String, Value)> = match request {
+                Value::Object(fields) => fields.iter().filter(|(key, _)| !matches!(key.as_str(), "id" | "token" | "agent")).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                _ => Vec::new(),
+            };
+            if op == "plugin" {
+                let action = request.get("action").and_then(|v| v.as_str()).unwrap_or_default();
+                // Code this assistant changes runs only once the person
+                // says so, whatever the request said of asking.
+                fields.retain(|(key, _)| key != "ask");
+                if action == "write" {
+                    fields.push(("ask".into(), Value::Bool(true)));
+                }
+                if action == "run" {
+                    let word = |key: &str| request.get(key).and_then(|v| v.as_str()).map(str::to_string);
+                    let plugin = word("plugin").ok_or("say which plugin: its id, as plugin")?;
+                    let command = word("command").ok_or("say which command")?;
+                    return Ok(Plan::PluginRun { json: with_fields(fields), plugin, command });
+                }
+            }
+            raw(with_fields(fields))
         }
         "tequila_undo" => raw(request(vec![("op", text("undo"))])),
         "tequila_redo" => raw(request(vec![("op", text("redo"))])),
         "tequila_stop" => raw(request(vec![("op", text("stop"))])),
+        "tequila_jobs" => raw(query("jobs")),
         // A page comes back as it is written, not as a JSON string.
         "tequila_guide" => Ok(Plan::Request { json: with("guide", pick(arguments, &["topic"])), shape: Shape::Text }),
         "tequila_read" => raw(with("read", pick(arguments, &["what", "node", "index"]))),
@@ -234,7 +344,18 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
         "tequila_look" => raw(with("look", pick(arguments, &["view", "at", "from", "yaw", "pitch", "distance", "focal_length"]))),
         "tequila_screenshot" => Ok(Plan::Screenshot {
             viewport: arguments.get("viewport").and_then(|v| v.as_bool()).unwrap_or(true),
+            window: arguments.get("window").and_then(|v| v.as_str()).map(str::to_string),
+            settle: arguments.get("settle").and_then(|v| v.as_f64()).unwrap_or(12.0).clamp(0.0, 60.0) as f32,
         }),
+        "tequila_render" => {
+            let count = |key: &str, fallback: f64, most: f64| arguments.get(key).and_then(|v| v.as_f64()).unwrap_or(fallback).clamp(1.0, most);
+            Ok(Plan::Render {
+                width: count("width", 640.0, 8192.0) as usize,
+                height: count("height", 400.0, 8192.0) as usize,
+                samples: count("samples", 32.0, 65536.0) as u32,
+                wireframe: arguments.get("wireframe").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        }
         "tequila_ui" => raw(with(
             "ui",
             pick(arguments, &["viewport", "render_window", "tab", "inspector", "library", "library_section", "graph", "uv_editor", "guides", "frame", "edges", "statistics", "full_viewport"]),
@@ -324,12 +445,84 @@ pub fn plan(name: &str, arguments: &Value) -> Result<Plan, String> {
     }
 }
 
-/// Keep local output destinations outside the assistant's editing surface.
-fn check_scene_command(command: &Value) -> Result<(), String> {
-    if command.get("command").and_then(|v| v.as_str()) == Some("render.set_settings") {
-        return Err("Render output settings are controlled locally; use tequila_queue for resolution, samples and denoising".into());
+/// A request from its fields, as they are.
+fn with_fields(fields: Vec<(String, Value)>) -> String {
+    let mut out = Object::new();
+    for (key, value) in fields {
+        out.set(&key, value);
     }
-    Ok(())
+    json_write::to_string(&out.build())
+}
+
+/// Whether a command is the one that sets the render settings.
+fn sets_render(command: &Value) -> bool {
+    command.get("command").and_then(|v| v.as_str()) == Some("render.set_settings")
+}
+
+/// The render settings an assistant sent, laid over the project's own
+/// (`current`, as `tequila_read` gives them): the block to set.
+///
+/// The settings are one block, sent whole, and among them is where renders
+/// are written - the one thing in it that is the person's alone, since a
+/// render written somewhere else is a file nobody was asked about. So a
+/// block that names another folder or file name is refused, and says where
+/// one render's place can be chosen with the person's yes. Everything else
+/// is the assistant's to set; what it leaves out stays as it is, so a model
+/// that sends only `format` and `alpha_mode` has not put the rest back to
+/// what a new project has.
+pub fn render_settings_kept(current: &Value, sent: &Value) -> Result<Value, String> {
+    let (Value::Object(current), Value::Object(sent)) = (current, sent) else {
+        return Err("render.set_settings takes the settings as `render`: an object, as tequila_read {\"what\":\"render\"} gives them".into());
+    };
+    let mut kept = current.clone();
+    for (key, value) in sent {
+        if RENDER_OUTPUT.contains(&key.as_str()) {
+            if current.get(key) != Some(value) {
+                return Err(format!(
+                    "Where renders are written is the person's to choose: `{key}` stays as it is. Leave it as it was read, or out. \
+                     For one render somewhere else, tequila_queue takes a folder and a filename, and the person is asked."
+                ));
+            }
+            continue;
+        }
+        kept.insert(key.clone(), value.clone());
+    }
+    Ok(Value::Object(kept))
+}
+
+/// An `apply` or a `batch` that changes the render settings
+/// ([`Plan::RenderSettings`]), with each block laid over the project's own
+/// by [`render_settings_kept`]: the request to send. Two in one batch build
+/// on each other.
+pub fn keep_render_output(json: &str, current: &Value) -> Result<String, String> {
+    let mut request = json::parse(json.as_bytes()).map_err(|_| "the request could not be read".to_string())?;
+    let mut current = current.clone();
+    let mut keep = |command: &mut Value| -> Result<(), String> {
+        if !sets_render(command) {
+            return Ok(());
+        }
+        let kept = render_settings_kept(&current, command.get("render").unwrap_or(&Value::Null))?;
+        current = kept.clone();
+        if let Value::Object(fields) = command {
+            fields.insert("render".into(), kept);
+        }
+        Ok(())
+    };
+    if let Value::Object(fields) = &mut request {
+        if let Some(command) = fields.get_mut("command") {
+            keep(command)?;
+        }
+        if let Some(Value::Array(ops)) = fields.get_mut("ops") {
+            for op in ops {
+                if let Value::Object(op) = op {
+                    if let Some(command) = op.get_mut("command") {
+                        keep(command)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(json_write::to_string(&request))
 }
 
 /// An application answer, as text for the model.
@@ -438,9 +631,10 @@ const SKILL: &str = include_str!("../../../skills/tequila/SKILL.md");
 const WHERE: &str = "You are the assistant built into Tequila, a product-rendering application, and you work on the scene that is open in it right now, using your tools. \
 The person is a designer, not a programmer: answer in plain words, briefly, and do what they ask in the scene rather than describing how.
 
-- Before anything that leaves the scene - importing a file, saving to a new place, rendering to a file, a preference, saving to the library, writing or running a plugin - Tequila asks the person itself. Call the tool and wait for its answer rather than asking first; if they said no, do not try another way. Only render, save, import or change a preference when asked to.
+- Before anything that leaves the scene - importing or exporting a file, saving to a new place, rendering to a file, a preference, the library, writing or running a plugin - Tequila asks the person itself. Call the tool and wait for its answer rather than asking first; if they said no, do not try another way. Only render, save, import, export or change a preference when asked to.
 - A name written as @Name in a message is a part or a material of the scene, and its id follows in brackets.
-- You have no tequila_request and no tequila_render tool. Where the guide sends a request through tequila_request (exporting, updating a model from its file, a texture pack, a UV layout picture), tell the person it is theirs to do in Tequila and where it is in the menus; for a quick look, switch the viewport to rendered and take a tequila_screenshot. render.set_settings is not yours either: tequila_queue takes the size, samples and engine.
+- tequila_request sends the requests the guide's pages write for it: export, reimport, texture_set, substance, uv_layout, studio_kit, library, studio_preset, queue, plugin, screenshot, render and ui. Starting or opening another project and quitting are the person's to do, in the File menu: say so.
+- render.set_settings changes the fields you send and leaves the rest. Where renders are written is the person's: leave output_directory and filename_template as they were read, or out.
 - tequila_query offers selection, camera, commands, ui, jobs and history; read anything else of the project with tequila_read.
 - Begin every request by calling tequila_guide with the page for the job. Only then look at the scene and change it.
 
@@ -467,15 +661,141 @@ pub fn core() -> &'static str {
 mod tests {
     use super::*;
 
+    /// The render settings as a project has them, for the tests: the few
+    /// fields that matter here.
+    const RENDER: &str = r#"{"engine":"cycles-gpu","resolution":[1920,1080],"max_samples":256,"format":"jpeg","alpha_mode":"none","output_directory":"/work/renders","filename_template":"{project}_{camera}"}"#;
+
+    /// The assistant sets the render settings - format, transparency,
+    /// layers - but a block that would move where renders are written is
+    /// refused, alone or in a batch, through whichever tool it is sent.
     #[test]
     fn output_paths_cannot_be_redirected_through_apply_or_batch() {
-        let command = r#"{"command":"render.set_settings","render":{"output_directory":"C:/outside","filename_template":"redirected"}}"#;
+        let current = args(RENDER);
+        let command = r#"{"command":"render.set_settings","render":{"format":"png","output_directory":"C:/outside","filename_template":"redirected"}}"#;
         for (tool, input) in [
             ("tequila_apply", format!(r#"{{"command":{command}}}"#)),
-            ("tequila_batch", format!(r#"{{"ops":[{{"op":"apply","command":{command}}}]}}"#)),
+            ("tequila_batch", format!(r#"{{"ops":[{{"op":"select","nodes":[1]}},{{"op":"apply","command":{command}}}]}}"#)),
+            ("tequila_request", format!(r#"{{"request":{{"op":"apply","command":{command}}}}}"#)),
+            ("tequila_request", format!(r#"{{"request":{{"op":"batch","ops":[{{"op":"apply","command":{command}}}]}}}}"#)),
         ] {
-            assert!(plan(tool, &args(&input)).unwrap_err().contains("controlled locally"));
+            // Never a request to send as it is: one the application lays
+            // over the project's own settings first.
+            let Plan::RenderSettings { json } = plan(tool, &args(&input)).unwrap() else { panic!("{tool}: sent as written") };
+            let refused = keep_render_output(&json, &current).unwrap_err();
+            assert!(RENDER_OUTPUT.iter().any(|field| refused.contains(field)) && refused.contains("the person's"), "{tool}: {refused}");
         }
+        for moved in [r#"{"filename_template":"elsewhere"}"#, r#"{"output_directory":null}"#, r#"{"output_directory":"/work/renders/../../other"}"#] {
+            assert!(render_settings_kept(&current, &args(moved)).is_err(), "{moved}");
+        }
+        assert!(render_settings_kept(&current, &args("\"png\"")).is_err(), "a block is an object");
+    }
+
+    /// What the assistant sends is laid over what the project has: the
+    /// fields it names change, the rest stay - the folder and the file
+    /// name among them, sent back as they were read or left out.
+    #[test]
+    fn render_settings_change_only_what_was_sent() {
+        let current = args(RENDER);
+        let Plan::RenderSettings { json } = plan("tequila_apply", &args(r#"{"command":{"command":"render.set_settings","render":{"format":"png","alpha_mode":"straight"}}}"#)).unwrap() else { panic!() };
+        let sent = args(&keep_render_output(&json, &current).unwrap());
+        assert_eq!(sent.get("op").and_then(Value::as_str), Some("apply"));
+        let block = sent.get("command").and_then(|c| c.get("render")).unwrap();
+        let word = |key: &str| block.get(key).and_then(Value::as_str);
+        assert_eq!((word("format"), word("alpha_mode")), (Some("png"), Some("straight")));
+        assert_eq!((word("output_directory"), word("filename_template")), (Some("/work/renders"), Some("{project}_{camera}")));
+        assert_eq!((word("engine"), block.get("max_samples").and_then(Value::as_f64)), (Some("cycles-gpu"), Some(256.0)), "what was not sent stays");
+
+        // The whole block sent back, as the guide teaches, is the same thing.
+        let mut whole = current.clone();
+        if let Value::Object(fields) = &mut whole {
+            fields.insert("alpha_mode".into(), Value::String("straight".into()));
+        }
+        let kept = render_settings_kept(&current, &whole).unwrap();
+        assert_eq!(kept, whole);
+
+        // Two in one batch build on each other; the other steps are left alone.
+        let batch = r#"{"ops":[{"op":"apply","command":{"command":"render.set_settings","render":{"format":"png"}}},{"op":"apply","command":{"command":"scene.rename","node":1,"name":"x"}},{"op":"apply","command":{"command":"render.set_settings","render":{"max_samples":64}}}]}"#;
+        let Plan::RenderSettings { json } = plan("tequila_batch", &args(batch)).unwrap() else { panic!() };
+        let sent = args(&keep_render_output(&json, &current).unwrap());
+        let ops = sent.get("ops").unwrap().as_array();
+        let last = ops[2].get("command").and_then(|c| c.get("render")).unwrap();
+        assert_eq!((last.get("format").and_then(Value::as_str), last.get("max_samples").and_then(Value::as_f64)), (Some("png"), Some(64.0)));
+        assert_eq!(ops[1].get("command").and_then(|c| c.get("name")).and_then(Value::as_str), Some("x"));
+        // A batch without one is a request like any other.
+        assert!(matches!(plan("tequila_batch", &args(r#"{"ops":[{"op":"select","nodes":[1]}]}"#)).unwrap(), Plan::Request { .. }));
+    }
+
+    /// `tequila_request` sends what has no tool of its own, from a list;
+    /// what closes the project or drives the Assistant is not on it, and
+    /// what has a tool is that tool's call, with what the tool allows.
+    #[test]
+    fn a_raw_request_is_one_of_a_list() {
+        let sent = |request: &str| match plan("tequila_request", &args(&format!(r#"{{"request":{request}}}"#))) {
+            Ok(Plan::Request { json, .. }) => Ok(args(&json)),
+            Ok(other) => panic!("{request}: {other:?}"),
+            Err(error) => Err(error),
+        };
+        for request in [
+            r#"{"op":"export","format":"glb","path":"kettle.glb"}"#,
+            r#"{"op":"reimport","node":3}"#,
+            r#"{"op":"texture_set","path":"packs/oak","nodes":[4]}"#,
+            r#"{"op":"substance","action":"open","path":"wear.sbsar"}"#,
+            r#"{"op":"uv_layout","node":12,"path":"shell-uv.svg","size":4096}"#,
+            r#"{"op":"studio_kit","piece":"softbox"}"#,
+            r#"{"op":"library","action":"import","path":"packs/oak.tqmat"}"#,
+            r#"{"op":"studio_preset","action":"export","preset":"mine","path":"mine.tqstudio"}"#,
+            r#"{"op":"queue","network":true}"#,
+            r#"{"op":"screenshot","path":"look.png"}"#,
+            r#"{"op":"render","path":"quick.png","width":800,"height":600}"#,
+            r#"{"op":"ui","uv_editor":true,"uv_fit":true}"#,
+            r#"{"op":"plugin","action":"restart","plugin":"my.x"}"#,
+        ] {
+            let request = args(request);
+            assert_eq!(sent(&json_write::to_string(&request)).as_ref(), Ok(&request), "as written");
+            assert!(REQUESTS.contains(&request.get("op").and_then(Value::as_str).unwrap()));
+        }
+        // The connection's own words are not the model's to write.
+        let marked = sent(r#"{"op":"export","format":"glb","path":"a.glb","id":7,"token":"t","agent":"mark"}"#).unwrap();
+        assert!(marked.get("id").is_none() && marked.get("token").is_none() && marked.get("agent").is_none());
+
+        for (request, says) in [
+            (r#"{"op":"quit","discard":true}"#, "the person's to do"),
+            (r#"{"op":"new","discard":true}"#, "the person's to do"),
+            (r#"{"op":"open","path":"other.tequila","discard":true}"#, "the person's to do"),
+            (r#"{"op":"assistant","answer":{"question":1,"allow":true}}"#, "cannot drive itself"),
+            (r#"{"op":"livelink","message":{}}"#, "that application's"),
+            (r#"{"op":"ping"}"#, "not a request this tool sends"),
+            (r#"{"op":"something_new","path":"/x"}"#, "not a request this tool sends"),
+            (r#"{"op":"material","action":"create","recipe":{}}"#, "tequila_material_create"),
+            (r#"{"op":"query","what":"context"}"#, "tequila_read"),
+            (r#"{"op":"query","what":"library"}"#, "tequila_library"),
+            (r#"{"op":"batch","ops":[{"op":"quit"}]}"#, "a batch here may hold"),
+            (r#"{"op":"batch","ops":[{"op":"export","format":"glb","path":"a.glb"}]}"#, "a batch here may hold"),
+            (r#"{"path":"a.glb"}"#, "needs an \"op\""),
+        ] {
+            let refused = sent(request).unwrap_err();
+            assert!(refused.contains(says), "{request}: {refused}");
+        }
+        assert!(plan("tequila_request", &args(r#"{"request":"export"}"#)).is_err());
+        for kept_out in ["quit", "new", "open", "assistant", "livelink"] {
+            assert!(!REQUESTS.contains(&kept_out) && !REQUEST_TOOLS.iter().any(|(op, _)| *op == kept_out), "{kept_out}");
+        }
+
+        // A tool's job is the tool's call: only what it passes on, passes.
+        let queue = sent(r#"{"op":"save","path":"copy.tequila","token":"x"}"#).unwrap();
+        assert_eq!((queue.get("op").and_then(Value::as_str), queue.get("token")), (Some("save"), None));
+        assert_eq!(sent(r#"{"op":"help","command":"scene.rename"}"#).unwrap().get("command").and_then(Value::as_str), Some("scene.rename"));
+        assert!(matches!(plan("tequila_request", &args(r#"{"request":{"op":"query","what":"nodes","filter":"strap"}}"#)).unwrap(), Plan::Request { shape: Shape::Nodes { .. }, .. }));
+        assert!(matches!(plan("tequila_request", &args(r#"{"request":{"op":"guide","topic":"uv"}}"#)).unwrap(), Plan::Request { shape: Shape::Text, .. }));
+
+        // A plugin's code written through a request asks the person again,
+        // whatever the request says of asking; a run waits for its log.
+        for asking in ["", r#","ask":false"#] {
+            let write = sent(&format!(r#"{{"op":"plugin","action":"write","plugin":"my.x","files":{{"main.py":"print(1)"}}{asking}}}"#)).unwrap();
+            assert_eq!(write.get("ask").and_then(Value::as_bool), Some(true), "{asking}");
+        }
+        let run = plan("tequila_request", &args(r#"{"request":{"op":"plugin","action":"run","plugin":"my.x","command":"go"}}"#)).unwrap();
+        assert!(matches!(run, Plan::PluginRun { ref plugin, ref command, .. } if plugin == "my.x" && command == "go"), "{run:?}");
     }
 
     fn args(text: &str) -> Value {
@@ -503,6 +823,7 @@ mod tests {
                 "tequila_import" => args(r#"{"path":"model.glb"}"#),
                 "tequila_library_apply" => args(r#"{"name":"Brushed Aluminium","nodes":[1]}"#),
                 "tequila_add_shape" => args(r#"{"shape":"cylinder","width":0.3,"height":0.15}"#),
+                "tequila_request" => args(r#"{"request":{"op":"export","format":"glb","path":"kettle.glb"}}"#),
                 _ => args("{}"),
             };
             plan(&tool.name, &arguments).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
@@ -633,6 +954,23 @@ mod tests {
             Plan::Request { json, .. } => assert!(json.contains("studios") && json.contains("camera")),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// The pictures the assistant asks for: the main window's, another
+    /// window's, and a quick render, small unless it says otherwise.
+    #[test]
+    fn pictures_are_planned_with_their_sizes_and_windows() {
+        assert_eq!(plan("tequila_screenshot", &args("{}")).unwrap(), Plan::Screenshot { viewport: true, window: None, settle: 12.0 });
+        assert_eq!(
+            plan("tequila_screenshot", &args(r#"{"window":"uv","settle":400}"#)).unwrap(),
+            Plan::Screenshot { viewport: true, window: Some("uv".into()), settle: 60.0 }
+        );
+        assert_eq!(plan("tequila_render", &args("{}")).unwrap(), Plan::Render { width: 640, height: 400, samples: 32, wireframe: false });
+        assert_eq!(
+            plan("tequila_render", &args(r#"{"width":800,"height":600,"samples":64,"wireframe":true,"path":"/elsewhere.png"}"#)).unwrap(),
+            Plan::Render { width: 800, height: 600, samples: 64, wireframe: true }
+        );
+        assert!(matches!(plan("tequila_jobs", &args("{}")).unwrap(), Plan::Request { ref json, .. } if json.contains("jobs")));
     }
 
     /// The person turns and zooms the view while the assistant works. One

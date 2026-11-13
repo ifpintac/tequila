@@ -7279,14 +7279,19 @@ impl TequilaApp {
                     }
                 }
                 // The application's own operations: a part's UV layout
-                // written as a picture.
-                tequila_scripting::server::Taken::Own(value) => responder.answer(&match value.get("op").and_then(|v| v.as_str()) {
-                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), &value) {
-                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
-                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
-                    },
-                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
-                }),
+                // written as a picture. The Assistant's is held for the
+                // person's answer like any other file it would write.
+                tequila_scripting::server::Taken::Own(value, peer) => {
+                    let assistants = self.assistant.is_its(value.get("agent").and_then(|v| v.as_str()).unwrap_or_default());
+                    if assistants {
+                        if let Some(question) = tequila_scripting::approval::own_question(&value, &std::env::temp_dir()) {
+                            self.assistant.hold_own(value, responder, question);
+                            return;
+                        }
+                    }
+                    let peer = if assistants { self.assistant.peer() } else { peer };
+                    responder.answer(&channel::handle_own(self, &value, &peer));
+                }
             });
             self.channel = Some(open);
         }

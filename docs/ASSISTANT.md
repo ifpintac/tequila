@@ -204,8 +204,11 @@ to sign in with a personal account is yours to weigh. (Read 2026-11-13.)
 These are answered by Tequila's own loop, in the same chat, with the same
 questions before anything leaves the scene. Its tools are Tequila's own:
 the scene, materials and the library's presets, lighting, camera, studios,
-renders, import, save, preferences and plugins. It has no tools for files
-or commands at all.
+renders and the render settings, import, export, save, preferences and
+plugins, and `tequila_request` for the requests that have no tool of their
+own. It cannot quit Tequila, start or open another project, or change the
+folder and file name renders are written to: those are yours. It has no
+tools for files or commands at all.
 
 Open the model picker, click **Connections…**, choose a starting point,
 fill in the form, and click **Test**:
@@ -1152,8 +1155,7 @@ all of it, yes. What stood in the way:
 | Choosing where a UV seam goes, moving one particular island | The commands name mesh vertices and island numbers, and nothing says which is where |
 | Rendering a turntable's frames | A button in the window; the spin viewer does render through the tools |
 | Subdividing a mesh, shading it again | Only the Improve model window makes those changes |
-| Format, transparency and layers, for API keys, local models and remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's |
-| Export, updating a model, texture packs, the UV picture, for API keys and local models | The own loop has no raw requests |
+| Format, transparency and layers, for remote connections | `render.set_settings` is refused whole there, to keep the output folder the person's (API keys and local models have it since: see *what the own loop could not reach* below) |
 | Cancelling a queued render | `stop` stops only the one running |
 
 **The check.** In a copy of the application with a home of its own, on the
@@ -1165,8 +1167,9 @@ through a longer lens with the background out of focus, and set 105 mm
 with depth of field at f/2.8; `image` for a warmer picture with a
 vignette, read the style and sent it back with two numbers changed.
 qwen3-coder is another matter: about half the time, through Ollama, it
-writes its tool call as text, which the own loop shows and the
-conversation ends there - with the old instructions as with the new.
+writes its tool call as text, which the own loop showed and the
+conversation ended there - with the old instructions as with the new.
+(Read as the call it is since: see the next section.)
 
 Not tried with Claude, ChatGPT or Gemini on this build.
 
@@ -1176,3 +1179,141 @@ whose a moved view is, in what holds everywhere, with the rest on the
 tint, in the core's materials paragraph, with the rest on `materials`. The
 core came to 7,059 characters with them, and its test holds it under
 7,200.
+
+## As built, November 13: calls written as text, and what the own loop could not reach
+
+Two findings of the audit above, both in Tequila's own loop (API keys and
+models on this computer).
+
+**A tool call written into the answer is read as the call.** A server for
+local models turns the model's own markup for a call into the format's
+`tool_calls`, and misses it when the model says a sentence first. Through
+Ollama 0.40, `qwen3-coder:30b` given the own loop's instructions and tools
+answered 6 of 12 requests that way:
+
+```text
+I'll warm up the image and add a slight vignette. First, let me check the current settings.
+
+<function=tequila_read>
+<parameter=what>
+image_style
+</parameter>
+</function>
+</tool_call>
+```
+
+The own loop showed that as the answer, and the request ended with nothing
+done. Now `wire::with_written_calls` reads it: a `<function=name>` with its
+`<parameter=key>` values, or a JSON object between `<tool_call>` tags (the
+other form local models write), naming one of the assistant's own tools,
+becomes the call; each value is read as the tool's schema says that
+argument is, since the markup has only text; and the markup leaves the
+words. While a reply is still coming, the chat shows the words before the
+markup and "calling" the tool, never the markup or its first letters
+(`wire::before_written_call`). Markup that names no tool of Tequila's is
+somebody explaining markup, and stays as written.
+
+Counted on a fresh sample of 36 replies (24 whole, 12 streamed), read with
+`cargo run -p tequila-ai --example replies`: 19 came as calls and 17
+written into the words; all 17 are now carried out as calls, none is left
+as markup. Before, those 17 would each have ended a request.
+
+Held by tests on the recorded replies:
+`wire::a_call_written_into_the_answer_is_read_as_the_call`,
+`written_arguments_are_read_as_the_tool_takes_them`,
+`a_call_written_as_json_between_tags_is_read_too`,
+`words_that_are_not_a_call_stay_words`,
+`a_call_being_written_into_a_stream_is_not_shown`, and
+`session::a_call_written_into_the_answer_goes_round_the_loop`.
+
+**What the own loop could not reach.** It had no raw requests, so an
+API-key or local model could not export, update a model from its file,
+bring a texture pack, open a Substance file, write a UV layout picture,
+add a studio-kit piece, move files in and out of the library, take a quick
+render or look at the UV and graph windows; and `render.set_settings` was
+refused whole, so it could not set a format, transparency or layers.
+
+The choice was between a named tool for each and one `tequila_request`
+held to a list. The list won: the guide is one for every assistant and
+writes these jobs as `tequila_request {"request": {...}}`, so the same
+page now works wherever the assistant runs, and a tool for each job would
+have been as many more descriptions for a local model to hold.
+
+- **`tequila_request`** (`tools::REQUESTS`) sends `export`, `reimport`,
+  `texture_set`, `substance`, `uv_layout`, `studio_kit`, `library`,
+  `studio_preset`, `queue`, `plugin`, `screenshot`, `render` and `ui` as
+  they are written. It is a list of what may pass, so an operation Tequila
+  learns later is not the assistant's until it is put there. `quit`,
+  `new`, `open`, `assistant` and `livelink` are refused in words (the
+  person's to do; the Assistant cannot drive itself). An operation that
+  has a tool - `apply`, `batch`, `save`, `import`, `query` and the rest -
+  becomes that tool's call, held to what the tool allows: a batch sent as
+  a request can hold no more than `tequila_batch` can. A plugin's code
+  written this way asks the person again before it runs, whatever the
+  request says of asking.
+- **The questions are the application's**, asked of the request itself
+  (`approval::question`), as before: an export, a texture pack, a
+  Substance file, a library file each wait for Allow. A path without a
+  folder is in the project's folder.
+- **`uv_layout` is asked about too.** It is answered outside the
+  protocol's own operations, so the gate never saw it: an agent could
+  write a picture anywhere unasked. `approval::own_question` asks ("Write
+  a UV layout to a file?") for the own loop and for an agent's bridge
+  alike, and the console now shows the request (`channel::handle_own`).
+- **`tequila_render`** returns a quick render as a picture, written to a
+  scratch file and removed; **`tequila_screenshot`** takes `window` (`uv`,
+  `graph`, `render`, `preferences`) and `settle`; **`tequila_jobs`** lists
+  the renders, as the guide's pages call it.
+- **The render settings, less where renders go.** `render.set_settings`
+  is no longer refused. The block the model sends is laid over the
+  project's own (`tools::render_settings_kept`): the fields it names
+  change and the rest stay, so a model that sends only `format` and
+  `alpha_mode` has not put everything else back to a new project's. A
+  block that would change `output_directory` or `filename_template` is
+  refused, alone or in a batch, and told that `tequila_queue` takes a
+  folder and a file name for one render, with the person's yes.
+
+Held by tests: in `tequila-ai`, `a_raw_request_is_one_of_a_list`,
+`output_paths_cannot_be_redirected_through_apply_or_batch`,
+`render_settings_change_only_what_was_sent`,
+`pictures_are_planned_with_their_sizes_and_windows`; in
+`tequila-scripting`, `approval::the_applications_own_operations_ask_too`;
+in the application,
+`the_own_loops_requests_ask_first_and_keep_out_of_what_is_the_persons`,
+`the_own_loop_sets_the_render_settings_but_not_where_renders_go`,
+`the_own_loop_takes_a_quick_render_and_looks_at_other_windows` and
+`an_agents_uv_layout_waits_for_the_person_too`.
+
+**The check.** In a copy of the application with a home of its own, on the
+Headphones sample, with the person's answers given by script
+(`{"op":"assistant","answer":{"id":…,"allow":true}}`), qwen3.8:27b through
+the own loop:
+
+| Asked | What happened |
+|---|---|
+| "Export the scene as a glb called headphones.glb, for the web team." | Opened `files`, sent the export; the chat asked *Export the scene to a file? headphones.glb (glb)*; allowed, and a 21 MB glb was written beside the project |
+| "Set the render up for a transparent PNG…" | Opened `rendering`, read the render settings, sent `alpha_mode` `straight` alone; the format, size, samples and folder stayed as they were |
+| "…renders written to /Users/Shared/elsewhere with the file name hero, and set 256 samples." | Sent the whole block with the folder and name changed: refused. Sent the samples alone: 256. Told the person the folder and name are theirs, and offered one render there through the queue |
+| "Export this as a USDZ called headphones.usdz." (answered Deny) | Asked, denied, nothing written; said it was not done |
+
+It also wrote a UV layout as an SVG when asked (*Write a UV layout to a
+file? cushion-uv.svg*, allowed; the part had no layout, so it unwrapped
+and packed it first and was asked again), and took a quick render at 480
+by 300, which came back as a picture in the chat.
+
+And qwen3-coder:30b, the model that writes its calls as text, was asked
+six things in six new chats through the own loop - what is in the scene,
+a warmer picture with a vignette, a three-quarter view through a longer
+lens, hiding the headband, the render settings, a launch shot on black.
+All six ran to an answer, 34 tool calls between them, and none of the
+chat's words held any markup. Before, about half of its first replies
+ended the request.
+
+One thing seen and left: a model set up as unable to see (no pictures are
+sent to it) described the quick render all the same, inventing what was
+in it. The picture in the chat is the real one.
+
+Still open: an agent (Claude, ChatGPT, Gemini) can move the render folder
+through `render.set_settings` over the Assistant's bridge, which the own
+loop and remote connections now cannot; and a remote connection still has
+no way to set format or transparency.
