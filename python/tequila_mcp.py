@@ -47,6 +47,11 @@ INSTRUCTIONS = (
     'A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. '
     'Look at your work with tequila_screenshot: it waits for the picture to finish and says whether it had. '
     'If something looks wrong, first check the simple causes with tequila_nodes: is the part hidden, is it where you think. '
+    'The view is the person\'s as well: they turn and zoom it while you work, to look at what you changed. '
+    'Nothing you do to a material moves the camera, so a view that differs from your last look is theirs: '
+    'work in it as it is, and do not frame it or move it back. '
+    'Move the camera only when asked for a view, or when what you must check is out of sight - and then put it back: '
+    'tequila_query camera reads a view, and tequila_look with its position as from and its target as at returns to it. '
     'To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then '
     'tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. '
     'Every command is undoable, and the person watching sees each request in Tequila\'s console.'
@@ -138,9 +143,11 @@ TOOLS = [
     tool('tequila_redo', 'Put back the last undone step.'),
     tool('tequila_select', 'Replace the selection with these node ids.',
          {'nodes': {'type': 'array', 'items': {'type': 'integer'}}}, ['nodes']),
-    tool('tequila_frame', 'Point the camera at everything, or at the selection.',
+    tool('tequila_frame', 'Point the camera at everything, or at the selection. This moves the view the person is looking at: '
+         'for when they ask for one, or to find something out of sight - not after a material edit, which leaves the camera where it was.',
          {'all': {'type': 'boolean', 'description': 'true for everything (default), false for the selection.'}}),
-    tool('tequila_look', 'Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable.',
+    tool('tequila_look', 'Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable. '
+         'The view is the person\'s too: read it first (tequila_query camera) if you mean to put it back.',
          {'view': {'type': 'string', 'enum': ['front', 'back', 'left', 'right', 'top', 'bottom', 'iso']},
           'at': {**VECTOR, 'description': 'Target point [x, y, z].'},
           'from': {**VECTOR, 'description': 'Eye position [x, y, z]; not with yaw/pitch/distance.'},

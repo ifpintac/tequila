@@ -3487,6 +3487,95 @@ mod handler_tests {
         assert!(failure(&mut app, r#"{"op":"look","view":"sideways"}"#).contains("front"));
     }
 
+    /// Nothing a script does to a material moves the view: a library preset
+    /// put on a part, a material made, shown on a ball, remade, set, unlinked
+    /// or assigned, on its own or in a batch, kept or taken back. An
+    /// assistant reported the view "jumping closer after material changes";
+    /// it was the person at the window, turning and zooming to look at each
+    /// change, and this holds the other half of that finding in place. The
+    /// view is tried both as the person has just left it, a frame before the
+    /// document hears of it, and once the document has it.
+    #[test]
+    fn a_material_change_leaves_the_view_where_it_was() {
+        let mut app = TequilaApp::for_tests();
+        // A second part beside the demo scene's one, so a material can be
+        // shared and a part unlinked from it.
+        value(&mut app, r#"{"op":"add_shape","shape":"cube","width":0.1}"#);
+        let nodes = value(&mut app, r#"{"op":"query","what":"nodes"}"#);
+        let parts: Vec<u64> = nodes
+            .get("nodes")
+            .unwrap()
+            .as_array()
+            .iter()
+            .filter(|n| n.get("kind").and_then(Value::as_str) == Some("part"))
+            .map(|n| n.get("id").unwrap().as_f64().unwrap() as u64)
+            .collect();
+        assert!(parts.len() >= 2, "two parts to work on: {parts:?}");
+        let (a, b) = (parts[0], parts[1]);
+        let ball = std::env::temp_dir().join(format!("tequila-view-test-{}.png", std::process::id()));
+        let ball = ball.to_string_lossy().replace('\\', "/");
+        let recipe = r##"{"name":"Speckled","type":"plastic","base_color":"#c0392b","patterns":[{"param":"bump","procedural":{"kind":"leather"},"size":0.002,"depth":0.0001}]}"##;
+        let material = |app: &TequilaApp, node: u64| app.project.document().tree.get(NodeId(node)).and_then(|part| part.material).map(|key| key.0);
+
+        for told in [false, true] {
+            // A view of the person's own: turned, moved aside and closer.
+            app.camera.orbit((140.0, -60.0), 800.0);
+            app.camera.pan((35.0, 20.0), 800.0, 1.5);
+            app.camera.zoom(2.0);
+            if told {
+                app.sync_viewport_camera();
+            }
+            let view = app.camera;
+            let saved = app.project.camera().clone();
+            let same = |app: &TequilaApp, after: &str| {
+                assert!(app.camera.camera == view.camera && app.camera.target == view.target, "the view moved after {after}");
+                assert!(*app.project.camera() == saved, "the document's camera moved after {after}");
+            };
+
+            value(&mut app, &format!(r#"{{"op":"library","action":"apply","name":"Aluminium Spun","nodes":[{a}]}}"#));
+            same(&app, "a library preset");
+            value(&mut app, &format!(r#"{{"op":"library","action":"apply","name":"Aluminium Spun","nodes":[{b}],"unlink":true}}"#));
+            same(&app, "a library preset of the part's own");
+            let made = value(&mut app, &format!(r#"{{"op":"material","action":"create","recipe":{recipe},"nodes":[{a}]}}"#));
+            let made = made.get("material").and_then(Value::as_f64).expect("the new material's id") as u64;
+            same(&app, "a material made");
+            value(&mut app, &format!(r#"{{"op":"material","action":"preview","material":{made},"path":"{ball}"}}"#));
+            let _ = std::fs::remove_file(&ball);
+            same(&app, "a material shown on a ball");
+            value(&mut app, &format!(r#"{{"op":"material","action":"update","material":{made},"recipe":{}}}"#, recipe.replace("#c0392b", "#2255aa")));
+            same(&app, "a material remade");
+            value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"material.set_parameter","material":{made},"parameter":"specular_roughness","value":0.2}}}}"#));
+            same(&app, "a parameter set");
+            value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"material.assign","nodes":[{a},{b}],"material":{made}}}}}"#));
+            same(&app, "a material assigned");
+            value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"material.unlink","node":{b}}}}}"#));
+            assert_ne!(material(&app, b), Some(made), "the part has a material of its own");
+            same(&app, "a part unlinked");
+            value(
+                &mut app,
+                &format!(
+                    r#"{{"op":"batch","ops":[{{"op":"library","action":"apply","name":"Aluminium Spun","nodes":[{a}]}},{{"op":"apply","command":{{"command":"material.set_parameter","material":{made},"parameter":"specular_roughness","value":0.5}}}}]}}"#
+                ),
+            );
+            same(&app, "a batch of material changes");
+            let message = failure(
+                &mut app,
+                &format!(r#"{{"op":"batch","ops":[{{"op":"library","action":"apply","name":"Aluminium Spun","nodes":[{b}]}},{{"op":"select","nodes":[999999]}}]}}"#),
+            );
+            assert!(message.contains("taken back"), "{message}");
+            same(&app, "a batch taken back");
+            // Back through every one of them, and forward again.
+            for _ in 0..8 {
+                value(&mut app, r#"{"op":"undo"}"#);
+                same(&app, "a material change undone");
+            }
+            for _ in 0..8 {
+                value(&mut app, r#"{"op":"redo"}"#);
+                same(&app, "a material change redone");
+            }
+        }
+    }
+
     /// A network render with no farm set up says what is missing, rather
     /// than queuing into nothing.
     #[test]

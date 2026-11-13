@@ -185,6 +185,17 @@ class BridgeTests(unittest.TestCase):
         sent = self.app.received[-1]
         self.assertEqual((sent['op'], sent['shape'], sent['width'], sent['height']), ('add_shape', 'cylinder', 0.3, 0.15))
 
+    def test_a_moved_view_is_the_persons(self):
+        """The person turns and zooms the view while the AI works. An
+        assistant that found it closer after its material changes framed
+        the model again each time; the instructions say whose a moved view
+        is, and the tool that frames says what it is not for."""
+        from tequila_mcp import INSTRUCTIONS
+        self.assertIn("The view is the person's as well", INSTRUCTIONS)
+        self.assertIn('do not frame it or move it back', INSTRUCTIONS)
+        described = {t['name']: t['description'] for t in TOOLS}
+        self.assertIn('not after a material edit', described['tequila_frame'])
+
     def test_look_passes_from_through(self):
         self.call('tequila_look', {'from': [0, 1, 3], 'at': [0, 0, 0]})
         sent = self.app.received[-1]

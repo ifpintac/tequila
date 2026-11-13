@@ -54,6 +54,11 @@ is not read. Use tequila_batch for several edits: they become one undo step, and
 new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. Look at your work with \
 tequila_screenshot: it waits for the picture to finish and says whether it had. If something looks wrong, first \
 check the simple causes with tequila_nodes: is the part hidden, is it where you think. \
+The view is the person's as well: they turn and zoom it while you work, to look at what you changed. Nothing you do \
+to a material moves the camera, so a view that differs from your last look is theirs: work in it as it is, and do not \
+frame it or move it back. Move the camera only when asked for a view, or when what you must check is out of sight - \
+and then put it back: tequila_query camera reads a view, and tequila_look with its position as from and its target as \
+at returns to it. \
 To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then \
 tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. \
 Every command is undoable, and the person watching sees each request in Tequila's console.";
@@ -824,6 +829,19 @@ mod tests {
         assert!(about("tequila_library").contains("LOOK HERE FIRST"));
         assert!(about("tequila_material_create").contains("Only when tequila_library has nothing close"));
         assert!(about("tequila_apply").contains("tequila_command"));
+    }
+
+    /// The view is the person's as well. An assistant that found it closer
+    /// after its material changes took that for a fault and framed the
+    /// model again, each time, over the close look the person had just
+    /// taken: so the bridge says whose a moved view is, and the tool that
+    /// frames says what it is not for.
+    #[test]
+    fn a_moved_view_is_the_persons() {
+        assert!(INSTRUCTIONS.contains("The view is the person's as well") && INSTRUCTIONS.contains("do not frame it or move it back"));
+        let tools = Bridge::new(None, false).tools();
+        let frame = tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some("tequila_frame")).and_then(|t| t.get("description")).and_then(Value::as_str).unwrap_or_default();
+        assert!(frame.contains("not after a material edit"), "{frame}");
     }
 
     #[test]
