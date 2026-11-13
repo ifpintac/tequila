@@ -33,17 +33,24 @@ fn a_project(laid_out: bool) -> (Project, NodeId, MaterialKey) {
     (project, ids[0], materials[0])
 }
 
-/// A small picture to print, written once for the tests.
+/// A small picture to print, written once for the tests. Tests run side by
+/// side, so the first to ask writes it and the others wait until it is whole:
+/// checking whether the file exists let a second test read it half written.
 fn artwork() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("tequila-uv-editor-logo-{}.png", std::process::id()));
-    if !path.exists() {
-        let file = std::fs::File::create(&path).unwrap();
-        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 8, 4);
-        encoder.set_color(png::ColorType::Rgb);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.write_header().unwrap().write_image_data(&[200u8; 8 * 4 * 3]).unwrap();
-    }
-    path
+    static ARTWORK: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    ARTWORK
+        .get_or_init(|| {
+            let path = std::env::temp_dir().join(format!("tequila-uv-editor-logo-{}.png", std::process::id()));
+            let file = std::fs::File::create(&path).unwrap();
+            let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), 8, 4);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[200u8; 8 * 4 * 3]).unwrap();
+            writer.finish().unwrap();
+            path
+        })
+        .clone()
 }
 
 /// A label on the layout, centred at `at`, `side` across.
