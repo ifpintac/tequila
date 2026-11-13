@@ -205,7 +205,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
         Operation::Apply(command) => {
             let previous_camera = app.project.camera().clone();
             app.project.end_interaction();
-            let result = app.project.apply((**command).clone());
+            let result = app.project.apply(with_fresh_mesh((**command).clone(), app.project.document()));
             app.project.end_interaction();
             if result.is_ok() {
                 follow_camera(app, &previous_camera);
@@ -295,7 +295,12 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             record_camera(app);
             Reply::Value(camera_state(app))
         }
-        Operation::Screenshot { path, viewport, window } => {
+        Operation::AddShape { shape, width, depth, height, radius } => add_shape(app, shape, [*width, *depth, *height, *radius]),
+        Operation::Help { command } => match tequila_scripting::document::help(command.as_deref()) {
+            Ok(page) => Reply::Value(page),
+            Err(error) => Reply::Failed(error),
+        },
+        Operation::Screenshot { path, viewport, window, settle } => {
             // A window's capture is written as the window draws, mid-frame:
             // finished since, it is not still pending.
             app.settle_window_capture();
@@ -328,6 +333,7 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             app.pending_screenshot = Some(target);
             app.screenshot_viewport = *viewport && window.is_none();
             app.screenshot_window = window;
+            app.screenshot_settle = settle.filter(|_| window.is_none()).map(|seconds| (std::time::Instant::now(), seconds));
             let mut out = Object::new();
             out.set("path", where_it_lands)
                 .set("pending", true)
@@ -992,6 +998,9 @@ fn ui_state(app: &TequilaApp) -> Value {
         .set("tab", app.project_tab.label().to_ascii_lowercase())
         .set("library", app.show_library)
         .set("viewport", app.view_mode.key())
+        // How far along the viewport's picture is, for judging a screenshot.
+        .set("picture_samples", app.image.samples as f64)
+        .set("picture_settled", app.picture_settled(std::time::Duration::from_secs(1)))
         // How far the viewport's picture has got: its samples, and whether
         // Cycles is still preparing the graphics card and has shown nothing.
         .set("viewport_samples", app.image.samples as f64)
@@ -1603,6 +1612,13 @@ fn reimport(app: &mut TequilaApp, node: Option<u64>, path: Option<&str>, tessell
 /// so the person sees what the script did.
 fn library(app: &mut TequilaApp, request: &tequila_scripting::protocol::LibraryRequest) -> Reply {
     use tequila_scripting::document::{library_request, LibraryOutcome};
+    // Looking changes nothing: answered without reading the library again
+    // for the panel.
+    if request.action == "search" {
+        let all = tequila_scripting::document::library(&crate::library_tab::user_library_path());
+        let words = request.search.as_deref().or(request.name.as_deref());
+        return Reply::Value(tequila_scripting::document::library_search(&all, words, request.category.as_deref(), request.limit.unwrap_or(20)));
+    }
     let selection: Vec<NodeId> = app.project.selection.nodes().collect();
     let pack = |path: &std::path::Path, size: f32, name: String, category: String, tags: Vec<String>| {
         tequila_import::texture_set::library_entry(path, size, name, category, tags).map_err(|e| e.to_string())
@@ -1619,6 +1635,84 @@ fn library(app: &mut TequilaApp, request: &tequila_scripting::protocol::LibraryR
         }
         Err(error) => Reply::Failed(error),
     }
+}
+
+/// A `scene.set_shape` from a script, given a mesh of its own where it
+/// named none, or named the one the part already has: the viewport keeps
+/// what it built for a mesh by its key, and a new shape under the old key
+/// read back right and went on being drawn as the old one.
+fn with_fresh_mesh(mut command: tequila_scene::Command, document: &tequila_scene::document::SceneDocument) -> tequila_scene::Command {
+    if let tequila_scene::Command::SetShape { node, mesh, .. } = &mut command {
+        let current = match document.tree.get(*node).map(|part| &part.kind) {
+            Some(tequila_scene::tree::NodeKind::Part { mesh }) => Some(*mesh),
+            _ => None,
+        };
+        if mesh.0 == tequila_scripting::protocol::UNSET_MESH || Some(*mesh) == current {
+            let (keys, _, _) = tequila_scene::command::reserve_keys(document, 1, 0, 0);
+            *mesh = keys[0];
+        }
+    }
+    command
+}
+
+/// `add_shape`: a simple shape as a new part, as Add › Shape adds one, and
+/// of the sizes asked for where any were. One step to undo.
+fn add_shape(app: &mut TequilaApp, shape: &str, sizes: [Option<f32>; 4]) -> Reply {
+    use tequila_scene::shapes::{Dimension, Shape};
+    let Some(shape) = Shape::from_key(shape) else {
+        return Reply::Failed(format!("`{shape}` is not a shape"));
+    };
+    let (payload, id) = tequila_scene::shapes::add(app.project.document(), shape, None);
+    // Inside a batch the batch is the step; alone, this is.
+    let own_step = !app.project.in_group();
+    if own_step {
+        app.project.begin_group();
+    }
+    let failed = |app: &mut TequilaApp, error: String| {
+        if own_step {
+            app.project.abandon_group();
+        }
+        Reply::Failed(error)
+    };
+    if let Err(error) = app.project.apply(tequila_scene::Command::Import { payload: Box::new(payload) }) {
+        return failed(app, error.to_string());
+    }
+    let Some(mut spec) = app.project.document().tree.get(id).and_then(|part| part.shape) else {
+        return failed(app, "the shape was not added".into());
+    };
+    let dimensions = [Dimension::Width, Dimension::Depth, Dimension::Height, Dimension::Radius];
+    if sizes.iter().any(Option::is_some) {
+        for (dimension, size) in dimensions.into_iter().zip(sizes) {
+            if let Some(size) = size {
+                spec.set(dimension, size);
+            }
+        }
+        let (keys, _, _) = tequila_scene::command::reserve_keys(app.project.document(), 1, 0, 0);
+        if let Err(error) = app.project.apply(tequila_scene::Command::SetShape { node: id, shape: spec, mesh: keys[0] }) {
+            return failed(app, error.to_string());
+        }
+    }
+    if own_step {
+        app.project.end_group();
+    }
+    app.project.end_interaction();
+    let mut out = Object::new();
+    out.set("node", id.0 as f64).set("shape", shape.key());
+    // The sizes it has, by the names this shape gives them.
+    let mut sized = Object::new();
+    for &(dimension, label) in spec.dimensions() {
+        let key = match dimension {
+            Dimension::Width => "width",
+            Dimension::Depth => "depth",
+            Dimension::Height => "height",
+            Dimension::Radius => "radius",
+        };
+        sized.set(key, spec.get(dimension));
+        let _ = label;
+    }
+    out.set("size", sized.build());
+    out.set("note", "Sizes are metres. It stands beside what is in the scene, on the floor: move it with scene.set_transform, resize it with scene.set_shape.");
+    Reply::Value(out.build())
 }
 
 /// Studio presets (`docs/studio-presets.md`): listed, applied by id, the
@@ -2439,6 +2533,14 @@ impl TequilaApp {
             self.settle_window_capture();
             return;
         }
+        // Asked to wait for the picture: not taken until the viewport shows
+        // the scene as it now stands, clearly, or the time given is up.
+        if let Some((asked, seconds)) = self.screenshot_settle {
+            if !self.picture_settled(asked.elapsed()) && asked.elapsed().as_secs_f32() < seconds {
+                return;
+            }
+            self.screenshot_settle = None;
+        }
         let image = ctx.input(|input| {
             input.events.iter().find_map(|event| match event {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),
@@ -2480,6 +2582,12 @@ impl TequilaApp {
 }
 
 impl TequilaApp {
+    /// Whether the viewport's picture is fit to judge a look by, `waited`
+    /// after it was asked about ([`picture_settled`]).
+    pub(crate) fn picture_settled(&self, waited: std::time::Duration) -> bool {
+        picture_settled(self.shading, &self.image, self.orchestrator.latest_asked(), waited)
+    }
+
     /// Finish with a capture of one of the windows once it is written, or
     /// once its window has closed and it never will be.
     pub(crate) fn settle_window_capture(&mut self) {
@@ -2500,6 +2608,36 @@ impl TequilaApp {
             }
         }
     }
+}
+
+/// Whether a picture is fit to judge a look by: `wanted` is the view asked
+/// for, `image` what the viewport shows, `asked` when the newest request
+/// for a picture was made, and `waited` how long ago this was first asked.
+///
+/// A change restarts the Rendered view, which goes on showing the picture
+/// from before for a moment - of another view altogether, if the view was
+/// just switched - and then a dark, grainy one that clears. So a picture is
+/// settled when it is of the Rendered view, answers the newest request, and
+/// has enough samples for how it is shown: fewer when it is denoised. The
+/// quick views are drawn whole each frame and settle in a moment.
+pub(crate) fn picture_settled(wanted: crate::orchestrator::Shading, image: &crate::orchestrator::DisplayImage, asked: Option<std::time::Instant>, waited: std::time::Duration) -> bool {
+    use crate::orchestrator::Shading;
+    /// A request that restarts nothing (the same scene, asked again another
+    /// way) leaves the picture's stamp behind it. After this long the
+    /// picture shown is taken to answer it.
+    const GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+    if wanted != Shading::Rendered {
+        return waited >= std::time::Duration::from_millis(150);
+    }
+    if image.shading != Shading::Rendered {
+        return false;
+    }
+    let newest = match (image.asked, asked) {
+        (Some(shown), Some(asked)) => shown >= asked || asked.elapsed() >= GRACE,
+        _ => false,
+    };
+    let enough = if image.denoised { 16 } else { 64 };
+    newest && (image.samples >= enough || image.converged_fraction >= 0.95)
 }
 
 pub(crate) fn write_png(path: &std::path::Path, image: &egui::ColorImage) -> Result<(), String> {
@@ -2674,6 +2812,133 @@ mod handler_tests {
         assert!(failure(&mut app, r#"{"op":"preferences","set":{"navigation.zoom_speed":"fast"}}"#).contains("a number"));
         value(&mut app, r#"{"op":"preferences","reset":"all"}"#);
         assert_eq!(app.prefs, crate::preferences::Prefs::default());
+    }
+
+    /// A script adds a shape of the size it wants in one request and one
+    /// undo step. There was no such request: an assistant asked for a
+    /// pedestal imported a stand-in and reshaped it, in four tries.
+    #[test]
+    fn a_script_adds_a_shape_of_a_size_as_one_step() {
+        let mut app = TequilaApp::for_tests();
+        let before = app.project.document().tree.iter().count();
+        let added = value(&mut app, r#"{"op":"add_shape","shape":"cylinder","width":0.3,"height":0.15}"#);
+        let id = NodeId(added.get("node").and_then(Value::as_f64).expect("the new part's id") as u64);
+        let size = added.get("size").expect("its sizes");
+        let near = |key: &str, wanted: f64| size.get(key).and_then(Value::as_f64).is_some_and(|got| (got - wanted).abs() < 1e-6);
+        assert!(near("width", 0.3) && near("height", 0.15), "{size:?}");
+        assert!(size.get("depth").is_none() && size.get("radius").is_none(), "a cylinder has no depth: {size:?}");
+        {
+            let document = app.project.document();
+            let part = document.tree.get(id).expect("the part is in the scene");
+            assert!(part.visible, "added hidden");
+            let mesh = part.mesh().expect("a part with a mesh");
+            let bounds = document.geometry.get(mesh).expect("the mesh was built").bounds();
+            assert!((bounds.max.x - bounds.min.x - 0.3).abs() < 1e-3 && (bounds.max.y - bounds.min.y - 0.15).abs() < 1e-3, "built at another size: {bounds:?}");
+        }
+        // The shape and its size are one step.
+        app.project.undo();
+        assert_eq!(app.project.document().tree.iter().count(), before, "undo left something of the shape behind");
+
+        // Without sizes it comes at the size Add › Shape gives it; in a
+        // batch it is part of the batch's step.
+        let plain = value(&mut app, r#"{"op":"add_shape","shape":"sphere"}"#);
+        assert!(plain.get("size").and_then(|s| s.get("width")).and_then(Value::as_f64).unwrap() > 0.0);
+        let count = app.project.document().tree.iter().count();
+        value(&mut app, r#"{"op":"batch","ops":[{"op":"add_shape","shape":"cube","width":0.2},{"op":"add_shape","shape":"plane"}]}"#);
+        assert_eq!(app.project.document().tree.iter().count(), count + 2);
+        app.project.undo();
+        assert_eq!(app.project.document().tree.iter().count(), count, "a batch of two shapes was more than one step");
+    }
+
+    /// A part reshaped by a script is built under a mesh of its own. The
+    /// viewport keeps what it built for a mesh by its key, so a new shape
+    /// under the old key read back right and went on being drawn as the
+    /// old one.
+    #[test]
+    fn a_reshaped_part_is_given_a_mesh_of_its_own() {
+        let mut app = TequilaApp::for_tests();
+        let added = value(&mut app, r#"{"op":"add_shape","shape":"cube"}"#);
+        let id = added.get("node").and_then(Value::as_f64).unwrap() as u64;
+        let mesh_of = |app: &TequilaApp| app.project.document().tree.get(NodeId(id)).and_then(|part| part.mesh()).expect("a mesh");
+        let first = mesh_of(&app);
+
+        // Naming no mesh.
+        value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"scene.set_shape","node":{id},"shape":{{"shape":"cylinder","width":0.3,"height":0.15}}}}}}"#));
+        let second = mesh_of(&app);
+        assert_ne!(second, first, "reshaped under the mesh it had");
+        let document = app.project.document();
+        let bounds = document.geometry.get(second).expect("the new mesh was built").bounds();
+        assert!((bounds.max.y - bounds.min.y - 0.15).abs() < 1e-3, "{bounds:?}");
+        assert_eq!(document.tree.get(NodeId(id)).and_then(|part| part.shape).map(|spec| spec.shape.key()), Some("cylinder"));
+
+        // Naming the mesh it has, as a script that read the part would.
+        value(&mut app, &format!(r#"{{"op":"apply","command":{{"command":"scene.set_shape","node":{id},"mesh":{},"shape":{{"shape":"cylinder","width":0.3,"height":0.4}}}}}}"#, second.0));
+        let third = mesh_of(&app);
+        assert!(third != second && third != first, "reshaped under a mesh in use");
+    }
+
+    /// The library searched, a command looked up, and whether the picture
+    /// has finished, each over the channel as an assistant asks them.
+    #[test]
+    fn a_script_searches_the_library_and_looks_up_a_command() {
+        let mut app = TequilaApp::for_tests();
+        let found = value(&mut app, r#"{"op":"library","action":"search","search":"aluminium spun"}"#);
+        let names: Vec<&str> = found.get("presets").unwrap().as_array().iter().filter_map(|p| p.get("name").and_then(Value::as_str)).collect();
+        assert!(names.contains(&"Aluminium Spun"), "{names:?}");
+        let categories = value(&mut app, r#"{"op":"library","action":"search"}"#);
+        assert!(categories.get("categories").is_some());
+
+        let page = value(&mut app, r#"{"op":"help","command":"scene.set_shape"}"#);
+        assert!(page.get("example").is_some() && page.get("mind").is_some());
+        assert!(failure(&mut app, r#"{"op":"help","command":"scene.reshape"}"#).contains("scene.set_shape"));
+        let api = value(&mut app, r#"{"op":"query","what":"api"}"#);
+        let operations: Vec<&str> = api.get("operations").unwrap().as_array().iter().filter_map(Value::as_str).collect();
+        assert!(operations.contains(&"add_shape") && operations.contains(&"help"), "{operations:?}");
+
+        let state = value(&mut app, r#"{"op":"ui"}"#);
+        assert!(state.get("picture_samples").is_some() && state.get("picture_settled").and_then(Value::as_bool).is_some());
+    }
+
+    /// A screenshot waits for the picture. Outside the Rendered view that
+    /// is a moment. In it, the picture has to be of that view, answer the
+    /// newest request, and have gathered enough to look at - fewer samples
+    /// when it is denoised - or have mostly converged. The first try in a
+    /// running copy called the Solid view's picture, still up a moment
+    /// after the switch to Rendered, finished at 0 samples.
+    #[test]
+    fn a_screenshot_waits_for_the_picture_to_finish() {
+        use crate::orchestrator::{DisplayImage, Shading};
+        use std::time::{Duration, Instant};
+        let second = Duration::from_secs(1);
+        let asked = Instant::now();
+        let quick = DisplayImage::default();
+        assert!(!picture_settled(Shading::Fast, &quick, None, Duration::from_millis(50)));
+        assert!(picture_settled(Shading::Fast, &quick, None, Duration::from_millis(200)));
+
+        // Rendered asked for, the quick view's picture still up.
+        assert!(!picture_settled(Shading::Rendered, &quick, Some(asked), Duration::from_secs(30)), "another view's picture passed for the Rendered one");
+
+        let rendered = |samples: u32, denoised: bool, converged: f32, stamp: Instant| DisplayImage { shading: Shading::Rendered, samples, denoised, converged_fraction: converged, asked: Some(stamp), ..DisplayImage::default() };
+        assert!(!picture_settled(Shading::Rendered, &rendered(8, false, 0.0, asked), Some(asked), second), "eight samples of a grainy picture passed for finished");
+        assert!(picture_settled(Shading::Rendered, &rendered(64, false, 0.0, asked), Some(asked), second));
+        assert!(!picture_settled(Shading::Rendered, &rendered(16, false, 0.0, asked), Some(asked), second));
+        assert!(picture_settled(Shading::Rendered, &rendered(16, true, 0.0, asked), Some(asked), second));
+        assert!(picture_settled(Shading::Rendered, &rendered(4, false, 0.97, asked), Some(asked), second));
+
+        // A fine picture of the scene before the last change is not one of
+        // the scene: it answers an older request.
+        let before = asked - Duration::from_secs(2);
+        assert!(!picture_settled(Shading::Rendered, &rendered(500, false, 1.0, before), Some(asked), second), "the picture from before the change passed for the new one");
+        // Unless the request is old enough to have been one that restarted
+        // nothing.
+        let long_ago = asked - Duration::from_secs(30);
+        assert!(picture_settled(Shading::Rendered, &rendered(500, false, 1.0, long_ago - second), Some(long_ago), second));
+        // And never with no picture, or no request, at all.
+        assert!(!picture_settled(Shading::Rendered, &DisplayImage { shading: Shading::Rendered, samples: 500, ..DisplayImage::default() }, Some(asked), second));
+
+        // The application's own, with nothing asked of the renderer yet.
+        let app = TequilaApp::for_tests();
+        let _ = app.picture_settled(second);
     }
 
     /// A script hides and shows the selection's outline and the gizmo, as

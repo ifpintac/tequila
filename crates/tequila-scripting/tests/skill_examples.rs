@@ -79,8 +79,27 @@ fn examples(block: &str) -> Vec<(Option<String>, Value)> {
 }
 
 fn check(file: &Path, tool: Option<&str>, value: &Value) -> Result<&'static str, String> {
+    // A library tool's arguments are the request it sends, less its
+    // operation and action.
+    let as_library = |action: &str| {
+        let mut request = value.clone();
+        if let Value::Object(fields) = &mut request {
+            fields.insert("op".into(), Value::String("library".into()));
+            fields.insert("action".into(), Value::String(action.into()));
+        }
+        request
+    };
+    let sent;
     let value = match (tool, value.get("request")) {
         (Some("tequila_request"), Some(request)) => request,
+        (Some("tequila_library"), _) => {
+            sent = as_library("search");
+            &sent
+        }
+        (Some("tequila_library_apply"), _) => {
+            sent = as_library("apply");
+            &sent
+        }
         _ => value,
     };
     let text = tequila_format::json_write::to_string(value);

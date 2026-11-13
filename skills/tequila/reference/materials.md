@@ -4,7 +4,7 @@ Tequila's materials are OpenPBR. `tequila_query {"what": "api"}` is the authorit
 
 ## Start from the library
 
-399 presets, in these categories (`tequila_query {"what": "library"}` lists every name):
+Several hundred presets, in these categories. `tequila_library {"search": "walnut"}` finds them by words, `tequila_library {"category": "Wood"}` lists one category, and `tequila_library_apply {"name": ..., "nodes": [...]}` puts one on parts. Do not read the whole library (`tequila_query {"what": "library"}`): it is a third of a million characters.
 
 | Category | Some of its presets (exact names) |
 |---|---|

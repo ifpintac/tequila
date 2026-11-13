@@ -1300,13 +1300,14 @@ fn read_flags(value: &Value) -> Result<Vec<(NodeId, bool)>, FormatError> {
             .get("node")
             .and_then(|v| v.as_index())
             .ok_or_else(|| FormatError::Invalid("a state names no node".into()))?;
-        out.push((
-            NodeId(id as u64),
-            entry
-                .get("value")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-        ));
+        // Show or hide, lock or unlock, is the whole point of a state, so
+        // it is never assumed: a state written with `visible` or `locked`
+        // for its value used to read as false, and hid the part.
+        let value = entry
+            .get("value")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| FormatError::Invalid("a state has no `value`: each is {\"node\": id, \"value\": true or false}".into()))?;
+        out.push((NodeId(id as u64), value));
     }
     if out.is_empty() {
         return Err(FormatError::Invalid("a state command has no states".into()));
@@ -2491,6 +2492,23 @@ mod tests {
     /// preset is refused. Read as Product, a script asking for "jewelry" got
     /// product lighting and no word of it: no caustics, no ground bounce and
     /// half the transmission depth, on exactly the scene that needed them.
+    /// Show or hide, lock or unlock, is never assumed. A state written
+    /// with `visible` for its `value` used to read as false, so a script
+    /// that meant to show a part hid it, and was told nothing.
+    #[test]
+    fn a_state_without_its_value_is_refused() {
+        for command in ["scene.set_visibility", "scene.set_locked"] {
+            for state in [r#"{"node":1,"visible":true}"#, r#"{"node":1}"#, r#"{"node":1,"value":"yes"}"#] {
+                let line = format!(r#"{{"command":"{command}","states":[{state}]}}"#);
+                let refused = decode(&line).err().unwrap_or_else(|| panic!("{line} was read"));
+                assert!(format!("{refused:?}").contains("`value`"), "{refused:?}");
+            }
+            for value in [true, false] {
+                assert!(decode(&format!(r#"{{"command":"{command}","states":[{{"node":1,"value":{value}}}]}}"#)).is_ok());
+            }
+        }
+    }
+
     #[test]
     fn a_lighting_preset_is_named_in_any_case_and_a_wrong_name_is_refused() {
         match decode(r#"{"command":"lighting.set_preset","preset":"jewelry"}"#) {

@@ -177,6 +177,10 @@ mod tests {
             r#"{"op":"studio_preset","action":"list"}"#,
             r#"{"op":"library","action":"apply","name":"Brushed Aluminium","nodes":[1]}"#,
             r#"{"op":"studio_kit","piece":"softbox"}"#,
+            r#"{"op":"library","action":"search","search":"black leather"}"#,
+            r#"{"op":"help","command":"scene.set_visibility"}"#,
+            r#"{"op":"add_shape","shape":"cylinder","width":0.3}"#,
+            r#"{"op":"screenshot","path":"SCRATCHtequila-mcp-2.png","viewport":true,"settle":8}"#,
             r#"{"op":"batch","ops":[{"op":"frame","all":true},{"op":"select","nodes":[1]}]}"#,
         ] {
             assert_eq!(asked(request), None, "{request}");

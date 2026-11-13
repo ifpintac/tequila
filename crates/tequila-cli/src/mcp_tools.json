@@ -29,11 +29,129 @@
  },
  {
   "name": "tequila_materials",
-  "description": "Every material: id, type, how many parts use it, parameters and texture maps.",
+  "description": "Every material in the scene, briefly: id, name, type, how many parts use it and how many texture maps it has. tequila_material gives one in full.",
   "inputSchema": {
    "type": "object",
    "properties": {},
    "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_material",
+  "description": "One material of the scene in full: every parameter, pattern and texture map.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "integer",
+     "description": "The material's id, from tequila_materials or tequila_nodes."
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_library",
+  "description": "Search the material library: several hundred finished presets. LOOK HERE FIRST for any material, before making one. With no arguments it lists the categories and how many presets each has. search takes words that must all match the name, category, type, tags or description (\"black leather\", \"brushed aluminium\", \"translucent ripstop\"); category narrows to one. Answers with name, category, type and a line about each: the name is what tequila_library_apply takes.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "search": {
+     "type": "string",
+     "description": "Words to look for: a colour, a finish, what it is made of."
+    },
+    "category": {
+     "type": "string",
+     "description": "One category, as the list with no arguments names them."
+    },
+    "limit": {
+     "type": "integer",
+     "description": "How many presets to answer with at most (default 20)."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_library_apply",
+  "description": "Put a library preset on parts, by its exact name from tequila_library. One undo step. unlink=true gives the parts a copy of their own, to change without changing the other parts that use the preset. To change its colour afterwards, read it with tequila_material: a preset that sets its colour by a pattern needs the pattern's colours changed (tequila_material_recipe, then tequila_material_update), not base_color.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "nodes": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "description": "Part ids to put it on; the selection when left out."
+    },
+    "unlink": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "name"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_command",
+  "description": "How to write one command for tequila_apply: its exact fields and a working example, and for a setting-by-name command the names it takes. With no command, the name of every command. Ask before using a command for the first time, rather than guessing its fields.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "command": {
+     "type": "string",
+     "description": "A command's name, e.g. \"scene.set_visibility\" or \"environment.set_parameter\"."
+    }
+   },
+   "required": [],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "tequila_add_shape",
+  "description": "Add a simple shape as a new part: plane, cube, cylinder, sphere, disc, backdrop or wall. It stands beside what is in the scene, on the floor, half its size unless sizes are given. Sizes are metres: width (a cylinder's, sphere's and disc's diameter), depth, height, radius (half a round shape's width; a backdrop's curve). One undo step. Answers with the new part's id and its sizes.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "shape": {
+     "type": "string",
+     "enum": [
+      "plane",
+      "cube",
+      "cylinder",
+      "sphere",
+      "disc",
+      "backdrop",
+      "wall"
+     ]
+    },
+    "width": {
+     "type": "number"
+    },
+    "depth": {
+     "type": "number"
+    },
+    "height": {
+     "type": "number"
+    },
+    "radius": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "shape"
+   ],
    "additionalProperties": false
   }
  },
@@ -69,7 +187,7 @@
  },
  {
   "name": "tequila_apply",
-  "description": "Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"}. tequila_query what=commands lists them; what=api describes material parameters and types. One undo step. Colours may be hex sRGB strings (\"value\": \"#c0392b\"), converted for you; arrays are linear ACEScg.",
+  "description": "Apply one command, e.g. {\"command\":\"material.set_type\",\"material\":2,\"type\":\"velvet\"}. tequila_command gives any command's exact fields and an example: ask it first. tequila_query what=api describes material parameters and types. One undo step. Colours may be hex sRGB strings (\"value\": \"#c0392b\"), converted for you; arrays are linear ACEScg.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -126,7 +244,7 @@
  },
  {
   "name": "tequila_material_create",
-  "description": "Make a new material from a recipe and put it on parts, as one undo step. Returns its id and a preview image. Recipe: {\"name\": \"Speckled Stone\", \"type\": \"plastic\" (or metal, glass, paint, velvet... see the guide), any parameter as a value (\"specular_roughness\": 0.3, \"base_color\": \"#c0392b\" - hex sRGB is fine), \"patterns\": [{\"param\": \"base_color\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.01, \"colors\": [{\"at\": 0, \"color\": \"#d8d4cc\"}, {\"at\": 1, \"color\": \"#a9a59c\"}]}, {\"param\": \"specular_roughness\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.02, \"range\": [0.2, 0.4]}, {\"param\": \"bump\", \"procedural\": {\"kind\": \"leather\"}, \"size\": 0.002, \"depth\": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: \"blend\" mix/multiply/add, \"amount\" 0-1, \"mask\" {\"threshold\": 0.5, \"softness\": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.",
+  "description": "Make a new material from a recipe and put it on parts, as one undo step. Only when tequila_library has nothing close: search it first. Returns its id and a preview image. Recipe: {\"name\": \"Speckled Stone\", \"type\": \"plastic\" (or metal, glass, paint, velvet... see the guide), any parameter as a value (\"specular_roughness\": 0.3, \"base_color\": \"#c0392b\" - hex sRGB is fine), \"patterns\": [{\"param\": \"base_color\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.01, \"colors\": [{\"at\": 0, \"color\": \"#d8d4cc\"}, {\"at\": 1, \"color\": \"#a9a59c\"}]}, {\"param\": \"specular_roughness\", \"procedural\": {\"kind\": \"noise\"}, \"size\": 0.02, \"range\": [0.2, 0.4]}, {\"param\": \"bump\", \"procedural\": {\"kind\": \"leather\"}, \"size\": 0.002, \"depth\": 0.0001}]}. `size` is the feature size in metres at real-world scale. A later pattern on the same param is a layer: \"blend\" mix/multiply/add, \"amount\" 0-1, \"mask\" {\"threshold\": 0.5, \"softness\": 0.05}. Pattern kinds: noise, noise_texture, ridged, cellular, spots, granite, marble, wood, wood_advanced, brushed, brushed_radial, scratches, leather, weave, camouflage, contour, mesh. Call tequila_material_guide once for what each looks like, their settings, the rules of thumb and 16 tested example recipes to start from.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -357,13 +475,17 @@
  },
  {
   "name": "tequila_screenshot",
-  "description": "See the application as it is now. Returns an image.",
+  "description": "See the application as it is now. Returns an image. After a change the rendered view is dark and grainy for a few seconds while it redraws: this waits for the picture to finish, up to settle seconds, and says with the image whether it had. Do not judge a look from one it calls unfinished: look again.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "viewport": {
      "type": "boolean",
      "description": "true for just the 3D view, without panels (default true)."
+    },
+    "settle": {
+     "type": "number",
+     "description": "Seconds to give the picture to finish (default 12; 0 takes it at once)."
     }
    },
    "required": [],
