@@ -765,6 +765,7 @@ impl Assistant {
         let mut key = false;
         let mut sign_in: Option<acp::SignIn> = None;
         let mut authenticate: Option<String> = None;
+        let mut subscribe = false;
         egui::Frame::none().fill(p.card).rounding(10.0).stroke(egui::Stroke::new(1.0_f32, p.line)).inner_margin(12.0).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let say = |ui: &mut egui::Ui, text: &str| {
@@ -798,10 +799,10 @@ impl Assistant {
                     ui.label(egui::RichText::new(format!("{} needs an account to answer", kind.name())).font(theme::strong(13.5)));
                     match kind {
                         agents::Kind::Claude if !self.settings.claude_subscription => {
-                            say(ui, "Here Claude is paid for by use, with an Anthropic API key or Console account. That is separate from a Claude subscription.");
                             if *subscription {
-                                say(ui, "A Claude subscription is signed in on this computer. Tequila leaves it alone: Anthropic's terms do not plainly allow an application that is not theirs to use one.");
+                                say(ui, "A Claude subscription is signed in on this computer, and Tequila is not using it.");
                             }
+                            say(ui, "Claude can be paid for by use, with an Anthropic API key or Console account, or by your Claude subscription. Anthropic's terms do not plainly allow a subscription in an application that is not theirs, so that one is yours to turn on.");
                         }
                         agents::Kind::Claude => say(ui, "Signing in happens in its own program, in a terminal window. Tequila never sees the login."),
                         agents::Kind::ChatGpt => say(ui, "Sign in with your ChatGPT account on OpenAI's own page, which opens in your browser, or connect an OpenAI API key, billed by use. Tequila never sees the login."),
@@ -820,6 +821,12 @@ impl Assistant {
                                     None => authenticate = Some(way.id.clone()),
                                 }
                             }
+                        }
+                        if kind == agents::Kind::Claude && !self.settings.claude_subscription {
+                            subscribe = ui
+                                .button("Use my Claude subscription")
+                                .on_hover_text("Signs in with your Claude plan, in Claude's own program. Nothing is billed by use. You can turn it off again under Connections.")
+                                .clicked();
                         }
                         key = ui.button("Add an API key\u{2026}").clicked();
                         retry = ui.button("Try again").on_hover_text("After signing in or adding a key").clicked();
@@ -849,6 +856,9 @@ impl Assistant {
         }
         if let Some(method) = authenticate {
             self.authenticate(&method);
+        }
+        if subscribe {
+            self.set_claude_subscription(true);
         }
         if key {
             self.add_provider(kind.key_preset());
