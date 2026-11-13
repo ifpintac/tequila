@@ -4,7 +4,7 @@ Everything the tools do is a request on Tequila's scripting channel. Two reasons
 
 ## 1. A raw request
 
-`tequila_request {"request": {"op": "<name>", ...}}` sends any request. It is offered on a full local connection; a restricted (remote) connection and an assistant running on an API key or a local model do not have it, and the jobs below are then the person's to do in the window.
+`tequila_request {"request": {"op": "<name>", ...}}` sends any request on a full local connection. An assistant running on an API key or a local model has it for the requests that have no tool of their own - `export`, `reimport`, `texture_set`, `substance`, `uv_layout`, `studio_kit`, `library`, `studio_preset`, `queue`, `plugin`, `screenshot`, `render` and `ui` - and is refused `new`, `open` and `quit`, which are the person's to do there. A restricted (remote) connection does not have it, and the jobs below are then the person's to do in the window.
 
 ```json
 tequila_request {"request": {"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}}

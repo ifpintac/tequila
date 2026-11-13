@@ -251,10 +251,12 @@ Snapshots are currently held in memory: after restarting, unfinished entries
 without a snapshot report a failure and must be queued again from their source
 project. Tequila will not silently render the newly opened scene for an old job.
 
-Restricted MCP access and the built-in Assistant cannot apply
-`render.set_settings`, including inside a batch, because it can redirect output
-files. Use `queue` to adjust resolution, samples and denoising within the locally
-configured output location.
+Restricted MCP access cannot apply `render.set_settings`, including inside a
+batch, because it can redirect output files. Use `queue` to adjust resolution,
+samples and denoising within the locally configured output location. The
+built-in Assistant's own loop (API keys and local models) applies it, less
+`output_directory` and `filename_template`: a block that would change either is
+refused, and the fields a block leaves out stay as they are.
 
 ## The built-in Assistant
 

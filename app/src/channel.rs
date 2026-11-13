@@ -46,6 +46,26 @@ pub fn handle(app: &mut TequilaApp, request: &Request) -> Reply {
     reply
 }
 
+/// Serve one of the application's own operations, which the protocol does
+/// not know (`tequila_scripting::server`): a part's UV layout written as a
+/// picture. Written down like any other request, `peer` being who sent it.
+pub fn handle_own(app: &mut TequilaApp, request: &tequila_format::json::Value, peer: &str) -> Reply {
+    let op = request.get("op").and_then(|v| v.as_str()).unwrap_or_default();
+    let (summary, reply) = match op {
+        tequila_scripting::uv_layout::OPERATION => {
+            let path = request.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+            let reply = match tequila_scripting::uv_layout::answer(app.project.document(), request) {
+                Ok(written) => Reply::Value(written),
+                Err(error) => Reply::Failed(error),
+            };
+            (format!("uv layout {path}"), reply)
+        }
+        other => (other.to_string(), Reply::Failed(format!("`{other}` is not an operation this understands"))),
+    };
+    log_reply(app, peer, summary, &[], &reply);
+    reply
+}
+
 /// Write down a request's outcome: in the console, for a request from
 /// outside, and in the activity log. `steps` spells out a batch.
 pub(crate) fn log_reply(app: &mut TequilaApp, peer: &str, summary: String, steps: &[String], reply: &Reply) {

@@ -74,7 +74,7 @@ tequila_read {"what": "render"}
 | `kind` | `photo`, or `wireframe` for a line drawing of the edges |
 | `output_directory`, `filename_template` | Where files go; the template takes `{project}`, `{camera}`, `{date}`. Change only when the person says where |
 
-This command is not offered on a restricted (remote) connection or to an assistant running on an API key or a local model: there, `tequila_queue` sets size, samples, denoising and engine, and format and transparency are the person's to set in the Render window (`tequila_ui {"render_window": true}` opens it).
+An assistant running on an API key or a local model sends this command too, but cannot move where files go: a block that changes `output_directory` or `filename_template` is refused, and there the fields a block leaves out stay as they are. On a restricted (remote) connection the command is not offered: `tequila_queue` sets size, samples, denoising and engine, and format and transparency are the person's to set in the Render window (`tequila_ui {"render_window": true}` opens it).
 
 ## 5. A transparent background
 
