@@ -209,6 +209,9 @@ pub struct Assistant {
     pub(crate) setup: Option<Setup>,
     /// Who the agent is signed in as, or what pays for it.
     pub(crate) account: Option<(String, String)>,
+    /// The sign-in a connected API key goes through, for an agent that
+    /// wants asking: tried once, when it says it needs signing in.
+    key_way: Option<&'static str>,
     /// A message waiting for the agent to be ready for it.
     queued: Option<Vec<Block>>,
     /// The agent's program left while it had nothing to do: it is started
@@ -493,6 +496,7 @@ impl Assistant {
             folder
         });
         let (more_args, more_env) = agents::start_with(kind, &self.settings);
+        self.key_way = kind.key_sign_in(&self.settings);
         let mut args = found.args.clone();
         args.extend(more_args);
         let mut env = found.env.clone();
@@ -1019,6 +1023,14 @@ impl Assistant {
                     }
                 }
                 acp::Event::SignIn(ways) => {
+                    // A key the person has connected signs it in without a
+                    // question, where the agent offers that way; once.
+                    if let Some(way) = self.key_way.take().filter(|way| ways.iter().any(|w| w.id == *way)) {
+                        if let Some((_, agent)) = &mut self.agent {
+                            agent.authenticate(way);
+                        }
+                        continue;
+                    }
                     let subscription = self.agent.as_ref().is_some_and(|(_, agent)| agent.signed_out_because == "claude_subscription_not_supported");
                     self.setup = Some(Setup::SignIn { ways, subscription });
                     self.asked = None;
@@ -2590,6 +2602,43 @@ mod tests {
         pump_until(&mut assistant, &mut app, |a| a.chat.session.is_some());
         assert!(assistant.setup.is_none(), "signed in by its key before the conversation opened: {:?}", assistant.status().get("setup"));
         assert_eq!(assistant.account.as_ref().map(|(kind, _)| kind.as_str()), Some("api_key"));
+    }
+
+    /// An agent that wants asking for a key sign-in (Gemini's) is asked,
+    /// once, when the person has connected a key; the conversation opens
+    /// without a card. Without a key the card shows its ways.
+    #[test]
+    fn a_connected_key_signs_an_agent_in_that_wants_asking() {
+        let wanting = || {
+            let signed_in = std::sync::Arc::new(std::sync::Mutex::new(false));
+            stand_in(move |message, write| match message.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => write(&format!(
+                    r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":1,"authMethods":[{{"id":"oauth-personal","name":"Log in with Google"}},{{"id":"gemini-api-key","name":"Gemini API key"}}]}}}}"#,
+                    id_of(message)
+                )),
+                Some("session/new") if *signed_in.lock().unwrap() => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"sessionId":"s"}}}}"#, id_of(message))),
+                Some("session/new") => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"Authentication required"}}}}"#, id_of(message))),
+                Some("authenticate") => {
+                    assert_eq!(message.get("params").unwrap().get("methodId").and_then(|m| m.as_str()), Some("gemini-api-key"));
+                    *signed_in.lock().unwrap() = true;
+                    write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{}}}}"#, id_of(message)));
+                }
+                _ => {}
+            })
+        };
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Gemini.id().into());
+        assistant.agent = Some((agents::Kind::Gemini, wanting()));
+        assistant.key_way = Some("gemini-api-key");
+        pump_until(&mut assistant, &mut app, |a| a.chat.session.is_some());
+        assert!(assistant.setup.is_none() && assistant.key_way.is_none());
+
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Gemini.id().into());
+        assistant.agent = Some((agents::Kind::Gemini, wanting()));
+        pump_until(&mut assistant, &mut app, |a| a.setup.is_some());
+        assert!(matches!(&assistant.setup, Some(Setup::SignIn { ways, .. }) if ways.len() == 2));
     }
 
     /// An agent whose program ends before it has opened a conversation is

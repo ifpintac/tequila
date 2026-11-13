@@ -50,11 +50,13 @@ pub struct Connection {
     ways: Vec<acp::SignIn>,
     /// Its models, once it has said.
     pub models: Option<acp::Setting>,
+    /// The sign-in a connected API key goes through, tried once.
+    key_way: Option<&'static str>,
 }
 
 impl Connection {
     fn new(kind: agents::Kind) -> Connection {
-        Connection { kind, status: Status::Checking, agent: None, found: None, installing: None, ways: Vec::new(), models: None }
+        Connection { kind, status: Status::Checking, agent: None, found: None, installing: None, ways: Vec::new(), models: None, key_way: None }
     }
 
     /// Look for the agent's program and, where it is there, start it to ask
@@ -62,6 +64,7 @@ impl Connection {
     fn look(&mut self, settings: &Settings, wake: &egui::Context) {
         self.agent = None;
         self.models = None;
+        self.key_way = self.kind.key_sign_in(settings);
         match agents::find_agent(self.kind) {
             Err(Missing::Adapter { node }) => self.status = Status::Missing { node },
             Ok(found) => {
@@ -121,8 +124,12 @@ impl Connection {
                 }
                 acp::Event::Account { kind, label } => self.status = Status::SignedIn { kind, label },
                 acp::Event::SignIn(ways) => {
+                    // A connected key signs it in without a question, once.
+                    match self.key_way.take().filter(|way| ways.iter().any(|w| w.id == *way)) {
+                        Some(way) => agent.authenticate(way),
+                        None => self.status = Status::SignedOut,
+                    }
                     self.ways = ways;
-                    self.status = Status::SignedOut;
                 }
                 acp::Event::Ready { .. } => {
                     self.models = agent.setting("model").cloned();
@@ -258,7 +265,7 @@ impl Assistant {
                 let status = connection.status.clone();
                 ui.horizontal_wrapped(|ui| match status {
                     Status::Missing { node: true } => {
-                        if ui.button("Install").on_hover_text("Downloads its maker's program into Tequila's own folder, with this computer's npm").clicked() {
+                        if ui.button("Install").on_hover_text(kind.install_says()).clicked() {
                             connection.installing = Some(agents::install(kind));
                             connection.status = Status::Installing;
                         }
@@ -270,7 +277,7 @@ impl Assistant {
                         look = ui.button("Check again").clicked();
                     }
                     Status::SignedOut => {
-                        for way in connection.ways.clone().iter().filter(|way| way.id != "api-key") {
+                        for way in connection.ways.clone().iter().filter(|way| !way.id.contains("api-key")) {
                             let button = ui.button(format!("Sign in: {}", way.name));
                             let button = if way.description.is_empty() { button } else { button.on_hover_text(&way.description) };
                             if button.clicked() {

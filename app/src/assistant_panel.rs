@@ -773,7 +773,7 @@ impl Assistant {
             match setup {
                 Setup::Missing { node: true } => {
                     ui.label(egui::RichText::new(format!("{} is not on this computer yet", kind.name())).font(theme::strong(13.5)));
-                    say(ui, &format!("Tequila can install the program that runs {} here. It is its maker's own, downloaded from npm into Tequila's folder, and can be removed by deleting that folder.", kind.name()));
+                    say(ui, &kind.install_says());
                     ui.add_space(6.0);
                     install = ui.button("Install").clicked();
                 }
@@ -805,12 +805,13 @@ impl Assistant {
                         }
                         agents::Kind::Claude => say(ui, "Signing in happens in its own program, in a terminal window. Tequila never sees the login."),
                         agents::Kind::ChatGpt => say(ui, "Sign in with your ChatGPT account on OpenAI's own page, which opens in your browser, or connect an OpenAI API key, billed by use. Tequila never sees the login."),
+                        agents::Kind::Gemini => say(ui, "Sign in with your Google account on Google's own page, which opens in your browser, or connect a Gemini API key, billed by use. Tequila never sees the login."),
                     }
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
                         // A key is signed in with by connecting it, not by a
                         // button that has nothing to hand over.
-                        for way in ways.iter().filter(|way| way.id != "api-key") {
+                        for way in ways.iter().filter(|way| !way.id.contains("api-key")) {
                             let button = ui.button(&way.name);
                             let button = if way.description.is_empty() { button } else { button.on_hover_text(&way.description) };
                             if button.clicked() {

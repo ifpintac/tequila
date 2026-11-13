@@ -3,7 +3,9 @@
 //!
 //! An agent is a program somebody else makes: Claude through Anthropic's
 //! Agent SDK and its `claude-agent-acp` adapter, ChatGPT through OpenAI's
-//! Codex and its `codex-acp` adapter. Tequila does not ship them.
+//! Codex and its `codex-acp` adapter, Gemini through Google's Antigravity
+//! CLI, which speaks the protocol itself (`agy acp`). Tequila does not ship
+//! them.
 //! It uses the one already on the computer, or installs it - into Tequila's
 //! own `agents` folder, with the computer's npm - when the person asks.
 //! Signing in is done in the agent's own program, in a terminal window:
@@ -22,16 +24,31 @@ pub enum Kind {
     Claude,
     /// OpenAI's Codex, signed in with a ChatGPT account or an API key.
     ChatGpt,
+    /// Google's Antigravity CLI, signed in with a Google account or a
+    /// Gemini API key.
+    Gemini,
+}
+
+/// How an agent's program gets onto the computer.
+enum Source {
+    /// An npm package, installed into Tequila's own folder and run with
+    /// the computer's Node: the package, and the program it brings.
+    Npm { package: &'static str, program: &'static str },
+    /// A program of its own, put where its maker's installer puts it: the
+    /// program, what it is started with to speak the protocol, and the
+    /// maker's installer for Macs and Linux, and for Windows.
+    Program { program: &'static str, args: &'static [&'static str], unix: &'static str, windows: &'static str },
 }
 
 impl Kind {
-    pub const ALL: [Kind; 2] = [Kind::Claude, Kind::ChatGpt];
+    pub const ALL: [Kind; 3] = [Kind::Claude, Kind::ChatGpt, Kind::Gemini];
 
     /// Its name in the settings and in a chat's file.
     pub fn id(self) -> &'static str {
         match self {
             Kind::Claude => "agent:claude",
             Kind::ChatGpt => "agent:chatgpt",
+            Kind::Gemini => "agent:gemini",
         }
     }
 
@@ -43,22 +60,40 @@ impl Kind {
         match self {
             Kind::Claude => "Claude",
             Kind::ChatGpt => "ChatGPT",
+            Kind::Gemini => "Gemini",
         }
     }
 
-    /// The npm package its adapter comes in.
-    fn package(self) -> &'static str {
+    fn source(self) -> Source {
         match self {
-            Kind::Claude => "@agentclientprotocol/claude-agent-acp",
-            Kind::ChatGpt => "@agentclientprotocol/codex-acp",
+            Kind::Claude => Source::Npm { package: "@agentclientprotocol/claude-agent-acp", program: "claude-agent-acp" },
+            Kind::ChatGpt => Source::Npm { package: "@agentclientprotocol/codex-acp", program: "codex-acp" },
+            Kind::Gemini => Source::Program {
+                program: "agy",
+                args: &["acp"],
+                unix: "https://antigravity.google/cli/install.sh",
+                windows: "https://antigravity.google/cli/install.ps1",
+            },
         }
     }
 
-    /// The adapter's program, as npm names it.
-    fn program(self) -> &'static str {
-        match self {
-            Kind::Claude => "claude-agent-acp",
-            Kind::ChatGpt => "codex-acp",
+    /// Whether it is installed with Node's npm, which then has to be on the
+    /// computer.
+    pub fn needs_node(self) -> bool {
+        matches!(self.source(), Source::Npm { .. })
+    }
+
+    /// What Install does, for the person to read before they click.
+    pub fn install_says(self) -> String {
+        match self.source() {
+            Source::Npm { .. } => format!(
+                "Tequila can install the program that runs {} here. It is its maker's own, downloaded from npm into Tequila's folder, and can be removed by deleting that folder.",
+                self.name()
+            ),
+            Source::Program { .. } => format!(
+                "Tequila can run Google's own installer for the Antigravity CLI, which is what {} runs on here. It goes where Google puts it, in your home folder, and adds itself to your terminal's path.",
+                self.name()
+            ),
         }
     }
 
@@ -67,6 +102,16 @@ impl Kind {
         match self {
             Kind::Claude => "claude",
             Kind::ChatGpt => "openai",
+            Kind::Gemini => "gemini",
+        }
+    }
+
+    /// The sign-in a connected API key is used through, where the agent
+    /// wants to be asked for that rather than told as it starts.
+    pub fn key_sign_in(self, settings: &Settings) -> Option<&'static str> {
+        match self {
+            Kind::Gemini => connected_key(settings, Wire::OpenAi, "generativelanguage.googleapis.com").map(|_| "gemini-api-key"),
+            Kind::Claude | Kind::ChatGpt => None,
         }
     }
 
@@ -78,6 +123,7 @@ impl Kind {
             // Codex looks at files by running read-only commands in its
             // own sandbox, which Tequila is not asked about.
             Kind::ChatGpt => Some("ChatGPT's own program can read files elsewhere on this computer. It cannot change them, run other commands or reach the internet without Tequila being asked, and Tequila says no."),
+            Kind::Gemini => None,
         }
     }
 }
@@ -118,6 +164,17 @@ pub fn start_with(kind: Kind, settings: &Settings) -> (Vec<String>, Vec<(String,
             if let Some(key) = connected_key(settings, Wire::OpenAi, "api.openai.com") {
                 env.push(("OPENAI_API_KEY".to_string(), key));
                 env.push(("DEFAULT_AUTH_REQUEST".to_string(), r#"{"methodId":"api-key"}"#.to_string()));
+            }
+        }
+        Kind::Gemini => {
+            // Its terminal is held to its own sandbox as well as to
+            // Tequila's answer, and what it does here is not reported to
+            // its maker as usage.
+            args.extend(["--sandbox".to_string(), "--disable-telemetry".to_string()]);
+            // A connected Gemini key is there for it to sign in with
+            // ([`Kind::key_sign_in`]).
+            if let Some(key) = connected_key(settings, Wire::OpenAi, "generativelanguage.googleapis.com") {
+                env.push(("GEMINI_API_KEY".to_string(), key));
             }
         }
     }
@@ -207,8 +264,23 @@ fn find_agent_in(kind: Kind, folder: &Path, places: &[PathBuf], stand_in: Option
         let args = std::env::var("TEQUILA_ASSISTANT_AGENT_ARGS").map(|args| args.split('\n').filter(|a| !a.is_empty()).map(str::to_string).collect()).unwrap_or_default();
         return Ok(Found { program, args, env });
     }
+    let (package, program) = match kind.source() {
+        Source::Npm { package, program } => (package, program),
+        // A program of its own: on the path, or where its installer puts it.
+        Source::Program { program, args, .. } => {
+            let name = if cfg!(windows) { format!("{program}.exe") } else { program.to_string() };
+            let mut places = places.to_vec();
+            if cfg!(windows) {
+                places.extend(std::env::var_os("LOCALAPPDATA").map(|local| PathBuf::from(local).join(program).join("bin")));
+            }
+            return match find(&[name.as_str()], &places) {
+                Some(program) => Ok(Found { program, args: args.iter().map(|a| a.to_string()).collect(), env }),
+                None => Err(Missing::Adapter { node: true }),
+            };
+        }
+    };
     let node = node(places);
-    let script = |modules: &Path| modules.join(kind.package()).join("dist").join("index.js");
+    let script = |modules: &Path| modules.join(package).join("dist").join("index.js");
     // Tequila's own install, then a global npm install on Windows, where
     // the program on the path is a batch file around the same script.
     let mut scripts = vec![script(&folder.join("node_modules"))];
@@ -220,7 +292,7 @@ fn find_agent_in(kind: Kind, folder: &Path, places: &[PathBuf], stand_in: Option
     }
     // One on the path: a link to its script, run with Node, or a program
     // that stands by itself (the adapter's own releases are that).
-    let name = if cfg!(windows) { format!("{}.exe", kind.program()) } else { kind.program().to_string() };
+    let name = if cfg!(windows) { format!("{program}.exe") } else { program.to_string() };
     if let Some(program) = find(&[name.as_str()], places) {
         let real = program.canonicalize().unwrap_or(program);
         return match (real.extension().is_some_and(|e| e == "js" || e == "mjs"), &node) {
@@ -243,11 +315,29 @@ pub fn install(kind: Kind) -> Receiver<Result<String, String>> {
 }
 
 fn install_now(kind: Kind, folder: &Path, places: &[PathBuf]) -> Result<String, String> {
-    let npm = find(if cfg!(windows) { &["npm.cmd"] } else { &["npm"] }, places)
-        .ok_or("Node.js is not on this computer. Install it from nodejs.org, then try again.")?;
-    std::fs::create_dir_all(folder).map_err(|e| format!("{} could not be made: {e}", folder.display()))?;
-    let mut command = std::process::Command::new(npm);
-    command.arg("install").arg("--prefix").arg(folder).arg("--no-fund").arg("--no-audit").arg(kind.package());
+    let mut command = match kind.source() {
+        Source::Npm { package, .. } => {
+            let npm = find(if cfg!(windows) { &["npm.cmd"] } else { &["npm"] }, places)
+                .ok_or("Node.js is not on this computer. Install it from nodejs.org, then try again.")?;
+            std::fs::create_dir_all(folder).map_err(|e| format!("{} could not be made: {e}", folder.display()))?;
+            let mut command = std::process::Command::new(npm);
+            command.arg("install").arg("--prefix").arg(folder).arg("--no-fund").arg("--no-audit").arg(package);
+            command
+        }
+        // The maker's own installer, fetched from the maker and run as they
+        // say to run it. It checks what it downloads against its manifest.
+        Source::Program { unix, windows, .. } => {
+            if cfg!(windows) {
+                let mut command = std::process::Command::new("powershell");
+                command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &format!("irm {windows} | iex")]);
+                command
+            } else {
+                let mut command = std::process::Command::new("bash");
+                command.args(["-c", &format!("set -o pipefail; curl -fsSL {unix} | bash")]);
+                command
+            }
+        }
+    };
     if let Some((name, value)) = path_for_children(places) {
         command.env(name, value);
     }
@@ -256,13 +346,13 @@ fn install_now(kind: Kind, folder: &Path, places: &[PathBuf]) -> Result<String, 
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let output = command.output().map_err(|e| format!("npm could not be started: {e}"))?;
+    let output = command.output().map_err(|e| format!("the installer could not be started: {e}"))?;
     if output.status.success() {
         Ok(format!("{} is installed.", kind.name()))
     } else {
         let said = String::from_utf8_lossy(&output.stderr);
         let last: Vec<&str> = said.lines().filter(|l| !l.trim().is_empty()).rev().take(4).collect();
-        Err(format!("npm could not install it: {}", last.into_iter().rev().collect::<Vec<_>>().join(" ")))
+        Err(format!("It could not be installed: {}", last.into_iter().rev().collect::<Vec<_>>().join(" ")))
     }
 }
 
@@ -363,6 +453,16 @@ pub fn options(kind: Kind) -> Option<Value> {
         }
         // Codex is set up through its environment ([`start_with`]).
         Kind::ChatGpt => None,
+        // Antigravity takes what it is told about where it is this way.
+        Kind::Gemini => {
+            let mut prompt = Object::new();
+            prompt.set("append", INSTRUCTIONS);
+            let mut antigravity = Object::new();
+            antigravity.set("systemPrompt", prompt.build());
+            let mut meta = Object::new();
+            meta.set("antigravity", antigravity.build());
+            Some(meta.build())
+        }
     }
 }
 
@@ -374,6 +474,9 @@ pub fn pinned(kind: Kind) -> &'static [(&'static str, &'static str)] {
     match kind {
         Kind::Claude => &[("mode", "default")],
         Kind::ChatGpt => &[("mode", "read-only")],
+        // Its own default already asks; held there against a setting of
+        // the person's that would not.
+        Kind::Gemini => &[("mode", "default")],
     }
 }
 
@@ -499,6 +602,38 @@ mod tests {
         assert!(start_with(Kind::Claude, &settings).0.is_empty());
         assert_eq!(Kind::from_id("agent:chatgpt"), Some(Kind::ChatGpt));
         assert!(Kind::ChatGpt.caveat().is_some() && Kind::Claude.caveat().is_none());
+    }
+
+    /// Gemini's program is one of its own, found on the path or where
+    /// Google's installer puts it, started to speak the protocol in its
+    /// sandbox; a connected Gemini key is handed over for it to sign in
+    /// with, and no other service's key is.
+    #[test]
+    fn gemini_is_googles_own_program_started_in_its_sandbox() {
+        use tequila_ai::{Key, Provider};
+        let root = scratch("gemini");
+        let bin = root.join("bin");
+        assert_eq!(find_agent_in(Kind::Gemini, &root.join("agents"), &[bin.clone()], None), Err(Missing::Adapter { node: true }));
+        let agy = bin.join(if cfg!(windows) { "agy.exe" } else { "agy" });
+        touch(&agy);
+        let found = find_agent_in(Kind::Gemini, &root.join("agents"), &[bin], None).unwrap();
+        assert_eq!((found.program, found.args), (agy, vec!["acp".to_string()]));
+        assert!(!Kind::Gemini.needs_node() && Kind::Claude.needs_node());
+
+        let mut settings = Settings::default();
+        let (args, env) = start_with(Kind::Gemini, &settings);
+        assert_eq!((args, env.len()), (vec!["--sandbox".to_string(), "--disable-telemetry".to_string()], 0));
+        assert_eq!(Kind::Gemini.key_sign_in(&settings), None);
+        settings.providers = vec![
+            Provider { key: Key::Stored("sk-proj-openai".into()), ..Provider::preset("openai").unwrap() },
+            Provider { key: Key::Stored("AIza-test".into()), ..Provider::preset("gemini").unwrap() },
+        ];
+        assert_eq!(start_with(Kind::Gemini, &settings).1, [("GEMINI_API_KEY".to_string(), "AIza-test".to_string())]);
+        assert_eq!(Kind::Gemini.key_sign_in(&settings), Some("gemini-api-key"));
+        assert_eq!(pinned(Kind::Gemini), [("mode", "default")]);
+        let told = options(Kind::Gemini).unwrap();
+        assert!(told.get("antigravity").unwrap().get("systemPrompt").unwrap().get("append").and_then(Value::as_str).unwrap().contains("Tequila"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

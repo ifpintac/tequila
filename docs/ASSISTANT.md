@@ -71,7 +71,7 @@ The model picker at the bottom right of the message box lists everything
 connected, and **Connections…** at its foot opens the page where each is
 set up:
 
-- **Subscriptions and agents**: Claude and ChatGPT, each on a card that
+- **Subscriptions and agents**: Claude, ChatGPT and Gemini, each on a card that
   says where it stands - *Not on this computer*, *Installed, not signed
   in*, *Signed in · paid for by a subscription* or *by an API key* - with
   the button for the next step (**Install**, **Sign in**, **Check
@@ -85,9 +85,10 @@ set up:
 There are two kinds of answerer.
 
 **An agent** is the AI company's own program, running on this computer:
-**Claude** and **ChatGPT**. Tequila starts it, hands it Tequila's tools,
-and shows what it says and does. Neither is shipped with Tequila: the
-first time you choose one, the chat offers **Install**, which downloads its
+**Claude**, **ChatGPT** and **Gemini**. Tequila starts it, hands it
+Tequila's tools, and shows what it says and does. None is shipped with
+Tequila: the first time you choose one, the chat offers **Install**. For
+Claude and ChatGPT that downloads the
 adapter into Tequila's own folder, `~/.tequila/agents` - Anthropic's
 `@agentclientprotocol/claude-agent-acp` with the Claude program it runs, or
 `@agentclientprotocol/codex-acp` with OpenAI's Codex, each Apache-2.0 and
@@ -165,16 +166,36 @@ project's folder to you. Its web search is turned off. The chat says this
 before you ask it anything. Closing the gap needs a Codex permission
 profile that keeps reading to the project, which is not built yet.
 
-### Gemini
+### Gemini, and how it is paid for
 
-Gemini answers today with an API key, under *API keys and this computer*.
-Google's own agent is not built in. Its command-line program for a
-personal Google account is the Antigravity CLI (`agy`), which Google
-documents as speaking the same protocol (`agy acp`), but Antigravity's
-terms say that *"using third party software, tools, or services to access
-the Service ... is a breach of this Agreement"*, while its own guide says
-*"any ACP client can launch Antigravity CLI"*. Until that is settled, and
-until `agy acp` has been tried on a computer, it is left out.
+Gemini as an agent is Google's Antigravity CLI (`agy`), which speaks the
+protocol itself. One already on the computer is used; otherwise
+**Install** runs Google's own installer, which puts `agy` where Google
+puts it (`~/.local/bin` on a Mac, `%LOCALAPPDATA%\agy\bin` on Windows)
+and adds it to your terminal's path. Then the chat says what is missing:
+
+- **Log in with Google** opens Google's own sign-in page in your browser,
+  for a personal Google account and its Google AI plan. **Log in from the
+  terminal** does the same in a terminal window, by a code. Tequila never
+  sees the login.
+- **Log in with Gemini Enterprise** and **Gemini Enterprise Agent
+  Platform** are for an organisation's account.
+- **Add an API key…** connects a Gemini key (aistudio.google.com), billed
+  by use. A key you have already connected for Google Gemini is used
+  without asking.
+
+It is started in its own sandbox (`--sandbox`), with its usage reporting
+off (`--disable-telemetry`), in the mode that asks before it acts.
+
+**What Google's terms say.** Antigravity's terms (antigravity.google/terms)
+say: *"Using third party software, tools, or services to access the
+Service (e.g. using OpenClaw with Antigravity OAuth) is a breach of this
+Agreement."* Google's guide to this very protocol
+(antigravity.google/docs/ide/extensions/acp) says: *"Any ACP client can
+launch Antigravity CLI."* Nothing Google has published says which holds
+for a personal plan used from an application like Tequila. Tequila starts
+Google's own program and never touches the sign-in or its tokens; whether
+to sign in with a personal account is yours to weigh. (Read 2026-11-13.)
 
 ## API keys and models on this computer
 
@@ -670,3 +691,49 @@ Held by tests: `assistant_connections::` (4: signed in with its models,
 signed out both ways and signed in through the agent, an agent that will
 not start, the page drawn in every state) and
 `an_agent_nobody_is_signed_in_to_says_so_as_it_opens`.
+
+## As built, November 13: Gemini as an agent
+
+The third agent. Unlike the other two it is not an npm package with an
+adapter: Google's Antigravity CLI speaks the protocol itself, so
+`assistant_agents` now knows two ways a program gets onto the computer
+(`Source::Npm`, `Source::Program`).
+
+- **Tried on this Mac first, as asked.** CLI 1.5.7, taken from Google's
+  bucket and checked against Google's manifest (sha512) and macOS
+  (*Notarized Developer ID, Google LLC*). `agy acp` answers `initialize`
+  as ACP version 1; signed out, `session/new` answers -32000 and it
+  offers `oauth-personal`, `oauth-business`, `gemini-api-key`,
+  `agent-platform` and `terminal-login` (`--login`). With a key that is
+  not one, `authenticate` succeeded, a conversation opened **with
+  Tequila's MCP bridge in `mcpServers`**, and it listed its models
+  (Gemini 4 Argon, 3.8/3.7/3.6 Flash, 3.1 Pro), two thinking levels and
+  the modes `default`, `accept-edits` and `plan`. It still opened with
+  `--sandbox`, `--disable-telemetry` and Tequila's instructions under
+  `_meta.antigravity.systemPrompt.append`.
+- **Install** fetches Google's installer and runs it as Google says to
+  (`curl … | bash`; `irm … | iex` in PowerShell). The installer checks its
+  download against its manifest, clears the quarantine flag itself, and
+  runs `agy install`, which adds the folder to the shell's path.
+- **A key that wants asking for.** Antigravity has no way to be told at
+  start to use a key, so a connected Gemini key is put in its environment
+  (`GEMINI_API_KEY`) and it is asked to sign in with it
+  (`Kind::key_sign_in`), once, when it says it needs signing in.
+- The mode is pinned to `default`, which asks.
+
+Tried in a copy with a home folder of its own: Gemini chosen, *not on this
+computer*, **Install** (Google's installer put `agy` in that home's
+`.local/bin`), the real program started and the card offered its
+sign-ins.
+
+**Not tried:** a Google sign-in and a conversation, which need the owner's
+account. So what Antigravity asks permission for, and whether its sandbox
+keeps its reading to the project's folder, is not yet seen; the chat lets
+through what it recognises as Tequila's, lets it read in the project's
+folder, asks before it writes there, and refuses a command, the internet
+and any other folder when it is asked. Whether the instructions under
+`_meta` are read is unknown (they were not refused). Windows is
+unverified.
+
+Held by tests: `gemini_is_googles_own_program_started_in_its_sandbox` and
+`a_connected_key_signs_an_agent_in_that_wants_asking`.
