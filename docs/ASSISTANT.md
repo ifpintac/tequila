@@ -153,6 +153,12 @@ profile that keeps reading to the project, which is not built yet.
 
 ## API keys and models on this computer
 
+These are answered by Tequila's own loop, in the same chat, with the same
+questions before anything leaves the scene. Its tools are Tequila's own:
+the scene, materials and the library's presets, lighting, camera, studios,
+renders, import, save, preferences and plugins. It has no tools for files
+or commands at all.
+
 Open the model picker, click **Connections…**, choose a starting point,
 fill in the form, and click **Test**:
 
@@ -560,3 +566,39 @@ unverified, as for Claude.
 
 Held by tests: `acp::signing_in_through_the_agent_opens_the_conversation_or_says_why_not`
 and `assistant_agents::chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key`.
+
+## As built, November 13: the same questions for API keys and local models
+
+Tequila's own loop already answered in the new chat. What it did not have
+was the questions: its tools simply left out what leaves the scene (no
+import, no save to another place, no render to a chosen file, no
+preferences). Now it has those tools, and is asked about them as an agent
+is.
+
+- `tools.rs`: `tequila_import`, `tequila_save` with a `path`,
+  `tequila_queue` with `folder` and `filename`, `tequila_preferences`,
+  and the library - `tequila_query` `library` and `tequila_library_apply`,
+  which closes the old gap between "prefer a library preset" in its
+  instructions and no tool to use one. Its instructions say that Tequila
+  asks, so the model calls the tool rather than asking first.
+- `Assistant::carry_out_agreed`: the request a call becomes is put to
+  `approval::question`, the same function an agent's requests go through.
+  A call with a question waits (`call_waiting`) for Allow or Deny; Deny
+  answers the model in words, and Stop drops it.
+- A path the model gives without a folder is taken to be in the project's
+  folder (`in_project`), not wherever Tequila was started from.
+- Running a plugin now asks here as well. Turning one on, and the change
+  to one that is on, keep the questions they had.
+
+Tried on this Mac with Ollama 0.40.16 and `qwen3-coder:30b`, in a copy
+with a home folder of its own: *"Save a copy of this project as
+copy.tequila"* - the model called the tool, the chat asked, Deny, and the
+model answered that it was declined, with nothing written; asked again
+for `copy2.tequila` and allowed, the file was saved beside the project.
+(In the same request the model failed to rename a part, guessing at
+command names; that is the model, and the chat showed each failed step.)
+
+Held by tests: `the_own_loops_tools_that_leave_the_scene_ask_first`,
+`a_plugin_run_by_the_assistant_answers_with_its_log` (now through the
+question), and in `tequila-ai`
+`what_leaves_the_scene_is_a_request_the_application_can_ask_about`.
