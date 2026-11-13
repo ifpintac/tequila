@@ -18,6 +18,18 @@
 //! `--restricted` is for anything reached from outside this computer: no raw
 //! requests, no importing files, no saving or rendering to a path the caller
 //! chooses.
+//!
+//! `--assistant MARK` is how Tequila's own chat panel starts the bridge for
+//! an agent it runs (Claude, through the Agent Client Protocol). Every
+//! request then carries the mark, which is how the application knows the
+//! request is its Assistant's: it names it so in the console, counts its
+//! changes as the request's own, and holds what leaves the scene - an
+//! import, a render to a file - until the person agrees in the chat
+//! (`tequila_scripting::approval`). The tools are all there, raw requests
+//! among them - the material library, exports and texture packs are
+//! reached that way - because the questions are asked of the request the
+//! application receives, whichever tool sent it; and an answer is waited
+//! for as long as the person takes.
 
 use tequila_format::json::{self, Value};
 use tequila_format::json_write::{self, Object};
@@ -62,8 +74,9 @@ const RESTRICTED_BATCH: [&str; 5] = ["apply", "frame", "look", "select", "ui"];
 
 /// Serve until standard input closes. `discovery` names the channel file to
 /// connect through; by default the one every Tequila writes.
-pub fn run(discovery: Option<&str>, restricted: bool) -> Result<(), String> {
+pub fn run(discovery: Option<&str>, restricted: bool, assistant: Option<&str>) -> Result<(), String> {
     let mut bridge = Bridge::new(discovery.map(PathBuf::from), restricted);
+    bridge.assistant = assistant.map(str::to_string);
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -149,13 +162,15 @@ fn failure(id: Value, code: i64, message: &str) -> Value {
 pub struct Bridge {
     discovery: PathBuf,
     restricted: bool,
+    /// The built-in Assistant's mark, when Tequila itself started this.
+    pub assistant: Option<String>,
     channel: Option<Channel>,
 }
 
 impl Bridge {
     pub fn new(discovery: Option<PathBuf>, restricted: bool) -> Bridge {
         let discovery = discovery.unwrap_or_else(tequila_scripting::server::discovery_path);
-        Bridge { discovery, restricted, channel: None }
+        Bridge { discovery, restricted, assistant: None, channel: None }
     }
 
     pub fn tools(&self) -> Vec<Value> {
@@ -174,12 +189,17 @@ impl Bridge {
             .collect()
     }
 
-    fn request(&mut self, op: &str, fields: Vec<(&str, Value)>) -> Result<Value, String> {
+    fn request(&mut self, op: &str, mut fields: Vec<(&str, Value)>) -> Result<Value, String> {
         if self.channel.is_none() {
-            self.channel = Some(
-                Channel::connect(&self.discovery)
-                    .map_err(|e| format!("Tequila does not seem to be open (or its channel is off): {e}"))?,
-            );
+            let mut channel = Channel::connect(&self.discovery)
+                .map_err(|e| format!("Tequila does not seem to be open (or its channel is off): {e}"))?;
+            if self.assistant.is_some() {
+                channel.set_patience(None);
+            }
+            self.channel = Some(channel);
+        }
+        if let Some(mark) = &self.assistant {
+            fields.push(("agent", mark.as_str().into()));
         }
         let channel = self.channel.as_mut().expect("connected above");
         let result = channel.request(op, fields);
@@ -649,6 +669,19 @@ mod tests {
             assert_eq!(answer.get("error").and_then(|e| e.get("code")).and_then(Value::as_f64), Some(-32602.0), "{name}");
             let refused = bridge.call(name, &json::parse(arguments.as_bytes()).unwrap()).unwrap_err();
             assert!(refused.contains("not available remotely"), "{name}: {refused}");
+        }
+    }
+
+    /// Started for Tequila's own Assistant, the bridge offers every tool:
+    /// the application asks the person about the ones that leave the scene.
+    #[test]
+    fn for_the_assistant_every_tool_is_offered() {
+        let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
+        bridge.assistant = Some("mark".into());
+        let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
+        assert_eq!(names.len(), 37);
+        for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
+            assert!(names.iter().any(|n| n == kept), "{kept}");
         }
     }
 

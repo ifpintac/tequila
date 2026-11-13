@@ -14,6 +14,22 @@ not vendored into the repository.
 | [Intel Embree](https://github.com/RenderKit/embree) | 4.4.1 | Apache-2.0 | BVH build and ray traversal (`tequila-render-cpu`) |
 | [Intel Open Image Denoise](https://github.com/RenderKit/oidn) | 2.5.1 | Apache-2.0 | ML denoising (`tequila-denoise`) |
 
+## Installed when asked, not shipped
+
+The Assistant can talk to an AI company's own agent program. None is part
+of Tequila or of its packages: the chat offers **Install**, which runs the
+computer's `npm` and puts the program in `~/.tequila/agents`
+(`docs/ASSISTANT.md`).
+
+| Component | Licence | Used for |
+|---|---|---|
+| [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) | Apache-2.0 | Claude as an agent, over the Agent Client Protocol |
+| Claude Code and the Claude Agent SDK, which that adapter installs and runs | Anthropic's own terms (proprietary) | The Claude program itself |
+
+Tequila speaks the Agent Client Protocol
+([agentclientprotocol.com](https://agentclientprotocol.com), Apache-2.0)
+with code of its own (`crates/tequila-ai/src/acp.rs`); no SDK is linked.
+
 ## Microsoft Visual C++ runtime
 
 `scripts/package-windows.ps1` copies Microsoft's C++ runtime DLLs

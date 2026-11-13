@@ -15,6 +15,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod assistant;
+mod assistant_agents;
+mod assistant_panel;
 mod axis_legend;
 mod channel;
 use tequila_core::clock;
@@ -438,6 +440,10 @@ struct TequilaApp {
     /// and nothing else — a renderer that refused to start over it would be
     /// the worse tool.
     channel: Option<tequila_scripting::server::Channel>,
+    /// The file that names this window's channel, kept beside it: the
+    /// channel itself is out of reach while one of its requests is served,
+    /// and a request may be the one that starts the Assistant's agent.
+    channel_record: Option<std::path::PathBuf>,
     /// A screenshot the channel asked for, waiting for egui to hand the
     /// framebuffer over on a later frame.
     pending_screenshot: Option<std::path::PathBuf>,
@@ -1095,6 +1101,7 @@ impl TequilaApp {
             open_look: None,
             last_preview_mode: view_mode::ViewMode::default(),
             channel: None,
+            channel_record: None,
             pending_screenshot: None,
             screenshots: screenshot::Preferences::default(),
             guides: composition::Guides::default(),
@@ -1602,41 +1609,7 @@ impl eframe::App for TequilaApp {
         // Taken out of `self` for the duration because the handler needs the
         // whole application and the channel is part of it; it goes straight
         // back afterwards.
-        if let Some(open) = self.channel.take() {
-            // A request wakes the window, so a script or a plugin is answered
-            // at once rather than at the next idle repaint.
-            if !self.channel_wakes {
-                let waking = ctx.clone();
-                open.set_waker(move || waking.request_repaint());
-                self.channel_wakes = true;
-            }
-            open.drain_with_responders(|arrived, responder| match arrived {
-                tequila_scripting::server::Arrived::Request(request) => {
-                    // A script that changes something wants the window, not
-                    // the start screen; one that only looks leaves it be.
-                    use tequila_scripting::protocol::Operation;
-                    if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
-                        self.start_screen.open = false;
-                    }
-                    match &request.operation {
-                        // Read on another thread, answered when it has
-                        // arrived: the window goes on drawing meanwhile.
-                        Operation::Import { path, parent, .. } => channel::begin_import(self, request, path, *parent, responder, ctx),
-                        _ => responder.answer(&channel::handle(self, request)),
-                    }
-                }
-                // The application's own operations: a part's UV layout
-                // written as a picture.
-                tequila_scripting::server::Arrived::Own(value) => responder.answer(&match value.get("op").and_then(|v| v.as_str()) {
-                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), value) {
-                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
-                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
-                    },
-                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
-                }),
-            });
-            self.channel = Some(open);
-        }
+        self.serve_channel(ctx);
         // Plugins: their code, their messages, their window and panels.
         self.plugins_frame(ctx);
         self.serve_screenshot(ctx);
@@ -1758,19 +1731,49 @@ impl eframe::App for TequilaApp {
         // columns of controls around a viewport that had what was left: the
         // tree and the material editor are never both being read at the same
         // moment, and a tab strip says so where two panels insist otherwise.
-        if !self.full_viewport && self.assistant.open {
+        if self.assistant.open && (self.assistant.detached || !self.full_viewport) {
             let can_undo = self.assistant.can_undo_turn(self.project.bus());
+            let around = self.around();
             let mut assistant = std::mem::take(&mut self.assistant);
-            let action = egui::SidePanel::right("assistant")
-                .resizable(true)
-                .default_width(380.0)
-                .width_range(300.0..=640.0)
-                .show(ctx, |ui| assistant.show(ui, can_undo))
-                .inner;
+            let things = || self.assistant_things();
+            let action = if assistant.detached {
+                // A window of its own, to put beside Tequila or on another
+                // display; closing it closes the Assistant.
+                let mut open = true;
+                let spec = windows::Spec {
+                    kind: windows::Kind::Assistant,
+                    title: "Assistant".into(),
+                    size: egui::vec2(440.0, 680.0),
+                    min_size: egui::vec2(320.0, 360.0),
+                    resizable: true,
+                    margin: 0.0,
+                };
+                let shown = windows::show(ctx, spec, &mut open, |window| window.default_width(420.0).default_height(560.0).resizable(true), |ui| assistant.show(ui, can_undo, &around, &things));
+                match (shown.inner, open) {
+                    (_, false) => assistant::Action::Close,
+                    (Some(action), true) => action,
+                    (None, true) => assistant::Action::None,
+                }
+            } else {
+                egui::SidePanel::right("assistant")
+                    .resizable(true)
+                    .default_width(400.0)
+                    .width_range(320.0..=680.0)
+                    .frame(egui::Frame::none().fill(theme::p().panel))
+                    .show(ctx, |ui| assistant.show(ui, can_undo, &around, &things))
+                    .inner
+            };
             match action {
-                assistant::Action::Ask(text) => assistant.ask(text, self.project.bus().depth()),
+                assistant::Action::Ask { text, context, pictures } => assistant.ask(text, &context, pictures, &around),
                 assistant::Action::Stop => assistant.stop(),
                 assistant::Action::UndoTurn => assistant.undo_turn(self),
+                assistant::Action::Answer { question, allow } => assistant.answer(self, question, allow),
+                assistant::Action::NewChat => assistant.new_chat(),
+                assistant::Action::OpenChat(id) => assistant.open_chat(&id),
+                assistant::Action::DeleteChat(id) => assistant.delete_chat(&id),
+                assistant::Action::SendViewport => assistant.send_viewport(self),
+                assistant::Action::Detach(detached) => assistant.detached = detached,
+                assistant::Action::Close => assistant.open = false,
                 assistant::Action::None => {}
             }
             self.assistant = assistant;
@@ -5427,9 +5430,11 @@ impl TequilaApp {
     fn dropped_files(&mut self, ctx: &egui::Context) {
         let hovering: Vec<std::path::PathBuf> =
             ctx.input(|i| i.raw.hovered_files.iter().filter_map(|f| f.path.clone()).collect());
+        let pointer = ctx.input(|i| i.pointer.latest_pos());
         if let Some(path) = hovering.first() {
             let parts = self.project.selection.nodes().count();
             let text = match texture_pack::classify_drop(path) {
+                _ if self.assistant.takes_drop(pointer, path) => "Drop to attach the picture to your message".to_string(),
                 texture_pack::Dropped::Model => "Drop to import the model".to_string(),
                 texture_pack::Dropped::Project => "Drop to open the project".to_string(),
                 texture_pack::Dropped::Scene => "Drop to open the KeyShot scene as a new project".to_string(),
@@ -5466,6 +5471,10 @@ impl TequilaApp {
             ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
         // And on a Mac, what Finder sent while Tequila was running.
         for path in dropped.into_iter().chain(mac::take_opened()) {
+            if self.assistant.takes_drop(pointer, &path) {
+                self.assistant.attach_file(&path);
+                continue;
+            }
             self.open_given(path);
         }
     }
@@ -7198,7 +7207,113 @@ impl TequilaApp {
             windows::Kind::Connect => self.assistant.providers_open(),
             windows::Kind::Uv => self.uv_editor.open,
             windows::Kind::Preferences => self.preferences.open,
+            windows::Kind::Assistant => self.assistant.open && self.assistant.detached,
         }
+    }
+
+    /// Answer what has arrived on the scripting channel since the last
+    /// frame. The built-in Assistant's own requests are named for it, and
+    /// the ones that would leave the scene are kept for the person's answer.
+    pub(crate) fn serve_channel(&mut self, ctx: &egui::Context) {
+        // What an agent has said comes first: it names a tool call before
+        // the call itself arrives here, and the chat reads in that order.
+        let mut assistant = std::mem::take(&mut self.assistant);
+        assistant.agent_events(self);
+        self.assistant = assistant;
+        if let Some(channel) = &self.channel {
+            self.channel_record = channel.own_file();
+        }
+        if let Some(open) = self.channel.take() {
+            // A request wakes the window, so a script or a plugin is answered
+            // at once rather than at the next idle repaint.
+            if !self.channel_wakes {
+                let waking = ctx.clone();
+                open.set_waker(move || waking.request_repaint());
+                self.channel_wakes = true;
+            }
+            open.drain_taken(|taken, responder| match taken {
+                tequila_scripting::server::Taken::Request(mut request) => {
+                    // A script that changes something wants the window, not
+                    // the start screen; one that only looks leaves it be.
+                    use tequila_scripting::protocol::Operation;
+                    if !matches!(request.operation, Operation::Ping | Operation::Query(_) | Operation::Screenshot { .. } | Operation::Ui(_)) {
+                        self.start_screen.open = false;
+                    }
+                    // The built-in Assistant's own: named for it in the
+                    // console, and held for the person's answer where it
+                    // would leave the scene.
+                    let assistants = self.assistant.is_its(&request.agent);
+                    if assistants {
+                        request.peer = self.assistant.peer();
+                        if matches!(request.operation, Operation::Assistant(_)) {
+                            responder.answer(&tequila_scripting::protocol::Reply::Failed("the Assistant cannot drive itself".into()));
+                            return;
+                        }
+                        if let Some(question) = tequila_scripting::approval::question(&request.operation, &std::env::temp_dir()) {
+                            self.assistant.hold(request, responder, question);
+                            return;
+                        }
+                    }
+                    match &request.operation {
+                        // Read on another thread, answered when it has
+                        // arrived: the window goes on drawing meanwhile.
+                        Operation::Import { path, parent, .. } => channel::begin_import(self, &request, path, *parent, responder, ctx),
+                        _ => responder.answer(&channel::handle(self, &request)),
+                    }
+                    if assistants {
+                        let mut assistant = std::mem::take(&mut self.assistant);
+                        assistant.touched(self.project.bus());
+                        self.assistant = assistant;
+                    }
+                }
+                // The application's own operations: a part's UV layout
+                // written as a picture.
+                tequila_scripting::server::Taken::Own(value) => responder.answer(&match value.get("op").and_then(|v| v.as_str()) {
+                    Some(tequila_scripting::uv_layout::OPERATION) => match tequila_scripting::uv_layout::answer(self.project.document(), &value) {
+                        Ok(written) => tequila_scripting::protocol::Reply::Value(written),
+                        Err(error) => tequila_scripting::protocol::Reply::Failed(error),
+                    },
+                    other => tequila_scripting::protocol::Reply::Failed(format!("`{}` is not an operation this understands", other.unwrap_or_default())),
+                }),
+            });
+            self.channel = Some(open);
+        }
+    }
+
+    /// What the Assistant needs to know of the application to start a
+    /// request: see [`assistant::Around`].
+    pub(crate) fn around(&self) -> assistant::Around {
+        assistant::Around {
+            depth: self.project.bus().depth(),
+            folder: self.project.path.as_ref().and_then(|path| path.parent().map(std::path::Path::to_path_buf)),
+            channel: self.channel.as_ref().and_then(|channel| channel.own_file()).or_else(|| self.channel_record.clone()),
+            program: connect_apps::server_program(),
+        }
+    }
+
+    /// What a message to the Assistant can name with `@`: the selection,
+    /// each part, each material.
+    fn assistant_things(&self) -> Vec<assistant_panel::Thing> {
+        use assistant_panel::Thing;
+        let document = self.project.document();
+        let mut things = Vec::new();
+        let selected: Vec<_> = self.project.selection.nodes().filter_map(|id| document.tree.get(id)).collect();
+        if !selected.is_empty() {
+            let named: Vec<String> = selected.iter().map(|node| format!("{} (id {})", node.name, node.id.0)).collect();
+            things.push(Thing {
+                label: "Selection".into(),
+                kind: format!("{} selected", selected.len()),
+                context: format!("@Selection is what the person has selected: {}", named.join(", ")),
+            });
+        }
+        for node in document.tree.iter() {
+            let kind = if node.mesh().is_some() { "part" } else { "group" };
+            things.push(Thing { label: node.name.clone(), kind: kind.into(), context: format!("@{} is the {kind} with id {}", node.name, node.id.0) });
+        }
+        for (key, material) in document.materials.iter() {
+            things.push(Thing { label: material.name.clone(), kind: "material".into(), context: format!("@{} is the material with id {}", material.name, key.0) });
+        }
+        things
     }
 }
 

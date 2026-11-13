@@ -48,7 +48,7 @@ pub fn handle(app: &mut TequilaApp, request: &Request) -> Reply {
 
 /// Write down a request's outcome: in the console, for a request from
 /// outside, and in the activity log. `steps` spells out a batch.
-fn log_reply(app: &mut TequilaApp, peer: &str, summary: String, steps: &[String], reply: &Reply) {
+pub(crate) fn log_reply(app: &mut TequilaApp, peer: &str, summary: String, steps: &[String], reply: &Reply) {
     let origin = if peer.is_empty() {
         "console".to_string()
     } else {
@@ -418,8 +418,57 @@ fn assistant(app: &mut TequilaApp, request: &Value) -> Reply {
     if let Some(open) = request.get("open").and_then(Value::as_bool) {
         app.assistant.open = open;
     }
+    if let Some(detached) = request.get("window").and_then(Value::as_bool) {
+        app.assistant.detached = detached;
+    }
     if request.get("stop").and_then(Value::as_bool) == Some(true) && app.assistant.is_working() {
         app.assistant.stop();
+    }
+    if request.get("new_chat").and_then(Value::as_bool) == Some(true) {
+        app.assistant.new_chat();
+    }
+    if let Some(id) = request.get("chat").and_then(Value::as_str) {
+        app.assistant.open_chat(id);
+    }
+    // Who answers: `claude`, or a connected provider by its name or id.
+    if let Some(name) = request.get("use").and_then(Value::as_str) {
+        if let Err(error) = app.assistant.use_named(name) {
+            return Reply::Failed(error);
+        }
+    }
+    // What is in the message box, the viewport's picture attached to it,
+    // and the list of past chats: for a script to set up a picture of the
+    // panel, or to hand the person a message to finish.
+    if let Some(draft) = request.get("draft").and_then(Value::as_str) {
+        app.assistant.input = draft.to_string();
+    }
+    if request.get("viewport").and_then(Value::as_bool) == Some(true) {
+        let mut assistant = std::mem::take(&mut app.assistant);
+        assistant.send_viewport(app);
+        app.assistant = assistant;
+    }
+    if let Some(history) = request.get("history").and_then(Value::as_bool) {
+        app.assistant.panel.show_history(history);
+    }
+    // The buttons of the card that says what an agent still needs: install
+    // its program, or try it again after signing in.
+    if request.get("install").and_then(Value::as_bool) == Some(true) {
+        if let Some(crate::assistant::Backend::Agent(kind)) = app.assistant.backend() {
+            app.assistant.install(kind);
+        }
+    }
+    if request.get("retry").and_then(Value::as_bool) == Some(true) {
+        let around = app.around();
+        app.assistant.retry(&around);
+    }
+    // The person's answer to a question in the chat, for a test to give.
+    if let Some(answer) = request.get("answer") {
+        let (Some(question), Some(allow)) = (answer.get("id").and_then(Value::as_index), answer.get("allow").and_then(Value::as_bool)) else {
+            return Reply::Failed("`answer` is {\"id\": the question's id, \"allow\": true or false}".into());
+        };
+        let mut assistant = std::mem::take(&mut app.assistant);
+        assistant.answer(app, question as u64, allow);
+        app.assistant = assistant;
     }
     if let Some(text) = request.get("ask").and_then(Value::as_str) {
         if app.assistant.is_working() {
@@ -427,8 +476,10 @@ fn assistant(app: &mut TequilaApp, request: &Value) -> Reply {
         }
         app.start_screen.open = false;
         app.assistant.open = true;
-        let depth = app.project.bus().depth();
-        app.assistant.ask(text.trim().to_string(), depth);
+        let around = app.around();
+        let mut assistant = std::mem::take(&mut app.assistant);
+        assistant.ask(text.trim().to_string(), "", Vec::new(), &around);
+        app.assistant = assistant;
     }
     Reply::Value(app.assistant.status())
 }

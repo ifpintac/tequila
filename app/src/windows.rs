@@ -31,10 +31,12 @@ pub enum Kind {
     Connect,
     Uv,
     Preferences,
+    /// The Assistant's chat, moved out of the main window.
+    Assistant,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 6] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect, Kind::Uv, Kind::Preferences];
+    pub const ALL: [Kind; 7] = [Kind::Render, Kind::Graph, Kind::Shortcuts, Kind::Connect, Kind::Uv, Kind::Preferences, Kind::Assistant];
 
     /// Its name on the scripting channel.
     pub fn key(self) -> &'static str {
@@ -45,6 +47,7 @@ impl Kind {
             Kind::Connect => "connect",
             Kind::Uv => "uv",
             Kind::Preferences => "preferences",
+            Kind::Assistant => "assistant",
         }
     }
 

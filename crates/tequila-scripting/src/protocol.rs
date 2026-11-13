@@ -989,6 +989,13 @@ pub struct Request {
     /// could name itself something else. Empty for a request built inside the
     /// application, which the console labels for itself.
     pub peer: String,
+    /// The built-in Assistant's mark: what Tequila gave the MCP bridge it
+    /// started for an agent of its own (`tequila-cli --mcp --assistant`),
+    /// sent back with each of that bridge's requests. Empty for everything
+    /// else. It is what lets the application name the request for the
+    /// Assistant, count its changes as the request's own, and hold the ones
+    /// that leave the scene until the person agrees ([`crate::approval`]).
+    pub agent: String,
 }
 
 /// Why a request could not be understood.
@@ -1087,12 +1094,14 @@ pub fn parse_request(line: &str) -> Result<Request, ProtocolError> {
         .unwrap_or_default()
         .to_string();
     let operation = parse_operation(&value)?;
+    let agent = value.get("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
 
     Ok(Request {
         id,
         token,
         operation,
         peer: String::new(),
+        agent,
     })
 }
 
