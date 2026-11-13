@@ -16,6 +16,7 @@
 
 mod assistant;
 mod assistant_agents;
+mod assistant_connections;
 mod assistant_panel;
 mod axis_legend;
 mod channel;

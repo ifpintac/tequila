@@ -36,7 +36,7 @@ Exact behavior of every interaction. This document exists because "drag a materi
 - **The library** is on the left: search, shelves (All, Favorites, Recent, In project), category, and tiles that fill the panel's width. Preview size and texture-pack import are in its ⋯ menu.
 - **The status line** spans the window: the selection and the last message on the left, the viewport's engine and size on the right.
 - `Space` toggles the Project window. `M` toggles the Library. `Tab` toggles all panels (full-viewport mode); the viewport's islands stay.
-- The Material Graph, the Render window, Shortcuts and Connect an AI open as windows of their own (`app/src/windows.rs`), not panels drawn inside the main window. They can be moved off it, onto another display, and sized past it.
+- The Material Graph, the Render window, Shortcuts and Connections open as windows of their own (`app/src/windows.rs`), not panels drawn inside the main window. They can be moved off it, onto another display, and sized past it.
   - The first time, each opens centred on the main window. After that it reopens where it was left, at the size it was left.
   - Each is created hidden and shown once it is in place, so it does not appear in one spot and jump to another.
   - Their title bars, and the main window's, follow the interface's light or dark mode rather than the desktop's.
@@ -708,7 +708,7 @@ Marked *(built)*: a setting that exists today, which moves here from where it is
 **Assistant**
 - Provider and model: Claude, OpenAI, Ollama or a local model *(built: the Assistant)*, keys kept in the system's keychain.
 - Whether the assistant asks before changing the scene, and whether it may look at screenshots.
-- Connect an AI *(built)*.
+- Connections (the AI agents, API keys and AI apps) *(built)*.
 
 **Plugins and scripting**
 - Plugins on or off *(built)*, where Python is, the plugins folder.

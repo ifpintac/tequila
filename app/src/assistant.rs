@@ -255,6 +255,8 @@ pub struct Assistant {
     viewport: Option<(PathBuf, std::time::Instant)>,
     /// What the panel keeps between frames.
     pub(crate) panel: crate::assistant_panel::State,
+    /// The agents as the Connections page finds them, while it is open.
+    pub(crate) connections: crate::assistant_connections::Connections,
 }
 
 impl Assistant {
@@ -685,6 +687,10 @@ impl Assistant {
             let settings: Vec<Value> = agent.settings().iter().map(|setting| Value::String(format!("{}={}", setting.category, setting.current))).collect();
             out.set("settings", Value::Array(settings));
         }
+        if self.providers_open {
+            let rows: Vec<Value> = self.connections.status().into_iter().map(|(name, says)| Value::String(format!("{name}: {says}"))).collect();
+            out.set("connections", Value::Array(rows));
+        }
         if let Some(setup) = &self.setup {
             out.set(
                 "setup",
@@ -992,6 +998,13 @@ impl Assistant {
                     for (setting, value) in wanted {
                         agent.set(&setting, &value);
                     }
+                    // Open, and it has said nobody is signed in (Claude's
+                    // way; Codex will not open at all): the ways to sign
+                    // in are shown now, not when the first message fails.
+                    if self.account.as_ref().is_some_and(|(kind, _)| kind == "none") && self.setup.is_none() {
+                        let ways = self.agent.as_ref().map(|(_, agent)| agent.sign_ins().to_vec()).unwrap_or_default();
+                        self.setup = Some(Setup::SignIn { ways, subscription: false });
+                    }
                     // A message waiting goes now - unless nobody is signed
                     // in, when it waits for that.
                     let signed_out = matches!(self.setup, Some(Setup::SignIn { .. }));
@@ -1011,11 +1024,18 @@ impl Assistant {
                     self.asked = None;
                 }
                 acp::Event::Account { kind, label } => {
-                    // Nobody signed in: said now, with the ways to, rather
-                    // than when the first message fails.
-                    if kind == "none" && self.setup.is_none() && !self.agent.as_ref().is_some_and(|(_, agent)| agent.phase() == acp::Phase::Starting) {
+                    // Signed out while it was running: said at once. While
+                    // it is still starting, what it says first may not be
+                    // what it ends on (a key signs it in a moment later),
+                    // so that is read when the conversation has opened.
+                    let idle = self.agent.as_ref().is_some_and(|(_, agent)| agent.phase() == acp::Phase::Idle);
+                    if kind == "none" && idle && self.setup.is_none() {
                         let ways = self.agent.as_ref().map(|(_, agent)| agent.sign_ins().to_vec()).unwrap_or_default();
                         self.setup = Some(Setup::SignIn { ways, subscription: false });
+                    }
+                    // And signed in: the card that asked for it has done.
+                    if kind != "none" && matches!(self.setup, Some(Setup::SignIn { .. } | Setup::SigningIn)) {
+                        self.setup = None;
                     }
                     self.account = Some((kind, label));
                 }
@@ -1482,6 +1502,14 @@ impl Assistant {
         self.providers_open = open;
         if !open {
             self.draft = None;
+            // The agents asked on the page are let go, and the chat looks
+            // again at what its own still needs: it may have been installed
+            // or signed in to meanwhile.
+            self.connections.forget();
+            if matches!(self.setup, Some(Setup::Missing { .. } | Setup::SignIn { .. } | Setup::Failed(_))) && !self.working() {
+                self.setup = None;
+                self.rested = false;
+            }
         }
     }
 
@@ -1492,8 +1520,8 @@ impl Assistant {
         let mut open = true;
         let spec = crate::windows::Spec {
             kind: crate::windows::Kind::Connect,
-            title: "Connect an AI".into(),
-            size: egui::vec2(560.0, 480.0),
+            title: "Connections".into(),
+            size: egui::vec2(580.0, 620.0),
             min_size: egui::vec2(420.0, 300.0),
             resizable: true,
             margin: 16.0,
@@ -1504,19 +1532,26 @@ impl Assistant {
                     self.edit_draft(ui);
                     return;
                 }
-                self.apps_section(ui);
+                self.agents_section(ui);
+                ui.add_space(4.0);
                 ui.separator();
-                ui.label(egui::RichText::new("Tequila's Assistant").strong());
+                ui.label(egui::RichText::new("API keys and this computer").strong());
+                ui.label(
+                    egui::RichText::new("A service's API key, billed by use, or a model running here (Ollama, LM Studio). Tequila's own loop talks to these.")
+                        .small()
+                        .color(crate::theme::dim()),
+                );
                 if self.settings.providers.is_empty() {
-                    ui.label("Nothing connected yet.");
+                    ui.label(egui::RichText::new("Nothing connected yet.").color(crate::theme::dim()));
                 }
                 let mut remove = None;
                 let mut edit = None;
+                let mut use_provider = None;
                 for provider in &self.settings.providers {
                     ui.horizontal(|ui| {
                         let active = self.settings.active.as_deref() == Some(provider.id.as_str());
-                        if ui.radio(active, "").on_hover_text("Use this one").clicked() {
-                            self.settings.active = Some(provider.id.clone());
+                        if ui.radio(active, "").on_hover_text("Use this one in the chat").clicked() {
+                            use_provider = Some(provider.clone());
                         }
                         ui.label(egui::RichText::new(&provider.name).strong());
                         ui.label(egui::RichText::new(format!("{} · {}", provider.kind.label(), provider.model)).color(crate::theme::dim()));
@@ -1540,7 +1575,10 @@ impl Assistant {
                 if let Some(provider) = edit {
                     self.draft = Some(Draft::of(Some(provider.id.clone()), provider));
                 }
-                ui.separator();
+                if let Some(provider) = use_provider {
+                    self.choose(&Backend::Provider(provider));
+                }
+                ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.label("Add:");
                     for preset in Provider::presets() {
@@ -1557,11 +1595,17 @@ impl Assistant {
                     .small()
                     .color(crate::theme::dim()),
                 );
+                ui.add_space(4.0);
+                ui.separator();
+                // The other direction: AI apps that use Tequila from
+                // outside, rather than answering inside it.
+                egui::CollapsingHeader::new(egui::RichText::new("AI apps that can use Tequila").strong()).id_salt("connections-apps").default_open(false).show(ui, |ui| {
+                    self.apps_section(ui);
+                });
             });
         });
         if !open {
-            self.providers_open = false;
-            self.draft = None;
+            self.set_providers_open(false);
         }
     }
 
@@ -1571,7 +1615,6 @@ impl Assistant {
     fn apps_section(&mut self, ui: &mut egui::Ui) {
         use crate::connect_apps::App;
         let dim = crate::theme::dim();
-        ui.label(egui::RichText::new("AI apps on this computer").strong());
         ui.label(
             egui::RichText::new(
                 "Lets an AI app work in Tequila through its tools - exact, fast and undoable - \
@@ -2509,6 +2552,44 @@ mod tests {
         // The agent's models are what the picker offers.
         assert_eq!(assistant.answering(), "Claude Sonnet");
         let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    /// An agent that opens a conversation but says nobody is signed in
+    /// shows its ways of signing in as it opens, and a message sent then
+    /// waits for that instead of failing; one that says so and then signs
+    /// in with a key a moment later shows no card at all.
+    #[test]
+    fn an_agent_nobody_is_signed_in_to_says_so_as_it_opens() {
+        let opens = |account: &'static [&'static str]| {
+            stand_in(move |message, write| match message.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => write(&format!(
+                    r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":1,"authMethods":[{{"id":"console","name":"Anthropic Console","type":"terminal","args":["--cli"]}}]}}}}"#,
+                    id_of(message)
+                )),
+                Some("session/new") => {
+                    for kind in account {
+                        write(&format!(r#"{{"jsonrpc":"2.0","method":"_auth/status_update","params":{{"authStatus":{{"kind":"{kind}","label":""}}}}}}"#));
+                    }
+                    write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"sessionId":"s"}}}}"#, id_of(message)));
+                }
+                _ => {}
+            })
+        };
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        assistant.agent = Some((agents::Kind::Claude, opens(&["none"])));
+        pump_until(&mut assistant, &mut app, |a| a.setup.is_some());
+        assert!(matches!(&assistant.setup, Some(Setup::SignIn { ways, .. }) if ways.len() == 1));
+        assistant.ask("Hello".into(), "", Vec::new(), &app.around());
+        assert!(assistant.queued.is_some() && !assistant.is_working(), "kept for after signing in, not sent to fail");
+
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::ChatGpt.id().into());
+        assistant.agent = Some((agents::Kind::ChatGpt, opens(&["none", "api_key"])));
+        pump_until(&mut assistant, &mut app, |a| a.chat.session.is_some());
+        assert!(assistant.setup.is_none(), "signed in by its key before the conversation opened: {:?}", assistant.status().get("setup"));
+        assert_eq!(assistant.account.as_ref().map(|(kind, _)| kind.as_str()), Some("api_key"));
     }
 
     /// An agent whose program ends before it has opened a conversation is
