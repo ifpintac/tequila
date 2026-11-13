@@ -1064,8 +1064,11 @@ impl Assistant {
                         let ways = self.agent.as_ref().map(|(_, agent)| agent.sign_ins().to_vec()).unwrap_or_default();
                         self.setup = Some(Setup::SignIn { ways, subscription: false });
                     }
-                    // And signed in: the card that asked for it has done.
-                    if kind != "none" && matches!(self.setup, Some(Setup::SignIn { .. } | Setup::SigningIn)) {
+                    // And signed in, with a conversation open: the card that
+                    // asked for it has done. (An agent can name an account
+                    // and still refuse to open one - Claude, with a plan it
+                    // was told not to use - and then the card stays.)
+                    if kind != "none" && idle && matches!(self.setup, Some(Setup::SignIn { .. } | Setup::SigningIn)) {
                         self.setup = None;
                     }
                     self.account = Some((kind, label));
@@ -2685,6 +2688,39 @@ mod tests {
         assistant.set_claude_subscription(false);
         assert!(!Settings::load(&home.join("assistant.json")).0.claude_subscription);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Claude told not to use a subscription names the account it found and
+    /// refuses to open a conversation: the card says a subscription is
+    /// signed in and stays, however often the account is named again.
+    #[test]
+    fn a_subscription_that_is_refused_keeps_its_card() {
+        let agent = stand_in(|message, write| {
+            let named = r#"{"jsonrpc":"2.0","method":"_auth/status_update","params":{"authStatus":{"kind":"account","label":"me@example.com"}}}"#;
+            match message.get("method").and_then(|m| m.as_str()) {
+                Some("initialize") => write(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"protocolVersion":1,"authMethods":[{{"id":"console-login","name":"Anthropic Console","type":"terminal","args":["--cli"]}}]}}}}"#, id_of(message))),
+                Some("session/new") => {
+                    write(named);
+                    write(&format!(
+                        r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32000,"message":"Authentication required","data":{{"reason":"claude_subscription_not_supported"}}}}}}"#,
+                        id_of(message)
+                    ));
+                    write(named);
+                }
+                _ => {}
+            }
+        });
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        assistant.agent = Some((agents::Kind::Claude, agent));
+        pump_until(&mut assistant, &mut app, |a| a.setup.is_some());
+        let ctx = egui::Context::default();
+        for _ in 0..20 {
+            assistant.pump(&mut app, &ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(matches!(assistant.setup, Some(Setup::SignIn { subscription: true, .. })), "the card stays, saying a subscription is signed in");
     }
 
     /// An agent whose program ends before it has opened a conversation is
