@@ -796,17 +796,21 @@ impl Assistant {
                 }
                 Setup::SignIn { ways, subscription } => {
                     ui.label(egui::RichText::new(format!("{} needs an account to answer", kind.name())).font(theme::strong(13.5)));
-                    if kind == agents::Kind::Claude && !self.settings.claude_subscription {
-                        say(ui, "Here Claude is paid for by use, with an Anthropic API key or Console account. That is separate from a Claude subscription.");
-                        if *subscription {
-                            say(ui, "A Claude subscription is signed in on this computer. Tequila leaves it alone: Anthropic's terms do not plainly allow an application that is not theirs to use one.");
+                    match kind {
+                        agents::Kind::Claude if !self.settings.claude_subscription => {
+                            say(ui, "Here Claude is paid for by use, with an Anthropic API key or Console account. That is separate from a Claude subscription.");
+                            if *subscription {
+                                say(ui, "A Claude subscription is signed in on this computer. Tequila leaves it alone: Anthropic's terms do not plainly allow an application that is not theirs to use one.");
+                            }
                         }
-                    } else {
-                        say(ui, "Signing in happens in its own program, in a terminal window. Tequila never sees the login.");
+                        agents::Kind::Claude => say(ui, "Signing in happens in its own program, in a terminal window. Tequila never sees the login."),
+                        agents::Kind::ChatGpt => say(ui, "Sign in with your ChatGPT account on OpenAI's own page, which opens in your browser, or connect an OpenAI API key, billed by use. Tequila never sees the login."),
                     }
                     ui.add_space(6.0);
                     ui.horizontal_wrapped(|ui| {
-                        for way in ways {
+                        // A key is signed in with by connecting it, not by a
+                        // button that has nothing to hand over.
+                        for way in ways.iter().filter(|way| way.id != "api-key") {
                             let button = ui.button(&way.name);
                             let button = if way.description.is_empty() { button } else { button.on_hover_text(&way.description) };
                             if button.clicked() {
@@ -816,11 +820,18 @@ impl Assistant {
                                 }
                             }
                         }
-                        if kind == agents::Kind::Claude {
-                            key = ui.button("Add an API key\u{2026}").clicked();
-                        }
+                        key = ui.button("Add an API key\u{2026}").clicked();
                         retry = ui.button("Try again").on_hover_text("After signing in or adding a key").clicked();
                     });
+                }
+                Setup::SigningIn => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(14.0));
+                        ui.label(egui::RichText::new(format!("Signing in to {}", kind.name())).font(theme::strong(13.5)));
+                    });
+                    say(ui, "Finish in the browser page that opened. This goes away by itself when it is done.");
+                    ui.add_space(6.0);
+                    retry = ui.button("Start over").clicked();
                 }
                 Setup::Failed(error) => {
                     ui.add(egui::Label::new(egui::RichText::new(error).color(p.danger)).wrap());
@@ -836,13 +847,10 @@ impl Assistant {
             self.sign_in(&way);
         }
         if let Some(method) = authenticate {
-            if let Some((_, agent)) = &mut self.agent {
-                agent.authenticate(&method);
-                self.setup = None;
-            }
+            self.authenticate(&method);
         }
         if key {
-            self.add_provider("claude");
+            self.add_provider(kind.key_preset());
         }
         if retry {
             self.retry(around);
@@ -878,8 +886,10 @@ impl Assistant {
                 ui.add_space(12.0);
                 if self.backend().is_none() {
                     ui.vertical_centered(|ui| {
-                        if ui.button("Use Claude").clicked() {
-                            self.choose(&Backend::Agent(agents::Kind::Claude));
+                        for kind in agents::Kind::ALL {
+                            if ui.button(format!("Use {}", kind.name())).clicked() {
+                                self.choose(&Backend::Agent(kind));
+                            }
                         }
                         if ui.button("Connect an API key or a model on this computer\u{2026}").clicked() {
                             self.set_providers_open(true);
@@ -1005,6 +1015,14 @@ impl Assistant {
             if self.setup.is_some() {
                 ui.add_space(8.0);
                 self.setup_card(ui, around);
+            }
+            // How far the one answering reaches, where that is further than
+            // Tequila's own tools: said before anything is asked of it.
+            if let (Some(Backend::Agent(kind)), true) = (self.backend(), items.is_empty()) {
+                if let Some(caveat) = kind.caveat() {
+                    ui.add_space(8.0);
+                    ui.add(egui::Label::new(egui::RichText::new(caveat).small().color(theme::dim())).wrap());
+                }
             }
             if let (Some((kind, label)), true) = (&self.account, items.is_empty()) {
                 ui.add_space(8.0);

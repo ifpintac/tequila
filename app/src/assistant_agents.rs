@@ -2,7 +2,8 @@
 //! how each is found, installed, started and signed in to on this computer.
 //!
 //! An agent is a program somebody else makes: Claude through Anthropic's
-//! Agent SDK and its `claude-agent-acp` adapter. Tequila does not ship it.
+//! Agent SDK and its `claude-agent-acp` adapter, ChatGPT through OpenAI's
+//! Codex and its `codex-acp` adapter. Tequila does not ship them.
 //! It uses the one already on the computer, or installs it - into Tequila's
 //! own `agents` folder, with the computer's npm - when the person asks.
 //! Signing in is done in the agent's own program, in a terminal window:
@@ -11,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use tequila_ai::acp;
+use tequila_ai::{Kind as Wire, Settings};
 use tequila_format::json::Value;
 use tequila_format::json_write::Object;
 
@@ -18,15 +20,18 @@ use tequila_format::json_write::Object;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Claude,
+    /// OpenAI's Codex, signed in with a ChatGPT account or an API key.
+    ChatGpt,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 1] = [Kind::Claude];
+    pub const ALL: [Kind; 2] = [Kind::Claude, Kind::ChatGpt];
 
     /// Its name in the settings and in a chat's file.
     pub fn id(self) -> &'static str {
         match self {
             Kind::Claude => "agent:claude",
+            Kind::ChatGpt => "agent:chatgpt",
         }
     }
 
@@ -37,6 +42,7 @@ impl Kind {
     pub fn name(self) -> &'static str {
         match self {
             Kind::Claude => "Claude",
+            Kind::ChatGpt => "ChatGPT",
         }
     }
 
@@ -44,6 +50,7 @@ impl Kind {
     fn package(self) -> &'static str {
         match self {
             Kind::Claude => "@agentclientprotocol/claude-agent-acp",
+            Kind::ChatGpt => "@agentclientprotocol/codex-acp",
         }
     }
 
@@ -51,8 +58,70 @@ impl Kind {
     fn program(self) -> &'static str {
         match self {
             Kind::Claude => "claude-agent-acp",
+            Kind::ChatGpt => "codex-acp",
         }
     }
+
+    /// The provider preset an API key for it is added from.
+    pub fn key_preset(self) -> &'static str {
+        match self {
+            Kind::Claude => "claude",
+            Kind::ChatGpt => "openai",
+        }
+    }
+
+    /// What the person should know about how far it reaches, where that is
+    /// further than Tequila holds its own tools to.
+    pub fn caveat(self) -> Option<&'static str> {
+        match self {
+            Kind::Claude => None,
+            // Codex looks at files by running read-only commands in its
+            // own sandbox, which Tequila is not asked about.
+            Kind::ChatGpt => Some("ChatGPT's own program can read files elsewhere on this computer. It cannot change them, run other commands or reach the internet without Tequila being asked, and Tequila says no."),
+        }
+    }
+}
+
+/// The key a connected provider holds for a service, by the service's host.
+fn connected_key(settings: &Settings, wire: Wire, host: &str) -> Option<String> {
+    settings
+        .providers
+        .iter()
+        .filter(|p| p.kind == wire && tequila_ai::provider::host(&p.base_url).as_deref() == Some(host))
+        .find_map(|p| p.key.resolve().ok().flatten())
+}
+
+/// What an agent's program is started with besides its own arguments:
+/// more arguments, and more of an environment.
+pub fn start_with(kind: Kind, settings: &Settings) -> (Vec<String>, Vec<(String, String)>) {
+    let (mut args, mut env) = (Vec::new(), Vec::new());
+    match kind {
+        Kind::Claude => {
+            // An API key the person has connected for Claude is what pays,
+            // where there is one.
+            if let Some(key) = connected_key(settings, Wire::Anthropic, "api.anthropic.com") {
+                env.push(("ANTHROPIC_API_KEY".to_string(), key));
+            }
+            // A Claude subscription is not used unless the person has said
+            // so: see `Settings::claude_subscription`.
+            if !settings.claude_subscription {
+                args.push("--hide-claude-auth".to_string());
+            }
+        }
+        Kind::ChatGpt => {
+            // Codex starts where it may only read: a change to a file or a
+            // command that needs more asks, and Tequila answers. Its web
+            // search is its maker's, on their servers, and is turned off.
+            env.push(("INITIAL_AGENT_MODE".to_string(), "read-only".to_string()));
+            env.push(("CODEX_CONFIG".to_string(), r#"{"web_search":"disabled"}"#.to_string()));
+            // A connected OpenAI key signs it in without a question.
+            if let Some(key) = connected_key(settings, Wire::OpenAi, "api.openai.com") {
+                env.push(("OPENAI_API_KEY".to_string(), key));
+                env.push(("DEFAULT_AUTH_REQUEST".to_string(), r#"{"methodId":"api-key"}"#.to_string()));
+            }
+        }
+    }
+    (args, env)
 }
 
 /// How to start an agent: the program, and what goes before its own
@@ -292,16 +361,19 @@ pub fn options(kind: Kind) -> Option<Value> {
             meta.set("claudeCode", claude.build());
             Some(meta.build())
         }
+        // Codex is set up through its environment ([`start_with`]).
+        Kind::ChatGpt => None,
     }
 }
 
 /// Settings of the agent's own that Tequila chooses for it, by kind and
 /// value. Claude's adapter starts in a mode where Claude decides for itself
-/// what needs permission; here it always asks, and Tequila answers
-/// ([`tequila_ai::acp::judge`]).
+/// what needs permission, and Codex's in one that reviews its own actions;
+/// here each always asks, and Tequila answers ([`tequila_ai::acp::judge`]).
 pub fn pinned(kind: Kind) -> &'static [(&'static str, &'static str)] {
     match kind {
         Kind::Claude => &[("mode", "default")],
+        Kind::ChatGpt => &[("mode", "read-only")],
     }
 }
 
@@ -399,6 +471,34 @@ mod tests {
         assert_eq!(pinned(Kind::Claude), [("mode", "default")]);
         assert_eq!(Kind::from_id("agent:claude"), Some(Kind::Claude));
         assert_eq!(Kind::from_id("claude"), None, "a provider may be called that");
+    }
+
+    /// ChatGPT's program starts where it may only read, with its web search
+    /// off; a connected OpenAI key signs it in, and another service's key
+    /// is never handed to it.
+    #[test]
+    fn chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key() {
+        use tequila_ai::{Key, Provider};
+        let mut settings = Settings::default();
+        let (args, env) = start_with(Kind::ChatGpt, &settings);
+        assert!(args.is_empty());
+        assert_eq!(env, [("INITIAL_AGENT_MODE".to_string(), "read-only".to_string()), ("CODEX_CONFIG".to_string(), r#"{"web_search":"disabled"}"#.to_string())]);
+        assert_eq!(pinned(Kind::ChatGpt), [("mode", "read-only")]);
+
+        let gateway = Provider { key: Key::Stored("sk-company".into()), base_url: "https://ai.example.com/v1".into(), ..Provider::preset("openai").unwrap() };
+        let openai = Provider { key: Key::Stored("sk-proj-test".into()), ..Provider::preset("openai").unwrap() };
+        settings.providers = vec![gateway, openai];
+        let (_, env) = start_with(Kind::ChatGpt, &settings);
+        assert!(env.contains(&("OPENAI_API_KEY".to_string(), "sk-proj-test".to_string())));
+        assert!(env.contains(&("DEFAULT_AUTH_REQUEST".to_string(), r#"{"methodId":"api-key"}"#.to_string())));
+        // Claude gets nothing of OpenAI's, and refuses a subscription
+        // unless the person has turned that on.
+        let (args, env) = start_with(Kind::Claude, &settings);
+        assert_eq!((args, env.len()), (vec!["--hide-claude-auth".to_string()], 0));
+        settings.claude_subscription = true;
+        assert!(start_with(Kind::Claude, &settings).0.is_empty());
+        assert_eq!(Kind::from_id("agent:chatgpt"), Some(Kind::ChatGpt));
+        assert!(Kind::ChatGpt.caveat().is_some() && Kind::Claude.caveat().is_none());
     }
 
     #[test]

@@ -145,6 +145,8 @@ pub enum Setup {
     /// It wants signing in, and these are its ways. `subscription` when it
     /// found a Claude subscription signed in and was told not to use one.
     SignIn { ways: Vec<acp::SignIn>, subscription: bool },
+    /// The person is signing in, in the agent's own window or browser page.
+    SigningIn,
     /// Something went wrong setting it up, to read and try again.
     Failed(String),
 }
@@ -482,26 +484,11 @@ impl Assistant {
             let _ = std::fs::create_dir_all(&folder);
             folder
         });
+        let (more_args, more_env) = agents::start_with(kind, &self.settings);
         let mut args = found.args.clone();
+        args.extend(more_args);
         let mut env = found.env.clone();
-        if kind == agents::Kind::Claude {
-            // An API key the person has connected for Claude is what pays,
-            // where there is one.
-            let key = self
-                .settings
-                .providers
-                .iter()
-                .filter(|p| p.kind == Kind::Anthropic && tequila_ai::provider::host(&p.base_url).as_deref() == Some("api.anthropic.com"))
-                .find_map(|p| p.key.resolve().ok().flatten());
-            if let Some(key) = key {
-                env.push(("ANTHROPIC_API_KEY".into(), key));
-            }
-            // A Claude subscription is not used unless the person has said
-            // so: see `Settings::claude_subscription`.
-            if !self.settings.claude_subscription {
-                args.push("--hide-claude-auth".into());
-            }
-        }
+        env.extend(more_env);
         // The earlier conversation, where this chat had one with this agent
         // in this folder.
         let resume = self.chat.session.clone().filter(|_| self.chat.backend == kind.id() && self.chat.folder.as_deref() == Some(folder.as_path()));
@@ -556,6 +543,15 @@ impl Assistant {
         let Some(found) = &self.agent_found else { return };
         if let Err(error) = agents::sign_in(found, way) {
             self.setup = Some(Setup::Failed(error));
+        }
+    }
+
+    /// Sign in by one of the ways the agent carries out itself: it opens
+    /// its maker's own page in the browser, and says when that is done.
+    pub(crate) fn authenticate(&mut self, way: &str) {
+        if let Some((_, agent)) = &mut self.agent {
+            agent.authenticate(way);
+            self.setup = Some(Setup::SigningIn);
         }
     }
 
@@ -689,6 +685,7 @@ impl Assistant {
                     Setup::Missing { .. } => "missing",
                     Setup::Installing(_) => "installing",
                     Setup::SignIn { .. } => "sign in",
+                    Setup::SigningIn => "signing in",
                     Setup::Failed(_) => "failed",
                 },
             );
@@ -954,6 +951,10 @@ impl Assistant {
         for event in events {
             match event {
                 acp::Event::Ready { resumed } => {
+                    // Signed in a moment ago: the card has done its work.
+                    if matches!(self.setup, Some(Setup::SigningIn)) {
+                        self.setup = None;
+                    }
                     let Some((_, agent)) = &mut self.agent else { continue };
                     self.chat.session = agent.session().map(str::to_string);
                     self.chat.folder = Some(self.agent_folder.clone());
@@ -996,7 +997,7 @@ impl Assistant {
                 acp::Event::Account { kind, label } => {
                     // Nobody signed in: said now, with the ways to, rather
                     // than when the first message fails.
-                    if kind == "none" && self.setup.is_none() {
+                    if kind == "none" && self.setup.is_none() && !self.agent.as_ref().is_some_and(|(_, agent)| agent.phase() == acp::Phase::Starting) {
                         let ways = self.agent.as_ref().map(|(_, agent)| agent.sign_ins().to_vec()).unwrap_or_default();
                         self.setup = Some(Setup::SignIn { ways, subscription: false });
                     }
@@ -2018,9 +2019,12 @@ pub(crate) fn prepare_image(png_bytes: &[u8]) -> Option<Vec<u8>> {
 /// tools under the names a person knows them by, the agent's as it titles
 /// them.
 fn step_news(tool: &acp::ToolNews) -> StepNews {
-    let ours = tool.name.as_deref().or(tool.title.as_deref()).and_then(|name| {
-        let name = name.rsplit("__").next().unwrap_or(name);
-        name.strip_prefix("tequila_").map(|short| Call { id: String::new(), name: format!("tequila_{short}"), arguments: tool.input.clone().ok_or_else(String::new) })
+    // Tequila's tool, however the agent writes it: `mcp__tequila__tequila_look`,
+    // `tequila.tequila_look`, or the bare name.
+    let ours = [tool.name.as_deref(), tool.title.as_deref()].into_iter().flatten().find_map(|name| {
+        let from = name.rfind("tequila_")?;
+        let short: String = name[from..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        (short.len() > "tequila_".len()).then(|| Call { id: String::new(), name: short, arguments: tool.input.clone().ok_or_else(String::new) })
     });
     let title = match (&ours, &tool.title) {
         // Only where there is something to title it from: news of a call

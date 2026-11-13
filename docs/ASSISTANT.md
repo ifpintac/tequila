@@ -71,14 +71,15 @@ The model picker at the bottom right of the message box lists everything
 connected. There are two kinds.
 
 **An agent** is the AI company's own program, running on this computer:
-today, **Claude**. Tequila starts it, hands it Tequila's tools, and shows
-what it says and does. It is not shipped with Tequila: the first time you
-choose it, the chat offers **Install**, which downloads Anthropic's adapter
-(`@agentclientprotocol/claude-agent-acp`, Apache-2.0, about 400 MB with the
-Claude program it runs) into Tequila's own folder, `~/.tequila/agents`. It
-needs Node.js on the computer; the chat says so when it is missing. Delete
-that folder to remove it. One you installed yourself (`npm install -g`) is
-used as it is.
+**Claude** and **ChatGPT**. Tequila starts it, hands it Tequila's tools,
+and shows what it says and does. Neither is shipped with Tequila: the
+first time you choose one, the chat offers **Install**, which downloads its
+adapter into Tequila's own folder, `~/.tequila/agents` - Anthropic's
+`@agentclientprotocol/claude-agent-acp` with the Claude program it runs, or
+`@agentclientprotocol/codex-acp` with OpenAI's Codex, each Apache-2.0 and
+about 400 MB. It needs Node.js on the computer; the chat says so when it is
+missing. Delete that folder to remove them. One you installed yourself
+(`npm install -g`) is used as it is.
 
 **An API key or a model on this computer** is answered by Tequila's own
 loop: OpenAI, Claude, Gemini, OpenRouter, a company gateway, Ollama, LM
@@ -125,6 +126,30 @@ yours anyway, at your own judgement of those terms, add
 `"claude_subscription": true` to `~/.tequila/assistant.json` and start
 Tequila again: the sign-in card then offers **Claude Subscription** as
 well. Nothing in the window turns it on.
+
+### ChatGPT, and how it is paid for
+
+ChatGPT as an agent is OpenAI's Codex. Choose **ChatGPT** and the chat
+says what is missing:
+
+- **ChatGPT** opens OpenAI's own sign-in page in your browser. Sign in
+  with your ChatGPT account there - a Plus, Pro, Business or Enterprise
+  plan - and the chat carries on by itself. Tequila never sees the login.
+  This is the sign-in Codex itself offers, and what it uses counts against
+  your plan's Codex limits.
+- **Add an API key…** connects an OpenAI key (platform.openai.com), billed
+  by use. A key you have already connected for OpenAI is used without
+  asking.
+
+**One thing ChatGPT can do that Tequila's rule says it should not.** Codex
+looks at files by running read-only commands in a sandbox of its own, and
+is not asked about those. So it can *read* files outside the project's
+folder. It is started where that is all it can do: changing a file,
+running any other command or reaching the internet asks Tequila first,
+and Tequila refuses the command and the internet and puts a file in the
+project's folder to you. Its web search is turned off. The chat says this
+before you ask it anything. Closing the gap needs a Codex permission
+profile that keeps reading to the project, which is not built yet.
 
 ## API keys and models on this computer
 
@@ -489,3 +514,49 @@ bridge's own client), `stopping_refuses_what_was_waiting_for_an_answer`,
 `chats_are_kept_and_opened_again`,
 `an_agent_that_ends_as_it_starts_is_said_once`,
 `the_panel_draws_every_kind_of_thing`, and `assistant_agents::` (6).
+
+## As built, November 13: ChatGPT as an agent
+
+The second agent, on the first's footing: `assistant_agents::Kind::ChatGpt`
+names the adapter (`@agentclientprotocol/codex-acp` 2.6.0, which brings
+`@openai/codex`), `start_with` gives each agent what it is started with,
+and the rest - Install, the chat, the pickers, the questions - is what
+Claude uses.
+
+- **Started read-only.** `INITIAL_AGENT_MODE=read-only` and the `mode`
+  setting pinned to `read-only` (the adapter's default is `agent`, "Auto
+  review", where Codex judges its own actions): approval on request, a
+  read-only sandbox, no network. `CODEX_CONFIG={"web_search":"disabled"}`.
+- **Signing in** is one of the agent's own ways (`authenticate`, method
+  `chat-gpt`), not a terminal: the adapter opens OpenAI's page and answers
+  when it is done. The card shows *Signing in…* meanwhile
+  (`Setup::SigningIn`); a sign-in that fails is said in the chat and the
+  ways are offered again. A connected OpenAI key is handed over as
+  `OPENAI_API_KEY` with `DEFAULT_AUTH_REQUEST`, and only a key whose
+  address is `api.openai.com`: a company gateway's key is never given to
+  Codex.
+- **Quarantine.** The task expected the Codex program to need its
+  quarantine flag cleared on a Mac. Installed through npm it has none, and
+  it is signed by OpenAI (checked with `xattr` and `codesign` on the
+  installed `codex`), so nothing is cleared. That would matter only for a
+  release downloaded by hand in a browser.
+
+**Tried on this Mac,** in a copy with a home folder of its own: ChatGPT
+chosen, *not on this computer*, **Install** (383 MB), the adapter started
+and said *Not logged in*, and the card offered **ChatGPT** and **Add an
+API key…**. Asked directly with a key that is not one, the adapter opened
+a conversation in `read-only` and listed its models (6.1 Sol and eight
+more) and reasoning levels; OpenAI answered that key 401, as it should.
+
+**Not tried:** the ChatGPT sign-in itself and a conversation: both need
+the owner's account. So how Codex names Tequila's tools when it asks, and
+whether it asks before each one in `read-only`, is not yet seen; the chat
+lets through what it recognises as Tequila's and asks about what it does
+not. OpenAI's terms for signing in to Codex from another application were
+not read; it is the sign-in Codex offers every client of its adapter.
+
+**Left:** reading outside the project's folder (above). Windows is
+unverified, as for Claude.
+
+Held by tests: `acp::signing_in_through_the_agent_opens_the_conversation_or_says_why_not`
+and `assistant_agents::chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key`.
