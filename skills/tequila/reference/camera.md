@@ -2,6 +2,19 @@
 
 The viewport looks through the **active camera**. Moving the view moves that camera, undoably. A project keeps a list of saved cameras, each a shot to come back to and render.
 
+## Whose view it is
+
+The view is the person's as well. They turn and zoom it while you work, to look at what you changed, and nothing you do to a material moves the camera. So a view that differs from your last look is theirs, and `tequila_screenshot` says so when they have moved it: work in it as it is, and do not frame it or move it back.
+
+Move the camera only when a view is what was asked for, or when what you must check is out of sight - and then put it back. Read the view first, and return to it with its `position` as `from` and its `target` as `at`:
+
+```json
+tequila_query {"what": "camera"}
+tequila_look {"from": [0.35, 0.17, 0.6], "at": [0, 0.09, 0]}
+```
+
+`tequila_query {"what": "ui"}` counts the person's own moves in `view_moves_by_hand`: their orbits, pans and zooms, their Frame buttons, a Snapshot they clicked, their undo. Nothing a request does to the camera adds to it, so when it has risen since your last look the view is where they want it.
+
 ## 1. Point it
 
 ```json

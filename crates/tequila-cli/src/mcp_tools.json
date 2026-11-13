@@ -155,7 +155,7 @@
  },
  {
   "name": "tequila_library_apply",
-  "description": "Put a library preset on parts, by its exact name from tequila_library. One undo step. unlink=true gives the parts a copy of their own, to change without changing the other parts that use the preset. To change its colour afterwards, read it with tequila_material: a preset that sets its colour by a pattern needs the pattern's colours changed (tequila_material_recipe, then tequila_material_update), not base_color.",
+  "description": "Put a library preset on parts, by its exact name from tequila_library. One undo step. Answers with the material's id. color applies it in another colour: the same leather, wood or plastic with its pattern and finish kept, as a material of its own named for the colour (\"Leather Tan #1f4d2b\"). unlink=true gives the parts a copy of their own, to change without changing the other parts that use the preset. To change a preset's colour once it is on a part, use tequila_material_tint, not base_color: many presets keep their colour inside a pattern.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -168,6 +168,10 @@
       "type": "integer"
      },
      "description": "Part ids to put it on; the selection when left out."
+    },
+    "color": {
+     "type": "string",
+     "description": "A hex sRGB colour, e.g. \"#1f4d2b\", to apply the preset in."
     },
     "unlink": {
      "type": "boolean"
@@ -373,6 +377,32 @@
   }
  },
  {
+  "name": "tequila_material_tint",
+  "description": "Make a material the same material in another colour, wherever its colour is kept: a plain value, the colours inside a pattern, the stops of a ramp. THE way to recolour a library preset (\"make this leather dark green\", \"that denim in red\"): its pattern, grain, weave and finish stay, the colour asked for becomes its main colour, and its other colours keep their relation to it - creases stay darker, pale threads paler - while colours of another family (white threads, rust on steel) are left alone. Every part using the material changes; material.unlink a part first to change it alone. One undo step. Answers with the colour it was, each parameter changed and how many colours, and a preview image. Refuses a material with no colour of its own (its colour is a picture, or a thin film's) and says why.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "material": {
+     "type": "integer",
+     "description": "The material's id, from tequila_nodes, tequila_materials or tequila_library_apply."
+    },
+    "color": {
+     "type": "string",
+     "description": "A hex sRGB colour, e.g. \"#1f4d2b\"."
+    },
+    "preview": {
+     "type": "boolean",
+     "description": "Return a preview image too (default true)."
+    }
+   },
+   "required": [
+    "material",
+    "color"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
   "name": "tequila_material_recipe",
   "description": "Read any material - one you made, or a library preset already on a part - back as a recipe, to change it and send it to tequila_material_update or tequila_material_create.",
   "inputSchema": {
@@ -480,7 +510,7 @@
  },
  {
   "name": "tequila_frame",
-  "description": "Point the camera at everything, or at the selection.",
+  "description": "Point the camera at everything, or at the selection. This moves the view the person is looking at: for when they ask for one, or to find something out of sight - not after a material edit, which leaves the camera where it was.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -495,7 +525,7 @@
  },
  {
   "name": "tequila_look",
-  "description": "Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable.",
+  "description": "Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable. The view is the person's too: read it first (tequila_query camera) if you mean to put it back.",
   "inputSchema": {
    "type": "object",
    "properties": {

@@ -528,7 +528,7 @@ mod tests {
         for said in ["tequila_guide", "tequila_command", "tequila_read", "search the library before anything else", "Tequila asks the person itself"] {
             assert!(told.contains(said), "{said}");
         }
-        assert!(told.chars().count() < 8_000, "{} characters before the first message", told.chars().count());
+        assert!(told.chars().count() < 8_200, "{} characters before the first message", told.chars().count());
     }
 
     /// The assistant Tequila runs itself, on an API key or a local model,

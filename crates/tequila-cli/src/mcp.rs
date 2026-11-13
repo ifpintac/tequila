@@ -51,7 +51,9 @@ Start with tequila_scene, then tequila_nodes to find parts by name, material or 
 For any material, look in the library first: tequila_library searches several hundred finished presets (leather, \
 fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. Make a material yourself only \
 when the library has nothing close - tequila_material_guide, tequila_material_preview, then tequila_material_create \
-and tequila_material_update - or change a preset once it is on a part. Materials may be shared between parts: unlink \
+and tequila_material_update - or change a preset once it is on a part. For the same material in another colour \
+(\"this leather, but dark green\") use tequila_material_tint, or color on tequila_library_apply: many presets keep \
+their colour inside a pattern, where setting base_color changes nothing. Materials may be shared between parts: unlink \
 a part (material.unlink) before changing it alone. Before sending a command you have not used, ask tequila_command \
 for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example \
 is not read. A command that takes a whole block back (render.set_settings, image.set_style, camera.set, studio.set...) \
@@ -60,6 +62,12 @@ setting. Use tequila_batch for several edits: they become one undo step, and if 
 new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. Look at your work with \
 tequila_screenshot: it waits for the picture to finish and says whether it had. If something looks wrong, first \
 check the simple causes with tequila_nodes: is the part hidden, is it where you think. \
+The view is the person's as well: they turn and zoom it while you work, to look at what you changed. Nothing you do \
+to a material moves the camera, so a view that differs from your last look is theirs, and \
+tequila_screenshot says so when they have moved it: work in it as it is, and do not \
+frame it or move it back. Move the camera only when asked for a view, or when what you must check is out of sight - \
+and then put it back: tequila_query camera reads a view, and tequila_look with its position as from and its target as \
+at returns to it. \
 To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then \
 tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. \
 Every command is undoable, and the person watching sees each request in Tequila's console.";
@@ -177,12 +185,15 @@ pub struct Bridge {
     /// The built-in Assistant's mark, when Tequila itself started this.
     pub assistant: Option<String>,
     channel: Option<Channel>,
+    /// Tequila's count of the person's own view moves at the last
+    /// screenshot, to say with the next one that the view is theirs.
+    view_moves: Option<u64>,
 }
 
 impl Bridge {
     pub fn new(discovery: Option<PathBuf>, restricted: bool) -> Bridge {
         let discovery = discovery.unwrap_or_else(tequila_scripting::server::discovery_path);
-        Bridge { discovery, restricted, assistant: None, channel: None }
+        Bridge { discovery, restricted, assistant: None, channel: None, view_moves: None }
     }
 
     pub fn tools(&self) -> Vec<Value> {
@@ -281,7 +292,7 @@ impl Bridge {
             "tequila_library_apply" => {
                 let name = get("name").ok_or("tequila_library_apply needs `name`")?;
                 let mut fields = vec![("action", Value::from("apply")), ("name", name)];
-                for key in ["nodes", "unlink"] {
+                for key in ["nodes", "unlink", "color"] {
                     if let Some(value) = get(key) {
                         fields.push((key, value));
                     }
@@ -346,6 +357,12 @@ impl Bridge {
                 }
                 let picture = get("preview").and_then(|v| v.as_bool()).unwrap_or(true);
                 self.material_with_picture(fields, picture)
+            }
+            "tequila_material_tint" => {
+                let material = get("material").ok_or("tequila_material_tint needs `material`")?;
+                let color = get("color").ok_or("tequila_material_tint needs `color`, a hex sRGB string like \"#1f4d2b\"")?;
+                let picture = get("preview").and_then(|v| v.as_bool()).unwrap_or(true);
+                self.material_with_picture(vec![("action", Value::from("tint")), ("material", material), ("color", color)], picture)
             }
             "tequila_material_recipe" => {
                 let material = get("material").ok_or("tequila_material_recipe needs `material`")?;
@@ -420,7 +437,8 @@ impl Bridge {
                 )?;
                 wait_for_png(&path, Duration::from_secs_f64(30.0 + settle))?;
                 let ui = self.request("query", vec![("what", "ui".into())]).unwrap_or(Value::Null);
-                image(&path, &picture_caption(viewport, &ui))
+                let moved = moved_by_hand(&mut self.view_moves, &ui);
+                image(&path, &format!("{}{}", picture_caption(viewport, &ui), if moved { MOVED_BY_HAND } else { "" }))
             }
             "tequila_render" => {
                 let path = temporary("tequila-mcp-render", "png");
@@ -643,6 +661,24 @@ fn picture_caption(viewport: bool, ui: &Value) -> String {
     }
 }
 
+/// Said with a screenshot when the person has moved the view since the
+/// last one: an assistant cannot see a hand on the mouse, and took a view
+/// it found closer for a fault to put right.
+const MOVED_BY_HAND: &str = " The person has moved the view since your last look: it is where they want it, so leave it there.";
+
+/// Whether the person has moved the view since the last look: Tequila's
+/// count of their moves (`view_moves_by_hand` in `query ui`) against the
+/// count `seen` then, which is brought up to date. Never at a first look,
+/// which has nothing to differ from.
+fn moved_by_hand(seen: &mut Option<u64>, ui: &Value) -> bool {
+    let Some(count) = ui.get("view_moves_by_hand").and_then(Value::as_f64).map(|count| count as u64) else {
+        return false;
+    };
+    let moved = seen.is_some_and(|before| count > before);
+    *seen = Some(count);
+    moved
+}
+
 fn fields_of(value: &Value) -> Vec<(&str, Value)> {
     match value {
         Value::Object(map) => map.iter().map(|(k, v)| (k.as_str(), v.clone())).collect(),
@@ -767,7 +803,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 44);
+        assert_eq!(tools.len(), 45);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -775,7 +811,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 33);
+        assert_eq!(restricted.len(), 34);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }
@@ -806,7 +842,7 @@ mod tests {
         let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
         bridge.assistant = Some("mark".into());
         let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
-        assert_eq!(names.len(), 44);
+        assert_eq!(names.len(), 45);
         for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
             assert!(names.iter().any(|n| n == kept), "{kept}");
         }
@@ -836,6 +872,22 @@ mod tests {
         let solid = picture_caption(true, &ui(r#"{"viewport":"solid","picture_samples":1,"picture_settled":true}"#));
         assert!(solid.contains("solid view") && solid.contains("not ray traced"), "{solid}");
         assert_eq!(picture_caption(false, &Value::Null), "Tequila window");
+    }
+
+    /// A screenshot says when the person has moved the view since the last
+    /// one: not at the first look, not while the count stands still, not
+    /// from an application that does not count.
+    #[test]
+    fn a_look_says_when_the_person_moved_the_view() {
+        let ui = |text: &str| json::parse(text.as_bytes()).unwrap();
+        let mut seen = None;
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":3}"#)), "a first look has nothing to differ from");
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":3}"#)));
+        assert!(moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":5}"#)));
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"view_moves_by_hand":5}"#)), "said once");
+        assert!(!moved_by_hand(&mut seen, &ui(r#"{"viewport":"solid"}"#)));
+        assert_eq!(seen, Some(5));
+        assert!(MOVED_BY_HAND.contains("leave it there"));
     }
 
     /// The library is looked in before a material is made: the bridge says
@@ -877,6 +929,36 @@ mod tests {
         // Every page the instructions name is one.
         let named = INSTRUCTIONS.split("tequila_guide: ").nth(1).and_then(|rest| rest.split(" - and start").next()).expect("the pages are named");
         assert_eq!(named.split(", ").map(str::trim).collect::<Vec<_>>(), tequila_scripting::guide::PAGES.iter().map(|page| page.topic).collect::<Vec<_>>());
+    }
+
+    /// The view is the person's as well. An assistant that found it closer
+    /// after its material changes took that for a fault and framed the
+    /// model again, each time, over the close look the person had just
+    /// taken: so the bridge says whose a moved view is, and the tool that
+    /// frames says what it is not for.
+    #[test]
+    fn a_moved_view_is_the_persons() {
+        assert!(INSTRUCTIONS.contains("The view is the person's as well") && INSTRUCTIONS.contains("do not frame it or move it back"));
+        let tools = Bridge::new(None, false).tools();
+        let frame = tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some("tequila_frame")).and_then(|t| t.get("description")).and_then(Value::as_str).unwrap_or_default();
+        assert!(frame.contains("not after a material edit"), "{frame}");
+    }
+
+    /// The same material in another colour is one tool, and the bridge
+    /// says to reach for it rather than for base_color.
+    #[test]
+    fn a_tint_is_one_tool() {
+        assert!(INSTRUCTIONS.contains("tequila_material_tint"));
+        let tools = Bridge::new(None, false).tools();
+        let tool = |name: &str| tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(name)).cloned().unwrap_or(Value::Null);
+        let tint = tool("tequila_material_tint");
+        let required: Vec<&str> = tint.get("inputSchema").and_then(|s| s.get("required")).map(Value::as_array).unwrap_or(&[]).iter().filter_map(Value::as_str).collect();
+        assert_eq!(required, ["material", "color"]);
+        let apply = tool("tequila_library_apply");
+        assert!(apply.get("inputSchema").and_then(|s| s.get("properties")).and_then(|p| p.get("color")).is_some());
+        assert!(apply.get("description").and_then(Value::as_str).unwrap_or_default().contains("tequila_material_tint"));
+        // It changes only the open scene, so a restricted bridge offers it.
+        assert!(Bridge::new(None, true).tools().iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_tint")));
     }
 
     #[test]

@@ -237,6 +237,9 @@ pub struct Assistant {
     calls: VecDeque<Call>,
     results: Vec<Part>,
     shot: Option<Shot>,
+    /// Tequila's count of the person's own view moves at the assistant's
+    /// last screenshot, to say with the next that the view is theirs.
+    view_moves: Option<u64>,
     plugin_wait: Option<PluginWait>,
     /// The undo depth when the current request began, and after the
     /// assistant's last change — for taking back everything one request did.
@@ -1372,7 +1375,17 @@ impl Assistant {
                 // Given time to finish its picture, as the bridge's is.
                 app.screenshot_settle = Some((std::time::Instant::now(), 12.0));
                 self.stepped(&call, label, Status::Running, String::new());
-                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption: "The screenshot, as the application shows it now.".into() });
+                // Whose the view is, when the person has moved it since
+                // the last look: said with the picture, as the bridge says
+                // it (`channel::note_view`).
+                let moves = crate::channel::view_moves_by_hand(app);
+                let moved = self.view_moves.is_some_and(|before| moves > before);
+                self.view_moves = Some(moves);
+                let mut caption = String::from("The screenshot, as the application shows it now.");
+                if moved {
+                    caption.push_str(" The person has moved the view since your last look: it is where they want it, so leave it there.");
+                }
+                self.shot = Some(Shot { call, path, asked: std::time::Instant::now(), caption });
             }
             Ok(tools::Plan::Material { json, picture }) => {
                 if self.shot.is_some() || app.pending_screenshot.is_some() {
@@ -2138,6 +2151,10 @@ fn step_label(call: &Call) -> String {
         "material_preview" => "Tried a material on a ball".into(),
         "material_create" => "Made a material".into(),
         "material_update" => "Changed a material".into(),
+        "material_tint" => match word("color") {
+            Some(colour) => format!("Tinted a material {colour}"),
+            None => "Tinted a material".into(),
+        },
         "material_recipe" => "Read a material".into(),
         "material_save" => "Save a material to the library".into(),
         "studio_presets" => "Read the studios".into(),
@@ -2158,9 +2175,10 @@ fn step_label(call: &Call) -> String {
             None => "Added a shape".into(),
         },
         "material" => "Read a material".into(),
-        "library_apply" => match word("name") {
-            Some(name) => format!("Library: {name}"),
-            None => "Put a library material on parts".into(),
+        "library_apply" => match (word("name"), word("color")) {
+            (Some(name), Some(colour)) => format!("Library: {name}, in {colour}"),
+            (Some(name), None) => format!("Library: {name}"),
+            (None, _) => "Put a library material on parts".into(),
         },
         "import" => "Import a file".into(),
         "save" => "Save the project".into(),
@@ -2246,6 +2264,7 @@ fn changes(tool: &str) -> bool {
             | "tequila_library_apply"
             | "tequila_material_create"
             | "tequila_material_update"
+            | "tequila_material_tint"
             | "tequila_studio_preset_apply"
             | "tequila_queue"
             | "tequila_import"
@@ -2306,6 +2325,50 @@ mod tests {
         let _ = std::fs::remove_file(&shot.path);
         // One step to take back.
         assert!(assistant.can_undo_turn(app.project.bus()));
+    }
+
+    /// "This leather, but dark green": a library preset put on a part, then
+    /// tinted, each by its own tool through the application's channel. The
+    /// leather's colour is inside its pattern, and that is where the green
+    /// goes; the answer says so, and comes with the leather on the ball.
+    #[test]
+    fn the_assistant_tints_a_library_preset_in_its_pattern() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let part = app.project.document().tree.iter().find(|n| n.mesh().is_some()).unwrap().id;
+        assistant.turn_start = Some(app.project.bus().depth());
+        assert!(assistant.carry_out(&mut app, call("tequila_library_apply", &format!(r#"{{"name":"Leather Tan","nodes":[{}]}}"#, part.0))));
+        let key = app.project.document().tree.get(part).unwrap().material.expect("the preset is on the part");
+        let applied = app.project.bus().depth();
+        let tan = app.project.document().materials.get(key).unwrap().graph.clone();
+        assert!(tan.is_connected(tequila_materials::material_type::Param::BaseColor));
+
+        assert!(assistant.carry_out(&mut app, call("tequila_material_tint", &format!(r##"{{"material":{},"color":"#1f4d2b"}}"##, key.0))));
+        let green = tequila_format::hex_colour("#1f4d2b").unwrap();
+        let leather = app.project.document().materials.get(key).unwrap();
+        assert_eq!(leather.name, "Leather Tan");
+        assert_eq!(leather.material().base_color, green);
+        let driver = leather.graph.driver_of(tequila_materials::material_type::Param::BaseColor).unwrap();
+        assert!(leather.graph.node(driver).unwrap().literals.values().any(|v| *v == tequila_materials::graph::Value::Color(green)), "the green is not in the pattern");
+        assert_eq!(leather.graph.topology_hash(), tan.topology_hash(), "the grain is as it was");
+        assert_eq!(app.project.bus().depth(), applied + 1, "a tint is one step");
+        let shot = assistant.shot.take().expect("its picture is on its way");
+        assert!(shot.path.exists(), "the preview was not written");
+        assert!(shot.caption.contains("\"in\": \"pattern\"") || shot.caption.contains("\"in\":\"pattern\""), "{}", shot.caption);
+        let _ = std::fs::remove_file(&shot.path);
+
+        // Already in a colour, as it goes on: a material of its own.
+        assert!(assistant.carry_out(&mut app, call("tequila_library_apply", &format!(r##"{{"name":"Leather Tan","nodes":[{}],"color":"#7a1f2b"}}"##, part.0))));
+        let other = app.project.document().tree.get(part).unwrap().material.unwrap();
+        assert_ne!(other, key);
+        assert_eq!(app.project.document().materials.get(other).unwrap().name, "Leather Tan #7a1f2b");
+
+        // A material with no colour says so, and is an error the model reads.
+        let film = r#"{"name": "Soap Film", "type": "thin_film"}"#;
+        assert!(assistant.carry_out(&mut app, call("tequila_material_create", &format!(r#"{{"recipe":{film},"preview":false}}"#))));
+        let film = app.project.document().materials.iter().find(|(_, d)| d.name == "Soap Film").map(|(key, _)| key).unwrap();
+        assert!(assistant.carry_out(&mut app, call("tequila_material_tint", &format!(r##"{{"material":{},"color":"#1f4d2b"}}"##, film.0))));
+        assert!(matches!(assistant.results.last(), Some(Part::Result { is_error: true, text, .. }) if text.contains("`Soap Film` has no colour to change")), "{:?}", assistant.results.last());
     }
 
     /// A plugin's command run by the assistant is answered once it has run,
@@ -2432,6 +2495,25 @@ mod tests {
         app.project.undo();
         app.project.apply(tequila_scene::Command::Rename { node, name: "By hand".into() }).unwrap();
         assert!(!assistant.can_undo_turn(app.project.bus()), "the button would undo the person's own edit");
+    }
+
+    /// The assistant's own screenshot says when the person has moved the
+    /// view since its last one, and not at its first look.
+    #[test]
+    fn a_look_says_when_the_person_moved_the_view() {
+        let mut app = TequilaApp::for_tests();
+        let mut assistant = Assistant::default();
+        let mut look = |app: &mut TequilaApp| {
+            assistant.carry_out(app, call("tequila_screenshot", "{}"));
+            let shot = assistant.shot.take().expect("a screenshot asked for");
+            app.pending_screenshot = None;
+            shot.caption
+        };
+        assert!(!look(&mut app).contains("moved the view"));
+        assert!(!look(&mut app).contains("moved the view"));
+        app.camera.zoom(2.0);
+        assert!(look(&mut app).contains("The person has moved the view since your last look"));
+        assert!(!look(&mut app).contains("moved the view"), "said once");
     }
 
     /// A script's screenshot already in flight makes the assistant's wait a
@@ -2574,6 +2656,8 @@ mod tests {
         assert_eq!(step_label(&call("tequila_apply", r#"{"command":{"command":"material.set_type"}}"#)), "Material: set type");
         assert_eq!(step_label(&call("tequila_batch", r#"{"ops":[{},{},{}]}"#)), "3 changes as one step");
         assert_eq!(step_label(&call("tequila_look", r#"{"view":"front"}"#)), "Camera: front view");
+        assert_eq!(step_label(&call("tequila_material_tint", r##"{"material":4,"color":"#1f4d2b"}"##)), "Tinted a material #1f4d2b");
+        assert_eq!(step_label(&call("tequila_library_apply", r##"{"name":"Leather Tan","color":"#1f4d2b"}"##)), "Library: Leather Tan, in #1f4d2b");
         assert_eq!(step_label(&call("tequila_nodes", r#"{"filter":"grille"}"#)), "Found parts named \"grille\"");
         assert_eq!(step_label(&call("tequila_screenshot", "{}")), "Looked at the viewport");
         assert_eq!(step_label(&call("tequila_library", r#"{"search":"black leather"}"#)), "Looked in the library for \"black leather\"");

@@ -889,7 +889,6 @@ fn render_loop(shared: Arc<Shared>) {
                     // The camera this picture is of, before the next goes in,
                     // and when it was asked for.
                     let frame_camera = view.camera().unwrap_or(state.request.camera);
-                    let frame_moving = view.moving_picture();
                     state.asked = view.asked().unwrap_or(state.request.submitted);
                     // The change Cycles was held from while it made this
                     // picture goes in now - the newest camera, if the mouse
@@ -925,25 +924,22 @@ fn render_loop(shared: Arc<Shared>) {
                     // newest asked for. Traced while Cycles made the picture
                     // (below, as it waits), and a sample more for a still
                     // view's - given up if anything new is asked for, as a
-                    // full-size sample is long. A moving picture's is traced
-                    // at half its size (`cycles_view::floor_size`).
+                    // full-size sample is long.
                     if view.floor_reflection() {
-                        let (width, height) = crate::cycles_view::floor_size((frame.width, frame.height), frame_moving);
-                        let key = (Arc::as_ptr(&state.request.scene) as usize, frame_camera, width, height);
+                        let key = (Arc::as_ptr(&state.request.scene) as usize, frame_camera, frame.width, frame.height);
                         let given_up = || !moving && at_full_size && news(&shared, seen_request);
-                        let layer = floors.for_frame(state.intersector.as_ref(), key, &state.request.config, moving || !at_full_size || frame_moving, &given_up);
+                        let layer = floors.for_frame(state.intersector.as_ref(), key, &state.request.config, moving || !at_full_size, &given_up);
                         let _timer = Timer::start("render: lay reflection");
                         let bright = tequila_render_cpu::floor::alpha_by_brightness(&state.request.scene);
-                        let laid = crate::cycles_view::Reflection::over(layer, (frame.width, frame.height));
                         use rayon::prelude::*;
-                        let lay = |(i, pixel): (usize, &mut tequila_render_core::framebuffer::Pixel)| {
-                            let (mean, share) = laid.at(i);
+                        let lay = |(pixel, laid): (&mut tequila_render_core::framebuffer::Pixel, &tequila_render_core::framebuffer::Pixel)| {
+                            let share = laid.alpha();
                             if share > 0.0 && pixel.samples > 0 {
                                 let n = pixel.samples as f32;
                                 let (reflection, share) = if bright {
-                                    tequila_render_cpu::floor::by_brightness(mean, share, style.exposure)
+                                    tequila_render_cpu::floor::by_brightness(laid.mean(), share, style.exposure)
                                 } else {
-                                    (mean, share)
+                                    (laid.mean(), share)
                                 };
                                 let (colour, coverage) = tequila_render_cpu::floor::lay_reflection(
                                     pixel.sum * (1.0 / n),
@@ -957,9 +953,9 @@ fn render_loop(shared: Arc<Shared>) {
                         };
                         // Shared out for a full-size picture only, as the frame is.
                         if frame.width * frame.height >= crate::cycles_view::PARALLEL_PIXELS {
-                            state.framebuffer.pixels_mut().par_iter_mut().enumerate().for_each(lay);
+                            state.framebuffer.pixels_mut().par_iter_mut().zip(layer.pixels().par_iter()).for_each(lay);
                         } else {
-                            state.framebuffer.pixels_mut().iter_mut().enumerate().for_each(lay);
+                            state.framebuffer.pixels_mut().iter_mut().zip(layer.pixels()).for_each(lay);
                         }
                     } else {
                         floors.clear();
@@ -1036,11 +1032,11 @@ fn render_loop(shared: Arc<Shared>) {
                     if view.awaiting_frame() {
                         view.prepare();
                         if let (true, Some(camera)) = (view.floor_reflection(), view.camera()) {
-                            let (width, height) = crate::cycles_view::floor_size(view.size(), view.moving_picture());
+                            let (width, height) = view.size();
                             let key = (Arc::as_ptr(&state.request.scene) as usize, camera, width, height);
                             let still = view.size() == view.full_size() && !view.navigating();
                             let given_up = || still && news(&shared, seen_request);
-                            floors.prepare(state.intersector.as_ref(), key, &state.request.config, &given_up);
+                            floors.prepare(state.intersector.as_ref(), key, &state.request.config, !still, &given_up);
                         }
                     }
                     wait_for_news(&shared, seen_request, seen_style, Duration::from_millis(if view.awaiting_frame() { 3 } else { 15 }));
