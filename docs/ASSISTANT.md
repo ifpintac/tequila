@@ -156,15 +156,13 @@ says what is missing:
   by use. A key you have already connected for OpenAI is used without
   asking.
 
-**One thing ChatGPT can do that Tequila's rule says it should not.** Codex
-looks at files by running read-only commands in a sandbox of its own, and
-is not asked about those. So it can *read* files outside the project's
-folder. It is started where that is all it can do: changing a file,
-running any other command or reaching the internet asks Tequila first,
-and Tequila refuses the command and the internet and puts a file in the
-project's folder to you. Its web search is turned off. The chat says this
-before you ask it anything. Closing the gap needs a Codex permission
-profile that keeps reading to the project, which is not built yet.
+**ChatGPT works through Tequila's tools alone.** Codex looks at files by
+running commands, and its sandbox for those reads the whole disk without
+asking. So here its command tool is switched off altogether, and its web
+search with it: the same rule Claude is held to, no shell and no internet.
+What that costs is that ChatGPT cannot read the files in the project's
+folder, as Claude can; it can still write one there when you allow it. The
+chat says so before you ask it anything.
 
 ### Gemini, and how it is paid for
 
@@ -610,8 +608,9 @@ lets through what it recognises as Tequila's and asks about what it does
 not. OpenAI's terms for signing in to Codex from another application were
 not read; it is the sign-in Codex offers every client of its adapter.
 
-**Left:** reading outside the project's folder (above). Windows is
-unverified, as for Claude.
+**Left:** reading outside the project's folder (closed later the same
+day: see *ChatGPT held to Claude's rules*). Windows is unverified, as for
+Claude.
 
 Held by tests: `acp::signing_in_through_the_agent_opens_the_conversation_or_says_why_not`
 and `assistant_agents::chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key`.
@@ -737,3 +736,32 @@ unverified.
 
 Held by tests: `gemini_is_googles_own_program_started_in_its_sandbox` and
 `a_connected_key_signs_an_agent_in_that_wants_asking`.
+
+## As built, November 13: ChatGPT held to Claude's rules
+
+ChatGPT was started in Codex's `read-only` mode, which lets its commands
+read any file on the disk without asking. The owner's rule is no shell and
+no other folders, for every AI.
+
+- Codex has a switch for its command tool, `features.shell_tool`
+  ("Enable command execution tools (stable; on by default)", in its
+  configuration reference; in its source the tools are not registered at
+  all when it is off). It goes in the `CODEX_CONFIG` Tequila already
+  passes, beside `web_search = "disabled"`.
+- The `read-only` mode stays, so a change to a file still asks.
+- Considered and left: a Codex permission profile that keeps reading to
+  the project's folder. It would let ChatGPT read project files, but it is
+  marked beta, has to live in a Codex home of Tequila's own (so the person
+  would sign in again there), and on Windows needs a sandbox that not
+  every PC has.
+
+Checked without an account, with the Codex program Install puts in place
+(0.167.2): `codex features list -c features.shell_tool=false` reports the
+switch off, `codex debug prompt-input` no longer offers the model
+`write_stdin` and offers `exec_command` in half as many places, and the
+adapter opens a conversation with the setting. **Not checked:** a real
+conversation, where ChatGPT would be seen to have no way of running a
+command.
+
+Held by test:
+`chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key`.
