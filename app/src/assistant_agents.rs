@@ -534,9 +534,9 @@ mod tests {
         let script = root.join("agents/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js");
         touch(&script);
         let found = find_agent_in(Kind::Claude, &root.join("agents"), &[bin.clone()], None).unwrap();
+        // Compared as paths: on a PC the script's path is written with
+        // backslashes, and the one made here with the slashes above.
         assert_eq!(found.program, node);
-        // The same file, whichever slashes its path is spelled with: on
-        // Windows the two spellings differ as text and not as paths.
         assert_eq!(found.args.iter().map(PathBuf::from).collect::<Vec<_>>(), [script]);
         assert_eq!(found.env[0].0, "PATH");
         assert!(found.env[0].1.contains(&*bin.to_string_lossy()));
