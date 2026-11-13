@@ -2195,7 +2195,13 @@ mod tests {
     /// Tequila's renderer, the camera moving faster than it can trace a
     /// picture - a new one every millisecond, as a busy computer sees a
     /// mouse - still shows pictures of the move as it goes: a moving view's
-    /// pass is never given up for the next camera.
+    /// pass is never given up for the next camera. Given up, no picture of
+    /// the move is ever shown, however long the camera goes on moving.
+    ///
+    /// The camera moves till five have been shown, not for a set time: on a
+    /// computer shared with hundreds of other tests a picture can take half
+    /// a second, and two seconds of moving showed three (GitHub's Windows
+    /// runner) or four (its Mac) where a quiet computer shows dozens.
     #[test]
     fn a_moving_view_shows_pictures_however_fast_the_camera_moves() {
         let renderer = Orchestrator::new();
@@ -2212,18 +2218,23 @@ mod tests {
             assert!(Instant::now() < deadline, "the view never drew");
             std::thread::sleep(Duration::from_millis(5));
         }
+        // Only pictures of the move count: each of a camera asked for after
+        // it began, as the window stamps its requests, and not one more of
+        // the first camera's coming in late.
         let (started, mut moves, mut shown) = (Instant::now(), 0u32, 0u32);
-        while started.elapsed() < Duration::from_secs(2) {
+        let deadline = started + Duration::from_secs(30);
+        while shown < 5 {
+            assert!(Instant::now() < deadline, "{shown} pictures in {:.0} s of a camera moving every millisecond ({moves} moves)", started.elapsed().as_secs_f64());
             moves += 1;
             let a = moves as f32 * 0.002;
             req.camera = Camera::look_at(Vec3 { x: 4.0 * a.cos(), y: 4.0, z: 4.0 * a.sin() }, Vec3::ZERO, Vec3::Y);
+            req.submitted = Instant::now();
             renderer.submit(req.clone());
-            if renderer.take_image(&mut seen).is_some_and(|image| image.width > 0) {
+            if renderer.take_image(&mut seen).is_some_and(|image| image.width > 0 && image.asked.is_some_and(|asked| asked >= started)) {
                 shown += 1;
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert!(shown >= 5, "{shown} pictures in two seconds of a camera moving every millisecond ({moves} moves)");
     }
 
     /// The denoising thread gives a denoise up as soon as it is told to,
@@ -2978,22 +2989,31 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        // Three seconds of a mouse turning the view sixty times a second.
+        // A mouse turning the view sixty times a second, till five pictures
+        // of the turn have come in: each of a camera asked for after it
+        // began, as the window stamps its requests, not a still one of where
+        // it began. Not for a set time: three seconds showed fewer on a
+        // computer busy with other tests. A view that restarted Cycles at
+        // every move shows none, however long the mouse goes on.
         req.interacting = true;
         let (started, mut moves, mut shown) = (Instant::now(), 0u32, Vec::new());
-        while started.elapsed() < Duration::from_secs(3) {
+        let deadline = started + Duration::from_secs(60);
+        while shown.len() < 5 {
+            assert!(Instant::now() < deadline, "{} pictures in {:.0} s of orbiting ({moves} moves)", shown.len(), started.elapsed().as_secs_f64());
             moves += 1;
             req.camera = camera_at(moves as f32 * 0.01);
+            req.submitted = Instant::now();
             renderer.submit(req.clone());
             let tick = Instant::now();
             while tick.elapsed() < Duration::from_micros(16_667) {
                 if let Some(image) = renderer.take_image(&mut seen) {
-                    shown.push(image);
+                    if image.asked.is_some_and(|asked| asked >= started) {
+                        shown.push(image);
+                    }
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
-        assert!(shown.len() >= 5, "{} pictures in three seconds of orbiting", shown.len());
         // Each next camera went to Cycles as a picture came in, before the
         // picture was put up: Cycles rendered while Tequila drew.
         assert!(renderer.handed_early() > 0, "no camera went to Cycles before the picture in hand was put up");
