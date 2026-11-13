@@ -389,6 +389,11 @@ fn open_terminal(words: &[String], env: &[(String, String)]) -> Result<(), Strin
     // A `.command` file is what Terminal runs when it is opened.
     let script = std::env::temp_dir().join(format!("tequila-sign-in-{}.command", std::process::id()));
     let mut text = String::from("#!/bin/sh\n");
+    // Terminal starts with the computer's own idea of the home folder. The
+    // sign-in has to land where the agent, started by Tequila, will look.
+    if let Some(home) = std::env::var_os("HOME") {
+        text.push_str(&format!("export HOME={}\n", quoted(&home.to_string_lossy())));
+    }
     for (name, value) in env {
         text.push_str(&format!("export {name}={}\n", quoted(value)));
     }

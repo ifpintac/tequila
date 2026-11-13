@@ -567,6 +567,25 @@ impl Assistant {
         }
     }
 
+    /// Whether Claude may be signed in with a Claude subscription: the
+    /// person's own choice, made in the sign-in card or on the Connections
+    /// page. The agent is let go, to start again as chosen.
+    pub(crate) fn set_claude_subscription(&mut self, on: bool) {
+        if self.settings.claude_subscription == on || self.working() {
+            return;
+        }
+        self.settings.claude_subscription = on;
+        self.save_settings();
+        if matches!(self.agent, Some((agents::Kind::Claude, _))) {
+            self.end_agent();
+        }
+        if matches!(self.backend(), Some(Backend::Agent(agents::Kind::Claude))) {
+            self.setup = None;
+            self.rested = false;
+        }
+        self.connections.forget();
+    }
+
     /// Try the agent again: after installing it, or signing in.
     pub(crate) fn retry(&mut self, around: &Around) {
         self.setup = None;
@@ -2640,6 +2659,32 @@ mod tests {
         assistant.agent = Some((agents::Kind::Gemini, wanting()));
         pump_until(&mut assistant, &mut app, |a| a.setup.is_some());
         assert!(matches!(&assistant.setup, Some(Setup::SignIn { ways, .. }) if ways.len() == 2));
+    }
+
+    /// Using a Claude subscription is off until the person turns it on,
+    /// and their choice is kept: Claude's program is let go, to start again
+    /// as chosen, and the setting is in the file for next time.
+    #[test]
+    fn the_person_turns_their_claude_subscription_on_themselves() {
+        let home = std::env::temp_dir().join(format!("tequila-assistant-subscription-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let mut assistant = Assistant::default();
+        assistant.load(home.join("assistant.json"));
+        assistant.settings.active = Some(agents::Kind::Claude.id().into());
+        assert!(!assistant.settings.claude_subscription);
+        assert_eq!(agents::start_with(agents::Kind::Claude, &assistant.settings).0, ["--hide-claude-auth"]);
+        assistant.agent = Some((agents::Kind::Claude, stand_in(|_, _| {})));
+        assistant.setup = Some(Setup::SignIn { ways: Vec::new(), subscription: true });
+
+        assistant.set_claude_subscription(true);
+        assert!(assistant.agent.is_none() && assistant.setup.is_none(), "let go, to start again with the subscription allowed");
+        assert!(agents::start_with(agents::Kind::Claude, &assistant.settings).0.is_empty());
+        let (kept, _) = Settings::load(&home.join("assistant.json"));
+        assert!(kept.claude_subscription, "kept for next time");
+
+        assistant.set_claude_subscription(false);
+        assert!(!Settings::load(&home.join("assistant.json")).0.claude_subscription);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// An agent whose program ends before it has opened a conversation is

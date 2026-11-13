@@ -241,6 +241,7 @@ impl Assistant {
         );
         ui.add_space(4.0);
         let chosen = self.backend();
+        let mut subscription = None;
         for connection in &mut connections.each {
             let kind = connection.kind;
             let mut look = false;
@@ -335,6 +336,16 @@ impl Assistant {
                     Status::Failed(_) => look = ui.button("Try again").clicked(),
                     Status::Installing | Status::Checking => {}
                 });
+                // Claude's subscription: the person's own switch, both ways.
+                if kind == agents::Kind::Claude && !matches!(connection.status, Status::Missing { .. } | Status::Installing) {
+                    let mut on = self.settings.claude_subscription;
+                    let switch = ui
+                        .checkbox(&mut on, "Use my Claude subscription")
+                        .on_hover_text("Off, Claude is paid for by use: an Anthropic API key or Console account. On, it signs in with your Claude plan. Anthropic's terms do not plainly allow that in an application that is not theirs, so it is yours to decide.");
+                    if switch.changed() {
+                        subscription = Some(on);
+                    }
+                }
                 if let (Some(caveat), true) = (kind.caveat(), matches!(connection.status, Status::SignedIn { .. } | Status::SignedOut)) {
                     ui.add(egui::Label::new(egui::RichText::new(caveat).small().color(theme::dim())).wrap());
                 }
@@ -345,6 +356,10 @@ impl Assistant {
             ui.add_space(4.0);
         }
         self.connections = connections;
+        // Changed last: it lets the agents on the page go, to be asked again.
+        if let Some(on) = subscription {
+            self.set_claude_subscription(on);
+        }
     }
 }
 

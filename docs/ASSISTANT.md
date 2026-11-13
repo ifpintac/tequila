@@ -113,13 +113,16 @@ what is missing:
 - **Add an API key…** connects an Anthropic key (console.anthropic.com).
   A key you have already connected for Claude under *API keys* is used
   without asking again.
+- **Use my Claude subscription** signs in with your Claude plan instead,
+  in the same terminal window, and bills nothing by use. A plan already
+  signed in to Claude on this computer is used straight away.
 
-Then click **Try again**.
+After signing in, click **Try again**.
 
-**A Claude subscription (Pro, Max) is not used, and that is a choice, not a
-limit.** The adapter can sign in with one, through the same terminal
-window. But Anthropic's terms do not plainly allow it in an application
-that is not theirs:
+**The subscription is off until you turn it on,** with that button or the
+checkbox on Claude's card under Connections, which also turns it off
+again. It is your choice rather than Tequila's because Anthropic's terms
+do not plainly allow it in an application that is not theirs:
 
 - The Agent SDK's documentation says: *"Unless previously approved,
   Anthropic does not allow third party developers to offer claude.ai login
@@ -128,19 +131,20 @@ that is not theirs:
 - Their legal page forbids a third-party application offering Claude.ai
   login or handling its credentials, and adds that this does not *"prevent
   an end user from signing in to the unmodified Claude Code binary with
-  their own Claude subscription"*. Tequila would be doing the second - the
-  sign-in is Anthropic's program, in a terminal - but whether a button that
-  starts it counts as "offering" is not said.
+  their own Claude subscription"*. Tequila does the second - the sign-in
+  is Anthropic's program, in a terminal, and Tequila never sees it - but
+  whether a button that starts it counts as "offering" is not said.
 
 (Read on 2026-11-13: code.claude.com/docs/en/agent-sdk/overview and
 code.claude.com/docs/en/legal-and-compliance.)
 
-So Tequila starts the adapter with `--hide-claude-auth`, which makes it
-refuse a subscription even when one is signed in on the computer. To use
-yours anyway, at your own judgement of those terms, add
-`"claude_subscription": true` to `~/.tequila/assistant.json` and start
-Tequila again: the sign-in card then offers **Claude Subscription** as
-well. Nothing in the window turns it on.
+While it is off, Tequila starts the adapter with `--hide-claude-auth`,
+which makes it refuse a subscription even when one is signed in on the
+computer, and the card says so. Anthropic's Console sign-in page may
+itself offer *Continue with* your plan when the account has no Console
+organisation: that signs the plan in, and the card then offers to use it.
+The choice is kept as `"claude_subscription"` in
+`~/.tequila/assistant.json`.
 
 ### ChatGPT, and how it is paid for
 
@@ -765,3 +769,30 @@ command.
 
 Held by test:
 `chatgpt_starts_read_only_and_signs_in_with_a_connected_openai_key`.
+
+## As built, November 13: the Claude subscription is the person's own switch
+
+The subscription was off, with a line in `assistant.json` as the only way
+to turn it on. The first person to try it, the owner, clicked **Anthropic
+Console**; Anthropic's page answered that the account had no Console
+organisation and offered *Continue with Claude Ultra*; and Tequila then
+refused the plan it had just been signed in with, with nothing in the
+window to change that.
+
+- The card has **Use my Claude subscription**, and Claude's card under
+  Connections a checkbox that turns it on and off
+  (`Assistant::set_claude_subscription`). Either lets Claude's program go
+  and starts it again as chosen. It is still off until the person turns
+  it on, and the card says why it is theirs to decide.
+- The terminal a sign-in opens in is given the home folder Tequila has
+  (`open_terminal`), so the sign-in lands where the agent will look. They
+  are the same in ordinary use; they differ when Tequila is run with a
+  home of its own, as a test copy is.
+
+Found on the way, about test copies and not about Tequila: on a Mac the
+login Keychain is found through the home folder, so a copy run with a
+home of its own cannot see a Claude sign-in made in the real one
+(`security find-generic-password` answers 44 there). A copy for trying
+sign-ins has to run on the real home.
+
+Held by test: `the_person_turns_their_claude_subscription_on_themselves`.
