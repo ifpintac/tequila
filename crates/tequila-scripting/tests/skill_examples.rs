@@ -303,13 +303,18 @@ fn every_example_in_the_skill_is_read_by_tequila() {
 /// The core is short enough to be given whole to every assistant with
 /// every conversation, and a page short enough to be read whole: an answer
 /// of tens of thousands of characters is skipped, and the assistant guesses.
+///
+/// The lengths are the files' as the repository keeps them. `.gitattributes`
+/// keeps them so in every checkout; one made before that, on Windows, has a
+/// carriage return on every line, which is not counted.
 #[test]
 fn the_core_and_every_page_stay_short_enough_to_read() {
-    let core = guide::core().chars().count();
+    let count = |text: &str| text.chars().filter(|c| *c != '\r').count();
+    let core = count(guide::core());
     assert!(core <= 7_000, "the core is {core} characters; it is to stay well under {}", guide::CORE_LIMIT);
     assert!(guide::CORE_LIMIT <= 8_000 && guide::PAGE_LIMIT <= 12_000);
     for page in guide::PAGES {
-        let length = page.text.chars().count();
+        let length = count(page.text);
         assert!(length <= guide::PAGE_LIMIT, "`{}` is {length} characters, over {}", page.topic, guide::PAGE_LIMIT);
         assert!(length >= 1_500, "`{}` is {length} characters: too little to work from", page.topic);
         assert!(page.text.starts_with("# "), "`{}` starts with its title", page.topic);
