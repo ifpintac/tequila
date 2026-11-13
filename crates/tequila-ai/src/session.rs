@@ -351,7 +351,7 @@ fn send_turn(provider: &Provider, messages: &[Message], job: &Job, headers: &[(S
     }
     job.phase(Phase::Reading);
     let tools = tools::all();
-    let body = |stream| wire::request_body_with(provider, tools::SYSTEM, &tools, messages, wire::Options { stream, ..options });
+    let body = |stream| wire::request_body_with(provider, tools::system(), &tools, messages, wire::Options { stream, ..options });
     if let Some(info) = ollama {
         let tokens = ollama::estimate_tokens(&body(false));
         ollama::check_fit(info, tokens, provider.max_tokens)?;
@@ -506,7 +506,7 @@ pub fn test(provider: &Provider) -> Result<String, String> {
             if info.can("tools") == Some(false) {
                 return Err(format!("It answered ({answer}), but: {}", ollama::no_tools(&info)));
             }
-            let first = wire::request_body(provider, tools::SYSTEM, &tools::all(), &[Message::user("Make the strap black velvet.")]);
+            let first = wire::request_body(provider, tools::system(), &tools::all(), &[Message::user("Make the strap black velvet.")]);
             let tokens = ollama::estimate_tokens(&first);
             if let Err(message) = ollama::check_fit(&info, tokens, provider.max_tokens) {
                 return Err(format!("It answered ({answer}), but: {message}"));
@@ -1032,7 +1032,7 @@ mod tests {
     /// 4,843 for qwen3 on November 6; the estimate is 5,888.)
     #[test]
     fn the_assistants_first_request_needs_more_than_ollamas_default() {
-        let body = wire::request_body(&local("http://localhost:11434/v1".into()), tools::SYSTEM, &tools::all(), &[Message::user("Make the strap velvet")]);
+        let body = wire::request_body(&local("http://localhost:11434/v1".into()), tools::system(), &tools::all(), &[Message::user("Make the strap velvet")]);
         let tokens = ollama::estimate_tokens(&body);
         assert!((4096..14_000).contains(&tokens), "{tokens}");
     }

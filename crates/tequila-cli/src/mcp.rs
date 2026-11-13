@@ -43,14 +43,20 @@ const TOOLS: &str = include_str!("mcp_tools.json");
 const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const INSTRUCTIONS: &str = "Tequila is a product-rendering application open on this computer, and these tools are \
 the way to work in it: use them, not screenshots of the desktop, mouse clicks or any computer-use control - they \
-are exact, fast and undoable. Start with tequila_scene, then tequila_nodes to find parts by name, material or size. \
+are exact, fast and undoable. Before working in an area for the first time, read its page of the guide with \
+tequila_guide: materials, recipes, graph, textures, labels, uv, scene, lighting, camera, variants, rendering, image, \
+animation, fixing, files, plugins, app, scripting, shots - and start, the short guide to working here, if you have no \
+Tequila skill. Each page is short, and tested against this build. \
+Start with tequila_scene, then tequila_nodes to find parts by name, material or size. \
 For any material, look in the library first: tequila_library searches several hundred finished presets (leather, \
 fabric, metal, plastic, wood, glass...) and tequila_library_apply puts one on parts. Make a material yourself only \
 when the library has nothing close - tequila_material_guide, tequila_material_preview, then tequila_material_create \
 and tequila_material_update - or change a preset once it is on a part. Materials may be shared between parts: unlink \
 a part (material.unlink) before changing it alone. Before sending a command you have not used, ask tequila_command \
 for it: it answers with the exact fields and an example. Never guess a field name; a field that is not in the example \
-is not read. Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. A \
+is not read. A command that takes a whole block back (render.set_settings, image.set_style, camera.set, studio.set...) \
+starts from tequila_read, which reads one part of the project or one node; never read the whole project to find one \
+setting. Use tequila_batch for several edits: they become one undo step, and if one fails none of them stay. A \
 new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. Look at your work with \
 tequila_screenshot: it waits for the picture to finish and says whether it had. If something looks wrong, first \
 check the simple causes with tequila_nodes: is the part hidden, is it where you think. \
@@ -282,6 +288,18 @@ impl Bridge {
                 }
                 self.request("library", fields).map(|v| text_value(&v))
             }
+            // From this program's own copy of the pages, which is the
+            // application's: the guide reads with Tequila closed too.
+            "tequila_guide" => tequila_scripting::guide::page(get("topic").as_ref().and_then(Value::as_str)).map(|v| text_value(&v)),
+            "tequila_read" => {
+                let mut fields = Vec::new();
+                for key in ["what", "node", "index"] {
+                    if let Some(value) = get(key) {
+                        fields.push((key, value));
+                    }
+                }
+                self.request("read", fields).map(|v| text_value(&v))
+            }
             "tequila_command" => {
                 let fields = get("command").filter(|c| c.as_str().is_some_and(|c| !c.trim().is_empty())).map(|c| vec![("command", c)]).unwrap_or_default();
                 self.request("help", fields).map(|v| text_value(&v))
@@ -390,6 +408,12 @@ impl Bridge {
                 // rendered view is dark and grainy while it redraws.
                 let settle = get("settle").and_then(|v| v.as_f64()).unwrap_or(12.0).clamp(0.0, 60.0);
                 let path = temporary("tequila-mcp", "png");
+                // One of the windows of its own: the UV editor, the graph.
+                if let Some(window) = get("window").and_then(|w| w.as_str().map(str::to_string)) {
+                    self.request("screenshot", vec![("path", path.to_string_lossy().into_owned().into()), ("viewport", false.into()), ("window", window.as_str().into())])?;
+                    wait_for_png(&path, Duration::from_secs(30))?;
+                    return image(&path, &format!("Tequila's {window} window"));
+                }
                 self.request(
                     "screenshot",
                     vec![("path", path.to_string_lossy().into_owned().into()), ("viewport", viewport.into()), ("settle", Value::Number(settle))],
@@ -743,7 +767,7 @@ mod tests {
         assert!(result.get("instructions").and_then(Value::as_str).unwrap().contains("not screenshots of the desktop"));
         let list = call(&mut bridge, r#"{"jsonrpc":"2.0","id":"a","method":"tools/list"}"#);
         let tools = list.get("result").unwrap().get("tools").unwrap().as_array();
-        assert_eq!(tools.len(), 42);
+        assert_eq!(tools.len(), 44);
         assert!(tools.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_material_create")), "the material tools are listed");
         assert_eq!(list.get("id"), Some(&Value::String("a".into())), "the id comes back as it was sent");
         // A notification gets no answer; an unknown method an error.
@@ -751,7 +775,7 @@ mod tests {
         assert!(call(&mut bridge, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).get("error").is_some());
         // Restricted, the tools that reach outside the scene are gone.
         let restricted = Bridge::new(None, true).tools();
-        assert_eq!(restricted.len(), 31);
+        assert_eq!(restricted.len(), 33);
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str) == Some("tequila_import")));
         assert!(!restricted.iter().any(|t| t.get("name").and_then(Value::as_str).is_some_and(|n| n.starts_with("tequila_plugin"))));
     }
@@ -782,7 +806,7 @@ mod tests {
         let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), false);
         bridge.assistant = Some("mark".into());
         let names: Vec<String> = bridge.tools().iter().filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string)).collect();
-        assert_eq!(names.len(), 42);
+        assert_eq!(names.len(), 44);
         for kept in ["tequila_import", "tequila_save", "tequila_queue", "tequila_preferences", "tequila_plugin_run", "tequila_request"] {
             assert!(names.iter().any(|n| n == kept), "{kept}");
         }
@@ -824,6 +848,35 @@ mod tests {
         assert!(about("tequila_library").contains("LOOK HERE FIRST"));
         assert!(about("tequila_material_create").contains("Only when tequila_library has nothing close"));
         assert!(about("tequila_apply").contains("tequila_command"));
+    }
+
+    /// The guide is one tool, a page at a time, from the binary itself:
+    /// it answers with Tequila closed, its topics are the pages there are,
+    /// and the first thing the bridge says is to read it.
+    #[test]
+    fn the_guide_is_served_a_page_at_a_time() {
+        let mut bridge = Bridge::new(Some(std::env::temp_dir().join("tequila-mcp-nowhere.json")), true);
+        let said = |content: Vec<Value>| content[0].get("text").and_then(Value::as_str).unwrap().to_string();
+        let page = said(bridge.call("tequila_guide", &json::parse(br#"{"topic":"uv"}"#).unwrap()).unwrap());
+        assert!(page.starts_with("# ") && page.len() <= tequila_scripting::guide::PAGE_LIMIT, "{}", page.len());
+        let list = said(bridge.call("tequila_guide", &json::parse(b"{}").unwrap()).unwrap());
+        assert!(list.contains("\"rendering\"") && list.len() < 6000, "{list}");
+        assert!(bridge.call("tequila_guide", &json::parse(br#"{"topic":"teapots"}"#).unwrap()).unwrap_err().contains("materials"));
+        // The tool's topics are the pages, and the parts `read` names are
+        // the parts there are.
+        let tools = bridge.tools();
+        let choices = |tool: &str, field: &str| -> Vec<String> {
+            let tool = tools.iter().find(|t| t.get("name").and_then(Value::as_str) == Some(tool)).unwrap_or_else(|| panic!("{tool} is offered"));
+            tool.get("inputSchema").and_then(|s| s.get("properties")).and_then(|p| p.get(field)).and_then(|f| f.get("enum")).expect("its choices").as_array().iter().filter_map(|c| c.as_str().map(str::to_string)).collect()
+        };
+        let mut topics = vec![tequila_scripting::guide::START.to_string()];
+        topics.extend(tequila_scripting::guide::PAGES.iter().map(|page| page.topic.to_string()));
+        assert_eq!(choices("tequila_guide", "topic"), topics);
+        assert_eq!(choices("tequila_read", "what"), tequila_scripting::document::SECTIONS.iter().map(|(name, _)| name.to_string()).collect::<Vec<_>>());
+        assert!(INSTRUCTIONS.contains("tequila_guide") && INSTRUCTIONS.contains("tequila_read"));
+        // Every page the instructions name is one.
+        let named = INSTRUCTIONS.split("tequila_guide: ").nth(1).and_then(|rest| rest.split(" - and start").next()).expect("the pages are named");
+        assert_eq!(named.split(", ").map(str::trim).collect::<Vec<_>>(), tequila_scripting::guide::PAGES.iter().map(|page| page.topic).collect::<Vec<_>>());
     }
 
     #[test]

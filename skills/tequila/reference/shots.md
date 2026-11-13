@@ -1,6 +1,17 @@
-# Shots, renders and the look
+# Whole shots, step by step
 
-Recipes for the shots people ask for most, then the render and image settings. Every `{"command": …}` goes through `tequila_apply`, or several at once as `{"op": "apply", "command": {…}}` entries in `tequila_batch`. Colours are hex sRGB strings (`"#101014"`) or linear ACEScg arrays (`materials.md`); `[0, 0, 0]` is black and `[1, 1, 1]` white either way.
+The shots people ask for most, each as the few steps that make it. Every `{"command": …}` goes through `tequila_apply`, or several at once as `{"op": "apply", "command": {…}}` entries in one `tequila_batch`. Each step has its own page for more: `lighting`, `camera`, `rendering`, `image`.
+
+Whatever the shot: materials first (page `materials`), then light, then camera, then look at a rendered screenshot, then render only if asked.
+
+## The quickest good result: a studio preset
+
+```json
+tequila_studio_presets {}
+tequila_studio_preset_apply {"preset": "tequila-soft-studio"}
+```
+
+Lights, floor, several camera views, image look and render settings in one undo step, sized to the product (page `variants`). Catalogue and White for e-commerce, Soft and Photo for hero shots, Dark for drama. Start here unless the person described the lighting themselves, then adjust.
 
 ## The clean studio product shot
 
@@ -13,7 +24,14 @@ Recipes for the shots people ask for most, then the render and image settings. E
 {"command": "environment.set_parameter", "parameter": "ground_reflection_blur", "value": 0.08}
 ```
 
-Then the camera: `tequila_look {"yaw": 30, "pitch": 15, "focal_length": 85}` for a three-quarter hero view, and `tequila_frame` to fit it. Check with a rendered screenshot.
+Then the camera, a three-quarter view through a product lens, and fit it:
+
+```json
+tequila_look {"yaw": 30, "pitch": 15, "focal_length": 85}
+tequila_frame {"all": true}
+```
+
+Turn the environment (`rotation`) until the highlights run along the product's edges.
 
 ## The premium black shot
 
@@ -21,94 +39,75 @@ The product reflected on black, as in phone and watch launches:
 
 ```json
 {"command": "environment.set_parameter", "parameter": "background", "value": "Color"}
-{"command": "environment.set_parameter", "parameter": "background_color", "value": [0, 0, 0]}
+{"command": "environment.set_parameter", "parameter": "background_color", "value": "#000000"}
 {"command": "environment.set_parameter", "parameter": "ground_reflections", "value": 0.5}
 {"command": "environment.set_parameter", "parameter": "ground_reflection_blur", "value": 0.1}
+{"command": "environment.set_parameter", "parameter": "ground_reflection_length", "value": 0.3}
+{"command": "environment.set_parameter", "parameter": "ground_reflection_fresnel", "value": true}
 ```
 
-Lower `ground_reflections` toward 0.3 for a subtler floor; `ground_reflection_fresnel: true` fades it toward the camera, as a real glossy surface does. For the short reflection that fades out under the product, add `{"command": "environment.set_parameter", "parameter": "ground_reflection_length", "value": 0.3}` (1 is the whole reflection, 0.5 is gone by the product's top).
+The background being black does not darken the light: the studio still lights the product. For real darkness with rim light, use the Dark studio preset or add strip pins (page `lighting`). Dark products on black need a bright edge to separate them: a strip behind and to the side.
 
-## White e-commerce shot
+## White e-commerce
 
 ```json
 {"command": "environment.set_parameter", "parameter": "background", "value": "Color"}
-{"command": "environment.set_parameter", "parameter": "background_color", "value": [1, 1, 1]}
+{"command": "environment.set_parameter", "parameter": "background_color", "value": "#ffffff"}
 {"command": "environment.set_parameter", "parameter": "ground_shadows", "value": true}
 {"command": "environment.set_parameter", "parameter": "ground_reflections", "value": 0}
 ```
 
-If the product looks grey against the white, raise the image's `exposure` (see the image style below) a third to two thirds of a stop rather than brightening the materials.
+A soft shadow and no reflection. If the product looks grey against the white, raise the image's `exposure` a third to two thirds of a stop (page `image`) rather than brightening its materials. Marketplaces want the product filling most of a square frame: render settings `resolution` `[2000, 2000]`, then `tequila_frame`.
 
-## Transparent PNG (cut-out)
+## Cut-out on a transparent background
 
-Set the render block's `"alpha_mode": "straight"` and `"format": "png"` (see the render settings below). For glass and clear parts, `"alpha_mode": "silhouette"` cuts along the product's outline and keeps the glass solid. The floor's shadow and reflection stay in the alpha.
+In the render settings (page `rendering`): `"alpha_mode": "straight"` and `"format": "png"`. For glass and clear parts, `"alpha_mode": "silhouette"` cuts along the outline and keeps the glass solid. The floor's shadow and reflection stay in the transparency; switch `ground_shadows` off and `ground_reflections` to 0 for the product alone.
 
 ## Lit by a photograph (HDRI)
 
-Only with a file the user gives: `{"command": "environment.set_parameter", "parameter": "image", "value": "C:/path/to/studio.hdr"}`; `"value": null` returns to the built-in studio. `rotation` (radians, 0 to 6.283) turns the light around the product; `brightness` scales it.
-
-## A whole studio at once (studio presets)
-
-A studio preset brings lights, cameras and views, the floor and the look in one undo step, framed to the product's size. Use one when the person names a studio, or wants the same set of shots across products.
-- `tequila_studio_presets` lists them. In each family, the size nearest the product is marked `suggested`.
-- `tequila_studio_preset_apply {"preset": "<id>"}` applies one. Options:
-  - `"front"`: the side of the product that faces the main camera, `+z`, `-z`, `+x` or `-x`;
-  - `"dress": true`: put the preset's materials on parts by name.
-- `tequila_studio_render_all` renders every view, one file each. Only when asked for renders.
-- `tequila_studio_preset_save {"name": "..."}` keeps the current studio as the person's own preset.
-
-## A turntable
-
-The product turning, a numbered image a frame: `{"command": "animation.set", "animation": {"frames": 36, "fps": 24, "keys": [{"frame": 0, "product_yaw": 0}, {"frame": 36, "product_yaw": 6.2832}], "interpolation": "linear"}}` (radians; `"ease"` starts and stops gently; the key after the last frame is where the first began, so none repeats). `{"command": "studio.turn_product", "yaw": 1.5708}` shows one angle. The person renders the frames from the Studio tab or the Render window; a frame already rendered is left out, so asking again finishes a stopped turntable.
-
-## Jewellery and glass
-
-`{"command": "lighting.set_preset", "preset": "Jewelry"}` gives the deeper light paths gems and glass need; then gem presets (Diamond, Ruby, Sapphire Blue…) or glass ones.
-
-## The camera
-
-- `tequila_look {"view": "front"}`: front, back, left, right, top, bottom, iso.
-- `tequila_look {"yaw": 35, "pitch": 20, "distance": 0.6, "at": [0, 0.05, 0]}`: yaw in degrees around the vertical (0 looks from the front), pitch above the horizon, distance and target in metres.
-- `"focal_length"` in millimetres: 50 natural; 85-135 for products (less distortion); 24-35 for drama.
-- `tequila_frame` fits everything after any of these.
-
-## Rendering
-
-A quick check: `tequila_render {"width": 640, "height": 400, "samples": 32}` returns the image; it blocks Tequila meanwhile, so keep it small.
-
-A final image: `tequila_queue {"name": "Hero", "width": 3000, "height": 2000, "samples": 512}` renders in the background with the project's settings and writes the file; poll `tequila_jobs` for progress and the output path, and tell the user where it is.
-
-### Render settings
-
-`render.set_settings` carries the whole block, so read it first (`tequila_query {"what": "context"}`, the document's `render`), change only what is asked, and send all of it back:
+Only with a file the person gives:
 
 ```json
-{"command": "render.set_settings", "render": { …everything read, with your changes… }}
+{"command": "environment.set_parameter", "parameter": "image", "value": "C:/hdri/studio_small_08.hdr"}
+{"command": "environment.set_parameter", "parameter": "rotation", "value": 2.1}
+{"command": "environment.set_parameter", "parameter": "background", "value": "Color"}
 ```
 
-The fields people ask about:
+`rotation` turns the light round the product; `brightness` scales it. Keep the photograph out of the picture with a `Color` background unless the product is meant to stand in that place.
 
-| Field | Values |
-|---|---|
-| `engine` | `"cycles-gpu"` (graphics card, fastest), `"cycles-cpu"`, `"tequila"` (Tequila's own renderer) |
-| `resolution` | `[width, height]` |
-| `max_samples`, `max_seconds` | When to stop; more samples mean less noise |
-| `denoise` | `true` cleans the remaining noise |
-| `spectral` | `"auto"` (the default: wavelengths where a gem or glass disperses light, so it shows its fire; RGB elsewhere), `"on"`, `"off"`. Tequila's renderer only; Cycles renders RGB |
-| `format` | `"png"`, `"jpeg"`, `"tiff"`, `"exr"`, `"psd"` |
-| `alpha_mode` | `"none"`, `"straight"`, `"premultiplied"`, `"aliased"`, `"silhouette"` |
-| `output_directory`, `filename_template` | Where files go; the template takes `{project}`, `{camera}`, `{date}` |
+## Jewellery, glass and liquids
 
-### The image style
+```json
+{"command": "lighting.set_preset", "preset": "Jewelry"}
+```
 
-`image.set_style` also carries the whole style: read the document's `image_style`, change, and send all of it back. Useful fields:
+gives the many bounces these need; without it they render dark. Then gem and glass presets from the library ("diamond", "sapphire", "glass clear"). Gems want small bright lights to sparkle (a few small pins), glass wants big soft ones to show its shape, and both want a dark or graduated background to stand against. Render with 512 samples or more.
 
-| Field | Means |
-|---|---|
-| `display_transform` | `"PBR Neutral"` (true product colour, the default), `"AgX"` (filmic, handles bright highlights), `"ACES"`, `"sRGB"`, `"Raw"` |
-| `exposure` | In stops: +1 twice as bright |
-| `contrast`, `saturation` | 1 is unchanged |
-| `temperature`, `tint` | White balance, in kelvin (6500 neutral) and green-magenta |
-| `vignette`, `bloom` | 0 is none |
+## A hero close-up with a soft background
 
-Changing the style does not restart the render: the image updates at once.
+After framing, a long lens and a wide aperture (page `camera`):
+
+```json
+tequila_look {"yaw": 35, "pitch": 12, "focal_length": 100}
+tequila_frame {"all": true}
+```
+
+then read the active camera and send it back with `"dof": {"enabled": true, "f_number": 2.8, …}` and `focus_distance` set to the camera's distance to the part that must be sharp.
+
+## The same product from every side
+
+Apply a studio preset: its views (a hero view, front, side, back, top) become Snapshots. Then, when asked for the renders:
+
+```json
+tequila_studio_render_all {}
+```
+
+One file per view, named for it.
+
+## Every colour
+
+Colourways as a multi-material, a Snapshot per colour, then `tequila_queue {"studios": true}` (page `variants`).
+
+## Checking a shot before calling it done
+
+Take a rendered screenshot and look for: the product whole inside the frame with air round it; its front readable, not lost in shadow; highlights that describe its shape; a shadow or reflection that grounds it; nothing blown out to white or sunk to black unless meant; the background the colour asked for. Fix the largest fault first, and look again.

@@ -300,6 +300,14 @@ fn perform(app: &mut TequilaApp, operation: &Operation) -> Reply {
             Ok(page) => Reply::Value(page),
             Err(error) => Reply::Failed(error),
         },
+        Operation::Guide { topic } => match tequila_scripting::guide::page(topic.as_deref()) {
+            Ok(page) => Reply::Value(page),
+            Err(error) => Reply::Failed(error),
+        },
+        Operation::Read { what, node, index } => match tequila_scripting::document::read(app.project.document(), what.as_deref(), *node, *index) {
+            Ok(part) => Reply::Value(part),
+            Err(error) => Reply::Failed(error),
+        },
         Operation::Screenshot { path, viewport, window, settle } => {
             // A window's capture is written as the window draws, mid-frame:
             // finished since, it is not still pending.

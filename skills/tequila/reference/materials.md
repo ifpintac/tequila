@@ -1,98 +1,130 @@
-# Materials in Tequila
+# Materials on parts
 
-Tequila's materials are OpenPBR. `tequila_query {"what": "api"}` is the authority on every type and parameter (names, ranges, what each type exposes); this page is the working summary.
+Tequila's materials are OpenPBR. The order of work: find the part, search the library, put a preset on, then change it if it is not quite right. Make a material from nothing only when the library has nothing close (page `recipes`).
 
-## Start from the library
+## 1. Find the parts and what they wear
 
-Several hundred presets, in these categories. `tequila_library {"search": "walnut"}` finds them by words, `tequila_library {"category": "Wood"}` lists one category, and `tequila_library_apply {"name": ..., "nodes": [...]}` puts one on parts. Do not read the whole library (`tequila_query {"what": "library"}`): it is a third of a million characters.
+`tequila_nodes {"parts_only": true, "filter": "strap"}` lists parts by a word in their name or their material's name, each with its `id`, `material` (an id) and `material_name`. `tequila_materials` lists every material briefly, with `used_by` (how many parts wear it).
 
-| Category | Some of its presets (exact names) |
+## 2. Search the library
+
+Several hundred presets, each procedural and sized for real objects, plus the person's own.
+
+```json
+tequila_library {}
+tequila_library {"search": "black leather"}
+tequila_library {"category": "Wood", "limit": 40}
+```
+
+With nothing it lists the categories and how many presets each has. Every word of `search` must be in the preset's name, category, type, tags or description: if nothing comes back, use fewer or other words (the colour, the finish, what it is made of). Do not read the whole library with `tequila_query`: it is a third of a million characters.
+
+What is there, to choose words by: **Metal** (aluminium brushed, bead blasted, polished and anodised in colours; stainless, chrome, brass, copper, gold, titanium, knurled steel, cast iron), **Plastic** (ABS, piano black, matte, satin, soft touch, rubber, silicone, polycarbonate, nylon, VDI textures), **Paint** (automotive solid, metallic and pearl; matte, satin, powder coat, enamel), **Wood**, **Fabric** (denim, canvas, linen, felt, velvet, wool, upholstery, nylon, webbing, laces), **Leather & Suede**, **Composite** (carbon fibre, forged carbon, kevlar, fiberglass), **Stone** (marble, granite, concrete, terrazzo, slate), **Glass** (clear, frosted, reeded, tinted, acrylic, sapphire), **Gem**, **Liquid**, **Ceramic**, **Translucent** (wax, jade, soap), **Light** (LEDs, a glowing screen), **FDM 3D Print**.
+
+## 3. Put a preset on parts
+
+```json
+tequila_library_apply {"name": "Leather Black", "nodes": [7, 8]}
+tequila_library_apply {"name": "Aluminium Brushed", "nodes": [21], "unlink": true}
+```
+
+The name is exactly as the search gave it. The listed parts share one new material; `unlink` gives them a copy that is theirs alone. One undo step. Pick by what the part is made of in the real product.
+
+## 4. Change it
+
+**Parts share materials.** Changing a material changes every part that wears it. To change one part alone, give it its own copy first, then read its new material id from `tequila_nodes`:
+
+```json
+{"command": "material.unlink", "node": 12}
+```
+
+**A colour, a finish, a number** - one parameter by its key:
+
+```json
+{"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#c0392b"}
+{"command": "material.set_parameter", "material": 3, "parameter": "specular_roughness", "value": 0.25}
+```
+
+**The colour did not change?** In many presets the colour comes from a pattern, not from `base_color` (leather's grain, wood's rings, a weave). `tequila_material {"id": 3}` reads the one material whole: if its `definition.graph.links` has a link whose `socket` is `param:base_color`, the colour is in the graph. Then recolour it by its recipe:
+
+1. `tequila_material_recipe {"material": 3}` answers with the material as a recipe.
+2. Change the `colors` of the patterns that drive `base_color` (keep their darks and lights the same distance apart, or the grain goes flat), or the colours inside its `graph`.
+3. `tequila_material_update {"material": 3, "recipe": {...}}` puts it back, and shows it on a ball.
+
+**Another kind of material** - the type decides which parameters exist. Set the type first, then its parameters:
+
+```json
+{"command": "material.set_type", "material": 3, "type": "metal"}
+```
+
+| Type | For |
 |---|---|
-| Metal (111) | Aluminium Brushed, Aluminium Bead Blasted, Aluminium Polished, Aluminium Anodised Black, Aluminium Anodised Space Grey, Stainless Brushed, Stainless Polished, Chrome, Brass Satin, Copper Polished, Gold Polished, Titanium Brushed, Steel Knurled, Gunmetal, Cast Iron |
-| Plastic (78) | ABS Black, ABS White, ABS Red Gloss, ABS Textured, Piano Black, Plastic Matte White, Plastic Satin Black, Soft Touch Black, Rubber Black, Rubber Grip, Silicone Soft Grey, Polycarbonate Clear, Nylon Black, Plastic VDI 30 Black, Outsole Rubber White |
-| Paint (46) | Automotive Red, Automotive Blue Metallic, Automotive Pearl White, Paint Matte Black, Paint Satin White, Powder Coat Matte Black, Powder Coat White, Enamel Gloss White |
-| Wood (23) | Wood Walnut, Wood European Walnut, Wood Red Oak, Wood White Oak, Wood Smoked Oak, Wood Maple, Wood Cherry, Wood Ash, Wood Teak, Wood Ebony |
-| Fabric (31) | Denim Indigo, Canvas Natural, Linen Natural, Felt Grey, Suede Tan, Velvet Charcoal, Herringbone Wool, Upholstery Charcoal, Boucle Cream. Footwear: Nylon Taffeta Grey/Black (tongues), Jersey Lining Grey/White; and, read along the part's UVs (U along the strip, V across or round it, in proportion), Shoelace Flat White/Black, Webbing Nylon Black, Thread Bonded White/Black |
-| Composite (20) | Carbon Fibre, Carbon Fibre 12K Twill, Carbon Fibre Matte, Forged Carbon, Kevlar Twill, Fiberglass Gelcoat White |
-| Stone (21) | Marble Calacatta, Marble Black, Granite Absolute Black, Concrete Polished, Terrazzo, Slate, Travertine |
-| Glass (9) | Glass Clear, Glass Frosted, Glass Reeded, Glass Blue Tint, Acrylic Clear, Acrylic Smoked, Sapphire Crystal |
-| FDM 3D Print (11) | FDM PLA White, Black, Grey, Red, Blue, Yellow; FDM PLA Translucent Natural, Red, Orange, Green, Blue. Real 0.2 mm layer lines, seam and top raster, built along the part's own Z (STL, STEP); for a part drawn Y up (glTF, OBJ) set the FDM Layer Lines node's Build Along Z to 0 |
-| Others | Gem: Diamond, Ruby, Sapphire Blue. Liquid: Water, Coffee Black, Red Wine, Milk Whole. Ceramic: Porcelain, Ceramic Glazed White, Ceramic Matte. Translucent: Wax Candle, Jade, Soap White, Outsole Rubber Gum. Leather: Leather Black, Leather Tan, Leather Cognac, Fine Suede Sand, Roughout Suede Tobacco, Roughout Suede Cream (hairy suede, for boots and sneakers). Light: LED Warm White, LED Cool White, Screen Glow. Other: Cork, Paper Matte |
-
-Apply with `{"op": "library", "action": "apply", "name": "<exact name>", "nodes": [ids]}` through `tequila_request`. Pick by what the part is made of in the real product, then adjust colour or roughness if asked. A preset is far more realistic than a material built from scratch: its grain, brushing, weave or flakes are procedural and sized for real objects.
-
-## Types, by what they are for
-
-Set with `{"command": "material.set_type", "material": <id>, "type": "<key>"}`. Changing type keeps what carries over (the colour, usually).
-
-| Key | For |
-|---|---|
-| `plastic` | Opaque plastics, glazed ceramics, anything coloured with a clear glossy skin |
-| `plastic_transparent` | Clear and tinted plastics |
-| `plastic_cloudy` | Frosted, milky, translucent plastics |
-| `metal` | Bare metals: aluminium, steel, gold, copper (colour from a measured-metal table, `metal_ior`) |
-| `anisotropic` | Brushed and spun metal, where the highlight stretches along the grain |
-| `paint` | Solid glossy paint |
-| `metallic_paint` | Car paint: flakes under a clear coat |
-| `glass` / `glass_solid` | Thin glass (a window, a bulb) / solid glass and thick clear parts |
-| `liquid` | Liquids in a container |
-| `gem` | Cut gems: dispersion, the fire of a diamond |
-| `translucent`, `translucent_medium`, `scattering_medium` | Light passing into the material: wax, soap, skin, milk, jade |
+| `plastic` | Opaque plastics, glazed ceramics: colour under a glossy skin |
+| `plastic_transparent`, `plastic_cloudy` | Clear and tinted plastics; frosted and milky ones |
+| `metal` | Bare metals, their colour from measured data |
+| `anisotropic` | Brushed and spun metal, the highlight stretched along the grain |
+| `paint`, `metallic_paint` | Solid glossy paint; car paint with flakes under a clear coat |
+| `glass`, `glass_solid` | Thin glass (a bulb, a window); solid glass and thick clear parts |
+| `liquid`, `gem` | A liquid in a container; cut gems with fire |
+| `translucent`, `translucent_medium`, `scattering_medium` | Light passing into it: wax, soap, skin, milk, jade |
 | `velvet`, `real_cloth` | Fabrics |
-| `diffuse` | Completely matte surfaces |
-| `thin_film`, `multi_layer_optics` | Iridescent coatings, soap-bubble colours |
+| `diffuse`, `flat` | Completely matte; unlit colour |
+| `thin_film`, `multi_layer_optics` | Iridescent coatings |
 | `emissive` | Screens, LEDs, glowing parts |
-| `generic`, `advanced`, `dielectric` | Every parameter exposed, for building something unusual |
-| `toon`, `flat`, `wireframe`, `xray` | Stylised looks |
+| `generic`, `advanced`, `dielectric` | Every parameter exposed, for something unusual |
+| `toon`, `wireframe`, `xray` | Stylised looks |
 
-A parameter can only be set on a type that exposes it: set the type first, then the parameters.
-
-## The parameters that matter
-
-Set with `{"command": "material.set_parameter", "material": <id>, "parameter": "<key>", "value": <v>}`. Colours are hex sRGB strings (`"#C23B32"`), converted for you, or `[r, g, b]` already in linear ACEScg (below); lengths are metres.
+**The parameters that matter:**
 
 | Key | Means | Typical |
 |---|---|---|
 | `base_color` | The colour | `"#C23B32"` |
-| `base_metalness` | 0 a dielectric (plastic, paint, wood), 1 a metal | 0 or 1, rarely between |
-| `specular_roughness` | 0 a mirror, 1 completely matte | Polished 0.05-0.15, satin 0.25-0.4, matte 0.5-0.8 |
-| `specular_ior` | Strength of the reflection on dielectrics | 1.5 plastic and glass, 1.33 water, 2.4 diamond |
-| `specular_roughness_anisotropy`, `specular_rotation` | Brushed-metal stretch and its direction | Anisotropy 0.9-0.97 with roughness about 0.3 for brushed |
+| `base_metalness` | 0 plastic, paint, wood; 1 metal | 0 or 1 |
+| `specular_roughness` | 0 a mirror, 1 matte | Polished 0.05-0.15, satin 0.25-0.4, matte 0.5-0.8 |
+| `specular_ior` | Strength of reflection on non-metals | 1.5 plastic and glass, 1.33 water, 2.4 diamond |
+| `specular_roughness_anisotropy`, `specular_rotation` | Brushed stretch and its direction | 0.9-0.97 with roughness about 0.3 |
 | `coat_weight`, `coat_roughness` | A clear lacquer over the surface | Car paint 1 and 0.02-0.05 |
-| `transmission_weight`, `transmission_color`, `transmission_depth` | Light through the material; the colour it takes on after `transmission_depth` metres | Glass 1; tinted glass colour over 0.01-0.05 m |
-| `transmission_tint` | The surface's own tint on light through it, on top of the volume's colour: what makes a thin edge of dyed plastic coloured | White unless the plastic is dyed; translucent PLA 0.45 + 0.55 x its colour |
-| `subsurface_weight`, `subsurface_color`, `subsurface_radius` | Light scattering inside (wax, skin) | Radius a few millimetres: 0.002-0.01 |
-| `fuzz_weight`, `fuzz_color`, `fuzz_roughness` | The soft sheen of fabric | Velvet 1 |
-| `fuzz_density`, `fuzz_length`, `fuzz_thickness`, `fuzz_lean`, `fuzz_curl`, `fuzz_color_variation`, `fuzz_clump`, `fuzz_comb` | Real fibres grown out of the surface, in the fuzz colour: felt's halo, a tennis ball's nap, velvet's pile; clumped and combed, a hairy suede's matted locks | Density 0 (none); felt 300-1500 a cm2, length 0.002 m, thickness 0.00003-0.00005 m |
-| `flake_weight`, `flake_color`, `flake_size` | Metallic flakes in paint | Size 0.00002-0.0001 m |
-| `thin_film_weight`, `thin_film_thickness` | Iridescence | |
+| `transmission_weight`, `transmission_color`, `transmission_depth` | Light through it; the colour it reaches after that many metres | Glass 1; tint over 0.01-0.05 m |
+| `subsurface_weight`, `subsurface_color`, `subsurface_radius` | Light scattering inside | Radius 0.002-0.01 |
+| `fuzz_weight`, `fuzz_color`, `fuzz_roughness` | The soft sheen of cloth | Velvet 1 |
+| `flake_weight`, `flake_color`, `flake_size` | Metallic flakes | Size 0.00002-0.0001 |
+| `thin_film_weight`, `thin_film_thickness` | Iridescence | Thickness 300-700 (nm) |
+| `emission_luminance`, `emission_color` | Glow | 1 is a picture's white; an indicator 1-1.5 |
+| `geometry_opacity` | See-through cut-outs | 1 solid |
+| `edge_radius` | Rounds sharp edges in the shading, metres | 0.0002-0.001 |
 
-## Colours: hex, or ACEScg arrays
+A parameter a type does not show is refused by name. `tequila_command {"command": "material.set_parameter"}` shows the command; the full list of keys with ranges is in `tequila_query {"what": "api"}` under `material_parameters`, which is long: ask it only for a parameter this table does not name.
 
-Tequila's colours are linear ACEScg, the rendering space. **Colour fields take hex sRGB strings** - material parameters, environment colours, lights, gradient stops, recipes - and convert them as Tequila's colour pickers do. Use that whenever you can:
+## 5. Put an existing material on more parts, rename it
 
 ```json
-{"command": "material.set_parameter", "material": 3, "parameter": "base_color", "value": "#C23B32"}
-{"command": "environment.set_parameter", "parameter": "background_color", "value": "#101014"}
+{"command": "material.assign", "material": 3, "nodes": [12, 13]}
+{"command": "material.rename", "material": 3, "name": "Body red"}
 ```
 
-`rgb(194, 59, 50)` is `#C23B32`. An array is taken as ACEScg as it is - never send sRGB numbers as an array. If a field refuses a string, send an array converted like this:
+`material.assign` links: the parts then share the material.
 
-1. Each channel to 0-1 (divide 0-255 values by 255).
-2. Decode: `c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4`
-3. Rec.709 to ACEScg:
-   - `R = 0.6130974 r + 0.3395234 g + 0.0473792 b`
-   - `G = 0.0701936 r + 0.9163535 g + 0.0134529 b`
-   - `B = 0.0206158 r + 0.1095696 g + 0.8698146 b`
+## 6. Look at it
 
-Worked example: `#C23B32` → (0.761, 0.231, 0.196) → decoded (0.539, 0.044, 0.032) → **[0.347, 0.078, 0.044]**. White is [1, 1, 1] and mid-grey sRGB 128 is about [0.216, 0.216, 0.216].
+`tequila_ui {"viewport": "rendered"}` then `tequila_screenshot`. Solid and material previews do not show real reflections, glass or cloth sheen. `tequila_material_preview {"material": 3}` shows one material alone on a 5 cm ball without touching the scene; `"radius"` in metres makes the ball the part's size, which matters for patterns.
 
-Do this arithmetic carefully for every array colour you send.
+## 7. Keep it
 
-## Your own procedural materials
+`tequila_material_save {"material": 3, "name": "Brand Red Gloss", "category": "Plastic"}` adds it to the person's own library (they are asked first inside the Assistant). Only when they ask.
 
-When no preset fits, write a recipe: `recipes.md`.
+## Colours
 
-## Textures
+Give hex sRGB strings everywhere a colour goes: material parameters, environment colours, lights, gradient stops, recipes. `rgb(194, 59, 50)` is `"#C23B32"`. An array is taken as linear ACEScg, the rendering space, as it is. If a field refuses a string, convert: divide each channel by 255; decode with `c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4`; then
 
-Only when the user gives files: `material.set_texture` puts an image on a parameter (see `commands.md`), and `{"op": "texture_set", "path": "<folder or .zip of a PBR texture pack>", "nodes": [ids]}` makes materials from a whole pack (base colour, roughness, normal…) and puts the first on the parts. Images can be PNG, JPEG, TIFF, TGA, BMP, WebP, GIF, JPEG XL, DDS, PSD/PSB, SVG, EXR or HDR; HEIC and AVIF are not read, so ask for another format.
+- `R = 0.6130974 r + 0.3395234 g + 0.0473792 b`
+- `G = 0.0701936 r + 0.9163535 g + 0.0134529 b`
+- `B = 0.0206158 r + 0.1095696 g + 0.8698146 b`
+
+`#C23B32` comes to `[0.347, 0.078, 0.044]`; white is `[1, 1, 1]`.
+
+## Good to know
+
+- A liquid in a glass is modelled a fraction of a millimetre into the glass wall; the `liquid` type's higher priority makes it the medium there.
+- Glass reaches its colour over `transmission_depth` metres and patterns are sized in metres, so check the part's `size` before tuning either.
+- FDM presets build their layer lines along the part's own Z, as STL and STEP have it; a part drawn Y up needs the FDM Layer Lines node's Build Along Z set to 0 (page `graph`).
+- Several materials for one part to switch between are colourways: page `variants`.
+- Rules that dress parts by their names, for many models alike: Material Templates, page `variants`.

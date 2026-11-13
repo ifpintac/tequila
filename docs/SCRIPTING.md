@@ -126,6 +126,24 @@ samples, so each is known to parse. Their ids and keys are placeholders: read
 the real ones from the scene, copy the example, and change what you need. It
 is a discovery guide, not a JSON Schema.
 
+`read` answers with one part of the project, small enough to be read:
+`{"op":"read","what":"render"}` is the render settings exactly as
+`render.set_settings` takes them back, and so for `image_style`,
+`color_management`, `environment` (with its pins and the floor),
+`lighting`, `cameras`, `units`, `multi_materials`, `model_sets`, `studios`,
+`configurator`, `animation`, `product_turn`, `material_templates`,
+`measurements` and `textures`; `index` takes one entry of a part that is a
+list, and `{"op":"read","node":12}` is one node of the tree, with its
+transform, metadata and a light's or cutaway's settings. With nothing asked
+it lists what there is. Most of what changes a project's look takes a whole
+block back, so each block has to be readable by itself: the whole project
+at once, below, is 61,000 characters for a sample scene of 24 parts.
+Python: `fs.read('render')['value']`, `fs.read(node=12)`.
+
+`query scene` ends with `guide`: a line saying to read the guide's page for
+the job before changing anything, and the pages there are. Nearly every
+assistant starts there.
+
 `query context` combines selection, node IDs/names/parents/world bounds,
 material users, full material definitions/graphs, and the saved scene metadata:
 units, local transforms, lights, environment, textures, cameras and render
@@ -298,9 +316,13 @@ OpenAI's Codex, Gemini CLI, Windsurf, LM Studio and others. Its tools
 cover reading the scene, applying commands and batches, undo, camera, panels,
 background renders, screenshots, the material library (`tequila_library`
 searches it, `tequila_library_apply` puts a preset on parts), one command's
-fields and example (`tequila_command`), simple shapes (`tequila_add_shape`),
+fields and example (`tequila_command`), the guide a page at a time
+(`tequila_guide`), one part of the project or one node (`tequila_read`),
+simple shapes (`tequila_add_shape`),
 procedural materials from recipes (`tequila_material_*`) and writing
-plugins (`tequila_plugin_*`).
+plugins (`tequila_plugin_*`). `tequila_screenshot` takes `window` (`uv`,
+`graph`, `render`, `preferences`) for one of the windows of their own, so
+the UV editor and the Material Graph can be looked at.
 **Screenshots, renders and material previews come back as images**, so the
 assistant sees the result of what it did. Everything it
 sends also appears in Tequila's console as it happens.
@@ -356,9 +378,37 @@ own Assistant.
 `python/tequila_mcp.py` is the same bridge in Python, standard library only,
 for a checkout without a built `tequila-cli`.
 
-**The Tequila skill** teaches the AI how to work in Tequila - the shots
-people ask for, materials, recipes, scene work, configurators, plugins and
-scripts. It is an Agent Skill (a folder with a `SKILL.md`), which the Claude
+**The guide** teaches an AI how to work in Tequila, and is written in
+layers, because an answer of tens of thousands of characters is skipped and
+the AI guesses instead:
+
+- **The core** (`skills/tequila/SKILL.md`, under 7,000 characters): how to
+  look, change, check a picture and undo, the library first, never a
+  guessed field, and which page to open for which job. Every assistant has
+  it before it starts: the skill's own first page, the instructions
+  Tequila gives the agents in its chat, and the system text of its own
+  loop are this one text.
+- **A page for each area** (`skills/tequila/reference/`, each under 12,000
+  characters): materials, recipes, graph, textures, labels, uv, scene,
+  lighting, camera, variants, rendering, image, animation, fixing, files,
+  plugins, app, scripting and shots. Each teaches the work in the order a
+  person does it, with examples, and says plainly what cannot be done
+  through the tools yet and where it is in the window.
+- **`tequila_guide`** serves the pages from the binary: a topic in, one
+  page out as text; no topic, the list of pages. The request is `guide`
+  (`{"op":"guide","topic":"uv"}`; Python: `fs.guide('uv')`), answered by
+  the application and by a headless session, and a page is found by other
+  names it goes by (`nodes`, `decals`, `render`). So the Claude app reading
+  the skill's folder, an AI app asking the bridge, and a local model in
+  Tequila's own chat read the same words.
+
+`crates/tequila-scripting/tests/skill_examples.rs` reads every JSON example
+in the guide with the parsers Tequila itself uses, checks every tool call
+against the tool's own list of what it takes, holds the core and each page
+to its size, and checks that the pages there are, the pages the core names
+and the pages one page sends its reader on to are the same.
+
+The guide is also an Agent Skill (a folder with a `SKILL.md`), which the Claude
 app, Claude Code, Codex and other apps read, and it ships as
 `Tequila-Skill.zip` beside Tequila. In the Claude app: **Settings →
 Capabilities → Skills → Upload skill** (the **Connections** window has
@@ -430,6 +480,8 @@ Operations:
 | `screenshot` | `path`, optional `viewport` or `window`, optional `settle` (seconds, at most 60) | Deferred window PNG; one pending capture at a time. With `settle`, the capture waits that long at most for the viewport's picture to finish: in the Rendered view, until the picture shown is of that view, answers the newest request (so not the one from before the last change), and has gathered enough samples to look at (64, or 16 when the viewport denoises) or has mostly converged; a moment otherwise. When the time runs out it is taken as it is. `query ui` says how far the picture is: `picture_samples` and `picture_settled`. Python: `fs.screenshot('a.png', viewport=True, settle=12)`. |
 | `add_shape` | `shape`: `plane`, `cube`, `cylinder`, `sphere`, `disc`, `backdrop` or `wall`; optional `width`, `depth`, `height`, `radius` (metres) | A simple shape as a new part, as Add › Shape adds one: beside what is in the scene, on the floor, sized to it unless sizes are given (`width` is a cylinder's, sphere's and disc's diameter, and may be written `diameter`, or as half of it, `radius`; on a backdrop `radius` is its curve). One undo step. The reply is the new part's `node` and its `size`. The window only. Python: `fs.add_shape('cylinder', width=0.3, height=0.15)`. |
 | `help` | optional `command` | One command, for someone about to send it: its `fields`, an `example` exactly as `apply` takes it, and under `mind` or `parameters` what the example cannot say (a state's `value` is required; the environment's parameter names). Without `command`, every command's name. A wrong name is refused with the ones it might have meant. A page where `query commands` is the whole catalog. Python: `fs.help('scene.set_visibility')`. |
+| `guide` | optional `topic` | One page of the guide to working in Tequila, as text (`crates/tequila-scripting/src/guide.rs`): `start` (the core), `materials`, `recipes`, `graph`, `textures`, `labels`, `uv`, `scene`, `lighting`, `camera`, `variants`, `rendering`, `image`, `animation`, `fixing`, `files`, `plugins`, `app`, `scripting`, `shots`. Without `topic`, the pages and a line about each. A name that is no page is refused with the pages there are. Python: `fs.guide('lighting')`. |
+| `read` | optional `what`, `index`, `node` | One part of the project as it is saved, or one node of the tree: see "What an agent can understand". Python: `fs.read('cameras', index=0)`. |
 | `library` | `action`: `search` (optional `search`, `category`, `limit`), `apply`, `save`, `import`, `export`, `delete` | The material library. `search` answers with the presets that have every word of `search` in their name, category, type, tags or description, those with them in their name first, 20 unless `limit` says: each as `name`, `category`, `type` and a line `about` it, with `found` and a `note` when there are more. With neither `search` nor `category`, the `categories` and how many presets each holds. It is the short way to find a preset: `query library` is every preset with its tags and files, a third of a million characters. The others are in `docs/materials-authoring.md`. Python: `fs.library.search('black leather')`. |
 | `render` | `path`, `width`, `height`, `samples`, `wireframe` | Synchronous PNG render. `"wireframe": true` draws the model's edges instead, with the project's Wireframe settings (`render.set_settings` → `wireframe: {edges: mesh\|model, hidden: faint\|hidden\|shown, line_width, line_colour, background_top, background_bottom}`): no ray tracing, a second or two at any size. The console's `render out.png 1920x1080 wireframe` and Python's `render(path, wireframe=True)` say the same. |
 | `undo`, `redo` | none | Existing document history |

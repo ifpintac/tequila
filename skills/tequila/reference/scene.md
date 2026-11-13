@@ -1,115 +1,117 @@
-# The scene: parts, lights, cameras, variants
+# The scene: parts, groups, shapes, units
 
-Every `{"command": ...}` here goes through `tequila_apply`, or several at once as `{"op": "apply", "command": {...}}` entries in `tequila_batch` (one undo step). `{"op": ...}` requests go through `tequila_request`. Exact fields for every command: `commands.md`. Ids are placeholders - read the real ones first.
+Every `{"command": ...}` goes through `tequila_apply`, or several at once as `{"op": "apply", "command": {...}}` entries in `tequila_batch` (one undo step). Ids here are placeholders: read the real ones first.
 
-## Reading it
+## 1. Read it
 
-- `tequila_nodes`: every node - `id`, `name`, `kind` (`group`, `part`, `light`, `cutaway`), `parent`, `material` and `material_name`, `visible`, and for parts their world `size` and `center` in metres.
-- `tequila_query {"what": "context"}`: everything at once - `document` holds the whole project as saved: `tree` (each node's `transform`, `metadata`, `children`, and a light's settings), `cameras` and `active_camera`, `environment`, `lighting`, `render`, `image_style`, and - when the project has them - `multi_materials`, `studios`, `configurator`, `model_sets`, `measurements`. A key that is absent means there are none yet.
-- CAD files bring metadata (`Source file`, part number, properties): `metadata` on each node in the context's `tree`. Their layers are each node's `layers` (an IGES file's levels: `"Level 5"`), and the context's `scene.layers` lists them with their `nodes` and whether they are `shown` (`all`, `none`, `some`).
+- `tequila_scene`: how many parts and materials, the overall size (`bounds`), the file, and any CAD `layers`.
+- `tequila_nodes {"parts_only": true, "filter": "screw"}`: nodes by a word in their name or material, each with `id`, `kind` (`group`, `part`, `light`, `cutaway`), `material`, `visible`, and for parts their world `size` and `center` in metres. Without `filter` it lists everything; on a big assembly always filter.
+- `tequila_read {"node": 12}`: one node whole - its `transform`, `parent`, `children`, `metadata` (a CAD file's part numbers and properties), `layers`, and a light's or a cutaway's own settings.
 
-## Organising parts
+A model that came in as `part 1 … part 355` has no names to go by: find parts by `size` and `center` ("the small one at the front is at high +Z"), select what you think it is (`tequila_select {"nodes": [41]}`), and look at a screenshot - the selection is outlined.
+
+## 2. Organise
 
 ```json
 {"command": "scene.rename", "node": 5, "name": "Hinge pin"}
 {"command": "scene.group", "name": "Fasteners", "nodes": [5, 6, 7]}
 {"command": "scene.ungroup", "group": 9}
 {"command": "scene.reparent", "node": 5, "parent": 2}
+{"command": "scene.add_group", "name": "Props"}
 {"command": "scene.delete_nodes", "nodes": [8]}
 {"command": "scene.set_metadata", "node": 5, "key": "SKU", "value": "PIN-01"}
 {"command": "scene.set_locked", "states": [{"node": 5, "value": true}]}
 ```
 
-- **Hide and show:** `{"command": "scene.set_visibility", "states": [{"node": 3, "value": true}, {"node": 4, "value": false}]}` - one command for many nodes, so "isolate these" is one undo step: list every part, true for the ones to keep.
-- **A CAD layer at once:** `{"command": "scene.set_layer_visibility", "layer": "Construction", "visible": false}` hides every node on it, one undo step; the name exactly as `scene.layers` gives it.
-- **Seen by some rays only:** `{"command": "scene.set_rays", "states": [{"node": 3, "rays": {"camera": false, "diffuse": true, "glossy": true, "transmission": true, "shadow": true, "holdout": false}}]}` - send all six. `camera: false` keeps a part out of the picture but in its reflections and light (a bounce card); `glossy: false` keeps it out of reflections; `shadow: false` stops its shadow; `holdout: true` cuts a transparent hole where the camera sees it, for compositing. A group's rays apply to every part in it.
-- **A model that came in as one lump** (an STL, an OBJ without groups): `{"command": "scene.split_parts", "node": 4}` makes one part per connected piece.
-- **Renaming many parts** (`Body.001` → `Body`): read the names, then one `tequila_batch` of `scene.rename`s.
-- **Selecting** for the user to see: `tequila_select {"nodes": [3, 4]}`; `tequila_frame {"all": false}` frames them.
+Renaming many parts is one `tequila_batch` of `scene.rename`s. Deleting a group deletes everything in it. A locked node, and everything under it, refuses edits until unlocked.
 
-## Moving things
-
-`scene.set_transform` takes a 4×4 matrix per node, 16 numbers **row by row**, metres, relative to the node's parent - the translation is at positions 3, 7 and 11 (counting from 0). Read the node's current `transform` from the context's `tree`, change it, send it back:
+## 3. Hide, show, isolate
 
 ```json
-{"command": "scene.set_transform", "transforms": [{"node": 5, "matrix": [1,0,0,0, 0,1,0,0.01, 0,0,1,0, 0,0,0,1]}]}
+{"command": "scene.set_visibility", "states": [{"node": 3, "value": true}, {"node": 4, "value": false}]}
+{"command": "scene.set_layer_visibility", "layer": "Construction", "visible": false}
 ```
 
-That puts node 5 1 cm up (+Y is up) from where an identity transform has it. For a rotation, multiply the current matrix by the rotation; keep the scale at 1 unless asked. `scene.set_pivot` sets the point a node rotates about.
+Each state needs `value`: true shows, false hides. One command takes many nodes, so "show only these" is one undo step: list every part, true for the ones to keep. Hiding a group hides what is in it. A CAD layer is named exactly as `tequila_scene` lists it.
 
-**Units:** lengths are always metres. `{"command": "scene.set_units", "unit": "Millimetre", "mode": "KeepSceneSize"}` only changes how lengths are shown. A model imported at the wrong size needs **Units of this model…** (right-click it in the Scene tab) - ask the user.
-
-## Importing and updating models
-
-- `tequila_import {"path": "C:/models/kettle.step"}` (full connection): STEP and IGES (CAD, divided into parts with their colours), Rhino `.3dm` (layers, materials, blocks; Z up turned to Y up), glTF/GLB, FBX, OBJ, STL, 3MF, PLY, USD (`.usda`), IFC.
-- **The file changed:** `{"op": "reimport", "node": 3}` updates the model it belongs to, part by part, keeping materials and edits; the answer says what was added and removed.
-- **Smoother or lighter CAD:** `{"op": "reimport", "node": 3, "tessellation": "high"}` - `draft`, `medium`, `high`, `ultra` - divides it again from the CAD data kept with the project.
-- **A texture pack** (folder or ZIP of PBR maps) onto parts: `{"op": "texture_set", "path": "C:/packs/Wood049", "nodes": [3]}`.
-
-## Lights
+**Seen by some rays only** - a part that lights or reflects but is not in the picture, or the reverse. Send all six:
 
 ```json
-{"command": "scene.add_light", "name": "Key", "light": {"shape": "Area", "width": 0.5, "height": 0.5, "intensity": 1500, "intensity_unit": "lm", "color": "#fff4e6"}}
+{"command": "scene.set_rays", "states": [{"node": 3, "rays": {"camera": false, "diffuse": true, "glossy": true, "transmission": true, "shadow": true, "holdout": false}}]}
 ```
 
-- `shape`: `Area` (a panel; `width`, `height`, `two_sided`), `Disc`, `Point` (`radius`), `Spot` (`inner_degrees`, `outer_degrees`, `falloff`), `Sun` (`angle_degrees`, the disc's width: 0.53 is the real sun, 0 hard shadows). `intensity` in `lm` (lumens), `cd` (candela), `nits`, or `lx` (lux, a sun's: a few hundred lights a product like a softbox); `temperature` in kelvin instead of a colour. A sun lights from far away along its local -Z wherever it is placed: only its rotation matters.
-- A new light sits at the origin: find its id in `tequila_nodes` (kind `light`) and place it with `scene.set_transform`. An area or disc light shines along its local **+Z** - the opposite of Blender, so negate the Y and Z columns of a Blender light's matrix. A spot aims along its local -Z, and so does a point light's `.ies` file; an area light's `.ies` file aims where the panel faces. 40 cm up, facing down:
+`camera: false` keeps it out of the picture but in reflections and light (a bounce card); `glossy: false` keeps it out of reflections; `shadow: false` stops its shadow; `holdout: true` cuts a transparent hole where the camera sees it; `"catcher": true` makes it catch shadows as the floor does.
+
+## 4. Move, turn, scale
+
+A node's `transform` is a 4 by 4 matrix, 16 numbers **row by row**, in metres, relative to its parent. Its place is the 4th, 8th and 12th numbers (x, y, z); +Y is up. Read it, change it, send it back:
 
 ```json
-{"command": "scene.set_transform", "transforms": [{"node": 7, "matrix": [1,0,0,0, 0,0,-1,0.4, 0,1,0,0, 0,0,0,1]}]}
+tequila_read {"node": 5}
+{"command": "scene.set_transform", "transforms": [{"node": 5, "matrix": [1,0,0,0.02, 0,1,0,0.01, 0,0,1,0, 0,0,0,1]}]}
 ```
 
-- **A softbox's look:** on an `Area` or `Disc` light, `edge_falloff` (0 to 1) darkens its edges against its middle as a real softbox's front is - gloss paint and chrome then show a sheen fading to its edges instead of a hard white shape; 0.5 is a softbox. `fade` (-1 to 1) dims it from its top edge (local +Y) to its bottom, as a graduated scrim: 1 leaves the bottom dark, -1 the top. `spread_degrees` below 180 puts it behind a grid. None changes how much light it gives.
-- **Light and shadow linking:** a light's `links` keeps it to some parts, its `shadow_links` keeps its shadow to some: `{"exclude": false, "nodes": [3], "product": false}` (only these), `"exclude": true` (all but these), `"product": true` for the whole product. A light kept to the product lights nothing else, the floor included; shadow links leaving a prop out let the light through it.
-- `scene.set_light` changes everything but its place. Lights in the scene add to the environment; for most product shots the environment and a lighting preset are enough (`shots.md`).
+- **Move:** add to the 4th, 8th or 12th number. The example puts node 5 at 2 cm along x and 1 cm up, from an untouched transform.
+- **Turn about the vertical** by angle a: the upper-left 3 by 3 becomes `[cos a, 0, sin a,  0, 1, 0,  -sin a, 0, cos a]`, multiplied onto what was there. **Scale:** multiply the first three numbers of each of the first three rows by the factor.
+- One command moves many nodes, each with its own matrix: one undo step.
+- A part **on the floor** has its lowest point at y = 0: `center[1] - size[1] / 2` from `tequila_nodes` should be 0. Move it by the difference.
+- A group moves everything in it. `scene.set_pivot` sets the point a node turns and scales about in the window: `{"command": "scene.set_pivot", "pivots": [{"node": 5, "at": [0, 0.1, 0]}]}`.
 
-## Cutaways and measurements
+Check with `tequila_nodes` (the part's new `center`) and a screenshot. For the whole product turned to face the camera, turn the product, not its parts: `{"command": "studio.turn_product", "yaw": 0.5}` (radians; page `variants`).
 
-- **A cutaway** shows the inside: `{"command": "scene.add_cutaway", "name": "Section", "cutaway": {"shape": "plane", "enabled": true, "cap": "own"}, "transform": [1,0,0,0.005, 0,1,0,0, 0,0,1,0, 0,0,0,1]}` - `shape` `plane`, `box`, `sphere` or `cylinder`; `cap` `own` (the cut part's material) or `color` with `cap_color`. Place and size it with its transform.
-- **Measurements** (dimension lines shown in the viewport): `scene.set_measurements` with the whole list, each `{"a": {"node": 3, "point": [x, y, z]}, "b": {"point": [x, y, z]}, "visible": true}`.
+## 5. Add a simple shape
 
-## Cameras
-
-The viewport's view is the active saved camera: `tequila_look` and `tequila_frame` move it, undoably. To keep a shot:
-
-1. Set the view (`tequila_look`, `tequila_frame`).
-2. Read `cameras` and `active_camera` from the context's `document`, copy the active camera, give it a `name`, and `{"command": "camera.add", "camera": {...}}` - it is added at the end of the list.
-3. `{"command": "camera.select", "index": 1}` makes a saved camera the active one; `camera.rename` and `camera.remove` take its `index`.
-
-Render from a saved camera without switching: `tequila_queue {"camera": 1}`. One render per camera: queue each index (or the user's **Render Every Camera** example plugin).
-
-## Colourways, studios and configurators
-
-These are lists the whole project shares: read the current one from the context's `document`, change it, send the **whole** list back.
-
-**A Multi-Material** - a part with several material variants (colourways), one active:
+A pedestal, a backdrop, a floor plane, a card to bounce light:
 
 ```json
-{"command": "material.set_multi_materials", "multi_materials": [{"id": 1, "name": "Body colours", "parts": [3], "variants": [1, 4, 5], "active": 0}]}
+tequila_add_shape {"shape": "cylinder", "width": 0.3, "height": 0.02}
+tequila_add_shape {"shape": "backdrop", "width": 2, "depth": 1.2, "height": 1.2, "radius": 0.3}
 ```
 
-`variants` are material ids from `tequila_materials` (make the colourways first: library presets with `"unlink": true`, or recipes). `active` is the index of the one shown. `id` is yours to choose, unique among the multi-materials.
+- Shapes: `plane`, `cube`, `cylinder`, `sphere`, `disc`, `backdrop` (a floor curving up into a wall; `radius` is the curve), `wall`. Sizes in metres; `width` is a round shape's diameter. Left out, it is sized to what is in the scene.
+- It answers with the new part's `node`. It stands **beside** the scene, on the floor: move it under or behind the product with `scene.set_transform` (step 4), then give it a material (page `materials`).
+- Resize it later: `{"command": "scene.set_shape", "node": 27, "shape": {"shape": "cylinder", "width": 0.4, "depth": 0.4, "height": 0.03}}`.
 
-**Studios** - saved set-ups (environment, camera, variants, model set) to switch between: `{"command": "studio.set", "studios": [{"name": "Hero", "variants": [{"multi_material": 1, "active": 1}]}]}`, then `{"command": "studio.apply", "index": 0}`. Copy a full studio from `commands.md` for its environment and camera fields.
+## 6. Copies in a row or a ring
 
-**Model sets** - which parts are shown together (with or without the handle): `{"command": "scene.set_model_sets", "model_sets": {"active": 0, "sets": [{"name": "With handle", "nodes": [2, 7]}, {"name": "Without", "nodes": [2]}]}}`.
-
-**A configurator** - the choices a customer makes, each driving a multi-material, a model set or a studio:
+A group becomes a pattern: one of its parts repeated, the copies sharing its mesh and material.
 
 ```json
-{"command": "configurator.set", "configurator": {"title": "Kettle", "options": [
-  {"id": 1, "name": "Body", "drives": "material", "multi_material": 1, "style": "swatches",
-   "choices": [{"label": "Red", "target": 0, "swatch": "#c23b32"}, {"label": "Ocean", "target": 1, "swatch": "#2d5da8"}]}]}}
-{"command": "configurator.choose", "choices": [1]}
+{"command": "scene.set_pattern", "group": 9, "pattern": {"kind": "line", "source": 5, "count": 4, "step": [0.03, 0, 0], "copies": [40, 41, 42]}}
 ```
 
-`target` is the variant's index in the multi-material. `rules` (`"kind": "excludes"`) forbid combinations; `commands.md` has the full shape. Then:
+`source` is a part inside `group`; `count` includes it; `step` is metres between copies. A ring is `"kind": "circle"` with `centre`, `axis` and `angle` (radians, the whole sweep). `copies` are ids for the new parts: use numbers no node has (one fewer than `count`). Ask `tequila_command {"command": "scene.set_pattern"}` for the ring's exact fields.
 
-- **Render every combination:** `tequila_request {"request": {"op": "queue", "configurations": true}}` - one job per valid combination, named by its choices.
-- **A web configurator:** `{"op": "export", "format": "web", "path": "C:/out/kettle-site", "live": true}` writes a static website (live 3D; `"photos": true` adds a render of every combination).
+## 7. Units and size
 
-**Material Templates** - rules that put materials on parts by name, colour, metadata or material: `material.set_templates` (`commands.md`).
+Lengths are stored in metres. Two different things go by "units":
 
-## Exporting
+- **How lengths are shown** in Tequila's panels: `{"command": "scene.set_units", "unit": "Millimetre", "mode": "KeepSceneSize"}` changes the display and nothing else. Units: `Millimetre`, `Centimetre`, `Metre`, `Inch`, `Foot`.
+- **A model that came in at the wrong size** (a phone 150 m long: the file had no units and its numbers were millimetres): page `fixing`.
 
-`{"op": "export", "format": "glb", "path": "C:/out/kettle.glb"}` (what is shown, as glTF binary), `"format": "usd"` (`.usda`), `"format": "usdz"` (one file an iPhone, iPad or Vision Pro opens in AR, at the product's real size), `"format": "web"` (above), `"format": "spin"` (a 360° spin viewer: `columns` 36, `rows` 1, `tilt` 15, `transparent`). Only when the user asks, to a path they gave or agreed.
+## 8. A cutaway
+
+A volume that cuts parts open to show the inside:
+
+```json
+{"command": "scene.add_cutaway", "name": "Section", "cutaway": {"shape": "plane", "enabled": true, "cap": "own"}, "transform": [1,0,0,0, 0,1,0,0.05, 0,0,1,0, 0,0,0,1]}
+```
+
+`shape` is `plane`, `box`, `sphere` or `cylinder`; `cap` is `own` (the cut faces wear the cut part's material) or `color` with `cap_color`. Its transform places and sizes it, as any node's. It appears in `tequila_nodes` as kind `cutaway`; `scene.set_cutaway` changes everything but its place, and `"enabled": false` switches it off without removing it.
+
+## 9. Dimension lines
+
+Measurements are one list, sent whole; read what is there with `tequila_read {"what": "measurements"}`:
+
+```json
+{"command": "scene.set_measurements", "measurements": [{"a": {"node": 3, "point": [-0.06, 0.05, 0]}, "b": {"node": 3, "point": [0.06, 0.05, 0]}, "visible": true}]}
+```
+
+Each runs from point `a` to point `b`, in metres; with a `node`, the point is in that node's own space and follows it. They show in the viewport, not in renders. An empty list removes them. For a size itself, a part's `size` in `tequila_nodes` is already its width, height and depth.
+
+## Good to know
+
+- **Selecting** shows the person what you mean: `tequila_select {"nodes": [3, 4]}`, and `tequila_frame {"all": false}` points the camera at it.
+- A model that arrived as one lump, faceted, lying down or too big: page `fixing`.
+- Showing different sets of parts (with and without the lid) as something to switch between: model sets, page `variants`.
+- Lights are nodes too: they are added, moved and removed as above, and set up on page `lighting`.

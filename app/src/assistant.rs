@@ -223,6 +223,12 @@ pub struct Assistant {
     /// A tool call of Tequila's own loop that the person is being asked
     /// about, and the question's number.
     call_waiting: Option<(u64, Call)>,
+    /// Whether the model in Tequila's own loop is still to be told, at its
+    /// first change, to open a page of the guide: so from when the person
+    /// asks until it opens one or has been told ([`changes`]).
+    guide_due: bool,
+    /// Whether it has opened one in this chat, or been told to.
+    guide_seen: bool,
     waiting: HashMap<u64, Waiting>,
     next_question: u64,
     /// The window, for an agent's reader to wake.
@@ -400,6 +406,9 @@ impl Assistant {
 
     fn ask_provider(&mut self, provider: Provider, sent: String, pictures: &[Picture]) {
         self.chat.model = provider.model.clone();
+        // Until it has opened a page of the guide in this chat, or been
+        // told to, its first change is held back with where to read.
+        self.guide_due = !self.guide_seen;
         let retold = if self.session.is_none() { self.retold() } else { None };
         let session = self.session.get_or_insert_with(|| Session::new(provider.clone()));
         // The conversation is kept in a neutral form, so switching provider
@@ -516,7 +525,7 @@ impl Assistant {
                 env: Vec::new(),
             }],
             resume,
-            instructions: agents::INSTRUCTIONS.into(),
+            instructions: agents::instructions().into(),
             meta: agents::options(kind),
             version: env!("CARGO_PKG_VERSION").into(),
         };
@@ -864,6 +873,8 @@ impl Assistant {
         self.turn_end = None;
         self.asked = None;
         self.live = None;
+        self.guide_due = false;
+        self.guide_seen = false;
         if matches!(self.setup, Some(Setup::Failed(_))) {
             self.setup = None;
         }
@@ -1309,6 +1320,20 @@ impl Assistant {
                 return true;
             }
         };
+        // The first change of a chat in which no page of the guide has
+        // been opened is held back, once, with where to read: a model that
+        // goes by habit looks at the scene and then does the job the way
+        // some other application would have it - a black plane for a
+        // background, every part painted - and what it is told before it
+        // starts it has forgotten by then. Sent again, the call goes
+        // through: a job that needs no page is one step longer.
+        if call.name == "tequila_guide" {
+            (self.guide_due, self.guide_seen) = (false, true);
+        } else if self.guide_due && changes(&call.name) {
+            (self.guide_due, self.guide_seen) = (false, true);
+            self.result(call, READ_FIRST.to_string(), None, true, label);
+            return true;
+        }
         let planned = tools::plan(&call.name, &arguments).map(|plan| in_project(plan, app.project.path.as_deref().and_then(std::path::Path::parent)));
         // What leaves the scene waits for the person, as it does for an
         // agent: the same questions, asked of the same request.
@@ -2201,6 +2226,33 @@ fn step_news(tool: &acp::ToolNews) -> StepNews {
     StepNews { id: tool.id.clone(), title, status: tool.status, detail, pictures: tool.pictures.iter().cloned().map(Picture::new).collect() }
 }
 
+/// What a model that changes the scene before opening the guide is told,
+/// once in a chat.
+const READ_FIRST: &str = "Not done yet. Before changing anything, read the guide's page for this job: call tequila_guide with its topic \
+(materials, recipes, graph, textures, labels, uv, scene, lighting, camera, variants, rendering, image, animation, fixing, files, plugins, \
+app, scripting or shots). Tequila has its own way of doing most jobs - the background and the floor are settings, not parts to add - and \
+the page shows it with examples to copy. Then make the change as the page shows. If you are sure this job needs no page, send the same \
+call again.";
+
+/// Whether a tool of Tequila's own loop changes the scene, or what leaves
+/// it: what the guide is to be read before. Looking, reading, selecting,
+/// moving the view and taking back are not.
+fn changes(tool: &str) -> bool {
+    matches!(
+        tool,
+        "tequila_apply"
+            | "tequila_batch"
+            | "tequila_add_shape"
+            | "tequila_library_apply"
+            | "tequila_material_create"
+            | "tequila_material_update"
+            | "tequila_studio_preset_apply"
+            | "tequila_queue"
+            | "tequila_import"
+            | "tequila_plugin_write"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2384,6 +2436,56 @@ mod tests {
 
     /// A script's screenshot already in flight makes the assistant's wait a
     /// frame — and the frame must end, not spin on the same call forever.
+    /// A model that changes the scene before it has opened a page of the
+    /// guide is told once where to read, and the change is not made; one
+    /// that has read a page, or sends the change again, is not held up, and
+    /// looking is never held up.
+    #[test]
+    fn the_first_change_waits_for_the_guide_once() {
+        let mut app = TequilaApp::for_tests();
+        let rename = || call("tequila_apply", r#"{"command":{"command":"scene.rename","node":1,"name":"Renamed"}}"#);
+        let said = |assistant: &Assistant| match assistant.results.last() {
+            Some(Part::Result { text, is_error, .. }) => (text.clone(), *is_error),
+            _ => panic!("no answer"),
+        };
+        let name = |app: &TequilaApp| app.project.document().tree.get(tequila_scene::tree::NodeId(1)).map(|node| node.name.clone());
+        let before = name(&app);
+
+        // Asked by the person, with no page opened: looking goes through,
+        // the first change does not.
+        let mut assistant = Assistant { guide_due: true, ..Assistant::default() };
+        assert!(assistant.carry_out(&mut app, call("tequila_scene", "{}")));
+        assert!(!said(&assistant).1);
+        assert!(assistant.carry_out(&mut app, rename()));
+        let (told, refused) = said(&assistant);
+        assert!(refused && told.contains("tequila_guide") && told.contains("lighting") && told.contains("send the same call again"), "{told}");
+        assert_eq!(name(&app), before, "nothing was changed");
+        // Sent again, it is made: told once is told.
+        assert!(assistant.carry_out(&mut app, rename()));
+        assert!(!said(&assistant).1, "{}", said(&assistant).0);
+        assert_eq!(name(&app).as_deref(), Some("Renamed"));
+
+        // A page opened first, and nothing is held back.
+        let mut assistant = Assistant { guide_due: true, ..Assistant::default() };
+        assert!(assistant.carry_out(&mut app, call("tequila_guide", r#"{"topic":"scene"}"#)));
+        let (page, failed) = said(&assistant);
+        assert!(!failed && page.starts_with("# "), "the page as it is written: {}", &page[..page.len().min(60)]);
+        assert!(assistant.carry_out(&mut app, call("tequila_apply", r#"{"command":{"command":"scene.rename","node":1,"name":"Again"}}"#)));
+        assert_eq!(name(&app).as_deref(), Some("Again"));
+        assert!(assistant.guide_seen && !assistant.guide_due);
+
+        // Every topic the reminder names is a page.
+        let named = READ_FIRST.split('(').nth(1).and_then(|rest| rest.split(')').next()).expect("the topics are named");
+        let topics: Vec<&str> = named.split([',', ' ']).filter(|word| !word.is_empty() && *word != "or").collect();
+        assert_eq!(topics, tequila_scripting::guide::PAGES.iter().map(|page| page.topic).collect::<Vec<_>>());
+        for tool in tequila_ai::tools::all() {
+            // What only looks is never held back.
+            if ["tequila_scene", "tequila_nodes", "tequila_materials", "tequila_read", "tequila_command", "tequila_library", "tequila_screenshot", "tequila_undo", "tequila_guide"].contains(&tool.name.as_str()) {
+                assert!(!changes(&tool.name), "{}", tool.name);
+            }
+        }
+    }
+
     #[test]
     fn a_screenshot_waits_for_one_already_in_flight() {
         let mut app = TequilaApp::for_tests();

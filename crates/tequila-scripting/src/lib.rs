@@ -25,6 +25,7 @@ pub mod approval;
 pub mod bindings;
 pub mod client;
 pub mod document;
+pub mod guide;
 pub mod material;
 pub mod protocol;
 pub mod server;
