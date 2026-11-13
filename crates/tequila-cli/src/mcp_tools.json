@@ -404,7 +404,7 @@
  },
  {
   "name": "tequila_frame",
-  "description": "Point the camera at everything, or at the selection.",
+  "description": "Point the camera at everything, or at the selection. This moves the view the person is looking at: for when they ask for one, or to find something out of sight - not after a material edit, which leaves the camera where it was.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -419,7 +419,7 @@
  },
  {
   "name": "tequila_look",
-  "description": "Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable.",
+  "description": "Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable. The view is the person's too: read it first (tequila_query camera) if you mean to put it back.",
   "inputSchema": {
    "type": "object",
    "properties": {

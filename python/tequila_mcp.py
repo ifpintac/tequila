@@ -47,6 +47,12 @@ INSTRUCTIONS = (
     'A new plane, cube, cylinder, sphere, disc, backdrop or wall is tequila_add_shape. '
     'Look at your work with tequila_screenshot: it waits for the picture to finish and says whether it had. '
     'If something looks wrong, first check the simple causes with tequila_nodes: is the part hidden, is it where you think. '
+    'The view is the person\'s as well: they turn and zoom it while you work, to look at what you changed. '
+    'Nothing you do to a material moves the camera, so a view that differs from your last look is theirs, '
+    'and tequila_screenshot says so when they have moved it: '
+    'work in it as it is, and do not frame it or move it back. '
+    'Move the camera only when asked for a view, or when what you must check is out of sight - and then put it back: '
+    'tequila_query camera reads a view, and tequila_look with its position as from and its target as at returns to it. '
     'To extend Tequila itself - a panel, a batch job, an automation - write a plugin: tequila_plugin_guide, then '
     'tequila_plugin_write, tequila_plugin_enable (the person confirms), tequila_plugin_run and tequila_plugin_log. '
     'Every command is undoable, and the person watching sees each request in Tequila\'s console.'
@@ -138,9 +144,11 @@ TOOLS = [
     tool('tequila_redo', 'Put back the last undone step.'),
     tool('tequila_select', 'Replace the selection with these node ids.',
          {'nodes': {'type': 'array', 'items': {'type': 'integer'}}}, ['nodes']),
-    tool('tequila_frame', 'Point the camera at everything, or at the selection.',
+    tool('tequila_frame', 'Point the camera at everything, or at the selection. This moves the view the person is looking at: '
+         'for when they ask for one, or to find something out of sight - not after a material edit, which leaves the camera where it was.',
          {'all': {'type': 'boolean', 'description': 'true for everything (default), false for the selection.'}}),
-    tool('tequila_look', 'Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable.',
+    tool('tequila_look', 'Place the camera: a standard view, orbit angles around a target, or an exact eye position. Undoable. '
+         'The view is the person\'s too: read it first (tequila_query camera) if you mean to put it back.',
          {'view': {'type': 'string', 'enum': ['front', 'back', 'left', 'right', 'top', 'bottom', 'iso']},
           'at': {**VECTOR, 'description': 'Target point [x, y, z].'},
           'from': {**VECTOR, 'description': 'Eye position [x, y, z]; not with yaw/pitch/distance.'},
@@ -263,6 +271,9 @@ class Bridge:
         self._connect = connect
         self._client = None
         self.restricted = restricted
+        # Tequila's count of the person's own view moves at the last
+        # screenshot, to say with the next one that the view is theirs.
+        self._view_moves = None
 
     def tools(self):
         if not self.restricted:
@@ -482,7 +493,12 @@ class Bridge:
         seconds = max(0.0, min(float(settle), 60.0))
         self.request('screenshot', path=str(path), viewport=viewport, settle=seconds)
         wait_for_png(path, 30 + seconds)
-        return image(path, picture_caption(viewport, self.request('query', what='ui')))
+        ui = self.request('query', what='ui')
+        count = ui.get('view_moves_by_hand') if isinstance(ui, dict) else None
+        moved = count is not None and self._view_moves is not None and count > self._view_moves
+        if count is not None:
+            self._view_moves = count
+        return image(path, picture_caption(viewport, ui) + (MOVED_BY_HAND if moved else ''))
 
     def tool_render(self, width=640, height=400, samples=32, wireframe=False):
         path = Path(tempfile.gettempdir()) / f'tequila-mcp-render-{time.time_ns()}.png'
@@ -567,6 +583,12 @@ def wait_for_png(path, timeout):
             pass
         time.sleep(0.05)
     raise TequilaError('the screenshot did not arrive')
+
+
+# Said with a screenshot when the person has moved the view since the last
+# one: an assistant cannot see a hand on the mouse, and took a view it found
+# closer for a fault to put right.
+MOVED_BY_HAND = ' The person has moved the view since your last look: it is where they want it, so leave it there.'
 
 
 def picture_caption(viewport, ui):

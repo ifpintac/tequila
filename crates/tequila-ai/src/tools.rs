@@ -48,9 +48,9 @@ const TOOLS: &str = r##"[
   "schema":{"type":"object","properties":{}}},
  {"name":"tequila_select","description":"Select these node ids (replaces the selection).",
   "schema":{"type":"object","properties":{"nodes":{"type":"array","items":{"type":"integer"}}},"required":["nodes"]}},
- {"name":"tequila_frame","description":"Point the camera at everything (all=true, the default) or at the selection.",
+ {"name":"tequila_frame","description":"Point the camera at everything (all=true, the default) or at the selection. This moves the view the person is looking at: for when they ask for one, or to find something out of sight - not after a material edit, which leaves the camera where it was.",
   "schema":{"type":"object","properties":{"all":{"type":"boolean"}}}},
- {"name":"tequila_look","description":"Place the camera: a standard view; or yaw/pitch in degrees and distance around a target 'at'; or an exact eye 'from' looking at 'at'. Optional focal_length in mm. Undoable.",
+ {"name":"tequila_look","description":"Place the camera: a standard view; or yaw/pitch in degrees and distance around a target 'at'; or an exact eye 'from' looking at 'at'. Optional focal_length in mm. Undoable. The view is the person's too: read it first (tequila_query camera) if you mean to put it back.",
   "schema":{"type":"object","properties":{"view":{"type":"string","enum":["front","back","left","right","top","bottom","iso"]},"at":{"type":"array","items":{"type":"number"}},"from":{"type":"array","items":{"type":"number"}},"yaw":{"type":"number"},"pitch":{"type":"number"},"distance":{"type":"number"},"focal_length":{"type":"number"}}}},
  {"name":"tequila_screenshot","description":"Look at the scene as it is now. Returns an image. viewport=true (default) shows only the 3D view. Switch the viewport to rendered first (tequila_ui) to judge materials and lighting.",
   "schema":{"type":"object","properties":{"viewport":{"type":"boolean"}}}},
@@ -409,6 +409,7 @@ How to work:
 - Materials can be shared by many parts. To change one part without the others, apply material.unlink to that part first, then read its new material id from tequila_nodes.
 - Put several edits in one tequila_batch: it is one undo step for the person, and if anything fails none of it stays.
 - Check your work: switch the viewport to rendered (tequila_ui viewport=rendered) and take a tequila_screenshot. Judge the picture, and fix what is wrong.
+- The view is the person's as well: they turn and zoom it while you work, to look at what you changed. Nothing you do to a material moves the camera, so a view that differs from your last look is theirs, and tequila_screenshot says so when they have moved it: work in it as it is, and do not frame it or move it back. Move the camera only when asked for a view, or when what you must check is out of sight - and then put it back: tequila_query camera reads a view, and tequila_look with its position as from and its target as at returns to it.
 - Units are metres; +Y is up. Give colours as hex sRGB strings (\"#c0392b\"): Tequila converts them into ACEScg, the rendering space. An array is taken as linear ACEScg as it is. Sizes are real: glass reaches its colour over its transmission depth in metres and pattern frequencies are per metre, so check a part's size in tequila_nodes before tuning either.
 - A liquid in a glass container is modelled a fraction of a millimetre into the glass wall; the Liquid type's higher priority makes it the medium there.
 - For a material of the person's own (\"make it look like terrazzo\"), read tequila_material_guide once, try recipes with tequila_material_preview, then tequila_material_create on the parts and refine with tequila_material_update after looking at it. Only when tequila_library has nothing close.
@@ -537,6 +538,17 @@ mod tests {
         assert_eq!((shape.get("op").and_then(Value::as_str), shape.get("width").and_then(Value::as_f64)), (Some("add_shape"), Some(0.3)));
         assert!(plan("tequila_add_shape", &args("{}")).is_err());
         assert!(SYSTEM.contains("look in the library first") && SYSTEM.contains("tequila_command"));
+    }
+
+    /// The person turns and zooms the view while the assistant works. One
+    /// that found it closer after its material changes framed the model
+    /// again each time: it is told whose a moved view is, and the tool that
+    /// frames says what it is not for.
+    #[test]
+    fn a_moved_view_is_the_persons() {
+        assert!(SYSTEM.contains("The view is the person's as well") && SYSTEM.contains("do not frame it or move it back"));
+        let frame = all().into_iter().find(|tool| tool.name == "tequila_frame").expect("the tool that frames");
+        assert!(frame.description.contains("not after a material edit"), "{}", frame.description);
     }
 
     #[test]
