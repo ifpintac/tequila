@@ -799,6 +799,14 @@ impl Session {
         unsafe { (self.api.fsc_set_paused)(self.raw, paused as c_int) }
     }
 
+    /// How many times this live session has loaded its render kernels, from
+    /// a library that counts them: once for its first picture, and again
+    /// whenever the scene needs kernels other than those loaded - which on
+    /// a graphics card can compile for minutes before anything new shows.
+    pub fn kernel_loads(&self) -> Option<u32> {
+        self.api.fsc_live_kernel_loads.map(|loads| unsafe { loads(self.raw) }.max(0) as u32)
+    }
+
     /// Whether a live view follows a moving camera: its pictures then come
     /// without their denoising guides, which they do not use. A library
     /// from before the switch carries on as for a still view.

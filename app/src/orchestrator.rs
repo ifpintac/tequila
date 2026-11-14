@@ -625,6 +625,9 @@ fn render_loop(shared: Arc<Shared>) {
     // has shown since it was made: none yet means it is still getting ready.
     let mut cycles_why = String::new();
     let mut cycles_frames = 0u64;
+    // Whether the view says what Cycles is doing because a change's picture
+    // is late (`CyclesView::overdue`), to take it down with the picture.
+    let mut cycles_noted = false;
     // Tequila's floor reflection under Cycles, refined a sample a frame
     // alongside it, a layer for each view it goes over.
     let mut floors = crate::cycles_view::FloorLayers::default();
@@ -877,13 +880,20 @@ fn render_loop(shared: Arc<Shared>) {
                     cycles = None;
                     continue;
                 }
-                Ok(doing) if cycles_frames == 0 => say(Some(EngineNote::Preparing(doing))),
+                // Before the first picture, and whenever a change's picture is
+                // late: a kernel compile after a material change kept the
+                // picture before on screen for minutes, saying nothing.
+                Ok(doing) if cycles_frames == 0 || view.overdue() => {
+                    say(Some(EngineNote::Preparing(doing)));
+                    cycles_noted = true;
+                }
                 Ok(_) => {}
             }
             match crate::profile::time("render: cycles frame", || view.take_frame(&mut state.framebuffer)) {
                 Some(frame) => {
-                    if cycles_frames == 0 {
+                    if cycles_frames == 0 || cycles_noted {
                         say(None);
+                        cycles_noted = false;
                     }
                     cycles_frames += 1;
                     // The camera this picture is of, before the next goes in,
@@ -2706,6 +2716,76 @@ mod tests {
         req.scene_generation += 1;
         redness(&mut view, &req);
         assert_eq!(view.translations(), 1, "a dragged part translated the scene again");
+    }
+
+    /// A library material with rounded edges dropped on a part while the
+    /// Rendered view shows Cycles: the view's kernels are not loaded again,
+    /// and the picture of the change comes. The Bevel that rounds the edges
+    /// needs Cycles' kernels for shaders that trace rays, which with OptiX
+    /// are a second program compiled for the card - five minutes on an RTX
+    /// 2060, the view black or frozen on the picture before until it ended.
+    /// Those kernels are now loaded with the view's first picture
+    /// (`translate::keep_raytrace_kernels`). Driven on the processor, where
+    /// loading them is quick but counted the same. Skipped where Cycles is
+    /// not installed (`TEQUILA_CYCLES`) or counts no loads.
+    #[test]
+    fn a_material_with_rounded_edges_loads_no_kernels_in_the_cycles_viewport() {
+        if let Err(why) = tequila_render_cycles::available() {
+            eprintln!("skipped: {why}");
+            return;
+        }
+        let mut view = crate::cycles_view::CyclesView::new(tequila_scene::render::RenderEngine::CyclesCpu).expect("a Cycles session");
+        let mut req = request();
+        req.width = 64;
+        req.height = 48;
+        req.engine = tequila_scene::render::RenderEngine::CyclesCpu;
+        let mut framebuffer = tequila_render_core::framebuffer::Framebuffer::new(64, 48);
+        // Synced as the render thread syncs, until a picture of the change
+        // with some samples is in.
+        let mut picture = |view: &mut crate::cycles_view::CyclesView, req: &RenderRequest| {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !view.sync(req).expect("synced") {
+                assert!(Instant::now() < deadline, "Cycles never took the change");
+                view.take_frame(&mut framebuffer);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            loop {
+                view.sync(req).expect("synced");
+                if view.take_frame(&mut framebuffer).is_some_and(|frame| frame.samples >= 4 && frame.width == 64) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "no picture of the change");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        picture(&mut view, &req);
+        let Some(loads) = view.kernel_loads() else {
+            eprintln!("skipped: this Cycles library counts no kernel loads");
+            return;
+        };
+        assert_eq!(loads, 1, "the view's first picture loads its kernels once");
+
+        // Dropped from the library: a material of its own, with rounded
+        // edges, the part's now - the whole scene is translated again.
+        let mut dropped = (*req.scene).clone();
+        let mut rounded = dropped.materials[dropped.instances[0].material.index()].clone();
+        rounded.edge_radius = 0.01;
+        dropped.materials.push(rounded);
+        dropped.programs.resize(dropped.materials.len(), None);
+        dropped.bumps.resize(dropped.materials.len(), None);
+        dropped.instances[0].material = tequila_core::ids::MaterialId(dropped.materials.len() as u32 - 1);
+        req.scene = Arc::new(dropped);
+        req.scene_generation += 1;
+        picture(&mut view, &req);
+        assert_eq!(view.kernel_loads(), Some(1), "a material with rounded edges made Cycles load its kernels again");
+
+        // And taken off again.
+        let mut back = (*req.scene).clone();
+        back.instances[0].material = tequila_core::ids::MaterialId(0);
+        req.scene = Arc::new(back);
+        req.scene_generation += 1;
+        picture(&mut view, &req);
+        assert_eq!(view.kernel_loads(), Some(1), "a material without rounded edges made Cycles load its kernels again");
     }
 
     /// Parts imported into a Cycles viewport on a card with memory of its
