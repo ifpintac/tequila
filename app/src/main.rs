@@ -270,16 +270,14 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx);
-            // Asked for once the window is up: given to the builder, the
-            // window came up flagged maximized at its first size.
-            if maximized {
-                cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-            }
             mac::quit_asks_first(cc);
             mac::wake_on_open(&cc.egui_ctx);
             mac::add_menus(&cc.egui_ctx);
             {
                 let mut app = TequilaApp::new();
+                // Maximized once the window is fitted to its screen, not here
+                // (`fit_to_screen`).
+                app.maximize_on_fit = maximized;
                 if !adopted.is_empty() {
                     app.toasts.info("Brought your materials, plugins and settings across from Freeshot".to_string());
                 }
@@ -508,6 +506,11 @@ struct TequilaApp {
     close_approved: bool,
     /// Whether the window has been fitted to its screen yet.
     fitted: bool,
+    /// Whether the window is maximized once fitted (`fit_to_screen`): as a
+    /// workspace opens, unless a capture or a test asked for a width.
+    maximize_on_fit: bool,
+    /// Frames the window has waited for its screen's size to be known.
+    fit_waits: u32,
     /// The selection before the viewport's last click, for a double-click
     /// to step up from (`select_enclosing`).
     selected_before_click: Vec<tequila_scene::tree::NodeId>,
@@ -816,6 +819,26 @@ fn enclosing_group(
         _ => None,
     };
     Some(next.unwrap_or(parent))
+}
+
+/// How many frames the window waits to learn its screen's size before it is
+/// maximized without being fitted (`TequilaApp::fit_to_screen`).
+const FIT_WAITS_AT_MOST: u32 = 30;
+
+/// What the window is told once its screen's size is known: the size that
+/// fits the screen, if `inner` does not, and then, for a workspace,
+/// maximized - in that order, so the size is the one it goes back to.
+///
+/// Maximized as the window was made and fitted a frame later, a window too
+/// big for its screen - 1440 x 900 points on a laptop at 125% or 150% - was
+/// given its fitted size after Windows had maximized it, and kept it: half
+/// the screen, at the top left, with Windows calling it maximized.
+fn startup_window(inner: egui::Vec2, monitor: egui::Vec2, maximize: bool) -> Vec<egui::ViewportCommand> {
+    let mut commands: Vec<egui::ViewportCommand> = fitted_window(inner, monitor).map(egui::ViewportCommand::InnerSize).into_iter().collect();
+    if maximize {
+        commands.push(egui::ViewportCommand::Maximized(true));
+    }
+    commands
 }
 
 /// The window's size on a screen of `monitor` points, if `inner` does not
@@ -1138,6 +1161,8 @@ impl TequilaApp {
             quit_requested: false,
             close_approved: false,
             fitted: false,
+            maximize_on_fit: false,
+            fit_waits: 0,
             selected_before_click: Vec::new(),
             viewport_rect: egui::Rect::NOTHING,
             screenshot_viewport: false,
@@ -5297,11 +5322,19 @@ impl TequilaApp {
     fn fit_to_screen(&mut self, ctx: &egui::Context) {
         let (monitor, inner) = ctx.input(|i| (i.viewport().monitor_size, i.viewport().inner_rect));
         let (Some(monitor), Some(inner)) = (monitor, inner) else {
+            // A screen whose size never comes is maximized all the same.
+            self.fit_waits += 1;
+            if self.fit_waits >= FIT_WAITS_AT_MOST {
+                self.fitted = true;
+                if self.maximize_on_fit {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                }
+            }
             return;
         };
         self.fitted = true;
-        if let Some(size) = fitted_window(inner.size(), monitor) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        for command in startup_window(inner.size(), monitor, self.maximize_on_fit) {
+            ctx.send_viewport_cmd(command);
         }
     }
 
@@ -7830,6 +7863,25 @@ mod undo_tests {
         // From another selection, its own group again.
         assert_eq!(enclosing_group(&document, ids[2], &[ids[3]]), Some(ids[1]));
         assert_eq!(enclosing_group(&document, ids[3], &[]), None);
+    }
+
+    #[test]
+    fn a_workspace_window_is_fitted_and_then_maximized() {
+        let first = egui::vec2(1440.0, 900.0);
+        // A 1920 x 1080 laptop at 125%: too tall, so fitted first, and only
+        // then maximized - never resized once maximized.
+        let commands = startup_window(first, egui::vec2(1536.0, 864.0), true);
+        assert_eq!(
+            commands,
+            vec![egui::ViewportCommand::InnerSize(egui::vec2(1440.0, 864.0 * 0.86)), egui::ViewportCommand::Maximized(true)]
+        );
+        // At 150%, the same.
+        let commands = startup_window(first, egui::vec2(1280.0, 720.0), true);
+        assert!(matches!(commands.as_slice(), [egui::ViewportCommand::InnerSize(_), egui::ViewportCommand::Maximized(true)]), "{commands:?}");
+        // A screen it fits: maximized alone.
+        assert_eq!(startup_window(first, egui::vec2(1920.0, 1080.0), true), vec![egui::ViewportCommand::Maximized(true)]);
+        // A capture or a test that asked for a width: fitted, not maximized.
+        assert_eq!(startup_window(first, egui::vec2(1536.0, 864.0), false).last(), Some(&egui::ViewportCommand::InnerSize(egui::vec2(1440.0, 864.0 * 0.86))));
     }
 
     #[test]
