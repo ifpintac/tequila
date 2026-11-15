@@ -545,3 +545,38 @@ kbd { white-space: nowrap; }
 @media (max-width: 380px) {
   .brand .stage { display: none; }
 }
+
+/* ---------- How close to Stable: a loading bar ---------- */
+.progress { background: var(--bg-raised); border: 1px solid var(--line); border-radius: 18px; padding: clamp(22px, 3.5vw, 36px); }
+.progress-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px; }
+.progress-head .when { font: 600 12.5px/1 var(--font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--warm); }
+.progress-head h3 { font-size: clamp(26px, 3.4vw, 36px); margin: 12px 0 0; letter-spacing: -0.02em; }
+.progress-head h3 span { color: var(--warm); font-variant-numeric: tabular-nums; }
+.progress-head p { margin: 0; color: var(--text-faint); font-size: 15px; }
+.progress-track { position: relative; height: 14px; margin: 26px 0 40px; border-radius: 999px; background: var(--bg-card); border: 1px solid var(--line-strong); }
+.progress-fill { position: absolute; inset: 0 auto 0 0; width: var(--p); border-radius: inherit;
+  background: repeating-linear-gradient(-45deg, rgba(255,255,255,0.14) 0 8px, rgba(255,255,255,0) 8px 16px), linear-gradient(90deg, var(--teal), var(--warm));
+  background-size: 22.6px 22.6px, 100% 100%; box-shadow: 0 0 22px rgba(242, 179, 122, 0.35); animation: progress-stripes 1.2s linear infinite; }
+.progress-fill::after { content: ""; position: absolute; right: -2px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: #fff3e6; box-shadow: 0 0 14px 4px rgba(242, 179, 122, 0.7); }
+.js .progress.reveal .progress-fill { width: 0; transition: width 1.6s cubic-bezier(.2, .7, .2, 1) 0.2s; }
+.js .progress.reveal.seen .progress-fill { width: var(--p); }
+@keyframes progress-stripes { to { background-position: 22.6px 0, 0 0; } }
+.progress-mark { position: absolute; top: 22px; left: var(--at); transform: translateX(-50%); font: 600 13px/1 var(--font); color: var(--text-faint); white-space: nowrap; }
+.progress-mark::before { content: ""; position: absolute; left: 50%; top: -15px; width: 2px; height: 8px; margin-left: -1px; background: var(--line-strong); }
+.progress-mark.done { color: var(--teal); }
+.progress-mark[style*="--at:0%"] { transform: none; }
+.progress-mark[style*="--at:0%"]::before { left: 0; }
+.progress-mark[style*="--at:100%"] { transform: translateX(-100%); }
+.progress-mark[style*="--at:100%"]::before { left: auto; right: 0; }
+.milestones { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 28px; }
+.milestones li { position: relative; padding-left: 30px; color: var(--text-soft); font-size: 15px; }
+.milestones li strong { color: var(--text); }
+.milestones li::before { content: ""; position: absolute; left: 0; top: 2px; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-strong); box-sizing: border-box; }
+.milestones li.done::before { border-color: var(--teal); background: var(--teal) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.5 2.5L12 5.5' fill='none' stroke='%230b0c0d' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat; }
+.milestones li.doing::before { border-color: var(--warm); background: linear-gradient(90deg, var(--warm) 50%, transparent 50%); }
+.progress-foot { margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--text-faint); font-size: 14.5px; }
+@media (max-width: 720px) { .milestones { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill { animation: none; }
+  .js .progress.reveal .progress-fill { width: var(--p); transition: none; }
+}

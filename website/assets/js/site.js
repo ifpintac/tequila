@@ -39,6 +39,23 @@
     reveals.forEach(function (el) { el.classList.add('seen'); });
   }
 
+  // ---------- How close to Stable ----------
+
+  // The roadmap's loading bar counts its own checklist: a step done counts
+  // in full, one under way counts half, so ticking a step moves the bar.
+  document.querySelectorAll('[data-progress]').forEach(function (box) {
+    var steps = box.querySelectorAll('.milestones li');
+    if (!steps.length) return;
+    var score = 0;
+    steps.forEach(function (li) { score += li.classList.contains('done') ? 1 : li.classList.contains('doing') ? 0.5 : 0; });
+    var percent = Math.round(score / steps.length * 100);
+    box.querySelectorAll('[data-progress-value]').forEach(function (el) { el.textContent = percent; });
+    var track = box.querySelector('.progress-track');
+    if (track) track.setAttribute('aria-valuenow', percent);
+    var fill = box.querySelector('.progress-fill');
+    if (fill) fill.style.setProperty('--p', percent + '%');
+  });
+
   // ---------- Which computer is this? ----------
 
   // A best guess from what the browser says: an Intel Mac can't be told
