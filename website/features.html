@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Features · Tequila</title>
-<meta name="description" content="Everything Tequila does: CAD import, over 300 materials, studio lighting, Cycles and Tequila's own renderer, a full UV editor, wireframe drawings, sharing, scripting and AI apps.">
+<meta name="description" content="Everything Tequila does: CAD and Blender import, about 600 materials, studio lighting, Cycles and Tequila's own renderer, a full UV editor, wireframe drawings, sharing, scripting and AI apps.">
 <meta property="og:title" content="Features · Tequila">
 <meta property="og:image" content="https://ifpintac.github.io/tequila/assets/img/social.jpg">
 <meta name="theme-color" content="#0b0c0d">
@@ -83,7 +83,7 @@
         <figure><img src="assets/img/holder-colours.jpg" alt="Six helmet holders in different 3D-print filament colours" loading="lazy" data-zoom><figcaption>The library's 3D-print material in six colours on the same part: white, yellow, red, green, blue and black.</figcaption></figure>
         <figure><img src="assets/img/holder-macro.jpg" alt="Close-up of a navy 3D-printed part, its layer lines wrapping a rounded end" loading="lazy" data-zoom><figcaption>Close on the rounded end: the print's layers wrap the curve, stacked through the part's thickness, as it prints lying flat.</figcaption></figure>
         <ul>
-          <li><strong>A library of over 300</strong> procedural materials: plastics with mould textures, anodised, brushed and polished metals, car paint with flakes, glass, gems, liquids with bubbles, wood, stone, leather, ceramics, fabrics and 3D-print filaments.</li>
+          <li><strong>A library of about 600</strong> procedural materials: plastics with mould textures, enamels, powder coats and hammertones, plated and zinc hardware, grilles and meshes, lit buttons, LEDs and displays, anodised, brushed and polished metals, car paint with flakes, glass, gems, liquids with bubbles, wood, stone, leather, ceramics, fabrics and 3D-print filaments.</li>
           <li><strong>Real fibres:</strong> a material's Fuzz grows fibres for felt, velvet, fur and tennis-ball fuzz, a texture colours each fibre where it grows, and both renderers draw them.</li>
           <li><strong>Suedes and footwear:</strong> roughout and fine suedes, Faux Fur Camel, jersey lining, nylon taffeta, outsole rubber, laces, bonded thread and webbing.</li>
           <li><strong>Adobe Substance materials</strong> (<code>.sbsar</code>, <code>.sbs</code>) with their settings; with Adobe's Substance tools installed, the textures render again as you change them.</li>
@@ -101,7 +101,9 @@
           <li><strong>HDRI environments</strong>, and an HDRI editor with pins for placing highlights.</li>
           <li><strong>Sun and sky</strong>, and area, spot, point and IES lights.</li>
           <li><strong>Light groups</strong> you can rebalance after the render is done.</li>
-          <li><strong>Studios:</strong> lighting, camera and look saved by name, and a set of views to render in one go.</li>
+          <li><strong>Light like a photographer:</strong> click where you want a highlight and the light moves to put it there; add a softbox, strip, card or flag in one click. Softboxes fall off toward their edges, in both renderers.</li>
+          <li><strong>Seven studios</strong> ready in the Library, among them Photo Studio (softboxes close to the product in a dark room) and Catalogue Studio (cut out on white).</li>
+          <li><strong>Snapshots:</strong> lighting, camera and look saved by name, and a set of views to render in one go.</li>
           <li><strong>Floors:</strong> shadow catchers, contact shadows, and mirror reflections of the product alone.</li>
           <li><strong>Caustics</strong> off, by photons, or by working out each lamp's path through smooth glass.</li>
         </ul>
@@ -138,7 +140,8 @@
         <h2 id="camera">Camera and look</h2>
         <figure><img src="assets/img/dof.jpg" alt="A row of material balls, the second sharp and the rest falling out of focus" loading="lazy" data-zoom><figcaption>Depth of field at f/3.5, focused on the velvet ball.</figcaption></figure>
         <ul>
-          <li>A photographic camera with focal length, depth of field, lens shift and orthographic views. Several cameras per scene.</li>
+          <li>A photographic camera with focal length, depth of field from the lens’s own opening (f/4 blurs as f/4 does), lens shift and orthographic views. Several cameras per scene.</li>
+          <li><strong>Composition guides</strong> over the view: thirds, golden spiral, triangles and more.</li>
           <li>AgX, ACES and PBR Neutral tone mapping, with exposure and white balance.</li>
           <li>ACES colour end to end through OpenColorIO, with every ACES 1.3 output transform and the common camera log curves.</li>
         </ul>
@@ -159,9 +162,10 @@
         <figure><img src="assets/img/app-connect.jpg" alt="The Connect an AI window, listing AI apps that can drive Tequila" loading="lazy" data-zoom><figcaption>Connect an AI: each AI app on the computer, one click away.</figcaption></figure>
         <ul>
           <li><strong>Connect an AI app</strong> in one click: Claude, Cursor, VS Code (GitHub Copilot), Codex, Gemini CLI, Windsurf, LM Studio, or any other app that speaks MCP. It can set up materials, lighting and renders, make materials from a description, and write plugins.</li>
-          <li><strong>A built-in Assistant</strong> for OpenAI, Claude, Gemini, OpenRouter, Mistral, DeepSeek, xAI, Groq or a local model.</li>
+          <li><strong>A built-in Assistant:</strong> a chat, with a list of chats and the model picker in the message box. Claude, ChatGPT and Gemini answer it through their own apps, or an API key or a local model does. Every one is held to the same rules: Tequila and the project’s folder, never a shell; it asks before anything leaves the scene.</li>
           <li><strong>Python scripting and plugins</strong>, a command-line renderer, and a Blender live link.</li>
-          <li><strong>A 3Dconnexion SpaceMouse</strong> to turn, pan and zoom the view.</li>
+          <li><strong>A 3Dconnexion SpaceMouse</strong> to turn, pan and zoom the view, on a Mac through 3Dconnexion’s own driver.</li>
+          <li><strong>Preferences</strong> in one window, every key of the main window yours to change, and navigation like Blender, Maya or a CAD package.</li>
           <li>Every edit is an undoable command with a name, so scripts and AI apps can do anything the buttons do. See <a href="docs.html#scripting">Scripting</a>.</li>
         </ul>
 
