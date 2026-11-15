@@ -299,6 +299,12 @@
   // Pictures for the releases the website has them for, by the section
   // heading they go under. Later releases can carry their own in the notes.
   var ART = {
+    'v2026.11.13.2336': {
+      'Open Blender files': ['assets/img/blender-pedal.jpg', 'A guitar pedal in Blender with Cycles and its seven lights (left), and opened in Tequila with Blender’s own lighting (right).'],
+      'Lighting and Studios': ['assets/img/studios-seven.jpg', 'One pedal in each of the seven studios: Photo, Dark, Gel, Soft, White Seamless, Flat and Catalogue.'],
+      'Materials and library': ['assets/img/materials-new.jpg', 'Sixteen of the 264 new library materials, as the library shows them.'],
+      'Viewport and camera': ['assets/img/palma-depth-of-field.jpg', 'The palma P8 at f/1.8: depth of field from the lens’s own opening, rendered in Tequila.']
+    },
     'v2026.11.06.0224': {
       'Look at a design in AR, and bring in more kinds of files': ['assets/img/app-usdz.jpg', 'File › Export USDZ for AR, on the perfume bottle sample.'],
       'Rendering': ['assets/img/fibres-printed.jpg', 'A printed velvet: the texture now colours every fibre, in both renderers.'],
