@@ -35,6 +35,11 @@ const MOVING_SAMPLES: u32 = 1;
 /// enough that a view whose picture never came still follows the mouse.
 const HELD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How long the picture of a change may take before the view says what
+/// Cycles is doing instead (`CyclesView::overdue`): longer than a big
+/// model's ordinary restart, short enough that a wait reads as a wait.
+const OVERDUE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// How long the camera has to be still before the view goes back to its
 /// full size: long enough that a pause between two strokes of an orbit does
 /// not cost a full-size restart, short enough to feel immediate.
@@ -365,6 +370,11 @@ impl CyclesView {
             self.translations += 1;
             self.session.clear_scene();
             translate::build_with(&mut self.session, &request.scene, &view, &mut self.images).and_then(|translation| {
+                // The kernels for shaders that trace rays of their own, loaded
+                // from the first picture: a material with rounded edges
+                // dropped on a part made Cycles compile them then, for
+                // minutes, with nothing new on screen (`keep_raytrace_kernels`).
+                translate::keep_raytrace_kernels(&mut self.session)?;
                 for warning in &translation.warnings {
                     eprintln!("Cycles: {warning}");
                 }
@@ -522,6 +532,21 @@ impl CyclesView {
     /// loop then looks for it often.
     pub fn awaiting_frame(&self) -> bool {
         !self.answered
+    }
+
+    /// Whether the picture of the last change is late: Cycles is doing
+    /// something long first - loading its kernels, building a big model's
+    /// BVH - which the view then says, rather than sitting on the picture
+    /// before as if it had stopped.
+    pub fn overdue(&self) -> bool {
+        !self.answered && self.restarted.elapsed() >= OVERDUE
+    }
+
+    /// How many times the session has loaded its render kernels, where the
+    /// library counts them.
+    #[cfg(test)]
+    pub fn kernel_loads(&self) -> Option<u32> {
+        self.session.kernel_loads()
     }
 
     /// The size the view asked for.

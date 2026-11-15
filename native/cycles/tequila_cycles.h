@@ -299,6 +299,10 @@ FSC_API void fsc_set_paused(FscSession *session, int paused);
  * its pictures then come without their albedo and normal guides, as they go
  * up undenoised. */
 FSC_API void fsc_live_set_moving(FscSession *session, int moving);
+/* How many times a live session has loaded its render kernels: once at its
+ * first picture, and again whenever the scene comes to need other kernels
+ * than those loaded. On a graphics card a load can compile for minutes. */
+FSC_API int fsc_live_kernel_loads(FscSession *session);
 /* What the session says it is doing ("Rendering", "Updating Scene", ...),
  * or "error: " and why it stopped. Valid until the next call on this thread. */
 FSC_API const char *fsc_status(FscSession *session);

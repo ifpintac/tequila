@@ -1126,6 +1126,35 @@ pub fn update_materials(
     Ok(true)
 }
 
+/// Keep a live view's kernels for shaders that trace rays of their own -
+/// Cycles' Bevel, which rounds a part's edges, and its Ambient Occlusion -
+/// loaded whatever the scene holds: an object no ray ever meets, its
+/// shader a Bevel feeding a diffuse surface.
+///
+/// Cycles loads its kernels again whenever a scene comes to need others
+/// than those loaded, and with OptiX a shader that traces rays needs a
+/// second, far larger program, compiled for the card the first time: five
+/// minutes on an RTX 2060. Nearly every library material rounds its edges,
+/// so the first one dropped on a part in the Rendered view started that
+/// compile, and the view showed nothing new until it ended - black, or
+/// frozen on the picture before. Kept from the view's first picture, the
+/// compile is done while the view says it is preparing the graphics card,
+/// and a material with rounded edges coming or going loads nothing.
+pub fn keep_raytrace_kernels(session: &mut Session) -> Result<(), String> {
+    let shader = session.shader("raytrace kernels kept")?;
+    let bevel = session.node(shader, "bevel")?;
+    let bsdf = session.node(shader, "diffuse_bsdf")?;
+    let output = session.node(shader, "output")?;
+    session.connect(shader, bevel, "Normal", bsdf, "Normal")?;
+    session.connect(shader, bsdf, "BSDF", output, "Surface")?;
+    let shader = session.commit(shader)?;
+    // A real triangle, a millimetre across, that no ray sees.
+    let positions = [[0.0, 0.0, 0.0], [0.001, 0.0, 0.0], [0.0, 0.001, 0.0]];
+    let mesh = session.mesh(&positions, None, &[[0, 1, 2]], None, &[shader])?;
+    session.object(mesh, &rows(&Mat4::IDENTITY), 0, false)?;
+    Ok(())
+}
+
 /// Place the objects of an earlier translation where `scene` has them.
 pub fn move_objects(session: &mut Session, scene: &SceneSnapshot, objects: &[Option<Node>]) -> Result<(), String> {
     for (instance, object) in scene.instances.iter().zip(objects) {

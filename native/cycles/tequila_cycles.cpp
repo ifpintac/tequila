@@ -334,6 +334,11 @@ class LiveDriver : public OutputDriver {
   /* When the latest change was asked for. A tile from a render that started
    * before it shows the view as it was, and is dropped. */
   double requested = 0.0;
+  /* How many times Cycles has loaded its render kernels (`fsc_live_kernel_loads`),
+   * and the status it last said, to count each load once. A load on a graphics
+   * card can compile for minutes, and the view shows nothing new until it ends. */
+  std::atomic<int> kernel_loads{0};
+  std::string last_status;
   /* Whether the camera is moving (`fsc_live_set_moving`). Its pictures go
    * up undenoised, so their albedo and normal guides are not read back: at
    * a view's size, reading every pass back took 26 ms a picture. (Pausing
@@ -657,26 +662,33 @@ static bool start_session(FscSession *s)
     live->tint = &s->tint;
     s->live = live.get();
     s->session->set_output_driver(std::move(live));
-    /* With the trace on, what Cycles is doing after each change and when:
-     * where a moving picture's time goes outside its samples. */
-    if (getenv("TEQUILA_CYCLES_TRACE") != nullptr) {
+    /* What Cycles is doing: each load of its render kernels counted, and with
+     * the trace on, every step after each change and when - where a moving
+     * picture's time goes outside its samples. */
+    {
       LiveDriver *driver = s->live;
       Progress *progress = &s->session->progress;
+      static const bool trace = getenv("TEQUILA_CYCLES_TRACE") != nullptr;
       progress->set_update_callback([driver, progress] {
         string status, substatus;
         progress->get_status(status, substatus);
-        static string last;
-        if (status + substatus == last) {
-          return;
-        }
-        last = status + substatus;
         double requested;
         {
           const std::lock_guard<std::mutex> lock(driver->mutex);
+          if (status + substatus == driver->last_status) {
+            return;
+          }
+          const bool was_loading = string_startswith(driver->last_status, "Loading render kernels");
+          driver->last_status = status + substatus;
+          if (!was_loading && string_startswith(status, "Loading render kernels")) {
+            driver->kernel_loads++;
+          }
           requested = driver->requested;
         }
-        fprintf(stderr, "live: %.1f ms after the change: %s%s%s\n", (time_dt() - requested) * 1000.0,
-                status.c_str(), substatus.empty() ? "" : " | ", substatus.c_str());
+        if (trace) {
+          fprintf(stderr, "live: %.1f ms after the change: %s%s%s\n", (time_dt() - requested) * 1000.0,
+                  status.c_str(), substatus.empty() ? "" : " | ", substatus.c_str());
+        }
       });
     }
   }
@@ -1715,6 +1727,11 @@ const char *fsc_status(FscSession *s)
   s->session->progress.get_status(status, substatus);
   text = substatus.empty() ? status : status + ": " + substatus;
   return text.c_str();
+}
+
+int fsc_live_kernel_loads(FscSession *s)
+{
+  return s->live ? s->live->kernel_loads.load() : 0;
 }
 
 void fsc_live_set_moving(FscSession *s, int moving)
