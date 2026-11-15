@@ -53,34 +53,32 @@
       <h2>In beta.</h2>
       <p>Ready for real work, and still changing quickly.</p>
     </div>
-    <div class="stages">
-      <article class="stage-step done">
-        <span class="when">Done</span>
-        <h3>Alpha</h3>
-        <p>The first versions: the renderer, the materials and the app, built up and tried out.</p>
-      </article>
-      <article class="stage-step now">
-        <span class="when">Now</span>
-        <h3>Beta</h3>
-        <p>Every main feature is in, on Windows, Mac and Linux. What that means for you:</p>
-        <ul>
-          <li>Use it for real work, client renders included.</li>
-          <li>Updates come often. <strong>Help › Check for updates</strong> installs them and keeps your materials and settings.</li>
-          <li>Some things are still rough. Windows and Mac warn you when you first open it, and some of the newest features haven't met real hardware yet.</li>
-          <li>Tell us what breaks, on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</li>
-        </ul>
-      </article>
-      <article class="stage-step">
-        <span class="when">Next</span>
-        <h3>Stable</h3>
-        <p>When these are done:</p>
-        <ul>
-          <li>Tested on many more computers and graphics cards.</li>
-          <li>The newest features tried on real hardware: see <strong>Now</strong> below.</li>
-          <li>A signed Windows installer, so no warning when you open it.</li>
-        </ul>
-      </article>
+    <div class="progress reveal" data-progress>
+      <div class="progress-head">
+        <div>
+          <span class="when">Beta, on the way to Stable</span>
+          <h3><span data-progress-value>71</span>% of the way to Stable</h3>
+        </div>
+        <p>As of 2026.11.13.2336, the best-received build yet.</p>
+      </div>
+      <div class="progress-track" role="progressbar" aria-label="How close Tequila is to Stable" aria-valuemin="0" aria-valuemax="100" aria-valuenow="71">
+        <div class="progress-fill" style="--p:71%"></div>
+        <span class="progress-mark done" style="--at:0%">Alpha</span>
+        <span class="progress-mark done" style="--at:29%">Beta</span>
+        <span class="progress-mark" style="--at:100%">Stable</span>
+      </div>
+      <ol class="milestones">
+        <li class="done"><strong>Alpha:</strong> the renderer, the materials and the app, built up and tried out.</li>
+        <li class="done"><strong>Every main feature in</strong>, on Windows, Mac and Linux.</li>
+        <li class="done"><strong>Used for real work</strong> by a growing community, client renders included.</li>
+        <li class="done"><strong>Your feedback, built in:</strong> the roadmap cards you asked for on Discord shipped in the last release.</li>
+        <li class="doing"><strong>Tested on many more computers</strong> and graphics cards: run <strong>Help › Test this computer…</strong> and share the report.</li>
+        <li class="doing"><strong>The newest features tried on real hardware:</strong> see <a href="#lane-now">Now</a> below.</li>
+        <li><strong>A signed Windows installer</strong>, so Windows stops warning when you open it.</li>
+      </ol>
+      <p class="progress-foot">Each step done counts in full, each one under way counts half. Beta means you can use Tequila for real work, updates come often (<strong>Help › Check for updates</strong> keeps your materials and settings), and a few things are still rough. Tell us what breaks, on the <a href="https://discord.gg/Na5T2qgQBX">Discord</a>.</p>
     </div>
+  </div>
   </div>
 </section>
 
