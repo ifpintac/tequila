@@ -653,6 +653,7 @@ pub enum EnvParam {
     GroundShadows,
     GroundShadowColor,
     GroundOcclusion,
+    GroundProductLight,
     GroundReflections,
     GroundReflectionBlur,
     GroundReflectionLength,
@@ -714,7 +715,7 @@ pub struct EnvUi {
 }
 
 impl EnvParam {
-    pub const ALL: [EnvParam; 26] = [
+    pub const ALL: [EnvParam; 27] = [
         EnvParam::Rotation,
         EnvParam::Brightness,
         EnvParam::Contrast,
@@ -728,6 +729,7 @@ impl EnvParam {
         EnvParam::GroundShadows,
         EnvParam::GroundShadowColor,
         EnvParam::GroundOcclusion,
+        EnvParam::GroundProductLight,
         EnvParam::GroundReflections,
         EnvParam::GroundReflectionBlur,
         EnvParam::GroundReflectionLength,
@@ -774,6 +776,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => "ground_reflection_length",
             EnvParam::GroundReflectionFadeDistance => "ground_reflection_fade_distance",
             EnvParam::GroundReflectionFresnel => "ground_reflection_fresnel",
+            EnvParam::GroundProductLight => "ground_product_light",
             EnvParam::GroundReflectionAlpha => "ground_reflection_alpha",
             EnvParam::GroundReflectionFadeBy => "ground_reflection_fade_by",
             EnvParam::GroundBounce => "ground_bounce",
@@ -819,6 +822,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => ("ground", "reflection_length"),
             EnvParam::GroundReflectionFadeDistance => ("ground", "reflection_fade_distance"),
             EnvParam::GroundReflectionFresnel => ("ground", "reflection_fresnel"),
+            EnvParam::GroundProductLight => ("ground", "product_light"),
             EnvParam::GroundReflectionAlpha => ("ground", "reflection_alpha"),
             EnvParam::GroundReflectionFadeBy => ("ground", "reflection_fade_by"),
             EnvParam::GroundBounce => ("ground", "bounce"),
@@ -904,6 +908,10 @@ impl EnvParam {
                 label: "Fainter seen from above",
                 range: (0.0, 0.0),
             },
+            EnvParam::GroundProductLight => EnvUi {
+                label: "Light from the product",
+                range: (0.0, 0.0),
+            },
             EnvParam::GroundReflectionAlpha => EnvUi {
                 label: "Reflection alpha",
                 range: (0.0, 0.0),
@@ -960,6 +968,7 @@ impl EnvParam {
             EnvParam::GroundReflectionLength => EnvValue::Scalar(settings.ground.reflection_length),
             EnvParam::GroundReflectionFadeDistance => EnvValue::Scalar(settings.ground.reflection_fade_distance),
             EnvParam::GroundReflectionFresnel => EnvValue::Flag(settings.ground.reflection_fresnel),
+            EnvParam::GroundProductLight => EnvValue::Flag(settings.ground.product_light),
             EnvParam::GroundReflectionAlpha => EnvValue::Choice(settings.ground.reflection_alpha.key()),
             EnvParam::GroundReflectionFadeBy => EnvValue::Choice(settings.ground.reflection_fade_by.key()),
             EnvParam::GroundBounce => EnvValue::Flag(settings.ground.bounce),
@@ -1036,6 +1045,7 @@ impl EnvParam {
                 }
             }
             (EnvParam::GroundReflectionFresnel, EnvValue::Flag(f)) => settings.ground.reflection_fresnel = *f,
+            (EnvParam::GroundProductLight, EnvValue::Flag(f)) => settings.ground.product_light = *f,
             (EnvParam::GroundReflectionAlpha, EnvValue::Choice(c)) => {
                 if let Some(alpha) = crate::document::ReflectionAlpha::from_key(c) {
                     settings.ground.reflection_alpha = alpha;
