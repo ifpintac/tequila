@@ -1521,6 +1521,11 @@ Measured here (Ryzen 7 2700X, 8 cores and 16 threads; RTX 2060 6 GB, driver 610.
 | `bench/interior` | Enclosed, lit through a portal | Interior sampling, portals |
 | `bench/textured` | 40 × 4K textures | Texture cache |
 | `bench/animation` | 240 frames, moving parts | Motion blur, temporal denoise |
+| `fibre_product` | `simple_product`, its body velvet with about 1.4M real fibres | Curves and the fibre BSDF (`docs/07` R0.1) |
+| `subsurface_product` | `simple_product`, its body translucent | The random walk under the surface (`docs/07` R0.1) |
+| `lamp_lit` | `simple_product` under three lamps, the environment dark | Light sampling alone (`docs/07` R0.1) |
+
+*As built, November 17:* `tequila --bench NAME --engine tequila|cycles [--device CPU|GPU] [--json FILE]`, NAME a scene above or a project file, measures the time each engine takes to a clean picture: two renders with two seeds, their difference in display values giving the noise, measured at the sample count a trial render says reaches 1% of full scale (`crates/tequila-cli/src/noise_bench.rs`, `docs/07` R0.1). `scripts/bench/run.py` runs every scene and engine on a machine and writes the table. Without an engine, `--bench` is the targets report below, as before.
 
 ### 4.2 Tracked metrics (every commit, on fixed CI hardware)
 
