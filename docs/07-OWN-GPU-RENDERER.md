@@ -170,6 +170,15 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
   - Time to clean against Cycles on the processor, before and after: simple_product 2.69 to 1.38, fibre_product 2.35 to 1.19, subsurface_product 5.04 to 3.14, lamp_lit 3.28 to 3.04, Headphones 2.23 to 2.01, Perfume bottle 1.57 to 1.53, cad_assembly 0.67 to 0.59.
   - Left: `lamp_lit` is now within 1.4 times Cycles' samples and its gap is the cost of a sample (2.1 against 4.3 million a second); the Headphones' is still noise (1.7 times the samples, on dark plastics lit by thin strips painted into the environment; Tequila's floor reflection is in its picture and left out of Cycles', so compare without the bottom rows); `subsurface_product` is both.
 
+- *Then the cost of a sample (2026-11-18, `r1-speed`), every change bit-identical:* profiled on the RTX 2060 PC with a sampler built into the bench for the purpose (samply needs administrator rights on Windows), each step checked by rendering two seeds with the build before it and comparing the raw pictures byte for byte (`TEQUILA_BENCH_DUMP`, `cmp`). What the profile found, and what was done:
+  - Sobol′'s loop over the index's bits ran all 32 times, the index being shuffled: 10% of `lamp_lit`. Now four reads of a 16 KB table.
+  - The specular interface's energy tables were read again for the same `wo` by every evaluation at a shading point and by every layer beneath: 16%. `DielectricSpecular::aim` reads them once (the stack's `aim` calls it), and the stack's two copies of its interface share the reads.
+  - An environment turned down to nothing was still sampled, a table search and a texture read per vertex, and read again for every ray that escaped: 13%. Skipped.
+  - The two register banks made for every path allocated sixteen slots each, used or not: 3%. They grow on first use.
+  - The noise patterns called the C library's `fmodf` on every coordinate to wrap it at 100,000: 6% of the Headphones, whose leather grain is procedural and two thirds of its time. A coordinate nearer than that is returned as it is.
+  - Samples a second, before and after: `lamp_lit` 2.18 to 3.57 million (Cycles 4.3), `simple_product` 2.72 to 3.82 (Cycles 3.1), Headphones 2.26 to 2.65 (Cycles 2.65).
+  - Leads not taken yet: Tequila is built for baseline x86-64 (SSE2) while Cycles chooses AVX2 kernels at run time; the Headphones' bump evaluates the height four times a point (central differences) where Cycles does twice more than the point itself (forward), which would change the picture slightly; `lamp_lit`'s light tree (7%), chosen because one of its lamps is weak, is a strategy and not a cost to cut without the noise it saves.
+
 *Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
 
 ### R2 — The first picture from the card (M)
