@@ -176,7 +176,7 @@ pub fn run(options: &Options, name: &str) -> Result<(), String> {
     let camera = if project {
         document.cameras.active().camera
     } else if generated.is_some() {
-        framed(&document, aspect)
+        tequila_scene::bench::product_camera(&document, aspect)
     } else {
         framing(&options, &document, aspect).0
     };
@@ -261,26 +261,6 @@ fn report(m: &Measurement) {
 /// A file's name without its folder or extension, as the report names it.
 fn file_label(path: &str) -> String {
     std::path::Path::new(path).file_stem().map_or_else(|| path.to_string(), |s| s.to_string_lossy().into_owned())
-}
-
-/// A generated scene's camera, framed on the product: on every part but
-/// the ground, which the generated scenes name "Ground". Framed on everything, as the targets report frames, the
-/// camera fits the 80 m ground and the product is a speck in the middle,
-/// and what is measured is mostly floor.
-fn framed(document: &tequila_scene::SceneDocument, aspect: f32) -> Camera {
-    let product: Vec<_> = document
-        .tree
-        .iter()
-        .filter(|n| matches!(n.kind, tequila_scene::tree::NodeKind::Part { .. }))
-        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
-        .map(|n| n.id)
-        .collect();
-    let bounds = tequila_scene::snapshot::visible_bounds_under(document, &product);
-    let centre = bounds.center();
-    let radius = (bounds.diagonal().length() * 0.5).max(1e-4);
-    let mut camera = Camera::look_at(centre + vec3(0.75, 0.45, 1.0).normalize() * radius * 2.6, centre, Vec3::Y);
-    camera.set_vertical_fov(0.62, aspect);
-    camera
 }
 
 /// "CPU", or "GPU" for the best card Cycles finds, or a kind by name.
