@@ -316,6 +316,7 @@ fn with_tequila(
             }
         }
         developed.push(style.develop_through_wide(width, height, &linear, &display));
+        dump_for_study(i, &linear, developed.last().unwrap());
     }
     let (noise, mean) = noise_of(&developed[0], &developed[1]);
     Ok(Measurement {
@@ -397,6 +398,7 @@ fn with_cycles(
             }
         }
         developed.push(style.develop_through_wide(width, height, &linear, &display));
+        dump_for_study(i, &linear, developed.last().unwrap());
     }
     if developed[0] == developed[1] {
         return Err("Cycles made the same picture with both seeds, so its noise cannot be measured".into());
@@ -417,6 +419,19 @@ fn with_cycles(
         peak_memory: None,
         floor_overlay: translation.floor_reflection,
     })
+}
+
+/// With `TEQUILA_BENCH_DUMP` naming a folder, each seed's picture is written
+/// there raw, scene-linear (`linear-N.f32`, RGB) and developed (`developed-N.u16`),
+/// for studying where the noise is (`docs/07` R1).
+fn dump_for_study(seed_index: usize, linear: &[tequila_core::spectrum::Spectrum], developed: &[u16]) {
+    let Some(folder) = std::env::var_os("TEQUILA_BENCH_DUMP") else { return };
+    let folder = std::path::PathBuf::from(folder);
+    let _ = std::fs::create_dir_all(&folder);
+    let floats: Vec<u8> = linear.iter().flat_map(|c| [c.r, c.g, c.b]).flat_map(f32::to_le_bytes).collect();
+    let _ = std::fs::write(folder.join(format!("linear-{seed_index}.f32")), floats);
+    let codes: Vec<u8> = developed.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let _ = std::fs::write(folder.join(format!("developed-{seed_index}.u16")), codes);
 }
 
 /// The most memory this process has held: the peak working set on Windows,
