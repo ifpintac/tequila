@@ -1906,12 +1906,18 @@ fn trace<C: PathColour>(
         let scattering = |floor: f32| {
             if let Some(fibre) = &fibre {
                 Scattering::Fibre(crate::material::fibre_bsdf(material, fibre, floor))
-            } else if exiting_walk {
-                Scattering::Surface(walk_exit().bsdf(floor))
-            } else if from_inside {
-                Scattering::Surface(material.bsdf_from_inside(floor))
             } else {
-                Scattering::Surface(material.bsdf(floor))
+                let mut bsdf = if exiting_walk {
+                    walk_exit().bsdf(floor)
+                } else if from_inside {
+                    material.bsdf_from_inside(floor)
+                } else {
+                    material.bsdf(floor)
+                };
+                // Its lobes chosen by what each sends back the way it is
+                // seen, not face on (`MaterialBsdf::aim`).
+                bsdf.aim(wo);
+                Scattering::Surface(bsdf)
             }
         };
         let bsdf = scattering(floor);
