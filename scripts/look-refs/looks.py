@@ -1,10 +1,11 @@
 """The look Cycles gives Tequila's pictures, kept, and compared against
 (docs/07 R0.2).
 
-Before Cycles leaves Tequila, the pictures it makes of what Tequila ships
-are rendered once and kept: after it has gone, they are the only record of
-the look existing projects were made in, and Tequila's own renderer is held
-to them (R0.4, R6.2).
+The pictures Cycles makes of what Tequila ships, rendered once and kept:
+the record of the look existing projects were made in, which does not move
+when Cycles is upgraded. Tequila's own renderer is compared with them
+(R0.4, R6.2), and a difference is a finding for the owner to judge, not a
+failure: either engine may be the one that is wrong.
 
     python3 scripts/look-refs/looks.py make    --out DIR [--device GPU]
     python3 scripts/look-refs/looks.py compare --refs DIR_OR_ZIP --out DIR
@@ -13,7 +14,9 @@ to them (R0.4, R6.2).
 `make` renders the set with Cycles at 1,024 samples into DIR, writes
 DIR/manifest.json, and zips it as DIR.zip, printing its SHA-256. `compare`
 renders the same set with another engine (Tequila's renderer by default,
-at 256 samples: enough for a mean and a correlation) and writes
+at 256 samples: enough for a mean and a correlation), but of the library
+only one preset of each kind (`representatives`; --every for all of it),
+and writes
 DIR/report.md, worst first, and DIR/sheet-N.png, the worst pictures side
 by side with their references.
 
@@ -134,12 +137,55 @@ def ball_gltf(path, radius=0.025, segments=96, rings=48):
     Path(path).write_text(json.dumps(gltf))
 
 
+# What makes two presets render alike or differently: the lobes they use,
+# not their colours. Speaker Fabric in black, charcoal and navy is one
+# shader three times; a fault in it shows in all three.
+FEATURES = ('fuzz', 'coat', 'flake', 'subsurface', 'transmission', 'emission', 'anisotropy', 'thin_walled',
+            'metalness', 'metal_preset')
+
+
+def preset_file(preset):
+    path = Path(preset.get('file') or '')
+    if path.is_file():
+        return path
+    found = list((ROOT / 'assets' / 'library').rglob(path.name)) if path.name else []
+    return found[0] if found else None
+
+
+def kind_of(data):
+    """A preset's kind: its type, whether a node graph textures it, which
+    lobes it switches on, and its roughness and brightness each in three
+    bands."""
+    features = tuple(sorted({f for f in FEATURES for k, v in data.items() if f in k and v not in (0, False, None)}))
+    rough = data.get('specular_roughness', 0.5)
+    c = data.get('base_color') or [0.5] * 3
+    lum = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] if isinstance(c, list) and len(c) == 3 else 0.5
+    textured = bool((data.get('graph') or {}).get('nodes'))
+    return (str(data.get('type')), textured, features, (rough >= 0.15) + (rough >= 0.5), (lum >= 0.03) + (lum >= 0.25))
+
+
+def representatives(presets):
+    """One preset of each kind (`kind_of`), the first by name; about one in
+    five of the library. A preset whose file cannot be read is its own kind."""
+    chosen = {}
+    for preset in sorted(presets, key=lambda p: p['name']):
+        path = preset_file(preset)
+        try:
+            kind = kind_of(json.loads(path.read_text(encoding='utf-8'))) if path else ('?', preset['name'])
+        except (OSError, ValueError):
+            kind = ('?', preset['name'])
+        chosen.setdefault(kind, preset)
+    return list(chosen.values())
+
+
 def safe(name):
     return ''.join(c if c.isalnum() or c in '-_' else '_' for c in name).strip('_') or 'unnamed'
 
 
-def render_set(cli, engine, device, samples, out, kinds, limit, log):
-    """Render the set into `out`; return the manifest, one entry a picture."""
+def render_set(cli, engine, device, samples, out, kinds, limit, log, every=True, resume=False):
+    """Render the set into `out`; return the manifest, one entry a picture.
+    With `every` false, only `representatives` of the library; with
+    `resume`, a picture already in `out` is kept, not rendered again."""
     out.mkdir(parents=True, exist_ok=True)
     manifest = {}
     args = engine_args(engine, device)
@@ -150,7 +196,15 @@ def render_set(cli, engine, device, samples, out, kinds, limit, log):
         manifest[rel] = entry
         log(f'{rel}  {entry["seconds"]:.1f} s')
 
+    def kept(rel, kind, name, extra=None):
+        if resume and (out / rel).is_file():
+            manifest[rel] = {'kind': kind, 'name': name, 'seconds': None, **(extra or {})}
+            return True
+        return False
+
     def cli_render(rel, kind, name, extra_args):
+        if kept(rel, kind, name):
+            return
         path = out / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         started = time.time()
@@ -177,6 +231,8 @@ def render_set(cli, engine, device, samples, out, kinds, limit, log):
             for studio in studios[:limit]:
                 sid = studio.get('id') if isinstance(studio, dict) else studio
                 rel = f'studios/{safe(str(sid))}.png'
+                if kept(rel, 'studios', str(sid)):
+                    continue
                 started = time.time()
                 try:
                     session.open_project(headphones, discard=True)
@@ -202,10 +258,15 @@ def render_set(cli, engine, device, samples, out, kinds, limit, log):
                 session.look(frm=(2.1 * r, 2.5 * r, 3.0 * r), at=(0.0, 0.95 * r, 0.0))
                 presets = session.library.presets()
                 presets = presets.get('presets', presets) if isinstance(presets, dict) else presets
-                presets = [p for p in presets if p.get('source', 'shipped') != 'mine']
+                presets = [p for p in presets if p.get('source', 'shipped') not in ('mine', 'user')]
+                if not every:
+                    log(f'library: {len(presets)} presets, rendering one of each kind')
+                    presets = representatives(presets)
                 for preset in presets[:limit]:
                     name = preset['name']
                     rel = f'library/{safe(name)}.png'
+                    if kept(rel, 'library', name, {'category': preset.get('category')}):
+                        continue
                     started = time.time()
                     try:
                         session.library.apply(name, part)
@@ -310,7 +371,8 @@ def compare(args):
     meta = json.loads((refs / 'manifest.json').read_text())
     kinds = sorted({e['kind'] for e in meta['pictures'].values()} & set(args.kinds))
     new = args.out / 'renders'
-    manifest = render_set(args.tequila, args.engine, args.device, args.samples, new, kinds, args.limit, print)
+    manifest = render_set(args.tequila, args.engine, args.device, args.samples, new, kinds, args.limit,
+                          lambda line: print(line, flush=True), every=args.every, resume=args.resume)
     rows = []
     for rel in sorted(manifest):
         if rel in meta['pictures'] and (refs / rel).is_file():
@@ -356,6 +418,9 @@ def main():
             p.add_argument('--correlation', type=float, default=0.98)
             p.add_argument('--mean', type=float, default=0.05)
             p.add_argument('--sheet', type=int, default=48, help='how many flagged pictures go on sheets')
+            p.add_argument('--every', action='store_true',
+                           help='the whole library, not one preset of each kind (before a default changes)')
+            p.add_argument('--resume', action='store_true', help='keep pictures already rendered into --out')
     args = parser.parse_args()
     if not args.tequila or not Path(args.tequila).is_file():
         sys.exit('no tequila command-line build found: build it or give --tequila')
