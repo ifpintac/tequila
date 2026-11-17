@@ -865,9 +865,11 @@ pub(super) fn solve(
         let base = scene.material(hit.material);
         let open = instance.light_proxy || !scene.casts_shadows(hit.instance) || !light.shadow_links.lights(hit.instance.0);
         if !open && is_boundary(base) {
+            // Media keyed by solid, as the camera path seeding this keys them.
+            let solid = scene.solid(hit.instance);
             let present = seeded.top(None).map(|m| m.instance);
             let bends = scene.pane(hit.material).is_some_and(|pane| pane.bends());
-            let there = seeded.beyond(hit.instance, base.medium_priority);
+            let there = seeded.beyond(solid, base.medium_priority);
             let eta = seeded.ior_of(there, Some(base)) / seeded.ior_of(present, None);
             // Inside a medium that outranks it, no interface at all; glass
             // this does not solve through, or between two equal indices,
@@ -888,7 +890,7 @@ pub(super) fn solve(
                 };
                 count += 1;
             }
-            seeded.cross_with(hit.instance, base, scene.density(hit.instance));
+            seeded.cross_with(solid, base, scene.density(hit.instance));
             absorbing[count] = absorbs(&seeded);
         }
         let (geometric, _) = hit.facing_forward(ray.direction);

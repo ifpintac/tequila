@@ -224,19 +224,27 @@ const MAX_ENCLOSURE_CROSSINGS: u32 = 32;
 
 /// The media a path starts inside, if it starts inside any.
 ///
-/// Decided by counting crossings along the ray rather than by reading a
-/// normal: an odd number of surfaces of one instance between the origin and
+/// Decided by counting crossings along a line rather than by reading a
+/// normal: an odd number of surfaces of one solid between the origin and
 /// infinity means the origin is within it. That is true of any closed mesh
 /// however it is wound, which is the whole point — the winding is the thing
-/// that cannot be trusted here.
+/// that cannot be trusted here. A solid modelled as several open parts is
+/// counted as the one it is ([`SceneSnapshot::solid`]).
 ///
 /// Only the boundaries of media are counted. An opaque object the camera has
 /// been pushed inside of has no interface to get the wrong way round, and
 /// counting it would cost every scene the probe for nothing.
 ///
-/// Costs nothing in the ordinary case: the first hit of a camera ray outside
-/// everything is a front face of an opaque surface, and the walk stops at the
-/// first surface that is not transmissive.
+/// The line runs back from the ray's origin, away from where it looks, not
+/// on ahead. Any line out to infinity will do, and the one behind a camera
+/// usually meets nothing, where the one ahead crosses everything in view:
+/// each part one more step past a surface, and a step past one of two
+/// surfaces lying in one plane passes the other unseen. A frosted label laid
+/// flat on the palma P8's back shell did that: counted from the front, the
+/// shell was crossed once, and the screen in front of the label showed
+/// through a dark patch of the shell's volume.
+///
+/// [`SceneSnapshot::solid`]: crate::scene::SceneSnapshot::solid
 fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
     let scene = intersector.scene();
     let mut media = MediumStack::default();
@@ -248,7 +256,7 @@ fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
     let mut counts: [(InstanceId, tequila_core::ids::MaterialId, u32); MAX_MEDIA] =
         [(InstanceId(u32::MAX), tequila_core::ids::MaterialId(0), 0); MAX_MEDIA];
     let mut used = 0usize;
-    let mut probe = *ray;
+    let mut probe = Ray { direction: -ray.direction, ..*ray };
     for _ in 0..MAX_ENCLOSURE_CROSSINGS {
         let Some(hit) = intersector.intersect(&probe) else {
             break;
@@ -256,13 +264,14 @@ fn enclosing_media(intersector: &dyn Intersector, ray: &Ray) -> MediumStack {
         // Only what has an inside: a thin-walled shell is a surface with no
         // medium behind it, whatever its mesh encloses.
         if is_boundary(scene.material(hit.material)) {
-            match counts[..used].iter_mut().find(|(i, _, _)| *i == hit.instance) {
+            let solid = scene.solid(hit.instance);
+            match counts[..used].iter_mut().find(|(i, _, _)| *i == solid) {
                 Some((_, _, n)) => *n += 1,
                 // More than a handful of media along one ray is past what the
                 // stack holds; stop counting rather than grow, and let the
                 // extra ones read as outside.
                 None if used < MAX_MEDIA => {
-                    counts[used] = (hit.instance, hit.material, 1);
+                    counts[used] = (solid, hit.material, 1);
                     used += 1;
                 }
                 None => {}
@@ -1252,11 +1261,11 @@ fn trace<C: PathColour>(
         // The density with which a lit medium's last event sent the path
         // here, if it did: what the sky past a part that casts no shadow is
         // weighed by (`light_past`).
-        let from_medium = lit_from_medium.filter(|m| *m != hit.instance).map(|_| lit_phase_pdf);
+        let from_medium = lit_from_medium.filter(|m| *m != scene.solid(hit.instance)).map(|_| lit_phase_pdf);
         // Anything but the lit medium's own surface is a new event, which
         // the direct sample did not see past. A light's stand-in, passed
         // below, it did see past: it casts no shadow.
-        if lit_from_medium.is_some_and(|m| m != hit.instance)
+        if lit_from_medium.is_some_and(|m| m != scene.solid(hit.instance))
             && (stand_in_shows || !is_light_proxy(scene, hit.instance))
         {
             lit_from_medium = None;
@@ -1503,12 +1512,15 @@ fn trace<C: PathColour>(
             out.fine = fibre.is_some();
         }
         let boundary = is_boundary(base) && fibre.is_none();
+        // The medium this surface bounds, which is the part's own unless
+        // the part is one piece of a solid modelled as several.
+        let solid = if boundary { scene.solid(hit.instance) } else { hit.instance };
         if boundary
             && crossings < MAX_CUTOUT_CROSSINGS
-            && media.beyond(hit.instance, base.medium_priority) == media.top(None).map(|m| m.instance)
+            && media.beyond(solid, base.medium_priority) == media.top(None).map(|m| m.instance)
         {
             crossings += 1;
-            media.cross_with(hit.instance, base, scene.density(hit.instance));
+            media.cross_with(solid, base, scene.density(hit.instance));
             let (geometric, _) = hit.facing_forward(ray.direction);
             ray = Ray::new(hit.offset(-geometric), ray.direction);
             continue;
@@ -1849,7 +1861,7 @@ fn trace<C: PathColour>(
         let shaded = material;
         let (from_inside, relative_ior) = if boundary {
             let here = media.top(None).map(|m| m.instance);
-            let there = media.beyond(hit.instance, base.medium_priority);
+            let there = media.beyond(solid, base.medium_priority);
             let n_here = media.ior_of(here, None);
             let n_there = media.ior_of(there, Some(shaded));
             if n_there >= n_here {
@@ -2261,7 +2273,7 @@ fn trace<C: PathColour>(
             if sample.flags.contains(BsdfFlags::SUBSURFACE) {
                 media.cross_walk(hit.instance, shaded);
             } else if boundary {
-                media.cross_with(hit.instance, shaded, scene.density(hit.instance));
+                media.cross_with(solid, shaded, scene.density(hit.instance));
             }
         }
         if !throughput.is_finite() || throughput.is_black() {
@@ -3240,9 +3252,10 @@ fn cutout_transmittance(
             through *= pane.crossing(ray.direction.dot(hit.geometric_normal));
             bent |= pane.bends();
             if pane.has_volume() {
+                let solid = scene.solid(hit.instance);
                 match inside {
-                    None => inside = Some((hit.instance, at)),
-                    Some((instance, since)) if instance == hit.instance => {
+                    None => inside = Some((solid, at)),
+                    Some((instance, since)) if instance == solid => {
                         through *= pane.inside(at - since);
                         inside = None;
                     }
@@ -3800,8 +3813,8 @@ fn medium_transmittance(
             None => return through,
             // The medium's own surface, and anything that casts no shadow,
             // are passed; anything else is in the way.
-            Some(hit) if hit.instance == instance || !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => {
-                if hit.instance == instance {
+            Some(hit) if scene.solid(hit.instance) == instance || !scene.casts_shadows(hit.instance) || !blockers.lights(hit.instance.0) => {
+                if scene.solid(hit.instance) == instance {
                     inside = !inside;
                 }
                 remaining -= hit.t;
