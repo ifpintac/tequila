@@ -5295,6 +5295,16 @@ mod tests {
         sphere: Sphere,
         sphere_material: Material,
     ) -> AnalyticIntersector {
+        catcher_scene_with(ShadowCatcher::default(), environment, lights, sphere, sphere_material)
+    }
+
+    fn catcher_scene_with(
+        catcher: ShadowCatcher,
+        environment: Environment,
+        lights: Vec<crate::light::Light>,
+        sphere: Sphere,
+        sphere_material: Material,
+    ) -> AnalyticIntersector {
         let size = crate::scene::Mesh::new(
             vec![vec3(-4.0, 0.0, -4.0), vec3(4.0, 4.0, 4.0), vec3(4.0, 0.0, -4.0)],
             vec![0, 1, 2],
@@ -5302,7 +5312,7 @@ mod tests {
         let instances = vec![
             crate::scene::Instance::new(InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0)),
             crate::scene::Instance::new(InstanceId(1), tequila_core::ids::MeshId(1), tequila_core::ids::MaterialId(0))
-                .with_shadow_catcher(ShadowCatcher::default()),
+                .with_shadow_catcher(catcher),
         ];
         let scene = SceneSnapshot::new(vec![Arc::new(size)], instances, vec![sphere_material], Arc::new(environment))
             .with_lights(Arc::new(crate::light::LightSet::new(lights)));
@@ -5461,6 +5471,43 @@ mod tests {
         assert!(intersector.scene().has_cutouts());
         let (caught, _) = caught_at_origin(&intersector);
         assert!((caught - 0.64).abs() < 0.01, "the floor is {caught:.3} shadowed under a 40%-opaque sphere");
+    }
+
+    /// A floor that takes the product's light shows it: a white ball just
+    /// over it lightens the shadow under it, a black one does not, and with
+    /// the setting off the two cast the same shadow, as they always did.
+    /// Under a uniform sky a white diffuse ball sends the floor less than
+    /// the sky it hides, so the floor stays darker than in the open: the
+    /// light is not counted twice.
+    #[test]
+    fn a_floor_shows_the_light_a_white_part_sends_onto_it() {
+        let floor = |albedo: f32, product_light: bool| -> f32 {
+            let intersector = catcher_scene_with(
+                ShadowCatcher { product_light, ..ShadowCatcher::default() },
+                Environment::uniform(Spectrum::ONE),
+                Vec::new(),
+                Sphere::new(vec3(0.0, 0.6, 0.0), 0.5, tequila_core::ids::MaterialId(0)),
+                Material::diffuse(Spectrum::splat(albedo)),
+            );
+            let config = IntegratorConfig { shadows: true, ..IntegratorConfig::product() };
+            let n = 6_000u32;
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                let mut sampler = Sampler::new(3, 5, i, 29);
+                let ray = Ray::new(vec3(4.0, 1.0, 0.5), vec3(-4.0, -1.0, -0.5).normalize());
+                let result = trace_path(&intersector, &config, ray, Vec2::ZERO, &mut sampler);
+                assert_eq!(result.object_id, 1, "the camera ray missed the floor");
+                sum += f64::from(result.radiance.luminance());
+            }
+            (sum / f64::from(n)) as f32
+        };
+        let (black_off, black_on) = (floor(0.0, false), floor(0.0, true));
+        let (white_off, white_on) = (floor(0.9, false), floor(0.9, true));
+        assert!(black_off < 0.8, "the ball casts too little shadow to test with: {black_off:.3}");
+        assert!((black_on - black_off).abs() < 0.01, "a black ball lit the floor: {black_off:.3} to {black_on:.3}");
+        assert!((white_off - black_off).abs() < 0.01, "with the setting off a white ball lit the floor: {white_off:.3}");
+        assert!(white_on > white_off + 0.1, "a white ball sent the floor too little: {white_off:.3} to {white_on:.3}");
+        assert!(white_on < 1.0, "the floor under a white ball came out brighter than in the open: {white_on:.3}");
     }
 
     fn mirrored(normal: Vec3, wo: Vec3) -> Vec3 {
