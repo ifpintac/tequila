@@ -135,9 +135,12 @@ Sizes are relative: S is a pull request or two, M a handful, L a dozen or more.
 *Test:* `scripts/bench/run.py` runs on both reference machines; its table replaces §2.1 here and joins `docs/05` §4.
 
 **R0.2 Keep the look Cycles makes, before it goes.**
-`scripts/look-refs/make.py` renders, with Cycles on the processor at 1,024 samples: the three samples, the demo scene in plastic, metal and diffuse, every Studio once, and all library presets as 256×256 swatches. The set is zipped, attached to a GitHub release named `look-refs-1`, and its SHA-256 is committed. It is not committed to the repository (size). After R7 this archive is the only record of the look existing projects were made in.
+The pictures Cycles makes of what Tequila ships, rendered once and kept: after R7 they are the only record of the look existing projects were made in.
+- *As built:* `scripts/look-refs/looks.py make` renders, with Cycles, through the command line's render (the render queue's own, with each project's look and denoising), at 1,024 samples: the three samples and the demo scene in plastic, metal and diffuse at 960×540, every Studio applied to the Headphones, and every library preset on a ball 5 cm across seen as the library's previews see theirs, at 256×256.
+- *Made 2026-11-17:* 623 pictures (610 presets, 7 Studios, 3 samples, 3 demo), by Cycles on the RTX 2060 (OptiX; it renders the same pictures as on the processor, sample for sample, R0.1), from main's renderer, in 49 minutes. `look-refs-1.zip`, 39 MB, is on a **draft** release of the repository, which only its writers can see and which starts no release build and no Discord announcement; it must never be published. Its SHA-256 is in `scripts/look-refs/look-refs-1.sha256`, and `compare` refuses a zip that does not match.
+- The first plan put it on a published release named `look-refs-1`; the repository is public, and publishing any release builds the Mac and Linux packages and announces them on Discord.
 
-*Test:* `scripts/look-refs/compare.py` fetches the archive and reports, per picture, the mean absolute difference and correlation against any engine; run against Cycles itself it reports zero.
+*Test:* `scripts/look-refs/looks.py compare --refs look-refs-1.zip --engine cycles` reports correlation 1.000 and no difference against Cycles itself; with `--engine tequila`, the default, it reports Tequila's renderer against the look, worst first, with sheets of the pictures that differ (R0.4's input).
 
 **R0.3 Name the parity set.**
 One list of small scenes that between them use every feature in R3's tiers, each with a fixed seed, size and sample count. R2 starts it with one scene; each R3 step adds the scene for its feature.
