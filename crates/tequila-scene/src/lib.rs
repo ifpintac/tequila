@@ -38,6 +38,7 @@ pub mod model_size;
 pub mod occlusion;
 pub mod proximity;
 pub mod orbit;
+pub mod parity;
 pub mod paths;
 pub mod pattern;
 pub mod preset;
