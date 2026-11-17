@@ -9,26 +9,26 @@
 //!
 //! The specification's table allocates 6 dimensions per bounce starting at
 //! dimension 6. This implementation allocates **8 per bounce starting at
-//! dimension 8**, because [`crate::sobol`] pads beyond
-//! [`NUM_BASE_DIMENSIONS`](crate::sobol::NUM_BASE_DIMENSIONS)`= 8` and only
-//! guarantees joint stratification *within* a padding group. Aligning each
-//! bounce to a group boundary means a bounce's light-selection, light-sample,
-//! lobe-selection and direction-sample dimensions are jointly stratified;
-//! a 6-wide allocation would straddle group boundaries and silently lose that
-//! for two of every four bounces. The two spare dimensions carry Russian
-//! roulette and medium sampling.
+//! dimension 8**: two of [`crate::sobol`]'s padding groups of
+//! [`NUM_BASE_DIMENSIONS`](crate::sobol::NUM_BASE_DIMENSIONS)`= 4`, which are
+//! jointly stratified within a group and decorrelated across. The bounce's
+//! direction takes the first group's leading pair, with the lobe choice and
+//! Russian roulette after it; the light sample takes the second's, with the
+//! light choice and medium sampling after it. So each two-dimensional draw
+//! is a group's leading pair, the one Sobol′ stratifies perfectly, and each
+//! choice is stratified together with the draw it goes with.
 
 use crate::math::{vec2, Vec2};
 use crate::rng::{hash_many, Pcg32};
 use crate::sobol::{self, NUM_BASE_DIMENSIONS};
 
-/// Dimensions consumed by each bounce. Equal to the Sobol′ padding group size
-/// so that a bounce never straddles two groups.
-pub const DIMENSIONS_PER_BOUNCE: u32 = NUM_BASE_DIMENSIONS;
+/// Dimensions consumed by each bounce: two whole Sobol′ padding groups, so
+/// that no draw straddles two.
+pub const DIMENSIONS_PER_BOUNCE: u32 = 2 * NUM_BASE_DIMENSIONS;
 
 /// First dimension belonging to bounce 0. Dimensions below this are the
 /// camera-level samples, which every path shares.
-pub const FIRST_BOUNCE_DIMENSION: u32 = NUM_BASE_DIMENSIONS;
+pub const FIRST_BOUNCE_DIMENSION: u32 = 2 * NUM_BASE_DIMENSIONS;
 
 /// Camera-level dimension indices.
 pub mod dim {
@@ -41,12 +41,13 @@ pub mod dim {
     /// Hero wavelength in spectral mode (1D).
     pub const WAVELENGTH: u32 = 5;
 
-    /// Per-bounce offsets, added to the bounce's base dimension.
-    pub const LIGHT_SELECT: u32 = 0;
-    pub const LIGHT_SAMPLE: u32 = 1; // 2D
-    pub const BSDF_LOBE: u32 = 3;
-    pub const BSDF_DIRECTION: u32 = 4; // 2D
-    pub const RUSSIAN_ROULETTE: u32 = 6;
+    /// Per-bounce offsets, added to the bounce's base dimension: the
+    /// bounce's own group first, then the light sample's.
+    pub const BSDF_DIRECTION: u32 = 0; // 2D
+    pub const BSDF_LOBE: u32 = 2;
+    pub const RUSSIAN_ROULETTE: u32 = 3;
+    pub const LIGHT_SAMPLE: u32 = 4; // 2D
+    pub const LIGHT_SELECT: u32 = 6;
     pub const MEDIUM: u32 = 7;
 }
 
@@ -218,19 +219,46 @@ mod tests {
         assert_eq!(s.get(dim::PIXEL), s.get(dim::PIXEL));
     }
 
-    /// Each bounce must land exactly on one Sobol′ padding group, which is the
+    /// Each bounce must start on a Sobol′ padding group, and each of its
+    /// two-dimensional draws must be a group's leading pair, which is the
     /// reason this module deviates from the spec's 6-wide allocation.
     #[test]
     fn bounce_blocks_align_to_padding_groups() {
         for bounce in 0..8u32 {
             let base = FIRST_BOUNCE_DIMENSION + bounce * DIMENSIONS_PER_BOUNCE;
             assert_eq!(base % NUM_BASE_DIMENSIONS, 0);
-            let last = base + DIMENSIONS_PER_BOUNCE - 1;
-            assert_eq!(
-                base / NUM_BASE_DIMENSIONS,
-                last / NUM_BASE_DIMENSIONS,
-                "bounce {bounce} straddles two padding groups"
-            );
+            for pair in [dim::BSDF_DIRECTION, dim::LIGHT_SAMPLE] {
+                assert_eq!((base + pair) % NUM_BASE_DIMENSIONS, 0, "bounce {bounce}: a pair off a group's start");
+            }
+        }
+        assert_eq!(dim::PIXEL % NUM_BASE_DIMENSIONS, 0);
+    }
+
+    /// A bounce's direction and its light sample are each a perfect
+    /// (0,2)-net, in every pixel and at every bounce: for `4^k` samples,
+    /// one in each cell of a `2^k` by `2^k` grid. The pair a bounce's
+    /// direction was once drawn from (Sobol′'s dimensions 4 and 5) is not,
+    /// and made a glossy reflection of a softbox several times noisier than
+    /// it needs to be (`docs/07` R1).
+    #[test]
+    fn every_two_dimensional_draw_is_a_perfect_net() {
+        let draws: [(&str, fn(&mut Sampler) -> Vec2); 3] =
+            [("direction", Sampler::bsdf_direction), ("light", Sampler::light_sample), ("pixel", Sampler::pixel_jitter)];
+        for (pixel, bounce) in [((0u32, 0u32), 0u32), ((37, 91), 1), ((640, 2), 4)] {
+            for (name, draw) in draws {
+                for k in 2..=4u32 {
+                    let side = 1usize << k;
+                    let mut seen = vec![false; side * side];
+                    for i in 0..(side * side) as u32 {
+                        let mut s = Sampler::new(pixel.0, pixel.1, i, 9);
+                        s.begin_bounce(bounce);
+                        let v = draw(&mut s);
+                        let cell = (v.y * side as f32) as usize * side + (v.x * side as f32) as usize;
+                        assert!(!seen[cell], "{name} at bounce {bounce}, pixel {pixel:?}: two of {} samples in one cell", side * side);
+                        seen[cell] = true;
+                    }
+                }
+            }
         }
     }
 
