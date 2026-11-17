@@ -1624,6 +1624,18 @@ fn trace<C: PathColour>(
             ),
             _ => shading_normal,
         };
+        // Turned again, now it is bent: Cycles makes its reflection valid on
+        // the normal the BSDF is given, which is the bumped one. Turned only
+        // before the bump, a steep relief - a 3D print's layer grooves, a
+        // hammered finish - sent much of its mirror reflection into the
+        // surface, where the leak guard below ends the path: the highlight
+        // went and the part darkened, a translucent print by half. One that
+        // already reflects above the surface is left exactly as it was.
+        let shading_normal = if scene.bump(hit.material).is_some() || material.edge_radius > 0.0 {
+            valid_for_reflection(geometric_normal, wo_world, shading_normal)
+        } else {
+            shading_normal
+        };
 
         // ---- Cutout ------------------------------------------------------
         //
@@ -4413,6 +4425,57 @@ mod tests {
             }
         }
         assert!(tilted > 5, "only {tilted} of 20 points on the slopes were bumped");
+    }
+
+    #[test]
+    fn a_steep_bump_still_reflects_above_the_surface() {
+        use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket};
+        use tequila_materials::material_type::{MaterialType, Param};
+        use tequila_texture::procedural::{Axis, Procedural};
+
+        // Grooves a tenth of their spacing deep, as a print's layers are:
+        // slopes steep enough to tip the mirror reflection of a view from
+        // 60 degrees into the surface, unless the normal is turned after
+        // the bump.
+        let mut graph = MaterialGraph::from_material(MaterialType::Plastic.defaults());
+        let lines = graph.add_node(Node::new(NodeKind::Procedural {
+            procedural: Box::new(Procedural::Contour { axis: Axis::X, frequency: 50.0, width: 0.5, softness: 1.0, distortion: 0.0 }),
+            seed: 0,
+        }));
+        let bump = graph.add_node(Node::new(NodeKind::Bump { depth: 0.01 }));
+        graph.connect(lines, bump, Socket::Input(0));
+        let output = graph.output();
+        graph.connect(bump, output, Socket::Param(Param::Bump));
+        let program = graph.compile().expect("compiles");
+        let quad = crate::scene::Mesh::new(vec![vec3(0.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0)], vec![0, 1, 2]);
+        let scene = SceneSnapshot::new(
+            vec![Arc::new(quad)],
+            vec![crate::scene::Instance::new(tequila_core::ids::InstanceId(0), tequila_core::ids::MeshId(0), tequila_core::ids::MaterialId(0))],
+            vec![Material::diffuse(Spectrum::splat(0.5))],
+            Arc::new(Environment::uniform(Spectrum::ONE)),
+        )
+        .with_programs(vec![Some(Arc::new(program))], Arc::new(Default::default()));
+        let intersector = AnalyticIntersector::new(scene).with_plane(Plane::new(Vec3::ZERO, Vec3::Z, tequila_core::ids::MaterialId(0)));
+        // Seen from 60 degrees off the normal, across the grooves.
+        let direction = vec3(60f32.to_radians().sin(), 0.0, -60f32.to_radians().cos());
+        let wo = -direction;
+        let (mut steep, mut tilted) = (0, 0);
+        for i in 0..200 {
+            let x = 0.3 + i as f32 * 0.00037;
+            let ray = Ray::new(vec3(x, 0.3, 0.0) - direction * 2.0, direction);
+            let mut sampler = Sampler::new(0, 0, 0, 3);
+            let n = trace_path(&intersector, &IntegratorConfig::default(), ray, Vec2::ZERO, &mut sampler).normal;
+            let mirrored = n * (2.0 * n.dot(wo)) - wo;
+            assert!(mirrored.z > 0.0, "at x {x} the reflection about {n:?} goes into the surface: {mirrored:?}");
+            if (n - Vec3::Z).length() > 0.05 {
+                tilted += 1;
+            }
+            if n.x.abs() > 0.4 {
+                steep += 1;
+            }
+        }
+        assert!(tilted > 50, "only {tilted} of 200 points were bumped");
+        assert!(steep > 0, "no slope was steep enough to test the turn");
     }
 
     fn average_radiance(
