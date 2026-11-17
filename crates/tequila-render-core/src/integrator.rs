@@ -2792,6 +2792,13 @@ fn catch_shadow(
         coverage = 0.0;
     }
 
+    // What the product sends onto the floor, added to what is behind it in
+    // the share it adds to the light the floor gets in the open: the other
+    // half of the ratio a shadow is, which can only take light away.
+    if catcher.product_light && catcher.shadows && !config.floor_reflection_only {
+        radiance += behind * light_from_the_product(intersector, config, hit, normal, sampler);
+    }
+
     let mut guide = (radiance, hit.shading_normal);
     if catcher.reflections > 0.0 {
         if let Some((seen, share)) = floor_reflection(intersector, config, hit, catcher, view, normal, sampler) {
@@ -2815,6 +2822,77 @@ fn catch_shadow(
     }
 
     CaughtShadow { radiance, coverage, guide }
+}
+
+/// The light the product sends onto the floor at `hit`, facing `normal`,
+/// over the light the floor would receive there with nothing on it: bounced
+/// off the product, glowing from it, through its frosted glass or
+/// translucent plastic. Per channel, so a red part reddens the floor by it.
+///
+/// One direction from the floor in proportion to its cosine; where it meets
+/// the product, the light coming back along it is a path of its own, traced
+/// as the floor's reflection's is. A direction that meets the sky or the
+/// floor brings nothing here: that light is the shadow's to account for.
+///
+/// Smooth glass is left out: what passes it straight on is already the
+/// shadow's transmittance (a pane, `Pane::of`), and what it focuses is the
+/// caustics', and counted here as well either would light the floor twice.
+fn light_from_the_product(
+    intersector: &dyn Intersector,
+    config: &IntegratorConfig,
+    hit: &Hit,
+    normal: Vec3,
+    sampler: &mut Sampler,
+) -> Spectrum {
+    let scene = intersector.scene();
+    let open = open_irradiance(scene, hit.position, normal);
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    if !(open > 0.0) {
+        return Spectrum::ZERO;
+    }
+    let local = tequila_core::sampling::sample_cosine_hemisphere(sampler.next_unstructured2());
+    let direction = Onb::from_normal(normal).to_world(local);
+    let ray = Ray::new(hit.offset(normal), direction);
+    let Some(seen) = intersector.intersect(&ray) else {
+        return Spectrum::ZERO;
+    };
+    if scene.instances.get(seen.instance.0 as usize).is_some_and(|i| i.shadow_catcher.is_some()) {
+        return Spectrum::ZERO;
+    }
+    if scene.pane(seen.material).is_some() {
+        return Spectrum::ZERO;
+    }
+    let material = scene.material(seen.material);
+    let focuses = material.specular_roughness <= caustics::FOCUSING_ROUGHNESS
+        && (material.transmission_weight > 0.5 || material.base_metalness > 0.5);
+    if config.caustics && focuses {
+        return Spectrum::ZERO;
+    }
+    let mut child = config.clone();
+    child.max_bounces = config.max_bounces.min(4);
+    child.in_floor_reflection = true;
+    child.floor_reflection_only = false;
+    let back = trace_path(intersector, &child, ray, Vec2::ZERO, sampler).radiance;
+    // Irradiance from a cosine-weighted draw is pi times the radiance.
+    back * (std::f32::consts::PI / open)
+}
+
+/// The light, as luminance, the environment and the lamps bring onto a
+/// point facing `normal` with nothing in the way: what the product's light
+/// on the floor is measured against. The environment's is exact for a
+/// floor facing up (`Environment::irradiance_bound`); each lamp's is its
+/// light from its middle.
+fn open_irradiance(scene: &crate::scene::SceneSnapshot, position: Vec3, normal: Vec3) -> f32 {
+    let mut total = scene.environment.irradiance_bound(position, normal);
+    for light in scene.lights.lights() {
+        if let Some(sample) = light.sample(position, Vec2::splat(0.5)) {
+            let density = if sample.is_delta { 1.0 } else { sample.pdf };
+            if density > 0.0 {
+                total += sample.radiance.luminance() * sample.direction.dot(normal).max(0.0) / density;
+            }
+        }
+    }
+    total
 }
 
 /// What the floor reflects along one direction, and how much of it shows:
