@@ -812,6 +812,9 @@ fn trace<C: PathColour>(
     // tens to hundreds of steps and each is cheap.
     let mut walk_steps = 0u32;
     let mut null_steps = 0u32;
+    // The subsurface walk the path is on, guided back towards where it came
+    // in (`WalkGuide`).
+    let mut guide: Option<WalkGuide> = None;
     // The last walk's medium, its extinction and albedo, and the two as the
     // path carries them.
     let mut walk_spectra: Option<(Spectrum, Spectrum, C::Value, C::Value)> = None;
@@ -960,21 +963,29 @@ fn trace<C: PathColour>(
         // one, when it is that close.
         let mut drawn: Option<WalkFlight<C::Value>> = None;
         if ray.t_max == f32::INFINITY && seen_from.is_none() && scene.cutters().is_empty() {
-            if let Some((walk, recipe)) = media.top(None).filter(|m| m.density.is_none()).and_then(|m| Some((m.scattering?, m.recipe)))
+            if let Some((walk, recipe, instance)) =
+                media.top(None).filter(|m| m.density.is_none()).and_then(|m| Some((m.scattering?, m.recipe, m.instance)))
             {
                 walk_steps += 1;
                 if walk_steps > MAX_WALK_STEPS {
                     break;
                 }
                 let (sigma, albedo) = walk_medium_cached(colour, &walk, recipe.as_ref(), &mut walk_spectra);
+                let guiding = guide.as_ref().filter(|g| g.instance == instance);
                 let draws = (sampler.next_unstructured(), sampler.next_unstructured());
-                let (chance, depth) = walk_flight(throughput, sigma, draws);
-                drawn = Some(WalkFlight { sigma, albedo, chance, depth });
+                let (chance, depth) = walk_flight(throughput, sigma, guiding.map_or(1.0, WalkGuide::stretch), draws);
+                // The walk's first flight looks further, for the surface
+                // opposite the one it came in by.
+                let reach = match guiding {
+                    Some(g) if !g.flown => depth.max(WalkGuide::look(sigma)),
+                    _ => depth,
+                };
+                drawn = Some(WalkFlight { sigma, albedo, chance, depth, reach });
             }
         }
-        let flight = drawn.as_ref().map(|d| d.depth);
+        let flight = drawn.as_ref().map(|d| d.reach);
         let hit = match flight {
-            Some(depth) => intersector.intersect(&Ray { t_max: depth, ..ray }),
+            Some(reach) => intersector.intersect(&Ray { t_max: reach, ..ray }),
             None => intersector.intersect(&ray),
         };
 
@@ -1078,6 +1089,27 @@ fn trace<C: PathColour>(
                 Some(d) => (d.sigma, d.albedo),
                 None => walk_medium_cached(colour, &walk, media.top(None).and_then(|m| m.recipe.as_ref()), &mut walk_spectra),
             };
+            // Guided, when this is the walk the path came in on (a Volume
+            // Map's medium never is: it is entered by refraction).
+            let walk_instance = media.top(None).map(|m| m.instance);
+            let guiding = guide.as_mut().filter(|g| Some(g.instance) == walk_instance && field.is_none());
+            let (stretch, turn) = match guiding {
+                Some(g) => {
+                    if !g.flown {
+                        // The surface opposite, if the first flight saw it
+                        // within ten mean free paths: where a thin part's
+                        // walk is guided across to.
+                        let look = WalkGuide::look(sigma);
+                        g.opposite = hit
+                            .as_ref()
+                            .filter(|h| h.instance == g.instance && h.t <= look)
+                            .map(|h| (h.position - g.entry).dot(-g.normal))
+                            .filter(|d| *d > 0.0);
+                    }
+                    (g.stretch(), g.turn)
+                }
+                None => (1.0, None),
+            };
             let channels = <C::Value as Carried>::CHANNELS;
             let survive = |t: f32| C::Value::from_channels(|c| (-sigma.channel(c) * t).exp());
             // Flights along this one ray until a real collision or the
@@ -1091,13 +1123,16 @@ fn trace<C: PathColour>(
             loop {
                 let (chance, depth) = match drawn.take() {
                     Some(d) => (d.chance, d.depth),
-                    None => walk_flight(throughput, sigma, (sampler.next_unstructured(), sampler.next_unstructured())),
+                    None => walk_flight(throughput, sigma, stretch, (sampler.next_unstructured(), sampler.next_unstructured())),
                 };
                 let (t, bound) = match fly(field.as_deref(), &ray, travelled, surface_at, depth) {
                     Flight::Collided { t, bound } => (t, bound),
                     Flight::Reached { depth } => {
                         let kept = survive(depth);
-                        let probability: f32 = (0..channels).map(|c| chance.channel(c) * kept.channel(c)).sum();
+                        let probability: f32 = match &turn {
+                            Some(turn) => turn.density(chance, sigma, depth, false),
+                            None => (0..channels).map(|c| chance.channel(c) * kept.channel(c)).sum(),
+                        };
                         if probability <= 0.0 {
                             lost = true;
                         } else {
@@ -1107,7 +1142,10 @@ fn trace<C: PathColour>(
                     }
                 };
                 let kept = survive(depth);
-                let density: f32 = (0..channels).map(|c| chance.channel(c) * sigma.channel(c) * kept.channel(c)).sum();
+                let density: f32 = match &turn {
+                    Some(turn) => turn.density(chance, sigma, depth, true),
+                    None => (0..channels).map(|c| chance.channel(c) * sigma.channel(c) * kept.channel(c)).sum(),
+                };
                 if density <= 0.0 {
                     lost = true;
                     break;
@@ -1182,13 +1220,12 @@ fn trace<C: PathColour>(
                     aovs.contribute(colour.rgb(lights), group);
                     lit_from_medium = Some(instance);
                 }
-                let next = tequila_core::sampling::sample_henyey_greenstein(
-                    ray.direction,
-                    walk.anisotropy,
-                    sampler.next_unstructured2(),
-                );
-                // Sampled exactly, so the density is the phase function's
-                // value.
+                let next = match guide.as_mut().filter(|g| Some(g.instance) == walk_instance && field.is_none()) {
+                    Some(g) => g.turn(at, ray.direction, walk.anisotropy, sampler),
+                    None => tequila_core::sampling::sample_henyey_greenstein(ray.direction, walk.anisotropy, sampler.next_unstructured2()),
+                };
+                // The phase function's value: the density of an unguided
+                // turn, and what a guided one is weighed against.
                 lit_phase_pdf = henyey_greenstein(ray.direction.dot(next), walk.anisotropy);
                 least_pdf = least_pdf.min(lit_phase_pdf);
                 ray = Ray::new(at, next);
@@ -2322,6 +2359,12 @@ fn trace<C: PathColour>(
             // relative one this interface was given.
             if sample.flags.contains(BsdfFlags::SUBSURFACE) {
                 media.cross_walk(hit.instance, shaded);
+                // A walk begins here, guided back towards this point and out
+                // through this surface; or the one it was on ends.
+                guide = media
+                    .top(None)
+                    .filter(|m| m.doorway && m.instance == hit.instance)
+                    .and_then(|m| WalkGuide::new(hit.instance, hit.position, geometric_normal, &m.scattering?));
             } else if boundary {
                 media.cross_with(hit.instance, shaded, scene.density(hit.instance));
             }
@@ -3744,20 +3787,209 @@ fn walk_medium_cached<C: PathColour>(
 }
 
 /// A uniform walk's next flight, drawn before its ray is traced: the medium
-/// as the path carries it, the chance of each channel, and the distance.
+/// as the path carries it, the chance of each channel, the distance, and how
+/// far to trace (further than the flight on a guided walk's first).
 struct WalkFlight<V> {
     sigma: V,
     albedo: V,
     chance: V,
     depth: f32,
+    reach: f32,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Walks unguided, on this thread, for tests that compare the two.
+    static UNGUIDED_WALKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A subsurface walk guided back towards the surface it came in by, as
+/// Cycles' random walk is (Blender's `subsurface_random_walk.h`,
+/// Apache-2.0): Dwivedi sampling, after Krivanek and d'Eon 2014, *A
+/// Zero-variance-based Sampling Scheme for Monte Carlo Subsurface
+/// Scattering*, with Meng, Hanika and Dachsbacher's 2016 improvements.
+///
+/// In a medium that scatters far more than it absorbs, a walk wanders: the
+/// translucent body of `subsurface_product` took seventy flights a walk on
+/// average, each a ray. Guided, its walks come out sooner, about 7% less
+/// time a sample for the same noise; in a white furnace a dense medium's
+/// variance halves (`docs/07` R1). A guided turn favours the way back out,
+/// along the entry's normal, and stretches the flight that follows when it
+/// heads that way; where the first flight saw the part's far side close by,
+/// some turns are guided across to it instead, so a thin part lit from
+/// behind is not starved. Half the turns of an isotropic medium are guided
+/// and half drawn from the phase function, fewer as it scatters forward,
+/// and every flight is weighed by the mixture of all the ways it could
+/// have been drawn (one-sample MIS, balance heuristic), so the picture it
+/// converges to is the same.
+#[derive(Clone, Copy, Debug)]
+struct WalkGuide {
+    instance: InstanceId,
+    /// Where the walk came in, and the surface's normal there, out of the
+    /// part.
+    entry: Vec3,
+    normal: Vec3,
+    /// Dwivedi's diffusion length `v`, for the channel that scatters most,
+    /// and `ln((v + 1) / (v - 1))`.
+    diffusion: f32,
+    phase_log: f32,
+    /// The share of turns drawn guided.
+    share: f32,
+    /// How far into the part, along the entry's normal, the surface opposite
+    /// lies, where the first flight saw one.
+    opposite: Option<f32>,
+    /// Whether the walk has turned yet: its first flight goes on the way
+    /// the path came in, and looks ahead for the surface opposite.
+    flown: bool,
+    /// How the turn that set the flight now being flown was drawn.
+    turn: Option<GuidedTurn>,
+}
+
+/// One turn of a guided walk, as the flight after it needs it.
+#[derive(Clone, Copy, Debug)]
+struct GuidedTurn {
+    guided: bool,
+    backward: bool,
+    /// [`WalkGuide::share`].
+    share: f32,
+    /// The chance a guided turn here heads across to the surface opposite.
+    backward_fraction: f32,
+    /// Dwivedi's density for the direction taken, over the phase
+    /// function's: guided out, and guided across.
+    forward_factor: f32,
+    backward_factor: f32,
+    /// What a guided flight's extinction is multiplied by, out and across.
+    forward_stretch: f32,
+    backward_stretch: f32,
+}
+
+impl WalkGuide {
+    /// The guide for a walk into `instance` at `entry`, through a surface
+    /// whose normal out of the part is `normal`; `None` where guiding would
+    /// not help (a medium that hardly scatters, or that scatters strongly
+    /// forward) or could not be worked out.
+    fn new(instance: InstanceId, entry: Vec3, normal: Vec3, walk: &tequila_materials::openpbr::SubsurfaceMedium) -> Option<WalkGuide> {
+        #[cfg(test)]
+        if UNGUIDED_WALKS.with(|u| u.get()) {
+            return None;
+        }
+        let alpha = walk.albedo.max_component();
+        if !(alpha > 0.0 && alpha < 1.0) {
+            return None;
+        }
+        // Meng et al.'s fit (their equation 67), as Cycles has it.
+        let diffusion = 1.0 / (1.0 - alpha.powf(2.44294 - 0.0215813 * alpha + 0.578637 / alpha)).sqrt();
+        let phase_log = ((diffusion + 1.0) / (diffusion - 1.0)).ln();
+        let share = 1.0 - walk.anisotropy.abs().powf(0.125).max(0.5);
+        if !(diffusion > 1.0 && diffusion.is_finite() && phase_log > 0.0 && phase_log.is_finite() && share > 0.0) {
+            return None;
+        }
+        Some(WalkGuide { instance, entry, normal, diffusion, phase_log, share, opposite: None, flown: false, turn: None })
+    }
+
+    /// How far the first flight looks for the surface opposite: ten mean
+    /// free paths in the channel that travels furthest.
+    fn look<V: Carried>(sigma: V) -> f32 {
+        let thinnest = (0..V::CHANNELS).map(|c| sigma.channel(c)).fold(f32::INFINITY, f32::min);
+        10.0 / thinnest.max(1e-9)
+    }
+
+    /// What the next flight's extinction is multiplied by, to draw it.
+    fn stretch(&self) -> f32 {
+        match self.turn {
+            Some(turn) if turn.guided && turn.backward => turn.backward_stretch,
+            Some(turn) if turn.guided => turn.forward_stretch,
+            _ => 1.0,
+        }
+    }
+
+    /// Turn at `at`, where the walk was heading `forward`: guided, or by
+    /// the phase function of anisotropy `g`. The way on.
+    fn turn(&mut self, at: Vec3, forward: Vec3, g: f32, sampler: &mut Sampler) -> Vec3 {
+        self.flown = true;
+        let guided = sampler.next_unstructured() < self.share;
+        // Across to the surface opposite the more, the further the walk has
+        // gone towards it (Meng et al.).
+        let backward_fraction = match self.opposite {
+            Some(opposite) => {
+                let x = (at - self.entry).dot(-self.normal).clamp(0.0, opposite);
+                1.0 / (1.0 + ((opposite - 2.0 * x) / self.diffusion).exp())
+            }
+            None => 0.0,
+        };
+        let backward = self.opposite.is_some() && sampler.next_unstructured() < backward_fraction;
+        let u = sampler.next_unstructured2();
+        let v = self.diffusion;
+        let (next, cos_theta) = if guided {
+            // Dwivedi's distribution about the entry's normal, mirrored to
+            // head across.
+            let mut cos_theta = (v - (v + 1.0) * (-u.x * self.phase_log).exp()).clamp(-1.0, 1.0);
+            if backward {
+                cos_theta = -cos_theta;
+            }
+            let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
+            let phi = std::f32::consts::TAU * u.y;
+            let next = Onb::from_normal(self.normal).to_world(Vec3 { x: sin_theta * phi.cos(), y: sin_theta * phi.sin(), z: cos_theta });
+            (next, cos_theta)
+        } else {
+            let next = tequila_core::sampling::sample_henyey_greenstein(forward, g, u);
+            (next, next.dot(self.normal))
+        };
+        let phase = henyey_greenstein(forward.dot(next), g).max(1e-12);
+        let dwivedi = |mu: f32| 1.0 / ((v - mu) * self.phase_log) / std::f32::consts::TAU;
+        self.turn = Some(GuidedTurn {
+            guided,
+            backward,
+            share: self.share,
+            backward_fraction,
+            forward_factor: dwivedi(cos_theta) / phase,
+            backward_factor: dwivedi(-cos_theta) / phase,
+            forward_stretch: 1.0 - cos_theta / v,
+            backward_stretch: 1.0 + cos_theta / v,
+        });
+        next
+    }
+}
+
+impl GuidedTurn {
+    /// The density, over the channels' `chance`s, with which the flight
+    /// after this turn ends at `t` - colliding there, or flying past it to
+    /// the surface - by any of the ways it could have been drawn: by the
+    /// phase function and plain extinction, or guided out or across with
+    /// the extinction stretched, in each channel. The phase function's own
+    /// density is left out, as it is of the phase function's value that
+    /// the throughput is multiplied by (`henyey_greenstein`), which it
+    /// cancels.
+    fn density<V: Carried>(&self, chance: V, sigma: V, t: f32, collided: bool) -> f32 {
+        let flight = |s: f32| {
+            let past = (-s * t).exp();
+            if collided {
+                s * past
+            } else {
+                past
+            }
+        };
+        let mut total = 0.0f32;
+        for c in 0..V::CHANNELS {
+            let s = sigma.channel(c);
+            let mut guided = self.forward_factor * flight(s * self.forward_stretch);
+            if self.backward_fraction > 0.0 {
+                guided = guided * (1.0 - self.backward_fraction)
+                    + self.backward_fraction * self.backward_factor * flight(s * self.backward_stretch);
+            }
+            total += chance.channel(c) * ((1.0 - self.share) * flight(s) + self.share * guided);
+        }
+        total
+    }
 }
 
 /// A walk's next flight from two uniform draws: the chance of each channel
 /// it may be sampled in, in proportion to the path's `throughput`, and the
 /// optical depth it flies in the one chosen, in density times distance -
 /// plain distance in a uniform medium, and through a Volume Map each
-/// majorant block's bound times the length crossed.
-fn walk_flight<V: Carried>(throughput: V, sigma: V, (pick, along): (f32, f32)) -> (V, f32) {
+/// majorant block's bound times the length crossed - with the extinction
+/// multiplied by `stretch` (1 but on a guided walk, `WalkGuide`).
+fn walk_flight<V: Carried>(throughput: V, sigma: V, stretch: f32, (pick, along): (f32, f32)) -> (V, f32) {
     let channels = V::CHANNELS;
     let weights = V::from_channels(|c| throughput.channel(c).max(0.0));
     let mut total = weights.channel(0);
@@ -3778,7 +4010,7 @@ fn walk_flight<V: Carried>(throughput: V, sigma: V, (pick, along): (f32, f32)) -
             break;
         }
     }
-    let depth = -(1.0 - along).max(1e-12).ln() / sigma.channel(channel).max(1e-9);
+    let depth = -(1.0 - along).max(1e-12).ln() / (sigma.channel(channel) * stretch).max(1e-9);
     (chance, depth)
 }
 
@@ -4619,6 +4851,59 @@ mod tests {
         }
         let dim = Spectrum::splat(3.0);
         assert_eq!(clamp_light(&Rgb, dim, light_ceiling(&config, false, 2), &mut clamped), dim);
+    }
+
+    /// A guided walk (`WalkGuide`) is a way of drawing the same walk: a
+    /// coloured translucent ball in a white furnace returns the same light
+    /// guided or not, within the noise of either.
+    #[test]
+    fn guided_and_unguided_walks_return_the_same_light() {
+        let config = IntegratorConfig {
+            max_bounces: 64,
+            max_transmission_bounces: 64,
+            ..IntegratorConfig::default()
+        };
+        let material = Material {
+            subsurface_weight: 1.0,
+            subsurface_color: Spectrum { r: 0.9, g: 0.6, b: 0.3 },
+            subsurface_radius: Spectrum::splat(0.3),
+            base_weight: 1.0,
+            specular_weight: 0.0,
+            ..Material::default()
+        };
+        let intersector = white_furnace_scene(material);
+        let samples = 40_000;
+        let guided = average_radiance(&intersector, &config, samples);
+        UNGUIDED_WALKS.with(|u| u.set(true));
+        let unguided = average_radiance(&intersector, &config, samples);
+        UNGUIDED_WALKS.with(|u| u.set(false));
+        for (name, a, b) in [("red", guided.r, unguided.r), ("green", guided.g, unguided.g), ("blue", guided.b, unguided.b)] {
+            assert!((a - b).abs() < 0.03 * b.max(0.05), "{name}: guided {a:.4}, unguided {b:.4}");
+        }
+    }
+
+    #[test]
+    fn zz_guided_study() {
+        let config = IntegratorConfig { max_bounces: 64, max_transmission_bounces: 64, ..IntegratorConfig::default() };
+        for (colour, radius) in [(Spectrum { r: 0.9, g: 0.6, b: 0.3 }, 0.3f32), (Spectrum::splat(0.95), 0.3), (Spectrum::splat(0.8), 0.05), (Spectrum::splat(0.99), 1.0)] {
+            let material = Material { subsurface_weight: 1.0, subsurface_color: colour, subsurface_radius: Spectrum::splat(radius), base_weight: 1.0, specular_weight: 0.0, ..Material::default() };
+            let intersector = white_furnace_scene(material);
+            for unguided in [false, true] {
+                UNGUIDED_WALKS.with(|u| u.set(unguided));
+                let n = 40_000u32;
+                let (mut s1, mut s2) = (0.0f64, 0.0f64);
+                let t0 = std::time::Instant::now();
+                for i in 0..n {
+                    let mut sampler = Sampler::new(0, 0, i, 7);
+                    let ray = Ray::new(vec3(0.0, 0.0, 4.0), vec3(0.0, 0.0, -1.0));
+                    let v = trace_path(&intersector, &config, ray, Vec2::ZERO, &mut sampler).radiance.luminance() as f64;
+                    s1 += v; s2 += v * v;
+                }
+                let mean = s1 / n as f64; let var = s2 / n as f64 - mean * mean;
+                eprintln!("colour {:?} radius {radius} {}: mean {mean:.4} sd/sample {:.4} se {:.5} time {:.2}s", (colour.r, colour.g, colour.b), if unguided { "unguided" } else { "guided  " }, var.sqrt(), (var / n as f64).sqrt(), t0.elapsed().as_secs_f64());
+            }
+            UNGUIDED_WALKS.with(|u| u.set(false));
+        }
     }
 
     /// The integrator's own white furnace: a white object inside a uniform
