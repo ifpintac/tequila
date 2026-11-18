@@ -53,6 +53,19 @@ struct Seen {
     albedo: f32,
 }
 
+
+/// How much of a specular interface's compensation lobe - the light its
+/// microfacets lose to bouncing among themselves, given back as a broad
+/// lobe (Kulla and Conty) - is drawn from that lobe's own cosine-weighted
+/// directions, against the share of its energy. Drawn in full proportion,
+/// one sample in twenty on a plastic at roughness 0.3 went the broad way,
+/// where the highlight carries nearly everything, and the dark glossy
+/// plastics of the Headphones were the noisier for it; the lobe is still
+/// found by the interface's own sampling and the light samples, which cover
+/// every direction it reaches, so a quarter costs nothing in what the
+/// picture converges to (`docs/07` R1).
+const COMPENSATION_SHARE: f32 = 0.25;
+
 impl DielectricSpecular {
     pub fn new(roughness: f32, ior: f32) -> Self {
         DielectricSpecular {
@@ -145,7 +158,7 @@ impl DielectricSpecular {
             Some(s) => s.e_o,
             None => energy::table().white_directional(mu, self.distribution.average_alpha()),
         };
-        (1.0 - e_o).clamp(0.0, 0.5)
+        ((1.0 - e_o) * COMPENSATION_SHARE).clamp(0.0, 0.5)
     }
 
     fn compensation_scale(&self, e_avg: f32) -> f32 {
