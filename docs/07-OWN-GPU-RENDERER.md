@@ -196,7 +196,7 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
 
   | Scene | Tequila | Cycles | R0.1 | now |
   |---|---|---|---|---|
-  | palma P8 | 7.4 | 78.6 | 0.21 | 0.09 (needs #169 to compare; palma's shell is black here) |
+  | palma P8 | 80.8 | 78.6 | 0.21 | 1.03 (with #169 applied; without it the shell renders near black and took 7.4 s) |
   | `cad_assembly` | 4.8 | 10.9 | 0.67 | 0.44 |
   | Perfume bottle | 11.9 | 23.0 | 1.57 | 0.52 |
   | `fibre_product` | 17.8 | 19.2 | 2.35 | 0.93 |
@@ -209,7 +209,8 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
   - `simple_product` and `lamp_lit`, 1.05 and 1.07: within what two runs of the same build differ by on this PC (simple_product's samples a second have read 3.3 to 3.7 million). Level.
   - Headphones, 1.27: noise, about 1.6 times the samples on the product; a sample costs less than Cycles' (3.49 against 2.66 million a second). Not yet explained (above): direct light from a thin-striped environment onto matte parts is 1.2 times noisier, with the method the same as Cycles' as far as its source shows. A fifth of Tequila's noise in this scene is the floor reflection only Tequila draws.
   - `subsurface_product`, 1.45: noise now, 160 samples against Cycles' 112, at the same cost a sample (1.87 against 1.94 million). With Cycles given the right colour, its walk costs it more than it did grey; Tequila's walk through the pink medium, sampled per channel, is the noise to look at next.
-  - Not yet measured: the MacBook (G1.2 asks for both machines), and palma P8 with #169.
+  - palma P8, 1.03 with #169 (its clear shell, split by material, is one solid there; this branch predates it): noise, 336 samples against Cycles' 136, at half the cost a sample (2.65 against 1.32 million). The light through the lime shell is the noise to look at.
+  - Not yet measured: the MacBook (G1.2 asks for both machines).
 
 *Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
 
