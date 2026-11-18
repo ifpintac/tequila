@@ -197,9 +197,11 @@ Three-layer defense, in this order:
 
 1. **Path regularization** [Kaplanyan & Dachsbacher 2013]: after bounce `regularization_start_bounce` (default 2), impose a roughness floor on subsequent BSDF lobes: `α = max(α, 0.09)` for glossy lobes; convert perfect-specular lobes to near-specular. This is a small, bounded bias that eliminates most SDS-adjacent fireflies. Expose as a user-visible toggle inside Custom lighting settings; on by default.
 2. **Adaptive outlier rejection in accumulation**: maintain per-pixel running mean and variance; reject a sample whose luminance exceeds `mean + k·σ` with `k = 8` **only when the pixel already has ≥ 16 samples**, and log the rejected energy into a separate "clamped energy" AOV so the bias is auditable. Never reject early — you will clip legitimate highlights.
-3. **Explicit indirect clamping** (user-facing, default off): hard clamp on indirect radiance. Provided because some users want it; documented as biased.
+3. **Indirect clamping**: each contribution of light a path finds past the first surface is brought down to a ceiling, its red, green and blue summed, as Cycles clamps (`IntegratorConfig::clamp_indirect`). The render settings set the ceilings as Blender's Clamping panel does, and as Tequila's Cycles takes them (`tequila-render-cycles` `Quality::with_clamping`, `tequila-render-cpu` `renderer::clamps`): Clamp samples clamps light found anywhere, unless Clamp direct light apart gives light found at the first surface a ceiling of its own; without either, firefly rejection (#2's switch, on by default) clamps indirect light at 10, as Cycles' does, and direct light not at all. Biased, and audited in the same "clamped energy" AOV.
 
-Do not implement only #3. Clamping alone darkens caustics and specular highlights, which is exactly the look product renderers need.
+Do not implement only #3. Clamping alone darkens caustics and specular highlights, which is exactly the look product renderers need. So what the camera sees through mirrors and clear glass alone counts as found at the first surface (a lamp in a mirror is the lamp; Cycles clamps it), and the caustic photons (§6.5), which are a smooth estimate rather than fireflies, are not clamped at all.
+
+*Changed 2026-11-18 (`docs/07` R1):* #3 was a whole-sample clamp, default off. Measured against Cycles, most of the noise Tequila had left in lamp-lit and glass scenes was in their brightest one per cent of pixels, glints Cycles' clamp removes and #2 does not: with the clamp the Perfume bottle needs a third of the samples and `lamp_lit` 0.6 times, for 1.1% and 0.04% of their displayed light, taken from highlights already at white.
 
 ---
 
@@ -723,7 +725,7 @@ Implemented via light path expressions (§5.5), so they are consistent by constr
 | Labels | All label layers composited alone with alpha |
 | **Cryptomatte** | Per-object, per-material, and per-asset coverage mattes, [Friedman & Jones 2015] standard: 32-bit float ID hashes with coverage, ranked into `CryptoObject00..02` layers. Must be spec-compliant so Nuke/After Effects/Fusion read it directly. |
 | Light group AOVs | One per light layer (§5.5) |
-| Clamped energy | Energy removed by firefly rejection — for auditing bias |
+| Clamped energy | Energy removed by firefly rejection and clamping — for auditing bias |
 
 Alpha modes for render layers: Straight (unmatted, edge colour extended), Premultiplied (matted with black), Aliased (opaque fringe). Implement as a post-process over the layer's coverage buffer.
 
