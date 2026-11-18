@@ -3841,6 +3841,13 @@ fn sample_environment_light(
     seen: Option<&dyn Fn(Vec3) -> f32>,
 ) -> Lit {
     let scene = intersector.scene();
+    // An environment turned down to nothing lights nothing, wherever the
+    // sample lands; drawing one, a search of its tables and a texture read,
+    // was a tenth of a lamp-lit render's time (`docs/07` R1). Dimensions
+    // are positional, so skipping it leaves every other sample as it was.
+    if scene.environment.intensity() <= 0.0 {
+        return Lit::default();
+    }
     let Some(light) = scene
         .environment
         .sample_from(hit.position, sampler.light_sample())
