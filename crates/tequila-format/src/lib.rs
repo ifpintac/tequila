@@ -2064,6 +2064,8 @@ pub(crate) fn read_integrator(value: &Value, default: IntegratorConfig) -> Integ
         cycles: read_cycles_transport(value.get("cycles")),
         // The render's, set per render.
         pixel_filter: default.pixel_filter,
+        clamp_indirect: default.clamp_indirect,
+        clamp_direct: default.clamp_direct,
         spectral: default.spectral,
         spectral_companions: default.spectral_companions,
     }

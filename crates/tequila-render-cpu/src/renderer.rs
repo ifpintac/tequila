@@ -33,9 +33,32 @@ pub struct RenderContext {
     /// How far §12's Ambient Occlusion pass looks. In scene units, so it means
     /// the same thing whatever the model was authored in.
     pub ambient_occlusion_radius: f32,
-    /// §3.5's optional hard ceiling on one sample's luminance. `None` is the
-    /// default and the unbiased choice.
-    pub clamp_sample: Option<f32>,
+    /// The render settings' Clamp samples and Clamp direct light apart,
+    /// which [`clamps`] turns into the ceilings the paths clamp their light
+    /// to, as Cycles takes them.
+    pub clamp_indirect: Option<f32>,
+    pub clamp_direct: Option<f32>,
+}
+
+/// Where firefly rejection clamps light found past the first surface, as
+/// Cycles' does (Tequila's `Quality::with_clamping`): each contribution's
+/// red, green and blue summed, at most this.
+pub const FIREFLY_CLAMP: f32 = 10.0;
+
+/// The ceilings a render's paths clamp their light to, direct and indirect
+/// (`IntegratorConfig::clamp_indirect`), each contribution as it is found,
+/// as Blender's Clamping panel and Tequila's Cycles take them
+/// (`tequila-render-cycles` `Quality::with_clamping`): a direct clamp of
+/// its own leaves Clamp samples, or firefly rejection's 10, to indirect
+/// light alone; without one, Clamp samples clamps both; with neither,
+/// firefly rejection clamps indirect light at 10. A ceiling of 0 is none.
+pub fn clamps(context: &RenderContext) -> (Option<f32>, Option<f32>) {
+    let rejection = context.reject_fireflies.then_some(FIREFLY_CLAMP);
+    match (context.clamp_direct, context.clamp_indirect) {
+        (Some(direct), clamp) => (Some(direct), clamp.or(rejection)),
+        (None, Some(clamp)) => (Some(clamp), Some(clamp)),
+        (None, None) => (None, rejection),
+    }
 }
 
 impl Default for RenderContext {
@@ -50,7 +73,8 @@ impl Default for RenderContext {
             // Large enough to find the floor under a part, small enough not to
             // shade one side of a room.
             ambient_occlusion_radius: 0.1,
-            clamp_sample: None,
+            clamp_indirect: None,
+            clamp_direct: None,
         }
     }
 }
@@ -167,12 +191,15 @@ fn pass(
     // image. An orthographic camera has no angle to give; it keeps the
     // default.
     let fov = context.camera.vertical_fov(aspect);
+    let (clamp_direct, clamp_indirect) = clamps(context);
     let config = tequila_render_core::settings::IntegratorConfig {
         pixel_spread: if fov > 0.0 {
             fov / height as f32
         } else {
             tequila_render_core::settings::DEFAULT_PIXEL_SPREAD
         },
+        clamp_indirect,
+        clamp_direct,
         ..context.config.clone()
     };
     let context = &RenderContext {
@@ -281,11 +308,7 @@ fn pass(
                             &mut sampler,
                         );
                     }
-                    pixel.accumulate_with(
-                        &result,
-                        context.reject_fireflies,
-                        context.clamp_sample,
-                    );
+                    pixel.accumulate_with(&result, context.reject_fireflies, None);
                     if let Some(aov_base) = &aov_base {
                         // SAFETY: the tile owns `(x, y)`, and every write below
                         // is at that pixel.
@@ -570,6 +593,20 @@ mod tests {
             .sum::<f32>()
             / fb.pixels().len() as f32;
         assert!(mean > 0.05, "image is essentially black: {mean}");
+    }
+
+    /// The render settings' clamps become the paths' ceilings as Blender's
+    /// Clamping panel, and Tequila's Cycles, take them (`clamps`).
+    #[test]
+    fn clamps_are_taken_as_cycles_takes_them() {
+        let with = |reject_fireflies, clamp_direct, clamp_indirect| {
+            clamps(&RenderContext { reject_fireflies, clamp_direct, clamp_indirect, ..RenderContext::default() })
+        };
+        assert_eq!(with(true, None, None), (None, Some(FIREFLY_CLAMP)), "firefly rejection clamps indirect light at 10");
+        assert_eq!(with(false, None, None), (None, None), "nothing asked, nothing clamped");
+        assert_eq!(with(true, None, Some(4.0)), (Some(4.0), Some(4.0)), "Clamp samples clamps both");
+        assert_eq!(with(true, Some(20.0), None), (Some(20.0), Some(FIREFLY_CLAMP)), "a direct clamp apart leaves indirect to rejection");
+        assert_eq!(with(false, Some(0.0), Some(4.0)), (Some(0.0), Some(4.0)), "apart, each its own");
     }
 
     /// The property everything in §4.6 exists to protect: the same scene at

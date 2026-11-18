@@ -1014,7 +1014,12 @@ fn trace<C: PathColour>(
                 }
                 let weight = from.weight_of_lamp(intersector, index, light);
                 let lobes = if light.visibility.diffuse { Spectrum::ONE } else { from.glossy };
-                let contribution = throughput * colour.reflectance(lobes) * colour.unbounded(emitted) * weight;
+                let contribution = clamp_light(
+                    colour,
+                    throughput * colour.reflectance(lobes) * colour.unbounded(emitted) * weight,
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    &mut out.clamped_energy,
+                );
                 radiance += contribution;
                 aovs.contribute(colour.rgb(contribution), light.layer.min(crate::lpe::LAST_LAYER));
             }
@@ -1169,7 +1174,9 @@ fn trace<C: PathColour>(
                         instance,
                         sampler,
                     );
-                    let (sky, lights) = (throughput * colour.unbounded(sky), throughput * colour.unbounded(lights));
+                    let ceiling = light_ceiling(config, specular_chain, bounce);
+                    let sky = clamp_light(colour, throughput * colour.unbounded(sky), ceiling, &mut out.clamped_energy);
+                    let lights = clamp_light(colour, throughput * colour.unbounded(lights), ceiling, &mut out.clamped_energy);
                     radiance += sky + lights;
                     aovs.contribute(colour.rgb(sky), crate::lpe::ENVIRONMENT);
                     aovs.contribute(colour.rgb(lights), group);
@@ -1238,7 +1245,12 @@ fn trace<C: PathColour>(
                     let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
                     mis_power(prev_pdf_solid_angle, pdf_light)
                 };
-                let contribution = throughput * colour.unbounded(emitted) * weight;
+                let contribution = clamp_light(
+                    colour,
+                    throughput * colour.unbounded(emitted) * weight,
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    &mut out.clamped_energy,
+                );
                 radiance += contribution;
                 if bounce == 0 {
                     out.background += colour.rgb(contribution);
@@ -1472,7 +1484,12 @@ fn trace<C: PathColour>(
             // twice as dim here as in a render through Cycles.
             let glow = volume.emitted_over(hit.t) * (ior * ior).max(1.0);
             if !glow.is_black() {
-                let emitted = throughput * colour.unbounded(glow);
+                let emitted = clamp_light(
+                    colour,
+                    throughput * colour.unbounded(glow),
+                    light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                    &mut out.clamped_energy,
+                );
                 radiance += emitted;
                 aovs.contribute(colour.rgb(emitted), crate::lpe::EMISSIVE);
             }
@@ -1702,8 +1719,14 @@ fn trace<C: PathColour>(
                 if let Some(from) = &seen_from {
                     let glass = if from.sees_glass { through_glass } else { config.shadow_glass() };
                     if !(read_caustics && smooth_since > 0) {
+                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1));
                         lamps_past(intersector, &hit, &ray, from, glass, |lobes, light, layer| {
-                            let contribution = throughput * colour.reflectance(lobes) * colour.unbounded(light);
+                            let contribution = clamp_light(
+                                colour,
+                                throughput * colour.reflectance(lobes) * colour.unbounded(light),
+                                ceiling,
+                                &mut out.clamped_energy,
+                            );
                             radiance += contribution;
                             aovs.contribute(colour.rgb(contribution), layer);
                         });
@@ -1716,7 +1739,9 @@ fn trace<C: PathColour>(
                     if !scene.casts_shadows(hit.instance) {
                         let receiver = emitters_from.filter(|_| from_medium.is_none());
                         let (sky, glow) = light_past(intersector, &hit, &ray, through_glass, (pdf, pass_pdf), receiver, !(read_caustics && smooth_since > 0));
-                        let (sky, glow) = (throughput * colour.unbounded(sky), throughput * colour.unbounded(glow));
+                        let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1));
+                        let sky = clamp_light(colour, throughput * colour.unbounded(sky), ceiling, &mut out.clamped_energy);
+                        let glow = clamp_light(colour, throughput * colour.unbounded(glow), ceiling, &mut out.clamped_energy);
                         radiance += sky + glow;
                         aovs.contribute(colour.rgb(sky), crate::lpe::ENVIRONMENT);
                         aovs.contribute(colour.rgb(glow), crate::lpe::EMISSIVE);
@@ -1768,7 +1793,12 @@ fn trace<C: PathColour>(
                 },
                 None => 1.0,
             };
-            let contribution = throughput * colour.unbounded(material.emission()) * (weight * face);
+            let contribution = clamp_light(
+                colour,
+                throughput * colour.unbounded(material.emission()) * (weight * face),
+                light_ceiling(config, specular_chain, bounce.saturating_sub(1)),
+                &mut out.clamped_energy,
+            );
             radiance += contribution;
             // A light's visible stand-in is that light, and goes in its
             // layer; any other glowing surface is a group of its own.
@@ -2096,6 +2126,14 @@ fn trace<C: PathColour>(
                         environment_direct.total() + analytic_direct.total() + emissive_direct.total() + manifold_direct.total(),
                     )
             };
+            // Clamped as one, and its passes with it, so they still add up.
+            let kept = clamp_share(colour, contribution, light_ceiling(config, specular_chain, bounce));
+            let contribution = if kept < 1.0 {
+                out.clamped_energy += colour.rgb(contribution).luminance() * (1.0 - kept);
+                contribution * kept
+            } else {
+                contribution
+            };
             radiance += contribution;
             // Next-event estimation ends the path at a light *and then the path
             // keeps going*, so the matcher is rewound afterwards. Without that,
@@ -2108,7 +2146,7 @@ fn trace<C: PathColour>(
             let saved = aovs.matcher.save();
             let carried = |lit: &Lit| {
                 let by = lit_by(lit);
-                move |part: Spectrum| colour.rgb(by * colour.unbounded(part))
+                move |part: Spectrum| colour.rgb(by * colour.unbounded(part)) * kept
             };
             aovs.contribute_lit(carried(&environment_direct), environment_direct, crate::lpe::ENVIRONMENT, &saved, &[]);
             aovs.contribute_lit(carried(&analytic_direct), analytic_direct, layer, &saved, &[]);
@@ -3646,6 +3684,47 @@ enum Flight {
     Reached { depth: f32 },
 }
 
+/// The ceiling on light a path finds (`IntegratorConfig::clamp_indirect`):
+/// direct where it is found at the first surface (`found_at` 0: sampled
+/// there, or met by the ray leaving it), or past the camera's mirrors and
+/// clear glass alone; indirect past that.
+#[inline]
+fn light_ceiling(config: &IntegratorConfig, specular_chain: bool, found_at: u32) -> Option<f32> {
+    if found_at == 0 || specular_chain {
+        config.clamp_direct
+    } else {
+        config.clamp_indirect
+    }
+}
+
+/// What of `contribution` a ceiling keeps: all of it, or the share that
+/// brings its red, green and blue down to the ceiling, as Cycles clamps.
+#[inline]
+fn clamp_share<C: PathColour>(colour: &C, contribution: C::Value, ceiling: Option<f32>) -> f32 {
+    let Some(ceiling) = ceiling.filter(|c| *c > 0.0) else {
+        return 1.0;
+    };
+    let rgb = colour.rgb(contribution);
+    let sum = rgb.r.abs() + rgb.g.abs() + rgb.b.abs();
+    if sum > ceiling {
+        ceiling / sum
+    } else {
+        1.0
+    }
+}
+
+/// `contribution` brought down to its `ceiling` ([`clamp_share`]), the
+/// luminance taken off counted in `clamped`, for §3.5's audit pass.
+#[inline]
+fn clamp_light<C: PathColour>(colour: &C, contribution: C::Value, ceiling: Option<f32>, clamped: &mut f32) -> C::Value {
+    let kept = clamp_share(colour, contribution, ceiling);
+    if kept >= 1.0 {
+        return contribution;
+    }
+    *clamped += colour.rgb(contribution).luminance() * (1.0 - kept);
+    contribution * kept
+}
+
 /// A walk's medium as the path carries it, `walk_medium`'s, read once per
 /// medium rather than at each of a walk's thousands of steps.
 fn walk_medium_cached<C: PathColour>(
@@ -4516,6 +4595,30 @@ mod tests {
             sum += trace_path(intersector, config, ray, Vec2::ZERO, &mut sampler).radiance;
         }
         sum / samples as f32
+    }
+
+    /// Cycles' clamping (`IntegratorConfig::clamp_indirect`): light found
+    /// past the first surface is brought down to the ceiling, its red, green
+    /// and blue summed, keeping its colour; light found at the first surface,
+    /// or past the camera's mirrors and clear glass alone, is under the
+    /// direct ceiling instead; and what is taken off is counted.
+    #[test]
+    fn indirect_light_is_clamped_as_cycles_clamps_it() {
+        use crate::spectral::Rgb;
+        let config = IntegratorConfig { clamp_indirect: Some(10.0), clamp_direct: None, ..IntegratorConfig::default() };
+        let bright = Spectrum { r: 12.0, g: 6.0, b: 2.0 };
+        let mut clamped = 0.0;
+        let kept = clamp_light(&Rgb, bright, light_ceiling(&config, false, 1), &mut clamped);
+        assert!((kept.r + kept.g + kept.b - 10.0).abs() < 1e-4, "{kept:?} sums to more than the ceiling");
+        assert!((kept.r / kept.g - 2.0).abs() < 1e-4 && (kept.g / kept.b - 3.0).abs() < 1e-4, "{kept:?} changed colour");
+        assert!((clamped - (bright.luminance() - kept.luminance())).abs() < 1e-4, "counted {clamped}");
+        for (chain, found_at) in [(false, 0), (true, 3)] {
+            let mut none = 0.0;
+            assert_eq!(clamp_light(&Rgb, bright, light_ceiling(&config, chain, found_at), &mut none), bright);
+            assert_eq!(none, 0.0);
+        }
+        let dim = Spectrum::splat(3.0);
+        assert_eq!(clamp_light(&Rgb, dim, light_ceiling(&config, false, 2), &mut clamped), dim);
     }
 
     /// The integrator's own white furnace: a white object inside a uniform

@@ -2593,7 +2593,8 @@ fn render_to_file(
         camera: app.camera.camera,
         config: app.project.integrator_config(),
         reject_fireflies: settings.reject_fireflies,
-        clamp_sample: settings.clamp_indirect,
+        clamp_indirect: settings.clamp_indirect,
+        clamp_direct: settings.clamp_direct,
         ..RenderContext::default()
     };
     let mut schedule = ProgressiveSchedule::default();
