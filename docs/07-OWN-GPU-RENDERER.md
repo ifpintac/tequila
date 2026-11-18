@@ -189,6 +189,29 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
   - Noise at 64 samples: Perfume bottle 0.0163 to 0.0098 (a third of the samples), `lamp_lit` 0.0120 to 0.0095 (0.6 times); `simple_product`, `subsurface_product` and the Headphones unchanged. Displayed light: Perfume bottle 1.1% less, from highlights already at white; `lamp_lit` 0.04%; the rest nothing.
   - Time to clean against Cycles, both measured on the RTX 2060 PC on 2026-11-18 (Tequila / Cycles seconds): palma P8 7.8 / 76.9 (0.10, but #169 is not in this branch and palma's shell is black here), `cad_assembly` 4.8 / 11.7 (0.41), Perfume bottle 12.1 / 23.2 (0.52), `fibre_product` 18.3 / 21.2 (0.86), `simple_product` 13.6 / 12.7 (1.07), `lamp_lit` 9.3 / 8.2 (1.13), Headphones 12.2 / 7.9 (1.54), `subsurface_product` 46.9 / 27.2 (1.72).
 
+- *Then the bump (2026-11-18, `r1-bump`):* the Headphones' surfaces are grained by a procedural pattern, and its bump was half of all the render's time (3.99 million samples a second with it switched off, 2.11 with it). Its slope was measured by central differences, the height evaluated four times a point; now from the height the material's own program already found at the point and two more a tenth of a footprint along, as Cycles' bump does. 2.0 to 2.7 million samples a second; the picture the same within its noise (mean -0.02%).
+  - The Headphones' remaining gap is noise, 1.6 times the samples on the product, and not yet explained. A fifth of Tequila's noise there is the floor's reflection, which only Tequila draws. On the product: not the bump (switched off, 0.0099 to 0.0098), not its materials (every part one plain plastic, or all matte: still 1.4 times), not light that has bounced (direct light alone, matte: relative noise 0.0505 against Cycles' 0.0413, the same 1.2 times), not the measurement (each engine's seed-to-seed estimate matches its error against a 512-sample reference: 0.0117 / 0.0111, and Cycles 0.0085 / 0.0084), not the sampler's stratification of the light sample (random instead: 0.0128 to 0.0150), and not the environment's sampling table being filtered (the raw texels: no change). So it is how a matte surface samples a 1024 x 512 environment lit by three thin painted strips, which both engines are meant to do the same way; what Cycles does differently there is the lead.
+
+- *Where R1 stands (2026-11-18, all of the above, #172 to #177):* time to clean against Cycles on the processor, both engines measured the same day on the RTX 2060 PC, with #176 (Cycles given the Translucent body's subsurface colour) in the Cycles build so `subsurface_product` compares like with like. Tequila / Cycles seconds, and the ratio at R0.1 and now:
+
+  | Scene | Tequila | Cycles | R0.1 | now |
+  |---|---|---|---|---|
+  | palma P8 | 80.8 | 78.6 | 0.21 | 1.03 (with #169 applied; without it the shell renders near black and took 7.4 s) |
+  | `cad_assembly` | 4.8 | 10.9 | 0.67 | 0.44 |
+  | Perfume bottle | 11.9 | 23.0 | 1.57 | 0.52 |
+  | `fibre_product` | 17.8 | 19.2 | 2.35 | 0.93 |
+  | `simple_product` | 13.0 | 12.4 | 2.69 | 1.05 |
+  | `lamp_lit` | 8.8 | 8.2 | 3.28 | 1.07 |
+  | Headphones | 9.3 | 7.3 | 2.23 | 1.27 |
+  | `subsurface_product` | 46.2 | 31.8 | 5.04 | 1.45 |
+
+  The account of what is left, scene by scene:
+  - `simple_product` and `lamp_lit`, 1.05 and 1.07: within what two runs of the same build differ by on this PC (simple_product's samples a second have read 3.3 to 3.7 million). Level.
+  - Headphones, 1.27: noise, about 1.6 times the samples on the product; a sample costs less than Cycles' (3.49 against 2.66 million a second). Not yet explained (above): direct light from a thin-striped environment onto matte parts is 1.2 times noisier, with the method the same as Cycles' as far as its source shows. A fifth of Tequila's noise in this scene is the floor reflection only Tequila draws.
+  - `subsurface_product`, 1.45: noise now, 160 samples against Cycles' 112, at the same cost a sample (1.87 against 1.94 million). With Cycles given the right colour, its walk costs it more than it did grey; Tequila's walk through the pink medium, sampled per channel, is the noise to look at next.
+  - palma P8, 1.03 with #169 (its clear shell, split by material, is one solid there; this branch predates it): noise, 336 samples against Cycles' 136, at half the cost a sample (2.65 against 1.32 million). The light through the lime shell is the noise to look at.
+  - Not yet measured: the MacBook (G1.2 asks for both machines).
+
 *Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
 
 ### R2 — The first picture from the card (M)
