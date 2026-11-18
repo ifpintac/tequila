@@ -900,6 +900,11 @@ fn trace<C: PathColour>(
     // on from it straight, or through mirror-smooth glass, alone
     // (`SeenFrom`).
     let mut seen_from: Option<SeenFrom> = None;
+    // Which way the surface the path last sampled the sky from faced, where
+    // it drew only what it could see (`Environment::sample_facing`): what a
+    // bounce that meets the sky is weighed against. `None` is the whole sky,
+    // as a surface lit from both sides draws it.
+    let mut sky_facing: Option<Vec3> = None;
     // Whether such bounces see glass that bends light as glass: where
     // shadow rays pass all clear glass, and there is some. With manifold
     // caustics they stop at glass that bends light, and with photons at
@@ -935,6 +940,7 @@ fn trace<C: PathColour>(
             density: f32::INFINITY,
             glossy: Spectrum::ONE,
             receiver: None,
+            sky_facing: None,
             met: false,
         });
     }
@@ -1219,6 +1225,7 @@ fn trace<C: PathColour>(
                     aovs.contribute(colour.rgb(sky), crate::lpe::ENVIRONMENT);
                     aovs.contribute(colour.rgb(lights), group);
                     lit_from_medium = Some(instance);
+                    sky_facing = None;
                 }
                 let next = match guide.as_mut().filter(|g| Some(g.instance) == walk_instance && field.is_none()) {
                     Some(g) => g.turn(at, ray.direction, walk.anisotropy, sampler),
@@ -1277,9 +1284,9 @@ fn trace<C: PathColour>(
                 } else if let Some(from) = seen_from.filter(|from| from.met) {
                     // Past glass a glossy bounce saw: weighed against the sky's
                     // sample there, straight on the way it left (`SeenFrom`).
-                    from.weight(intersector, scene.environment.pdf_from(from.position, from.direction), f32::INFINITY)
+                    from.weight(intersector, scene.environment.pdf_facing(from.position, from.direction, from.sky_facing), f32::INFINITY)
                 } else {
-                    let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
+                    let pdf_light = scene.environment.pdf_facing(ray.origin, ray.direction, sky_facing);
                     mis_power(prev_pdf_solid_angle, pdf_light)
                 };
                 let contribution = clamp_light(
@@ -1775,7 +1782,8 @@ fn trace<C: PathColour>(
                 if let (Some(pdf), false, true) = (pdf, seen_from.is_some_and(|from| from.met), config.direct_lighting) {
                     if !scene.casts_shadows(hit.instance) {
                         let receiver = emitters_from.filter(|_| from_medium.is_none());
-                        let (sky, glow) = light_past(intersector, &hit, &ray, through_glass, (pdf, pass_pdf), receiver, !(read_caustics && smooth_since > 0));
+                        let facing = if from_medium.is_some() { None } else { sky_facing };
+                        let (sky, glow) = light_past(intersector, &hit, &ray, through_glass, (pdf, pass_pdf), receiver, facing, !(read_caustics && smooth_since > 0));
                         let ceiling = light_ceiling(config, specular_chain, bounce.saturating_sub(1));
                         let sky = clamp_light(colour, throughput * colour.unbounded(sky), ceiling, &mut out.clamped_energy);
                         let glow = clamp_light(colour, throughput * colour.unbounded(glow), ceiling, &mut out.clamped_energy);
@@ -2052,6 +2060,20 @@ fn trace<C: PathColour>(
         let seen_density = |wi: Vec3| bsdf.pdf_reflection(wo, wi, seeing_share);
         let seen: Option<&dyn Fn(Vec3) -> f32> = (meets_glass || meets_lamps).then_some(&seen_density);
         if samples_lights {
+            // Lit from one side, it draws only the sky it can see: a surface
+            // that only reflects; one whose only way through is a walk's
+            // doorway, behind which is the part itself; and a walk's way
+            // out, whose light comes from outside alone.
+            let doorway_only = !material.geometry_thin_walled && material.transmission_weight <= 0.0;
+            sky_facing = if !sky_facing_on() {
+                None
+            } else if exiting_walk {
+                Some(-geometric_normal)
+            } else if !bsdf.flags().contains(BsdfFlags::TRANSMISSION) || doorway_only {
+                Some(geometric_normal)
+            } else {
+                None
+            };
             let environment_direct = sample_environment_light(
                 intersector,
                 config,
@@ -2060,6 +2082,7 @@ fn trace<C: PathColour>(
                 &onb,
                 wo,
                 geometric_normal,
+                sky_facing,
                 sampler,
                 &mut out,
                 colour.rgb(throughput),
@@ -2430,6 +2453,7 @@ fn trace<C: PathColour>(
                     Spectrum::ONE
                 },
                 receiver: emitters_from,
+                sky_facing,
                 met: false,
             })
         } else if sample.is_delta && !samples_lights && (seeing || passing) {
@@ -2452,6 +2476,7 @@ fn trace<C: PathColour>(
                 density: f32::INFINITY,
                 glossy: Spectrum::ONE,
                 receiver: None,
+                sky_facing: None,
                 met: false,
             };
             match seen_from {
@@ -2657,6 +2682,8 @@ struct SeenFrom {
     glossy: Spectrum,
     /// Where the surface sampled the glowing parts from, if it did.
     receiver: Option<crate::emitters::Receiver>,
+    /// Which way the light sample there drew the sky (`sky_facing`).
+    sky_facing: Option<Vec3>,
     /// Whether the path has met glass that bends light since, as glass.
     met: bool,
 }
@@ -3685,6 +3712,7 @@ fn light_past(
     glass: ShadowGlass,
     (pdf, pass_pdf): (f32, f32),
     receiver: Option<crate::emitters::Receiver>,
+    sky_facing: Option<Vec3>,
     sky: bool,
 ) -> (Spectrum, Spectrum) {
     let scene = intersector.scene();
@@ -3698,7 +3726,7 @@ fn light_past(
     match (stop, receiver) {
         (None, _) if sky => {
             let emitted = scene.environment.radiance_from(ray.origin, ray.direction);
-            let pdf_light = scene.environment.pdf_from(ray.origin, ray.direction);
+            let pdf_light = scene.environment.pdf_facing(ray.origin, ray.direction, sky_facing);
             (emitted * through * mis_power(pdf, pdf_light), Spectrum::ZERO)
         }
         (Some(next), Some(from)) if glows(&next) && !next.is_backface(ray.direction) => {
@@ -3766,6 +3794,23 @@ fn clamp_light<C: PathColour>(colour: &C, contribution: C::Value, ceiling: Optio
     }
     *clamped += colour.rgb(contribution).luminance() * (1.0 - kept);
     contribution * kept
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The sky drawn whole, on this thread, for tests that compare.
+    static WHOLE_SKY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether light samples draw only the sky their surface faces
+/// (`Environment::sample_facing`).
+#[inline]
+fn sky_facing_on() -> bool {
+    #[cfg(test)]
+    if WHOLE_SKY.with(|w| w.get()) {
+        return false;
+    }
+    true
 }
 
 /// A walk's medium as the path carries it, `walk_medium`'s, read once per
@@ -4220,6 +4265,7 @@ fn sample_environment_light(
     onb: &Onb,
     wo: Vec3,
     geometric_normal: Vec3,
+    facing: Option<Vec3>,
     sampler: &mut Sampler,
     out: &mut PathResult,
     throughput: Spectrum,
@@ -4236,7 +4282,7 @@ fn sample_environment_light(
     }
     let Some(light) = scene
         .environment
-        .sample_from(hit.position, sampler.light_sample())
+        .sample_facing(hit.position, facing, sampler.light_sample())
     else {
         return Lit::default();
     };
@@ -4851,6 +4897,50 @@ mod tests {
         }
         let dim = Spectrum::splat(3.0);
         assert_eq!(clamp_light(&Rgb, dim, light_ceiling(&config, false, 2), &mut clamped), dim);
+    }
+
+    /// Drawing only the sky a surface faces (`Environment::sample_facing`)
+    /// is a way of drawing the same light: a matte ball under a sky of
+    /// narrow bright strips and a dim rest, seen from all round, gathers the
+    /// same light either way, with a quarter of the variance.
+    #[test]
+    fn drawing_the_sky_a_surface_faces_gathers_the_same_light() {
+        use tequila_texture::image::{ColorSpace, Image};
+        let (w, h) = (256usize, 128usize);
+        let mut data = vec![0.05f32; w * h * 3];
+        for y in 10..100 {
+            for x in (70..76).chain(180..186) {
+                for c in 0..3 {
+                    data[(y * w + x) * 3 + c] = 30.0;
+                }
+            }
+        }
+        let env = Environment::new(Arc::new(Image { width: w, height: h, channels: 3, data, color_space: ColorSpace::LinearSrgb }), 1.0);
+        let material = Material { base_weight: 1.0, base_color: Spectrum::splat(0.5), specular_weight: 0.0, ..Material::default() };
+        let scene = SceneSnapshot::new(Vec::new(), Vec::new(), vec![material], Arc::new(env));
+        let intersector = AnalyticIntersector::new(scene).with_sphere(Sphere::new(Vec3::ZERO, 1.0, tequila_core::ids::MaterialId(0)));
+        let config = IntegratorConfig { max_bounces: 1, ..IntegratorConfig::default() };
+        let gather = |whole: bool| {
+            WHOLE_SKY.with(|x| x.set(whole));
+            let n = 400_000u32;
+            let (mut s1, mut s2) = (0.0f64, 0.0f64);
+            for i in 0..n {
+                let mut sampler = Sampler::new(i % 97, i / 97, i, 5);
+                let a = ((i as f64 * 0.6180339887) % 1.0) as f32 * std::f32::consts::TAU;
+                let b = ((i as f64 * 0.7548776662) % 1.0) as f32 * 2.0 - 1.0;
+                let dir = vec3((1.0 - b * b).sqrt() * a.cos(), b, (1.0 - b * b).sqrt() * a.sin());
+                let v = trace_path(&intersector, &config, Ray::new(dir * 4.0, -dir), Vec2::ZERO, &mut sampler).radiance.luminance() as f64;
+                s1 += v;
+                s2 += v * v;
+            }
+            WHOLE_SKY.with(|x| x.set(false));
+            let mean = s1 / n as f64;
+            (mean, (s2 / n as f64 - mean * mean) / n as f64)
+        };
+        let ((facing, facing_var), (whole, whole_var)) = (gather(false), gather(true));
+        let spread = (facing_var + whole_var).sqrt();
+        assert!((facing - whole).abs() < 4.0 * spread, "facing {facing:.5}, whole sky {whole:.5}, spread {spread:.5}");
+        assert!(facing_var < 0.5 * whole_var, "facing variance {facing_var:.3e} against the whole sky's {whole_var:.3e}");
     }
 
     /// A guided walk (`WalkGuide`) is a way of drawing the same walk: a
