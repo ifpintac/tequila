@@ -900,8 +900,11 @@ pub(super) fn solve(
     if count == 0 {
         return None;
     }
-    // Within the path's limits, as though it had bounced its way through.
-    if bounce + count as u32 >= config.max_bounces || transmission_bounces + count as u32 > config.max_transmission_bounces {
+    // Within the path's limits, as though it had passed its way through:
+    // `bounce` is the path's bounces so far, which passes through glass do
+    // not add to (`docs/01` §11), and the crossings count against the
+    // transmission limit.
+    if bounce >= config.max_bounces || transmission_bounces + count as u32 > config.max_transmission_bounces {
         return None;
     }
 
