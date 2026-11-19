@@ -100,6 +100,10 @@ pub fn from_cycles(v: [f32; 3]) -> Vec3 {
 /// renderer measured them: red the curvature, green the occlusion.
 const SHAPE_ATTRIBUTE: &str = "tq_shape";
 
+/// Which part of a clear solid modelled as several a vertex belongs to, as
+/// its number among them in every channel ([`Builder::solid_shader`]).
+const SOLID_ATTRIBUTE: &str = "tq_solid_part";
+
 /// What Cryptomatte names the objects and materials of a render by, by
 /// instance and by material, as Tequila's renderer names them
 /// (`Project::render_names`): Cycles hashes the names it is given.
@@ -589,6 +593,11 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
     // What lies outside the clear solids, where it is not the air: a
     // liquid in its glass (`media`).
     let media = if builder.session.has_mesh_attributes() { crate::media::attributes(scene) } else { HashMap::new() };
+    // Clear solids modelled as several parts, each one object (`solids`).
+    let (solid_parts, solid_warning) = if builder.session.has_mesh_attributes() { solids(scene, &media) } else { (HashMap::new(), false) };
+    if solid_warning {
+        builder.out.warn("a clear solid modelled as parts with different volumes keeps its volume in the air inside it in Cycles");
+    }
     // Cycles binds shaders to meshes and Tequila binds materials to
     // instances, so a mesh is built once per material it is shown in.
     let mut meshes: HashMap<(usize, usize), Node> = HashMap::new();
@@ -642,6 +651,12 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
             }
         };
         let key = (instance.mesh.index(), material);
+        // A later part of a clear solid made one object with its first.
+        let parts = solid_parts.get(&instance_index);
+        if parts.is_some_and(|parts| parts[0] != instance_index) {
+            builder.out.objects.push(None);
+            continue;
+        }
         // Fibres (§4.4's Fuzz) go over as hair, in their material's shader,
         // which turns to a hair BSDF on them (`Builder::with_fibres`). A
         // library from before fibres leaves them out, and the part keeps its
@@ -653,6 +668,17 @@ fn build_inner(session: &mut Session, scene: &SceneSnapshot, view: &View, images
         }
         // An occlusion-only floor's shader is its own, and a bouncing one's.
         let cycles_mesh = match (media.get(&instance_index), meshes.get(&key).filter(|_| material != usize::MAX - 1 && material != usize::MAX - 2)) {
+            // A clear solid modelled as several parts: theirs together, in
+            // this first part's space, with one shader.
+            _ if parts.is_some() => {
+                let parts = parts.map(Vec::as_slice).unwrap_or_default();
+                let materials: Vec<usize> = parts.iter().map(|&i| scene.instances[i].material.index()).collect();
+                let shader = builder.solid_shader(instance_index, &materials)?;
+                let (joined, numbers) = joined_mesh(scene, parts);
+                let m = builder.mesh(&joined, shader)?;
+                builder.session.mesh_attribute(m, SOLID_ATTRIBUTE, &numbers)?;
+                m
+            }
             // A medium's surfaces meet what this instance is inside of, so
             // its mesh, and what it carries of that, is its own.
             (Some(outside), _) => {
@@ -1029,6 +1055,146 @@ fn same_stage(old: &SceneSnapshot, new: &SceneSnapshot, moves: bool) -> bool {
         }
 }
 
+/// The clear solids modelled as several parts that Cycles is to have as one
+/// object each, by every part: the solid's parts in order, its first part
+/// first. And whether a solid could not be, its parts' volumes differing.
+///
+/// Tequila's renderer tells the media a path is inside apart by solid
+/// (`SceneSnapshot::solid`); Cycles by object and shader. A clear shell
+/// split by material into its outside and its inside came over as two
+/// objects, and a ray that went in through the one and out through the
+/// other was still inside the first: the palma P8's lime shell tinted the
+/// air inside it, and its board showed greener and darker than through the
+/// shell alone. Only where the solid has a volume, which is what Cycles'
+/// stack carries - clear glass refracts by the side it is met from - and
+/// where every part's volume is the same, so the one the solid is given is
+/// each part's. A part inside another medium keeps its own object: its
+/// surfaces carry what is outside them (`media`).
+fn solids(scene: &SceneSnapshot, media: &HashMap<usize, crate::media::Outside>) -> (HashMap<usize, Vec<usize>>, bool) {
+    let mut groups: HashMap<u32, Vec<usize>> = HashMap::new();
+    for index in 0..scene.instances.len() {
+        groups.entry(scene.solid(tequila_core::ids::InstanceId(index as u32)).0).or_default().push(index);
+    }
+    let volume_of = |index: usize| {
+        let instance = &scene.instances[index];
+        let m = scene.materials.get(instance.material.index())?;
+        let has_volume = !m.geometry_thin_walled && m.transmission_weight > 0.0 && m.transmission_depth > 0.0;
+        let plain = scene.meshes.get(instance.mesh.index()).is_some_and(|mesh| mesh.fibres.is_none())
+            && !instance.light_proxy
+            && instance.shadow_catcher.is_none()
+            && !media.contains_key(&index);
+        (has_volume && plain).then(|| {
+            (
+                m.transmission_depth,
+                m.volume_density,
+                m.transmission_color,
+                m.transmission_scatter,
+                m.transmission_scatter_anisotropy,
+                m.volume_emission_strength,
+                m.volume_emission_color,
+            )
+        })
+    };
+    let mut solids = HashMap::new();
+    let mut differ = false;
+    for (_, parts) in groups {
+        if parts.len() < 2 {
+            continue;
+        }
+        let volumes: Vec<_> = parts.iter().map(|&i| volume_of(i)).collect();
+        match volumes[0] {
+            Some(first) if volumes.iter().all(|v| *v == Some(first)) => {
+                for &part in &parts {
+                    solids.insert(part, parts.clone());
+                }
+            }
+            _ => differ |= volumes.iter().any(Option::is_some),
+        }
+    }
+    (solids, differ)
+}
+
+/// A solid's parts as one mesh, in its first part's space, and each vertex's
+/// part number for [`SOLID_ATTRIBUTE`].
+fn joined_mesh(scene: &SceneSnapshot, parts: &[usize]) -> (tequila_render_core::scene::Mesh, Vec<[f32; 4]>) {
+    let root = &scene.instances[parts[0]].transform;
+    let (mut positions, mut indices) = (Vec::new(), Vec::new());
+    let (mut normals, mut uvs, mut tangents, mut colors) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut curvature, mut occlusion, mut closeness) = (Vec::new(), Vec::new(), Vec::new());
+    let mut numbers = Vec::new();
+    let meshes: Vec<&tequila_render_core::scene::Mesh> = parts.iter().map(|&i| &*scene.meshes[scene.instances[i].mesh.index()]).collect();
+    let every = |f: &dyn Fn(&tequila_render_core::scene::Mesh) -> usize| meshes.iter().all(|m| f(m) == m.positions.len());
+    let any = |f: &dyn Fn(&tequila_render_core::scene::Mesh) -> usize| meshes.iter().any(|m| f(m) == m.positions.len() && !m.positions.is_empty());
+    let (with_normals, with_uvs, with_tangents) = (every(&|m| m.normals.len()), every(&|m| m.uvs.len()), every(&|m| m.tangents.len()));
+    let with_colors = any(&|m| m.colors.len());
+    let (with_curvature, with_occlusion, with_closeness) = (any(&|m| m.curvature.len()), any(&|m| m.occlusion.len()), any(&|m| m.closeness.len()));
+    for (number, (&part, mesh)) in parts.iter().zip(&meshes).enumerate() {
+        // Into the first part's space: its own placing, then the first's
+        // undone.
+        let placing = scene.instances[part].transform;
+        let to_root = root.inverse * placing.matrix;
+        let from_root = placing.inverse * root.matrix;
+        let base = positions.len() as u32;
+        positions.extend(mesh.positions.iter().map(|&p| to_root.transform_point(p)));
+        indices.extend(mesh.indices.iter().map(|&i| base + i));
+        if with_normals {
+            normals.extend(mesh.normals.iter().map(|&n| tequila_core::math::Mat4::transform_normal_with_inverse(&from_root, n).try_normalize().unwrap_or(n)));
+        }
+        if with_uvs {
+            uvs.extend_from_slice(&mesh.uvs);
+        }
+        if with_tangents {
+            tangents.extend(mesh.tangents.iter().map(|t| {
+                let along = to_root.transform_vector(tequila_core::math::vec3(t.x, t.y, t.z)).try_normalize().unwrap_or(tequila_core::math::vec3(t.x, t.y, t.z));
+                tequila_core::math::vec4(along.x, along.y, along.z, t.w)
+            }));
+        }
+        let n = mesh.positions.len();
+        let or_none = |values: &[f32]| if values.len() == n { values.to_vec() } else { vec![0.0; n] };
+        if with_curvature {
+            curvature.extend(or_none(&mesh.curvature));
+        }
+        if with_occlusion {
+            occlusion.extend(or_none(&mesh.occlusion));
+        }
+        if with_closeness {
+            closeness.extend(or_none(&mesh.closeness));
+        }
+        if with_colors {
+            if mesh.colors.len() == n {
+                colors.extend_from_slice(&mesh.colors);
+            } else {
+                colors.extend(std::iter::repeat(tequila_core::math::vec4(1.0, 1.0, 1.0, 1.0)).take(n));
+            }
+        }
+        numbers.extend(std::iter::repeat([number as f32; 4]).take(n));
+    }
+    let mut joined = tequila_render_core::scene::Mesh::new(positions, indices);
+    joined.normals = normals;
+    joined.uvs = uvs;
+    joined.tangents = tangents;
+    joined.colors = colors;
+    joined.curvature = curvature;
+    joined.occlusion = occlusion;
+    joined.closeness = closeness;
+    (joined, numbers)
+}
+
+/// Whether a part of a clear solid made one object with others moved: that
+/// object is placed by its first part, so the others' places are in its
+/// mesh, and only a translation again puts them right.
+fn moved_a_joined_part(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
+    let moved: Vec<usize> = old.instances.iter().zip(&new.instances).enumerate().filter(|(_, (a, b))| a.transform != b.transform).map(|(i, _)| i).collect();
+    if moved.is_empty() {
+        return false;
+    }
+    let mut parts: HashMap<u32, usize> = HashMap::new();
+    for index in 0..new.instances.len() {
+        *parts.entry(new.solid(tequila_core::ids::InstanceId(index as u32)).0).or_default() += 1;
+    }
+    moved.iter().any(|&i| parts.get(&new.solid(tequila_core::ids::InstanceId(i as u32)).0).is_some_and(|&n| n > 1))
+}
+
 /// Whether `new` differs from `old` only in where its instances are. Such a
 /// change - a part dragged with the gizmo - needs only [`move_objects`].
 /// Whether parts came or went between `old` and `new`: a model imported or
@@ -1039,7 +1205,7 @@ pub fn parts_came_or_went(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
 }
 
 pub fn only_moved(old: &SceneSnapshot, new: &SceneSnapshot) -> bool {
-    same_stage(old, new, true) && changed_materials_of(old, new).is_some_and(|changed| changed.is_empty())
+    same_stage(old, new, true) && changed_materials_of(old, new).is_some_and(|changed| changed.is_empty()) && !moved_a_joined_part(old, new)
 }
 
 /// The materials `new` changed from `old`, when nothing else differs - a
@@ -1101,6 +1267,18 @@ pub fn update_materials(
     shadow_glass: tequila_render_core::settings::ShadowGlass,
 ) -> Result<bool, String> {
     if !session.can_reopen() || changed.iter().any(|&i| i >= shaders.len()) {
+        return Ok(false);
+    }
+    // A clear solid modelled as several parts has a shader of its own
+    // (`solids`), built from its parts' materials: changed, the scene is
+    // translated again.
+    let joined = |material: usize| {
+        scene.instances.iter().enumerate().any(|(index, instance)| {
+            instance.material.index() == material
+                && scene.instances.iter().enumerate().filter(|(j, _)| scene.solid(tequila_core::ids::InstanceId(*j as u32)) == scene.solid(tequila_core::ids::InstanceId(index as u32))).count() > 1
+        })
+    };
+    if changed.iter().any(|&material| joined(material)) {
         return Ok(false);
     }
     let mut out = Translation::default();
@@ -3669,14 +3847,52 @@ impl Builder<'_> {
 
     /// Material `index`'s shader: a new one, or `reuse` built again.
     fn material(&mut self, index: usize, reuse: Option<Node>) -> Result<Node, String> {
-        let material: &Material = &self.scene.materials[index];
-        let program = self.scene.programs.get(index).and_then(|p| p.as_deref());
         let shader = match reuse {
             Some(shader) => self.session.reopen(shader).ok_or("this Cycles library cannot rebuild a shader in place")??,
             None => self.session.shader(&format!("material{index}"))?,
         };
-        let bsdf = self.session.node(shader, "principled_bsdf")?;
         let output = self.session.node(shader, "output")?;
+        let surface = self.surface(shader, output, index, true)?;
+        self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
+        self.session.commit(shader)
+    }
+
+    /// One shader for a clear solid modelled as several parts (`solids`):
+    /// each part's surface, chosen by the part a face belongs to
+    /// ([`SOLID_ATTRIBUTE`]), and the volume once, the first part's, which
+    /// every part shares. Cycles keys the volumes a ray is inside by object
+    /// and shader, so only as one object with one shader is the solid one
+    /// volume to it.
+    fn solid_shader(&mut self, root: usize, materials: &[usize]) -> Result<Node, String> {
+        let shader = self.session.shader(&format!("solid{root}"))?;
+        let output = self.session.node(shader, "output")?;
+        let attribute = self.session.node(shader, "attribute")?;
+        self.session.set_string(attribute, "attribute", SOLID_ATTRIBUTE)?;
+        let mut chosen = self.surface(shader, output, materials[0], true)?;
+        for (part, &material) in materials.iter().enumerate().skip(1) {
+            let surface = self.surface(shader, output, material, false)?;
+            // This part's faces carry its number; each mix past a half-step
+            // below it takes this part's surface over the ones before.
+            let past = self.session.node(shader, "math")?;
+            self.session.set_string(past, "math_type", "greater_than")?;
+            self.session.connect(shader, attribute, "Fac", past, "Value1")?;
+            self.session.set_float(past, "Value2", part as f32 - 0.5)?;
+            let mix = self.session.node(shader, "mix_closure")?;
+            self.session.connect(shader, past, "Value", mix, "Fac")?;
+            self.session.connect(shader, chosen.0, chosen.1, mix, "Closure1")?;
+            self.session.connect(shader, surface.0, surface.1, mix, "Closure2")?;
+            chosen = (mix, "Closure");
+        }
+        self.session.connect(shader, chosen.0, chosen.1, output, "Surface")?;
+        self.session.commit(shader)
+    }
+
+    /// A material's surface, built into `shader`, for its output's Surface;
+    /// and, `with_volume`, its volume connected to `output`.
+    fn surface(&mut self, shader: Shader, output: Node, index: usize, with_volume: bool) -> Result<(Node, &'static str), String> {
+        let material: &Material = &self.scene.materials[index];
+        let program = self.scene.programs.get(index).and_then(|p| p.as_deref());
+        let bsdf = self.session.node(shader, "principled_bsdf")?;
 
         // The parameter block the program starts from, and what it drives.
         let constants = program.map(|p| &p.constants).unwrap_or(material);
@@ -3866,7 +4082,7 @@ impl Builder<'_> {
             self.feed(shader, bsdf, "thin_film_thickness", thickness, false)?;
             self.feed(shader, bsdf, "thin_film_ior", value(Param::ThinFilmIor, Value::Float(m.thin_film_ior)), false)?;
         }
-        if volume {
+        if volume && with_volume {
             self.volume(shader, output, m, driven.contains_key(&Param::TransmissionColor))?;
         }
 
@@ -4010,9 +4226,7 @@ impl Builder<'_> {
             // glass's inner wall under its liquid - it is no boundary.
             let surface = if transmissive { self.with_media(shader, surface)? } else { surface };
             // The fibres last, so a strand stays a strand to shadow rays too.
-            let surface = self.with_fibres(shader, index, m, surface)?;
-            self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
-            return self.session.commit(shader);
+            return self.with_fibres(shader, index, m, surface);
         }
         // The shell, as Tequila's renderer has a thin wall: a reflection by
         // Fresnel's share at its index, and the rest straight through, tinted
@@ -4110,9 +4324,7 @@ impl Builder<'_> {
             None => body,
         };
         self.session.connect(shader, body.0, body.1, cut, "Closure2")?;
-        let surface = self.with_fibres(shader, index, m, (cut, "Closure"))?;
-        self.session.connect(shader, surface.0, surface.1, output, "Surface")?;
-        self.session.commit(shader)
+        self.with_fibres(shader, index, m, (cut, "Closure"))
     }
 
     /// Clear glass as a shadow ray meets it, as Tequila's renderer has it
