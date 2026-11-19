@@ -2225,7 +2225,11 @@ fn trace<C: PathColour>(
             break;
         }
 
-        throughput *= colour.reflectance(sample.throughput_weight());
+        let weight = sample.throughput_weight();
+        throughput *= match C::SPECTRAL.then(|| glass_pass(material, &sample, weight)).flatten() {
+            Some((tint, scale)) => colour.reflectance(tint) * scale,
+            None => colour.reflectance(weight),
+        };
         // Through a dispersive surface each wavelength leaves by a direction
         // of its own, and this path has only its hero's: the other three end
         // here, and the hero carries on for all four, as Wilkie et al. do at
@@ -3150,6 +3154,70 @@ fn nearness_at(intersector: &dyn Intersector, hit: &Hit, normal: Vec3, radius: f
 /// the rest let it by. Every part, for a light without shadow links, takes
 /// the one `occluded` as before.
 ///
+/// A pass through clear glass as a spectral path takes it: its weight's
+/// tint and the number that scales it, apart, the tint the crossing tint
+/// ([`crate::spectral::crossing_tint`]) of the glass's colour. `None` for
+/// anything else, which the path reads by its weight as it is.
+///
+/// The lobe tints a crossing by the square root of the colour, and its
+/// weight is that root times its Fresnel share and the odds of choosing it.
+/// Read as one, that weight is often over one, a colour no surface reflects,
+/// and its spectrum is an unbounded colour's, of another shape than the
+/// root's; and the root's own spectrum, crossed twice, is not the colour's.
+/// Between them a garnet's middle in a white world read 0.47 red, against
+/// the 0.41 a tinted ball passes and the RGB render gives. Its tint read as
+/// the crossing tint and its number as a number, two crossings are the
+/// colour on either path. A weight that is not the root scaled - glass under
+/// a coloured coat - is read as it was.
+fn glass_pass(material: &crate::material::Material, sample: &tequila_materials::bsdf::BsdfSample, weight: Spectrum) -> Option<(Spectrum, f32)> {
+    if !sample.is_transmission || sample.flags.intersects(BsdfFlags::DIFFUSE | BsdfFlags::SUBSURFACE) {
+        return None;
+    }
+    let has_depth = !material.geometry_thin_walled && material.transmission_depth > 0.0;
+    let colour = if has_depth { material.transmission_tint } else { material.transmission_color * material.transmission_tint };
+    if colour.r == colour.g && colour.g == colour.b {
+        return None;
+    }
+    let root = colour.to_array().map(|c| c.max(0.0).sqrt());
+    let weight = weight.to_array();
+    // The number the root is scaled by, the same in every channel the root
+    // has, or this is not a pass of this glass alone.
+    let channels: Vec<f32> = (0..3).filter(|&c| root[c] > 1e-4).map(|c| weight[c] / root[c]).collect();
+    let scale = *channels.first()?;
+    if !(scale.is_finite() && scale > 0.0) || channels.iter().any(|&k| (k - scale).abs() > 1e-3 * scale) {
+        return None;
+    }
+    if (0..3).any(|c| root[c] <= 1e-4 && weight[c] > 1e-6) {
+        return None;
+    }
+    Some((crossing_tint(colour), scale))
+}
+
+/// [`crate::spectral::crossing_tint`], remembered for the colours this
+/// thread has met: a constant glass is one colour, and the tint takes a few
+/// integrations of a spectrum to find. A textured colour can be many, so
+/// past a few hundred a new one is worked out each time and not kept.
+fn crossing_tint(colour: Spectrum) -> Spectrum {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    const KEPT: usize = 512;
+    thread_local! {
+        static TINTS: RefCell<HashMap<[u32; 3], Spectrum>> = RefCell::new(HashMap::new());
+    }
+    let key = colour.to_array().map(f32::to_bits);
+    TINTS.with(|tints| {
+        if let Some(tint) = tints.borrow().get(&key) {
+            return *tint;
+        }
+        let tint = crate::spectral::crossing_tint(colour);
+        let mut tints = tints.borrow_mut();
+        if tints.len() < KEPT {
+            tints.insert(key, tint);
+        }
+        tint
+    })
+}
+
 /// Clear glass `glass` takes in ([`IntegratorConfig::shadow_glass`]) lets
 /// the light by as well, tinted by its colour and less what it reflects
 /// ([`crate::scene::Pane`]), which is why the answer is a colour.
