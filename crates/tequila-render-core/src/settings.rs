@@ -211,7 +211,8 @@ pub const DEFAULT_PIXEL_SPREAD: f32 = 1e-3;
 /// does not, for a studio that has to match Blender's exactly (Blender's
 /// Light Paths panel). Each `None` sends Cycles what it was always sent:
 /// diffuse and glossy bounces both `max_bounces` (at least 4), transparent
-/// 8, Filter Glossy 1, Cycles' own volume bounces and caustics.
+/// 8, Cycles' own volume bounces and caustics; and no Filter Glossy, which
+/// was 1 until 2026-11-19.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct CyclesTransport {
     /// Diffuse bounces. Set, or [`glossy_bounces`](Self::glossy_bounces)
@@ -223,7 +224,9 @@ pub struct CyclesTransport {
     pub transparent_bounces: Option<u32>,
     pub volume_bounces: Option<u32>,
     /// Blurs glossy reflections after diffuse bounces to cut noise; 0 is
-    /// none, Blender's 0.5 a little.
+    /// none, Blender's 0.5 a little. Unset, none: the blur takes light that
+    /// reaches a part through clear glass (`tequila-render-cycles`
+    /// `tests/filter_glossy.rs`).
     pub filter_glossy: Option<f32>,
     pub caustics_reflective: Option<bool>,
     pub caustics_refractive: Option<bool>,
