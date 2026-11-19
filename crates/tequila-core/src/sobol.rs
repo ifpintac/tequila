@@ -188,26 +188,56 @@ pub fn nested_uniform_scramble(x: u32, seed: u32) -> u32 {
 /// so that neighbouring pixels do not share the same error pattern (§4.3).
 #[inline]
 pub fn sample_u32(index: u32, dimension: u32, seed: u32) -> u32 {
-    let group = dimension / NUM_BASE_DIMENSIONS;
-    let base_dim = dimension % NUM_BASE_DIMENSIONS;
-    let group_seed = hash_combine(seed, group.wrapping_mul(0x51633e2d));
+    let group = shuffle(index, dimension / NUM_BASE_DIMENSIONS, seed);
+    sample_u32_in(group, dimension % NUM_BASE_DIMENSIONS)
+}
 
+/// What [`sample_u32`] works out for a whole group of
+/// [`NUM_BASE_DIMENSIONS`] dimensions at once - the group's seed, and the
+/// index shuffled by it - so a caller drawing several of the group's
+/// dimensions for one index can work it out once ([`crate::sampler`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Group {
+    seed: u32,
+    shuffled: u32,
+}
+
+/// The [`Group`] of `index` in dimension group `group`.
+#[inline]
+pub fn shuffle(index: u32, group: u32, seed: u32) -> Group {
+    let group_seed = hash_combine(seed, group.wrapping_mul(0x51633e2d));
     // Shuffling the index randomizes *which* points of the sequence this
     // sample set draws, so different pixels do not all start from the same
     // corner of the domain. It preserves the net property, so the set stays
     // stratified.
-    let shuffled = nested_uniform_scramble(index, hash_u32(group_seed));
-    let x = sobol_u32(shuffled, base_dim);
-    nested_uniform_scramble(x, hash_combine(group_seed, base_dim ^ 0xa511_e9b3))
+    Group { seed: group_seed, shuffled: nested_uniform_scramble(index, hash_u32(group_seed)) }
+}
+
+/// [`sample_u32`] in base dimension `base_dim` of a [`Group`].
+#[inline]
+pub fn sample_u32_in(group: Group, base_dim: u32) -> u32 {
+    let x = sobol_u32(group.shuffled, base_dim);
+    nested_uniform_scramble(x, hash_combine(group.seed, base_dim ^ 0xa511_e9b3))
 }
 
 /// Owen-scrambled Sobol′ sample in `[0, 1)`.
 #[inline]
 pub fn sample(index: u32, dimension: u32, seed: u32) -> f32 {
+    to_unit(sample_u32(index, dimension, seed))
+}
+
+/// [`sample`] in base dimension `base_dim` of a [`Group`].
+#[inline]
+pub fn sample_in(group: Group, base_dim: u32) -> f32 {
+    to_unit(sample_u32_in(group, base_dim))
+}
+
+#[inline]
+fn to_unit(x: u32) -> f32 {
     // 24 significant bits: the most an f32 can represent exactly, and the
     // `min` guarantees the result never rounds up to 1.0.
     const ONE_MINUS_EPS: f32 = 1.0 - f32::EPSILON / 2.0;
-    ((sample_u32(index, dimension, seed) >> 8) as f32 * (1.0 / 16_777_216.0)).min(ONE_MINUS_EPS)
+    ((x >> 8) as f32 * (1.0 / 16_777_216.0)).min(ONE_MINUS_EPS)
 }
 
 #[cfg(test)]

@@ -70,7 +70,18 @@ pub struct Sampler {
     bounce_base: u32,
     /// Fallback stream for dimensions past [`SOBOL_DIMENSION_LIMIT`].
     fallback: Pcg32,
+    /// Each Sobol' dimension group's seed and shuffled index, worked out
+    /// the first time one of its dimensions is drawn: the same for all four
+    /// of them, and a path draws most of each group it reaches. Half of
+    /// every draw was working them out again (`docs/07` R1).
+    groups: [sobol::Group; GROUPS],
+    /// Which of `groups` are worked out, one bit each.
+    known: u16,
 }
+
+/// How many Sobol' dimension groups the sampler draws from.
+const GROUPS: usize = (SOBOL_DIMENSION_LIMIT / sobol::NUM_BASE_DIMENSIONS) as usize;
+const _: () = assert!(GROUPS <= 16, "`known` holds a bit per group");
 
 impl Sampler {
     /// Create a sampler for one pixel and one sample index.
@@ -87,6 +98,8 @@ impl Sampler {
                 hash_many(&[seed, sample_index, 0x5f3d]) as u64,
                 hash_many(&[seed, sample_index, 0xa17c]) as u64,
             ),
+            groups: [sobol::Group::default(); GROUPS],
+            known: 0,
         }
     }
 
@@ -101,7 +114,14 @@ impl Sampler {
     #[inline]
     pub fn get(&mut self, dimension: u32) -> f32 {
         if dimension < SOBOL_DIMENSION_LIMIT {
-            sobol::sample(self.sample_index, dimension, self.seed)
+            // `sobol::sample`, its group's part worked out once.
+            let group = dimension / sobol::NUM_BASE_DIMENSIONS;
+            let bit = 1u16 << group;
+            if self.known & bit == 0 {
+                self.groups[group as usize] = sobol::shuffle(self.sample_index, group, self.seed);
+                self.known |= bit;
+            }
+            sobol::sample_in(self.groups[group as usize], dimension % sobol::NUM_BASE_DIMENSIONS)
         } else {
             self.fallback.next_f32()
         }
