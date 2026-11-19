@@ -238,7 +238,12 @@ pub fn settings(quality: &Quality) -> Vec<(&'static str, &'static str, Setting)>
         // darker by the odds of surviving: an eighth of the light, through a
         // sphere half there. (Blender's default, 0, has the same fault.)
         ("integrator", "transparent_min_bounce", Int(transparent)),
-        ("integrator", "filter_glossy", Float(t.filter_glossy.unwrap_or(1.0).max(0.0))),
+        // No blur unless asked for. Filter Glossy roughens what a path meets
+        // after a diffuse or rough bounce, and through clear glass that is
+        // light lost: on the palma P8 it took 44% of the light reaching the
+        // circuit board through the shell, which Tequila's renderer and
+        // Cycles both find with it off (`tests/filter_glossy.rs`).
+        ("integrator", "filter_glossy", Float(t.filter_glossy.unwrap_or(0.0).max(0.0))),
         ("integrator", "use_adaptive_sampling", Bool(quality.adaptive)),
         ("integrator", "use_denoise", Bool(quality.denoise)),
     ];
@@ -4884,7 +4889,8 @@ mod tests {
     }
 
     /// What Cycles is told with none of the finer controls set is what it
-    /// was always told, and each one set reaches its own socket, as a studio
+    /// was always told - but for Filter Glossy, off since 2026-11-19 where it
+    /// was 1 - and each one set reaches its own socket, as a studio
     /// that has to match Blender's Light Paths, clamping and Film sets them:
     /// total 16 with diffuse 4, glossy 8, transmission 12, transparent 16,
     /// volume 0, Filter Glossy 0.5, direct light unclamped and indirect at
@@ -4903,7 +4909,7 @@ mod tests {
             ("max_transmission_bounce", Setting::Int(12)),
             ("transparent_max_bounce", Setting::Int(8)),
             ("transparent_min_bounce", Setting::Int(8)),
-            ("filter_glossy", Setting::Float(1.0)),
+            ("filter_glossy", Setting::Float(0.0)),
             ("sample_clamp_direct", Setting::Float(0.0)),
             ("sample_clamp_indirect", Setting::Float(10.0)),
         ] {
