@@ -434,35 +434,87 @@ impl GgxEnergyTable {
         }
     }
 
+    /// Where a lobe of roughness `alpha` and index `ior` falls on the
+    /// tables' axes. A lobe reads the tables several times at a shading
+    /// point, at one roughness and index and different angles, and working
+    /// the place out again for each read was a measurable share of a
+    /// lamp-lit render (`docs/07` R1). The reads at a place are the reads
+    /// with the same arguments, to the bit.
     #[inline]
-    fn lookup2d(values: &[f32], mu: f32, alpha: f32) -> f32 {
+    pub fn place(alpha: f32, ior: f32) -> Place {
         let (ri, rf) = index(alpha.max(0.0).sqrt(), ROUGHNESS_STEPS);
-        let (mi, mf) = index(mu_param(mu), MU_STEPS);
+        let (ii, if_) = index(ior_param(ior), IOR_STEPS);
+        // Both axes are far shorter than 256 steps.
+        Place { ri: ri as u8, ii: ii as u8, rf, if_ }
+    }
+
+    /// Two of the 2D tables read at the same place - mu and roughness,
+    /// bilinearly - the place in them worked out once.
+    #[inline]
+    fn lookup2d_pair(first: &[f32], second: &[f32], mu: f32, alpha: f32) -> (f32, f32) {
+        let (ri, rf) = index(alpha.max(0.0).sqrt(), ROUGHNESS_STEPS);
+        Self::pair_at(first, second, ri, rf, index(mu_param(mu), MU_STEPS))
+    }
+
+    /// [`Self::lookup2d_pair`] at roughness coordinates `(ri, rf)` and mu
+    /// coordinates `(mi, mf)`.
+    #[inline]
+    fn pair_at(first: &[f32], second: &[f32], ri: usize, rf: f32, (mi, mf): (usize, f32)) -> (f32, f32) {
         let ri1 = (ri + 1).min(ROUGHNESS_STEPS - 1);
         let mi1 = (mi + 1).min(MU_STEPS - 1);
-        let v00 = values[ri * MU_STEPS + mi];
-        let v01 = values[ri * MU_STEPS + mi1];
-        let v10 = values[ri1 * MU_STEPS + mi];
-        let v11 = values[ri1 * MU_STEPS + mi1];
-        let v0 = v00 + (v01 - v00) * mf;
-        let v1 = v10 + (v11 - v10) * mf;
-        v0 + (v1 - v0) * rf
+        let at = |values: &[f32]| {
+            let v00 = values[ri * MU_STEPS + mi];
+            let v01 = values[ri * MU_STEPS + mi1];
+            let v10 = values[ri1 * MU_STEPS + mi];
+            let v11 = values[ri1 * MU_STEPS + mi1];
+            let v0 = v00 + (v01 - v00) * mf;
+            let v1 = v10 + (v11 - v10) * mf;
+            v0 + (v1 - v0) * rf
+        };
+        (at(first), at(second))
     }
 
     #[inline]
     fn lookup1d(values: &[f32], alpha: f32) -> f32 {
         let (ri, rf) = index(alpha.max(0.0).sqrt(), ROUGHNESS_STEPS);
+        Self::lookup1d_at(values, ri, rf)
+    }
+
+    #[inline]
+    fn lookup1d_at(values: &[f32], ri: usize, rf: f32) -> f32 {
         let ri1 = (ri + 1).min(ROUGHNESS_STEPS - 1);
         values[ri] + (values[ri1] - values[ri]) * rf
+    }
+
+    /// [`Self::white_directional`] at a lobe's [`Place`].
+    #[inline]
+    pub fn white_directional_at(&self, place: &Place, cos_theta: f32) -> f32 {
+        let (scale, bias) = Self::pair_at(&self.scale, &self.bias, place.ri as usize, place.rf, index(mu_param(cos_theta), MU_STEPS));
+        (scale + bias).clamp(0.0, 1.0)
+    }
+
+    /// [`Self::white_average`] at a lobe's [`Place`].
+    #[inline]
+    pub fn white_average_at(&self, place: &Place) -> f32 {
+        Self::lookup1d_at(&self.white_average, place.ri as usize, place.rf).clamp(0.0, 1.0)
+    }
+
+    /// [`Self::dielectric_directional`] and [`Self::white_directional`] at
+    /// a lobe's [`Place`], the angle's place on the axis found once for
+    /// both.
+    #[inline]
+    pub fn dielectric_and_white_at(&self, place: &Place, cos_theta: f32) -> (f32, f32) {
+        let mu = index(mu_param(cos_theta), MU_STEPS);
+        let (scale, bias) = Self::pair_at(&self.scale, &self.bias, place.ri as usize, place.rf, mu);
+        (self.dielectric_at(place, mu), (scale + bias).clamp(0.0, 1.0))
     }
 
     /// Directional albedo of a **white** (`F = 1`) single-scattering GGX lobe.
     /// The quantity the Kulla-Conty compensation is defined against.
     #[inline]
     pub fn white_directional(&self, cos_theta: f32, alpha: f32) -> f32 {
-        (Self::lookup2d(&self.scale, cos_theta, alpha)
-            + Self::lookup2d(&self.bias, cos_theta, alpha))
-        .clamp(0.0, 1.0)
+        let (scale, bias) = Self::lookup2d_pair(&self.scale, &self.bias, cos_theta, alpha);
+        (scale + bias).clamp(0.0, 1.0)
     }
 
     /// Cosine-weighted hemispherical average of [`Self::white_directional`].
@@ -477,8 +529,7 @@ impl GgxEnergyTable {
     /// [`Self::dielectric_directional`].
     #[inline]
     pub fn conductor_directional(&self, cos_theta: f32, alpha: f32, f0: Spectrum) -> Spectrum {
-        let s = Self::lookup2d(&self.scale, cos_theta, alpha);
-        let b = Self::lookup2d(&self.bias, cos_theta, alpha);
+        let (s, b) = Self::lookup2d_pair(&self.scale, &self.bias, cos_theta, alpha);
         (f0 * s + Spectrum::splat(b)).clamp(0.0, 1.0)
     }
 
@@ -494,9 +545,12 @@ impl GgxEnergyTable {
     /// Single-scattering directional albedo of a dielectric interface,
     /// integrated against the exact Fresnel equations.
     pub fn dielectric_directional(&self, cos_theta: f32, alpha: f32, ior: f32) -> f32 {
-        let (ri, rf) = index(alpha.max(0.0).sqrt(), ROUGHNESS_STEPS);
-        let (ii, if_) = index(ior_param(ior), IOR_STEPS);
-        let (mi, mf) = index(mu_param(cos_theta), MU_STEPS);
+        self.dielectric_at(&Self::place(alpha, ior), index(mu_param(cos_theta), MU_STEPS))
+    }
+
+    #[inline]
+    fn dielectric_at(&self, place: &Place, (mi, mf): (usize, f32)) -> f32 {
+        let (ri, rf, ii, if_) = (place.ri as usize, place.rf, place.ii as usize, place.if_);
         let ri1 = (ri + 1).min(ROUGHNESS_STEPS - 1);
         let ii1 = (ii + 1).min(IOR_STEPS - 1);
         let mi1 = (mi + 1).min(MU_STEPS - 1);
@@ -580,6 +634,16 @@ impl GgxEnergyTable {
 #[inline]
 fn refraction(wo: Vec3, wm: Vec3, eta: f32) -> Option<Vec3> {
     DielectricTransmission::refract(wo, wm, eta)
+}
+
+/// A lobe's place on the tables' roughness and index axes
+/// ([`GgxEnergyTable::place`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Place {
+    ri: u8,
+    ii: u8,
+    rf: f32,
+    if_: f32,
 }
 
 #[inline]

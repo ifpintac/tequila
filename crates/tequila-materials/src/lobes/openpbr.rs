@@ -69,11 +69,15 @@ const MAX_LOBES: usize = 5;
 /// lookup is not cheap, so taking that shortcut is the difference between a
 /// plastic costing what it always did and costing five times as much. A
 /// metal, a bare diffuse and a plain glass never reach this function at all.
+///
+/// `coat_average` and `specular_average` are the two interfaces'
+/// [`DielectricSpecular::hemispherical_albedo`], which the caller has read
+/// already for the layers' responses.
 fn stack_transmittance(
     fuzz: Option<&Sheen>,
-    coat: Option<&DielectricSpecular>,
+    (coat, coat_average): (Option<&DielectricSpecular>, f32),
     coat_weight: f32,
-    specular: Option<&DielectricSpecular>,
+    (specular, specular_average): (Option<&DielectricSpecular>, f32),
     specular_scale: f32,
 ) -> f32 {
     let layers =
@@ -81,8 +85,8 @@ fn stack_transmittance(
     if layers <= 1 {
         let reflected = fuzz
             .map(|sheen| sheen.hemispherical_albedo())
-            .or_else(|| coat.map(|lobe| lobe.hemispherical_albedo() * coat_weight))
-            .or_else(|| specular.map(|lobe| lobe.hemispherical_albedo() * specular_scale))
+            .or_else(|| coat.map(|_| coat_average * coat_weight))
+            .or_else(|| specular.map(|_| specular_average * specular_scale))
             .unwrap_or(0.0);
         return (1.0 - reflected).clamp(0.0, 1.0);
     }
@@ -217,6 +221,41 @@ pub struct OpenPbrBsdf {
     /// the flake lobe is evaluated with directions turned into it. A
     /// rotation, so densities carry over unchanged.
     flake_frame: Option<tequila_core::math::Onb>,
+    /// Whether `probabilities` holds a choice of lobes: not yet when built
+    /// for [`Self::aim`] to choose them ([`Self::to_aim`]).
+    chosen: bool,
+}
+
+/// The lobes' selection probabilities by each one's albedo seen face on
+/// (`OpenPbrBsdf::build`'s §2.4).
+fn face_on_probabilities(lobes: &[Option<(Lobe, Depth, Spectrum, f32)>; MAX_LOBES], count: usize) -> [f32; MAX_LOBES] {
+    let mut probabilities = [0.0f32; MAX_LOBES];
+    let mut total = 0.0;
+    for (index, slot) in lobes.iter().enumerate().take(count) {
+        if let Some((lobe, _, scale, weight)) = slot {
+            let estimate = match lobe {
+                Lobe::Fuzz(l) => l.albedo(Vec3::Z).luminance(),
+                Lobe::Coat(l) => l.albedo(Vec3::Z).luminance().max(0.05),
+                Lobe::Metal(l) => l.albedo(Vec3::Z).luminance(),
+                // A clear specular interface has a low face-on albedo but
+                // dominates at grazing angles. A floor keeps it sampled
+                // often enough that its highlight is not noise.
+                Lobe::Specular(l) => l.albedo(Vec3::Z).luminance().max(0.05),
+                Lobe::Transmission(l) => l.albedo(Vec3::Z).luminance(),
+                Lobe::Diffuse(l) => l.albedo(Vec3::Z).luminance(),
+                Lobe::Subsurface(l) => l.albedo(Vec3::Z).luminance().max(0.05),
+            };
+            let p = (estimate * scale.luminance() * weight).max(1e-4);
+            probabilities[index] = p;
+            total += p;
+        }
+    }
+    if total > 0.0 {
+        for p in probabilities.iter_mut().take(count) {
+            *p /= total;
+        }
+    }
+    probabilities
 }
 
 impl OpenPbrBsdf {
@@ -226,7 +265,14 @@ impl OpenPbrBsdf {
     /// integrator raises it after a couple of bounces so near-specular lobes
     /// deep in a path stop producing fireflies.
     pub fn new(material: &Material, roughness_floor: f32) -> OpenPbrBsdf {
-        OpenPbrBsdf::build(material, roughness_floor, false)
+        OpenPbrBsdf::build(material, roughness_floor, false, false)
+    }
+
+    /// [`Self::new`], for a caller that calls [`Self::aim`] next, before
+    /// anything else: the same stack, leaving the face-on choice of lobes,
+    /// which `aim` replaces, for `aim` to make only if it declines to.
+    pub fn to_aim(material: &Material, roughness_floor: f32) -> OpenPbrBsdf {
+        OpenPbrBsdf::build(material, roughness_floor, false, true)
     }
 
     /// The same stack, for a path already inside the material.
@@ -236,10 +282,15 @@ impl OpenPbrBsdf {
     /// `wo.z` is positive whichever side the path is on. Everything else in
     /// the stack is symmetric and reads the same either way.
     pub fn from_inside(material: &Material, roughness_floor: f32) -> OpenPbrBsdf {
-        OpenPbrBsdf::build(material, roughness_floor, true)
+        OpenPbrBsdf::build(material, roughness_floor, true, false)
     }
 
-    fn build(material: &Material, roughness_floor: f32, from_inside: bool) -> OpenPbrBsdf {
+    /// [`Self::from_inside`], for [`Self::aim`] next, as [`Self::to_aim`].
+    pub fn from_inside_to_aim(material: &Material, roughness_floor: f32) -> OpenPbrBsdf {
+        OpenPbrBsdf::build(material, roughness_floor, true, true)
+    }
+
+    fn build(material: &Material, roughness_floor: f32, from_inside: bool, to_aim: bool) -> OpenPbrBsdf {
         let mut lobes: [Option<(Lobe, Depth, Spectrum, f32)>; MAX_LOBES] = [None; MAX_LOBES];
         let mut count = 0;
 
@@ -460,32 +511,12 @@ impl OpenPbrBsdf {
         // spends its samples where the energy is. Any positive set of
         // probabilities is unbiased; a *good* set is what keeps the variance
         // down, which is the whole reason to weight them at all.
-        let mut probabilities = [0.0f32; MAX_LOBES];
-        let mut total = 0.0;
-        for (index, slot) in lobes.iter().enumerate().take(count) {
-            if let Some((lobe, _, scale, weight)) = slot {
-                let estimate = match lobe {
-                    Lobe::Fuzz(l) => l.albedo(Vec3::Z).luminance(),
-                    Lobe::Coat(l) => l.albedo(Vec3::Z).luminance().max(0.05),
-                    Lobe::Metal(l) => l.albedo(Vec3::Z).luminance(),
-                    // A clear specular interface has a low face-on albedo but
-                    // dominates at grazing angles. A floor keeps it sampled
-                    // often enough that its highlight is not noise.
-                    Lobe::Specular(l) => l.albedo(Vec3::Z).luminance().max(0.05),
-                    Lobe::Transmission(l) => l.albedo(Vec3::Z).luminance(),
-                    Lobe::Diffuse(l) => l.albedo(Vec3::Z).luminance(),
-                    Lobe::Subsurface(l) => l.albedo(Vec3::Z).luminance().max(0.05),
-                };
-                let p = (estimate * scale.luminance() * weight).max(1e-4);
-                probabilities[index] = p;
-                total += p;
-            }
-        }
-        if total > 0.0 {
-            for p in probabilities.iter_mut().take(count) {
-                *p /= total;
-            }
-        }
+        //
+        // Face on, since nothing here knows where the surface is seen from;
+        // `aim` chooses again by the direction it is. Where it is about to,
+        // this is left to it, and worked out only if it declines.
+        let chosen = !(to_aim && count >= 2);
+        let probabilities = if chosen { face_on_probabilities(&lobes, count) } else { [0.0f32; MAX_LOBES] };
 
         // What each layer is actually sitting on, built from the bottom up.
         //
@@ -502,9 +533,11 @@ impl OpenPbrBsdf {
         let under_interface = (diffuse_albedo * (1.0 - transmission)
             + material.transmission_color.luminance() * transmission)
             .clamp(0.0, 1.0);
-        let interface = specular
-            .map(|lobe| lobe.hemispherical_albedo() * specular_scale)
-            .unwrap_or(0.0);
+        // Each interface's hemispherical albedo, read once for every use
+        // below.
+        let specular_average = specular.as_ref().map_or(0.0, |lobe| lobe.hemispherical_albedo());
+        let coat_average = coat.as_ref().map_or(0.0, |lobe| lobe.hemispherical_albedo());
+        let interface = specular.map(|_| specular_average * specular_scale).unwrap_or(0.0);
         let dielectric_response = layer_response(interface, under_interface);
 
         // §2.2 mixes metal and dielectric by weight rather than by addition,
@@ -526,9 +559,9 @@ impl OpenPbrBsdf {
         {
             1.0 - stack_transmittance(
                 fuzz.as_ref(),
-                coat.as_ref(),
+                (coat.as_ref(), coat_average),
                 material.coat_weight,
-                specular.as_ref(),
+                (specular.as_ref(), specular_average),
                 specular_scale,
             )
         } else {
@@ -536,9 +569,7 @@ impl OpenPbrBsdf {
         };
 
         let coat_response = match &coat {
-            Some(lobe) => {
-                layer_response(lobe.hemispherical_albedo() * material.coat_weight, base_response)
-            }
+            Some(_) => layer_response(coat_average * material.coat_weight, base_response),
             None => base_response,
         };
 
@@ -557,6 +588,7 @@ impl OpenPbrBsdf {
             diffuse_albedo,
             substrate_internal,
             flake_frame,
+            chosen,
         }
     }
 
@@ -721,6 +753,7 @@ impl OpenPbrBsdf {
     /// is, which the sample's flags say only in part: a glossy reflection
     /// of roughness 0.05 and one of 0.8 are both `GLOSSY`.
     pub fn sample_reflection(&self, wo: Vec3, u: Vec2, uc: f32) -> Option<(BsdfSample, Option<f32>)> {
+        debug_assert!(self.chosen, "built to aim, and never aimed");
         if self.count == 0 {
             return None;
         }
@@ -818,8 +851,21 @@ impl OpenPbrBsdf {
     /// they stay each other's density. Call it once, before either, with the
     /// `wo` they will be given.
     pub fn aim(&mut self, wo: Vec3) {
+        // Built for this ([`Self::to_aim`]) and declined - seen from behind,
+        // or estimates that came to nothing usable - the face-on choice
+        // after all. The lobes' own aiming changes none of what it reads.
+        if !self.aim_choosing(wo) && !self.chosen {
+            self.probabilities = face_on_probabilities(&self.lobes, self.count);
+        }
+        self.chosen = true;
+    }
+
+    /// [`Self::aim`], answering whether it chose the lobes again: not when
+    /// the surface is seen from behind, has one lobe, or the estimates came
+    /// to nothing usable, which leave the choice as it was.
+    fn aim_choosing(&mut self, wo: Vec3) -> bool {
         if wo.z <= 0.0 {
-            return;
+            return false;
         }
         // The interfaces read their tables for `wo` once, for every
         // evaluation here and for the layers they cover (`attenuation`).
@@ -845,7 +891,7 @@ impl OpenPbrBsdf {
             }
         }
         if self.count < 2 {
-            return;
+            return false;
         }
         let mut probabilities = [0.0f32; MAX_LOBES];
         let mut total = 0.0;
@@ -875,7 +921,9 @@ impl OpenPbrBsdf {
                 *p /= total;
             }
             self.probabilities = probabilities;
+            return true;
         }
+        false
     }
 
     /// The density [`Bsdf::pdf`] gives `wi` from the reflections
@@ -940,6 +988,7 @@ impl Bsdf for OpenPbrBsdf {
     /// The weighted sum over **every** lobe. See this module's header for why
     /// returning only the sampled lobe's density is the bug that hides.
     fn pdf(&self, wo: Vec3, wi: Vec3) -> f32 {
+        debug_assert!(self.chosen, "built to aim, and never aimed");
         let mut total = 0.0;
         for (index, (lobe, depth, _, _)) in self.active() {
             let p = self.probabilities[index];
@@ -951,6 +1000,7 @@ impl Bsdf for OpenPbrBsdf {
     }
 
     fn sample(&self, wo: Vec3, u: Vec2, uc: f32) -> Option<BsdfSample> {
+        debug_assert!(self.chosen, "built to aim, and never aimed");
         self.sample_reflection(wo, u, uc).map(|(sample, _)| sample)
     }
 
