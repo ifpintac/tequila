@@ -72,7 +72,7 @@ use super::*;
 use crate::light::{Light, LightKind};
 use crate::scene::SceneSnapshot;
 use tequila_core::ids::MaterialId;
-use tequila_core::math::{offset_ray_origin, vec2};
+use tequila_core::math::{offset_ray_origin, offset_ray_origin_at, vec2};
 
 /// Steps of the walk before it is given up.
 const MAX_ITERATIONS: u32 = 64;
@@ -176,6 +176,8 @@ struct Surface {
     ng: Vec3,
     dn_du: Vec3,
     dn_dv: Vec3,
+    /// The hit's `magnitude`: how far a ray leaving `p` steps off first.
+    magnitude: f32,
 }
 
 /// One crossing of glass on the path from the receiver to the lamp.
@@ -209,6 +211,7 @@ impl Crossing {
             ng: Vec3::ZERO,
             dn_du: Vec3::ZERO,
             dn_dv: Vec3::ZERO,
+            magnitude: 0.0,
         },
         instance: InstanceId(0),
         material: MaterialId(0),
@@ -330,6 +333,7 @@ fn surface(scene: &SceneSnapshot, hit: &Hit) -> Option<Surface> {
         ng,
         dn_du: dn_du * cos - dn_dv * sin,
         dn_dv: dn_du * sin + dn_dv * cos,
+        magnitude: hit.magnitude,
     })
 }
 
@@ -967,19 +971,22 @@ pub(super) fn solve(
     // What each leg's medium absorbs, and whether each leg is clear: past
     // what casts this lamp no shadow and through thin walls, as a shadow
     // ray goes, and stopped by anything else - other glass that bends light
-    // included, through which this is not the path.
+    // included, through which this is not the path. Each leg starts a step
+    // off its surface, as far as the hit there was precise.
     let mut from = receiver;
     let mut from_normal = normal;
+    let mut from_magnitude = at.magnitude;
     for (i, crossing) in crossings.iter().enumerate() {
         let to = crossing.at.p;
         if let Some(medium) = absorbing[i] {
             through *= scene.material(scene.instance(medium).material).transmittance_over((to - from).length());
         }
+        let leaving = facing(from_normal, to - from);
         through *= shadow_transmittance(
             intersector,
             ShadowGlass::Unbent,
-            from,
-            facing(from_normal, to - from),
+            offset_ray_origin_at(from, leaving, from_magnitude),
+            leaving,
             to,
             facing(crossing.at.ng, from - to),
             &light.shadow_links,
@@ -989,12 +996,14 @@ pub(super) fn solve(
         }
         from = to;
         from_normal = crossing.at.ng;
+        from_magnitude = crossing.at.magnitude;
     }
+    let leaving = facing(last.ng, target - last.p);
     through *= shadow_transmittance(
         intersector,
         ShadowGlass::Unbent,
-        last.p,
-        facing(last.ng, target - last.p),
+        offset_ray_origin_at(last.p, leaving, last.magnitude),
+        leaving,
         target,
         target_normal,
         &light.shadow_links,
