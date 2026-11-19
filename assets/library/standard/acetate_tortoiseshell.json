@@ -25,6 +25,11 @@
         "from": 5,
         "socket": "param:base_color",
         "to": 1
+      },
+      {
+        "from": 5,
+        "socket": "param:subsurface_color",
+        "to": 1
       }
     ],
     "nodes": [
