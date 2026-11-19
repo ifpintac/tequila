@@ -219,6 +219,16 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
   - Tried and left out: steering the sky away from below a floor for what stands on it (noisier, likely because the floor is fitted to the product and some of the sky below the horizon reaches past its edge); a minimum chance for tiles at a surface's horizon, the balance heuristic, a 256-step cap on walks (Cycles' - faster, but it drops the light of the walks that go deep, 0.9% of the body's).
   - Time to clean against Cycles, both measured on 2026-11-19 on the RTX 2060 PC, Cycles with #176 (Tequila / Cycles seconds): Headphones 7.7 / 7.9 (0.97, was 1.27), `subsurface_product` 37.6 / 39.5 (0.95, was 1.45), `simple_product` 11.3 / 14.0 (0.81), `fibre_product` 18.6 / 22.3 (0.83), `cad_assembly` 5.4 / 11.7 (0.46), Perfume bottle 12.6 / 26.3 (0.48), `lamp_lit` 9.7 / 8.9 (1.09, its sky turned off, so untouched by this). palma P8 measured 1.03 with #169 before this, its shell lit by the sky this improves.
 
+- *Then `lamp_lit`'s cost a sample (2026-11-19, `r1-lamp`):* its noise was level with Cycles' and its gap the cost of a sample (3.1 against 3.96 million a second). Seven cuts, found by profiling, every one of them work done twice or not needed; all but the light tree's leave every picture bit-identical, checked on five bench scenes:
+  - The light tree's importance by the cosines of its angles, the sums and differences by the identities, as Cycles' is: an `acos` or `asin` at every node of every descent was 4%. A test holds it to the angles' answer over 200,000 cones, points and bounds; the first version read a point light's whole sphere seen from inside its bounds as no angle at all, which the light-selection test caught.
+  - A specular interface reads its tables from its place on their roughness and index axes, found once at a shading point, and two tables read at one place together.
+  - The face-on choice of lobes, which `aim` replaces at once, is made only where `aim` declines to choose.
+  - Each interface's hemispherical albedo read once a shading point, not once for each layer that asks.
+  - A medium's volume boxed, so the stack of media every path carries is small to move; and the two materials a path keeps for evaluating graphs are made when it first meets one, not for every path.
+  - Sobol′'s per-group shuffle of the sample index, the same for the group's four dimensions, worked out once a sample per group.
+  - Samples a second on `lamp_lit` 2.68 to 3.1 million with the PC busy; the same noise, the same picture (mean 0.48902 before and after). The cuts are in what every scene does, so every scene gains some.
+  - Time to clean against Cycles, measured alternately three times each on 2026-11-19 on the RTX 2060 PC with other builds running (best of three, Tequila / Cycles seconds): `lamp_lit` 9.4 / 10.3 (0.91, was 1.09). Every generated bench scene and both sample projects measured now take less time to clean in Tequila than in Cycles on this PC; palma P8 last read 1.03 with #169, before the sky a surface can see and these cuts, and is to be measured again once #169 is in.
+
 *Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
 
 ### R2 — The first picture from the card (M)
