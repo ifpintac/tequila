@@ -159,7 +159,7 @@ fn sheen_finite(x: f32) -> bool {
     return abs(x) <= 3.40282347e38;
 }
 
-fn sheen_sample(l: Sheen, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
+fn sheen_draw(l: Sheen, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
     if (l.weight <= 0.0) {
         return no_sample();
     }
@@ -187,11 +187,20 @@ fn sheen_sample(l: Sheen, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
     if (wo.z < 0.0) {
         wi.z = -wi.z;
     }
-    let pdf = sheen_pdf(l, wo, wi);
+    return LobeSample(true, wi, vec3<f32>(0.0), 0.0, false, false, 1.0);
+}
+
+// The draw (lobes.wgsl's diffuse_draw), kept where its own density is.
+fn sheen_sample(l: Sheen, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
+    let s = sheen_draw(l, wo, u);
+    if (!s.ok) {
+        return s;
+    }
+    let pdf = sheen_pdf(l, wo, s.wi);
     if (pdf <= 0.0) {
         return no_sample();
     }
-    return LobeSample(true, wi, sheen_eval(l, wo, wi), pdf, false, false, 1.0);
+    return LobeSample(true, s.wi, sheen_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
 fn sheen_albedo(l: Sheen, wo: vec3<f32>) -> vec3<f32> {

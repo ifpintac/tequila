@@ -280,14 +280,17 @@ fn openpbr_lobe_pdf(b: OpenPbr, slot: u32, wo: vec3<f32>, wi: vec3<f32>) -> f32 
     }
 }
 
-fn openpbr_lobe_sample(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+// A lobe's draw (lobes.wgsl's diffuse_draw): its sample, but for the check
+// of its own density and value, which the stack makes from its own
+// evaluation in the direction drawn.
+fn openpbr_lobe_draw(b: OpenPbr, slot: u32, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     switch slot {
-        case 0u: { return sheen_sample(b.fuzz, wo, u); }
-        case 1u: { return specular_sample(b.coat, wo, u, uc); }
-        case 2u: { return conductor_sample(b.metal, wo, u, uc); }
-        case 3u: { return specular_sample(b.specular, wo, u, uc); }
-        case 4u: { return transmission_sample(b.transmission, wo, u, uc); }
-        default: { return diffuse_sample(b.diffuse, wo, u); }
+        case 0u: { return sheen_draw(b.fuzz, wo, u); }
+        case 1u: { return specular_draw(b.coat, wo, u, uc); }
+        case 2u: { return conductor_draw(b.metal, wo, u, uc); }
+        case 3u: { return specular_draw(b.specular, wo, u, uc); }
+        case 4u: { return transmission_draw(b.transmission, wo, u, uc); }
+        default: { return diffuse_draw(b.diffuse, wo, u); }
     }
 }
 
@@ -698,7 +701,7 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
         return none;
     }
     let roughness = openpbr_reflection_roughness(b, chosen);
-    let s = openpbr_lobe_sample(b, chosen, wo, u, lobe_uc);
+    let s = openpbr_lobe_draw(b, chosen, wo, u, lobe_uc);
     if (!s.ok) {
         return none;
     }
@@ -708,15 +711,53 @@ fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: 
         let f = s.f * (b.scales[chosen] * (b.weights[chosen] * through / probability));
         return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true, s.is_transmission, s.eta), roughness, 0.0, f, chosen);
     }
-    let densities = openpbr_densities(b, wo, s.wi, up_to, passed_from);
-    if (densities.x <= 0.0) {
+    // The whole stack's value and density in the direction drawn, in one
+    // pass, and the drawn lobe's own, which keep its draw or not as its own
+    // sample would (a density above nought; a transmission's value not
+    // black).
+    var total = 0.0;
+    var seen = 0.0;
+    var value = StackValue(vec3<f32>(0.0), vec3<f32>(0.0));
+    var own_pdf = 0.0;
+    var own_value = vec3<f32>(0.0);
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        let density = openpbr_lobe_pdf(b, slot, wo, s.wi);
+        let raw = openpbr_lobe_eval(b, slot, wo, s.wi);
+        if (slot == chosen) {
+            own_pdf = density;
+            own_value = raw;
+        }
+        let p = b.probabilities[slot];
+        if (p > 0.0) {
+            total += p * density;
+            let reflection = openpbr_reflection_roughness(b, slot);
+            if (reflection >= 0.0) {
+                let kept = openpbr_seeing_share(reflection, up_to, passed_from);
+                if (kept > 0.0) {
+                    seen += p * kept * density;
+                }
+            }
+        }
+        let through = openpbr_attenuation(b, openpbr_depth(slot), wo, s.wi);
+        let term = raw * (b.scales[slot] * (b.weights[slot] * through));
+        value.total += term;
+        if (slot != LOBE_DIFFUSE) {
+            value.glossy += term;
+        }
+    }
+    if (own_pdf <= 0.0 || (chosen == LOBE_TRANSMISSION && all(own_value == vec3<f32>(0.0)))) {
         return none;
     }
-    let value = openpbr_values(b, wo, s.wi);
+    if (total <= 0.0) {
+        return none;
+    }
     if (all(value.total == vec3<f32>(0.0))) {
         return none;
     }
-    return ReflectionSample(LobeSample(true, s.wi, value.total, densities.x, false, s.is_transmission, s.eta), roughness, densities.y, value.glossy, chosen);
+    return ReflectionSample(LobeSample(true, s.wi, value.total, total, false, s.is_transmission, s.eta), roughness, seen, value.glossy, chosen);
 }
 
 fn openpbr_sample(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {

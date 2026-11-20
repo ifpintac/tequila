@@ -108,16 +108,27 @@ fn diffuse_pdf(l: Diffuse, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
     return cosine_pdf(wi.z);
 }
 
-fn diffuse_sample(l: Diffuse, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
+// A lobe's draw: its sample's direction, and for a mirror-smooth one its
+// whole sample; a direction its own sample would keep only where its own
+// density there is above nought (and, for the transmission, its value not
+// black), which the stack tells from the evaluation it makes of every lobe
+// in that direction anyway (openpbr_sample_seen), so that the kernel holds
+// each lobe's evaluation fewer times. The lobes' samples are their draws
+// with those checks.
+fn diffuse_draw(l: Diffuse, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
     if (wo.z <= 0.0) {
         return no_sample();
     }
-    let wi = lobe_cosine_hemisphere(u);
-    let pdf = cosine_pdf(wi.z);
-    if (pdf <= 0.0) {
+    return LobeSample(true, lobe_cosine_hemisphere(u), vec3<f32>(0.0), 0.0, false, false, 1.0);
+}
+
+fn diffuse_sample(l: Diffuse, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
+    let s = diffuse_draw(l, wo, u);
+    let pdf = diffuse_pdf(l, wo, s.wi);
+    if (!s.ok || pdf <= 0.0) {
         return no_sample();
     }
-    return LobeSample(true, wi, diffuse_eval(l, wo, wi), pdf, false, false, 1.0);
+    return LobeSample(true, s.wi, diffuse_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
 // --- DielectricSpecular (no film) --------------------------------------
@@ -194,7 +205,7 @@ fn specular_pdf(l: Specular, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
     return (1.0 - p_comp) * ggx_reflection_pdf(l.distribution, wo, wi) + p_comp * cosine_pdf(wi.z);
 }
 
-fn specular_sample(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+fn specular_draw(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     if (wo.z <= 0.0 || l.weight <= 0.0) {
         return no_sample();
     }
@@ -214,11 +225,19 @@ fn specular_sample(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSam
     if (wi.z <= 0.0) {
         return no_sample();
     }
-    let pdf = specular_pdf(l, wo, wi);
+    return LobeSample(true, wi, vec3<f32>(0.0), 0.0, false, false, 1.0);
+}
+
+fn specular_sample(l: Specular, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    let s = specular_draw(l, wo, u, uc);
+    if (!s.ok || s.is_delta) {
+        return s;
+    }
+    let pdf = specular_pdf(l, wo, s.wi);
     if (pdf <= 0.0) {
         return no_sample();
     }
-    return LobeSample(true, wi, specular_eval(l, wo, wi), pdf, false, false, 1.0);
+    return LobeSample(true, s.wi, specular_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
 // --- Conductor (no film) -----------------------------------------------
@@ -277,7 +296,7 @@ fn conductor_pdf(l: Conductor, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
     return (1.0 - p_comp) * ggx_reflection_pdf(l.distribution, wo, wi) + p_comp * cosine_pdf(wi.z);
 }
 
-fn conductor_sample(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+fn conductor_draw(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     if (wo.z <= 0.0) {
         return no_sample();
     }
@@ -300,11 +319,19 @@ fn conductor_sample(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeS
     if (wi.z <= 0.0) {
         return no_sample();
     }
-    let pdf = conductor_pdf(l, wo, wi);
+    return LobeSample(true, wi, vec3<f32>(0.0), 0.0, false, false, 1.0);
+}
+
+fn conductor_sample(l: Conductor, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    let s = conductor_draw(l, wo, u, uc);
+    if (!s.ok || s.is_delta) {
+        return s;
+    }
+    let pdf = conductor_pdf(l, wo, s.wi);
     if (pdf <= 0.0) {
         return no_sample();
     }
-    return LobeSample(true, wi, conductor_eval(l, wo, wi), pdf, false, false, 1.0);
+    return LobeSample(true, s.wi, conductor_eval(l, wo, s.wi), pdf, false, false, 1.0);
 }
 
 fn conductor_albedo(l: Conductor, wo: vec3<f32>) -> vec3<f32> {
@@ -501,7 +528,7 @@ fn transmission_pdf(l: Transmission, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
     return visible * (1.0 - f) * abs(hv.eta * hv.eta * dot(wi, h)) / denominator;
 }
 
-fn transmission_sample(l: Transmission, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+fn transmission_draw(l: Transmission, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
     let eta = transmission_eta(l);
     if (ggx_is_smooth(l.distribution)) {
         let f = fresnel_dielectric(abs(wo.z), eta);
@@ -549,15 +576,23 @@ fn transmission_sample(l: Transmission, wo: vec3<f32>, u: vec2<f32>, uc: f32) ->
     if (same_side == through) {
         return no_sample();
     }
-    let pdf = transmission_pdf(l, wo, wi);
+    return LobeSample(true, wi, vec3<f32>(0.0), 0.0, false, through, crossing);
+}
+
+fn transmission_sample(l: Transmission, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {
+    let s = transmission_draw(l, wo, u, uc);
+    if (!s.ok || s.is_delta) {
+        return s;
+    }
+    let pdf = transmission_pdf(l, wo, s.wi);
     if (pdf <= 0.0) {
         return no_sample();
     }
-    let value = transmission_eval(l, wo, wi);
+    let value = transmission_eval(l, wo, s.wi);
     if (all(value == vec3<f32>(0.0))) {
         return no_sample();
     }
-    return LobeSample(true, wi, value, pdf, false, through, crossing);
+    return LobeSample(true, s.wi, value, pdf, false, s.is_transmission, s.eta);
 }
 
 fn transmission_albedo(l: Transmission) -> vec3<f32> {

@@ -39,9 +39,11 @@ struct Surface {
     backfacing: bool,
 };
 
-// The hit as Embree's resolve builds it (embree.rs): the point from the
-// triangle's corners in the mesh, through the part's place.
-fn surface_of(hit: RayIntersection) -> Surface {
+// The hit's place as Embree's resolve builds it (embree.rs): the point from
+// the triangle's corners in the mesh, through the part's place, its
+// magnitude and its geometric normal - what stepping past it asks (the
+// probe, a shadow ray's walk); its shading normal the geometric one.
+fn hit_place(hit: RayIntersection) -> Surface {
     let inst = scene_instances[hit.instance_custom_data];
     let mesh = scene_meshes[inst.mesh];
     let first = mesh.first_index + 3u * hit.primitive_index;
@@ -65,7 +67,24 @@ fn surface_of(hit: RayIntersection) -> Surface {
     s.magnitude = magnitude;
     let g = rows_normal(inst.world_to_object, cross(c1 - c0, c2 - c0));
     s.geometric = normalized(g);
+    s.shading = s.geometric;
+    return s;
+}
+
+// The hit as Embree's resolve builds it, its shading normal the mesh's
+// own interpolated where it has them.
+fn surface_of(hit: RayIntersection) -> Surface {
+    var s = hit_place(hit);
+    let inst = scene_instances[hit.instance_custom_data];
+    let mesh = scene_meshes[inst.mesh];
     if (mesh.has_normals != 0u) {
+        let first = mesh.first_index + 3u * hit.primitive_index;
+        let i0 = mesh.base_vertex + scene_indices[first];
+        let i1 = mesh.base_vertex + scene_indices[first + 1u];
+        let i2 = mesh.base_vertex + scene_indices[first + 2u];
+        let u = hit.barycentrics.x;
+        let v = hit.barycentrics.y;
+        let w = 1.0 - u - v;
         let n = rows_normal(inst.world_to_object, scene_normal(i0) * w + scene_normal(i1) * u + scene_normal(i2) * v);
         let len2 = dot(n, n);
         s.shading = select(s.geometric, n * (1.0 / sqrt(len2)), len2 > 0.0);
@@ -428,7 +447,7 @@ fn enclosing_media(origin: vec3<f32>, direction: vec3<f32>) -> Media {
                 used += 1u;
             }
         }
-        let raw = surface_of(hit);
+        let raw = hit_place(hit);
         let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
         from_point = offset_at(raw.position, -g, raw.magnitude);
     }
@@ -517,7 +536,7 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
         let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u;
         let at = along + hit.t;
         let m = scene_materials[inst.material];
-        let raw = surface_of(hit);
+        let raw = hit_place(hit);
         let bends = (m.glass & GLASS_BENDS) != 0u;
         if ((m.glass & GLASS_PANE) != 0u && pane_passes(glass, bends) && !open) {
             through *= pane_crossing(m, dot(direction, raw.geometric));
