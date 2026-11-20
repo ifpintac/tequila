@@ -314,3 +314,56 @@ fn tq_instruction(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
         default: { return tq_stage(settings, a); }
     }
 }
+
+// ---- Cycles' Wave texture (cycles/textures.rs's wave) ---------------------
+
+// The Wave Texture, in two instructions round the fBm its distortion reads,
+// which is the Noise Texture's 3D fBM at the detail scale (an OP_NOISE
+// between them, program.rs). Bit 5 clear: its point - the coordinates `a`
+// times the scale `b`, nudged off the lattice. Set: its value at that point
+// `a`, `b` the fBm (read only with a distortion); the kind in bit 0
+// (rings), the direction in bits 1-2 (x, y, z, diagonal or spherical), the
+// profile in 3-4 (sine, saw, triangle).
+fn cy_wave(settings: u32, a: vec3<f32>, b: f32, distortion: f32, phase: f32) -> vec4<f32> {
+    if ((settings & 32u) == 0u) {
+        return vec4<f32>((cy_exact3(a * b) + vec3<f32>(0.000001)) * 0.999999, 0.0);
+    }
+    let direction = (settings >> 1u) & 3u;
+    var n: f32;
+    if ((settings & 1u) != 0u) {
+        var r = a;
+        if (direction == 0u) {
+            r.x = 0.0;
+        } else if (direction == 1u) {
+            r.y = 0.0;
+        } else if (direction == 2u) {
+            r.z = 0.0;
+        }
+        n = cy_sqrt(cy_exact(cy_exact(r.x * r.x) + cy_exact(r.y * r.y)) + cy_exact(r.z * r.z));
+        n = cy_exact(n * 20.0);
+    } else {
+        switch direction {
+            case 0u: { n = cy_exact(a.x * 20.0); }
+            case 1u: { n = cy_exact(a.y * 20.0); }
+            case 2u: { n = cy_exact(a.z * 20.0); }
+            default: { n = cy_exact((a.x + a.y + a.z) * 10.0); }
+        }
+    }
+    n = n + phase;
+    if (distortion != 0.0) {
+        n = n + cy_exact(distortion * (b * 2.0 - 1.0));
+    }
+    var v: f32;
+    switch (settings >> 3u) & 3u {
+        case 1u: {
+            let m = tex_div(n, CY_TAU);
+            v = m - floor(m);
+        }
+        case 2u: {
+            let m = tex_div(n, CY_TAU);
+            v = abs(m - floor(m + 0.5)) * 2.0;
+        }
+        default: { v = 0.5 + 0.5 * cy_sin(n - 1.57079632679489661923); }
+    }
+    return vec4<f32>(v);
+}

@@ -785,3 +785,106 @@ fn the_newly_running_bumps_are_the_processors() {
     within_budget("bumped normals", found.outside, found.items);
 }
 
+
+// ---- Cycles' Wave texture -------------------------------------------------
+
+/// A program of one node, its inputs literals, each output read wired to a
+/// parameter of its kind (graphs.rs's).
+fn single_node(node: tequila_materials::nodes::ShaderNode, inputs: &[tequila_materials::graph::Value], outputs: &[u8]) -> CompiledGraph {
+    use tequila_materials::graph::{NodeKind, SocketType, Value};
+    const FLOATS: [Param; 3] = [Param::SpecularRoughness, Param::CoatRoughness, Param::FuzzRoughness];
+    const COLOURS: [Param; 3] = [Param::BaseColor, Param::SpecularColor, Param::CoatColor];
+    let kind = NodeKind::Node(node);
+    let n = inputs.len();
+    let mut instructions: Vec<Instruction> = inputs.iter().enumerate().map(|(i, v): (usize, &Value)| Instruction::Load { dst: Register(i as u16), value: *v }).collect();
+    let mut driven = Vec::new();
+    let (mut f, mut c) = (0, 0);
+    for (k, output) in outputs.iter().enumerate() {
+        let dst = Register((n + k) as u16);
+        instructions.push(Instruction::Apply { dst, kind: Box::new(kind.clone()), args: (0..n).map(|i| Register(i as u16)).collect(), output: *output });
+        let param = match kind.output_type_at(*output) {
+            Some(SocketType::Float) | None => {
+                f += 1;
+                FLOATS[f - 1]
+            }
+            _ => {
+                c += 1;
+                COLOURS[c - 1]
+            }
+        };
+        driven.push((param, dst));
+    }
+    driven.sort_by_key(|(p, _)| p.key());
+    CompiledGraph { decals: Vec::new(), instructions, registers: n + outputs.len(), constants: Material::default(), driven, requirements: Requirements::default(), topology: 0, layer: None }
+}
+
+/// The Wave Texture by every kind, direction and profile, at random inputs
+/// over their ranges: the coordinates and scale kept where the bands number
+/// under ten thousand, and only where the processor's own answer moves by
+/// less than 1e-5 when the coordinates move by an ulp. Elsewhere it is its
+/// rounding's: a distorted wave of many rough octaves reads its noise at
+/// coordinates of thousands, where the Noise Texture's port (stage 1) is
+/// good to 1e-4 rather than to the bit, and the distortion multiplies that.
+#[test]
+fn wave_is_the_processors() {
+    use tequila_materials::graph::Value;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_texture::cycles::textures::{WaveDirection, WaveKind, WaveProfile};
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(25, 1);
+    let mut cases = Vec::new();
+    for kind in [WaveKind::Bands, WaveKind::Rings] {
+        for direction in [WaveDirection::X, WaveDirection::Y, WaveDirection::Z, WaveDirection::Diagonal] {
+            for profile in [WaveProfile::Sine, WaveProfile::Saw, WaveProfile::Triangle] {
+                for outputs in [&[0u8][..], &[1], &[0, 1]] {
+                    for _ in 0..300 {
+                        let node = ShaderNode::Wave { kind, direction, profile };
+                        let scale = if rng.next_f32() < 0.3 { uniform(&mut rng, 0.0, 200.0) } else { uniform(&mut rng, 0.0, 30.0) };
+                        let reach = 8.0 / scale.max(0.5);
+                        let vector = vec3(uniform(&mut rng, -reach, reach), uniform(&mut rng, -reach, reach), uniform(&mut rng, -reach, reach));
+                        let distortion = if rng.next_f32() < 0.3 { 0.0 } else { uniform(&mut rng, -10.0, 10.0) };
+                        let inputs = vec![
+                            Value::Vector(vector),
+                            Value::Float(scale),
+                            Value::Float(distortion),
+                            Value::Float(uniform(&mut rng, 0.0, 15.0)),
+                            Value::Float(uniform(&mut rng, 0.0, 10.0)),
+                            Value::Float(uniform(&mut rng, 0.0, 1.0)),
+                            Value::Float(uniform(&mut rng, -10.0, 10.0)),
+                        ];
+                        let wave = |v: Vec3| node.evaluate(&[Value::Vector(v), inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6]], 1).as_float();
+                        let nudged = vector * (1.0 + f32::EPSILON);
+                        if (wave(vector) - wave(nudged)).abs() > 1e-5 {
+                            continue;
+                        }
+                        let point = random_point(&mut rng, 1.0);
+                        cases.push(Case { label: format!("{node:?} {outputs:?} at {inputs:?}"), program: single_node(node, &inputs, outputs), surface: flat_surface(&point), point, normal: None, heights: None });
+                    }
+                }
+            }
+        }
+    }
+    compare_all(&h, "Wave", &cases, NOISE);
+}
+
+/// Stage 1's lowering refuses the Wave Texture as it did; the transport's
+/// refuses a distorted Wave whose detail or roughness is a constant the
+/// Noise Texture's fBm would clamp (Wave's own does not).
+#[test]
+fn wave_refusals() {
+    use tequila_materials::graph::Value;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_texture::cycles::textures::{WaveDirection, WaveKind, WaveProfile};
+    let pictures = no_pictures();
+    let node = ShaderNode::Wave { kind: WaveKind::Bands, direction: WaveDirection::X, profile: WaveProfile::Sine };
+    let inputs = |distortion: f32, detail: f32, roughness: f32| {
+        vec![Value::Vector(Vec3::ONE), Value::Float(5.0), Value::Float(distortion), Value::Float(detail), Value::Float(1.0), Value::Float(roughness), Value::Float(0.0)]
+    };
+    let lowered = |i: Vec<Value>| program::lower_with(&single_node(node, &i, &[1]), Pictures::On(&pictures)).map(|p| p.is_some());
+    assert_eq!(program::lower(&single_node(node, &inputs(1.0, 2.0, 0.5), &[1])), Err(Refusal::Node("Wave Texture")));
+    assert_eq!(lowered(inputs(1.0, 2.0, 0.5)), Ok(true));
+    assert_eq!(lowered(inputs(0.0, 20.0, -1.0)), Ok(true), "undistorted, the fBm is not read");
+    assert!(lowered(inputs(1.0, 20.0, 0.5)).is_err());
+    assert!(lowered(inputs(1.0, -1.0, 0.5)).is_err());
+    assert!(lowered(inputs(1.0, 2.0, -0.5)).is_err());
+}

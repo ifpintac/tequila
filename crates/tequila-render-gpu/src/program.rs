@@ -34,7 +34,7 @@ use tequila_materials::material_type::Param;
 use tequila_materials::nodes::{MixData, PointInput, ShaderNode};
 use tequila_texture::cycles::noise::FractalKind;
 use tequila_texture::cycles::ops::{BlendMode, ColorModel, MapRangeKind, MappingKind, MathOp, VectorMathOp};
-use tequila_texture::cycles::textures::GradientKind;
+use tequila_texture::cycles::textures::{GradientKind, WaveDirection, WaveKind, WaveProfile};
 use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::gradient::Interpolation;
 use tequila_texture::mip::Wrap;
@@ -97,6 +97,9 @@ pub const OP_TEXTURE: u32 = 24;
 /// arithmetic, a fractal of noise, or Worley's cells, by the settings
 /// word's [`PROCEDURAL_STEP`].
 pub const OP_PROCEDURAL: u32 = 25;
+/// The Wave Texture's point, or its value at the point (`procedural.wgsl`'s
+/// `cy_wave`): the settings word's [`WAVE_VALUE`].
+pub const OP_WAVE: u32 = 26;
 
 /// Every opcode by its WGSL name, for the test that holds the two sides to
 /// one numbering.
@@ -126,7 +129,13 @@ pub const OPCODES: &[(&str, u32)] = &[
     ("OP_GRADIENT_TEXTURE", OP_GRADIENT_TEXTURE),
     ("OP_TEXTURE", OP_TEXTURE),
     ("OP_PROCEDURAL", OP_PROCEDURAL),
+    ("OP_WAVE", OP_WAVE),
 ];
+
+/// `OP_WAVE`'s settings word: rings (bit 0) or bands, the direction (bits
+/// 1-2), the profile (3-4), and the value at the point rather than the point.
+pub const WAVE_RINGS: u32 = 1;
+pub const WAVE_VALUE: u32 = 1 << 5;
 
 /// `OP_PROCEDURAL`'s settings word: bits 0-1 the step - a stage of a
 /// pattern (its pattern in bits 2-6, which stage in 7-9, the axis in 10-11,
@@ -336,6 +345,21 @@ pub mod settings {
             | flag(at, TEXTURE_AT)
             | flag(colour_managed, TEXTURE_MANAGED)
             | pyramid << TEXTURE_PYRAMID_SHIFT
+    }
+    /// `OP_WAVE`'s: the point (`value` false) or the value at it.
+    pub fn wave(kind: WaveKind, direction: WaveDirection, profile: WaveProfile, value: bool) -> u32 {
+        let d = match direction {
+            WaveDirection::X => 0,
+            WaveDirection::Y => 1,
+            WaveDirection::Z => 2,
+            WaveDirection::Diagonal => 3,
+        };
+        let p = match profile {
+            WaveProfile::Sine => 0,
+            WaveProfile::Saw => 1,
+            WaveProfile::Triangle => 2,
+        };
+        (kind == WaveKind::Rings) as u32 | d << 1 | p << 3 | if value { WAVE_VALUE } else { 0 }
     }
     /// `OP_PROCEDURAL`'s for a stage of `pattern`.
     pub fn procedural_stage(pattern: u32, stage: u32, axis: Axis, mapped: bool) -> u32 {
@@ -1033,6 +1057,41 @@ impl Builder<'_> {
                         _ => Self::virtual_held(d2.expect("a position register"), Ty::Float, MODE_LANE0 + 3),
                     };
                     self.define(*register, held)?;
+                }
+                Ok(())
+            }
+            // Its point, the Noise Texture's 3D fBM there at the detail
+            // scale (what its distortion reads), and its value: Color (the
+            // value in three lanes) and Fac from one register.
+            ShaderNode::Wave { kind, direction, profile } => {
+                // Stage 1's lowering ran no Wave.
+                if matches!(self.pictures, Pictures::Unknown) {
+                    return Err(Refusal::Node(node.label()));
+                }
+                // The fBm unclamped, where the Noise Texture's clamps its
+                // detail to 0-15 and its roughness to no less than 0: a
+                // constant outside those is refused rather than read
+                // otherwise.
+                let outside = |o: &Operand, ok: &dyn Fn(f32) -> bool| match o.source {
+                    Source::Constant(c) => !ok(self.constants[c as usize][0]),
+                    Source::Virtual(_) => false,
+                };
+                let undistorted = matches!(operands[2].source, Source::Constant(c) if self.constants[c as usize][0] == 0.0);
+                if !undistorted && (outside(&operands[3], &|d| (0.0..=15.0).contains(&d)) || outside(&operands[5], &|r| r >= 0.0)) {
+                    return Err(Refusal::Instruction("a Wave Texture's detail outside 0 to 15, or its roughness below 0"));
+                }
+                let (p, _) = self.push(OP_WAVE, settings::wave(kind, direction, profile, false), vec![operands[0], operands[1]], false)?;
+                let at = Operand { source: Source::Virtual(p), mode: MODE_AS_IS };
+                let zero = self.constant([0.0; 4]);
+                let two = self.constant([2.0; 4]);
+                let one = self.constant([1.0; 4]);
+                let noise = vec![at, zero, operands[4], operands[3], operands[5], two, zero, one, zero];
+                let (n, _) = self.push(OP_NOISE, settings::noise(3, FractalKind::Fbm, true, false), noise, false)?;
+                let fbm = Operand { source: Source::Virtual(n), mode: MODE_AS_IS };
+                let (d, _) = self.push(OP_WAVE, settings::wave(kind, direction, profile, true), vec![at, fbm, operands[2], operands[6]], false)?;
+                for (register, output) in outputs {
+                    let ty = if *output == 0 { Ty::Color } else { Ty::Float };
+                    self.define(*register, Self::virtual_held(d, ty, MODE_AS_IS))?;
                 }
                 Ok(())
             }

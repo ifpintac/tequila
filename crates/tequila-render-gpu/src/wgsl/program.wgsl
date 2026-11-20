@@ -63,6 +63,7 @@ const OP_CHECKER: u32 = 22u;
 const OP_GRADIENT_TEXTURE: u32 = 23u;
 const OP_TEXTURE: u32 = 24u;
 const OP_PROCEDURAL: u32 = 25u;
+const OP_WAVE: u32 = 26u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -314,6 +315,7 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
                 out = tex_instruction(settings, a[0], a[1], a[2], a[3], tp);
             }
             case 25u: { out = tq_instruction(settings, a); }
+            case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
