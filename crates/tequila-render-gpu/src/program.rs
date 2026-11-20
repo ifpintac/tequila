@@ -38,6 +38,8 @@ use tequila_texture::cycles::textures::GradientKind;
 use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::gradient::Interpolation;
 use tequila_texture::mip::Wrap;
+use tequila_texture::noise::{Basis, Fractal, Metric};
+use tequila_texture::procedural::Procedural;
 use tequila_texture::projection::{Axis, Mapping, Projection};
 use crate::textures::{Pictures, MAX_PYRAMIDS};
 
@@ -91,6 +93,10 @@ pub const OP_GRADIENT_TEXTURE: u32 = 23;
 /// map laid down by a projection (`textures.wgsl`): the settings word's
 /// [`TEXTURE_MODE`] says which.
 pub const OP_TEXTURE: u32 = 24;
+/// One step of a Tequila procedural (`procedural.wgsl`): a stage of its
+/// arithmetic, a fractal of noise, or Worley's cells, by the settings
+/// word's [`PROCEDURAL_STEP`].
+pub const OP_PROCEDURAL: u32 = 25;
 
 /// Every opcode by its WGSL name, for the test that holds the two sides to
 /// one numbering.
@@ -119,7 +125,28 @@ pub const OPCODES: &[(&str, u32)] = &[
     ("OP_CHECKER", OP_CHECKER),
     ("OP_GRADIENT_TEXTURE", OP_GRADIENT_TEXTURE),
     ("OP_TEXTURE", OP_TEXTURE),
+    ("OP_PROCEDURAL", OP_PROCEDURAL),
 ];
+
+/// `OP_PROCEDURAL`'s settings word: bits 0-1 the step - a stage of a
+/// pattern (its pattern in bits 2-6, which stage in 7-9, the axis in 10-11,
+/// [`PROCEDURAL_MAPPED`]), a fractal (its kind in bits 2-3, the value basis
+/// bit 4, [`FRACTAL_UNIT`], the octaves from bit 8) or Worley's cells (the
+/// metric in bits 2-3).
+pub const PROCEDURAL_STEP: u32 = 3;
+pub const PROCEDURAL_STAGE: u32 = 0;
+pub const PROCEDURAL_FRACTAL: u32 = 1;
+pub const PROCEDURAL_WORLEY: u32 = 2;
+/// A stage whose point is a mapping's (u, v), not the part's own.
+pub const PROCEDURAL_MAPPED: u32 = 1 << 12;
+/// A fractal's answer brought from [-1, 1] to [0, 1] (`* 0.5 + 0.5`).
+pub const FRACTAL_UNIT: u32 = 1 << 5;
+/// The patterns the card runs, by `procedural.wgsl`'s numbers.
+pub const PATTERN_SCRATCHES: u32 = 0;
+pub const PATTERN_BRUSHED_RADIAL: u32 = 1;
+pub const PATTERN_LEATHER: u32 = 2;
+/// The most octaves a fractal's settings word holds.
+pub const MAX_OCTAVES: u32 = (1 << 24) - 1;
 
 /// `OP_TEXTURE`'s settings word: bits 0-1 what it gives back - a colour
 /// (`Instruction::Sample`), a number (`SampleAlpha`), the coordinates
@@ -310,6 +337,23 @@ pub mod settings {
             | flag(colour_managed, TEXTURE_MANAGED)
             | pyramid << TEXTURE_PYRAMID_SHIFT
     }
+    /// `OP_PROCEDURAL`'s for a stage of `pattern`.
+    pub fn procedural_stage(pattern: u32, stage: u32, axis: Axis, mapped: bool) -> u32 {
+        PROCEDURAL_STAGE | pattern << 2 | stage << 7 | axis_code(axis) << 10 | if mapped { PROCEDURAL_MAPPED } else { 0 }
+    }
+    /// `OP_PROCEDURAL`'s for a fractal: fBm 0, turbulence 1, ridged 2.
+    pub fn fractal(kind: u32, basis: Basis, unit: bool, octaves: u32) -> u32 {
+        PROCEDURAL_FRACTAL | kind << 2 | ((basis == Basis::Value) as u32) << 4 | if unit { FRACTAL_UNIT } else { 0 } | octaves.clamp(1, MAX_OCTAVES) << 8
+    }
+    /// `OP_PROCEDURAL`'s for Worley's cells.
+    pub fn worley(metric: Metric) -> u32 {
+        let code = match metric {
+            Metric::Euclidean => 0,
+            Metric::Manhattan => 1,
+            Metric::Chebyshev => 2,
+        };
+        PROCEDURAL_WORLEY | code << 2
+    }
     pub fn gradient(interpolation: Interpolation, stops: usize) -> u32 {
         let i = match interpolation {
             Interpolation::Linear => 0,
@@ -332,6 +376,8 @@ pub enum Refusal {
     Instruction(&'static str),
     /// A node the card has no port of yet.
     Node(&'static str),
+    /// A Tequila procedural pattern the card has no port of yet.
+    Procedural(&'static str),
     /// A driven parameter the card's stack does not read.
     Param(Param),
     /// More registers live at once than the card has.
@@ -353,6 +399,7 @@ impl std::fmt::Display for Refusal {
             Refusal::Decals => write!(f, "it carries labels"),
             Refusal::Instruction(what) => write!(f, "it reads {what}"),
             Refusal::Node(what) => write!(f, "its {what} node is not on the card yet"),
+            Refusal::Procedural(what) => write!(f, "its {what} pattern is not on the card yet"),
             Refusal::Param(param) => write!(f, "it drives {}, which the card's surface does not read", param.label()),
             Refusal::Registers(n) => write!(f, "it holds {n} values at once, more than the card's {REGISTERS}"),
             Refusal::Operands(n) => write!(f, "a node of it takes {n} operands, more than the card's {MAX_OPERANDS}"),
@@ -735,7 +782,25 @@ impl Builder<'_> {
                     let (d, _) = self.texture(mode, mapping, place, at.is_some(), !alpha && card.colour_managed, pyramid)?;
                     self.define(*dst, Self::virtual_held(d, ty, MODE_AS_IS))?;
                 }
-                Instruction::Evaluate { .. } => return Err(Refusal::Instruction("a Tequila procedural")),
+                Instruction::Evaluate { dst, procedural, seed, mapping } => {
+                    // Stage 1's lowering ran no procedurals.
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("a Tequila procedural"));
+                    }
+                    // The point: the part's own in scene units, or where the
+                    // mapping puts it (its first contribution's u and v, as a
+                    // Project instruction has them).
+                    let point = match mapping {
+                        None => self.push(OP_INPUT, point_input_code(PointInput::Object), Vec::new(), false)?.0,
+                        Some(m) => {
+                            let zero = self.constant([0.0; 4]);
+                            self.texture(TEXTURE_PROJECT, m, zero, false, false, 0)?.0
+                        }
+                    };
+                    let point = Operand { source: Source::Virtual(point), mode: MODE_AS_IS };
+                    let held = self.procedural(procedural, *seed, point, mapping.is_some())?;
+                    self.define(*dst, held)?;
+                }
                 Instruction::Curvature { .. } => return Err(Refusal::Instruction("the curvature")),
                 Instruction::Occlusion { .. } => return Err(Refusal::Instruction("the baked occlusion")),
                 Instruction::Distance { .. } => return Err(Refusal::Instruction("the distance to other parts")),
@@ -756,6 +821,55 @@ impl Builder<'_> {
         let [c1, c2, c3] = mapping_constants(mapping);
         let operands = vec![place, self.constant(c1), self.constant(c2), self.constant(c3)];
         self.push(OP_TEXTURE, settings::texture(mode, mapping, at, colour_managed, pyramid), operands, false)
+    }
+
+    /// A seed as a constant: its two sixteen-bit halves, each exact as a
+    /// number.
+    fn seed(&mut self, seed: u32) -> Operand {
+        self.constant([(seed & 0xFFFF) as f32, (seed >> 16) as f32, 0.0, 0.0])
+    }
+
+    /// A fractal of noise at `point` times `scale` (`noise.rs`'s fbm 0,
+    /// turbulence 1, ridged 2), its answer brought to [0, 1] where `unit`.
+    fn fractal(&mut self, kind: u32, point: Operand, scale: f32, fractal: Fractal, seed: u32, unit: bool) -> Result<Operand, Refusal> {
+        let shape = self.constant([scale, fractal.lacunarity, fractal.gain, 0.0]);
+        let seed = self.seed(seed);
+        let (d, _) = self.push(OP_PROCEDURAL, settings::fractal(kind, fractal.basis, unit, fractal.octaves), vec![point, shape, seed], false)?;
+        Ok(Operand { source: Source::Virtual(d), mode: MODE_AS_IS })
+    }
+
+    /// A Tequila procedural at `point` (the part's own, or a mapping's u,
+    /// v where `mapped`): its instructions, and its value.
+    fn procedural(&mut self, procedural: &Procedural, seed: u32, point: Operand, mapped: bool) -> Result<Held, Refusal> {
+        let number = |d: usize| Self::virtual_held(d, Ty::Float, MODE_AS_IS);
+        let at = |d: usize| Operand { source: Source::Virtual(d), mode: MODE_AS_IS };
+        match *procedural {
+            Procedural::Scratches { frequency, width, density, spread } => {
+                let c = self.constant([frequency.max(1e-4), width.max(1e-4), density.clamp(0.0, 1.0), spread.clamp(0.0, 0.5)]);
+                let s = self.seed(seed);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_SCRATCHES, 0, Axis::Y, mapped), vec![point, c, s], false)?;
+                Ok(number(d))
+            }
+            Procedural::BrushedRadial { axis, frequency, stretch } => {
+                let c = self.constant([frequency.max(1e-4), stretch.max(1e-3), 0.0, 0.0]);
+                let (q, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_BRUSHED_RADIAL, 0, axis, mapped), vec![point, c], false)?;
+                // Perlin noise: one octave of fBm, bit for bit.
+                let one = Fractal { octaves: 1, ..Fractal::default() };
+                let n = self.fractal(0, at(q), 1.0, one, seed, true)?;
+                Ok(Held { operand: n, ty: Ty::Float })
+            }
+            Procedural::Leather { frequency, crack_width, wrinkle } => {
+                let c = self.constant([frequency.max(1e-4), 0.0, 0.0, 0.0]);
+                let (q, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_LEATHER, 0, Axis::Y, mapped), vec![point, c], false)?;
+                let s = self.seed(seed);
+                let (cells, _) = self.push(OP_PROCEDURAL, settings::worley(Metric::Euclidean), vec![at(q), s], false)?;
+                let fine = self.fractal(0, at(q), 6.0, Fractal { octaves: 3, ..Fractal::default() }, seed ^ 0x6a09_e667, true)?;
+                let c = self.constant([crack_width, wrinkle.clamp(0.0, 1.0), 0.0, 0.0]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_LEATHER, 1, Axis::Y, mapped), vec![point, at(cells), fine, c], false)?;
+                Ok(number(d))
+            }
+            ref other => Err(Refusal::Procedural(other.label())),
+        }
     }
 
     /// One node, for the outputs read of it.
@@ -1232,5 +1346,23 @@ mod tests {
             let line = format!("const {name}: u32 = {value}u;");
             assert!(wgsl.contains(&line), "program.wgsl has no `{line}`");
         }
+    }
+
+    #[test]
+    fn the_procedural_numbers_are_procedural_wgsls() {
+        let wgsl = crate::shader::module("procedural").expect("procedural.wgsl");
+        for (name, value) in [
+            ("TQ_SCRATCHES", PATTERN_SCRATCHES),
+            ("TQ_BRUSHED_RADIAL", PATTERN_BRUSHED_RADIAL),
+            ("TQ_LEATHER", PATTERN_LEATHER),
+            ("TQ_STAGE", PROCEDURAL_STAGE),
+            ("TQ_FRACTAL", PROCEDURAL_FRACTAL),
+            ("TQ_WORLEY", PROCEDURAL_WORLEY),
+        ] {
+            let line = format!("const {name}: u32 = {value}u;");
+            assert!(wgsl.contains(&line), "procedural.wgsl has no `{line}`");
+        }
+        let line = format!("const TQ_MAPPED: u32 = 0x{PROCEDURAL_MAPPED:X}u;");
+        assert!(wgsl.contains(&line), "procedural.wgsl has no `{line}`");
     }
 }

@@ -436,6 +436,63 @@ fn another_preset_wall_is_the_processors_picture() {
     preset_wall(1);
 }
 
+/// Whether the card runs `program` now where stage 1's lowering did not:
+/// the transport's lowering takes it (its pictures none loaded, as no
+/// preset of these has one), `program::lower` refuses it.
+fn newly_on_the_card(program: &tequila_materials::graph::CompiledGraph) -> bool {
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    tequila_render_gpu::program::lower(program).is_err()
+        && matches!(tequila_render_gpu::program::lower_with(program, tequila_render_gpu::textures::Pictures::On(&pictures)), Ok(Some(_)))
+}
+
+/// A wall of the presets the card has run since R3's procedural nodes
+/// (`newly_on_the_card`: Tequila's procedurals, Wave, Gabor, the curvature
+/// and the baked occlusion), the Headphones' parts and camera as the preset
+/// walls have them, opaque and glowing nowhere, spread over those presets by
+/// `variant`.
+fn new_preset_wall(variant: usize) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let runnable: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            newly_on_the_card(&program)
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.transmission_weight == 0.0
+                && m.emission_luminance <= 0.0
+                && m.geometry_opacity >= 0.999
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    assert!(!runnable.is_empty(), "no preset is newly on the card");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &runnable[(2 * j + variant) % runnable.len()];
+        let mut definition = entry.definition();
+        definition.graph.material_mut().edge_radius = 0.0;
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, definition);
+    }
+    eprintln!("new preset wall {variant} (of {} newly on the card): {}", runnable.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: format!("new_preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+#[test]
+fn a_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(0);
+}
+
+#[test]
+fn another_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(1);
+}
+
 /// Which presets of the walls the card renders otherwise: each swapped in
 /// alone. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity
 /// -- --ignored --nocapture one_by_one`.

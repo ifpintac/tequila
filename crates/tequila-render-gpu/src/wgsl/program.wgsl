@@ -6,6 +6,7 @@
 //#include nodes
 //#include openpbr
 //#include textures
+//#include procedural
 
 // Every material's instructions and write-back pairs, their constants, and
 // where each material's are (program.rs's GpuProgram). A kernel that runs
@@ -61,6 +62,7 @@ const OP_INVERT_COLOR: u32 = 21u;
 const OP_CHECKER: u32 = 22u;
 const OP_GRADIENT_TEXTURE: u32 = 23u;
 const OP_TEXTURE: u32 = 24u;
+const OP_PROCEDURAL: u32 = 25u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -94,6 +96,15 @@ struct ProgPoint {
     footprint: f32,
     uv_footprint: vec2<f32>,
     has_uv_footprint: u32,
+    // What the snapshot measured at the mesh's corners, interpolated to the
+    // point (SceneSnapshot's curvature_at, occlusion_at, closeness_at,
+    // vertex_color_at): the curvature in inverse scene units, the occluded
+    // share, the closeness of the nearest other part, the vertex colour in
+    // the rendering space.
+    curvature: f32,
+    occlusion: f32,
+    closeness: f32,
+    vertex_color: vec3<f32>,
 };
 
 // The registers, and the program's first constant.
@@ -302,6 +313,7 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
                 let tp = TexPoint(pt.object, pt.object_normal, pt.uv, pt.footprint, pt.scale, pt.uv_footprint, pt.has_uv_footprint != 0u);
                 out = tex_instruction(settings, a[0], a[1], a[2], a[3], tp);
             }
+            case 25u: { out = tq_instruction(settings, a); }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
