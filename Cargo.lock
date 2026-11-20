@@ -4336,6 +4336,7 @@ dependencies = [
  "tequila-render-core",
  "tequila-render-cpu",
  "tequila-render-cycles",
+ "tequila-render-gpu",
  "tequila-scene",
  "tequila-scripting",
  "tequila-texture",

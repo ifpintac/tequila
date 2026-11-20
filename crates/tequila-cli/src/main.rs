@@ -1392,6 +1392,30 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         return render_with_cycles(&cycles_device, output, &scene, camera, width, height, samples, keep_alpha, &context.config, denoise, style, cut, project.then_some(&settings));
     }
 
+    // `--device GPU` with Tequila's own renderer: its first transport on the
+    // graphics card (docs/07 R2.5), every surface grey and diffuse until R3
+    // brings the materials over.
+    let on_card = options.device.as_deref().is_some_and(|d| d.eq_ignore_ascii_case("gpu"));
+    let card = if on_card {
+        let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
+            .map_err(|why| format!("--device GPU: {why}"))?;
+        println!("  on the graphics card, {}: every surface grey and diffuse for now (docs/07 R3)", gpu.describe());
+        let settings = tequila_render_gpu::transport::FrameSettings {
+            camera: context.camera,
+            config: context.config.clone(),
+            scene_seed: context.scene_seed,
+            reject_fireflies: context.reject_fireflies,
+            clamp_direct: context.clamp_direct,
+            clamp_indirect: context.clamp_indirect,
+        };
+        Some((tequila_render_gpu::transport::GpuRenderer::new(gpu, tequila_render_core::intersect::Intersector::scene(&intersector)), settings))
+    } else {
+        None
+    };
+    // The card returns no albedo or normals yet, which the denoiser's guides
+    // are made of.
+    let denoise = denoise && card.is_none();
+
     let mut framebuffer = Framebuffer::new(width, height);
     let render_start = Instant::now();
     println!(
@@ -1405,7 +1429,10 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     let mut done = 0;
     while done < samples {
         let batch = BATCH.min(samples - done);
-        render_pass(&intersector, &mut framebuffer, &context, &schedule, batch);
+        match &card {
+            Some((renderer, settings)) => renderer.render_pass(&mut framebuffer, settings, batch),
+            None => render_pass(&intersector, &mut framebuffer, &context, &schedule, batch),
+        }
         done += batch;
         print!(
             "\r  {done}/{} spp   {:.0}% converged",
