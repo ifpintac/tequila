@@ -19,9 +19,21 @@ struct GpuInstance {
     // Its shadow catcher's record (scene.rs's GpuCatcher), NO_CATCHER for an
     // ordinary surface.
     catcher: u32,
+    // The lamp it stands in for, by its place among the scene's lamps;
+    // NO_LIGHT for any other instance.
+    light: u32,
+    // INSTANCE_STAND_IN for a lamp's stand-in.
+    flags: u32,
+    _pad: vec2<u32>,
 };
 
 const NO_CATCHER: u32 = 0xFFFFFFFFu;
+const NO_LIGHT: u32 = 0xFFFFFFFFu;
+const INSTANCE_STAND_IN: u32 = 1u;
+// The top-level structure's masks (scene.rs's MASK_*): every instance is a
+// surface, and those that cast shadows are in the shadow rays' mask too.
+const MASK_SURFACE: u32 = 1u;
+const MASK_SHADOW: u32 = 2u;
 // GpuCatcher's fade.
 const FADE_NONE: u32 = 0u;
 const FADE_BY_HEIGHT: u32 = 1u;

@@ -1399,7 +1399,7 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
     let card = if on_card {
         let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
             .map_err(|why| format!("--device GPU: {why}"))?;
-        println!("  on the graphics card, {}: opaque materials and the floor; textures, glass and lamps are still to come (docs/07 R3)", gpu.describe());
+        println!("  on the graphics card, {}: opaque materials, the floor and the lamps; textures and glass are still to come (docs/07 R3)", gpu.describe());
         let settings = tequila_render_gpu::transport::FrameSettings {
             camera: context.camera,
             config: context.config.clone(),

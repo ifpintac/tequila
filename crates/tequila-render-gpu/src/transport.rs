@@ -1,10 +1,12 @@
 //! The transport on the card (`docs/07` R2.5, R3): camera rays, triangles,
 //! the scene's opaque OpenPBR materials, the environment sampled by its own
-//! tables with next-event estimation and MIS, Russian roulette and the bounce
-//! limit, and the shadow catcher's floor - its shadow, its reflection, the
-//! backdrop behind it - as the processor's integrator has them
-//! (`transport.wgsl`). What of a floor the card renders otherwise, it says
-//! ([`floor_limits`]).
+//! tables with next-event estimation and MIS, the analytic lamps - their
+//! light samples, the lamps a sharp enough bounce meets and the stand-ins
+//! the camera sees - Russian roulette and the bounce limit, and the shadow
+//! catcher's floor - its shadow, its reflection, the backdrop behind it - as
+//! the processor's integrator has them (`transport.wgsl`). What of a floor
+//! or of the lamps the card renders otherwise, it says ([`floor_limits`],
+//! [`crate::lights::lamp_limits`]).
 //!
 //! The card hands each sample back, radiance and the background its camera
 //! ray saw, and the processor's [`Framebuffer`] accumulates them in sample
@@ -21,6 +23,7 @@ use tequila_render_core::settings::IntegratorConfig;
 
 use crate::device::GpuDevice;
 use crate::environment::GpuEnvironment;
+use crate::lights::{GpuLights, LampScene, LightRecords};
 use crate::scene::GpuScene;
 use crate::tables::Tables;
 
@@ -69,7 +72,14 @@ pub struct FrameParams {
     pub shadows: u32,
     /// `IntegratorConfig::ground_illumination`, 1 for on.
     pub ground_illumination: u32,
+    /// How many lamps the scene has.
+    pub light_count: u32,
+    /// 1 where the light hierarchy chooses among them, 0 for the alias table.
+    pub light_hierarchy: u32,
+    /// [`crate::lights::lamp_flags`].
+    pub lamp_flags: u32,
     pub _pad1: u32,
+    pub _pad2: u32,
 }
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
@@ -157,6 +167,10 @@ pub struct GpuRenderer {
     /// configuration is known (the first pass), and whether it has been.
     floor_scene: FloorScene,
     said_floor_limits: std::sync::atomic::AtomicBool,
+    /// The scene's lamps, which the scene's bind group reads, and what
+    /// [`crate::lights::lamp_limits`] and the lamp flags read of the scene.
+    pub lights: GpuLights,
+    lamp_scene: LampScene,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -193,7 +207,7 @@ impl FloorScene {
         }
         let shadows = config.shadows && self.catcher_shadows;
         if shadows && self.lamps {
-            limits.push("the floor's shadows are the sky's alone: the lamps are not on the card");
+            limits.push("the floor's shadows are the sky's alone: the lamps cast none on it");
         }
         if self.finite_dome {
             limits.push("the floor is lit and shadowed as under an infinitely far dome");
@@ -245,6 +259,7 @@ impl GpuRenderer {
             eprintln!("  {unsupported} material(s) render as their opaque part on the graphics card for now (docs/07 R3)");
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
+        let lights = GpuLights::upload(device, &LightRecords::of(scene));
         let materials = wgpu::util::DeviceExt::create_buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
@@ -265,6 +280,9 @@ impl GpuRenderer {
                 entry(5, storage(true)),
                 entry(6, storage(true)),
                 entry(7, storage(true)),
+                entry(8, storage(true)),
+                entry(9, storage(true)),
+                entry(10, storage(true)),
             ],
         });
         let environment_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -311,6 +329,9 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 5, resource: uploaded.instances.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: materials.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 7, resource: uploaded.catchers.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 8, resource: lights.lights.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 9, resource: lights.nodes.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 10, resource: lights.links.as_entire_binding() },
             ],
         });
         let environment_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -337,12 +358,19 @@ impl GpuRenderer {
             frame_layout,
             floor_scene: FloorScene::of(scene),
             said_floor_limits: std::sync::atomic::AtomicBool::new(false),
+            lights,
+            lamp_scene: LampScene::of(scene),
         }
     }
 
     /// [`floor_limits`] of the scene this renders, under `config`.
     pub fn floor_limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
         self.floor_scene.limits(config)
+    }
+
+    /// [`crate::lights::lamp_limits`] of the scene this renders, under `config`.
+    pub fn lamp_limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
+        self.lamp_scene.limits(config)
     }
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
@@ -390,7 +418,11 @@ impl GpuRenderer {
             env_upward_sum: e.upward_sum,
             shadows: settings.config.shadows as u32,
             ground_illumination: settings.config.ground_illumination as u32,
+            light_count: self.lights.count,
+            light_hierarchy: self.lights.hierarchy as u32,
+            lamp_flags: self.lamp_scene.flags(&settings.config),
             _pad1: 0,
+            _pad2: 0,
         }
     }
 
@@ -404,7 +436,7 @@ impl GpuRenderer {
             "the floor's reflection alone is the processor's (tequila-render-cpu's floor.rs); the card renders the whole picture"
         );
         if !self.said_floor_limits.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            for limit in &self.floor_limits(&settings.config) {
+            for limit in self.floor_limits(&settings.config).iter().chain(&self.lamp_limits(&settings.config)) {
                 eprintln!("  on the graphics card for now, {limit} (docs/07 R3)");
             }
         }

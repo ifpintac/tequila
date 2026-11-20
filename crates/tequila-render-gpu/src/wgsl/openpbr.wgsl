@@ -19,16 +19,17 @@
 // - flakes: flake coverage 0, so no Depth::Flake lobe, no flake frame, and
 //   the base's scale and response are the base's whole;
 // - thin-walled: only the transmission and subsurface lobes read it;
-// - emission and geometry_opacity: not the BSDF's at all (the integrator's).
+// - emission and geometry_opacity: not the BSDF's at all (the integrator's;
+//   GpuMaterial carries emission for it).
 //
 // The processor's lobes cache their table reads for a shading point
 // (DielectricSpecular's Seen, aimed by OpenPbrBsdf::aim): the same reads
 // with the same arguments, so here the reads are simply made.
 //
 // Ported: build (new, to_aim), aim, attenuation and its trapped-light
-// series, eval, pdf, sample and sample_reflection, albedo. Not yet:
-// from_inside (only transmission reads it), pdf_reflection, eval_selective
-// and flags.
+// series, eval, eval_selective, pdf, pdf_reflection, sample and
+// sample_reflection, albedo, and of the flags whether there is a delta lobe.
+// Not yet: from_inside (only transmission reads it).
 //#include sheen
 
 // Which layer of §2.1's stack a lobe belongs to (openpbr.rs's Depth), in
@@ -73,6 +74,9 @@ struct GpuMaterial {
     fuzz_roughness: f32,
     geometry_occlusion: f32,
     _pad: vec2<f32>,
+    // Material::emission, in nits; w 1 where the material is_emissive. Not
+    // the stack's: the integrator reads it.
+    emission: vec4<f32>,
 };
 
 // The assembled stack for one shading point.
@@ -466,11 +470,112 @@ fn openpbr_pdf(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> f32 {
     return total;
 }
 
+// eval_selective (§5.4's visibility flags): only the diffuse lobe, only the
+// others, or all of them - the same sum as openpbr_eval then - each lobe
+// still attenuated by every layer over it, whether that layer's own lobe
+// is in or not.
+fn openpbr_eval_selective(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>, diffuse: bool, specular: bool) -> vec3<f32> {
+    var total = vec3<f32>(0.0);
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        let is_diffuse = slot == LOBE_DIFFUSE;
+        if ((is_diffuse && !diffuse) || (!is_diffuse && !specular)) {
+            continue;
+        }
+        let through = openpbr_attenuation(b, openpbr_depth(slot), wo, wi);
+        total += openpbr_lobe_eval(b, slot, wo, wi) * (b.scales[slot] * (b.weights[slot] * through));
+    }
+    return total;
+}
+
+// flags().contains(DELTA): a mirror-smooth reflection among the lobes.
+fn openpbr_has_delta(b: OpenPbr) -> bool {
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        switch slot {
+            case 1u: { if (ggx_is_smooth(b.coat.distribution)) { return true; } }
+            case 2u: { if (ggx_is_smooth(b.metal.distribution)) { return true; } }
+            case 3u: { if (ggx_is_smooth(b.specular.distribution)) { return true; } }
+            default: {}
+        }
+    }
+    return false;
+}
+
+// The share of a reflection of roughness `r` kept, faded out between
+// `up_to` and `passed_from` (integrator.rs's seeing_share, 0.5 and 0.8).
+fn openpbr_seeing_share(r: f32, up_to: f32, passed_from: f32) -> f32 {
+    let t = clamp((r - up_to) / (passed_from - up_to), 0.0, 1.0);
+    return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+// The stack's density for `wi` (openpbr_pdf), and pdf_reflection's: the
+// density the reflections sample_reflection names a roughness for - the
+// coat, the metal, the interface - give it, each weighed by the share
+// openpbr_seeing_share keeps of its roughness (a mirror-smooth lobe has no
+// density and adds none). Both from one density of each lobe.
+fn openpbr_densities(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>, up_to: f32, passed_from: f32) -> vec2<f32> {
+    var total = 0.0;
+    var seen = 0.0;
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        let p = b.probabilities[slot];
+        if (!openpbr_has(b, slot) || !(p > 0.0)) {
+            continue;
+        }
+        let density = openpbr_lobe_pdf(b, slot, wo, wi);
+        total += p * density;
+        let roughness = openpbr_reflection_roughness(b, slot);
+        if (roughness >= 0.0) {
+            let kept = openpbr_seeing_share(roughness, up_to, passed_from);
+            if (kept > 0.0) {
+                seen += p * kept * density;
+            }
+        }
+    }
+    return vec2<f32>(total, seen);
+}
+
+// OpenPbrBsdf::pdf_reflection (see openpbr_densities).
+fn openpbr_pdf_reflection(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>, up_to: f32, passed_from: f32) -> f32 {
+    return openpbr_densities(b, wo, wi, up_to, passed_from).y;
+}
+
+// openpbr_eval's sum, and in the same pass the part of it the lobes other
+// than the diffuse give (eval_selective(false, true)).
+struct StackValue {
+    total: vec3<f32>,
+    glossy: vec3<f32>,
+};
+
+fn openpbr_values(b: OpenPbr, wo: vec3<f32>, wi: vec3<f32>) -> StackValue {
+    var v = StackValue(vec3<f32>(0.0), vec3<f32>(0.0));
+    for (var slot = 0u; slot < OPENPBR_LOBES; slot++) {
+        if (!openpbr_has(b, slot)) {
+            continue;
+        }
+        let through = openpbr_attenuation(b, openpbr_depth(slot), wo, wi);
+        let term = openpbr_lobe_eval(b, slot, wo, wi) * (b.scales[slot] * (b.weights[slot] * through));
+        v.total += term;
+        if (slot != LOBE_DIFFUSE) {
+            v.glossy += term;
+        }
+    }
+    return v;
+}
+
 struct ReflectionSample {
     sample: LobeSample,
     // The chosen lobe's reflection_roughness; negative where it is not a
     // reflection off the coat, the interface or a metal.
     roughness: f32,
+    // For a sample that is not a delta's: pdf_reflection in its direction,
+    // and the part of its value the lobes other than the diffuse give.
+    seen: f32,
+    glossy: vec3<f32>,
 };
 
 // sample_reflection: a lobe chosen by `uc` against the probabilities, `uc`
@@ -478,6 +583,13 @@ struct ReflectionSample {
 // in that direction - or, for a delta lobe, its value through the layers
 // over it divided by the chance of having chosen it.
 fn openpbr_sample_reflection(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> ReflectionSample {
+    return openpbr_sample_seen(b, wo, u, uc, 0.5, 0.8);
+}
+
+// openpbr_sample_reflection, with what the integrator asks of a bounce off a
+// reflection (ReflectionSample's seen and glossy, the density by
+// openpbr_seeing_share's thresholds) from the same evaluation.
+fn openpbr_sample_seen(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32, up_to: f32, passed_from: f32) -> ReflectionSample {
     var none: ReflectionSample;
     none.sample = no_sample();
     none.roughness = -1.0;
@@ -513,17 +625,17 @@ fn openpbr_sample_reflection(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -
     if (s.is_delta) {
         let through = openpbr_attenuation(b, openpbr_depth(chosen), wo, s.wi);
         let f = s.f * (b.scales[chosen] * (b.weights[chosen] * through / probability));
-        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true), roughness);
+        return ReflectionSample(LobeSample(true, s.wi, f, 1.0, true), roughness, 0.0, f);
     }
-    let pdf = openpbr_pdf(b, wo, s.wi);
-    if (pdf <= 0.0) {
+    let densities = openpbr_densities(b, wo, s.wi, up_to, passed_from);
+    if (densities.x <= 0.0) {
         return none;
     }
-    let f = openpbr_eval(b, wo, s.wi);
-    if (all(f == vec3<f32>(0.0))) {
+    let value = openpbr_values(b, wo, s.wi);
+    if (all(value.total == vec3<f32>(0.0))) {
         return none;
     }
-    return ReflectionSample(LobeSample(true, s.wi, f, pdf, false), roughness);
+    return ReflectionSample(LobeSample(true, s.wi, value.total, densities.x, false), roughness, densities.y, value.glossy);
 }
 
 fn openpbr_sample(b: OpenPbr, wo: vec3<f32>, u: vec2<f32>, uc: f32) -> LobeSample {

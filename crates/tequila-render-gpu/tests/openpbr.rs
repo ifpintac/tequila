@@ -296,12 +296,13 @@ fn material_from_words() -> String {
     let mut parts: Vec<String> = (0..6).map(|c| format!("vec4<f32>({}, {}, {}, {})", at(4 * c), at(4 * c + 1), at(4 * c + 2), at(4 * c + 3))).collect();
     parts.extend((24..38).map(at));
     parts.push(format!("vec2<f32>({}, {})", at(38), at(39)));
+    parts.push(format!("vec4<f32>({}, {}, {}, {})", at(40), at(41), at(42), at(43)));
     format!("GpuMaterial({})", parts.join(", "))
 }
 
 fn the_stack(seed: u64, aimed: bool) {
     let Some(h) = Harness::for_test() else { return };
-    assert_eq!(MATERIAL_WORDS, 40);
+    assert_eq!(MATERIAL_WORDS, 44);
     let mut rng = Pcg32::new(seed, 1);
     let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
     let (mut deltas, mut misses, mut floored) = (0, 0, 0);
@@ -390,4 +391,101 @@ fn the_stack_is_the_processors() {
 #[test]
 fn the_aimed_stack_is_the_processors() {
     the_stack(32, true);
+}
+
+/// integrator.rs's `seeing_share` with its thresholds as parameters: 1 up
+/// to `up_to`, 0 from `passed_from`, smoothstepped between.
+fn seeing_share(roughness: f32, up_to: f32, passed_from: f32) -> f32 {
+    let t = ((roughness - up_to) / (passed_from - up_to)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// The words of the stack's other answers: `pdf_reflection` with the
+/// integrator's seeing share (0.5 to 0.8) and with another (0.1 to 0.3),
+/// `eval_selective` for the diffuse lobes alone, the others alone and all
+/// of them, and whether a lobe is mirror-smooth (`flags` has `DELTA`).
+const SELECTIVE_WORDS: [Word; 12] = [
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Value, false),
+    w(Kind::Flag, false),
+];
+
+/// `OpenPbrBsdf::pdf_reflection`, `eval_selective` and the delta flag,
+/// aimed, at a roughness floor of zero and above it: what the lamps' light
+/// samples and the bounces that meet the lamps read of the stack.
+#[test]
+fn the_stacks_reflection_density_and_selective_values_are_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(33, 1);
+    let (mut inputs, mut want, mut cases) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut deltas, mut seen) = (0, 0);
+    for _ in 0..N {
+        let m = material(&mut rng);
+        let floor = if rng.next_f32() < 0.6 { 0.0 } else { rng.next_f32() * 0.5 };
+        let (wo, wi) = (direction(&mut rng, 0.0), direction(&mut rng, 0.05));
+        let mut bsdf = OpenPbrBsdf::to_aim(&m, floor);
+        bsdf.aim(wo);
+        let gpu = GpuMaterial::from_material(&m);
+        inputs.extend_from_slice(bytemuck::cast_slice::<GpuMaterial, u32>(std::slice::from_ref(&gpu)));
+        inputs.extend(bits(&[floor, wo.x, wo.y, wo.z, wi.x, wi.y, wi.z]));
+        let first = bsdf.pdf_reflection(wo, wi, |r| seeing_share(r, 0.5, 0.8));
+        let second = bsdf.pdf_reflection(wo, wi, |r| seeing_share(r, 0.1, 0.3));
+        let diffuse = bsdf.eval_selective(wo, wi, true, false);
+        let glossy = bsdf.eval_selective(wo, wi, false, true);
+        let both = bsdf.eval_selective(wo, wi, true, true);
+        let delta = bsdf.flags().contains(tequila_materials::bsdf::BsdfFlags::DELTA);
+        want.push(vec![
+            first,
+            second,
+            diffuse.r,
+            diffuse.g,
+            diffuse.b,
+            glossy.r,
+            glossy.g,
+            glossy.b,
+            both.r,
+            both.g,
+            both.b,
+            delta as u8 as f32,
+        ]);
+        deltas += delta as usize;
+        seen += (first > 0.0) as usize;
+        cases.push(format!("floor {floor} wo {wo:?} wi {wi:?} material {gpu:?}"));
+    }
+    let base = MATERIAL_WORDS;
+    let body = format!(
+        "let m = {material};
+         let wo = vec3<f32>(inf({}u), inf({}u), inf({}u));
+         let wi = vec3<f32>(inf({}u), inf({}u), inf({}u));
+         let b = openpbr_aim(openpbr_to_aim(m, inf({base}u)), wo);
+         outf(0u, openpbr_pdf_reflection(b, wo, wi, 0.5, 0.8));
+         outf(1u, openpbr_pdf_reflection(b, wo, wi, 0.1, 0.3));
+         let d = openpbr_eval_selective(b, wo, wi, true, false);
+         outf(2u, d.x); outf(3u, d.y); outf(4u, d.z);
+         let g = openpbr_eval_selective(b, wo, wi, false, true);
+         outf(5u, g.x); outf(6u, g.y); outf(7u, g.z);
+         let a = openpbr_eval_selective(b, wo, wi, true, true);
+         outf(8u, a.x); outf(9u, a.y); outf(10u, a.z);
+         outf(11u, select(0.0, 1.0, openpbr_has_delta(b)));",
+        base + 1,
+        base + 2,
+        base + 3,
+        base + 4,
+        base + 5,
+        base + 6,
+        material = material_from_words(),
+    );
+    let out = h.run_wgsl(&["openpbr"], &body, &inputs, base + 7, SELECTIVE_WORDS.len());
+    println!("pdf_reflection: {seen} of {N} items with a reflection density, {deltas} stacks with a mirror-smooth lobe");
+    // The flag is never looser: the words are all compared, none sampled.
+    compare("OpenPbrBsdf::pdf_reflection and eval_selective", &out, &want, &SELECTIVE_WORDS, 11, &cases);
 }

@@ -7,8 +7,9 @@
 //! what that reads. Transmission, subsurface, thin film, flakes and
 //! thin walls are not on the card yet, so their parameters are not here;
 //! [`GpuMaterial::supports`] says whether a material is one the card's stack
-//! is the processor's for. Emission and cutout opacity are the
-//! integrator's, not the BSDF's, and are not here either.
+//! is the processor's for. Cutout opacity is the integrator's, not the
+//! BSDF's, and is not here either; emission is the integrator's too, and is
+//! here for it to read (`transport.wgsl`: a lamp's stand-in glowing).
 
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
@@ -44,6 +45,9 @@ pub struct GpuMaterial {
     /// Baked occlusion, which scales every lobe of the stack.
     pub geometry_occlusion: f32,
     pub _pad: [f32; 2],
+    /// `Material::emission`, in nits, and in `[3]` 1 where the material
+    /// `is_emissive`.
+    pub emission: [f32; 4],
 }
 
 fn colour(s: Spectrum) -> [f32; 4] {
@@ -76,6 +80,10 @@ impl GpuMaterial {
             fuzz_roughness: m.fuzz_roughness,
             geometry_occlusion: m.geometry_occlusion,
             _pad: [0.0; 2],
+            emission: {
+                let e = m.emission();
+                [e.r, e.g, e.b, if m.is_emissive() { 1.0 } else { 0.0 }]
+            },
         }
     }
 

@@ -42,10 +42,27 @@ pub struct GpuInstance {
     /// Its shadow catcher's record in the catcher buffer, [`NO_CATCHER`]
     /// for an ordinary surface.
     pub catcher: u32,
+    /// The lamp it stands in for (`Instance::light`), by its place among
+    /// the scene's lamps; [`NO_LIGHT`] for any other instance.
+    pub light: u32,
+    /// [`INSTANCE_STAND_IN`] for a lamp's stand-in (`Instance::light_proxy`).
+    pub flags: u32,
+    pub _pad: [u32; 2],
 }
 
 /// [`GpuInstance::catcher`] of an instance that is no shadow catcher.
 pub const NO_CATCHER: u32 = u32::MAX;
+/// [`GpuInstance::light`] of an instance that stands in for no lamp.
+pub const NO_LIGHT: u32 = u32::MAX;
+/// [`GpuInstance::flags`]: a lamp's visible stand-in.
+pub const INSTANCE_STAND_IN: u32 = 1;
+
+/// The top-level structure's instance masks, as Embree's geometry masks are
+/// (`tequila-render-cpu`'s `embree.rs`): every instance a surface, and the
+/// ones that cast shadows also in the mask shadow rays look for. A lamp's
+/// stand-in and a part that casts no shadow are passed by every shadow ray.
+pub const MASK_SURFACE: u8 = 1;
+pub const MASK_SHADOW: u8 = 2;
 
 /// A shadow catcher (`tequila_render_core::scene::ShadowCatcher`) as the card
 /// reads it: the floor the environment's ground puts in, or a part made one.
@@ -193,11 +210,14 @@ impl GpuScene {
                     material: inst.material.index() as u32,
                     instance: n as u32,
                     catcher,
+                    light: inst.light.unwrap_or(NO_LIGHT),
+                    flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 },
+                    _pad: [0; 2],
                 }
             })
             .collect();
         if instance_records.is_empty() {
-            instance_records.push(GpuInstance { catcher: NO_CATCHER, ..GpuInstance::default() });
+            instance_records.push(GpuInstance { catcher: NO_CATCHER, light: NO_LIGHT, ..GpuInstance::default() });
         }
         let mut catcher_buffer_records = catcher_records.clone();
         if catcher_buffer_records.is_empty() {
@@ -255,7 +275,8 @@ impl GpuScene {
                 r[0][0], r[0][1], r[0][2], r[0][3], r[1][0], r[1][1], r[1][2], r[1][3], r[2][0], r[2][1], r[2][2], r[2][3],
             ];
             let blas = blases[record.mesh as usize].as_ref().expect("a traced instance's mesh has triangles");
-            tlas[slot] = Some(wgpu::TlasInstance::new(blas, transform, slot as u32, 0xff));
+            let shadow = if scene.instances[traced[slot]].casts_shadows { MASK_SHADOW } else { 0 };
+            tlas[slot] = Some(wgpu::TlasInstance::new(blas, transform, slot as u32, MASK_SURFACE | shadow));
         }
         {
             let entries: Vec<wgpu::BlasBuildEntry> = blases

@@ -56,6 +56,28 @@ fn the_product_on_a_lit_floor_is_the_processors_picture() {
     same_picture("product_floor_lit");
 }
 
+/// The lamps: a key, a fill and a rim, chosen down the light hierarchy, two
+/// with stand-ins; the bounces that meet them, the mirrors that show them,
+/// Filter Glossy.
+#[test]
+fn the_lamp_lit_product_is_the_processors_picture() {
+    same_picture("lamp_lit");
+}
+
+/// A studio: the sky and three softboxes falling off to their edges, out of
+/// the camera's sight, chosen by the alias table.
+#[test]
+fn the_product_in_a_studio_is_the_processors_picture() {
+    same_picture("studio_lamps");
+}
+
+/// Lamps the camera sees: a softbox's stand-in glowing as it lights, and
+/// mirrored by the lamp itself; a disc's stand-in seen from behind.
+#[test]
+fn lamps_in_view_are_the_processors_picture() {
+    same_picture("lamps_in_view");
+}
+
 fn same_picture(name: &str) {
     let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
     let scene = parity::scene(name).expect("the parity set has it");
@@ -67,7 +89,8 @@ fn same_picture(name: &str) {
     let config = document.lighting.config();
 
     // Nothing in the set is a case the card renders otherwise.
-    let limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
+    let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
+    limits.extend(tequila_render_gpu::lights::lamp_limits(&snapshot, &config));
     assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
 
     let started = std::time::Instant::now();

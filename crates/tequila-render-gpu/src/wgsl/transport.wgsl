@@ -1,15 +1,20 @@
 // The transport (docs/07 R2.5, R3): the processor's path for a scene of
-// opaque OpenPBR surfaces (openpbr.wgsl) under the environment, standing on
-// a shadow catcher, draw for draw - camera ray, next-event estimation of the
-// sky by its facing tables with power-heuristic MIS, the stack's bounce,
-// Russian roulette, the bounce limit, the clamps; and the floor: its shadow,
-// its reflection (a path of its own, run in the same loop, as WGSL has no
-// recursion), a floor a bounce meets passed, glowing or shaded. integrator.rs is the specification; the
-// line references in the comments are to it. One invocation is one pixel,
+// opaque OpenPBR surfaces (openpbr.wgsl) under the environment and the
+// analytic lamps (lamps.wgsl), standing on a shadow catcher, draw for draw -
+// camera ray, next-event estimation of the sky by its facing tables with
+// power-heuristic MIS and of one lamp chosen as the processor chooses it,
+// the stack's bounce, Russian roulette, the bounce limit, the clamps; the
+// lamps a bounce off a sharp enough reflection meets along its way, shared
+// with the light sample there, and the stand-ins the camera sees them by;
+// and the floor: its shadow, its reflection (a path of its own, run in the
+// same loop, as WGSL has no recursion), a floor a bounce meets passed,
+// glowing or shaded. integrator.rs is the specification; the line
+// references in the comments are to it. One invocation is one pixel,
 // drawing frame.samples samples in order.
 //#include sampler
 //#include environment
 //#include openpbr
+//#include lamps
 
 @group(0) @binding(6) var<storage, read> scene_materials: array<GpuMaterial>;
 // The shadow catchers (scene.rs's GpuCatcher), by an instance's `catcher`.
@@ -91,33 +96,6 @@ fn valid_for_reflection(geometric: vec3<f32>, wo: vec3<f32>, shading: vec3<f32>)
     return select(geometric, r * (1.0 / sqrt(r2)), r2 > 0.0);
 }
 
-// Onb::from_normal [Duff et al. 2017].
-struct Frame {
-    t: vec3<f32>,
-    b: vec3<f32>,
-    n: vec3<f32>,
-};
-
-fn frame_of(n: vec3<f32>) -> Frame {
-    // copysign(1, n.z), -0.0 counting as negative.
-    let sign = select(1.0, -1.0, (bitcast<u32>(n.z) & 0x80000000u) != 0u);
-    let a = -1.0 / (sign + n.z);
-    let b = n.x * n.y * a;
-    return Frame(
-        vec3<f32>(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x),
-        vec3<f32>(b, sign + n.y * n.y * a, -n.y),
-        n,
-    );
-}
-
-fn to_local(f: Frame, v: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(dot(v, f.t), dot(v, f.b), dot(v, f.n));
-}
-
-fn to_world(f: Frame, v: vec3<f32>) -> vec3<f32> {
-    return f.t * v.x + f.b * v.y + f.n * v.z;
-}
-
 // sample_uniform_disk_concentric, then the hemisphere above it.
 fn sample_cosine_hemisphere(u: vec2<f32>) -> vec3<f32> {
     let o = vec2<f32>(2.0 * u.x - 1.0, 2.0 * u.y - 1.0);
@@ -173,13 +151,14 @@ fn light_ceiling(specular_chain: bool, found_at: u32) -> f32 {
 
 fn trace(origin: vec3<f32>, direction: vec3<f32>) -> RayIntersection {
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, 0xFFu, 0.0, 3.0e38, origin, direction));
+    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, 3.0e38, origin, direction));
     rayQueryProceed(&rq);
     return rayQueryGetCommittedIntersection(&rq);
 }
 
 // Intersector::occluded through shadow_ray: both ends offset, stopped just
-// short of the aim.
+// short of the aim, passing what casts no shadow (a lamp's stand-in) as
+// Embree's MASK_SHADOW does.
 fn occluded(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> bool {
     let origin = offset_at(from_point, from_normal, 0.0);
     let aim = offset_at(to, to_normal, 0.0);
@@ -187,7 +166,7 @@ fn occluded(from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_nor
     let distance = sqrt(dot(delta, delta));
     let direction = select(from_normal, delta / distance, distance > 0.0);
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, distance * (1.0 - 1e-4), origin, direction));
+    rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, MASK_SHADOW, 0.0, distance * (1.0 - 1e-4), origin, direction));
     rayQueryProceed(&rq);
     return rayQueryGetCommittedIntersection(&rq).kind != RAY_QUERY_INTERSECTION_NONE;
 }
@@ -237,11 +216,31 @@ fn sanitized(c: vec3<f32>) -> vec3<f32> {
 // from its bounces.
 const MAX_CUTOUT_CROSSINGS: u32 = 64u;
 
+// The surface a seeing bounce left, or a mirror's view (ic:2654's
+// SeenFrom, for a path of opaque surfaces: no glass to see or pass, and a
+// surface lit from one side): where it was, its geometric normal on the
+// side the bounce left by, the way it left, its instance (by its index in
+// the snapshot), and the density the lobes that see gave that way -
+// infinite off a mirror-smooth lobe (`delta`), which no light sample stands
+// in for - and the share of the value its glossy lobes gave.
+struct SeenFrom {
+    valid: bool,
+    delta: bool,
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    direction: vec3<f32>,
+    density: f32,
+    glossy: vec3<f32>,
+    instance: u32,
+};
+
 // What a path carries from one segment to the next: the ray, what it has
 // gathered and what it carries, how the last bounce left (its density, or
 // a mirror's, whose density is infinite and an escape after which is
 // weighed 1), the specular chain, whether a shadow catcher met next is seen
-// as the camera would see it (ic:859), the bounces and the floor crossings.
+// as the camera would see it (ic:859), the bounces and the floor crossings,
+// the least density a bounce left by (ic:879, for Filter Glossy) and the
+// surface a bounce that meets the lamps left (ic:907).
 struct PathState {
     origin: vec3<f32>,
     direction: vec3<f32>,
@@ -257,10 +256,16 @@ struct PathState {
     bounce: u32,
     crossings: u32,
     max_bounces: u32,
+    // Read only below 1 (filtered_roughness): any value from 1 up is the
+    // processor's infinity.
+    least_pdf: f32,
+    seen: SeenFrom,
 };
 
 fn path_start(origin: vec3<f32>, direction: vec3<f32>, max_bounces: u32, catcher_view: bool) -> PathState {
-    return PathState(origin, direction, vec3<f32>(0.0), vec3<f32>(1.0), vec3<f32>(0.0, 1.0, 0.0), 0.0, false, true, catcher_view, 0u, 0u, max_bounces);
+    var seen: SeenFrom;
+    seen.valid = false;
+    return PathState(origin, direction, vec3<f32>(0.0), vec3<f32>(1.0), vec3<f32>(0.0, 1.0, 0.0), 0.0, false, true, catcher_view, 0u, 0u, max_bounces, 3.0e38, seen);
 }
 
 // ic:1259-1324: the sky, weighed against having been sampled. What it adds
@@ -306,9 +311,132 @@ fn catcher_view_through(m: GpuMaterial) -> f32 {
     return 1.0 - t * t * (3.0 - 2.0 * t);
 }
 
+// integrator.rs's seeing_share: up to this roughness a reflection's bounce
+// sees - meets the lamps it is turned to - and from this one on it does not.
+const SEEN_UP_TO: f32 = 0.5;
+const PASSED_FROM: f32 = 0.8;
+
+// filtered_roughness (ic:2643): the roughness a mirror-smooth surface is
+// blurred to past a bounce that left by a density of `least_pdf` at most,
+// as Cycles' Filter Glossy has it.
+fn filtered_roughness(least_pdf: f32) -> f32 {
+    if (!(least_pdf < 1.0)) {
+        return 0.0;
+    }
+    return sqrt(0.5 * sqrt(1.0 - max(least_pdf, 0.0)));
+}
+
+// left_to_bounces (ic:4435): the share of a light sample's light the lobes
+// that do not see make up, and what the ones that see give it.
+fn left_to_bounces(pdf: f32, seen_in: f32) -> vec2<f32> {
+    if (!(pdf > 0.0)) {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let seen = clamp(seen_in, 0.0, pdf);
+    return vec2<f32>((pdf - seen) / pdf, seen);
+}
+
+// Next-event estimation at a vertex (ic:2043-2201): one sample of the sky
+// (sample_environment_light, ic:4279) and one of the lamps
+// (sample_analytic_lights, ic:4550), each with its own shadow ray, summed
+// before the throughput, as the processor sums them. One pass of the loop
+// is one light source, so the two share their evaluation of the stack,
+// their shadow ray and their arithmetic. An environment turned down to
+// nothing, and a scene with no lamp, draw nothing (ic:4299, 4565).
+fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32) -> vec3<f32> {
+    var direct = vec3<f32>(0.0);
+    for (var source = 0u; source < 2u; source++) {
+        let sky = source == 0u;
+        var draw: LightDraw;
+        var diffuse = true;
+        var specular = true;
+        var shadow = true;
+        var p_select = 1.0;
+        var is_shared = false;
+        if (sky) {
+            if (frame.env_intensity <= 0.0) {
+                continue;
+            }
+            let e = env_sample_facing(surf.geometric, sampler_light_sample(s));
+            if (!e.ok || e.pdf <= 0.0 || all(e.radiance == vec3<f32>(0.0))) {
+                continue;
+            }
+            draw = LightDraw(true, e.direction, e.radiance, 0.0, true, e.pdf, false);
+        } else {
+            if (frame.light_count == 0u) {
+                continue;
+            }
+            // The lamp chosen from this point, facing the side the path is on
+            // (an opaque surface is lit from one side), and its own variates.
+            let choice = lamps_select_at(frame.light_count, frame.light_hierarchy != 0u, surf.position, surf.geometric, false, sampler_light_select(s));
+            if (!choice.ok) {
+                continue;
+            }
+            let light = scene_lights[choice.index];
+            // Light linking: a lamp kept to other parts lights nothing here.
+            if (!lamp_lights(light, instance)) {
+                continue;
+            }
+            draw = light_sample(light, surf.position, sampler_light_sample(s));
+            if (!draw.ok || all(draw.radiance == vec3<f32>(0.0)) || (!draw.is_delta && draw.pdf <= 0.0)) {
+                continue;
+            }
+            diffuse = light_has(light, LF_DIFFUSE);
+            specular = light_has(light, LF_SPECULAR);
+            shadow = light_has(light, LF_SHADOW);
+            p_select = choice.probability;
+            // Shared with the bounces that meet it (ic:4686).
+            is_shared = (frame.lamp_flags & LAMPS_SEEN) != 0u && frame.shadows != 0u && !draw.is_delta && lamp_met_by_bounces(light, instance);
+        }
+        // Not lit from behind: an opaque surface only reflects.
+        if (dot(draw.direction, surf.geometric) <= 0.0) {
+            continue;
+        }
+        let wi = to_local(f, draw.direction);
+        if (wi.z <= 0.0) {
+            continue;
+        }
+        let value = openpbr_eval_selective(bsdf, wo, wi, diffuse, specular);
+        if (all(value == vec3<f32>(0.0))) {
+            continue;
+        }
+        // The stack's density, and its seeing lobes', in one pass.
+        let densities = openpbr_densities(bsdf, wo, wi, SEEN_UP_TO, PASSED_FROM);
+        let bsdf_pdf = select(densities.x, 0.0, draw.is_delta);
+        if (frame.shadows != 0u && shadow) {
+            // Just short of a lamp; past everything for the sky or a sun.
+            var reach = frame.shadow_far;
+            if (!draw.infinite) {
+                reach = draw.distance * (1.0 - 1e-3);
+            }
+            let from_point = offset_at(surf.position, surf.geometric, surf.magnitude);
+            if (occluded(from_point, surf.geometric, surf.position + draw.direction * reach, -draw.direction)) {
+                continue;
+            }
+        }
+        var scale: vec3<f32>;
+        if (sky) {
+            scale = draw.radiance * ((abs(wi.z) * mis_power(draw.pdf, bsdf_pdf)) / draw.pdf);
+        } else {
+            // No MIS against the bounces that cannot meet a lamp; the share
+            // of one they can meet that this sample keeps.
+            var share = 1.0;
+            if (is_shared) {
+                let left = left_to_bounces(bsdf_pdf, densities.y);
+                share = left.x + (1.0 - left.x) * mis_power(draw.pdf * p_select, left.y);
+            }
+            let density = select(draw.pdf * p_select, p_select, draw.is_delta);
+            scale = draw.radiance * ((abs(wi.z) * share) / density);
+        }
+        direct += value * scale;
+    }
+    return direct;
+}
+
 // One vertex of a path off an opaque OpenPBR surface: the bounce limit,
-// next-event estimation of the sky and the bounce, the catcher's view and
-// Russian roulette (ic:1867-2562). False where the path ends here.
+// Filter Glossy, next-event estimation of the sky and the lamps and the
+// bounce, whether it sees, the catcher's view and Russian roulette
+// (ic:1862-2562). False where the path ends here.
 fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: RayIntersection, surf: Surface) -> bool {
     let bounce = (*st).bounce;
     if (bounce >= (*st).max_bounces) {
@@ -319,39 +447,42 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
     if (wo.z <= 0.0) {
         return false;
     }
-    // The stack as the integrator builds it (ic:2003-2021): every
+    // The stack as the integrator builds it (ic:2003-2032): every
     // reflection lobe at least as rough as the regularization's floor from
-    // its bounce on, the lobe chances aimed at `wo`.
-    let material = scene_materials[scene_instances[hit.instance_custom_data].material];
+    // its bounce on, the lobe chances aimed at `wo`; and where lamps show in
+    // mirrors, one with a mirror-smooth lobe blurred past a diffuse or rough
+    // bounce as Cycles' Filter Glossy blurs it - built again, all its
+    // reflections at least that rough (one call site, for the code's size).
+    let inst = scene_instances[hit.instance_custom_data];
+    let material = scene_materials[inst.material];
     let floor = select(0.0, frame.regularization_roughness, bounce >= frame.regularization_start);
-    let bsdf = openpbr_aim(openpbr_to_aim(material, floor), wo);
+    var blur = 0.0;
+    if ((frame.lamp_flags & LAMPS_IN_MIRRORS) != 0u && frame.regularization_roughness > 0.0) {
+        blur = filtered_roughness((*st).least_pdf);
+    }
+    var roughness_floor = floor;
+    var bsdf: OpenPbr;
+    loop {
+        bsdf = openpbr_aim(openpbr_to_aim(material, roughness_floor), wo);
+        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {
+            roughness_floor = blur;
+            continue;
+        }
+        break;
+    }
     sampler_begin_bounce(s, bounce);
 
-    // Next-event estimation of the sky (ic:4279-4412), but for a stack of
-    // mirrors only.
-    (*st).sky_facing = surf.geometric;
-    if (!pure_delta(bsdf)) {
-        let light = env_sample_facing(surf.geometric, sampler_light_sample(s));
-        if (light.ok && any(light.radiance > vec3<f32>(0.0)) && dot(light.direction, surf.geometric) > 0.0) {
-            let wi = to_local(f, light.direction);
-            if (wi.z > 0.0) {
-                let value = openpbr_eval(bsdf, wo, wi);
-                if (any(value != vec3<f32>(0.0))) {
-                    let bsdf_pdf = openpbr_pdf(bsdf, wo, wi);
-                    let w = mis_power(light.pdf, bsdf_pdf);
-                    let scale = light.radiance * ((abs(wi.z) * w) / light.pdf);
-                    let from_point = offset_at(surf.position, surf.geometric, surf.magnitude);
-                    let aim = surf.position + light.direction * frame.shadow_far;
-                    if (!occluded(from_point, surf.geometric, aim, -light.direction)) {
-                        (*st).radiance += clamp_light((*st).throughput * (value * scale), light_ceiling((*st).specular_chain, bounce));
-                    }
-                }
-            }
-        }
+    // Next-event estimation (ic:2043-2224), but for a stack of mirrors
+    // only; clamped as one.
+    let samples_lights = !pure_delta(bsdf);
+    if (samples_lights) {
+        (*st).sky_facing = surf.geometric;
+        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance);
+        (*st).radiance += clamp_light((*st).throughput * direct, light_ceiling((*st).specular_chain, bounce));
     }
 
     // The bounce (ic:2316-2433).
-    let chosen = openpbr_sample_reflection(bsdf, wo, sampler_bsdf_direction(s), sampler_bsdf_lobe(s));
+    let chosen = openpbr_sample_seen(bsdf, wo, sampler_bsdf_direction(s), sampler_bsdf_lobe(s), SEEN_UP_TO, PASSED_FROM);
     let sample = chosen.sample;
     if (!sample.ok || !(sample.pdf > 0.0) || all(sample.f == vec3<f32>(0.0))) {
         return false;
@@ -365,8 +496,41 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         return false;
     }
     (*st).throughput = throughput;
+    // Whether this bounce sees (ic:2413): off a reflection sharp enough to
+    // show what it is turned to, it meets the lamps there - always off a
+    // mirror-smooth one, else by a draw of the open stream against how
+    // sharp it is.
+    var sees = false;
+    if (samples_lights && frame.shadows != 0u && (frame.lamp_flags & LAMPS_SEEN) != 0u && chosen.roughness >= 0.0) {
+        if (sample.is_delta) {
+            sees = true;
+        } else {
+            let share = openpbr_seeing_share(chosen.roughness, SEEN_UP_TO, PASSED_FROM);
+            sees = share >= 1.0 || (share > 0.0 && sampler_next_unstructured(s) < share);
+        }
+    }
+    if (!sample.is_delta) {
+        (*st).least_pdf = min((*st).least_pdf, sample.pdf);
+    }
     (*st).prev_pdf = sample.pdf;
     (*st).prev_delta = sample.is_delta;
+    // What meets the lamps along the way on (ic:2442-2498): a bounce that
+    // sees, or a mirror's view, which no light sample stands in for.
+    if (sees || (sample.is_delta && (frame.lamp_flags & LAMPS_IN_MIRRORS) != 0u)) {
+        var glossy = vec3<f32>(1.0);
+        var density = 0.0;
+        if (!sample.is_delta) {
+            density = chosen.seen;
+            if ((frame.lamp_flags & LAMPS_FOR_REFLECTIONS) != 0u) {
+                for (var c = 0u; c < 3u; c++) {
+                    glossy[c] = select(0.0, clamp(chosen.glossy[c] / sample.f[c], 0.0, 1.0), sample.f[c] > 0.0);
+                }
+            }
+        }
+        (*st).seen = SeenFrom(true, sample.is_delta, surf.position, surf.geometric, wi_world, density, glossy, inst.instance);
+    } else {
+        (*st).seen.valid = false;
+    }
     (*st).specular_chain = (*st).specular_chain && sample.is_delta;
     // ic:2510-2511: through a mirror the catcher is still seen as the camera
     // sees it; off a reflection that is not one, by a draw of the open
@@ -386,6 +550,41 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
         (*st).throughput = throughput * (1.0 / q);
     }
     return true;
+}
+
+// The lamps the surface a seeing bounce left meets along the ray just
+// traced (ic:1017-1048): no geometry, each looked for along the way, as far
+// as what the ray hit - a little past a lamp's own stand-in, which is
+// where the lamp is - weighed against the light sample there as it chose
+// lamps (weight_of_lamp, ic:2795), each clamped as light found past the
+// bounce before. A sun's disc, infinitely far, only where the ray escapes.
+fn meet_lamps(st: ptr<function, PathState>, hit: RayIntersection) {
+    let seen_from = (*st).seen;
+    var reach = 0.0;
+    let open = hit.kind == RAY_QUERY_INTERSECTION_NONE;
+    if (!open) {
+        let stand_in = (scene_instances[hit.instance_custom_data].flags & INSTANCE_STAND_IN) != 0u;
+        reach = select(hit.t, hit.t * (1.0 + 1e-3) + 1e-5, stand_in);
+    }
+    let bounce = (*st).bounce;
+    let found_at = select(bounce - 1u, 0u, bounce == 0u);
+    for (var i = 0u; i < frame.light_count; i++) {
+        let light = scene_lights[i];
+        if (!lamp_met_by_bounces(light, seen_from.instance)) {
+            continue;
+        }
+        let met = light_met_along(light, (*st).origin, (*st).direction);
+        if (!met.ok || (!open && (met.infinite || met.t >= reach))) {
+            continue;
+        }
+        var weight = 1.0;
+        if (!seen_from.delta) {
+            let chosen = lamps_selection_pdf_at(frame.light_hierarchy != 0u, seen_from.position, seen_from.normal, false, i);
+            weight = mis_power(seen_from.density, light_density_along(light, seen_from.position, seen_from.direction) * chosen);
+        }
+        let lobes = select(seen_from.glossy, vec3<f32>(1.0), light_has(light, LF_DIFFUSE));
+        (*st).radiance += clamp_light((*st).throughput * lobes * met.radiance * weight, light_ceiling((*st).specular_chain, found_at));
+    }
 }
 
 // ---- The shadow catcher -------------------------------------------------
@@ -479,6 +678,7 @@ fn floor_met(st: ptr<function, PathState>, s: ptr<function, Sampler>, c: GpuCatc
     let g = select(raw.geometric, -raw.geometric, dot(direction, raw.geometric) > 0.0);
     (*st).origin = offset_at(raw.position, -g, raw.magnitude);
     (*st).prev_delta = true;
+    (*st).seen.valid = false;
     return MET_PASSED;
 }
 
@@ -633,6 +833,10 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         } else {
             hit = trace(st.origin, st.direction);
         }
+        // The lamps a seeing bounce, or a mirror, meets on the way.
+        if (st.seen.valid) {
+            meet_lamps(&st, hit);
+        }
         if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
             let sky = path_escape(&st);
             if (st.bounce == 0u) {
@@ -696,6 +900,35 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
             if (met == MET_PASSED) {
                 continue;
             }
+        }
+        let inst = scene_instances[hit.instance_custom_data];
+        // A lamp's stand-in shows only where the camera sees it straight on
+        // (stand_in_shows, ic:1330); past the first surface the lamp itself
+        // is met (meet_lamps), and any other path passes the stand-in, as
+        // shadow rays do (ic:1568).
+        let stand_in = (inst.flags & INSTANCE_STAND_IN) != 0u;
+        if (stand_in && !(st.specular_chain && ((frame.lamp_flags & LAMPS_IN_MIRRORS) == 0u || st.bounce == 0u))) {
+            if (st.crossings >= MAX_CUTOUT_CROSSINGS) {
+                break;
+            }
+            st.crossings += 1u;
+            let g = select(raw.geometric, -raw.geometric, dot(st.direction, raw.geometric) > 0.0);
+            st.origin = offset_at(raw.position, -g, raw.magnitude);
+            continue;
+        }
+        // A glowing surface met from the front (ic:1813-1860): a stand-in,
+        // its face as its lamp lights, falling off to its edges.
+        let glow = scene_materials[inst.material].emission;
+        if (glow.w != 0.0 && dot(st.direction, raw.geometric) <= 0.0) {
+            var face = 1.0;
+            if (inst.light != NO_LIGHT) {
+                let lamp = scene_lights[inst.light];
+                if (lamp.kind == LIGHT_AREA) {
+                    face = light_face_at(lamp, raw.position);
+                }
+            }
+            let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
+            st.radiance += clamp_light(st.throughput * glow.xyz * (1.0 * face), light_ceiling(st.specular_chain, found_at));
         }
         if (!shade_vertex(&st, &s, hit, facing(raw, st.direction))) {
             break;

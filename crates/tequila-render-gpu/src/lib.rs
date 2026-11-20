@@ -21,14 +21,17 @@
 //! - [`scene`]: a snapshot's triangles, acceleration structures and the
 //!   records a hit leads back to (R2.1), their layouts held to the WGSL's
 //!   by test (R2.2).
+//! - [`lights`]: the scene's analytic lamps and the way the processor
+//!   chooses one, as `LightSet` built it (R3).
 //! - [`environment`] and [`transport`]: the transport (R2.5, R3), opaque
-//!   OpenPBR surfaces under the environment on a shadow catcher's floor, the
-//!   processor's path draw for draw, its samples accumulated by the
-//!   processor's `Framebuffer`.
+//!   OpenPBR surfaces under the environment and the lamps, on a shadow
+//!   catcher's floor, the processor's path draw for draw, its samples
+//!   accumulated by the processor's `Framebuffer`.
 
 pub mod device;
 pub mod environment;
 pub mod harness;
+pub mod lights;
 pub mod material;
 pub mod scene;
 pub mod shader;
