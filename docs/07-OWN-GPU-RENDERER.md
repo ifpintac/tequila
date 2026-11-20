@@ -370,6 +370,7 @@ Each item is: port to WGSL, differential tests for its functions (R2.4), its sce
   - Those five still have subsurface (0.08), so the whole library's count stays 515.
   - Cold compile 48.7, 46.2 and 46.8 s against 47.8, 48.1 and 46.6 s with the write-back as it was, interleaved (`what_driven_transmission_costs_to_compile`): under the noise.
   - Still to come in the glass family: dispersion (13 presets: wavelengths on the card) and glass whose volume scatters (9: a random walk inside).
+- **Dispatches cut by time.** A dispatch was 16 samples of the whole frame at any size: `bevelled_product` at 960x540 or 1280x720 ran past Windows' two seconds on the RTX 2060 and the card was reset (`BufferAsyncError`, or once a black picture and no word). `render_pass` now times its dispatches and aims each at 0.1 s: up to 16 samples of the whole frame, else one sample of every `row_stride`-th row from `row_base` (`FrameParams`' pad words), interleaved so that each set of rows costs what any other does and the pace one dispatch measures holds for the next; the work grows at most twofold a dispatch from 2^18 pixel samples. Once at full size and well inside the time, dispatches queue without a wait. Each pixel still takes its samples in order, so the picture is the same however the frame is cut (`tests/dispatch.rs`: cut finely, to the bit, the card or the processor adding up; 1280x720 at 16 samples of `bevelled_product` finishes). A lost card is now said, and the render stops, rather than handing back what it holds (`GpuDevice::is_lost`).
 
 ### R4 — In the app (M)
 

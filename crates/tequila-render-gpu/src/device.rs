@@ -19,6 +19,10 @@ pub struct GpuDevice {
     pub queue: wgpu::Queue,
     pub info: wgpu::AdapterInfo,
     pub needs: Needs,
+    /// Set when the device is lost: the system reset the card (Windows does
+    /// when one piece of work runs past two seconds), or its driver failed.
+    /// Nothing it hands back after that can be trusted.
+    lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// The backends Tequila renders through (`docs/07` §3): no DX12, no GL.
@@ -91,7 +95,15 @@ impl GpuDevice {
             trace: wgpu::Trace::Off,
         }))
         .map_err(|e| format!("{} refused a device: {e}", info.name))?;
-        Ok(GpuDevice { adapter, device, queue, info, needs })
+        let lost = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = lost.clone();
+        device.set_device_lost_callback(move |reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                eprintln!("  the graphics card was lost ({reason:?}): {message}");
+            }
+        });
+        Ok(GpuDevice { adapter, device, queue, info, needs, lost })
     }
 
     /// A line for logs: which card, through what, with which driver.
@@ -102,6 +114,11 @@ impl GpuDevice {
     /// Wait for everything submitted so far.
     pub fn wait(&self) {
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+    }
+
+    /// Whether the device has been lost (see [`GpuDevice::lost`]'s field).
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
