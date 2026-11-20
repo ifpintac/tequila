@@ -333,6 +333,14 @@ Each item is: port to WGSL, differential tests for its functions (R2.4), its sce
 
 *Exit:* the whole parity set within tolerance on both machines; `every_material_renders` on the card; all library presets, card against processor, correlate at 0.99 or better; G1.1 holds on both machines. If G1.1 does not hold, now is when to add compaction and path regeneration (D5) and to profile the kernels.
 
+*As built so far* (RTX 2060; the Mac half not yet run). Each port refuses what it does not do yet through a `*_limits` function, which `--device GPU` prints and the parity test holds empty:
+- **The surface and the floor** (#193): the OpenPBR stack without glass, the ground, the floor reflection traced in the path.
+- **Lamps** (#193): area, point, spot and distant lamps, the alias table and the hierarchy, shadow casting, lamps seen in mirrors, Filter Glossy. Nine scenes at 7e-6 or less. Still refused: IES lamps, shadow links, glowing parts as lights.
+- **Graph stage 1** (#194): the programs as bytecode on one interpreter, bump and the anisotropic frame. 438 of the library's 539 presets with a program run on the card; Headphones 8e-6.
+- **Glass** (tier B's first item): the transmission lobe as the stack's sixth slot, shadows through clear glass, the media stack with Beer-Lambert absorption and the start-inside probe, the split at the first glass, the floor's shadow through glass. Five glass scenes at 7e-6 or less. Still refused: spectral and dispersion, caustics, scattering and glowing volumes, Volume Maps, cut-out glass, thin film, flakes, subsurface, parts hidden from some rays.
+  - Cold compile 24.6 s, 14% over #194's 21.6 s after the stack learnt to check a drawn lobe from its own evaluation.
+  - For D5: the start-inside probe (`enclosing_media`) walks up to 32 surfaces through everything for every camera sample of a scene with any glass, on both renderers, though its comment says it stops at the first opaque surface. For a pinhole camera every camera ray starts at the same point, so one probe per frame would do where the solids are closed.
+
 ### R4 — In the app (M)
 
 - **R4.1 The engine list.** `RenderEngine` (`tequila-scene/src/render.rs`) gains `TequilaGpu`, key `tequila-gpu`, label "Tequila (graphics card)", marked experimental in the Render window and on the viewport's chip.
