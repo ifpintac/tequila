@@ -246,6 +246,22 @@ On the RTX 2060 (Vulkan) and an Apple-silicon Mac (Metal, macOS 15 or later): ma
 *If Metal's ray queries misbehave* (wgpu issues #9215, #9100 are open or recently closed): do R5.1 first and run the Mac on the processor-built tree; carry on.
 *If Vulkan's do:* stop and ask the owner. The alternative is Vulkan and Metal directly (`ash`, `metal`), which is a different plan.
 
+*Measured, November 20, the RTX 2060 half* (branch `r2-spike`, `cargo run --release -p tequila-render-gpu --example r2_spike -- PROJECT 1920 1080 OUT`; driver 610.88, against Embree on the Ryzen 7 2700X's 16 threads through the renderer's own `Intersector`, AO radius 5% of the scene's diagonal):
+
+| Scene | Triangles | Card, M rays/s | Processor, M rays/s | Card ÷ processor |
+|---|---|---|---|---|
+| Headphones | 102,408 | 2,498 | 72.7 | 34× |
+| Perfume bottle | 75,129 | 2,775 | 87.4 | 32× |
+| palma P8 | 193,531 | 2,792 | 83.9 | 33× |
+
+- The pictures are the same: hit or miss differs at 0, 1 and 0 pixels of 2 million, and the mean occlusion agrees to four decimals (both draw the same hashed directions).
+- Acceleration structures in 0.025 s on the card (one BLAS per mesh, 8 to 151 instances), 0.07–0.19 s in Embree. Card memory 13–34 MiB.
+- Cold pipeline compile 0.16 s, for a shader of 100 lines; the megakernel will be far larger, so R2.5 measures it again.
+- The processor's figure includes `Hit`'s full bookkeeping (shading normal, UVs, magnitude), which bare traversal does not, so the margin for traversal alone is smaller; it is still several times the 5× the pass asks.
+- wgpu 30 details that cost a try each: device creation needs `experimental_features: unsafe { ExperimentalFeatures::enabled() }`; the shader needs `enable wgpu_ray_query;`; the opaque flag is `RAY_FLAG_FORCE_OPAQUE`; `required_limits` must raise the acceleration-structure limits, which default to zero (the spike passes `adapter.limits()`).
+
+*Pass on the RTX 2060.* The Mac half is still to run.
+
 **R2.1 The crate.**
 In `crates/tequila-render-gpu` (workspace `rust-version` rises to what wgpu 30 needs; wgpu 22 is already in `Cargo.lock` through another dependency, so pin this crate's version explicitly):
 - `device.rs`: choose the adapter, request features and limits (raise `max_buffer_size` and `max_storage_buffer_binding_size`; they default to 256 and 128 MiB), report why a device was refused.
