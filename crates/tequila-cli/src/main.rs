@@ -276,7 +276,8 @@ usage: tequila [options]
       --engine NAME     tequila or cycles: render with Blender's Cycles,
                         when tequila_cycles.dll is installed (default: a
                         project's own engine, else tequila)
-      --device NAME     the Cycles device: CPU, OPTIX, CUDA (default: the
+      --device NAME     Cycles: CPU, OPTIX, CUDA; Tequila's renderer: CPU,
+                        or GPU (experimental, docs/07) (default: the
                         engine's - a project's graphics-card engine uses the
                         card, else the processor)
       --hdri PATH       light with an HDR or EXR environment
