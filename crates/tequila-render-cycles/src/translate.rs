@@ -510,6 +510,21 @@ pub fn to_rendering(r: f32, g: f32, b: f32) -> Spectrum {
     Spectrum { r, g, b }
 }
 
+/// How far along the surface Cycles' bump measures a height's slope, as a
+/// share of the ray's footprint: a hundredth, where Cycles' own default is a
+/// tenth. A tenth is a good part of any relief smaller than a pixel, and
+/// smooths it before the pixel's samples can average the real slopes, so a
+/// bumped part looked brighter and flatter the smaller it was in the frame:
+/// 0.6 mm polished pyramids seen from above read 0.74 at 32 pixels across
+/// and 0.37 at 256; at a hundredth, 0.36 and 0.32; at a thousandth, 0.32 at
+/// both. Tequila's renderer takes the thousandth
+/// (`tequila_render_core::surface_bump::BUMP_FILTER_WIDTH`), never shorter
+/// than `f32` can resolve where the point is. Cycles takes one width for the
+/// whole shader with no such floor, and a thousandth of a footprint on a
+/// large part in a close-up (a car's door, 2 m from its origin, at 4K) is
+/// about one unit in the last place: the slope would be noise.
+pub const BUMP_FILTER_WIDTH: f32 = 0.01;
+
 /// The turn about Cycles' vertical that makes its environment lookup land
 /// where Tequila's does, for an environment rotated by `rotation`.
 ///
@@ -3923,7 +3938,8 @@ impl Builder<'_> {
             // to it. Tequila's renderer tilts the normal away from uphill by
             // the height's slope along the surface, in world units; so does
             // Cycles' bump at a distance and strength of one, its filter
-            // width cancelling.
+            // width cancelling. The filter width is how far along the slope
+            // is measured: see [`BUMP_FILTER_WIDTH`].
             Some(BumpSource::Height { program, register }) => {
                 let registers = self.program(shader, program)?;
                 if let Some(height @ Slot::Link(..)) = registers.get(&register.0).copied() {
@@ -3931,6 +3947,7 @@ impl Builder<'_> {
                     self.feed(shader, bump, "Height", height, false)?;
                     self.session.set_float(bump, "Distance", 1.0)?;
                     self.session.set_float(bump, "Strength", 1.0)?;
+                    self.session.set_float(bump, "Filter Width", BUMP_FILTER_WIDTH)?;
                     if let Some(bevel) = bevel {
                         self.session.connect(shader, bevel, "Normal", bump, "Normal")?;
                     }
