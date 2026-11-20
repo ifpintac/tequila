@@ -345,7 +345,6 @@ struct FloorScene {
     catcher_shadows: bool,
     lamps: bool,
     finite_dome: bool,
-    panes: bool,
     cutouts: bool,
     shadowless_parts: bool,
     background: bool,
@@ -358,7 +357,6 @@ impl FloorScene {
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
             finite_dome: !scene.environment.dome().is_infinite(),
-            panes: scene.has_panes(),
             cutouts: scene.has_cutouts(),
             shadowless_parts: scene.has_shadowless_parts(),
             background: !scene.background.is_environment(),
@@ -376,9 +374,6 @@ impl FloorScene {
         }
         if self.finite_dome {
             limits.push("the floor is lit and shadowed as under an infinitely far dome");
-        }
-        if shadows && config.shadow_glass() != tequila_render_core::settings::ShadowGlass::Solid && self.panes {
-            limits.push("clear glass casts a solid shadow on the floor");
         }
         if self.cutouts {
             limits.push("a cutout casts a solid shadow on the floor");

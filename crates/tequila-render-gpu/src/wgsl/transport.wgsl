@@ -473,21 +473,23 @@ struct Visibility {
 };
 
 // shadow_transmittance_through (ic:3308-3447), every part a blocker (a
-// lamp's shadow links are a lamp limit): where no glass is passed, one
-// shadow ray, all or nothing; else the closest surfaces along the shadow
-// ray one after another, over every part, at most 64 - clear glass taking
-// its tint at each face and its volume between the way in and the way out
-// of one solid (one at a time, as the processor pairs them), a part that
-// casts no shadow passed, anything else (the card has no cutouts) a
-// shadow.
+// lamp's shadow links are a lamp limit), both ends offset and stopped just
+// short of the aim (intersect.rs's shadow_ray): where no glass is passed,
+// one any-hit query among the parts that cast shadows, all or nothing
+// (Intersector::occluded, Embree's MASK_SHADOW); else the closest surfaces
+// along the shadow ray one after another, over every part, at most 64 -
+// clear glass taking its tint at each face and its volume between the way
+// in and the way out of one solid (one at a time, as the processor pairs
+// them), a part that casts no shadow passed, anything else (the card has no
+// cutouts) a shadow. One ray query either way, for the code's size.
 fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, to: vec3<f32>, to_normal: vec3<f32>) -> Visibility {
     var glass = glass_in;
     if ((frame.glass_flags & SCENE_PANES) == 0u) {
         glass = GLASS_SOLID;
     }
-    if (glass == GLASS_SOLID) {
-        return Visibility(select(vec3<f32>(1.0), vec3<f32>(0.0), occluded(from_point, from_normal, to, to_normal)), false);
-    }
+    let solid = glass == GLASS_SOLID;
+    let flags = select(RAY_FLAG_FORCE_OPAQUE, RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT, solid);
+    let mask = select(MASK_SURFACE, MASK_SHADOW, solid);
     let start = offset_at(from_point, from_normal, 0.0);
     let aim = offset_at(to, to_normal, 0.0);
     let delta = aim - start;
@@ -502,11 +504,14 @@ fn shadow_through(glass_in: u32, from_point: vec3<f32>, from_normal: vec3<f32>, 
     var since = 0.0;
     for (var crossing = 0u; crossing < MAX_CUTOUT_CROSSINGS; crossing++) {
         var rq: ray_query;
-        rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, remaining, origin, direction));
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(flags, mask, 0.0, remaining, origin, direction));
         rayQueryProceed(&rq);
         let hit = rayQueryGetCommittedIntersection(&rq);
         if (hit.kind == RAY_QUERY_INTERSECTION_NONE) {
             return Visibility(through, bent);
+        }
+        if (solid) {
+            return Visibility(vec3<f32>(0.0), false);
         }
         let inst = scene_instances[hit.instance_custom_data];
         let open = (inst.flags & INSTANCE_CASTS_SHADOWS) == 0u;
@@ -1415,9 +1420,9 @@ fn shade_vertex(st: ptr<function, PathState>, s: ptr<function, Sampler>, hit: Ra
 
 // ---- The shadow catcher -------------------------------------------------
 
-// blocked_towards with neither glass nor cutouts: one shadow ray from the
-// point to `reach` along `direction`, and 1 less the luminance of what gets
-// through - 0 or 1.
+// blocked_towards with neither glass nor cutouts, as ambient occlusion asks
+// it: one shadow ray from the point to `reach` along `direction`, and 1
+// less the luminance of what gets through - 0 or 1.
 fn blocked_towards(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, direction: vec3<f32>, reach: f32) -> f32 {
     let aim = position + direction * reach;
     let through = select(1.0, 0.0, occluded(offset_at(position, normal, magnitude), normal, aim, -direction));
@@ -1441,7 +1446,10 @@ const MAX_SHADOW_DRAWS: u32 = 32u;
 // blocks, one direction drawn in proportion to the light it would bring.
 // The card has no lamps, so the sky is all of it: a floor facing straight
 // up keeps its first draw; any other surface keeps a draw by its cosine,
-// the draws after the first on the dimensions of the bounces after.
+// the draws after the first on the dimensions of the bounces after. The
+// shadow ray passes the clear glass the configuration's shadow rays pass,
+// as blocked_towards with the configuration's glass does (ic:3141): 1 less
+// the luminance of what gets through.
 fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32, s: ptr<function, Sampler>) -> f32 {
     if (frame.shadows == 0u) {
         return 0.0;
@@ -1464,7 +1472,8 @@ fn shadow_at(position: vec3<f32>, magnitude: f32, normal: vec3<f32>, bounce: u32
             continue;
         }
         if (chance < sample.keep || (last && sample.keep > 0.0)) {
-            return blocked_towards(position, magnitude, normal, sample.direction, frame.shadow_far);
+            let open = shadow_through(frame.shadow_glass, offset_at(position, normal, magnitude), normal, position + sample.direction * frame.shadow_far, -sample.direction);
+            return 1.0 - clamp(luminance(open.through), 0.0, 1.0);
         }
     }
     return 0.0;

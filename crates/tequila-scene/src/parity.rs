@@ -164,6 +164,14 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: liquid_in_glass,
+}, ParityScene {
+    name: "glass_ball_floor",
+    covers: "R3 tier B, glass on the floor: product_floor and glass_ball's ball on it - the floor's shadow drawn from              the sky through the ball, tinted at each face and absorbed between, the ball split at and refracting              the floor and its reflection, the floor's reflection a path of its own seeing the ball",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glass_ball_floor,
 }];
 
 /// The scene of the set by `name`.
@@ -394,6 +402,20 @@ fn hollow_ball(outer: f32, inner: f32) -> crate::geometry::Mesh {
 /// the ground in front of the body.
 fn glass_ball() -> SceneDocument {
     let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// The Headphones' floor and glass_ball's ball on it.
+fn glass_ball_floor() -> SceneDocument {
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
     let glass = Material {
         transmission_depth: 0.3,
         transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },

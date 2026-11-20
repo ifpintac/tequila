@@ -95,6 +95,13 @@ fn the_glass_ball_is_the_processors_picture() {
     same_picture("glass_ball");
 }
 
+/// Glass on the floor: the floor's shadow through it, its reflection
+/// seeing it.
+#[test]
+fn a_glass_ball_on_the_floor_is_the_processors_picture() {
+    same_picture("glass_ball_floor");
+}
+
 /// Rough glass under a coat on the floor: the rough transmission lobe from
 /// both sides, light sampled through it, no clear glass for shadow rays.
 #[test]
