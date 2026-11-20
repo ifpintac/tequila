@@ -109,7 +109,10 @@ struct GpuMaterial {
     pane_coat: f32,
     pane_coat_ior: f32,
     pane_depth: f32,
-    _pad2: vec2<f32>,
+    // Rounded edges (bevel.rs): the radius, none at 0, and the probes'
+    // count. The integrator's, at the surface a path meets first.
+    edge_radius: f32,
+    edge_samples: u32,
     // What the volume behind gives off (Material::emitted_over): the glow,
     // and in w what it absorbs a metre before its colour. The integrator's.
     volume_glow: vec4<f32>,

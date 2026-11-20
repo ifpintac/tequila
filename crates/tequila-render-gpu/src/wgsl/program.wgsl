@@ -393,7 +393,7 @@ fn prog_material_from(f: array<f32, 44>, base: GpuMaterial) -> GpuMaterial {
         f[24], f[25], f[26], f[27], f[28], f[29], f[30], f[31], f[32], f[33], f[34], f[35], f[36], f[37], f[38], f[39],
         vec4<f32>(f[40], f[41], f[42], f[43]),
         base.transmission_color, base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
-        base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base._pad2,
+        base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base.edge_radius, base.edge_samples,
         base.volume_glow,
     );
 }

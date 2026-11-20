@@ -186,6 +186,14 @@ fn a_glowing_volume_is_the_processors_picture() {
     same_picture("glowing_volume");
 }
 
+/// Rounded edges: sharp parts rounded by their materials at the surface a
+/// path meets first, the probes refusing other parts and the far side of a
+/// thin one, a program's bump over the rounded normal.
+#[test]
+fn the_bevelled_product_is_the_processors_picture() {
+    same_picture("bevelled_product");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
@@ -554,6 +562,101 @@ fn a_third_wall_of_the_new_presets_is_the_processors_picture() {
 
 /// How many walls the presets newly on the card are spread over.
 const NEW_WALLS: usize = 3;
+
+/// The presets of the standard library that round their edges
+/// (`edge_radius`) and that the card renders whole: its lowering takes
+/// their programs (their pictures none loaded, as no preset of these has
+/// one), its stack their surfaces, and they grow no fibres and wear no
+/// flakes. Glass, glows and cutouts among them.
+fn rounding_presets() -> Vec<tequila_format::library::LibraryEntry> {
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            m.edge_radius > 0.0
+                && tequila_render_gpu::program::lower_with(&program, tequila_render_gpu::textures::Pictures::On(&pictures)).is_ok()
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.fuzz_density <= 0.0
+                // Nor flakes, which the processor puts wherever the weight
+                // is over 1e-4 and the card leaves out.
+                && m.flake_weight <= 1e-4
+        })
+        .collect()
+}
+
+/// A bevel wall: the Headphones' parts and camera, every material swapped
+/// for a preset that rounds its edges, its radius and probes kept
+/// ([`rounding_presets`]), spread over them by `variant` of
+/// [`BEVEL_WALLS`].
+fn bevel_wall(variant: usize) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let runnable = rounding_presets();
+    assert!(!runnable.is_empty(), "no preset rounds its edges");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let stride = (runnable.len() / (BEVEL_WALLS * keys.len()).max(1)).max(1);
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &runnable[((BEVEL_WALLS * j + variant) * stride) % runnable.len()];
+        names.push(format!("{} ({} m)", entry.name, entry.graph.material().edge_radius));
+        document.materials.insert_with_key(*key, entry.definition());
+    }
+    eprintln!("bevel wall {variant} (of {} presets that round their edges): {}", runnable.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: format!("bevel_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+#[test]
+fn a_bevel_wall_is_the_processors_picture() {
+    bevel_wall(0);
+}
+
+#[test]
+fn another_bevel_wall_is_the_processors_picture() {
+    bevel_wall(1);
+}
+
+#[test]
+fn a_third_bevel_wall_is_the_processors_picture() {
+    bevel_wall(2);
+}
+
+/// How many walls the presets that round their edges are spread over.
+const BEVEL_WALLS: usize = 3;
+
+/// Which presets of the bevel walls the card renders otherwise: each swapped
+/// in alone, rounded, and again with its edges sharp. Run by hand,
+/// `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity -- --ignored
+/// --nocapture bevel_walls_one_by_one`.
+#[test]
+#[ignore]
+fn the_bevel_walls_one_by_one() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let original = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let runnable = rounding_presets();
+    let keys: Vec<_> = original.materials.keys().collect();
+    let stride = (runnable.len() / (BEVEL_WALLS * keys.len()).max(1)).max(1);
+    for variant in 0..BEVEL_WALLS {
+        for (j, key) in keys.iter().enumerate() {
+            let entry = &runnable[((BEVEL_WALLS * j + variant) * stride) % runnable.len()];
+            for rounded in [true, false] {
+                let mut document = original.clone();
+                let mut definition = entry.definition();
+                if !rounded {
+                    definition.graph.material_mut().edge_radius = 0.0;
+                }
+                document.materials.insert_with_key(*key, definition);
+                let camera = document.cameras.active().camera;
+                eprint!("{} on {key:?}, {}: ", entry.name, if rounded { "rounded" } else { "sharp" });
+                same_shot(Shot { name: format!("bevel_one_{variant}_{j}_{rounded}"), document, camera, width: 160, height: 90, samples: 128, seed: 7, cache: MeshCache::new() });
+            }
+        }
+    }
+}
 
 /// What the snapshot measures at the mesh's corners, read by programs on the
 /// card (R3: the curvature, the baked occlusion, the distance to other parts,

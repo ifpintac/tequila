@@ -1373,16 +1373,77 @@ fn generated_at(mesh: GpuMesh, object: vec3<f32>) -> vec3<f32> {
     return (object - center) / half * 0.5 + vec3<f32>(0.5);
 }
 
+// Rounded edges (bevel.rs's rounded_normal, ic:1680-1691), as Cycles' Bevel
+// node rounds them: the shading normal `normal` at `position` on the part
+// in slot `slot` blended with the normals of the faces of the same part
+// within `radius`, from `samples` samples. Each takes a point on a disc of
+// that radius across one of the frame's three axes - the normal half the
+// time, either tangent a quarter, on three draws of the open stream - and
+// casts a short ray through the disc from each side; what it meets of the
+// same part, near enough and not leaning the other way, lends its normal,
+// weighed down with its distance.
+fn bevel_normal(slot: u32, position: vec3<f32>, normal: vec3<f32>, radius: f32, samples: u32, s: ptr<function, Sampler>) -> vec3<f32> {
+    let f = frame_of(normal);
+    let sigma = radius * 0.5;
+    var sum = normal * 1e-3;
+    let count = max(samples, 1u);
+    for (var i = 0u; i < count; i++) {
+        let pick = sampler_next_unstructured(s);
+        var axis = f.n;
+        var across = f.t;
+        var other = f.b;
+        if (pick >= 0.75) {
+            axis = f.b;
+            across = f.n;
+            other = f.t;
+        } else if (pick >= 0.5) {
+            axis = f.t;
+            across = f.b;
+            other = f.n;
+        }
+        let r = radius * cy_sqrt(sampler_next_unstructured(s));
+        let phi = TAU * sampler_next_unstructured(s);
+        let height = max(cy_sqrt(max(cy_exact(radius * radius) - cy_exact(r * r), 0.0)), radius * 1e-3);
+        let turn = cy_sincos(phi);
+        let offset = (cy_exact3(across * turn.y) + cy_exact3(other * turn.x)) * r;
+        for (var k = 0u; k < 2u; k++) {
+            let side = select(1.0, -1.0, k == 1u);
+            let start = (position + offset) + axis * (height * side);
+            // Intersector::intersect: the closest surface of any part, from
+            // the start to twice the height.
+            var rq: ray_query;
+            rayQueryInitialize(&rq, scene_tlas, RayDesc(RAY_FLAG_FORCE_OPAQUE, MASK_SURFACE, 0.0, 2.0 * height, start, axis * -side));
+            rayQueryProceed(&rq);
+            let near = rayQueryGetCommittedIntersection(&rq);
+            if (near.kind == RAY_QUERY_INTERSECTION_NONE || near.instance_custom_data != slot) {
+                continue;
+            }
+            // The far side of a thin part leans the other way: not an edge.
+            let seen = surface_of(near);
+            if (cy_dot3(seen.shading, normal) < -0.1) {
+                continue;
+            }
+            let d = seen.position - position;
+            let distance = cy_sqrt(cy_dot3(d, d));
+            let weight = exp(cy_div(-(distance * distance), 2.0 * sigma * sigma));
+            sum += cy_exact3(seen.shading * weight);
+        }
+    }
+    return prog_normalized(sum, normal);
+}
+
 // The material at `hit`, seen along `direction` by a ray of kind `ray`
 // whose footprint widens by `spread` (ic:1626-1710): the shading point its
 // program reads (SceneSnapshot::shading_point_along), and prog_shade's
-// program, write-back and bump at it.
-fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32, spread: f32) -> ProgShaded {
+// program, write-back and bump at it, the bump bending `rounded` - the
+// shading normal its edges round to (bevel_normal), the point's own where
+// they do not.
+fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u32, spread: f32, rounded: vec3<f32>) -> ProgShaded {
     let inst = scene_instances[hit.instance_custom_data];
     let p = scene_programs[inst.material];
     let base = scene_materials[inst.material];
     var s: ProgSurface;
-    s.normal = surf.shading;
+    s.normal = rounded;
     s.geometric = surf.geometric;
     var pt: ProgPoint;
     if ((p.flags & PROGRAM_RUNS) == 0u) {
@@ -2121,6 +2182,9 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
         var hit_next = 0u;
         var seg_raw: Surface;
         var seg_surf: Surface;
+        // The shading normal at the segment's hit with its edges rounded
+        // (bevel_normal), what its bump bends.
+        var seg_rounded: vec3<f32>;
         var material: ProgShaded;
         let programs_cut = (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;
         loop {
@@ -2134,14 +2198,16 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 var along = st.direction;
                 var ray = st.ray;
                 var spread = frame.pixel_spread;
+                var rounded = seg_rounded;
                 if (want == WANT_CROSSING) {
                     at = cut_hit;
                     along = cut_direction;
                     surf = crossing_surface(cut_hit, cut_direction);
                     ray = RAY_SHADOW;
                     spread = DEFAULT_PIXEL_SPREAD;
+                    rounded = surf.shading;
                 }
-                let shaded = material_at(at, surf, along, ray, spread);
+                let shaded = material_at(at, surf, along, ray, spread, rounded);
                 if (want == WANT_CROSSING) {
                     cut_known_opacity[cut_known] = shaded.material.geometry_opacity;
                     cut_known += 1u;
@@ -2331,7 +2397,14 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 // what is read before it.
                 seg_raw = raw;
                 seg_surf = facing(raw, st.direction);
-                material = ProgShaded(base, seg_surf.shading, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
+                // Rounded edges on the surface a path meets first (ic:1680-1691):
+                // their draws after the material's program (which draws none)
+                // and before the cutout's, the bump bending what they leave.
+                seg_rounded = seg_surf.shading;
+                if ((frame.glass_flags & SCENE_BEVEL) != 0u && st.bounce == 0u && base.edge_radius > 0.0) {
+                    seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);
+                }
+                material = ProgShaded(base, seg_rounded, vec3<f32>(0.0), 0.0, vec2<f32>(0.0));
                 let program = scene_programs[inst.material];
                 if ((program.flags & PROGRAM_RUNS) != 0u && (st.bounce < st.max_bounces || (program.flags & PROGRAM_AT_HIT) != 0u)) {
                     want = WANT_MAIN;

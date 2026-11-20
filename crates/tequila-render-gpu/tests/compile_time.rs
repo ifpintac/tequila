@@ -222,3 +222,32 @@ fn what_emission_and_cutouts_cost_to_compile() {
         eprintln!("{name}: {:.2} s", t.as_secs_f64());
     }
 }
+
+/// What rounded edges cost the kernel's cold compile: the kernel with and
+/// without the bevel's one call site, interleaved so the card's other work
+/// falls on both alike, `TEQUILA_COMPILE_ROUNDS` rounds (3 by default). Run
+/// by hand: `cargo test --test compile_time -- --ignored --nocapture bevel`.
+#[test]
+#[ignore]
+fn what_rounded_edges_cost_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let call = "seg_rounded = bevel_normal(hit.instance_custom_data, raw.position, seg_surf.shading, base.edge_radius, base.edge_samples, &s);";
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    for round in 0..rounds {
+        for (k, without) in [false, true].into_iter().enumerate() {
+            let edit = move |s: String| {
+                assert!(s.contains(call), "no bevel call");
+                if without { s.replace(call, "") } else { s }
+            };
+            let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * 2 + k as u32) * 7919), &edit);
+            eprintln!("round {round}, {}: {:.2} s", if without { "without rounded edges" } else { "with rounded edges" }, t.as_secs_f64());
+        }
+    }
+}

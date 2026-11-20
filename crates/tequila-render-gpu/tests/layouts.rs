@@ -82,7 +82,7 @@ fn records_have_one_layout_on_both_sides() {
             base_diffuse_roughness, specular_weight, specular_roughness, specular_roughness_anisotropy, specular_ior,
             coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, specular_rotation, geometry_opacity,
             emission_color, transmission_color, transmission_tint, volume_density, medium_priority, base_ior, glass, pane_weight,
-            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, _pad2, volume_glow,
+            pane_opacity, pane_ior, pane_coat, pane_coat_ior, pane_depth, edge_radius, edge_samples, volume_glow,
         }
     );
     let source = shader::source("lights");

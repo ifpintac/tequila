@@ -299,7 +299,9 @@ fn material_from_words() -> String {
     parts.extend((52..55).map(at));
     parts.push("inp(55u)".into());
     parts.extend((56..62).map(at));
-    parts.push(format!("vec2<f32>({}, {})", at(62), at(63)));
+    // The edges' radius and the probes' count (a word).
+    parts.push(at(62));
+    parts.push("inp(63u)".into());
     parts.push(format!("vec4<f32>({}, {}, {}, {})", at(64), at(65), at(66), at(67)));
     format!("GpuMaterial({})", parts.join(", "))
 }

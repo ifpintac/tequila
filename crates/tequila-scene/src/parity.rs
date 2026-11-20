@@ -323,6 +323,21 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: glowing_volume,
     pictures: no_pictures,
+}, ParityScene {
+    name: "bevelled_product",
+    covers: "R3 tier B, rounded edges (Cycles' Bevel, bevel.rs): sharp-edged parts as a CAD model brings them, rounded \
+             by their materials at the surface a path meets first - a block of brushed aluminium (anisotropic, its UVs \
+             drawing the tangent), a red cylinder standing on it whose probes meet the block and are refused as \
+             another part's, a brass hex nut, a blue plate thinner than its radius whose far side leans away, an \
+             L-shaped bracket with no normals of its own whose program bumps it over the rounded normal - each \
+             sample a disc of probes cast from both sides on three draws of the open stream, before the cutout's \
+             draw; under three lamps and a dim sky, on a modelled ground",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: bevelled_product,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -1149,6 +1164,119 @@ fn glowing_volume() -> SceneDocument {
         ..MaterialType::GlassSolid.defaults()
     };
     add_parts(&mut document, &mut bus, vec![("Glowing Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// An L-shaped bracket as a CAD model brings it: the L `width` across and
+/// `height` up, `thickness` thick, drawn out `depth` along Z; every face
+/// flat, with corners of its own, and no normals.
+fn bracket(width: f32, height: f32, depth: f32, thickness: f32) -> crate::geometry::Mesh {
+    // The L in the XY plane, anticlockwise seen from +Z.
+    let outline = [vec2(0.0, 0.0), vec2(width, 0.0), vec2(width, thickness), vec2(thickness, thickness), vec2(thickness, height), vec2(0.0, height)];
+    let mut positions = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    for i in 0..outline.len() {
+        let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+        let base = positions.len() as u32;
+        positions.extend([vec3(a.x, a.y, 0.0), vec3(b.x, b.y, 0.0), vec3(b.x, b.y, depth), vec3(a.x, a.y, depth)]);
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    // Each end as two rectangles, anticlockwise seen from outside.
+    for (z, out) in [(0.0, false), (depth, true)] {
+        for (lo, hi) in [(vec2(0.0, 0.0), vec2(width, thickness)), (vec2(0.0, thickness), vec2(thickness, height))] {
+            let base = positions.len() as u32;
+            positions.extend([vec3(lo.x, lo.y, z), vec3(hi.x, lo.y, z), vec3(hi.x, hi.y, z), vec3(lo.x, hi.y, z)]);
+            if out {
+                indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            } else {
+                indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+            }
+        }
+    }
+    crate::geometry::Mesh::new(positions, indices)
+}
+
+/// Sharp-edged parts rounded by their materials (`edge_radius`), on a
+/// modelled ground under three lamps and a dim sky: a block of brushed
+/// aluminium, a cylinder standing on it, a hex nut, a plate thinner than
+/// its radius, and a bracket with no normals that a program bumps.
+fn bevelled_product() -> SceneDocument {
+    bevelled_product_rounded(true)
+}
+
+/// [`bevelled_product`], its parts' edges rounded or, `rounded` false, as
+/// sharp as their meshes: what rounding them shows.
+pub fn bevelled_product_rounded(rounded: bool) -> SceneDocument {
+    use crate::command::{EnvParam, EnvironmentParameter};
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::Vec3;
+    use tequila_materials::fresnel::metals;
+    let mut document = SceneDocument::new();
+    let mut bus = CommandBus::new();
+    let edge = |m: Material, radius: f32, samples: f32| Material { edge_radius: if rounded { radius } else { 0.0 }, edge_samples: samples, ..m };
+    let aluminium = Material { specular_roughness_anisotropy: 0.5, ..Material::metal(metals::ALUMINIUM, 0.22) };
+    let red = Material::plastic(Spectrum { r: 0.55, g: 0.06, b: 0.04 }, 0.3);
+    let brass = Material::metal(metals::GOLD, 0.3);
+    let blue = Material::plastic(Spectrum { r: 0.05, g: 0.12, b: 0.4 }, 0.45);
+    let graphite = Material::plastic(Spectrum::splat(0.06), 0.35);
+    let ground = Material::plastic(Spectrum::splat(0.3), 0.5);
+    let sharp_box = |half: Vec3| crate::bench::rounded_box(half, 0.0, 4);
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Block", sharp_box(vec3(0.3, 0.1, 0.2)), MaterialType::Metal, edge(aluminium, 0.02, 8.0), Transform::translation(vec3(0.0, 0.102, 0.0))),
+            ("Cylinder", crate::bench::cylinder(0.08, 0.18, 48), MaterialType::Plastic, edge(red, 0.015, 4.0), Transform::translation(vec3(0.1, 0.204, -0.02))),
+            ("Nut", crate::bench::cylinder(0.05, 0.04, 6), MaterialType::Metal, edge(brass, 0.008, 8.0), Transform::translation(vec3(-0.17, 0.204, 0.07))),
+            ("Plate", sharp_box(vec3(0.18, 0.006, 0.12)), MaterialType::Plastic, edge(blue, 0.012, 12.0), Transform::translation(vec3(-0.05, 0.008, 0.4))),
+            (
+                "Bracket",
+                bracket(0.22, 0.26, 0.16, 0.04),
+                MaterialType::Plastic,
+                edge(graphite, 0.015, 16.0),
+                Transform::translation(vec3(0.4, 0.002, 0.16)) * Transform::rotation(Vec3::Y, 0.35),
+            ),
+            ("Ground", crate::demo::to_document_mesh(&crate::demo::ground_plane(40.0)), MaterialType::Ground, ground, Transform::IDENTITY),
+        ],
+    );
+    // The bracket grained by a noise its program bumps it with.
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Bracket").map(|(k, _)| k).expect("the bracket");
+        let graph = &mut document.materials.get_mut(key).expect("the bracket").graph;
+        let output = graph.output();
+        let mut noise = Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Noise {
+            dims: 3,
+            fractal: tequila_texture::cycles::noise::FractalKind::Fbm,
+            normalize: true,
+        }));
+        noise.literals.insert(Socket::Input(2), Value::Float(60.0));
+        let noise = graph.add_node(noise);
+        let bump = graph.add_node(Node::new(GraphKind::Bump { depth: 0.0006 }));
+        graph.connect(noise, bump, Socket::Input(0));
+        graph.connect(bump, output, Socket::Param(Param::Bump));
+    }
+    for parameter in [EnvironmentParameter::flag(EnvParam::GroundEnabled, false), EnvironmentParameter::scalar(EnvParam::Brightness, 0.4)] {
+        bus.apply(&mut document, Command::SetEnvironmentParameter { parameter }).expect("the environment is set");
+    }
+    // A key panel and a disc fill shining down and a spot rim from behind,
+    // as lamp_lit has them, brought in to the parts.
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let (panel_down, spot_down) = (Transform::rotation(Vec3::X, quarter), Transform::rotation(Vec3::X, -quarter));
+    let lamps = [
+        ("Key", LightShape::Area { width: 0.8, height: 0.6, disc: false, two_sided: false }, 110.0, vec3(0.55, 1.2, 0.75), panel_down),
+        ("Fill", LightShape::Area { width: 0.5, height: 0.5, disc: true, two_sided: false }, 45.0, vec3(-0.9, 0.9, 0.35), panel_down),
+        ("Rim", LightShape::Spot { inner_degrees: 20.0, outer_degrees: 35.0, falloff: 1.0 }, 60.0, vec3(0.0, 1.4, -0.9), spot_down),
+    ];
+    for (name, shape, lumens, at, down) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(
+            &mut document,
+            Command::AddLight { parent: None, name: name.into(), settings: Box::new(LightSettings { shape, intensity: Intensity::Lumens(lumens), ..LightSettings::default() }) },
+        )
+        .expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
+    }
     document
 }
 

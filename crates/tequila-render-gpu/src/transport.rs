@@ -122,8 +122,8 @@ pub struct FrameParams {
     /// [`GLASS_UNBENT`].
     pub shadow_glass: u32,
     /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_CUTOUTS`],
-    /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`] and
-    /// [`SCENE_CUT_PROGRAMS`].
+    /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`],
+    /// [`SCENE_CUT_PROGRAMS`] and [`SCENE_BEVEL`].
     pub glass_flags: u32,
     pub _pad3: [u32; 2],
 }
@@ -152,6 +152,10 @@ pub const SCENE_LIGHT_MATERIALS: u32 = 16;
 /// A program on the card drives some material's opacity
 /// (`crate::program::PROGRAM_CUTS`): a walk crossing it asks the program.
 pub const SCENE_CUT_PROGRAMS: u32 = 32;
+/// Some material rounds its edges (`edge_radius`, Cycles' Bevel): the
+/// surface a path meets first has its normal rounded by probes
+/// (`transport.wgsl`'s `bevel_normal`, `bevel.rs`).
+pub const SCENE_BEVEL: u32 = 64;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -376,6 +380,8 @@ pub struct GpuRenderer {
     has_emitters: bool,
     /// Whether a program on the card drives some opacity.
     cut_programs: bool,
+    /// Whether some material rounds its edges, as the card shades it.
+    bevels: bool,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -675,6 +681,7 @@ impl GpuRenderer {
             emitters: [emitter_nodes, emitter_leaves],
             has_emitters,
             cut_programs: programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0),
+            bevels: records.iter().any(|r| r.edge_radius > 0.0),
         }
     }
 
@@ -697,6 +704,7 @@ impl GpuRenderer {
     pub fn texture_limits(&self, _config: &IntegratorConfig) -> Vec<&'static str> {
         self.texture_limits.clone()
     }
+
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
         let aspect = width as f32 / height as f32;
@@ -763,7 +771,8 @@ impl GpuRenderer {
             glass_flags: self.glass_scene.flags()
                 | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
                 | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
-                | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
+                | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 }
+                | if self.bevels { SCENE_BEVEL } else { 0 },
             _pad3: [0; 2],
         }
     }
@@ -919,6 +928,64 @@ impl GpuRenderer {
             }
             readback.unmap();
         }
+    }
+
+    /// For differential tests of what reads the scene (`docs/07` R2.4): the
+    /// transport's source with `kernel` after it, run from its entry point
+    /// `entry` over `groups` workgroups against this renderer's scene,
+    /// tables and environment, the frame as `settings` has it at one pixel.
+    /// `words` are in `frame_samples` as it starts, read as four words a
+    /// vector, and what it has there when it ends is handed back. Only what
+    /// `entry` reaches is compiled: a module with two entry points is
+    /// pared down to the one a pipeline takes.
+    pub fn run_on_scene(&self, settings: &FrameSettings, kernel: &str, entry: &str, words: &[u32], groups: u32) -> Vec<u32> {
+        let device = &self.gpu.device;
+        let source = format!("{}\n{kernel}\n", crate::shader::source("transport"));
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(entry), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(entry),
+            layout: Some(&self.layout),
+            module: &module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let mut padded = words.to_vec();
+        padded.resize(words.len().div_ceil(4).max(1) * 4, 0);
+        let bytes = (padded.len() * 4) as u64;
+        let init = |label: &str, contents: &[u8], usage| wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage });
+        let io = init("scene test", bytemuck::cast_slice(&padded), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC);
+        let pixel = init("scene test pixel", bytemuck::bytes_of(&PixelSums::default()), wgpu::BufferUsages::STORAGE);
+        let params = self.params(settings, 1, 1, 0, 1);
+        let uniform = init("scene test frame", bytemuck::bytes_of(&params), wgpu::BufferUsages::UNIFORM);
+        let readback = device.create_buffer(&wgpu::BufferDescriptor { label: Some("scene test back"), size: bytes, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene test frame"),
+            layout: &self.frame_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: io.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: pixel.as_entire_binding() },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(entry) });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(entry), timestamp_writes: None });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &self.scene_group, &[]);
+            pass.set_bind_group(1, &self.tables.bind_group, &[]);
+            pass.set_bind_group(2, &self.environment_group, &[]);
+            pass.set_bind_group(3, &frame_group, &[]);
+            pass.dispatch_workgroups(groups.max(1), 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&io, 0, &readback, 0, bytes);
+        self.gpu.queue.submit(Some(encoder.finish()));
+        readback.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("the scene test's words map"));
+        self.gpu.wait();
+        let view = readback.slice(..).get_mapped_range().expect("the scene test's words are mapped");
+        let mut out: Vec<u32> = bytemuck::cast_slice::<u8, u32>(&view[..]).to_vec();
+        out.truncate(words.len());
+        out
     }
 }
 
