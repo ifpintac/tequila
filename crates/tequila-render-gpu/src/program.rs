@@ -1421,6 +1421,9 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
         // first three floats, the luminance in the fourth.
         Param::EmissionColor => (at(offset_of!(M, emission_color)), true),
         Param::EmissionLuminance => (at(offset_of!(M, emission_color)) + 3, false),
+        // The cutout's opacity, which the integrator reads at a hit and at
+        // every crossing.
+        Param::Opacity => (at(offset_of!(M, geometry_opacity)), false),
         _ => return None,
     })
 }

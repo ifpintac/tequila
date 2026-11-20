@@ -284,6 +284,21 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: glow_under_glass,
     pictures: no_pictures,
+}, ParityScene {
+    name: "cutout_grille",
+    covers: "R3 tier A, cutout opacity: the product on the Headphones' floor under the environment, a perforated \
+             grille lying over its screen - its holes a checker a program draws into its opacity, a hole or a \
+             wall - and a sheet of smoked plastic standing on the floor in front, its opacity 0.45 everywhere: \
+             the camera and the bounces crossing the holes by a draw of the open stream, the camera's coverage \
+             averaged along its ray (the program run at every crossing, the floor's shadow added behind the \
+             sheet), the shadow rays of the sky through both, the floor's shadow of them, its reflection \
+             crossing them",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: cutout_grille,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -1045,6 +1060,40 @@ fn glow_under_glass() -> SceneDocument {
     let glass = Material { specular_ior: 1.5, ..MaterialType::GlassSolid.defaults() };
     let block = crate::bench::rounded_box(vec3(0.5, 0.012, 0.3), 0.004, 12);
     add_parts(&mut document, &mut bus, vec![("Cover Glass", block, MaterialType::GlassSolid, glass, Transform::translation(vec3(0.15, 0.345, 0.08)))]);
+    document
+}
+
+/// The Headphones' floor, a perforated grille over the product's screen,
+/// its holes a checker a program draws into its opacity, and a sheet of
+/// smoked plastic, 0.45 opaque, standing on the floor in front.
+fn cutout_grille() -> SceneDocument {
+    use tequila_core::math::Vec3;
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let grille = Material::plastic(Spectrum { r: 0.7, g: 0.68, b: 0.62 }, 0.3);
+    let sheet = Material { geometry_opacity: 0.45, ..Material::plastic(Spectrum { r: 0.12, g: 0.14, b: 0.18 }, 0.08) };
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Grille", crate::bench::rounded_box(vec3(0.8, 0.004, 0.46), 0.002, 8), MaterialType::Plastic, grille, Transform::translation(vec3(0.0, 0.42, 0.0))),
+            (
+                "Sheet",
+                crate::bench::rounded_box(vec3(0.3, 0.2, 0.004), 0.002, 8),
+                MaterialType::Plastic,
+                sheet,
+                Transform::translation(vec3(0.75, 0.2, 1.0)) * Transform::rotation(Vec3::Y, 0.5),
+            ),
+        ],
+    );
+    let key = document.materials.iter().find(|(_, m)| m.name == "Grille").map(|(k, _)| k).expect("the grille");
+    let graph = &mut document.materials.get_mut(key).expect("the grille").graph;
+    let output = graph.output();
+    let planar = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(1.6, 1.6, 1.0), ..Mapping::default() };
+    let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+    let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
+    graph.connect(m, checker, Socket::Input(0));
+    graph.connect_output(checker, 1, output, Socket::Param(Param::Opacity));
     document
 }
 

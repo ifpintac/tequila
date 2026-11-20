@@ -121,8 +121,9 @@ pub struct FrameParams {
     /// `IntegratorConfig::shadow_glass`: [`GLASS_SOLID`], [`GLASS_CLEAR`] or
     /// [`GLASS_UNBENT`].
     pub shadow_glass: u32,
-    /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_EMITTERS`] and
-    /// [`SCENE_LIGHT_MATERIALS`].
+    /// [`SCENE_TRANSMITS`], [`SCENE_PANES`], [`SCENE_CUTOUTS`],
+    /// [`SCENE_EMITTERS`], [`SCENE_LIGHT_MATERIALS`] and
+    /// [`SCENE_CUT_PROGRAMS`].
     pub glass_flags: u32,
     pub _pad3: [u32; 2],
 }
@@ -138,6 +139,9 @@ pub const GLASS_UNBENT: u32 = 2;
 pub const SCENE_TRANSMITS: u32 = 1;
 /// Some material is clear glass a shadow ray passes (`SceneSnapshot::has_panes`).
 pub const SCENE_PANES: u32 = 2;
+/// Some material is cut out (`SceneSnapshot::has_cutouts`): a path crosses
+/// its holes, and shadow rays walk through them.
+pub const SCENE_CUTOUTS: u32 = 4;
 /// The glowing triangles are lights a light sample chooses among
 /// (`SceneSnapshot::emitters` is not empty and
 /// `IntegratorConfig::light_source_materials` is on).
@@ -145,6 +149,9 @@ pub const SCENE_EMITTERS: u32 = 8;
 /// `IntegratorConfig::light_source_materials`: a glow a diffuse bounce meets
 /// lights what the bounce left.
 pub const SCENE_LIGHT_MATERIALS: u32 = 16;
+/// A program on the card drives some material's opacity
+/// (`crate::program::PROGRAM_CUTS`): a walk crossing it asks the program.
+pub const SCENE_CUT_PROGRAMS: u32 = 32;
 
 /// A pixel's sums on the card (`frame.wgsl`'s `PixelSums`): what of
 /// [`Framebuffer`]'s `Pixel` this transport fills.
@@ -228,6 +235,7 @@ struct GlassScene {
     volume_maps: bool,
     unseen_parts: bool,
     folded_glass: bool,
+    cutouts: bool,
 }
 
 impl GlassScene {
@@ -267,12 +275,13 @@ impl GlassScene {
                 .iter()
                 .any(|i| !i.visible_to_camera || !i.seen_by_diffuse || !i.seen_by_glossy || !i.seen_by_transmission || i.holdout),
             folded_glass: folded,
+            cutouts: scene.has_cutouts(),
         }
     }
 
     /// [`FrameParams::glass_flags`].
     fn flags(&self) -> u32 {
-        (if self.transmits { SCENE_TRANSMITS } else { 0 }) | if self.panes { SCENE_PANES } else { 0 }
+        (if self.transmits { SCENE_TRANSMITS } else { 0 }) | if self.panes { SCENE_PANES } else { 0 } | if self.cutouts { SCENE_CUTOUTS } else { 0 }
     }
 
     fn limits(&self, config: &IntegratorConfig) -> Vec<&'static str> {
@@ -373,6 +382,8 @@ pub struct GpuRenderer {
     /// scene's bind group reads, and whether there are any.
     pub emitters: [wgpu::Buffer; 2],
     has_emitters: bool,
+    /// Whether a program on the card drives some opacity.
+    cut_programs: bool,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -382,7 +393,6 @@ struct FloorScene {
     catcher_shadows: bool,
     lamps: bool,
     finite_dome: bool,
-    cutouts: bool,
     shadowless_parts: bool,
     background: bool,
 }
@@ -394,7 +404,6 @@ impl FloorScene {
             catcher_shadows: scene.instances.iter().any(|i| i.shadow_catcher.is_some_and(|c| c.shadows)),
             lamps: !scene.lights.lights().is_empty(),
             finite_dome: !scene.environment.dome().is_infinite(),
-            cutouts: scene.has_cutouts(),
             shadowless_parts: scene.has_shadowless_parts(),
             background: !scene.background.is_environment(),
         }
@@ -411,9 +420,6 @@ impl FloorScene {
         }
         if self.finite_dome {
             limits.push("the floor is lit and shadowed as under an infinitely far dome");
-        }
-        if self.cutouts {
-            limits.push("a cutout casts a solid shadow on the floor");
         }
         if self.shadowless_parts {
             limits.push("a part that casts no shadow shadows the floor all the same");
@@ -676,6 +682,7 @@ impl GpuRenderer {
             texture_limits: crate::textures::texture_limits(scene, &IntegratorConfig::default()),
             emitters: [emitter_nodes, emitter_leaves],
             has_emitters,
+            cut_programs: programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0),
         }
     }
 
@@ -763,7 +770,8 @@ impl GpuRenderer {
             },
             glass_flags: self.glass_scene.flags()
                 | if settings.config.light_source_materials { SCENE_LIGHT_MATERIALS } else { 0 }
-                | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 },
+                | if settings.config.light_source_materials && self.has_emitters { SCENE_EMITTERS } else { 0 }
+                | if self.cut_programs { SCENE_CUT_PROGRAMS } else { 0 },
             _pad3: [0; 2],
         }
     }

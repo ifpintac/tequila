@@ -165,6 +165,14 @@ fn a_glow_under_glass_is_the_processors_picture() {
     same_picture("glow_under_glass");
 }
 
+/// Cutouts: a grille whose holes a program draws, crossed by the camera and
+/// the bounces, its coverage averaged, its shadow cast through by the sky
+/// on the product and the floor; a sheet whose opacity is a number.
+#[test]
+fn a_cut_out_grille_is_the_processors_picture() {
+    same_picture("cutout_grille");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
@@ -430,6 +438,11 @@ fn preset_wall(variant: usize) {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     let keys: Vec<_> = document.materials.keys().collect();
@@ -651,6 +664,11 @@ fn the_preset_walls_one_by_one() {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     let keys: Vec<_> = original.materials.keys().collect();

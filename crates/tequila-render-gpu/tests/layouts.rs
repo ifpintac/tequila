@@ -106,3 +106,14 @@ fn records_have_one_layout_on_both_sides() {
         GpuProgram { main_start, main_end, bump_start, bump_end, constants, writes_start, writes_count, bump_here, bump_height, tangent, flags, _pad }
     );
 }
+
+/// The processor's numbers the transport repeats as constants: a shadow
+/// ray's footprint for a program at a crossing.
+#[test]
+fn constants_the_kernel_repeats_are_the_processors() {
+    let source = shader::source("transport");
+    let spread = tequila_render_core::settings::DEFAULT_PIXEL_SPREAD;
+    let line = source.lines().find(|l| l.starts_with("const DEFAULT_PIXEL_SPREAD: f32 = ")).expect("the transport has it");
+    let value: f32 = line.trim_start_matches("const DEFAULT_PIXEL_SPREAD: f32 = ").trim_end_matches(';').parse().expect("a number");
+    assert_eq!(value, spread, "the transport's DEFAULT_PIXEL_SPREAD is {value}, settings.rs's {spread}");
+}
