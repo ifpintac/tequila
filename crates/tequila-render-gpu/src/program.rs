@@ -544,7 +544,7 @@ pub struct GpuProgram {
     pub bump_here: u32,
     pub bump_height: u32,
     pub tangent: u32,
-    /// Bit 0: a program to run; bit 1: a height bump.
+    /// [`PROGRAM_RUNS`], [`PROGRAM_BUMPS`] and the rest.
     pub flags: u32,
     pub _pad: u32,
 }
@@ -556,6 +556,30 @@ pub const PROGRAM_NORMAL_UV: u32 = 4;
 /// A normal map laid down by a projection: the normal it gives, in the
 /// part's space, in `bump_here`.
 pub const PROGRAM_NORMAL_PROJECTED: u32 = 8;
+/// It drives what the integrator reads at a hit ahead of the bounce limit:
+/// the glow, or the cutout's opacity.
+pub const PROGRAM_AT_HIT: u32 = 16;
+/// It drives the cutout's opacity, which every ray crossing the surface
+/// asks of it (`SceneSnapshot::opacity_of` is `None`).
+pub const PROGRAM_CUTS: u32 = 32;
+
+/// [`PROGRAM_AT_HIT`] and [`PROGRAM_CUTS`] of a program's write-back pairs.
+fn hit_flags(writes: &[u32]) -> u32 {
+    use crate::material::GpuMaterial as M;
+    use std::mem::offset_of;
+    let glow = (offset_of!(M, emission_color) / 4) as u32;
+    let opacity = (offset_of!(M, geometry_opacity) / 4) as u32;
+    let mut flags = 0;
+    for pair in writes.chunks(2) {
+        let at = pair[0] & 0xFF;
+        if at == opacity {
+            flags |= PROGRAM_AT_HIT | PROGRAM_CUTS;
+        } else if (glow..glow + 4).contains(&at) {
+            flags |= PROGRAM_AT_HIT;
+        }
+    }
+    flags
+}
 
 impl GpuProgram {
     pub const EMPTY: GpuProgram = GpuProgram {
@@ -612,7 +636,7 @@ impl ProgramTable {
                 bump_here: p.bump_here,
                 bump_height: p.bump_height,
                 tangent: p.tangent,
-                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 } | p.normal_map,
+                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 } | p.normal_map | hit_flags(&p.writes),
                 _pad: 0,
             });
         }
@@ -1393,6 +1417,13 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
         Param::FuzzColor => (at(offset_of!(M, fuzz_color)), true),
         Param::FuzzRoughness => (at(offset_of!(M, fuzz_roughness)), false),
         Param::Occlusion => (at(offset_of!(M, geometry_occlusion)), false),
+        // The glow, which the integrator reads at a hit: the colour in the
+        // first three floats, the luminance in the fourth.
+        Param::EmissionColor => (at(offset_of!(M, emission_color)), true),
+        Param::EmissionLuminance => (at(offset_of!(M, emission_color)) + 3, false),
+        // The cutout's opacity, which the integrator reads at a hit and at
+        // every crossing.
+        Param::Opacity => (at(offset_of!(M, geometry_opacity)), false),
         _ => return None,
     })
 }

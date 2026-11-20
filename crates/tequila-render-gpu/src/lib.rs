@@ -27,6 +27,8 @@
 //!   by test (R2.2).
 //! - [`lights`]: the scene's analytic lamps and the way the processor
 //!   chooses one, as `LightSet` built it (R3).
+//! - [`emitters`]: the scene's glowing triangles as lights, the tree of
+//!   them as `Emitters` built it (R3).
 //! - [`textures`]: the pictures a scene's programs sample, every level as
 //!   `tequila-texture` keeps it, for `textures.wgsl` to filter as `mip.rs`
 //!   does (R3).
@@ -36,6 +38,7 @@
 //!   accumulated by the processor's `Framebuffer`.
 
 pub mod device;
+pub mod emitters;
 pub mod environment;
 pub mod harness;
 pub mod lights;

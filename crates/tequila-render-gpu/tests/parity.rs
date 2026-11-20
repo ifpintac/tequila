@@ -144,6 +144,48 @@ fn a_liquid_in_glass_is_the_processors_picture() {
     same_picture("liquid_in_glass");
 }
 
+/// Glows a program drives: a checker's colour, a picture's luminance,
+/// found by bounces alone and weighed whole.
+#[test]
+fn glows_a_program_drives_are_the_processors_picture() {
+    same_picture("glowing_pattern");
+}
+
+/// Glowing parts as lights: the tree of glowing triangles chosen down from
+/// each point, a point on the triangle, MIS against the bounces that hit.
+#[test]
+fn a_glowing_screen_is_the_processors_picture() {
+    same_picture("glowing_screen");
+}
+
+/// A glow under a block of glass: seen through it, sampled through it, met
+/// past it by the bounces that see the glass.
+#[test]
+fn a_glow_under_glass_is_the_processors_picture() {
+    same_picture("glow_under_glass");
+}
+
+/// Cutouts: a grille whose holes a program draws, crossed by the camera and
+/// the bounces, its coverage averaged, its shadow cast through by the sky
+/// on the product and the floor; a sheet whose opacity is a number.
+#[test]
+fn a_cut_out_grille_is_the_processors_picture() {
+    same_picture("cutout_grille");
+}
+
+/// Glass with a cutout's holes: crossed, refracted, cast through.
+#[test]
+fn cut_glass_is_the_processors_picture() {
+    same_picture("cut_glass");
+}
+
+/// A glowing volume: glass whose inside gives off light along every stretch
+/// a path travels in it.
+#[test]
+fn a_glowing_volume_is_the_processors_picture() {
+    same_picture("glowing_volume");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
@@ -409,6 +451,11 @@ fn preset_wall(variant: usize) {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     let keys: Vec<_> = document.materials.keys().collect();
@@ -466,6 +513,12 @@ fn new_preset_wall(variant: usize) {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says, as the
+                // older walls: the card took those after these nodes.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     assert!(!runnable.is_empty(), "no preset is newly on the card");
@@ -630,6 +683,11 @@ fn the_preset_walls_one_by_one() {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     let keys: Vec<_> = original.materials.keys().collect();

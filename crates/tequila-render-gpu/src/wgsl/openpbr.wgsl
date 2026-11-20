@@ -21,7 +21,7 @@
 // - flakes: flake coverage 0, so no Depth::Flake lobe, no flake frame, and
 //   the base's scale and response are the base's whole;
 // - emission and geometry_opacity: not the BSDF's at all (the integrator's;
-//   GpuMaterial carries emission for it).
+//   GpuMaterial carries both for it).
 //
 // The processor's lobes cache their table reads for a shading point
 // (DielectricSpecular's Seen, aimed by OpenPbrBsdf::aim): the same reads
@@ -82,10 +82,11 @@ struct GpuMaterial {
     // The anisotropic frame's turn, which the integrator reads, not the
     // stack.
     specular_rotation: f32,
-    _pad: f32,
-    // Material::emission, in nits; w 1 where the material is_emissive. Not
-    // the stack's: the integrator reads it.
-    emission: vec4<f32>,
+    // The cutout's opacity: 1 a wall, 0 a hole. The integrator's.
+    geometry_opacity: f32,
+    // emission_color, and in w emission_luminance: the integrator's
+    // (material_emission, material_is_emissive).
+    emission_color: vec4<f32>,
     // transmission_color, and in w transmission_weight.
     transmission_color: vec4<f32>,
     // The transmission lobe's tint at each crossing (the square root of
@@ -109,7 +110,21 @@ struct GpuMaterial {
     pane_coat_ior: f32,
     pane_depth: f32,
     _pad2: vec2<f32>,
+    // What the volume behind gives off (Material::emitted_over): the glow,
+    // and in w what it absorbs a metre before its colour. The integrator's.
+    volume_glow: vec4<f32>,
 };
+
+// Material::emission, in nits: the colour times the luminance.
+fn material_emission(m: GpuMaterial) -> vec3<f32> {
+    return m.emission_color.xyz * m.emission_color.w;
+}
+
+// Material::is_emissive: a luminance above nought and a colour that is not
+// all nought.
+fn material_is_emissive(m: GpuMaterial) -> bool {
+    return m.emission_color.w > 0.0 && any(m.emission_color.xyz != vec3<f32>(0.0));
+}
 
 const GLASS_THIN: u32 = 1u;
 const GLASS_BOUNDARY: u32 = 2u;

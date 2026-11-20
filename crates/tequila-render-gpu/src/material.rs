@@ -10,9 +10,9 @@
 //! shadow ray passes (`Pane`). Subsurface, thin film and flakes are not on
 //! the card yet, so their parameters are not here; [`GpuMaterial::supports`]
 //! says whether a material is one the card's stack is the processor's for.
-//! Cutout opacity is the integrator's, not the BSDF's, and is not here
-//! either; emission is the integrator's too, and is here for it to read
-//! (`transport.wgsl`: a lamp's stand-in glowing).
+//! Cutout opacity and emission are the integrator's, not the BSDF's, and
+//! are here for it to read (`transport.wgsl`: a cutout's holes, a glowing
+//! surface), among the floats a program writes.
 
 use bytemuck::{Pod, Zeroable};
 use tequila_core::spectrum::Spectrum;
@@ -51,10 +51,13 @@ pub struct GpuMaterial {
     /// The anisotropic frame's turn (`specular_rotation`), which the
     /// integrator reads rather than the stack.
     pub specular_rotation: f32,
-    pub _pad: f32,
-    /// `Material::emission`, in nits, and in `[3]` 1 where the material
-    /// `is_emissive`.
-    pub emission: [f32; 4],
+    /// The cutout's opacity (`geometry_opacity`): 1 a wall, 0 a hole. The
+    /// integrator's, not the stack's.
+    pub geometry_opacity: f32,
+    /// `emission_color`, and in `[3]` `emission_luminance`: the integrator
+    /// reads `Material::emission` and `is_emissive` from the two, as a
+    /// program writes them.
+    pub emission_color: [f32; 4],
     /// `transmission_color`, and in `[3]` `transmission_weight`.
     pub transmission_color: [f32; 4],
     /// The transmission lobe's tint at each crossing, the square root of
@@ -82,6 +85,11 @@ pub struct GpuMaterial {
     pub pane_coat_ior: f32,
     pub pane_depth: f32,
     pub _pad2: [f32; 2],
+    /// What the volume behind the surface gives off (`emitted_over`): the
+    /// glow, `volume_emission_color` times `volume_emission_strength` (none
+    /// where the strength is none), and in `[3]` what it absorbs a metre
+    /// before its colour, `volume_density` over `transmission_depth`.
+    pub volume_glow: [f32; 4],
 }
 
 /// [`GpuMaterial::glass`]: an infinitely thin shell (`geometry_thin_walled`).
@@ -164,11 +172,8 @@ impl GpuMaterial {
             fuzz_roughness: m.fuzz_roughness,
             geometry_occlusion: m.geometry_occlusion,
             specular_rotation: m.specular_rotation,
-            _pad: 0.0,
-            emission: {
-                let e = m.emission();
-                [e.r, e.g, e.b, if m.is_emissive() { 1.0 } else { 0.0 }]
-            },
+            geometry_opacity: m.geometry_opacity,
+            emission_color: [m.emission_color.r, m.emission_color.g, m.emission_color.b, m.emission_luminance],
             transmission_color: [m.transmission_color.r, m.transmission_color.g, m.transmission_color.b, m.transmission_weight],
             transmission_tint: tint,
             volume_density: m.volume_density,
@@ -182,15 +187,20 @@ impl GpuMaterial {
             pane_coat_ior: p.map_or(1.0, |p| p.coat_ior),
             pane_depth: p.and_then(|p| p.volume).map_or(0.0, |(_, depth)| depth),
             _pad2: [0.0; 2],
+            volume_glow: {
+                // As Material::emitted_over works them out.
+                let glow = if m.volume_emission_strength > 0.0 { m.volume_emission_color * m.volume_emission_strength } else { Spectrum::ZERO };
+                let per_metre = if m.transmission_depth > 0.0 { m.volume_density.max(0.0) / m.transmission_depth } else { 0.0 };
+                [glow.r, glow.g, glow.b, per_metre]
+            },
         }
     }
 
     /// Whether the card renders `m` as the processor does: no subsurface at
     /// all (even a share too small for its own lobe takes from the diffuse),
     /// no thin film the processor would put on, no flake under this point;
-    /// and as glass, none that scatters in its volume (a random walk), that
-    /// disperses light (a wavelength of its own), whose volume glows, or
-    /// that a cutout makes holes in.
+    /// and as glass, none that scatters in its volume (a random walk) or
+    /// that disperses light (a wavelength of its own).
     pub fn supports(m: &Material) -> bool {
         let glass = m.transmission_weight > 0.0;
         m.subsurface_weight == 0.0
@@ -198,7 +208,5 @@ impl GpuMaterial {
             && (m.flake_weight <= 1e-4 || m.flake_coverage <= 0.0)
             && !(glass && m.volume_scattering().is_some())
             && !(glass && m.transmission_dispersion_abbe > 0.0)
-            && !(m.has_volume() && m.volume_emission_strength > 0.0)
-            && !(glass && m.geometry_opacity < 0.999)
     }
 }
