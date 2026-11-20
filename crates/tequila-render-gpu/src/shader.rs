@@ -16,6 +16,7 @@ pub const MODULES: &[(&str, &str)] = &[
     ("microfacet", include_str!("wgsl/microfacet.wgsl")),
     ("fresnel", include_str!("wgsl/fresnel.wgsl")),
     ("energy", include_str!("wgsl/energy.wgsl")),
+    ("lobes", include_str!("wgsl/lobes.wgsl")),
     ("frame", include_str!("wgsl/frame.wgsl")),
     ("environment", include_str!("wgsl/environment.wgsl")),
     ("transport", include_str!("wgsl/transport.wgsl")),
