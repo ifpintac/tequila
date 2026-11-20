@@ -230,6 +230,8 @@ fn same_shot(mut scene: Shot) {
     limits.extend(tequila_render_gpu::lights::lamp_limits(&snapshot, &config));
     limits.extend(tequila_render_gpu::transport::glass_limits(&snapshot, &config));
     limits.extend(tequila_render_gpu::textures::texture_limits(&snapshot, &config));
+    limits.extend(tequila_render_gpu::transport::part_limits(&snapshot, &config));
+    limits.extend(tequila_render_gpu::transport::camera_limits(&camera, &config));
     assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
     // And every material's program is one the card runs.
     let refused: Vec<String> = tequila_render_gpu::transport::lower_programs(&snapshot)

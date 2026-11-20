@@ -269,7 +269,10 @@ impl GlassScene {
             dispersion: scene.has_dispersion(),
             subsurface: any(&|m| m.subsurface_weight != 0.0),
             film: any(&|m| m.thin_film_weight > 1e-4),
-            flakes: any(&|m| m.flake_weight > 1e-4 && m.flake_coverage > 0.0),
+            // A material's coverage is always nought: it is the point's,
+            // which the processor fills in wherever the weight is over 1e-4
+            // (flakes.rs's apply).
+            flakes: any(&|m| m.flake_weight > 1e-4),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             unseen_parts: scene
@@ -331,6 +334,65 @@ impl GlassScene {
     }
 }
 
+/// What of the parts and what lies past them in `scene` the card renders
+/// otherwise than the processor does, one sentence each; empty where they
+/// are the processor's. The renderer says each at its first pass, with the
+/// other `*_limits`; nothing here depends on `config`.
+pub fn part_limits(scene: &SceneSnapshot, _config: &IntegratorConfig) -> Vec<&'static str> {
+    let mut limits = Vec::new();
+    // The cutaway volumes (`cutaway.rs`): every ray the processor traces
+    // steps past what they cut; the card's acceleration structure has the
+    // parts whole.
+    if !scene.cutters().is_empty() {
+        limits.push("a cutaway is left out: the parts it cuts are whole");
+    }
+    // The fibres a material grows (`fuzz_density`, the Fuzz node) are curves
+    // the card's acceleration structure does not hold.
+    if scene.instances.iter().any(|i| scene.meshes.get(i.mesh.index()).is_some_and(|m| m.fibres.is_some())) {
+        limits.push("fibres are left out: the parts that grow them are bare");
+    }
+    // The environment as the card reads it is always infinitely far
+    // (environment.wgsl); a dome of a size looks its directions up from
+    // where a path is, for the light, its samples and the view.
+    if !scene.environment.dome().is_infinite() {
+        limits.push("the environment is an infinitely far dome rather than one of its size");
+    }
+    // A colour or a backplate replaces what the camera and its mirrors see
+    // past the parts (integrator.rs's past_the_scene).
+    if !scene.background.is_environment() {
+        limits.push("past the parts the camera sees the environment rather than the background colour or backplate");
+    }
+    limits
+}
+
+/// What of `camera`, and of the film under `config`, the card renders
+/// otherwise than the processor does, one sentence each; empty where they
+/// are the processor's (`transport.wgsl`'s pinhole and one pixel's box).
+/// The renderer says each at its first pass, with the other `*_limits`.
+pub fn camera_limits(camera: &Camera, config: &IntegratorConfig) -> Vec<&'static str> {
+    use tequila_render_core::camera::Projection;
+    use tequila_render_core::settings::PixelFilterKind;
+    let mut limits = Vec::new();
+    match camera.projection {
+        Projection::Perspective { .. } => {}
+        Projection::Shift { shift_x, shift_y, .. } if shift_x == 0.0 && shift_y == 0.0 => {}
+        Projection::Shift { .. } => limits.push("a shifted lens is left unshifted"),
+        Projection::Orthographic { .. } => limits.push("an orthographic camera is not drawn: the card's camera is a perspective one"),
+        Projection::Equirectangular => limits.push("a 360-degree camera is not drawn: the card's camera is a perspective one"),
+    }
+    if camera.aperture_radius(1.0) > 0.0 {
+        limits.push("no depth of field: everything is in focus, as through a pinhole");
+    }
+    // A box of one pixel places a sample where its jitter falls
+    // (FilterSampler::place); any other filter spreads it.
+    let filter = config.pixel_filter;
+    let width = if filter.width.is_finite() && filter.width > 0.0 { filter.width } else { 1.0 };
+    if filter.kind != PixelFilterKind::Box || width != 1.0 {
+        limits.push("the pixel filter is one pixel's box");
+    }
+    limits
+}
+
 /// How many samples a dispatch draws: a bounded buffer and a bounded time
 /// for the card to run without the display.
 const SAMPLES_PER_DISPATCH: u32 = 16;
@@ -382,6 +444,8 @@ pub struct GpuRenderer {
     cut_programs: bool,
     /// Whether some material rounds its edges, as the card shades it.
     bevels: bool,
+    /// What [`part_limits`] says of the scene.
+    part_limits: Vec<&'static str>,
 }
 
 /// What [`floor_limits`] asks of a scene, read when it is uploaded.
@@ -682,6 +746,7 @@ impl GpuRenderer {
             has_emitters,
             cut_programs: programs.headers.iter().any(|h| h.flags & crate::program::PROGRAM_CUTS != 0),
             bevels: records.iter().any(|r| r.edge_radius > 0.0),
+            part_limits: part_limits(scene, &IntegratorConfig::default()),
         }
     }
 
@@ -705,6 +770,10 @@ impl GpuRenderer {
         self.texture_limits.clone()
     }
 
+    /// [`part_limits`] of the scene this renders.
+    pub fn part_limits(&self, _config: &IntegratorConfig) -> Vec<&'static str> {
+        self.part_limits.clone()
+    }
 
     fn params(&self, settings: &FrameSettings, width: usize, height: usize, sample_base: u32, samples: u32) -> FrameParams {
         let aspect = width as f32 / height as f32;
@@ -793,6 +862,8 @@ impl GpuRenderer {
                 .chain(&self.lamp_limits(&settings.config))
                 .chain(&self.glass_limits(&settings.config))
                 .chain(&self.texture_limits(&settings.config))
+                .chain(&self.part_limits(&settings.config))
+                .chain(&camera_limits(&settings.camera, &settings.config))
             {
                 eprintln!("  on the graphics card for now, {limit} (docs/07 R3)");
             }
