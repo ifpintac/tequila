@@ -251,3 +251,43 @@ fn what_rounded_edges_cost_to_compile() {
         }
     }
 }
+
+/// What letting programs drive the transmission's weight costs the
+/// kernel's cold compile: the write-back four floats longer, against the
+/// kernel with the write-back as it was, interleaved, `TEQUILA_COMPILE_ROUNDS`
+/// rounds (3 by default). Run by hand: `cargo test --test compile_time --
+/// --ignored --nocapture transmission`.
+#[test]
+#[ignore]
+fn what_driven_transmission_costs_to_compile() {
+    let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
+    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let document = scene.document();
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
+    let renderer = GpuRenderer::new(gpu, &snapshot);
+    let salt = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32);
+    let pairs: &[(&str, &str)] = &[
+        ("array<f32, 48>", "array<f32, 44>"),
+        ("        m.transmission_color.x, m.transmission_color.y, m.transmission_color.z, m.transmission_color.w,\n", ""),
+        ("vec4<f32>(f[44], f[45], f[46], f[47]), base.transmission_tint,", "base.transmission_color, base.transmission_tint,"),
+    ];
+    let rounds: u32 = std::env::var("TEQUILA_COMPILE_ROUNDS").ok().and_then(|r| r.parse().ok()).unwrap_or(3);
+    for round in 0..rounds {
+        for (k, without) in [false, true].into_iter().enumerate() {
+            let edit = move |s: String| {
+                let mut s = s.replace("\r\n", "\n");
+                if without {
+                    for (from, to) in pairs {
+                        assert!(s.contains(from), "no {from:?}");
+                        s = s.replace(from, to);
+                    }
+                }
+                s
+            };
+            let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * 2 + k as u32) * 7919), &edit);
+            eprintln!("round {round}, {}: {:.2} s", if without { "the write-back as it was" } else { "the transmission's weight written back" }, t.as_secs_f64());
+        }
+    }
+}

@@ -1424,6 +1424,12 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
         // The cutout's opacity, which the integrator reads at a hit and at
         // every crossing.
         Param::Opacity => (at(offset_of!(M, geometry_opacity)), false),
+        // How much of the light the surface lets through, which the stack
+        // reads at a hit: the transmission colour's fourth float (the
+        // write-back's last). A medium's boundary and the clear glass a
+        // shadow ray passes stay the scene's own material's, as the
+        // processor keeps them (`is_boundary`, `Pane::of_program`).
+        Param::TransmissionWeight => (at(offset_of!(M, transmission_color)) + 3, false),
         _ => return None,
     })
 }

@@ -362,10 +362,10 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
     }
 }
 
-// The material as floats, GpuMaterial's members in order, for writing a
-// parameter by its offset.
-fn prog_material_floats(m: GpuMaterial) -> array<f32, 44> {
-    return array<f32, 44>(
+// The material as floats, GpuMaterial's members in order up to the
+// transmission's colour and weight, for writing a parameter by its offset.
+fn prog_material_floats(m: GpuMaterial) -> array<f32, 48> {
+    return array<f32, 48>(
         m.base_color.x, m.base_color.y, m.base_color.z, m.base_color.w,
         m.metal_n.x, m.metal_n.y, m.metal_n.z, m.metal_n.w,
         m.metal_k.x, m.metal_k.y, m.metal_k.z, m.metal_k.w,
@@ -377,12 +377,13 @@ fn prog_material_floats(m: GpuMaterial) -> array<f32, 44> {
         m.coat_roughness, m.coat_ior, m.coat_darkening, m.fuzz_weight,
         m.fuzz_roughness, m.geometry_occlusion, m.specular_rotation, m.geometry_opacity,
         m.emission_color.x, m.emission_color.y, m.emission_color.z, m.emission_color.w,
+        m.transmission_color.x, m.transmission_color.y, m.transmission_color.z, m.transmission_color.w,
     );
 }
 
 // The floats back into a material; the glass after them, which no program
 // writes, as `base` has it.
-fn prog_material_from(f: array<f32, 44>, base: GpuMaterial) -> GpuMaterial {
+fn prog_material_from(f: array<f32, 48>, base: GpuMaterial) -> GpuMaterial {
     return GpuMaterial(
         vec4<f32>(f[0], f[1], f[2], f[3]),
         vec4<f32>(f[4], f[5], f[6], f[7]),
@@ -392,7 +393,7 @@ fn prog_material_from(f: array<f32, 44>, base: GpuMaterial) -> GpuMaterial {
         vec4<f32>(f[20], f[21], f[22], f[23]),
         f[24], f[25], f[26], f[27], f[28], f[29], f[30], f[31], f[32], f[33], f[34], f[35], f[36], f[37], f[38], f[39],
         vec4<f32>(f[40], f[41], f[42], f[43]),
-        base.transmission_color, base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
+        vec4<f32>(f[44], f[45], f[46], f[47]), base.transmission_tint, base.volume_density, base.medium_priority, base.base_ior, base.glass,
         base.pane_weight, base.pane_opacity, base.pane_ior, base.pane_coat, base.pane_coat_ior, base.pane_depth, base.edge_radius, base.edge_samples,
         base.volume_glow,
     );

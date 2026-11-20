@@ -338,6 +338,19 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: bevelled_product,
     pictures: no_pictures,
+}, ParityScene {
+    name: "driven_film",
+    covers: "R3 tier B, glass whose transmission a program drives: the product on its modelled ground under the \
+             environment, a thin-walled, frosted film standing in front of it whose program draws a checker into \
+             how much light it lets through (a tenth or seven tenths) - the stack's transmission lobe weighed at \
+             each hit by the program, the film no clear glass to a shadow ray and no medium, as the scene's own \
+             material has it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: driven_film,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -1277,6 +1290,35 @@ pub fn bevelled_product_rounded(rounded: bool) -> SceneDocument {
         let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
         bus.apply(&mut document, Command::set_transform(id, Transform::translation(at) * down)).expect("the lamp placed");
     }
+    document
+}
+
+/// `simple_product` on its modelled ground, a frosted film standing in
+/// front of it whose program draws a checker into how much light it lets
+/// through.
+fn driven_film() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let film = Material {
+        base_color: Spectrum::splat(0.05),
+        specular_roughness: 0.35,
+        transmission_weight: 0.4,
+        transmission_color: Spectrum { r: 0.8, g: 0.85, b: 0.9 },
+        geometry_thin_walled: true,
+        ..Material::default()
+    };
+    let sheet = crate::bench::rounded_box(vec3(0.55, 0.3, 0.003), 0.002, 8);
+    add_parts(&mut document, &mut bus, vec![("Film", sheet, MaterialType::Glass, film, Transform::translation(vec3(-0.2, 0.31, 0.85)))]);
+    let key = document.materials.iter().find(|(_, m)| m.name == "Film").map(|(k, _)| k).expect("the film");
+    let graph = &mut document.materials.get_mut(key).expect("the film").graph;
+    let output = graph.output();
+    let planar = Mapping { projection: Projection::Planar, axis: Axis::Z, scale: vec3(6.0, 6.0, 1.0), ..Mapping::default() };
+    let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: planar }));
+    let mut checker = Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker));
+    checker.literals.insert(Socket::Input(1), Value::Color(Spectrum::splat(0.1)));
+    checker.literals.insert(Socket::Input(2), Value::Color(Spectrum::splat(0.7)));
+    let checker = graph.add_node(checker);
+    graph.connect(m, checker, Socket::Input(0));
+    graph.connect(checker, output, Socket::Param(Param::TransmissionWeight));
     document
 }
 

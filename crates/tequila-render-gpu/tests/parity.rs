@@ -194,6 +194,50 @@ fn the_bevelled_product_is_the_processors_picture() {
     same_picture("bevelled_product");
 }
 
+/// Glass whose transmission a program drives: a frosted film in front of
+/// the product, a checker drawing how much light it lets through.
+#[test]
+fn a_film_a_program_drives_is_the_processors_picture() {
+    same_picture("driven_film");
+}
+
+/// The library's presets whose programs drive their transmission, on the
+/// Headphones' parts in turn, the other parts as the sample has them. Each
+/// is a film with a share of subsurface scattering, which the card does not
+/// do yet (`glass_limits`): it is taken off, as the first walls took off
+/// rounded edges before the card had them. So is each one's bump, a grid
+/// of filaments far finer than a pixel here, which puts 0.13% of the
+/// pixels more than 0.02 apart with or without the transmission a program
+/// drives (0 without the bump): the forward differences of a pattern that
+/// fine move as far for an ulp of the point on the processor alone.
+#[test]
+fn a_wall_of_driven_transmission_is_the_processors_picture() {
+    use tequila_materials::material_type::Param;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let driven: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| entry.graph.compile().is_ok_and(|p| p.driven.iter().any(|(param, _)| *param == Param::TransmissionWeight)))
+        .collect();
+    assert!(!driven.is_empty(), "no preset drives its transmission");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    // Every other part, so each preset is seen beside the sample's own.
+    for (j, key) in keys.iter().enumerate().filter(|(j, _)| j % 2 == 0) {
+        let entry = &driven[(j / 2) % driven.len()];
+        names.push(entry.name.clone());
+        let mut definition = entry.definition();
+        definition.graph.material_mut().subsurface_weight = 0.0;
+        let output = definition.graph.output();
+        definition.graph.disconnect(output, tequila_materials::graph::Socket::Param(Param::Bump));
+        document.materials.insert_with_key(*key, definition);
+    }
+    eprintln!("driven transmission wall ({} presets): {}", driven.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "driven_transmission_wall".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
