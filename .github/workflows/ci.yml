@@ -102,6 +102,34 @@ jobs:
             self-test
           if-no-files-found: ignore
 
+  # The graphics card's kernels against the processor's Rust, function by
+  # function (docs/07 D2, R2.4), on Mesa's software Vulkan driver: no
+  # runner has a graphics card, and lavapipe runs compute shaders, if not
+  # ray queries. TEQUILA_REQUIRE_GPU_TESTS makes a missing adapter a
+  # failure here, where elsewhere it is a skip. The crate needs no Embree
+  # or OIDN, so this builds little.
+  gpu-differential:
+    name: graphics card kernels (software Vulkan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TEQUILA_REQUIRE_GPU_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Mesa's software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          vulkaninfo --summary || true
+
+      - name: Test
+        run: cargo test --release -p tequila-render-gpu --no-fail-fast
+
   # GitHub's Intel Mac, kept until autumn 2027, which the Intel disk image
   # is built on (release-macos.yml) and nothing tested per commit. Lighter
   # than the jobs above, which run the whole suite: the command-line

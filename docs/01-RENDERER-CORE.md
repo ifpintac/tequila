@@ -14,7 +14,7 @@ Five principles, in priority order. When they conflict, the earlier one wins.
 
 1. **Interactivity is a correctness requirement, not an optimization.** A frame must reach the screen within the interactivity budget (§9.2) regardless of scene complexity. A renderer that produces a beautiful image in 400 ms per frame has failed at the product's core promise; one that produces a noisy-but-converging image in 16 ms has succeeded.
 2. **Physical correctness by default.** Energy conservation, reciprocity, and correct units are not negotiable. Every shortcut is opt-in, named, and visible in the UI.
-3. **One implementation of the shading math.** CPU and GPU share source (§10). Divergence between backends is a bug.
+3. **One specification of the shading math.** The processor's Rust is it; the graphics card's WGSL is checked against it function by function (`docs/07` D2, `SPEC-README` invariant 3, amended November 20). Divergence between backends is a bug.
 4. **Determinism.** Same inputs, same seed, same output, bit-for-bit, on a given backend (§4.6).
 5. **Progressive refinement, never restart-from-scratch when avoidable.** The dirty-state taxonomy (§9.3) exists to preserve accumulated samples wherever the edit did not invalidate them.
 
