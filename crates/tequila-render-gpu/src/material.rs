@@ -44,7 +44,10 @@ pub struct GpuMaterial {
     pub fuzz_roughness: f32,
     /// Baked occlusion, which scales every lobe of the stack.
     pub geometry_occlusion: f32,
-    pub _pad: [f32; 2],
+    /// The anisotropic frame's turn (`specular_rotation`), which the
+    /// integrator reads rather than the stack.
+    pub specular_rotation: f32,
+    pub _pad: f32,
     /// `Material::emission`, in nits, and in `[3]` 1 where the material
     /// `is_emissive`.
     pub emission: [f32; 4],
@@ -79,7 +82,8 @@ impl GpuMaterial {
             fuzz_weight: m.fuzz_weight,
             fuzz_roughness: m.fuzz_roughness,
             geometry_occlusion: m.geometry_occlusion,
-            _pad: [0.0; 2],
+            specular_rotation: m.specular_rotation,
+            _pad: 0.0,
             emission: {
                 let e = m.emission();
                 [e.r, e.g, e.b, if m.is_emissive() { 1.0 } else { 0.0 }]

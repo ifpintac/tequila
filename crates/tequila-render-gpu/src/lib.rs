@@ -16,6 +16,10 @@
 //!   sheen's.
 //! - [`material`]: a material as the card reads it, for the OpenPBR stack in
 //!   `openpbr.wgsl` (R3: so far its opaque part).
+//! - [`program`]: a material's graph as the card runs it (R3, stage 1): its
+//!   compiled program lowered to the bytecode `program.wgsl` interprets,
+//!   the nodes of `nodes.wgsl`, and the height bump; what the card cannot
+//!   run yet it refuses, and says why.
 //! - [`harness`]: running a WGSL function over a buffer of inputs, which is
 //!   how every port is tested against the Rust it was ported from.
 //! - [`scene`]: a snapshot's triangles, acceleration structures and the
@@ -33,6 +37,7 @@ pub mod environment;
 pub mod harness;
 pub mod lights;
 pub mod material;
+pub mod program;
 pub mod scene;
 pub mod shader;
 pub mod tables;

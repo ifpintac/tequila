@@ -63,7 +63,9 @@ struct FrameParams {
     light_count: u32,
     light_hierarchy: u32,
     lamp_flags: u32,
-    _pad1: u32,
+    // IntegratorConfig::pixel_spread: a footprint is the hit's distance times
+    // it, for a material's program and its bump.
+    pixel_spread: f32,
     _pad2: u32,
 };
 
