@@ -120,12 +120,19 @@ fn refusal(adapter: &wgpu::Adapter, needs: Needs) -> Option<String> {
 
 /// Whether a test that needs a card skips when none is found or fails:
 /// `TEQUILA_REQUIRE_GPU_TESTS=1` (set in CI, where Mesa's software Vulkan is
-/// installed) makes a missing adapter a failure, not a skip (`docs/07` R2.4).
+/// installed) makes a missing compute adapter a failure, not a skip
+/// (`docs/07` R2.4). The software driver has no ray queries, so a test
+/// that needs them fails for want of them only under
+/// `TEQUILA_REQUIRE_RAY_QUERIES=1`, for a machine with a card.
 pub fn for_test(needs: Needs) -> Option<GpuDevice> {
+    let required = match needs {
+        Needs::Compute => "TEQUILA_REQUIRE_GPU_TESTS",
+        Needs::RayQueries => "TEQUILA_REQUIRE_RAY_QUERIES",
+    };
     match GpuDevice::new(needs) {
         Ok(device) => Some(device),
-        Err(e) if std::env::var("TEQUILA_REQUIRE_GPU_TESTS").is_ok_and(|v| v == "1") => {
-            panic!("TEQUILA_REQUIRE_GPU_TESTS is set and {e}")
+        Err(e) if std::env::var(required).is_ok_and(|v| v == "1") => {
+            panic!("{required} is set and {e}")
         }
         Err(e) => {
             eprintln!("skipped: {e}");

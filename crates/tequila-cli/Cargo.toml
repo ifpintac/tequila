@@ -24,6 +24,7 @@ tequila-render-cpu.workspace = true
 tequila-denoise.workspace = true
 tequila-color.workspace = true
 tequila-render-cycles.workspace = true
+tequila-render-gpu.workspace = true
 tequila-scripting.workspace = true
 tequila-network.workspace = true
 png = "0.17"
