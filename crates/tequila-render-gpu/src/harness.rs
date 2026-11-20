@@ -35,6 +35,21 @@ impl Harness {
     /// Run `body` once per item over `inputs`, `in_words` words an item, and
     /// return `out_words` words an item. `modules` are included in front.
     pub fn run_wgsl(&self, modules: &[&str], body: &str, inputs: &[u32], in_words: usize, out_words: usize) -> Vec<u32> {
+        self.run_wgsl_with(modules, body, inputs, in_words, out_words, &[])
+    }
+
+    /// [`Harness::run_wgsl`] for modules that read buffers of their own at
+    /// `@group(0)` (`lamps.wgsl`'s lamps): each of `buffers` bound, read
+    /// only, at its binding.
+    pub fn run_wgsl_with(
+        &self,
+        modules: &[&str],
+        body: &str,
+        inputs: &[u32],
+        in_words: usize,
+        out_words: usize,
+        buffers: &[(u32, &[u32])],
+    ) -> Vec<u32> {
         assert!(in_words > 0 && inputs.len() % in_words == 0, "inputs are whole items");
         let count = (inputs.len() / in_words) as u32;
         let groups = count.div_ceil(WORKGROUP);
@@ -58,22 +73,35 @@ fn harness_main(@builtin(global_invocation_id) id: vec3<u32>) {{
 }}
 "
         );
-        self.run_kernel(&crate::shader::with_includes(&kernel), "harness_main", inputs, count as usize * out_words, (gx, gy))
+        self.run_kernel_with(&crate::shader::with_includes(&kernel), "harness_main", inputs, count as usize * out_words, (gx, gy), buffers)
     }
 
     /// Run a whole kernel: `@group(0)` binding 0 the inputs, binding 1 the
     /// outputs, `@group(1)` the shared tables (when the kernel uses them).
-    pub fn run_kernel(&self, source: &str, entry: &str, inputs: &[u32], outputs: usize, (gx, gy): (u32, u32)) -> Vec<u32> {
+    pub fn run_kernel(&self, source: &str, entry: &str, inputs: &[u32], outputs: usize, groups: (u32, u32)) -> Vec<u32> {
+        self.run_kernel_with(source, entry, inputs, outputs, groups, &[])
+    }
+
+    /// [`Harness::run_kernel`] with `buffers` bound, read only, at their
+    /// bindings in `@group(0)` as well.
+    pub fn run_kernel_with(
+        &self,
+        source: &str,
+        entry: &str,
+        inputs: &[u32],
+        outputs: usize,
+        (gx, gy): (u32, u32),
+        buffers: &[(u32, &[u32])],
+    ) -> Vec<u32> {
         let device = &self.gpu.device;
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(entry),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let uses_tables = source.contains("@group(1)");
-        let own = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("harness"),
-            entries: &[storage(0, true), storage(1, false)],
-        });
+        let mut entries = vec![storage(0, true), storage(1, false)];
+        entries.extend(buffers.iter().map(|(binding, _)| storage(*binding, true)));
+        let own = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("harness"), entries: &entries });
         let mut layouts: Vec<&wgpu::BindGroupLayout> = vec![&own];
         if uses_tables {
             layouts.push(&self.tables.layout);
@@ -111,14 +139,23 @@ fn harness_main(@builtin(global_invocation_id) id: vec3<u32>) {{
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("harness"),
-            layout: &own,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: input.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
-            ],
-        });
+        let extra: Vec<wgpu::Buffer> = buffers
+            .iter()
+            .map(|(_, words)| {
+                let padded: Vec<u32> = if words.is_empty() { vec![0] } else { words.to_vec() };
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("harness buffer"),
+                    contents: bytemuck::cast_slice(&padded),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
+            })
+            .collect();
+        let mut bound = vec![
+            wgpu::BindGroupEntry { binding: 0, resource: input.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: output.as_entire_binding() },
+        ];
+        bound.extend(buffers.iter().zip(&extra).map(|((binding, _), buffer)| wgpu::BindGroupEntry { binding: *binding, resource: buffer.as_entire_binding() }));
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("harness"), layout: &own, entries: &bound });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("harness") });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("harness"), timestamp_writes: None });

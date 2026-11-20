@@ -1187,6 +1187,80 @@ impl LightSet {
         self.total_power
     }
 
+    /// The alias table [`LightSet::select`] reads, as built: (probability,
+    /// alternative) per light. For a renderer that chooses lamps itself
+    /// (`tequila-render-gpu`), which must choose them from these numbers and
+    /// not from a table of its own: Vose's construction rounds, and a table
+    /// rebuilt elsewhere can send a draw to the other light.
+    pub fn alias_table(&self) -> &[(f32, u32)] {
+        &self.alias
+    }
+
+    /// Each light's chance of being chosen by power ([`LightSet::selection_pdf`]).
+    pub fn probabilities(&self) -> &[f32] {
+        &self.probabilities
+    }
+
+    /// The light hierarchy [`LightSet::select_at`] descends, node by node in
+    /// the order it is stored (the root first); empty under
+    /// [`SelectionStrategy::Alias`]. As built, for the reason
+    /// [`LightSet::alias_table`] gives: the median split and the cones round
+    /// by floating point.
+    pub fn hierarchy(&self) -> impl ExactSizeIterator<Item = LightNodeView> + '_ {
+        self.nodes.iter().map(|node| LightNodeView {
+            centre: node.bounds.center(),
+            half: node.bounds.diagonal().length() * 0.5,
+            axis: node.axis,
+            cos_o: node.cos_o,
+            sin_o: node.sin_o,
+            cos_e: node.cos_e,
+            power: node.power,
+            first: node.first,
+            children: node.children,
+            parent: node.parent,
+            distant: node.distant,
+        })
+    }
+
+    /// The light indices the hierarchy's leaves point into
+    /// ([`LightNodeView::first`]).
+    pub fn order(&self) -> &[u32] {
+        &self.order
+    }
+
+    /// The leaf that holds each light, by its index ([`LightSet::selection_pdf_at`]).
+    pub fn leaves(&self) -> &[u32] {
+        &self.leaves
+    }
+}
+
+/// One node of the light hierarchy as [`LightSet::hierarchy`] shows it:
+/// what [`LightNode::importance`] reads - its bounds as their middle and
+/// half their diagonal, which is all it asks of them - and how the nodes
+/// link up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightNodeView {
+    /// The middle of the bounds of everything that emits in the subtree.
+    pub centre: Vec3,
+    /// Half the length of those bounds' diagonal.
+    pub half: f32,
+    pub axis: Vec3,
+    pub cos_o: f32,
+    pub sin_o: f32,
+    pub cos_e: f32,
+    pub power: f32,
+    /// A leaf's light, at this place in [`LightSet::order`].
+    pub first: u32,
+    /// The two children, or `None` for a leaf.
+    pub children: Option<(u32, u32)>,
+    /// The node above, `u32::MAX` at the root.
+    pub parent: u32,
+    /// The suns' subtree.
+    pub distant: bool,
+}
+
+impl LightSet {
+
     /// Choose a light, returning it and the probability of that choice.
     ///
     /// The probability is returned rather than assumed, because the estimator

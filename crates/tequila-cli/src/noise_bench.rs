@@ -193,10 +193,11 @@ pub fn run(options: &Options, name: &str) -> Result<(), String> {
     let device = if cycles {
         cycles_device(options.device.as_deref())?
     } else {
-        if let Some(device) = options.device.as_deref().filter(|d| !d.eq_ignore_ascii_case("cpu")) {
-            return Err(format!("Tequila's renderer runs on the processor only for now, not {device:?}"));
+        match options.device.as_deref().map(str::to_ascii_uppercase).as_deref() {
+            None | Some("CPU") => "CPU".to_string(),
+            Some("GPU") => "GPU".to_string(),
+            Some(other) => return Err(format!("Tequila's renderer runs on the processor (CPU) or the graphics card (GPU), not {other:?}")),
         }
-        "CPU".to_string()
     };
     let reject_fireflies = if project { settings.reject_fireflies } else { true };
     let clamp = if project { (settings.clamp_indirect, settings.clamp_direct) } else { (None, None) };
@@ -204,6 +205,8 @@ pub fn run(options: &Options, name: &str) -> Result<(), String> {
     let measure = |samples: u32, picture: Option<&str>| {
         if cycles {
             with_cycles(&device, &scene, camera, width, height, samples, &config, project.then_some(&settings), &style, picture)
+        } else if device == "GPU" {
+            with_tequila_on_card(&scene, camera, width, height, samples, config.clone(), reject_fireflies, clamp, &style, picture)
         } else {
             with_tequila(scene.clone(), camera, width, height, samples, config.clone(), reject_fireflies, clamp, &style, picture)
         }
@@ -323,6 +326,67 @@ fn with_tequila(
         scene: String::new(),
         engine: "tequila",
         device: "CPU".into(),
+        width,
+        height,
+        samples,
+        triangles: 0,
+        setup_seconds,
+        render_seconds,
+        noise,
+        mean,
+        peak_memory: None,
+        floor_overlay: false,
+    })
+}
+
+/// [`with_tequila`] on the graphics card (`docs/07` R2): the same two seeds
+/// and the same development. The setup is the device, the acceleration
+/// structures and the pipeline (from the driver's cache after the first
+/// run); every sample of a render goes in one call, so the pixels' sums stay
+/// on the card between dispatches as they would in the application.
+#[allow(clippy::too_many_arguments)]
+fn with_tequila_on_card(
+    scene: &SceneSnapshot,
+    camera: Camera,
+    width: usize,
+    height: usize,
+    samples: u32,
+    config: IntegratorConfig,
+    reject_fireflies: bool,
+    (clamp_indirect, clamp_direct): (Option<f32>, Option<f32>),
+    style: &tequila_color::ImageStyle,
+    picture: Option<&str>,
+) -> Result<Measurement, String> {
+    use tequila_render_gpu::transport::{FrameSettings, GpuRenderer};
+    let start = Instant::now();
+    let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries).map_err(|why| format!("--device GPU: {why}"))?;
+    let card = gpu.describe();
+    let renderer = GpuRenderer::new(gpu, scene);
+    let setup_seconds = start.elapsed().as_secs_f64();
+    let display = tequila_color::DisplayPipeline::Builtin(style.display);
+
+    let mut developed = Vec::new();
+    let mut render_seconds = [0.0; 2];
+    for (i, seed) in SEEDS.into_iter().enumerate() {
+        let settings = FrameSettings { camera, config: config.clone(), scene_seed: seed, reject_fireflies, clamp_direct, clamp_indirect };
+        let mut framebuffer = Framebuffer::new(width, height);
+        let start = Instant::now();
+        renderer.render_pass(&mut framebuffer, &settings, samples);
+        render_seconds[i] = start.elapsed().as_secs_f64();
+        let linear: Vec<_> = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).map(|(x, y)| framebuffer.pixel(x, y).mean().sanitized()).collect();
+        if i == 0 {
+            if let Some(path) = picture {
+                finish_image(path, width, height, &linear, None, style, false)?;
+            }
+        }
+        developed.push(style.develop_through_wide(width, height, &linear, &display));
+        dump_for_study(i, &linear, developed.last().unwrap());
+    }
+    let (noise, mean) = noise_of(&developed[0], &developed[1]);
+    Ok(Measurement {
+        scene: String::new(),
+        engine: "tequila",
+        device: format!("GPU, {card}"),
         width,
         height,
         samples,

@@ -19,14 +19,79 @@ use tequila_scene::snapshot::{snapshot, MeshCache};
 
 #[test]
 fn the_grey_product_is_the_processors_picture() {
+    same_picture("grey_product");
+}
+
+/// R3 tier A's surface: plastics, metals and a diffuse part, with mirror
+/// bounces and the stack's lobe choice.
+#[test]
+fn the_product_in_its_materials_is_the_processors_picture() {
+    same_picture("product_materials");
+}
+
+/// R3 tier A's floor: the environment's ground as a shadow catcher, its
+/// shadow, its mirror reflection and the coverage it takes.
+#[test]
+fn the_product_on_its_floor_is_the_processors_picture() {
+    same_picture("product_floor");
+}
+
+/// The floor's blurred reflection, weakened by Fresnel and fading by height,
+/// over a tinted shadow.
+#[test]
+fn the_product_on_a_glossy_floor_is_the_processors_picture() {
+    same_picture("product_floor_glossy");
+}
+
+/// A studio floor: occlusion shadows, the bounce the product sees, a
+/// reflection fading by distance.
+#[test]
+fn the_product_on_a_studio_floor_is_the_processors_picture() {
+    same_picture("product_floor_studio");
+}
+
+/// Ground illumination: the floor a bounce meets is shaded, not passed.
+#[test]
+fn the_product_on_a_lit_floor_is_the_processors_picture() {
+    same_picture("product_floor_lit");
+}
+
+/// The lamps: a key, a fill and a rim, chosen down the light hierarchy, two
+/// with stand-ins; the bounces that meet them, the mirrors that show them,
+/// Filter Glossy.
+#[test]
+fn the_lamp_lit_product_is_the_processors_picture() {
+    same_picture("lamp_lit");
+}
+
+/// A studio: the sky and three softboxes falling off to their edges, out of
+/// the camera's sight, chosen by the alias table.
+#[test]
+fn the_product_in_a_studio_is_the_processors_picture() {
+    same_picture("studio_lamps");
+}
+
+/// Lamps the camera sees: a softbox's stand-in glowing as it lights, and
+/// mirrored by the lamp itself; a disc's stand-in seen from behind.
+#[test]
+fn lamps_in_view_are_the_processors_picture() {
+    same_picture("lamps_in_view");
+}
+
+fn same_picture(name: &str) {
     let Some(gpu) = device::for_test(Needs::RayQueries) else { return };
-    let scene = parity::scene("grey_product").expect("the parity set has it");
+    let scene = parity::scene(name).expect("the parity set has it");
     let document = scene.document();
     let mut environments = tequila_scene::environment::EnvironmentCache::new();
     let environment = environments.environment(&document.environment);
     let (snapshot, _) = snapshot(&document, environment, &mut MeshCache::new());
     let camera = scene.camera(&document);
     let config = document.lighting.config();
+
+    // Nothing in the set is a case the card renders otherwise.
+    let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
+    limits.extend(tequila_render_gpu::lights::lamp_limits(&snapshot, &config));
+    assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
 
     let started = std::time::Instant::now();
     let mut renderer = GpuRenderer::new(gpu, &snapshot);
@@ -58,6 +123,15 @@ fn the_grey_product_is_the_processors_picture() {
     let mut far = 0usize;
     let mut worst = (0.0f32, 0usize);
     let (mut card_mean, mut processor_mean) = (0.0f64, 0.0f64);
+    // The alpha too: a shadow catcher's coverage is the floor's shadow and
+    // reflection, which the card has to find as the processor does.
+    let mut alpha_sum = 0.0f64;
+    let mut alpha_worst = 0.0f32;
+    for (a, b) in card.pixels().iter().zip(processor.pixels()) {
+        let d = (a.alpha() - b.alpha()).abs();
+        alpha_sum += d as f64;
+        alpha_worst = alpha_worst.max(d);
+    }
     for (i, (a, b)) in card.pixels().iter().zip(processor.pixels()).enumerate() {
         let (a, b) = (a.mean(), b.mean());
         let d = [(a.r - b.r).abs(), (a.g - b.g).abs(), (a.b - b.b).abs()];
@@ -73,7 +147,7 @@ fn the_grey_product_is_the_processors_picture() {
         }
     }
     // TEQUILA_PARITY_DUMP=folder: both pictures as raw little-endian f32
-    // RGB, width x height, to look at.
+    // RGB, width x height, to look at, and their alphas.
     if let Ok(folder) = std::env::var("TEQUILA_PARITY_DUMP") {
         for (name, buffer) in [("card", &card), ("processor", &processor)] {
             let bytes: Vec<u8> = buffer
@@ -85,15 +159,22 @@ fn the_grey_product_is_the_processors_picture() {
                 })
                 .flat_map(f32::to_le_bytes)
                 .collect();
-            std::fs::write(std::path::Path::new(&folder).join(format!("grey_product-{name}.f32")), bytes).expect("writes");
+            std::fs::write(std::path::Path::new(&folder).join(format!("{}-{name}.f32", scene.name)), bytes).expect("writes");
+            // And the alpha, one float a pixel: a shadow catcher's shadow
+            // and reflection.
+            let alpha: Vec<u8> = buffer.pixels().iter().flat_map(|p| p.alpha().to_le_bytes()).collect();
+            std::fs::write(std::path::Path::new(&folder).join(format!("{}-{name}-alpha.f32", scene.name)), alpha).expect("writes");
         }
     }
     let pixels = card.pixels().len();
     let mean = sum / (pixels * 3) as f64;
     let share = far as f64 / pixels as f64;
+    let alpha_mean = alpha_sum / pixels as f64;
     eprintln!(
-        "grey_product {}x{} at {} samples: card {:.2} s, processor {:.2} s; mean {:.5} against {:.5}; \
-         mean |difference| {mean:.6}; {far} pixels ({:.3}%) more than 0.02 apart; worst {:.4} at pixel {}",
+        "{} {}x{} at {} samples: card {:.2} s, processor {:.2} s; mean {:.5} against {:.5}; \
+         mean |difference| {mean:.6}; {far} pixels ({:.3}%) more than 0.02 apart; worst {:.4} at pixel {}; \
+         alpha mean |difference| {alpha_mean:.6}, worst {alpha_worst:.4}",
+        scene.name,
         scene.width,
         scene.height,
         scene.samples,
@@ -105,8 +186,14 @@ fn the_grey_product_is_the_processors_picture() {
         worst.0,
         worst.1
     );
-    assert!(mean < 0.002, "the mean absolute difference is {mean:.6}, not under 0.002");
-    assert!(share <= 0.001, "{far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+    assert!(mean < 0.002, "{name}: the mean absolute difference is {mean:.6}, not under 0.002");
+    assert!(share <= 0.001, "{name}: {far} pixels ({:.3}%) are more than 0.02 apart, more than 0.1%", 100.0 * share);
+    // A sample's coverage is all or nothing where a shadow catcher's shadow
+    // ray is (one direction, blocked or not), so the same paths give the
+    // same alpha but where a ray query and Embree round an edge apart:
+    // drawing the shadow from another bounce's dimensions, statistically
+    // the same shadow, is 0.0015 here and passes the colour's bar.
+    assert!(alpha_mean < 1e-4, "{name}: the alpha's mean absolute difference is {alpha_mean:.6}, not under 0.0001");
 }
 
 /// The card adding its samples up, firefly rejection and all, gives the
