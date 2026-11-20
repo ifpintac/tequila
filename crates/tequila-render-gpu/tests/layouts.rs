@@ -46,7 +46,7 @@ fn records_have_one_layout_on_both_sides() {
     layout!(
         &module,
         GpuInstance {
-            object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, _pad, object_color, inv_length_scale,
+            object_to_world, world_to_object, mesh, material, instance, catcher, light, flags, solid, _pad, object_color, inv_length_scale,
             scale, object_random, object_number,
         }
     );
@@ -67,7 +67,8 @@ fn records_have_one_layout_on_both_sides() {
             env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, mode,
             off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
             regularization_start, regularization_roughness, off_marginal, off_upward, env_upward_sum, shadows,
-            ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, _pad2,
+            ground_illumination, light_count, light_hierarchy, lamp_flags, pixel_spread, max_transmission_bounces, shadow_glass,
+            glass_flags, _pad3,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });

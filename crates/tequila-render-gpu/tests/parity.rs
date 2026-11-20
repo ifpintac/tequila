@@ -87,6 +87,34 @@ fn lamps_in_view_are_the_processors_picture() {
     same_picture("lamps_in_view");
 }
 
+/// Glass: a smooth ball of solid glass split at, refracted through,
+/// absorbing inside, passed by shadow rays and the bounces that pass it,
+/// seen as glass by those that see.
+#[test]
+fn the_glass_ball_is_the_processors_picture() {
+    same_picture("glass_ball");
+}
+
+/// Rough glass under a coat on the floor: the rough transmission lobe from
+/// both sides, light sampled through it, no clear glass for shadow rays.
+#[test]
+fn rough_glass_on_the_floor_is_the_processors_picture() {
+    same_picture("rough_glass_floor");
+}
+
+/// Thin panes, clear and frosted, in front of the product and its lamps.
+#[test]
+fn panes_in_front_of_the_lamps_are_the_processors_picture() {
+    same_picture("pane_and_lamps");
+}
+
+/// A liquid in a hollow glass: nested media by priority, the wall inside
+/// the liquid no interface.
+#[test]
+fn a_liquid_in_glass_is_the_processors_picture() {
+    same_picture("liquid_in_glass");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
@@ -119,6 +147,7 @@ fn same_shot(scene: Shot) {
     // Nothing in the set is a case the card renders otherwise.
     let mut limits = tequila_render_gpu::transport::floor_limits(&snapshot, &config);
     limits.extend(tequila_render_gpu::lights::lamp_limits(&snapshot, &config));
+    limits.extend(tequila_render_gpu::transport::glass_limits(&snapshot, &config));
     assert!(limits.is_empty(), "{name}: the card renders these otherwise: {limits:?}");
 
     let started = std::time::Instant::now();
@@ -336,6 +365,8 @@ fn preset_wall(variant: usize) {
             let m = &program.constants;
             matches!(tequila_render_gpu::program::lower(&program), Ok(Some(_)))
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
+                // Opaque, as the walls were before the card took glass.
+                && m.transmission_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
@@ -382,6 +413,8 @@ fn the_preset_walls_one_by_one() {
             let m = &program.constants;
             matches!(tequila_render_gpu::program::lower(&program), Ok(Some(_)))
                 && tequila_render_gpu::material::GpuMaterial::supports(m)
+                // Opaque, as the walls were before the card took glass.
+                && m.transmission_weight == 0.0
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0

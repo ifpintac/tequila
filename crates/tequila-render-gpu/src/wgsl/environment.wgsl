@@ -212,6 +212,59 @@ fn env_sample_facing(normal: vec3<f32>, u: vec2<f32>) -> EnvSample {
     return EnvSample(true, direction, env_radiance(false, direction), pdf);
 }
 
+// Environment::pdf, the dome infinite: the whole sky's density, as a
+// surface lit from both sides draws it.
+fn env_pdf_whole(world_direction: vec3<f32>) -> f32 {
+    if (frame.env_weighted_sum <= 0.0) {
+        return 0.0;
+    }
+    let local = rows_vector(frame.env_inverse_rotation, world_direction);
+    let uv = direction_to_equirect(local);
+    let w = frame.env_width;
+    let h = frame.env_height;
+    let x = min(u32(max(uv.x * f32(w), 0.0)), w - 1u);
+    let y = min(u32(max(uv.y * f32(h), 0.0)), h - 1u);
+    return env_f32[frame.off_luminance + y * w + x] * f32(w * h) / (((frame.env_weighted_sum * 2.0) * PI) * PI);
+}
+
+// Environment::pdf_facing with the facing optional: a zero `normal` is the
+// whole sky (None).
+fn env_pdf_sky(world_direction: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if (all(normal == vec3<f32>(0.0))) {
+        return env_pdf_whole(world_direction);
+    }
+    return env_pdf_facing(world_direction, normal);
+}
+
+// Environment::sample_facing with the facing optional: a zero `normal`
+// draws from the whole sky (Environment::sample: a row by the marginal, a
+// column within it by its own CDF), else only what a surface facing it can
+// see (env_sample_facing). One call site for both, for the kernel's size.
+fn env_sample_sky(normal: vec3<f32>, u: vec2<f32>) -> EnvSample {
+    if (!all(normal == vec3<f32>(0.0))) {
+        return env_sample_facing(normal, u);
+    }
+    var none: EnvSample;
+    none.ok = false;
+    if (frame.env_weighted_sum <= 0.0) {
+        return none;
+    }
+    let w = frame.env_width;
+    let h = frame.env_height;
+    let y = find_interval(frame.off_marginal, h, u.y);
+    let dy = segment_offset(frame.off_marginal, y, u.y);
+    let row = frame.off_cdf + y * (w + 1u);
+    let x = find_interval(row, w, u.x);
+    let dx = segment_offset(row, x, u.x);
+    let uv = vec2<f32>((f32(x) + dx) / f32(w), (f32(y) + dy) / f32(h));
+    let direction = normalized(rows_vector(frame.env_rotation, equirect_to_direction(uv)));
+    let pdf = env_pdf_whole(direction);
+    if (!(pdf > 0.0)) {
+        return none;
+    }
+    return EnvSample(true, direction, env_radiance(false, direction), pdf);
+}
+
 // Environment::faces_up: a surface facing straight up, near enough to be
 // drawn for exactly, under a dome infinitely far.
 fn env_faces_up(normal: vec3<f32>) -> bool {

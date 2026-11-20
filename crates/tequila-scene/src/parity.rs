@@ -14,7 +14,8 @@
 
 use crate::bench::{lamp_lit, product_camera, simple_product, simple_product_mapped};
 use crate::command::{Command, EnvParam, EnvValue, EnvironmentParameter};
-use crate::SceneDocument;
+use crate::{CommandBus, SceneDocument};
+use tequila_core::math::{vec3, Transform};
 use tequila_core::spectrum::Spectrum;
 use tequila_materials::material_type::MaterialType;
 use tequila_render_core::camera::Camera;
@@ -131,6 +132,38 @@ pub const SET: &[ParityScene] = &[ParityScene {
     samples: 256,
     seed: 7,
     build: lamps_in_view,
+}, ParityScene {
+    name: "glass_ball",
+    covers: "R3 tier B, glass: the product on its modelled ground and a smooth ball of solid glass in front of it              (depth 0.3, IOR 1.5) - the split at the first glass the camera sees, its reflection a path of its own              traced first on the same sampler and the camera's going on through by what Fresnel leaves; refraction              in and out, total internal reflection, the medium entered and left and the media a path starts in,              Beer-Lambert absorption inside; shadow rays from the ground and the body through the ball, tinted at              each face and absorbed between; the bounces that pass the ball as the light samples did and those that              see it as glass, met past it; the ball roughened deep in a path and sampling the whole sky",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glass_ball,
+}, ParityScene {
+    name: "rough_glass_floor",
+    covers: "R3 tier B, rough glass: product_floor and a block of rough (0.25) tinted glass on the floor under a              mirror-smooth coat, a tenth of it diffuse - the rough transmission lobe's evaluation, density and              sampling from both sides, compensated by the interface's table; the coat over glass trapping light              against the transmission colour; the interface and the diffuse sharing what the transmission leaves;              light sampled from both sides of a surface that transmits, the whole sky and the shadow rays leaving              from the side the light is on; the catcher's view through the reflections and not through the              refractions; no clear glass, so shadow rays stop at it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: rough_glass_floor,
+}, ParityScene {
+    name: "pane_and_lamps",
+    covers: "R3 tier B, thin glass and lamps: the product on its modelled ground under the environment, lamp_lit's key              and a softbox behind it facing the camera, seen through two thin-walled panes - one clear and tinted,              one frosted (0.3) - straight through the clear one (the thin split), off the frosted one's mirrored              half vector; lamps chosen from both sides of glass and lit through it, shadow rays tinted by the clear              pane at each face; the camera's view through glass meeting the softbox and the key, the split              reflection's own view of the lamps from its start, the stand-in passed past the first surface",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: pane_and_lamps,
+}, ParityScene {
+    name: "liquid_in_glass",
+    covers: "R3 tier B, nested media: a hollow ball of glass, its outer and inner surfaces one mesh, holding a ball of              orange liquid modelled into the glass, which outranks it (priority 1) - the medium present by              priority, the glass's inner wall inside the liquid crossed as no interface, the index between liquid              and glass both ways, absorption by whichever medium is present, the camera parked at its first glass              while the reflection's path has media of its own, and a shadow ray's walk pairing one volume at a time",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: liquid_in_glass,
 }];
 
 /// The scene of the set by `name`.
@@ -308,6 +341,195 @@ fn studio_lamps() -> SceneDocument {
             bus.apply(&mut document, command).expect("the studio kit's piece goes in");
         }
     }
+    document
+}
+
+/// Parts added to `document` through one import, as `simple_product_mapped`
+/// adds its own: each a mesh of its own in a material of its own at its
+/// place, under a group of their own.
+fn add_parts(document: &mut SceneDocument, bus: &mut CommandBus, parts: Vec<(&'static str, crate::geometry::Mesh, MaterialType, Material, Transform)>) {
+    use crate::command::{reserve_keys, ImportPayload};
+    use crate::material::MaterialDefinition;
+    use crate::tree::{NodeKind, SceneNode};
+    let (mesh_keys, material_keys, ids) = reserve_keys(document, parts.len(), parts.len(), parts.len() + 1);
+    let mut root = SceneNode::new(ids[0], "Glass", NodeKind::Group);
+    root.children = ids[1..].to_vec();
+    let mut nodes = vec![root];
+    let mut meshes = Vec::new();
+    let mut materials = Vec::new();
+    for (index, (name, mesh, material_type, material, transform)) in parts.into_iter().enumerate() {
+        let mut node = SceneNode::new(ids[index + 1], name, NodeKind::Part { mesh: mesh_keys[index] });
+        node.parent = Some(ids[0]);
+        node.transform = transform;
+        node.material = Some(material_keys[index]);
+        nodes.push(node);
+        meshes.push((mesh_keys[index], mesh));
+        materials.push((material_keys[index], MaterialDefinition::new(name, material_type, material)));
+    }
+    bus.apply(document, Command::Import { payload: Box::new(ImportPayload { meshes, textures: Vec::new(), materials, nodes, roots: vec![ids[0]] }) })
+        .expect("the parts go in");
+}
+
+/// A ball of glass: a sphere of radius `radius`.
+fn ball(radius: f32) -> crate::geometry::Mesh {
+    crate::demo::to_document_mesh(&crate::demo::uv_sphere(radius, 96, 48))
+}
+
+/// A hollow ball as one mesh: a sphere of radius `outer`, and inside it one
+/// of radius `inner` turned inside out, its faces and normals to the hollow.
+fn hollow_ball(outer: f32, inner: f32) -> crate::geometry::Mesh {
+    let mut shell = crate::demo::uv_sphere(outer, 96, 48);
+    let hollow = crate::demo::uv_sphere(inner, 96, 48);
+    let base = shell.positions.len() as u32;
+    shell.positions.extend_from_slice(&hollow.positions);
+    shell.normals.extend(hollow.normals.iter().map(|n| -*n));
+    shell.uvs.extend_from_slice(&hollow.uvs);
+    for triangle in hollow.indices.chunks(3) {
+        shell.indices.extend_from_slice(&[base + triangle[0], base + triangle[2], base + triangle[1]]);
+    }
+    crate::demo::to_document_mesh(&shell)
+}
+
+/// `simple_product` on its modelled ground, a smooth ball of solid glass on
+/// the ground in front of the body.
+fn glass_ball() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// The Headphones' floor, a rough block of tinted glass on it under a
+/// mirror-smooth coat, a tenth of it diffuse.
+fn rough_glass_floor() -> SceneDocument {
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let block = Material {
+        transmission_weight: 0.9,
+        transmission_color: Spectrum { r: 0.55, g: 0.75, b: 0.95 },
+        transmission_depth: 0.15,
+        specular_roughness: 0.25,
+        specular_ior: 1.5,
+        coat_weight: 1.0,
+        coat_roughness: 0.02,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let mesh = crate::bench::rounded_box(vec3(0.2, 0.12, 0.16), 0.03, 24);
+    add_parts(&mut document, &mut bus, vec![("Glass Block", mesh, MaterialType::GlassSolid, block, Transform::translation(vec3(0.45, 0.121, 0.9)))]);
+    document
+}
+
+/// `simple_product` on its modelled ground under the environment and
+/// lamps_in_view's key and softbox, the softbox behind the product facing
+/// the camera, both placed for the product's own camera; a thin clear pane
+/// of tinted glass hanging between that camera and the softbox, and a thin
+/// frosted pane standing on the ground in front of the product.
+fn pane_and_lamps() -> SceneDocument {
+    use crate::lighting::{Intensity, LightSettings, LightShape};
+    use tequila_core::math::{Mat4, Vec3};
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let camera = product_camera(&document, 320.0 / 180.0);
+    let eye = camera.position();
+    let product: Vec<_> = document
+        .tree
+        .iter()
+        .filter(|n| matches!(n.kind, crate::tree::NodeKind::Part { .. }))
+        .filter(|n| n.material.and_then(|m| document.materials.get(m)).is_none_or(|m| m.name != "Ground"))
+        .map(|n| n.id)
+        .collect();
+    let bounds = crate::snapshot::visible_bounds_under(&document, &product);
+    let (middle, radius) = (bounds.center(), (bounds.diagonal().length() * 0.5).max(1e-4));
+    let toward = vec3(eye.x - middle.x, 0.0, eye.z - middle.z).normalize();
+    let right = Vec3::Y.cross(toward).normalize();
+    // A frame whose +Z (the way a panel shines, and a pane's thickness) is
+    // `facing`.
+    let placed = |at: Vec3, facing: Vec3| {
+        let z = facing.normalize();
+        let x = Vec3::Y.cross(z).normalize();
+        let y = z.cross(x);
+        Transform::from_matrix(Mat4::translation(at) * Mat4::from_columns(x, y, z)).expect("a frame")
+    };
+    let softbox_at = middle - toward * (1.4 * radius) + right * (0.5 * radius) + Vec3::Y * (0.4 * radius);
+    let lamps = [
+        (
+            "Key",
+            LightSettings {
+                shape: LightShape::Area { width: 1.5, height: 1.0, disc: false, two_sided: false },
+                intensity: Intensity::Lumens(400.0),
+                ..LightSettings::default()
+            },
+            Transform::translation(vec3(0.9, 2.2, 1.1)) * Transform::rotation(Vec3::X, std::f32::consts::FRAC_PI_2),
+        ),
+        (
+            "Softbox",
+            LightSettings {
+                shape: LightShape::Area { width: radius, height: 0.6 * radius, disc: false, two_sided: false },
+                intensity: Intensity::Nits(8.0),
+                edge_falloff: 0.55,
+                fade: 0.3,
+                ..LightSettings::default()
+            },
+            placed(softbox_at, eye - softbox_at),
+        ),
+    ];
+    for (name, settings, transform) in lamps {
+        let before: Vec<_> = document.tree.iter().filter(|n| n.kind.light().is_some()).map(|n| n.id).collect();
+        bus.apply(&mut document, Command::AddLight { parent: None, name: name.into(), settings: Box::new(settings) }).expect("a lamp");
+        let id = document.tree.iter().find(|n| n.kind.light().is_some() && !before.contains(&n.id)).expect("the lamp just added").id;
+        bus.apply(&mut document, Command::set_transform(id, transform)).expect("the lamp placed");
+    }
+    let clear = Material { transmission_color: Spectrum { r: 0.8, g: 0.9, b: 1.0 }, ..MaterialType::Glass.defaults() };
+    let frosted = Material { specular_roughness: 0.3, ..MaterialType::Glass.defaults() };
+    let hanging = eye + (softbox_at - eye) * 0.75;
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Clear Pane", crate::bench::rounded_box(vec3(0.6 * radius, 0.4 * radius, 0.003), 0.002, 8), MaterialType::Glass, clear, placed(hanging, eye - hanging)),
+            (
+                "Frosted Pane",
+                crate::bench::rounded_box(vec3(0.32, 0.22, 0.003), 0.002, 8),
+                MaterialType::Glass,
+                frosted,
+                Transform::translation(vec3(0.55, 0.25, 1.35)) * Transform::rotation(Vec3::Y, 0.6),
+            ),
+        ],
+    );
+    document
+}
+
+/// `simple_product` on its modelled ground, a hollow ball of glass in front
+/// of the body - its outer and inner surfaces one mesh - holding a ball of
+/// orange liquid modelled two millimetres into the glass, which outranks
+/// it there.
+fn liquid_in_glass() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    let liquid = Material {
+        transmission_color: Spectrum { r: 0.9, g: 0.5, b: 0.2 },
+        transmission_depth: 0.2,
+        medium_priority: 1.0,
+        ..MaterialType::Liquid.defaults()
+    };
+    let at = Transform::translation(vec3(0.3, 0.151, 0.85));
+    add_parts(
+        &mut document,
+        &mut bus,
+        vec![
+            ("Glass Shell", hollow_ball(0.15, 0.14), MaterialType::GlassSolid, glass, at),
+            ("Liquid", ball(0.142), MaterialType::Liquid, liquid, at),
+        ],
+    );
     document
 }
 
