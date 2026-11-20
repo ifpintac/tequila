@@ -298,6 +298,13 @@ impl Texture {
         }
     }
 
+    /// The levels [`Texture::sample_alpha`] and [`Texture::alpha_at`] read,
+    /// or `None` for a picture without alpha: for a caller that samples them
+    /// itself (the graphics card's renderer).
+    pub fn alpha_pyramid(&self) -> Option<&MipPyramid> {
+        self.alpha()
+    }
+
     /// The alpha channel's own levels, or `None` for a picture without one.
     fn alpha(&self) -> Option<&MipPyramid> {
         if !self.pyramid.base().has_alpha() {

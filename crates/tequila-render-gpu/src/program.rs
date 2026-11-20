@@ -37,6 +37,9 @@ use tequila_texture::cycles::ops::{BlendMode, ColorModel, MapRangeKind, MappingK
 use tequila_texture::cycles::textures::GradientKind;
 use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::gradient::Interpolation;
+use tequila_texture::mip::Wrap;
+use tequila_texture::projection::{Axis, Mapping, Projection};
+use crate::textures::{Pictures, MAX_PYRAMIDS};
 
 /// The registers the card has: `program.wgsl`'s `prog_regs`.
 pub const REGISTERS: usize = 48;
@@ -84,6 +87,10 @@ pub const OP_GAMMA: u32 = 20;
 pub const OP_INVERT_COLOR: u32 = 21;
 pub const OP_CHECKER: u32 = 22;
 pub const OP_GRADIENT_TEXTURE: u32 = 23;
+/// An image texture, its alpha, a Mapping 2D's coordinates, or a normal
+/// map laid down by a projection (`textures.wgsl`): the settings word's
+/// [`TEXTURE_MODE`] says which.
+pub const OP_TEXTURE: u32 = 24;
 
 /// Every opcode by its WGSL name, for the test that holds the two sides to
 /// one numbering.
@@ -111,7 +118,75 @@ pub const OPCODES: &[(&str, u32)] = &[
     ("OP_INVERT_COLOR", OP_INVERT_COLOR),
     ("OP_CHECKER", OP_CHECKER),
     ("OP_GRADIENT_TEXTURE", OP_GRADIENT_TEXTURE),
+    ("OP_TEXTURE", OP_TEXTURE),
 ];
+
+/// `OP_TEXTURE`'s settings word: bits 0-1 what it gives back - a colour
+/// (`Instruction::Sample`), a number (`SampleAlpha`), the coordinates
+/// (`Project`) or a normal (`BumpSource::NormalMap` through a
+/// projection); bits 2-4 the projection, 5-6 its axis, 7-8 and 9-10 the
+/// wraps across and up; the flags; and from bit 18 the pyramid
+/// (`crate::textures`).
+pub const TEXTURE_MODE: u32 = 3;
+pub const TEXTURE_COLOUR: u32 = 0;
+pub const TEXTURE_ALPHA: u32 = 1;
+pub const TEXTURE_PROJECT: u32 = 2;
+pub const TEXTURE_NORMAL: u32 = 3;
+pub const TEXTURE_FLIP_U: u32 = 1 << 11;
+pub const TEXTURE_FLIP_V: u32 = 1 << 12;
+pub const TEXTURE_REAL_WORLD: u32 = 1 << 13;
+pub const TEXTURE_RIGID: u32 = 1 << 14;
+/// The mapping turns (`rotation != 0`).
+pub const TEXTURE_ROTATES: u32 = 1 << 15;
+/// At a place the graph worked out (`Instruction::Sample`'s `at`), its
+/// register the first operand.
+pub const TEXTURE_AT: u32 = 1 << 16;
+/// A colour to bring from linear sRGB into the rendering space
+/// (`shade.rs`'s `colour_of`).
+pub const TEXTURE_MANAGED: u32 = 1 << 17;
+pub const TEXTURE_PYRAMID_SHIFT: u32 = 18;
+
+/// `textures.wgsl`'s code for a projection.
+pub fn projection_code(projection: Projection) -> u32 {
+    match projection {
+        Projection::Uv => 0,
+        Projection::Planar => 1,
+        Projection::Cylindrical => 2,
+        Projection::Spherical => 3,
+        Projection::TriPlanar => 4,
+    }
+}
+
+fn axis_code(axis: Axis) -> u32 {
+    match axis {
+        Axis::X => 0,
+        Axis::Y => 1,
+        Axis::Z => 2,
+    }
+}
+
+fn wrap_code(wrap: Wrap) -> u32 {
+    match wrap {
+        Wrap::Repeat => 0,
+        Wrap::Clamp => 1,
+        Wrap::Mirror => 2,
+    }
+}
+
+/// The three constants a lookup through `mapping` reads, worked out as the
+/// processor works them out each time (`Mapping::finish_anisotropic`,
+/// `spin`, `tri_planar`), so the card has the processor's bits: the scale
+/// as repeats and the offset; the turn's cosine and sine and the pivot; the
+/// tri-planar blend's exponent.
+pub fn mapping_constants(mapping: &Mapping) -> [[f32; 4]; 3] {
+    let (su, sv) = mapping.repeats();
+    let (sin, cos) = (mapping.rotation * std::f32::consts::TAU).sin_cos();
+    [
+        [su, sv, mapping.offset.x, mapping.offset.y],
+        [cos, sin, mapping.pivot.x, mapping.pivot.y],
+        [mapping.blend_sharpness.max(1.0), 0.0, 0.0, 0.0],
+    ]
+}
 
 /// `OP_LEGACY`'s settings word: which of Tequila's own nodes.
 pub const LEGACY_MIX: u32 = 0;
@@ -216,6 +291,25 @@ pub mod settings {
     pub fn white_noise(dims: u8, colour: bool) -> u32 {
         dims as u32 | (colour as u32) << 4
     }
+    /// `OP_TEXTURE`'s: what it gives back, the mapping's projection, axis,
+    /// wraps and flags, whether it reads a place the graph worked out,
+    /// whether its colour is brought into the rendering space, and the
+    /// pyramid.
+    pub fn texture(mode: u32, mapping: &Mapping, at: bool, colour_managed: bool, pyramid: u32) -> u32 {
+        let flag = |on: bool, bit: u32| if on { bit } else { 0 };
+        mode | projection_code(mapping.projection) << 2
+            | axis_code(mapping.axis) << 5
+            | wrap_code(mapping.wrap_u) << 7
+            | wrap_code(mapping.wrap_v) << 9
+            | flag(mapping.flip_u, TEXTURE_FLIP_U)
+            | flag(mapping.flip_v, TEXTURE_FLIP_V)
+            | flag(mapping.real_world_units, TEXTURE_REAL_WORLD)
+            | flag(mapping.rigid, TEXTURE_RIGID)
+            | flag(mapping.rotation != 0.0, TEXTURE_ROTATES)
+            | flag(at, TEXTURE_AT)
+            | flag(colour_managed, TEXTURE_MANAGED)
+            | pyramid << TEXTURE_PYRAMID_SHIFT
+    }
     pub fn gradient(interpolation: Interpolation, stops: usize) -> u32 {
         let i = match interpolation {
             Interpolation::Linear => 0,
@@ -246,6 +340,10 @@ pub enum Refusal {
     Operands(usize),
     /// A register written twice, which the compiler never does.
     NotSsa,
+    /// The scene's pictures take more than the card's buffers hold.
+    PicturesTooLarge { bytes: u64, limit: u64 },
+    /// More pictures than an instruction can name.
+    TooManyPictures,
 }
 
 impl std::fmt::Display for Refusal {
@@ -259,6 +357,13 @@ impl std::fmt::Display for Refusal {
             Refusal::Registers(n) => write!(f, "it holds {n} values at once, more than the card's {REGISTERS}"),
             Refusal::Operands(n) => write!(f, "a node of it takes {n} operands, more than the card's {MAX_OPERANDS}"),
             Refusal::NotSsa => write!(f, "a register is written twice"),
+            Refusal::PicturesTooLarge { bytes, limit } => write!(
+                f,
+                "the scene's pictures take {} MB on the card, more than the {} MB it binds",
+                bytes.div_ceil(1 << 20),
+                limit / (1 << 20)
+            ),
+            Refusal::TooManyPictures => write!(f, "it reads a picture past the card's {MAX_PYRAMIDS}"),
         }
     }
 }
@@ -286,6 +391,9 @@ pub struct CardProgram {
     pub tangent: u32,
     /// The most registers either program holds at once.
     pub registers: usize,
+    /// [`PROGRAM_NORMAL_UV`] or [`PROGRAM_NORMAL_PROJECTED`] for a normal
+    /// map, its operand `bump_here`; 0 for none.
+    pub normal_map: u32,
 }
 
 impl CardProgram {
@@ -320,6 +428,11 @@ pub struct GpuProgram {
 
 pub const PROGRAM_RUNS: u32 = 1;
 pub const PROGRAM_BUMPS: u32 = 2;
+/// A normal map through the UVs: its texel in `bump_here`.
+pub const PROGRAM_NORMAL_UV: u32 = 4;
+/// A normal map laid down by a projection: the normal it gives, in the
+/// part's space, in `bump_here`.
+pub const PROGRAM_NORMAL_PROJECTED: u32 = 8;
 
 impl GpuProgram {
     pub const EMPTY: GpuProgram = GpuProgram {
@@ -376,7 +489,7 @@ impl ProgramTable {
                 bump_here: p.bump_here,
                 bump_height: p.bump_height,
                 tangent: p.tangent,
-                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 },
+                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 } | p.normal_map,
                 _pad: 0,
             });
         }
@@ -483,6 +596,7 @@ struct Op {
 struct Builder<'a> {
     constants: &'a mut Vec<[f32; 4]>,
     pooled: &'a mut HashMap<[u32; 4], u32>,
+    pictures: Pictures<'a>,
     held: HashMap<u16, Held>,
     ops: Vec<Op>,
     virtuals: usize,
@@ -576,9 +690,51 @@ impl Builder<'_> {
                     i += group.len();
                     continue;
                 }
-                Instruction::Project { .. } => return Err(Refusal::Instruction("a projection (Mapping 2D)")),
-                Instruction::Sample { .. } => return Err(Refusal::Instruction("an image texture")),
-                Instruction::SampleAlpha { .. } => return Err(Refusal::Instruction("an image's alpha")),
+                Instruction::Project { dst, mapping } => {
+                    // Stage 1's lowering, with no pictures, ran no
+                    // projections either.
+                    if matches!(self.pictures, Pictures::Unknown) {
+                        return Err(Refusal::Instruction("a projection (Mapping 2D)"));
+                    }
+                    let zero = self.constant([0.0; 4]);
+                    let (d, _) = self.texture(TEXTURE_PROJECT, mapping, zero, false, false, 0)?;
+                    self.define(*dst, Self::virtual_held(d, Ty::Vector, MODE_AS_IS))?;
+                }
+                Instruction::Sample { dst, texture, mapping, fallback, at } | Instruction::SampleAlpha { dst, texture, mapping, fallback, at } => {
+                    let alpha = matches!(instructions[i], Instruction::SampleAlpha { .. });
+                    let pictures = match self.pictures {
+                        Pictures::Unknown => return Err(Refusal::Instruction(if alpha { "an image's alpha" } else { "an image texture" })),
+                        Pictures::TooLarge { bytes, limit } => return Err(Refusal::PicturesTooLarge { bytes, limit }),
+                        Pictures::On(pictures) => pictures,
+                    };
+                    // A picture not loaded: the value the material had
+                    // (shade.rs, the placeholder rule).
+                    let Some(card) = pictures.texture(*texture) else {
+                        let (v, ty) = canonical(*fallback);
+                        let operand = self.constant(v);
+                        self.define(*dst, Held { operand, ty })?;
+                        i += 1;
+                        continue;
+                    };
+                    let pyramid = match (alpha, card.alpha) {
+                        (false, _) => card.colour,
+                        (true, Some(levels)) => levels,
+                        // No alpha: fully present.
+                        (true, None) => {
+                            let operand = self.constant([1.0; 4]);
+                            self.define(*dst, Held { operand, ty: Ty::Float })?;
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    let place = match at {
+                        Some(r) => self.held(*r)?.operand,
+                        None => self.constant([0.0; 4]),
+                    };
+                    let (mode, ty) = if alpha { (TEXTURE_ALPHA, Ty::Float) } else { (TEXTURE_COLOUR, Ty::Color) };
+                    let (d, _) = self.texture(mode, mapping, place, at.is_some(), !alpha && card.colour_managed, pyramid)?;
+                    self.define(*dst, Self::virtual_held(d, ty, MODE_AS_IS))?;
+                }
                 Instruction::Evaluate { .. } => return Err(Refusal::Instruction("a Tequila procedural")),
                 Instruction::Curvature { .. } => return Err(Refusal::Instruction("the curvature")),
                 Instruction::Occlusion { .. } => return Err(Refusal::Instruction("the baked occlusion")),
@@ -589,6 +745,17 @@ impl Builder<'_> {
             i += 1;
         }
         Ok(())
+    }
+
+    /// An `OP_TEXTURE` instruction: `place` its first operand, the
+    /// mapping's constants the next three.
+    fn texture(&mut self, mode: u32, mapping: &Mapping, place: Operand, at: bool, colour_managed: bool, pyramid: u32) -> Result<(usize, Option<usize>), Refusal> {
+        if pyramid as usize >= MAX_PYRAMIDS {
+            return Err(Refusal::TooManyPictures);
+        }
+        let [c1, c2, c3] = mapping_constants(mapping);
+        let operands = vec![place, self.constant(c1), self.constant(c2), self.constant(c3)];
+        self.push(OP_TEXTURE, settings::texture(mode, mapping, at, colour_managed, pyramid), operands, false)
     }
 
     /// One node, for the outputs read of it.
@@ -813,23 +980,57 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
     })
 }
 
-/// The parameter whose height bumps the surface, as `BumpSource::of` picks
-/// it: the Bump, else a Displacement with no detail to displace by.
-fn bump_param(program: &CompiledGraph) -> Option<Param> {
-    let driven = |wanted: Param| program.driven.iter().any(|(p, _)| *p == wanted);
-    if driven(Param::Bump) {
-        Some(Param::Bump)
-    } else if driven(Param::Displacement) && program.constants.displacement_detail <= 0.0 {
-        Some(Param::Displacement)
+/// How a material's surface is bumped, as `BumpSource::of` decides.
+enum Bump {
+    None,
+    /// By the height in this parameter.
+    Height(Param),
+    /// By a normal map through the UVs: its texel the Bump's register.
+    NormalUv,
+    /// By a normal map laid down by a projection of its own.
+    NormalProjected { pyramid: u32, mapping: Mapping },
+}
+
+/// How `program` bumps its surface, as `BumpSource::of` decides: the Bump's
+/// height, else a Displacement's with no detail to displace by; but a Bump
+/// a picture drives is a normal map where the picture is one, and bumps
+/// nothing where it is not loaded.
+fn bump_of(program: &CompiledGraph, pictures: Pictures) -> Bump {
+    let register = |wanted: Param| program.driven.iter().find(|(p, _)| *p == wanted).map(|(_, r)| *r);
+    if let Some(register) = register(Param::Bump) {
+        // The last instruction to write the register is what reaches the
+        // socket; none, and nothing does.
+        let Some(writer) = program.instructions.iter().rev().find(|i| i.destination() == register) else {
+            return Bump::None;
+        };
+        if let (Instruction::Sample { texture, mapping, .. }, Pictures::On(pictures)) = (writer, pictures) {
+            match pictures.texture(*texture) {
+                Some(card) if card.normal && mapping.projection != Projection::Uv => {
+                    return Bump::NormalProjected { pyramid: card.colour, mapping: **mapping };
+                }
+                Some(card) if card.normal => return Bump::NormalUv,
+                Some(_) => {}
+                None => return Bump::None,
+            }
+        }
+        Bump::Height(Param::Bump)
+    } else if register(Param::Displacement).is_some() && program.constants.displacement_detail <= 0.0 {
+        Bump::Height(Param::Displacement)
     } else {
-        None
+        Bump::None
     }
 }
 
 /// `program` lowered for the card: `Ok(None)` where the processor's `shade`
 /// takes its fast path and the material is its constants, `Err` where the
-/// card cannot run it.
+/// card cannot run it. With no pictures to read, as stage 1 lowered it: no
+/// image textures, no projections.
 pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
+    lower_with(program, Pictures::Unknown)
+}
+
+/// [`lower`], reading the scene's `pictures`.
+pub fn lower_with(program: &CompiledGraph, pictures: Pictures) -> Result<Option<CardProgram>, Refusal> {
     if program.layer.is_some() {
         return Err(Refusal::Layered);
     }
@@ -839,11 +1040,17 @@ pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
     if program.instructions.is_empty() || program.driven.is_empty() {
         return Ok(None);
     }
-    let bump = bump_param(program);
+    let shape = bump_of(program, pictures);
+    let bump = match shape {
+        Bump::Height(param) => Some(param),
+        _ => None,
+    };
     for (param, _) in &program.driven {
         let read = material_slot(*param).is_some()
             || *param == Param::Tangent
             || Some(*param) == bump
+            // A Bump that bumps nothing (its picture not loaded).
+            || *param == Param::Bump
             // A displacement with detail moved the geometry when the scene
             // was built, and shades no further.
             || (*param == Param::Displacement && program.constants.displacement_detail > 0.0);
@@ -856,7 +1063,7 @@ pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
 
     let mut constants = Vec::new();
     let mut pooled = HashMap::new();
-    let mut builder = Builder { constants: &mut constants, pooled: &mut pooled, held: HashMap::new(), ops: Vec::new(), virtuals: 0 };
+    let mut builder = Builder { constants: &mut constants, pooled: &mut pooled, pictures, held: HashMap::new(), ops: Vec::new(), virtuals: 0 };
     builder.lower(&main.instructions)?;
     let mut ends: Vec<Operand> = Vec::new();
     let mut writes: Vec<(u32, Operand)> = Vec::new();
@@ -868,6 +1075,12 @@ pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
             let operand = held.read_as(Ty::Float);
             here = Some(operand);
             ends.push(operand);
+        } else if *param == Param::Bump {
+            // A normal map's texel, as the colour it is.
+            if let Bump::NormalUv = shape {
+                here = Some(held.operand);
+                ends.push(held.operand);
+            }
         } else if *param == Param::Tangent {
             tangent = Some(held.operand);
             ends.push(held.operand);
@@ -876,6 +1089,15 @@ pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
             writes.push((offset | (colour as u32) << 8, operand));
             ends.push(operand);
         }
+    }
+    // A normal map laid down by a projection: the normal it gives, one more
+    // instruction after the program.
+    if let Bump::NormalProjected { pyramid, mapping } = &shape {
+        let zero = builder.constant([0.0; 4]);
+        let (d, _) = builder.texture(TEXTURE_NORMAL, mapping, zero, false, false, *pyramid)?;
+        let operand = Operand { source: Source::Virtual(d), mode: MODE_AS_IS };
+        here = Some(operand);
+        ends.push(operand);
     }
     let main_ops = std::mem::take(&mut builder.ops);
     let (main_words, main_registers, map) = encode(&main_ops, builder.virtuals, &ends)?;
@@ -888,12 +1110,17 @@ pub fn lower(program: &CompiledGraph) -> Result<Option<CardProgram>, Refusal> {
         bump_height: NONE,
         tangent: tangent.map_or(NONE, |o| resolve(o, &map)),
         registers: main_registers,
+        normal_map: match shape {
+            Bump::NormalUv => PROGRAM_NORMAL_UV,
+            Bump::NormalProjected { .. } => PROGRAM_NORMAL_PROJECTED,
+            _ => 0,
+        },
         ..CardProgram::default()
     };
 
     if let Some(param) = bump {
         let restricted = program.restricted_to(&[param]);
-        let mut builder = Builder { constants: &mut constants, pooled: &mut pooled, held: HashMap::new(), ops: Vec::new(), virtuals: 0 };
+        let mut builder = Builder { constants: &mut constants, pooled: &mut pooled, pictures, held: HashMap::new(), ops: Vec::new(), virtuals: 0 };
         builder.lower(&restricted.instructions)?;
         let register = restricted.driven.iter().find(|(p, _)| *p == param).map(|(_, r)| *r).expect("the bump is driven");
         let height = builder.held(register)?.read_as(Ty::Float);

@@ -4,7 +4,12 @@
 //! `program::lower`, the interpreter, the write-back into the material -
 //! against `shade.rs`'s `shade`; every preset of the standard library the
 //! card runs, at random shading points; and the bump, against
-//! `surface_bump.rs`'s `bumped_normal` on a part of its own.
+//! `surface_bump.rs`'s `bumped_normal` on a part of its own. Then programs
+//! that read pictures (R3, image textures): colour and number maps through
+//! the UVs and projections, alpha, a Mapping 2D a node reads, a picture at a
+//! place the graph worked out, one not loaded; and bumps from pictures -
+//! heights, normal maps through the UVs (with the mesh's tangents and
+//! without) and through projections - against `bumped_normal`.
 //!
 //! The bound: arithmetic to 1e-5 absolute and 1e-4 relative, noise and
 //! Voronoi to 1e-4; at most one item in a thousand may be outside it - a
@@ -26,6 +31,7 @@ use tequila_render_core::shade::{shade, Registers, TextureTable};
 use tequila_render_gpu::harness::Harness;
 use tequila_render_gpu::material::GpuMaterial;
 use tequila_render_gpu::program::{self, CardProgram, ProgramTable};
+use tequila_render_gpu::textures::{CardPictures, Pictures};
 use tequila_texture::cycles::noise::FractalKind;
 use tequila_texture::cycles::ops::{BlendMode, ColorModel, MapRangeKind, MappingKind, MathOp, VectorMathOp};
 use tequila_texture::cycles::textures::GradientKind;
@@ -36,8 +42,8 @@ use tequila_texture::projection::{PointWorld, RayKind, SurfacePoint};
 /// here, the Tangent drawn (world space), the shading normal.
 const OUT: usize = 49;
 /// Words an item takes: the program's header, the point, the surface, the
-/// material it is written over.
-const IN: usize = 123;
+/// material it is written over, the point's footprints, the mesh's tangent.
+const IN: usize = 131;
 
 /// Everything the card needs of a point beyond the program.
 #[derive(Clone, Copy)]
@@ -47,6 +53,9 @@ struct Surface {
     footprint: f32,
     derivatives: Option<(Vec3, Vec3)>,
     transform: Transform,
+    /// The mesh's own tangent here and its handedness
+    /// (`SceneSnapshot::tangent_frame`).
+    tangent: Option<(Vec3, f32)>,
 }
 
 /// One item: a program, where it runs, and what the processor makes of it.
@@ -98,6 +107,10 @@ fn kernel_body() -> String {
     for (var k = 0u; k < 40u; k++) {{
         b[k] = inf(83u + k);
     }}
+    pt.footprint = inf(123u);
+    pt.uv_footprint = vec2<f32>(inf(124u), inf(125u));
+    pt.has_uv_footprint = inp(126u);
+    s.mesh_tangent = vec4<f32>(inf(127u), inf(128u), inf(129u), inf(130u));
     let r = prog_shade(p, pt, prog_material_from(b, GpuMaterial()), s);
     let f = prog_material_floats(r.material);
     for (var k = 0u; k < 40u; k++) {{
@@ -160,10 +173,10 @@ fn bump_param(program: &CompiledGraph) -> Option<Param> {
 
 /// What the processor makes of a case: the material, the height here, the
 /// Tangent drawn, the normal.
-fn processor(case: &Case) -> [f32; OUT] {
+fn processor(case: &Case, textures: &TextureTable) -> [f32; OUT] {
     let mut registers = Registers::new();
     let mut scratch = Material::default();
-    let material = shade(&case.program, &TextureTable::new(), &case.point, &mut registers, &mut scratch).clone();
+    let material = shade(&case.program, textures, &case.point, &mut registers, &mut scratch).clone();
     let mut out = [0.0f32; OUT];
     out[..40].copy_from_slice(&floats(&GpuMaterial::from_material(&material)));
     let register = |p: Param| case.program.driven.iter().find(|(q, _)| *q == p).map(|(_, r)| *r);
@@ -188,7 +201,7 @@ fn rows(m: &Mat4) -> Vec<f32> {
 
 /// Run every case on the card, its program lowered (`None` for a case the
 /// card refuses, which runs as its constants).
-fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram]) -> Vec<[f32; OUT]> {
+fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram], pictures: &CardPictures) -> Vec<[f32; OUT]> {
     let table = ProgramTable::new(&lowered.iter().cloned().map(Some).collect::<Vec<_>>());
     let mut inputs: Vec<u32> = Vec::with_capacity(cases.len() * IN);
     for (case, header) in cases.iter().zip(&table.headers) {
@@ -227,7 +240,15 @@ fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram]) -> Vec<[f32;
         f.extend(rows(&s.transform.matrix));
         f.extend(rows(&s.transform.inverse));
         f.extend_from_slice(&floats(&GpuMaterial::from_material(&case.program.constants)));
+        let (uvf, has) = match p.uv_footprint {
+            Some(f) => (f, 1u32),
+            None => ([0.0, 0.0], 0),
+        };
+        f.extend_from_slice(&[p.footprint, uvf[0], uvf[1]]);
         inputs.extend(f.iter().map(|v| v.to_bits()));
+        inputs.push(has);
+        let t = s.tangent.map_or([0.0; 4], |(t, sign)| [t.x, t.y, t.z, sign]);
+        inputs.extend(t.iter().map(|v| v.to_bits()));
     }
     assert_eq!(inputs.len(), cases.len() * IN);
     let words = harness.run_wgsl_with(
@@ -236,7 +257,7 @@ fn card(harness: &Harness, cases: &[Case], lowered: &[CardProgram]) -> Vec<[f32;
         &inputs,
         IN,
         OUT,
-        &[(11, &table.words), (12, bytemuck::cast_slice(&table.constants))],
+        &[(11, &table.words), (12, bytemuck::cast_slice(&table.constants)), (16, &pictures.texels), (17, &pictures.header)],
     );
     words.chunks(OUT).map(|c| std::array::from_fn(|k| f32::from_bits(c[k]))).collect()
 }
@@ -264,20 +285,37 @@ fn close(card: f32, processor: f32, bound: Bound) -> bool {
 /// Every case on both sides, each word within `bound` but for at most one
 /// item in a thousand. Returns how many were outside it.
 fn compare(harness: &Harness, name: &str, cases: &[Case], bound: Bound, normal_bound: Option<Bound>) -> usize {
+    compare_in(harness, name, cases, bound, normal_bound, None)
+}
+
+/// [`compare`], the programs reading `pictures` where given.
+fn compare_in(harness: &Harness, name: &str, cases: &[Case], bound: Bound, normal_bound: Option<Bound>, pictures: Option<&Pics>) -> usize {
     let lowered: Vec<CardProgram> = cases
         .iter()
-        .map(|c| program::lower(&c.program).unwrap_or_else(|why| panic!("{name}: {} is refused: {why}", c.label)).expect("a program to run"))
+        .map(|c| {
+            let lowered = match pictures {
+                Some(p) => program::lower_with(&c.program, Pictures::On(&p.card)),
+                None => program::lower(&c.program),
+            };
+            lowered.unwrap_or_else(|why| panic!("{name}: {} is refused: {why}", c.label)).expect("a program to run")
+        })
         .collect();
-    let on_card = card(harness, cases, &lowered);
+    let none = Pics::none();
+    let pictures = pictures.unwrap_or(&none);
+    let on_card = card(harness, cases, &lowered, &pictures.card);
     let mut outside = Vec::new();
     for (i, case) in cases.iter().enumerate() {
-        let want = processor(case);
+        let want = processor(case, &pictures.table);
         let got = on_card[i];
         if i < 4 && std::env::var("TEQUILA_GRAPH_DEBUG").is_ok() {
             eprintln!("  #{i} {}: here {} / {}, heights {:?} / {:?}, normal {:?} / {:?}", case.label, got[40], want[40], &got[47..49], &want[47..49], &got[44..47], &want[44..47]);
         }
         let mut worst: Option<(usize, f32, f32)> = None;
         for k in 0..OUT {
+            // A normal map has no height here to compare.
+            if k == 40 && case.normal.is_some() && case.heights.is_none() {
+                continue;
+            }
             let b = if k >= 47 {
                 match case.heights {
                     Some(_) => Bound { absolute: 2e-9, relative: 1e-4 },
@@ -407,7 +445,7 @@ fn random_point(rng: &mut Pcg32, reach: f32) -> SurfacePoint {
 }
 
 fn flat_surface(point: &SurfacePoint) -> Surface {
-    Surface { normal: point.world.normal, geometric: point.world.true_normal, footprint: point.footprint, derivatives: None, transform: Transform::IDENTITY }
+    Surface { normal: point.world.normal, geometric: point.world.true_normal, footprint: point.footprint, derivatives: None, transform: Transform::IDENTITY, tangent: None }
 }
 
 const FLOAT_PARAMS: [Param; 4] = [Param::SpecularRoughness, Param::CoatRoughness, Param::FuzzRoughness, Param::BaseWeight];
@@ -792,11 +830,21 @@ fn the_librarys_presets_are_the_processors() {
 /// A triangle of a part placed turned, scaled and moved, with UVs, wearing
 /// `program`.
 fn bump_scene(program: &CompiledGraph, transform: Transform, uvs: bool) -> tequila_render_core::scene::SceneSnapshot {
+    bump_scene_with(program, transform, uvs, None, Arc::new(TextureTable::new()))
+}
+
+/// [`bump_scene`] with the mesh's own tangents of handedness `tangents`
+/// where given, and `textures`.
+fn bump_scene_with(program: &CompiledGraph, transform: Transform, uvs: bool, tangents: Option<f32>, textures: Arc<TextureTable>) -> tequila_render_core::scene::SceneSnapshot {
     use tequila_render_core::scene::{Instance, Mesh, SceneSnapshot};
     let mut mesh = Mesh::new(vec![vec3(0.0, 0.0, 0.0), vec3(0.3, 0.02, 0.0), vec3(0.05, 0.25, 0.04)], vec![0, 1, 2])
         .with_normals(vec![vec3(0.1, 0.0, 1.0).normalize(), vec3(0.0, 0.1, 1.0).normalize(), vec3(-0.1, -0.1, 1.0).normalize()]);
     if uvs {
         mesh = mesh.with_uvs(vec![vec2(0.1, 0.9), vec2(0.8, 0.85), vec2(0.2, 0.1)]);
+    }
+    if let Some(w) = tangents {
+        let t = |x: f32, y: f32, z: f32| tequila_core::math::Vec4 { x, y, z, w };
+        mesh = mesh.with_tangents(vec![t(1.0, 0.1, 0.0), t(0.9, 0.3, 0.1), t(1.0, -0.2, 0.05)]);
     }
     SceneSnapshot::new(
         vec![Arc::new(mesh)],
@@ -804,7 +852,7 @@ fn bump_scene(program: &CompiledGraph, transform: Transform, uvs: bool) -> tequi
         vec![Material::default()],
         Arc::new(tequila_render_core::environment::Environment::uniform(Spectrum::ONE)),
     )
-    .with_programs(vec![Some(Arc::new(program.clone()))], Arc::new(TextureTable::new()))
+    .with_programs(vec![Some(Arc::new(program.clone()))], textures)
 }
 
 /// The bumped normal of every bumping preset the card runs, at random points
@@ -852,7 +900,7 @@ fn bumped_normals_are_the_processors() {
             shade(program, &scene.textures, &point, &mut main, &mut scratch);
             let source = scene.bump(MaterialId(0)).expect("the preset bumps");
             let bumped = tequila_render_core::surface_bump::bumped_normal(source, &scene, &hit, &point, shading, geometric, &main, &mut Registers::new(), &mut Material::default());
-            let surface = Surface { normal: shading, geometric, footprint: point.footprint, derivatives: scene.uv_derivatives(&hit), transform };
+            let surface = Surface { normal: shading, geometric, footprint: point.footprint, derivatives: scene.uv_derivatives(&hit), transform, tangent: scene.tangent_frame(&hit) };
             // The heights bumped_normal differences, worked out as it works
             // them out.
             let n = shading;
@@ -894,4 +942,226 @@ fn bumped_normals_are_the_processors() {
     }
     eprintln!("bumped normals: {} points, {outside} outside the bound", cases.len());
     within_budget("bumped normals", outside, cases.len());
+}
+
+// ---- Pictures ------------------------------------------------------------
+
+/// Pictures programs read: the parity set's (`tequila_scene::parity`), in
+/// a table as a snapshot holds them, and packed for the card as
+/// `CardPictures::of` packs a scene's.
+struct Pics {
+    table: TextureTable,
+    card: CardPictures,
+}
+
+impl Pics {
+    fn none() -> Pics {
+        let mut card = CardPictures::default();
+        card.finish();
+        Pics { table: TextureTable::new(), card }
+    }
+
+    /// The parity set's pictures, packed for what `programs` read.
+    fn for_programs(programs: &[CompiledGraph]) -> Pics {
+        let mut table = TextureTable::new();
+        for (id, texture) in tequila_scene::parity::parity_pictures() {
+            table.insert(id, Arc::new(texture));
+        }
+        let table = Arc::new(table);
+        let scene = tequila_render_core::scene::SceneSnapshot::new(
+            Vec::new(),
+            Vec::new(),
+            vec![Material::default(); programs.len()],
+            Arc::new(tequila_render_core::environment::Environment::uniform(Spectrum::ONE)),
+        )
+        .with_programs(programs.iter().map(|p| Some(Arc::new(p.clone()))).collect(), table.clone());
+        Pics { table: (*table).clone(), card: CardPictures::of(&scene) }
+    }
+}
+
+/// A mapping for a picture: through the UVs, planar or tri-planar, its
+/// controls at random.
+fn picture_mapping(rng: &mut Pcg32) -> tequila_texture::projection::Mapping {
+    use tequila_texture::mip::Wrap;
+    use tequila_texture::projection::{Axis, Mapping, Projection};
+    let projection = [Projection::Uv, Projection::Uv, Projection::Planar, Projection::TriPlanar][(rng.next_u32() % 4) as usize];
+    let wrap = |rng: &mut Pcg32| [Wrap::Repeat, Wrap::Clamp, Wrap::Mirror][(rng.next_u32() % 3) as usize];
+    let mut m = Mapping { projection, axis: [Axis::X, Axis::Y, Axis::Z][(rng.next_u32() % 3) as usize], ..Mapping::default() };
+    m.wrap_u = wrap(rng);
+    m.wrap_v = if rng.next_f32() < 0.5 { m.wrap_u } else { wrap(rng) };
+    m.scale = vec3(uniform(rng, 0.3, 8.0), uniform(rng, 0.3, 8.0), 1.0);
+    m.offset = vec2(uniform(rng, -1.0, 1.0), uniform(rng, -1.0, 1.0));
+    if rng.next_f32() < 0.5 {
+        m.rotation = uniform(rng, -0.5, 0.5);
+        m.pivot = vec2(uniform(rng, -1.0, 1.0), uniform(rng, -1.0, 1.0));
+        m.rigid = rng.next_f32() < 0.5;
+    }
+    if projection != Projection::Uv && rng.next_f32() < 0.5 {
+        m.real_world_units = true;
+        m.scale = vec3(uniform(rng, 0.05, 1.0), uniform(rng, 0.05, 1.0), 1.0);
+    }
+    m
+}
+
+/// A program reading pictures every way a graph reads one: a colour map
+/// into the base colour, a picture read as a number into the roughness, an
+/// alpha into the coat, a picture through a mapping into the fuzz colour,
+/// one at the place a Mapping node made of the UVs into the coat colour, a
+/// Mapping 2D's coordinates read by a checker into the specular colour, and
+/// a picture not loaded into the base weight.
+fn picture_program(rng: &mut Pcg32) -> (CompiledGraph, String) {
+    use tequila_materials::graph::{MaterialGraph, Node, Socket, TextureId};
+    let mut graph = MaterialGraph::from_material(Material::default());
+    let output = graph.output();
+    let picture = |rng: &mut Pcg32| TextureId(1 + rng.next_u32() % 6);
+    let mut label = String::new();
+    let add = |graph: &mut MaterialGraph, kind: NodeKind, mapping: Option<tequila_texture::projection::Mapping>, param: Param, label: &mut String| {
+        let image = graph.add_node(Node::new(kind));
+        if let Some(mapping) = mapping {
+            let m = graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
+            graph.connect(m, image, Socket::Input(0));
+            label.push_str(&format!("{param:?} through {:?}; ", mapping.projection));
+        }
+        graph.connect(image, output, Socket::Param(param));
+    };
+    let colour = picture(rng);
+    let m = (rng.next_f32() < 0.7).then(|| picture_mapping(rng));
+    add(&mut graph, NodeKind::ImageTexture { texture: colour, fallback: Value::Color(Spectrum::splat(0.5)) }, m, Param::BaseColor, &mut label);
+    let number = picture(rng);
+    let m = (rng.next_f32() < 0.5).then(|| picture_mapping(rng));
+    add(&mut graph, NodeKind::ImageTexture { texture: number, fallback: Value::Float(0.4) }, m, Param::SpecularRoughness, &mut label);
+    let m = (rng.next_f32() < 0.5).then(|| picture_mapping(rng));
+    add(&mut graph, NodeKind::ImageAlpha { texture: TextureId(if rng.next_f32() < 0.7 { 4 } else { 1 }), fallback: Value::Float(0.3) }, m, Param::CoatWeight, &mut label);
+    let m = Some(picture_mapping(rng));
+    add(&mut graph, NodeKind::ImageTexture { texture: picture(rng), fallback: Value::Color(Spectrum::splat(0.2)) }, m, Param::FuzzColor, &mut label);
+    add(&mut graph, NodeKind::ImageTexture { texture: TextureId(99), fallback: Value::Float(0.65) }, None, Param::BaseWeight, &mut label);
+    // At a place a Mapping node made of the UVs.
+    let coordinates = graph.add_node(Node::new(NodeKind::Node(ShaderNode::TextureCoordinate)));
+    let mut scale = Node::new(NodeKind::Node(ShaderNode::Mapping { kind: MappingKind::Point }));
+    scale.literals.insert(Socket::Input(3), Value::Vector(vec3(uniform(rng, 0.5, 6.0), uniform(rng, 0.5, 6.0), 1.0)));
+    scale.literals.insert(Socket::Input(1), Value::Vector(vec3(uniform(rng, -1.0, 1.0), uniform(rng, -1.0, 1.0), 0.0)));
+    let scale = graph.add_node(scale);
+    let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: picture(rng), fallback: Value::Color(Spectrum::splat(0.1)) }));
+    graph.connect_output(coordinates, 2, scale, Socket::Input(0));
+    graph.connect(scale, image, Socket::Input(0));
+    graph.connect(image, output, Socket::Param(Param::CoatColor));
+    // A Mapping 2D's coordinates, read by a checker.
+    let m = graph.add_node(Node::new(NodeKind::Mapping2d { mapping: picture_mapping(rng) }));
+    let checker = graph.add_node(Node::new(NodeKind::Node(ShaderNode::Checker)));
+    graph.connect(m, checker, Socket::Input(0));
+    graph.connect(checker, output, Socket::Param(Param::SpecularColor));
+    (graph.compile().expect("the program compiles"), format!("colour {colour:?}, number {number:?}; {label}"))
+}
+
+/// Programs that read pictures every way, at random shading points with
+/// and without a footprint in UV, against `shade`.
+#[test]
+fn programs_reading_pictures_are_the_processors() {
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(31, 1);
+    let mut cases = Vec::new();
+    for _ in 0..400 {
+        let (program, label) = picture_program(&mut rng);
+        for _ in 0..25 {
+            let mut point = random_point(&mut rng, 1.0);
+            point.uv = vec2(uniform(&mut rng, -1.0, 2.0), uniform(&mut rng, -1.0, 2.0));
+            point.footprint = uniform(&mut rng, 1e-5, 0.05);
+            if rng.next_f32() < 0.7 {
+                point.uv_footprint = Some([uniform(&mut rng, 1e-6, 0.1), uniform(&mut rng, 1e-6, 0.1)]);
+            }
+            cases.push(Case { program: program.clone(), surface: flat_surface(&point), point, normal: None, heights: None, label: label.clone() });
+        }
+    }
+    let programs: Vec<CompiledGraph> = cases.iter().map(|c| c.program.clone()).collect();
+    let pictures = Pics::for_programs(&programs);
+    let mut outside = 0;
+    for (i, batch) in cases.chunks(4096).enumerate() {
+        outside += compare_in(&h, &format!("programs reading pictures, batch {i}"), batch, ARITHMETIC, None, Some(&pictures));
+    }
+    eprintln!("programs reading pictures: {} points, {outside} outside the bound", cases.len());
+    within_budget("programs reading pictures", outside, cases.len());
+}
+
+/// Bumps from pictures on a placed triangle, against `bumped_normal`: a
+/// height map through a Bump node, a normal map through the UVs with the
+/// mesh's tangents (either hand) and without, and a normal map laid down by
+/// a projection.
+#[test]
+fn bumps_from_pictures_are_the_processors() {
+    use tequila_materials::graph::{MaterialGraph, Node, Socket, TextureId};
+    use tequila_render_core::intersect::Hit;
+    use tequila_texture::projection::{Mapping, Projection};
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(37, 1);
+    let mut cases = Vec::new();
+    let mut table = TextureTable::new();
+    for (id, texture) in tequila_scene::parity::parity_pictures() {
+        table.insert(id, Arc::new(texture));
+    }
+    let table = Arc::new(table);
+    for k in 0..3000 {
+        let kind = k % 4;
+        let mut graph = MaterialGraph::from_material(Material::default());
+        let output = graph.output();
+        let image = graph.add_node(Node::new(NodeKind::ImageTexture { texture: TextureId(if kind == 0 { 5 } else { 6 }), fallback: Value::Float(0.0) }));
+        let mapping = match kind {
+            3 => Some(Mapping { projection: if rng.next_f32() < 0.5 { Projection::TriPlanar } else { Projection::Planar }, ..picture_mapping(&mut rng) }),
+            _ if rng.next_f32() < 0.6 => Some(Mapping { projection: Projection::Uv, ..picture_mapping(&mut rng) }),
+            _ => None,
+        };
+        if let Some(mapping) = mapping {
+            let m = graph.add_node(Node::new(NodeKind::Mapping2d { mapping }));
+            graph.connect(m, image, Socket::Input(0));
+        }
+        if kind == 0 {
+            let bump = graph.add_node(Node::new(NodeKind::Bump { depth: uniform(&mut rng, 0.001, 0.02) }));
+            graph.connect(image, bump, Socket::Input(0));
+            graph.connect(bump, output, Socket::Param(Param::Bump));
+        } else {
+            graph.connect(image, output, Socket::Param(Param::Bump));
+        }
+        let program = graph.compile().expect("compiles");
+        let angle = uniform(&mut rng, -3.0, 3.0);
+        let axis = unit(&mut rng);
+        let scale = if k % 3 == 0 { 1.0 } else { uniform(&mut rng, 0.2, 3.0) };
+        let matrix = Mat4::translation(vec3(wide(&mut rng) * 0.01, 0.1, -0.2)) * Mat4::rotation(axis, angle) * Mat4::scale(Vec3::splat(scale));
+        let transform = Transform::from_matrix(matrix).expect("invertible");
+        let tangents = match kind {
+            1 => Some(1.0),
+            2 => Some(-1.0),
+            _ => None,
+        };
+        let scene = bump_scene_with(&program, transform, kind != 3 || rng.next_f32() < 0.5, tangents, table.clone());
+        let mesh = scene.mesh(MeshId(0));
+        let (u, v) = (rng.next_f32(), rng.next_f32());
+        let (u, v) = if u + v > 1.0 { (1.0 - u, 1.0 - v) } else { (u, v) };
+        let w = 1.0 - u - v;
+        let p = &mesh.positions;
+        let position = transform.point(p[0] * w + p[1] * u + p[2] * v);
+        let geometric = transform.normal(mesh.geometric_normal_scaled(0)).normalize();
+        let n = &mesh.normals;
+        let shading = transform.normal(n[0] * w + n[1] * u + n[2] * v).normalize();
+        let uv = if mesh.uvs.is_empty() { vec2(u, v) } else { mesh.uvs[0] * w + mesh.uvs[1] * u + mesh.uvs[2] * v };
+        let distance = uniform(&mut rng, 0.05, 3.0);
+        let hit = Hit { t: distance, position, magnitude: 0.0, geometric_normal: geometric, shading_normal: shading, uv, instance: InstanceId(0), material: MaterialId(0), primitive: 0 };
+        let direction = (-geometric + unit(&mut rng) * 0.5).normalize();
+        let direction = if direction.dot(geometric) >= 0.0 { -geometric } else { direction };
+        let point = scene.shading_point_along(&hit, shading, tequila_render_core::settings::DEFAULT_PIXEL_SPREAD, direction);
+        let mut main = Registers::new();
+        let mut scratch = Material::default();
+        shade(&program, &scene.textures, &point, &mut main, &mut scratch);
+        let source = scene.bump(MaterialId(0)).expect("the material bumps");
+        let bumped = tequila_render_core::surface_bump::bumped_normal(source, &scene, &hit, &point, shading, geometric, &main, &mut Registers::new(), &mut Material::default());
+        let surface = Surface { normal: shading, geometric, footprint: point.footprint, derivatives: scene.uv_derivatives(&hit), transform, tangent: scene.tangent_frame(&hit) };
+        let label = format!("{} {:?}", ["height", "normal map, tangents", "normal map, mirrored tangents", "projected normal map"][kind], mapping.map(|m| m.projection));
+        cases.push(Case { label, program, point, surface, normal: Some(bumped), heights: None });
+    }
+    let programs: Vec<CompiledGraph> = cases.iter().map(|c| c.program.clone()).collect();
+    let pictures = Pics::for_programs(&programs);
+    let mut outside = 0;
+    for (i, batch) in cases.chunks(4096).enumerate() {
+        outside += compare_in(&h, &format!("bumps from pictures, batch {i}"), batch, ARITHMETIC, Some(Bound { absolute: 1e-3, relative: 0.0 }), Some(&pictures));
+    }
+    eprintln!("bumps from pictures: {} points, {outside} outside the bound", cases.len());
+    within_budget("bumps from pictures", outside, cases.len());
 }

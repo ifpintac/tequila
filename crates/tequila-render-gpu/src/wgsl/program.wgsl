@@ -5,6 +5,7 @@
 // write-back into the material.
 //#include nodes
 //#include openpbr
+//#include textures
 
 // Every material's instructions and write-back pairs, their constants, and
 // where each material's are (program.rs's GpuProgram). A kernel that runs
@@ -29,6 +30,11 @@ struct GpuProgram {
 
 const PROGRAM_RUNS: u32 = 1u;
 const PROGRAM_BUMPS: u32 = 2u;
+// A normal map through the UVs, its texel in the register `bump_here`
+// names; one laid down by a projection, the normal it gives in the part's
+// space there (OP_TEXTURE's normal mode).
+const PROGRAM_NORMAL_UV: u32 = 4u;
+const PROGRAM_NORMAL_PROJECTED: u32 = 8u;
 const PROGRAM_NONE: u32 = 0xFFFFFFFFu;
 
 const OP_INPUT: u32 = 1u;
@@ -54,6 +60,7 @@ const OP_GAMMA: u32 = 20u;
 const OP_INVERT_COLOR: u32 = 21u;
 const OP_CHECKER: u32 = 22u;
 const OP_GRADIENT_TEXTURE: u32 = 23u;
+const OP_TEXTURE: u32 = 24u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -81,6 +88,12 @@ struct ProgPoint {
     generated: vec3<f32>,
     object_location: vec3<f32>,
     object_color: vec3<f32>,
+    // The footprint in the part's own space, and in UV where the surface
+    // has UVs to measure it by (SurfacePoint::uv_footprint): what a picture
+    // picks its level by.
+    footprint: f32,
+    uv_footprint: vec2<f32>,
+    has_uv_footprint: u32,
 };
 
 // The registers, and the program's first constant.
@@ -285,6 +298,10 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
                 let fac = cy_gradient_texture(settings, a[0].xyz);
                 out = vec4<f32>(vec3<f32>(fac), fac);
             }
+            case 24u: {
+                let tp = TexPoint(pt.object, pt.object_normal, pt.uv, pt.footprint, pt.scale, pt.uv_footprint, pt.has_uv_footprint != 0u);
+                out = tex_instruction(settings, a[0], a[1], a[2], a[3], tp);
+            }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;
@@ -396,6 +413,9 @@ struct ProgSurface {
     dpdv: vec3<f32>,
     object_to_world: array<vec4<f32>, 3>,
     world_to_object: array<vec4<f32>, 3>,
+    // The mesh's own tangent (world space) and its handedness, nought for
+    // a mesh with none: what a normal map through the UVs is decoded by.
+    mesh_tangent: vec4<f32>,
 };
 
 // What a material's program makes of a point: its parameters, the shading
@@ -470,6 +490,23 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
         }
     }
     shaded.heights = heights;
+    if ((p.flags & (PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) {
+        let v = prog_value(p.bump_here);
+        var bumped = n;
+        if ((p.flags & PROGRAM_NORMAL_UV) != 0u) {
+            bumped = tex_uv_normal(v.xyz, n, s.has_derivatives, s.dpdu, s.dpdv, s.mesh_tangent);
+        } else if (v.w != 0.0) {
+            // Transform::normal: through the inverse's transpose.
+            let w = s.world_to_object;
+            let world = cy_exact3(cy_exact3(w[0].xyz * v.x) + cy_exact3(w[1].xyz * v.y)) + cy_exact3(w[2].xyz * v.z);
+            let unit = tex_normalized(world);
+            bumped = select(n, unit.xyz, unit.w != 0.0);
+        }
+        if (tex_dot(bumped, s.geometric) <= 1e-4) {
+            bumped = n;
+        }
+        shaded.normal = bumped;
+    }
     if (runs == 3u) {
         let along_t = (heights.x - shaded.here) / step;
         let along_b = (heights.y - shaded.here) / step;

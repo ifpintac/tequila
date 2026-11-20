@@ -169,6 +169,13 @@ impl MeshCache {
         MeshCache::default()
     }
 
+    /// `texture` as what `id` decodes to, for a picture made rather than
+    /// read from a file: the parity set's (`crate::parity`), generated so
+    /// no image file is shipped.
+    pub fn insert_texture(&mut self, id: TextureId, texture: Arc<Texture>) {
+        self.textures.insert(id, Some(texture));
+    }
+
     /// Decode a texture, or hand back what was decoded before.
     ///
     /// A failure is remembered as a failure, so a missing file is attempted

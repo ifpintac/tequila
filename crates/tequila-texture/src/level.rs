@@ -154,6 +154,19 @@ impl Level {
         self.width * self.height * self.stored * self.encoding().bytes()
     }
 
+    /// The values as kept, `stored_channels` a texel, row by row: for a
+    /// caller that hands a level on whole and reads it back itself (the
+    /// graphics card's renderer, which samples these very bytes).
+    pub fn raw(&self) -> RawTexels<'_> {
+        match &self.texels {
+            Texels::Srgb8(v, _) => RawTexels::Srgb8(v),
+            Texels::Unorm8(v) => RawTexels::Unorm8(v),
+            Texels::Unorm16(v) => RawTexels::Unorm16(v),
+            Texels::Half(v) => RawTexels::Half(v),
+            Texels::Float(v) => RawTexels::Float(v),
+        }
+    }
+
     /// Texel at `(x, y)`, clamped to the level, as linear RGB: what
     /// [`Image::texel`] gave when levels were images.
     #[inline]
@@ -225,6 +238,24 @@ impl Level {
             _ => self.colour(at),
         }
     }
+}
+
+/// A level's values as [`Level::raw`] hands them on, in its [`Encoding`]:
+/// an sRGB byte decodes through [`srgb_decode_table`], the alpha after it
+/// straight; the rest as [`Level::texel`] reads them.
+#[derive(Clone, Copy, Debug)]
+pub enum RawTexels<'a> {
+    Srgb8(&'a [u8]),
+    Unorm8(&'a [u8]),
+    Unorm16(&'a [u16]),
+    Half(&'a [f16]),
+    Float(&'a [f32]),
+}
+
+/// Each byte's linear value on the sRGB curve, the table an
+/// [`Encoding::Srgb8`] level decodes its colour through.
+pub fn srgb_decode_table() -> &'static [f32; 256] {
+    &srgb().decode
 }
 
 /// The largest finite half float.

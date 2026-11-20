@@ -977,7 +977,7 @@ fn uv_derivatives(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>) -> Derivatives
 
 // The mesh's own tangent at a point of the part's space, in world space
 // (SceneSnapshot::tangent_frame, its barycentrics worked out again from
-// the point); w 0 where the mesh has none.
+// the point), and its handedness, -1 or 1; w 0 where the mesh has none.
 fn mesh_tangent(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>, object: vec3<f32>) -> vec4<f32> {
     if (mesh.tangent_base == NO_DATA) {
         return vec4<f32>(0.0);
@@ -1002,7 +1002,8 @@ fn mesh_tangent(inst: GpuInstance, mesh: GpuMesh, c: vec3<u32>, object: vec3<f32
     let t1 = scene_tangents[mesh.tangent_base + c.y];
     let t2 = scene_tangents[mesh.tangent_base + c.z];
     let t = vec3<f32>(u * t0.x + v * t1.x + w * t2.x, u * t0.y + v * t1.y + w * t2.y, u * t0.z + v * t1.z + w * t2.z);
-    return vec4<f32>(rows_vector(inst.object_to_world, t), 1.0);
+    let hand = u * t0.w + v * t1.w + w * t2.w;
+    return vec4<f32>(rows_vector(inst.object_to_world, t), select(1.0, -1.0, hand < 0.0));
 }
 
 // Onb::from_normal_tangent: the tangent made square to the normal, or the
@@ -1108,13 +1109,28 @@ fn material_at(hit: RayIntersection, surf: Surface, direction: vec3<f32>, ray: u
     pt.object_location = vec3<f32>(inst.object_to_world[0].w, inst.object_to_world[1].w, inst.object_to_world[2].w);
     pt.object_color = inst.object_color.xyz;
     // No ray differentials: the footprint widens with the distance alone.
-    s.footprint = (hit.t * frame.pixel_spread) * inst.inv_length_scale;
+    let world = hit.t * frame.pixel_spread;
+    s.footprint = world * inst.inv_length_scale;
+    pt.footprint = s.footprint;
     let derivatives = uv_derivatives(inst, mesh, c);
+    // The same footprint in UV: its length over how far the surface moves
+    // per unit of u, and of v.
+    if (derivatives.ok) {
+        let lu = cy_sqrt(cy_dot3(derivatives.dpdu, derivatives.dpdu));
+        let lv = cy_sqrt(cy_dot3(derivatives.dpdv, derivatives.dpdv));
+        if (lu > 1e-12 && lv > 1e-12) {
+            pt.uv_footprint = vec2<f32>(tex_div(world, lu), tex_div(world, lv));
+            pt.has_uv_footprint = 1u;
+        }
+    }
     s.has_derivatives = derivatives.ok;
     s.dpdu = derivatives.dpdu;
     s.dpdv = derivatives.dpdv;
     s.object_to_world = inst.object_to_world;
     s.world_to_object = inst.world_to_object;
+    if ((p.flags & PROGRAM_NORMAL_UV) != 0u) {
+        s.mesh_tangent = mesh_tangent(inst, mesh, c, pt.object);
+    }
     return prog_shade(p, pt, base, s);
 }
 
