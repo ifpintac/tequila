@@ -39,7 +39,7 @@ use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::gradient::Interpolation;
 use tequila_texture::mip::Wrap;
 use tequila_texture::noise::{Basis, Fractal, Metric};
-use tequila_texture::procedural::Procedural;
+use tequila_texture::procedural::{CellOutput, HoleShape, Procedural, WeavePattern};
 use tequila_texture::projection::{Axis, Mapping, Projection};
 use crate::textures::{Pictures, MAX_PYRAMIDS};
 
@@ -193,6 +193,19 @@ pub const FRACTAL_UNIT: u32 = 1 << 5;
 pub const PATTERN_SCRATCHES: u32 = 0;
 pub const PATTERN_BRUSHED_RADIAL: u32 = 1;
 pub const PATTERN_LEATHER: u32 = 2;
+/// A solid pattern's point, scaled (and for Camouflage moved).
+pub const PATTERN_POINT: u32 = 3;
+pub const PATTERN_CELLULAR: u32 = 4;
+pub const PATTERN_MARBLE: u32 = 5;
+pub const PATTERN_WOOD: u32 = 6;
+pub const PATTERN_BRUSHED: u32 = 7;
+pub const PATTERN_NOISE_TEXTURE: u32 = 8;
+pub const PATTERN_GRANITE: u32 = 9;
+pub const PATTERN_SPOTS: u32 = 10;
+pub const PATTERN_CAMOUFLAGE: u32 = 11;
+pub const PATTERN_CONTOUR: u32 = 12;
+pub const PATTERN_WEAVE: u32 = 13;
+pub const PATTERN_MESH: u32 = 14;
 /// The most octaves a fractal's settings word holds.
 pub const MAX_OCTAVES: u32 = (1 << 24) - 1;
 
@@ -934,6 +947,24 @@ impl Builder<'_> {
         Ok(Operand { source: Source::Virtual(d), mode: MODE_AS_IS })
     }
 
+    /// Worley's cells at `point` times `scale`.
+    fn worley(&mut self, point: Operand, scale: f32, metric: Metric, seed: u32) -> Result<Operand, Refusal> {
+        let s = self.seed(seed);
+        let k = self.constant([scale; 4]);
+        let (d, _) = self.push(OP_PROCEDURAL, settings::worley(metric), vec![point, s, k], false)?;
+        Ok(Operand { source: Source::Virtual(d), mode: MODE_AS_IS })
+    }
+
+    /// A solid pattern's point (a mapping's on its plane z = 0) times
+    /// `scale`, moved by `offset` where given.
+    fn solid_point(&mut self, point: Operand, mapped: bool, scale: f32, offset: Option<[f32; 3]>) -> Result<Operand, Refusal> {
+        let [x, y, z] = offset.unwrap_or([0.0; 3]);
+        let c = self.constant([scale, x, y, z]);
+        let stage = offset.is_some() as u32;
+        let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_POINT, stage, Axis::Y, mapped), vec![point, c], false)?;
+        Ok(Operand { source: Source::Virtual(d), mode: MODE_AS_IS })
+    }
+
     /// A Tequila procedural at `point` (the part's own, or a mapping's u,
     /// v where `mapped`): its instructions, and its value.
     fn procedural(&mut self, procedural: &Procedural, seed: u32, point: Operand, mapped: bool) -> Result<Held, Refusal> {
@@ -957,11 +988,136 @@ impl Builder<'_> {
             Procedural::Leather { frequency, crack_width, wrinkle } => {
                 let c = self.constant([frequency.max(1e-4), 0.0, 0.0, 0.0]);
                 let (q, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_LEATHER, 0, Axis::Y, mapped), vec![point, c], false)?;
-                let s = self.seed(seed);
-                let (cells, _) = self.push(OP_PROCEDURAL, settings::worley(Metric::Euclidean), vec![at(q), s], false)?;
+                let cells = self.worley(at(q), 1.0, Metric::Euclidean, seed)?;
                 let fine = self.fractal(0, at(q), 6.0, Fractal { octaves: 3, ..Fractal::default() }, seed ^ 0x6a09_e667, true)?;
                 let c = self.constant([crack_width, wrinkle.clamp(0.0, 1.0), 0.0, 0.0]);
-                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_LEATHER, 1, Axis::Y, mapped), vec![point, at(cells), fine, c], false)?;
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_LEATHER, 1, Axis::Y, mapped), vec![point, cells, fine, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Noise { fractal, frequency } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let n = self.fractal(0, q, 1.0, fractal, seed, true)?;
+                Ok(Held { operand: n, ty: Ty::Float })
+            }
+            // Ridged noise is in [0, 1] already.
+            Procedural::Ridged { fractal, frequency } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let n = self.fractal(2, q, 1.0, fractal, seed, false)?;
+                Ok(Held { operand: n, ty: Ty::Float })
+            }
+            Procedural::NoiseTexture { basis, frequency, contrast, bias } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let single = Fractal { octaves: 1, basis, ..Fractal::default() };
+                let n = self.fractal(0, q, 1.0, single, seed, true)?;
+                let c = self.constant([contrast.max(0.0), bias, 0.0, 0.0]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_NOISE_TEXTURE, 0, Axis::Y, mapped), vec![point, n, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Cellular { metric, output, frequency } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let cells = self.worley(q, 1.0, metric, seed)?;
+                let which = match output {
+                    CellOutput::Distance => 0,
+                    CellOutput::Edges => 1,
+                    CellOutput::Id => 2,
+                };
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_CELLULAR, which, Axis::Y, mapped), vec![point, cells], false)?;
+                Ok(number(d))
+            }
+            Procedural::Brushed { frequency, stretch } => {
+                let c = self.constant([frequency.max(1e-4), stretch.max(1e-3), 0.0, 0.0]);
+                let (q, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_BRUSHED, 0, Axis::Y, mapped), vec![point, c], false)?;
+                let one = Fractal { octaves: 1, ..Fractal::default() };
+                let n = self.fractal(0, at(q), 1.0, one, seed, true)?;
+                Ok(Held { operand: n, ty: Ty::Float })
+            }
+            Procedural::Marble { axis, frequency, distortion, fractal } => {
+                let q = self.solid_point(point, mapped, frequency / 3.0, None)?;
+                let t = self.fractal(1, q, 1.0, fractal, seed, false)?;
+                let c = self.constant([frequency, distortion, 0.0, 0.0]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_MARBLE, 0, axis, mapped), vec![point, t, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Wood { axis, frequency, distortion, grain, fractal } => {
+                let q = self.solid_point(point, mapped, frequency / 8.0, None)?;
+                let wander = self.fractal(0, q, 1.0, fractal, seed, false)?;
+                let c = self.constant([frequency, distortion, grain, 0.0]);
+                let (s, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_WOOD, 0, axis, mapped), vec![point, c], false)?;
+                let one = Fractal { octaves: 1, ..Fractal::default() };
+                let streak = self.fractal(0, at(s), 1.0, one, seed ^ 0x51a4_0f37, true)?;
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_WOOD, 1, axis, mapped), vec![point, c, wander, streak], false)?;
+                Ok(number(d))
+            }
+            Procedural::Spots { frequency, coverage, variance, softness } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let cells = self.worley(q, 1.0, Metric::Euclidean, seed)?;
+                let c = self.constant([coverage.clamp(0.0, 1.0) * 0.8, variance.clamp(0.0, 1.0), softness.clamp(0.0, 1.0), 0.0]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_SPOTS, 0, Axis::Y, mapped), vec![point, cells, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Granite { frequency, speckle, fine } => {
+                let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                let large = self.worley(q, 1.0, Metric::Euclidean, seed)?;
+                let small = self.worley(q, 2.7, Metric::Euclidean, seed ^ 0x3c6e_f372)?;
+                let grain = self.fractal(0, q, 9.0, Fractal { octaves: 2, ..Fractal::default() }, seed ^ 0x2545_f491, true)?;
+                let flecks = self.worley(q, 5.3, Metric::Euclidean, seed ^ 0x9e37_79b9)?;
+                let half = speckle.clamp(0.0, 1.0) * 0.5;
+                let c = self.constant([fine.clamp(0.0, 1.0), half, 1.0 - half, 0.0]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_GRANITE, 0, Axis::Y, mapped), vec![point, large, small, grain, flecks, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Camouflage { frequency, layers } => {
+                let layers = layers.clamp(2, 5);
+                let mut operands = vec![point];
+                for layer in 0..layers {
+                    let scale = frequency.max(1e-4) * (1.0 + layer as f32 * 0.7);
+                    let offset = [layer as f32 * 17.3, 0.0, layer as f32 * 9.1];
+                    let q = self.solid_point(point, mapped, scale, Some(offset))?;
+                    let n = self.fractal(0, q, 1.0, Fractal { octaves: 3, ..Fractal::default() }, seed.wrapping_add(layer * 0x2f6b), false)?;
+                    operands.push(n);
+                }
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_CAMOUFLAGE, layers, Axis::Y, mapped), operands, false)?;
+                Ok(number(d))
+            }
+            Procedural::Contour { axis, frequency, width, softness, distortion } => {
+                let bend = if distortion != 0.0 {
+                    let q = self.solid_point(point, mapped, frequency.max(1e-4), None)?;
+                    self.fractal(0, q, 0.3, Fractal { octaves: 3, ..Fractal::default() }, seed, false)?
+                } else {
+                    self.constant([0.0; 4])
+                };
+                let half = width.clamp(0.0, 1.0) * 0.5;
+                let soft = softness.clamp(0.0, 1.0) * 0.5 + 1e-4;
+                let c = self.constant([frequency, distortion, half, half + soft]);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_CONTOUR, 0, axis, mapped), vec![point, bend, c], false)?;
+                Ok(number(d))
+            }
+            Procedural::Weave { pattern, frequency, width, variance } => {
+                let which = match pattern {
+                    WeavePattern::Plain => 0,
+                    WeavePattern::Twill => 1,
+                    WeavePattern::Satin => 2,
+                };
+                let c = self.constant([frequency.max(1e-4), width.clamp(0.0, 1.0) * 0.5, variance.clamp(0.0, 1.0), 0.0]);
+                let (ox, oy) = tequila_texture::procedural::phase(0.0, 0.0, seed);
+                let o = self.constant([ox, oy, 0.0, 0.0]);
+                let s = self.seed(seed);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_WEAVE, which, Axis::Y, mapped), vec![point, c, o, s], false)?;
+                Ok(number(d))
+            }
+            Procedural::Mesh { shape, frequency, size, softness } => {
+                let which = match shape {
+                    HoleShape::Round => 0,
+                    HoleShape::Square => 1,
+                    HoleShape::Hex => 2,
+                };
+                let radius = size.clamp(0.0, 1.0) * 0.5;
+                let soft = softness.clamp(0.0, 1.0) * 0.25 + 1e-4;
+                let c = self.constant([frequency.max(1e-4), radius, soft, 0.0]);
+                let (ox, oy) = tequila_texture::procedural::phase(0.0, 0.0, seed);
+                let o = self.constant([ox, oy, 0.0, 0.0]);
+                let s = self.seed(seed);
+                let (d, _) = self.push(OP_PROCEDURAL, settings::procedural_stage(PATTERN_MESH, which, Axis::Y, mapped), vec![point, c, o, s], false)?;
                 Ok(number(d))
             }
             ref other => Err(Refusal::Procedural(other.label())),
@@ -1502,6 +1658,18 @@ mod tests {
             ("TQ_SCRATCHES", PATTERN_SCRATCHES),
             ("TQ_BRUSHED_RADIAL", PATTERN_BRUSHED_RADIAL),
             ("TQ_LEATHER", PATTERN_LEATHER),
+            ("TQ_POINT", PATTERN_POINT),
+            ("TQ_CELLULAR", PATTERN_CELLULAR),
+            ("TQ_MARBLE", PATTERN_MARBLE),
+            ("TQ_WOOD", PATTERN_WOOD),
+            ("TQ_BRUSHED", PATTERN_BRUSHED),
+            ("TQ_NOISE_TEXTURE", PATTERN_NOISE_TEXTURE),
+            ("TQ_GRANITE", PATTERN_GRANITE),
+            ("TQ_SPOTS", PATTERN_SPOTS),
+            ("TQ_CAMOUFLAGE", PATTERN_CAMOUFLAGE),
+            ("TQ_CONTOUR", PATTERN_CONTOUR),
+            ("TQ_WEAVE", PATTERN_WEAVE),
+            ("TQ_MESH", PATTERN_MESH),
             ("TQ_STAGE", PROCEDURAL_STAGE),
             ("TQ_FRACTAL", PROCEDURAL_FRACTAL),
             ("TQ_WORLEY", PROCEDURAL_WORLEY),

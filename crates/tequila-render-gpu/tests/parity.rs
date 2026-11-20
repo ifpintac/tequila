@@ -561,6 +561,54 @@ fn the_measured_headphones_are_the_processors_picture() {
     same_shot(Shot { name: "measured_headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
 }
 
+/// Every Tequila procedural the card runs, at the menu's settings
+/// (`Procedural::catalog`; Wood (Advanced) is not on the card): the
+/// Headphones' parts, each material its constants with one pattern mixing
+/// its base colour between two and, on every other part, bumping it too;
+/// in the part's space, and on every third part through a planar mapping.
+#[test]
+fn the_patterned_headphones_are_the_processors_picture() {
+    use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    use tequila_texture::procedural::Procedural;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let patterns: Vec<Procedural> = Procedural::catalog().into_iter().filter(|p| !matches!(p, Procedural::WoodAdvanced { .. })).collect();
+    let colour = |r: f32, g: f32, b: f32| Value::Color(tequila_core::spectrum::Spectrum { r, g, b });
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let mut definition = document.materials.get(*key).expect("a material").clone();
+        let mut graph = MaterialGraph::from_material(definition.graph.material().clone());
+        graph.material_mut().edge_radius = 0.0;
+        let output = graph.output();
+        let pattern = patterns[j % patterns.len()];
+        names.push(pattern.label());
+        let node = graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(pattern), seed: j as u32 * 7 }));
+        if j % 3 == 2 {
+            let planar = tequila_texture::projection::Mapping { projection: tequila_texture::projection::Projection::Planar, axis: tequila_texture::projection::Axis::Z, real_world_units: true, scale: tequila_core::math::vec3(0.05, 0.05, 1.0), ..Default::default() };
+            let m = graph.add_node(Node::new(NodeKind::Mapping2d { mapping: planar }));
+            graph.connect(m, node, Socket::Input(0));
+        }
+        let mut mix = Node::new(NodeKind::Mix);
+        mix.literals.insert(Socket::Input(0), colour(0.06, 0.07, 0.08));
+        mix.literals.insert(Socket::Input(1), colour(0.85, 0.6, 0.3));
+        let mix = graph.add_node(mix);
+        graph.connect(node, mix, Socket::Input(2));
+        graph.connect(mix, output, Socket::Param(Param::BaseColor));
+        if j % 2 == 0 {
+            let bump = graph.add_node(Node::new(NodeKind::Bump { depth: 0.0003 }));
+            graph.connect(node, bump, Socket::Input(0));
+            graph.connect(bump, output, Socket::Param(Param::Bump));
+        }
+        definition.graph = graph;
+        document.materials.insert_with_key(*key, definition);
+    }
+    eprintln!("patterned headphones: {}", names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "patterned_headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// Which presets of the walls the card renders otherwise: each swapped in
 /// alone. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity
 /// -- --ignored --nocapture one_by_one`.

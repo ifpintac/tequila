@@ -19,6 +19,18 @@
 const TQ_SCRATCHES: u32 = 0u;
 const TQ_BRUSHED_RADIAL: u32 = 1u;
 const TQ_LEATHER: u32 = 2u;
+const TQ_POINT: u32 = 3u;
+const TQ_CELLULAR: u32 = 4u;
+const TQ_MARBLE: u32 = 5u;
+const TQ_WOOD: u32 = 6u;
+const TQ_BRUSHED: u32 = 7u;
+const TQ_NOISE_TEXTURE: u32 = 8u;
+const TQ_GRANITE: u32 = 9u;
+const TQ_SPOTS: u32 = 10u;
+const TQ_CAMOUFLAGE: u32 = 11u;
+const TQ_CONTOUR: u32 = 12u;
+const TQ_WEAVE: u32 = 13u;
+const TQ_MESH: u32 = 14u;
 
 // OP_PROCEDURAL's settings: the step in bits 0-1.
 const TQ_STAGE: u32 = 0u;
@@ -203,14 +215,108 @@ fn tq_worley(p: vec3<f32>, seed: u32, metric: u32) -> vec4<f32> {
 
 // ---- procedural.rs -------------------------------------------------------
 
-fn tq_smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+fn tq_smoothstep(edge0_in: f32, edge1_in: f32, x: f32) -> f32 {
+    // The edges through cy_exact: given r - s and r + s, the card's
+    // compiler otherwise takes their difference for 2 s.
+    let edge0 = cy_exact(edge0_in);
+    let edge1 = cy_exact(edge1_in);
     if (edge1 <= edge0) {
         return select(1.0, 0.0, x < edge0);
     }
-    let t = clamp(tex_div(x - edge0, edge1 - edge0), 0.0, 1.0);
+    let t = clamp(tex_div(cy_exact(x - edge0), cy_exact(edge1 - edge0)), 0.0, 1.0);
     // Through cy_exact: `1 - smoothstep` would take the product into a fused
     // multiply-add.
     return cy_exact(t * t * (3.0 - cy_exact(2.0 * t)));
+}
+
+// Axis::of: the component along the axis.
+fn tq_along(axis: u32, p: vec3<f32>) -> f32 {
+    switch axis {
+        case 0u: { return p.x; }
+        case 1u: { return p.y; }
+        default: { return p.z; }
+    }
+}
+
+// f32::round: half away from nought (WGSL's round is half to even). x - t
+// is exact.
+fn tq_round(x: f32) -> f32 {
+    let t = trunc(x);
+    return select(t, t + select(1.0, -1.0, x < 0.0), abs(x - t) >= 0.5);
+}
+
+// rem_euclid on integers: never below nought.
+fn tq_rem(a: i32, m: i32) -> i32 {
+    let r = a % m;
+    return select(r, r + m, r < 0);
+}
+
+// A thread's cross-section (procedural.rs's thread): 1 on its centre line,
+// falling to 0 at its edge, 0 beyond.
+fn tq_thread(offset: f32, half: f32) -> f32 {
+    if (half <= 0.0 || offset >= half) {
+        return 0.0;
+    }
+    let t = tex_div(offset, half);
+    return cy_sqrt(1.0 - cy_exact(t * t));
+}
+
+// Weave (procedural.rs's weave) at (x, y) in threads: `pattern` plain 0,
+// twill 1, satin 2; `c` the frequency, the half width, the variance and
+// nought.
+fn tq_weave(x: f32, y: f32, seed: u32, pattern: u32, c: vec4<f32>) -> f32 {
+    let i = cy_to_i32(floor(x));
+    let j = cy_to_i32(floor(y));
+    let fx = x - floor(x);
+    let fy = y - floor(y);
+    var warp_on_top: bool;
+    switch pattern {
+        case 0u: { warp_on_top = tq_rem(i + j, 2) == 0; }
+        case 1u: { warp_on_top = tq_rem(i - j, 3) != 0; }
+        default: { warp_on_top = tq_rem(j - 2 * i, 5) != 0; }
+    }
+    let warp = tq_thread(abs(fx - 0.5), c.y);
+    let weft = tq_thread(abs(fy - 0.5), c.y);
+    let warp_scale = 1.0 - cy_exact(c.z * tq_hash2(i, 0x7a3d, seed));
+    let weft_scale = 1.0 - cy_exact(c.z * tq_hash2(0x1f5b, j, seed ^ 0x4b3f27a1u));
+    let arch = cy_sin(cy_exact(CY_PI * select(fx, fy, warp_on_top)));
+    let top = select(weft, warp, warp_on_top);
+    let top_scale = select(weft_scale, warp_scale, warp_on_top);
+    let under = select(warp, weft, warp_on_top);
+    let under_scale = select(warp_scale, weft_scale, warp_on_top);
+    var height: f32;
+    if (top > 0.0) {
+        height = 0.5 + cy_exact(0.5 * top * (0.6 + cy_exact(0.4 * arch)) * top_scale);
+    } else {
+        height = 0.5 * under * under_scale;
+    }
+    return clamp(height, 0.0, 1.0);
+}
+
+// The perforated sheet (procedural.rs's mesh) at (x, y) in holes: `shape`
+// round 0, square 1, hex 2; `c` the radius and the softness worked out.
+fn tq_mesh(x: f32, y: f32, shape: u32, c: vec4<f32>) -> f32 {
+    var distance: f32;
+    if (shape < 2u) {
+        let dx = (x - floor(x)) - 0.5;
+        let dy = (y - floor(y)) - 0.5;
+        distance = select(max(abs(dx), abs(dy)), cy_sqrt(cy_exact(dx * dx) + cy_exact(dy * dy)), shape == 0u);
+    } else {
+        // A triangular lattice of centres, one unit apart: the nearer of
+        // two offset rectangular grids.
+        let h = 1.7320508;
+        let ay = y - cy_exact(floor(tex_div(y, h)) * h) - 0.8660254;
+        let ax = (x - floor(x)) - 0.5;
+        let bxx = x - 0.5;
+        let byy = y - 0.8660254;
+        let bx = (bxx - floor(bxx)) - 0.5;
+        let by = byy - cy_exact(floor(tex_div(byy, h)) * h) - 0.8660254;
+        let a_nearer = cy_exact(ax * ax) + cy_exact(ay * ay) < cy_exact(bx * bx) + cy_exact(by * by);
+        let dx = select(bx, ax, a_nearer);
+        let dy = select(by, ay, a_nearer);
+        distance = max(cy_exact(abs(dx) * 0.866025) + abs(dy) * 0.5, abs(dy));
+    }
+    return tq_smoothstep(c.x - c.y, c.x + c.y, distance);
 }
 
 // Axis::across: the two components across the axis (x 0, y 1, z 2).
@@ -286,6 +392,111 @@ fn tq_stage(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
             let around = tex_div(across, a[1].y);
             return vec4<f32>(across, cy_exact(cu * around), cy_exact(cv * around), 0.0);
         }
+        case TQ_POINT: {
+            // A solid pattern's point times a[1].x, and with step 1 moved
+            // by a[1].yzw (Camouflage's layers).
+            var q = cy_exact3(p * a[1].x);
+            if (step == 1u) {
+                q = q + a[1].yzw;
+            }
+            return vec4<f32>(q, 0.0);
+        }
+        case TQ_CELLULAR: {
+            // a[1] the cells; the step the output (distance, edges, id).
+            let c = a[1];
+            switch step {
+                case 0u: { return vec4<f32>(clamp(c.x, 0.0, 1.0)); }
+                case 1u: { return vec4<f32>(clamp(c.y - c.x, 0.0, 1.0)); }
+                default: { return vec4<f32>(c.z); }
+            }
+        }
+        case TQ_MARBLE: {
+            // a[1] the turbulence; a[2] frequency, distortion.
+            let banded = cy_exact(tq_along(axis, p) * a[2].x) + cy_exact(a[1].x * a[2].y);
+            return vec4<f32>(cy_sin(banded) * 0.5 + 0.5);
+        }
+        case TQ_WOOD: {
+            let uv = tq_across(axis, p);
+            let f = a[1].x;
+            if (step == 0u) {
+                // The streaks' point. a[1]: frequency.
+                return vec4<f32>(cy_exact(uv.x * f) * 3.0, cy_exact(tq_along(axis, p) * f) * 0.08, cy_exact(uv.y * f) * 3.0, 0.0);
+            }
+            // a[1] frequency, distortion, grain; a[2] the rings' wander,
+            // a[3] the streaks.
+            let radius = cy_sqrt(cy_exact(uv.x * uv.x) + cy_exact(uv.y * uv.y));
+            let rings = cy_exact(radius * f) + cy_exact(cy_exact(a[2].x * a[1].y) * 8.0);
+            let ring = abs(rings - trunc(rings));
+            return vec4<f32>(clamp(cy_exact(ring * (1.0 - a[1].z)) + cy_exact(a[3].x * a[1].z), 0.0, 1.0));
+        }
+        case TQ_BRUSHED: {
+            // The noise's point, squashed along y. a[1]: frequency, stretch.
+            let f = a[1].x;
+            return vec4<f32>(p.x * f, tex_div(cy_exact(p.y * f), a[1].y), p.z * f, 0.0);
+        }
+        case TQ_NOISE_TEXTURE: {
+            // a[1] the noise in [0, 1]; a[2] contrast, bias.
+            return vec4<f32>(clamp(cy_exact(cy_exact((a[1].x - 0.5) * a[2].x) + 0.5) + a[2].y, 0.0, 1.0));
+        }
+        case TQ_GRANITE: {
+            // a[1] the large cells, a[2] the small, a[3] the grain, a[4]
+            // the flecks' cells; a[5] fine, speckle / 2, 1 - speckle / 2.
+            let fine = a[5].x;
+            let crystals = cy_exact(cy_exact(a[1].z * 0.55) + cy_exact(a[2].z * 0.45));
+            var v = cy_exact(crystals * (1.0 - fine)) + cy_exact(a[3].x * fine);
+            if (a[4].x < 0.3) {
+                if (a[4].z < a[5].y) {
+                    v = 1.0;
+                } else if (a[4].z > a[5].z) {
+                    v = 0.0;
+                }
+            }
+            return vec4<f32>(clamp(v, 0.0, 1.0));
+        }
+        case TQ_SPOTS: {
+            // a[1] the cells; a[2] coverage * 0.8, variance, softness.
+            let radius = a[2].x * (1.0 - cy_exact(a[2].y * a[1].z));
+            if (radius <= 0.0) {
+                return vec4<f32>(0.0);
+            }
+            let soft = cy_exact(cy_exact(a[2].z * radius) * 0.5) + 1e-4;
+            return vec4<f32>(1.0 - tq_smoothstep(radius - soft, radius + soft, a[1].x));
+        }
+        case TQ_CAMOUFLAGE: {
+            // a[1..] each layer's fBm; the step the layers' count.
+            var top = 0u;
+            for (var layer = 0u; layer < step; layer++) {
+                if (a[1u + layer].x > 0.05) {
+                    top = layer + 1u;
+                }
+            }
+            return vec4<f32>(tex_div(f32(top), f32(step)));
+        }
+        case TQ_CONTOUR: {
+            // a[1] the bend's fBm (unread without distortion); a[2]
+            // frequency, distortion, half the width, and that and the
+            // softness.
+            var field = cy_exact(tq_along(axis, p) * a[2].x);
+            if (a[2].y != 0.0) {
+                field = field + cy_exact(a[1].x * a[2].y);
+            } else {
+                field = field + 0.0;
+            }
+            let d = abs(field - tq_round(field));
+            return vec4<f32>(1.0 - tq_smoothstep(a[2].z, a[2].w, d));
+        }
+        case TQ_WEAVE, TQ_MESH: {
+            // Flat: on the mapping's (u, v), or the part's x-z plane, in
+            // threads or holes, moved by the seed. a[1] frequency and the
+            // rest; a[2] the seed's offset; a[3] the seed.
+            let ab = select(a[0].xz, a[0].xy, mapped);
+            let x = cy_exact(ab.x * a[1].x) + a[2].x;
+            let y = cy_exact(ab.y * a[1].x) + a[2].y;
+            if (pattern == TQ_WEAVE) {
+                return vec4<f32>(tq_weave(x, y, tq_seed(a[3]), step, a[1]));
+            }
+            return vec4<f32>(tq_mesh(x, y, step, vec4<f32>(a[1].y, a[1].z, 0.0, 0.0)));
+        }
         default: {
             if (step == 0u) {
                 // Leather: the cells' point. a[1]: frequency.
@@ -306,11 +517,11 @@ fn tq_stage(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
 
 // One OP_PROCEDURAL instruction: a stage, a fractal (a[0] its point, a[1]
 // its scale, lacunarity and gain, a[2] its seed) or Worley's cells (a[0]
-// the point, a[1] the seed; the metric in bits 2-3).
+// the point, a[1] the seed, a[2] the scale; the metric in bits 2-3).
 fn tq_instruction(settings: u32, a: array<vec4<f32>, 10>) -> vec4<f32> {
     switch settings & 3u {
         case TQ_FRACTAL: { return vec4<f32>(tq_fractal(settings, a[0].xyz, a[1], tq_seed(a[2]))); }
-        case TQ_WORLEY: { return tq_worley(a[0].xyz, tq_seed(a[1]), (settings >> 2u) & 3u); }
+        case TQ_WORLEY: { return tq_worley(cy_exact3(a[0].xyz * a[2].x), tq_seed(a[1]), (settings >> 2u) & 3u); }
         default: { return tq_stage(settings, a); }
     }
 }

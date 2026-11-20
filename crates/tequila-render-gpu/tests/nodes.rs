@@ -542,11 +542,43 @@ fn tequilas_noise_is_the_processors() {
 
 // ---- Tequila's procedurals ------------------------------------------------
 
+/// A fractal's settings at random.
+fn random_fractal(rng: &mut Pcg32) -> Fractal {
+    Fractal {
+        octaves: rng.next_u32() % 7,
+        lacunarity: uniform(rng, 1.5, 3.0),
+        gain: uniform(rng, 0.3, 0.7),
+        basis: if rng.next_f32() < 0.5 { Basis::Perlin } else { Basis::Value },
+    }
+}
+
+/// How many kinds of pattern the card runs (all but Wood (Advanced)).
+const PATTERNS: usize = 16;
+
 /// A pattern of each kind the card runs, its settings at random over the
 /// ranges the library and the menu's defaults use.
 fn random_procedural(rng: &mut Pcg32, which: usize) -> Procedural {
+    use tequila_texture::procedural::{CellOutput, HoleShape, WeavePattern};
     let axis = [Axis::X, Axis::Y, Axis::Z][(rng.next_u32() % 3) as usize];
+    let pick = |rng: &mut Pcg32, n: u32| (rng.next_u32() % n) as usize;
     match which {
+        3 => Procedural::Noise { fractal: random_fractal(rng), frequency: uniform(rng, 0.5, 50.0) },
+        4 => Procedural::Cellular {
+            metric: [Metric::Euclidean, Metric::Manhattan, Metric::Chebyshev][pick(rng, 3)],
+            output: [CellOutput::Distance, CellOutput::Edges, CellOutput::Id][pick(rng, 3)],
+            frequency: uniform(rng, 0.5, 50.0),
+        },
+        5 => Procedural::Marble { axis, frequency: uniform(rng, 0.5, 20.0), distortion: uniform(rng, 0.0, 5.0), fractal: random_fractal(rng) },
+        6 => Procedural::Wood { axis, frequency: uniform(rng, 1.0, 30.0), distortion: uniform(rng, 0.0, 1.0), grain: uniform(rng, 0.0, 1.0), fractal: random_fractal(rng) },
+        7 => Procedural::Brushed { frequency: uniform(rng, 1.0, 200.0), stretch: uniform(rng, 0.5, 100.0) },
+        8 => Procedural::NoiseTexture { basis: if rng.next_f32() < 0.5 { Basis::Perlin } else { Basis::Value }, frequency: uniform(rng, 1.0, 50.0), contrast: uniform(rng, -0.5, 4.0), bias: uniform(rng, -0.5, 0.5) },
+        9 => Procedural::Ridged { fractal: random_fractal(rng), frequency: uniform(rng, 0.5, 20.0) },
+        10 => Procedural::Granite { frequency: uniform(rng, 1.0, 30.0), speckle: uniform(rng, -0.1, 1.1), fine: uniform(rng, -0.1, 1.1) },
+        11 => Procedural::Spots { frequency: uniform(rng, 1.0, 30.0), coverage: uniform(rng, -0.1, 1.1), variance: uniform(rng, -0.1, 1.1), softness: uniform(rng, -0.1, 1.1) },
+        12 => Procedural::Camouflage { frequency: uniform(rng, 0.5, 10.0), layers: rng.next_u32() % 7 },
+        13 => Procedural::Contour { axis, frequency: uniform(rng, 1.0, 30.0), width: uniform(rng, -0.1, 1.1), softness: uniform(rng, -0.1, 1.1), distortion: if rng.next_f32() < 0.3 { 0.0 } else { uniform(rng, 0.0, 2.0) } },
+        14 => Procedural::Weave { pattern: [WeavePattern::Plain, WeavePattern::Twill, WeavePattern::Satin][pick(rng, 3)], frequency: uniform(rng, 1.0, 100.0), width: uniform(rng, 0.2, 1.1), variance: uniform(rng, -0.1, 1.1) },
+        15 => Procedural::Mesh { shape: [HoleShape::Round, HoleShape::Square, HoleShape::Hex][pick(rng, 3)], frequency: uniform(rng, 1.0, 50.0), size: uniform(rng, -0.1, 1.1), softness: uniform(rng, -0.1, 1.1) },
         0 => Procedural::Scratches {
             frequency: if rng.next_f32() < 0.5 { 110.0 } else { uniform(rng, 1.0, 200.0) },
             width: uniform(rng, 0.002, 0.2),
@@ -573,8 +605,8 @@ fn tequilas_procedurals_are_the_processors() {
     let Some(h) = harness() else { return };
     let mut rng = Pcg32::new(22, 1);
     let mut cases = Vec::new();
-    for which in 0..3 {
-        for i in 0..6000 {
+    for which in 0..PATTERNS {
+        for i in 0..2400 {
             let procedural = random_procedural(&mut rng, which);
             let seed = if rng.next_f32() < 0.2 { rng.next_u32() % 16 } else { rng.next_u32() };
             let mapping = (i % 3 == 2).then(|| Box::new(random_mapping(&mut rng)));
@@ -597,7 +629,7 @@ fn unported_patterns_are_refused() {
     for procedural in Procedural::catalog() {
         let program = program_of(vec![Instruction::Evaluate { dst: Register(0), procedural: Box::new(procedural), seed: 3, mapping: None }], 1, Some(Register(0)), None);
         assert_eq!(program::lower(&program), Err(Refusal::Instruction("a Tequila procedural")));
-        let ported = matches!(procedural, Procedural::Scratches { .. } | Procedural::BrushedRadial { .. } | Procedural::Leather { .. });
+        let ported = !matches!(procedural, Procedural::WoodAdvanced { .. });
         match program::lower_with(&program, Pictures::On(&pictures)) {
             Ok(Some(_)) => assert!(ported, "{} runs on the card", procedural.label()),
             Err(Refusal::Procedural(name)) => assert!(!ported && name == procedural.label(), "{} is refused", procedural.label()),
