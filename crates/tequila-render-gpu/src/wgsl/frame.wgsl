@@ -81,7 +81,12 @@ struct FrameParams {
     // SCENE_LIGHT_MATERIALS: IntegratorConfig::light_source_materials;
     // SCENE_BEVEL: some material rounds its edges (edge_radius).
     glass_flags: u32,
-    _pad3: vec2<u32>,
+    // The rows this dispatch draws, row_base and every row_stride-th after
+    // it: render_pass draws a big frame in interleaved sets of rows, each
+    // within the time a display allows the card and each as costly as any
+    // other. A whole frame is row 0 at a stride of 1.
+    row_base: u32,
+    row_stride: u32,
 };
 
 // FrameParams::shadow_glass (settings.rs's ShadowGlass).

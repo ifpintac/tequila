@@ -2566,13 +2566,14 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
 
 @compute @workgroup_size(8, 8)
 fn transport_main(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= frame.width || id.y >= frame.height) {
+    let y = frame.row_base + id.y * frame.row_stride;
+    if (id.x >= frame.width || y >= frame.height) {
         return;
     }
-    let pixel = id.y * frame.width + id.x;
+    let pixel = y * frame.width + id.x;
     let pixels = frame.width * frame.height;
     for (var i = 0u; i < frame.samples; i++) {
-        let out = path(id.x, id.y, frame.sample_base + i);
+        let out = path(id.x, y, frame.sample_base + i);
         if ((frame.mode & 1u) != 0u) {
             accumulate(pixel, out.radiance, out.background, out.coverage);
         } else {
