@@ -191,7 +191,7 @@ fn sheen_sample(l: Sheen, wo: vec3<f32>, u: vec2<f32>) -> LobeSample {
     if (pdf <= 0.0) {
         return no_sample();
     }
-    return LobeSample(true, wi, sheen_eval(l, wo, wi), pdf, false);
+    return LobeSample(true, wi, sheen_eval(l, wo, wi), pdf, false, false, 1.0);
 }
 
 fn sheen_albedo(l: Sheen, wo: vec3<f32>) -> vec3<f32> {

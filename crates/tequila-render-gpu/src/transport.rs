@@ -334,10 +334,19 @@ impl GpuRenderer {
                 None => &scene.materials[i],
             })
             .collect();
-        let records: Vec<crate::material::GpuMaterial> = bases.iter().map(|m| crate::material::GpuMaterial::from_material(m)).collect();
+        let records: Vec<crate::material::GpuMaterial> = bases
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let id = tequila_core::ids::MaterialId(i as u32);
+                crate::material::GpuMaterial::with_glass(m, scene.material(id), scene.pane(id))
+            })
+            .collect();
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
-            eprintln!("  {unsupported} material(s) render as their opaque part on the graphics card for now (docs/07 R3)");
+            eprintln!(
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  dispersion, glowing volume or holes in glass (docs/07 R3)"
+            );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };
         let lights = GpuLights::upload(device, &LightRecords::of(scene));

@@ -192,6 +192,7 @@ fn pure_delta(b: OpenPbr) -> bool {
             case 1u: { if (!ggx_is_smooth(b.coat.distribution)) { return false; } }
             case 2u: { if (!ggx_is_smooth(b.metal.distribution)) { return false; } }
             case 3u: { if (!ggx_is_smooth(b.specular.distribution)) { return false; } }
+            case 4u: { if (!ggx_is_smooth(b.transmission.distribution)) { return false; } }
             default: { return false; }
         }
     }
