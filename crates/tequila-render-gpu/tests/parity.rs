@@ -151,6 +151,20 @@ fn glows_a_program_drives_are_the_processors_picture() {
     same_picture("glowing_pattern");
 }
 
+/// Glowing parts as lights: the tree of glowing triangles chosen down from
+/// each point, a point on the triangle, MIS against the bounces that hit.
+#[test]
+fn a_glowing_screen_is_the_processors_picture() {
+    same_picture("glowing_screen");
+}
+
+/// A glow under a block of glass: seen through it, sampled through it, met
+/// past it by the bounces that see the glass.
+#[test]
+fn a_glow_under_glass_is_the_processors_picture() {
+    same_picture("glow_under_glass");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {

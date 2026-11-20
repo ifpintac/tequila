@@ -2,8 +2,10 @@
 // OpenPBR surfaces (openpbr.wgsl), glass among them, under the environment
 // and the analytic lamps (lamps.wgsl), standing on a shadow catcher, draw
 // for draw - camera ray, next-event estimation of the sky by its facing
-// tables (the whole sky through glass) with power-heuristic MIS and of one
-// lamp chosen as the processor chooses it, shadow rays through clear glass,
+// tables (the whole sky through glass) with power-heuristic MIS, of one
+// lamp chosen as the processor chooses it and of one glowing triangle chosen
+// down the processor's tree of them (emitters.wgsl), weighed against the
+// bounces that hit a glow, shadow rays through clear glass,
 // the stack's bounce, Russian roulette, the bounce limit, the clamps; the
 // lamps a bounce off a sharp enough reflection meets along its way, shared
 // with the light sample there, and the stand-ins the camera sees them by;
@@ -883,27 +885,64 @@ fn left_to_bounces(pdf: f32, seen_in: f32) -> vec3<f32> {
 }
 
 // Next-event estimation at a vertex (ic:2043-2201): one sample of the sky
-// (sample_environment_light, ic:4279) and one of the lamps
-// (sample_analytic_lights, ic:4550), each with its own shadow ray, summed
+// (sample_environment_light, ic:4279), one of the lamps
+// (sample_analytic_lights, ic:4550) and one of the glowing triangles
+// (sample_emissive_surfaces, ic:4447), each with its own shadow ray, summed
 // before the throughput, as the processor sums them. One pass of the loop
-// is one light source, so the two share their evaluation of the stack,
+// is one light source, so the three share their evaluation of the stack,
 // their shadow ray and their arithmetic. An environment turned down to
-// nothing, and a scene with no lamp, draw nothing (ic:4299, 4565). A
-// surface that transmits is lit from both sides: it draws the whole sky,
-// chooses lamps on both sides, and its shadow rays leave from the side the
-// light is on; the light through clear glass is tinted, and through glass
-// that bends light the sky's is shared with the bounces that see it.
+// nothing, a scene with no lamp, and one with no glowing triangle a light
+// sample takes draw nothing (ic:4299, 4565, 2117). A surface that
+// transmits is lit from both sides: it draws the whole sky, chooses lamps
+// and glowing triangles on both sides, and its shadow rays leave from the
+// side the light is on; the light through clear glass is tinted, and
+// through glass that bends light the sky's and the glowing triangles' is
+// shared with the bounces that see it.
 fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32>, surf: Surface, instance: u32, transmissive: bool) -> vec3<f32> {
     var direct = vec3<f32>(0.0);
-    for (var source = 0u; source < 2u; source++) {
+    for (var source = 0u; source < 3u; source++) {
         let sky = source == 0u;
+        let glow = source == 2u;
         var draw: LightDraw;
         var diffuse = true;
         var specular = true;
         var shadow = true;
         var p_select = 1.0;
         var is_shared = false;
-        if (sky) {
+        // A glowing triangle's shadow ray ends at the point chosen on it,
+        // moved off it along its normal.
+        var glow_point = vec3<f32>(0.0);
+        var glow_normal = vec3<f32>(0.0);
+        if (glow) {
+            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {
+                continue;
+            }
+            // Chosen from here down the tree, on the bounce's light choice
+            // and light sample, as the lamp was.
+            let e = emitters_sample(surf.position, surf.geometric, transmissive, sampler_light_select(s), sampler_light_sample(s));
+            if (!e.ok) {
+                continue;
+            }
+            let to_light = e.position - surf.position;
+            let distance_squared = dot(to_light, to_light);
+            if (!(distance_squared > 0.0 && is_finite(distance_squared))) {
+                continue;
+            }
+            let direction = to_light * (1.0 / sqrt(distance_squared));
+            // It glows from the side its winding faces, to a light sample as
+            // to a bounce; seen edge on its density is no number.
+            let cos_light = -dot(direction, e.normal);
+            if (cos_light <= 1e-9) {
+                continue;
+            }
+            let pdf = e.density * distance_squared / cos_light;
+            if (!(pdf > 0.0 && is_finite(pdf))) {
+                continue;
+            }
+            draw = LightDraw(true, direction, e.radiance, 0.0, false, pdf, false);
+            glow_point = e.position;
+            glow_normal = e.normal;
+        } else if (sky) {
             if (frame.env_intensity <= 0.0) {
                 continue;
             }
@@ -964,7 +1003,13 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
                 reach = draw.distance * (1.0 - 1e-3);
             }
             let leaving = select(surf.geometric, -surf.geometric, below);
-            let v = shadow_through(frame.shadow_glass, offset_at(surf.position, leaving, surf.magnitude), leaving, surf.position + draw.direction * reach, -draw.direction);
+            var aim = surf.position + draw.direction * reach;
+            var aim_normal = -draw.direction;
+            if (glow) {
+                aim = glow_point;
+                aim_normal = glow_normal;
+            }
+            let v = shadow_through(frame.shadow_glass, offset_at(surf.position, leaving, surf.magnitude), leaving, aim, aim_normal);
             if (all(v.through == vec3<f32>(0.0))) {
                 continue;
             }
@@ -972,7 +1017,8 @@ fn direct_light(s: ptr<function, Sampler>, bsdf: OpenPbr, f: Frame, wo: vec3<f32
             bent = v.bent;
         }
         var scale: vec3<f32>;
-        if (sky) {
+        if (!(source == 1u)) {
+            // The sky, or a glowing triangle, which the bounce can meet too.
             var weight = mis_power(draw.pdf, bsdf_pdf);
             // Through glass that bends light, shared with the bounces that
             // pass it and those that see it.

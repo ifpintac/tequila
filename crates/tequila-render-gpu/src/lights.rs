@@ -338,7 +338,6 @@ pub struct LampScene {
     shadow_links: bool,
     shadowless_parts: bool,
     met_past_parts: bool,
-    glowing: bool,
     sky: bool,
 }
 
@@ -356,7 +355,6 @@ impl LampScene {
             shadow_links: lights.iter().any(|l| !l.shadow_links.is_all()),
             shadowless_parts: scene.has_shadowless_parts(),
             met_past_parts: lights.iter().filter(met).any(|l| !l.visibility.shadow || !l.shadow_links.is_all()),
-            glowing: !scene.emitters().is_empty(),
             sky: scene.environment.intensity() > 0.0,
         }
     }
@@ -395,9 +393,6 @@ impl LampScene {
         // passes, met where the bounce stops at it (lamps_past, light_past).
         if config.shadows && (self.shadowless_parts || self.met_past_parts) {
             limits.push("the light past a part its shadow rays pass is not met by a bounce that stops at the part");
-        }
-        if self.glowing && config.light_source_materials {
-            limits.push("a glowing part lights nothing by light samples: only the bounces that meet it find its light");
         }
         if !config.direct_lighting && (self.any_lamp || self.sky) {
             limits.push("the lights are sampled directly all the same");

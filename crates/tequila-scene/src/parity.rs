@@ -259,6 +259,31 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: glowing_pattern,
     pictures: parity_pictures,
+}, ParityScene {
+    name: "glowing_screen",
+    covers: "R3 tier A, glowing parts as lights: the product on its modelled ground under the environment turned \
+             down to a sixth, its screen glowing blue, its lens and its feet orange, the same all over - every \
+             triangle of them in the tree of glowing triangles, a light sample choosing one down it from each \
+             point the path scatters at and a point on it, weighed against the bounces that hit the same point; \
+             the screen lighting the bezel and the body, the feet the ground under the product",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_screen,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "glow_under_glass",
+    covers: "R3 tier A/B, a glow seen through glass: glowing_screen with a block of solid clear glass lying over the \
+             screen - the camera seeing the glow split at and refracted through the glass, the light samples of the \
+             glowing triangles passing the glass, the glossy bezel's bounces seeing the glass as glass and the glow \
+             past it weighed against the glowing surface their straight line meets",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glow_under_glass,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -980,6 +1005,46 @@ fn glowing_pattern() -> SceneDocument {
         graph.connect(checker, output, Socket::Param(Param::EmissionColor));
     }
     texture_material(&mut document, "Lens", &[wire(1, Some(uv_repeats(2.0, 2.0)), Param::EmissionLuminance)]);
+    document
+}
+
+/// `simple_product` on its modelled ground, the environment down to a sixth,
+/// its screen glowing blue, its lens and its feet orange, each the same all
+/// over: glowing parts a light sample chooses.
+fn glowing_screen() -> SceneDocument {
+    glowing_screen_and_bus().0
+}
+
+fn glowing_screen_and_bus() -> (SceneDocument, CommandBus) {
+    let (mut document, mut bus) = simple_product_mapped(&|(name, material_type, material)| match name {
+        "Screen" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 0.45, g: 0.65, b: 1.0 }, emission_luminance: 4.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Lens" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.6, b: 0.3 }, emission_luminance: 8.0, ..MaterialType::Emissive.defaults() },
+        ),
+        "Foot" => (
+            name,
+            MaterialType::Emissive,
+            Material { emission_color: Spectrum { r: 1.0, g: 0.5, b: 0.2 }, emission_luminance: 12.0, ..MaterialType::Emissive.defaults() },
+        ),
+        _ => (name, material_type, material),
+    });
+    bus.apply(&mut document, Command::SetEnvironmentParameter { parameter: EnvironmentParameter::scalar(EnvParam::Brightness, 1.0 / 6.0) })
+        .expect("the environment turns down");
+    (document, bus)
+}
+
+/// glowing_screen with a block of solid clear glass over the screen.
+fn glow_under_glass() -> SceneDocument {
+    let (mut document, mut bus) = glowing_screen_and_bus();
+    let glass = Material { specular_ior: 1.5, ..MaterialType::GlassSolid.defaults() };
+    let block = crate::bench::rounded_box(vec3(0.5, 0.012, 0.3), 0.004, 12);
+    add_parts(&mut document, &mut bus, vec![("Cover Glass", block, MaterialType::GlassSolid, glass, Transform::translation(vec3(0.15, 0.345, 0.08)))]);
     document
 }
 
