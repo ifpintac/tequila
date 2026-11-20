@@ -21,9 +21,10 @@
 //! - [`scene`]: a snapshot's triangles, acceleration structures and the
 //!   records a hit leads back to (R2.1), their layouts held to the WGSL's
 //!   by test (R2.2).
-//! - [`environment`] and [`transport`]: the first transport (R2.5), grey
-//!   diffuse surfaces under the environment, the processor's path draw for
-//!   draw, its samples accumulated by the processor's `Framebuffer`.
+//! - [`environment`] and [`transport`]: the transport (R2.5, R3), opaque
+//!   OpenPBR surfaces under the environment on a shadow catcher's floor, the
+//!   processor's path draw for draw, its samples accumulated by the
+//!   processor's `Framebuffer`.
 
 pub mod device;
 pub mod environment;

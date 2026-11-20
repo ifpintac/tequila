@@ -39,7 +39,72 @@ pub struct GpuInstance {
     pub material: u32,
     /// The instance's index in the snapshot.
     pub instance: u32,
-    pub _pad: u32,
+    /// Its shadow catcher's record in the catcher buffer, [`NO_CATCHER`]
+    /// for an ordinary surface.
+    pub catcher: u32,
+}
+
+/// [`GpuInstance::catcher`] of an instance that is no shadow catcher.
+pub const NO_CATCHER: u32 = u32::MAX;
+
+/// A shadow catcher (`tequila_render_core::scene::ShadowCatcher`) as the card
+/// reads it: the floor the environment's ground puts in, or a part made one.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable, PartialEq)]
+pub struct GpuCatcher {
+    /// The shadow's tint; the fourth float unused.
+    pub shadow_color: [f32; 4],
+    /// The glow the product sees of the floor (`ShadowCatcher::bounce`), and
+    /// in the fourth float 1 when there is one.
+    pub bounce: [f32; 4],
+    pub reflections: f32,
+    pub reflection_roughness: f32,
+    /// The height, or with [`FADE_BY_DISTANCE`] the distance, the reflection
+    /// fades out by; read only with a fade.
+    pub reflection_fade: f32,
+    /// [`FADE_NONE`], [`FADE_BY_HEIGHT`] or [`FADE_BY_DISTANCE`].
+    pub fade: u32,
+    pub reflection_fresnel: u32,
+    pub occlusion_only: u32,
+    pub occlusion_radius: f32,
+    pub shadows: u32,
+    pub bounce_falloff: f32,
+    pub _pad: [u32; 3],
+}
+
+/// [`GpuCatcher::fade`]: a reflection that never fades.
+pub const FADE_NONE: u32 = 0;
+/// [`GpuCatcher::fade`]: fading with the height of what it shows.
+pub const FADE_BY_HEIGHT: u32 = 1;
+/// [`GpuCatcher::fade`]: fading with how near the product is to the floor point.
+pub const FADE_BY_DISTANCE: u32 = 2;
+
+impl GpuCatcher {
+    pub fn from_catcher(c: &tequila_render_core::scene::ShadowCatcher) -> GpuCatcher {
+        let s = c.shadow_color;
+        let (fade, reflection_fade) = match c.reflection_fade {
+            None => (FADE_NONE, 0.0),
+            Some(fade) if c.reflection_fade_by_distance => (FADE_BY_DISTANCE, fade),
+            Some(fade) => (FADE_BY_HEIGHT, fade),
+        };
+        GpuCatcher {
+            shadow_color: [s.r, s.g, s.b, 0.0],
+            bounce: match c.bounce {
+                Some(glow) => [glow.r, glow.g, glow.b, 1.0],
+                None => [0.0; 4],
+            },
+            reflections: c.reflections,
+            reflection_roughness: c.reflection_roughness,
+            reflection_fade,
+            fade,
+            reflection_fresnel: c.reflection_fresnel as u32,
+            occlusion_only: c.occlusion_only as u32,
+            occlusion_radius: c.occlusion_radius,
+            shadows: c.shadows as u32,
+            bounce_falloff: c.bounce_falloff,
+            _pad: [0; 3],
+        }
+    }
 }
 
 /// A snapshot uploaded.
@@ -49,11 +114,14 @@ pub struct GpuScene {
     pub indices: wgpu::Buffer,
     pub meshes: wgpu::Buffer,
     pub instances: wgpu::Buffer,
+    /// The shadow catchers' records, by [`GpuInstance::catcher`].
+    pub catchers: wgpu::Buffer,
     pub blases: Vec<Option<wgpu::Blas>>,
     pub tlas: wgpu::Tlas,
     /// What the records say, kept for tests and for the next upload.
     pub mesh_records: Vec<GpuMesh>,
     pub instance_records: Vec<GpuInstance>,
+    pub catcher_records: Vec<GpuCatcher>,
 }
 
 fn rows(m: &tequila_core::math::Mat4) -> [[f32; 4]; 3] {
@@ -106,22 +174,34 @@ impl GpuScene {
             .filter(|(_, i)| !scene.meshes[i.mesh.index()].indices.is_empty())
             .map(|(n, _)| n)
             .collect();
+        let mut catcher_records: Vec<GpuCatcher> = Vec::new();
         let mut instance_records: Vec<GpuInstance> = traced
             .iter()
             .map(|&n| {
                 let inst = &scene.instances[n];
+                let catcher = match &inst.shadow_catcher {
+                    Some(c) => {
+                        catcher_records.push(GpuCatcher::from_catcher(c));
+                        catcher_records.len() as u32 - 1
+                    }
+                    None => NO_CATCHER,
+                };
                 GpuInstance {
                     object_to_world: rows(&inst.transform.matrix),
                     world_to_object: rows(&inst.transform.inverse),
                     mesh: inst.mesh.index() as u32,
                     material: inst.material.index() as u32,
                     instance: n as u32,
-                    _pad: 0,
+                    catcher,
                 }
             })
             .collect();
         if instance_records.is_empty() {
-            instance_records.push(GpuInstance::default());
+            instance_records.push(GpuInstance { catcher: NO_CATCHER, ..GpuInstance::default() });
+        }
+        let mut catcher_buffer_records = catcher_records.clone();
+        if catcher_buffer_records.is_empty() {
+            catcher_buffer_records.push(GpuCatcher::default());
         }
 
         let input = wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE;
@@ -133,6 +213,7 @@ impl GpuScene {
         let indices_buffer = init("indices", bytemuck::cast_slice(&indices), input);
         let meshes_buffer = init("meshes", bytemuck::cast_slice(&mesh_records), wgpu::BufferUsages::STORAGE);
         let instances_buffer = init("instances", bytemuck::cast_slice(&instance_records), wgpu::BufferUsages::STORAGE);
+        let catchers_buffer = init("catchers", bytemuck::cast_slice(&catcher_buffer_records), wgpu::BufferUsages::STORAGE);
 
         let sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor> = scene
             .meshes
@@ -205,10 +286,12 @@ impl GpuScene {
             indices: indices_buffer,
             meshes: meshes_buffer,
             instances: instances_buffer,
+            catchers: catchers_buffer,
             blases,
             tlas,
             mesh_records,
             instance_records,
+            catcher_records,
         }
     }
 }

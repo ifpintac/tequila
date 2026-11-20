@@ -6,7 +6,7 @@
 
 use std::mem::{offset_of, size_of};
 use tequila_render_gpu::material::GpuMaterial;
-use tequila_render_gpu::scene::{GpuInstance, GpuMesh};
+use tequila_render_gpu::scene::{GpuCatcher, GpuInstance, GpuMesh};
 use tequila_render_gpu::transport::{FrameParams, PixelSums};
 use tequila_render_gpu::shader;
 
@@ -41,7 +41,14 @@ fn records_have_one_layout_on_both_sides() {
     let source = shader::source("scene");
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
     layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count });
-    layout!(&module, GpuInstance { object_to_world, world_to_object, mesh, material, instance, _pad });
+    layout!(&module, GpuInstance { object_to_world, world_to_object, mesh, material, instance, catcher });
+    layout!(
+        &module,
+        GpuCatcher {
+            shadow_color, bounce, reflections, reflection_roughness, reflection_fade, fade, reflection_fresnel,
+            occlusion_only, occlusion_radius, shadows, bounce_falloff, _pad,
+        }
+    );
     let source = shader::source("frame");
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
     layout!(
@@ -51,7 +58,8 @@ fn records_have_one_layout_on_both_sides() {
             rr_start, clamp_direct, clamp_indirect, shadow_far, env_rotation, env_inverse_rotation, env_width,
             env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, mode,
             off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
-            regularization_start, regularization_roughness, _pad1, _pad2,
+            regularization_start, regularization_roughness, off_marginal, off_upward, env_upward_sum, shadows,
+            ground_illumination, _pad1,
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });

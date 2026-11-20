@@ -47,8 +47,17 @@ struct FrameParams {
     // reflection lobe at least this rough.
     regularization_start: u32,
     regularization_roughness: f32,
+    // The shadow catcher's tables in env_f32 (environment.wgsl's
+    // env_sample_irradiance): the rows' CDF, and the one weighted towards
+    // straight up, with its sum.
+    off_marginal: u32,
+    off_upward: u32,
+    env_upward_sum: f32,
+    // IntegratorConfig::shadows, and ::ground_illumination (a floor a bounce
+    // meets is shaded as its material rather than passed), 1 for on.
+    shadows: u32,
+    ground_illumination: u32,
     _pad1: u32,
-    _pad2: u32,
 };
 
 @group(3) @binding(0) var<uniform> frame: FrameParams;

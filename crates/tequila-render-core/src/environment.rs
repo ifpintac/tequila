@@ -366,6 +366,15 @@ pub struct EnvironmentTables<'a> {
     pub rows: &'a [f32],
     pub row_start: &'a [usize],
     pub choice: &'a [f32],
+    /// The rows' CDF, `height + 1` entries, that [`Environment::sample_irradiance`]
+    /// draws a surface not facing straight up from.
+    pub marginal_cdf: &'a [f32],
+    /// The rows' CDF weighted by their mean cosine towards straight up,
+    /// `height + 1` entries, and its normalization constant: what a floor
+    /// facing straight up draws from, and its light
+    /// ([`Environment::sample_irradiance`], [`Environment::irradiance_bound`]).
+    pub upward_cdf: &'a [f32],
+    pub upward_sum: f32,
 }
 
 /// The environment cut into tiles, each a cone of directions, and for each
@@ -736,7 +745,8 @@ impl Environment {
     }
 
     /// Everything [`Self::radiance`], [`Self::background_radiance_from`],
-    /// [`Self::sample_facing`] and [`Self::pdf_facing`] read, for a renderer
+    /// [`Self::sample_facing`], [`Self::pdf_facing`], [`Self::irradiance_bound`]
+    /// and [`Self::sample_irradiance`] read (an infinitely far dome), for a renderer
     /// that keeps its own copy: the graphics card's (`tequila-render-gpu`),
     /// which uploads these as they are so it samples the very same light.
     pub fn tables(&self) -> EnvironmentTables<'_> {
@@ -761,6 +771,9 @@ impl Environment {
             rows: &f.rows,
             row_start: &f.row_start,
             choice: &f.choice,
+            marginal_cdf: &self.marginal_cdf,
+            upward_cdf: &self.upward_cdf,
+            upward_sum: self.upward_sum,
         }
     }
 
