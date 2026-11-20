@@ -436,6 +436,179 @@ fn another_preset_wall_is_the_processors_picture() {
     preset_wall(1);
 }
 
+/// Whether the card runs `program` now where stage 1's lowering did not:
+/// the transport's lowering takes it (its pictures none loaded, as no
+/// preset of these has one), `program::lower` refuses it.
+fn newly_on_the_card(program: &tequila_materials::graph::CompiledGraph) -> bool {
+    let mut pictures = tequila_render_gpu::textures::CardPictures::default();
+    pictures.finish();
+    tequila_render_gpu::program::lower(program).is_err()
+        && matches!(tequila_render_gpu::program::lower_with(program, tequila_render_gpu::textures::Pictures::On(&pictures)), Ok(Some(_)))
+}
+
+/// A wall of the presets the card has run since R3's procedural nodes
+/// (`newly_on_the_card`: Tequila's procedurals, Wave, Gabor, the curvature
+/// and the baked occlusion), the Headphones' parts and camera as the preset
+/// walls have them, opaque and glowing nowhere: wall `variant` of
+/// [`NEW_WALLS`], which between them wear every one of those presets.
+fn new_preset_wall(variant: usize) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let (entries, _) = tequila_format::library::read_directory(&tequila_format::library::standard_directory());
+    let runnable: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| {
+            let Ok(program) = entry.graph.compile() else { return false };
+            let m = &program.constants;
+            newly_on_the_card(&program)
+                && tequila_render_gpu::material::GpuMaterial::supports(m)
+                && m.transmission_weight == 0.0
+                && m.emission_luminance <= 0.0
+                && m.geometry_opacity >= 0.999
+                && m.fuzz_density <= 0.0
+        })
+        .collect();
+    assert!(!runnable.is_empty(), "no preset is newly on the card");
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let entry = &runnable[(NEW_WALLS * j + variant) % runnable.len()];
+        let mut definition = entry.definition();
+        definition.graph.material_mut().edge_radius = 0.0;
+        names.push(entry.name.clone());
+        document.materials.insert_with_key(*key, definition);
+    }
+    assert!(NEW_WALLS * keys.len() >= runnable.len(), "{} presets newly on the card, more than {NEW_WALLS} walls of {} wear", runnable.len(), keys.len());
+    eprintln!("new preset wall {variant} (of {} newly on the card): {}", runnable.len(), names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: format!("new_preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+#[test]
+fn a_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(0);
+}
+
+#[test]
+fn another_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(1);
+}
+
+#[test]
+fn a_third_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(2);
+}
+
+/// How many walls the presets newly on the card are spread over.
+const NEW_WALLS: usize = 3;
+
+/// What the snapshot measures at the mesh's corners, read by programs on the
+/// card (R3: the curvature, the baked occlusion, the distance to other parts,
+/// vertex colours): the Headphones' parts, every mesh given vertex colours
+/// banded over it, every material its constants with one of the measures
+/// driving its base colour or its roughness - the barycentrics worked out
+/// again at the hit, the measures uploaded and weighed, the curvature by the
+/// part's scale, the colours into the rendering space.
+#[test]
+fn the_measured_headphones_are_the_processors_picture() {
+    use tequila_materials::graph::{CurvatureMode, MaterialGraph, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let meshes: Vec<_> = document.geometry.keys().collect();
+    for key in meshes {
+        let mut mesh = document.geometry.get(key).expect("a mesh").clone();
+        let band = |x: f32| 0.5 + 0.5 * (x * 60.0).sin();
+        mesh.colors = mesh.positions.iter().map(|p| tequila_core::math::Vec4 { x: band(p.x), y: band(p.y + 0.01), z: band(p.z - 0.02), w: 1.0 }).collect();
+        document.geometry.insert_with_key(key, mesh);
+    }
+    let colour = |r: f32, g: f32, b: f32| Value::Color(tequila_core::spectrum::Spectrum { r, g, b });
+    let keys: Vec<_> = document.materials.keys().collect();
+    for (j, key) in keys.iter().enumerate() {
+        let mut definition = document.materials.get(*key).expect("a material").clone();
+        let mut graph = MaterialGraph::from_material(definition.graph.material().clone());
+        graph.material_mut().edge_radius = 0.0;
+        let output = graph.output();
+        // A mask between two colours, into the base colour.
+        let mix_into_base = |graph: &mut MaterialGraph, mask: NodeKind| {
+            let mask = graph.add_node(Node::new(mask));
+            let mut mix = Node::new(NodeKind::Mix);
+            mix.literals.insert(Socket::Input(0), colour(0.05, 0.05, 0.06));
+            mix.literals.insert(Socket::Input(1), colour(0.9, 0.55, 0.2));
+            let mix = graph.add_node(mix);
+            graph.connect(mask, mix, Socket::Input(2));
+            graph.connect(mix, output, Socket::Param(Param::BaseColor));
+        };
+        match j % 5 {
+            0 => mix_into_base(&mut graph, NodeKind::Curvature { mode: CurvatureMode::Convex, radius: 0.004, contrast: 1.2 }),
+            1 => mix_into_base(&mut graph, NodeKind::Occlusion { radius: 0.01, contrast: 1.5 }),
+            2 => {
+                let distance = graph.add_node(Node::new(NodeKind::Distance { radius: 0.02 }));
+                graph.connect(distance, output, Socket::Param(Param::SpecularRoughness));
+                let curvature = graph.add_node(Node::new(NodeKind::Curvature { mode: CurvatureMode::Both, radius: 0.003, contrast: 0.7 }));
+                graph.connect(curvature, output, Socket::Param(Param::BaseColor));
+            }
+            3 => {
+                let painted = graph.add_node(Node::new(NodeKind::VertexColor));
+                graph.connect(painted, output, Socket::Param(Param::BaseColor));
+            }
+            _ => mix_into_base(&mut graph, NodeKind::Curvature { mode: CurvatureMode::Concave, radius: 0.004, contrast: 1.0 }),
+        }
+        definition.graph = graph;
+        document.materials.insert_with_key(*key, definition);
+    }
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "measured_headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
+/// Every Tequila procedural the card runs, at the menu's settings
+/// (`Procedural::catalog`; Wood (Advanced) is not on the card): the
+/// Headphones' parts, each material its constants with one pattern mixing
+/// its base colour between two and, on every other part, bumping it too;
+/// in the part's space, and on every third part through a planar mapping.
+#[test]
+fn the_patterned_headphones_are_the_processors_picture() {
+    use tequila_materials::graph::{MaterialGraph, Node, NodeKind, Socket, Value};
+    use tequila_materials::material_type::Param;
+    use tequila_texture::procedural::Procedural;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+    let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
+    let patterns: Vec<Procedural> = Procedural::catalog().into_iter().filter(|p| !matches!(p, Procedural::WoodAdvanced { .. })).collect();
+    let colour = |r: f32, g: f32, b: f32| Value::Color(tequila_core::spectrum::Spectrum { r, g, b });
+    let keys: Vec<_> = document.materials.keys().collect();
+    let mut names = Vec::new();
+    for (j, key) in keys.iter().enumerate() {
+        let mut definition = document.materials.get(*key).expect("a material").clone();
+        let mut graph = MaterialGraph::from_material(definition.graph.material().clone());
+        graph.material_mut().edge_radius = 0.0;
+        let output = graph.output();
+        let pattern = patterns[j % patterns.len()];
+        names.push(pattern.label());
+        let node = graph.add_node(Node::new(NodeKind::Procedural { procedural: Box::new(pattern), seed: j as u32 * 7 }));
+        if j % 3 == 2 {
+            let planar = tequila_texture::projection::Mapping { projection: tequila_texture::projection::Projection::Planar, axis: tequila_texture::projection::Axis::Z, real_world_units: true, scale: tequila_core::math::vec3(0.05, 0.05, 1.0), ..Default::default() };
+            let m = graph.add_node(Node::new(NodeKind::Mapping2d { mapping: planar }));
+            graph.connect(m, node, Socket::Input(0));
+        }
+        let mut mix = Node::new(NodeKind::Mix);
+        mix.literals.insert(Socket::Input(0), colour(0.06, 0.07, 0.08));
+        mix.literals.insert(Socket::Input(1), colour(0.85, 0.6, 0.3));
+        let mix = graph.add_node(mix);
+        graph.connect(node, mix, Socket::Input(2));
+        graph.connect(mix, output, Socket::Param(Param::BaseColor));
+        if j % 2 == 0 {
+            let bump = graph.add_node(Node::new(NodeKind::Bump { depth: 0.0003 }));
+            graph.connect(node, bump, Socket::Input(0));
+            graph.connect(bump, output, Socket::Param(Param::Bump));
+        }
+        definition.graph = graph;
+        document.materials.insert_with_key(*key, definition);
+    }
+    eprintln!("patterned headphones: {}", names.join(", "));
+    let camera = document.cameras.active().camera;
+    same_shot(Shot { name: "patterned_headphones".into(), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
+}
+
 /// Which presets of the walls the card renders otherwise: each swapped in
 /// alone. Run by hand, `TEQUILA_PARITY_REPORT_ONLY=1 cargo test --test parity
 /// -- --ignored --nocapture one_by_one`.

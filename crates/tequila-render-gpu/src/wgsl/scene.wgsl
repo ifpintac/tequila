@@ -10,13 +10,20 @@ struct GpuMesh {
     // Its first UV and first tangent, NO_DATA for a mesh without.
     uv_base: u32,
     tangent_base: u32,
-    _pad: array<u32, 2>,
+    // Its first vertex in scene_attributes and which of the measures it
+    // has (scene.rs's HAS_*), NO_DATA for none.
+    attribute_base: u32,
+    attribute_flags: u32,
     // Its bounds in its own space, for the Generated coordinate.
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
 };
 
 const NO_DATA: u32 = 0xFFFFFFFFu;
+const HAS_CURVATURE: u32 = 1u;
+const HAS_OCCLUSION: u32 = 2u;
+const HAS_CLOSENESS: u32 = 4u;
+const HAS_COLORS: u32 = 8u;
 
 struct GpuInstance {
     // Row-major 3 x 4, as Transform::matrix and Transform::inverse.
@@ -87,6 +94,10 @@ struct GpuCatcher {
 // uv_base and tangent_base.
 @group(0) @binding(14) var<storage, read> scene_uvs: array<f32>;
 @group(0) @binding(15) var<storage, read> scene_tangents: array<vec4<f32>>;
+// Every mesh's per-vertex measures (Mesh's curvature, occlusion, closeness
+// and colours), two vec4s a vertex from its attribute_base: (curvature,
+// occlusion, closeness, 0), (r, g, b, a) in linear sRGB.
+@group(0) @binding(20) var<storage, read> scene_attributes: array<vec4<f32>>;
 // The scene's materials (material.rs's GpuMaterial, declared in
 // openpbr.wgsl), by an instance's `material`. A kernel that reads them
 // includes openpbr; this module only names the binding.

@@ -29,7 +29,13 @@ pub struct GpuMesh {
     pub uv_base: u32,
     /// Its first tangent in the tangent buffer, [`NO_DATA`] for none.
     pub tangent_base: u32,
-    pub _pad: [u32; 2],
+    /// Its first vertex in the attribute buffer, two vec4s a vertex - its
+    /// curvature, occlusion and closeness, then its colour - [`NO_DATA`]
+    /// for a mesh with none or a scene no program of which reads them.
+    pub attribute_base: u32,
+    /// Which it has: [`HAS_CURVATURE`], [`HAS_OCCLUSION`],
+    /// [`HAS_CLOSENESS`], [`HAS_COLORS`].
+    pub attribute_flags: u32,
     /// Its bounds in its own space (`Mesh::bounds`), which the Generated
     /// texture coordinate is normalized to.
     pub bounds_min: [f32; 4],
@@ -38,6 +44,12 @@ pub struct GpuMesh {
 
 /// [`GpuMesh::uv_base`] or [`GpuMesh::tangent_base`] of a mesh without.
 pub const NO_DATA: u32 = u32::MAX;
+/// [`GpuMesh::attribute_flags`]: what of `Mesh`'s per-vertex measures it
+/// has, each a list as long as its vertices (one that is not is none).
+pub const HAS_CURVATURE: u32 = 1;
+pub const HAS_OCCLUSION: u32 = 2;
+pub const HAS_CLOSENESS: u32 = 4;
+pub const HAS_COLORS: u32 = 8;
 
 /// One placed instance, at its slot in the top-level structure (the slot is
 /// the instance's custom data, which a hit hands back).
@@ -170,6 +182,9 @@ pub struct GpuScene {
     /// Every mesh's tangents, four floats a vertex (the handedness in the
     /// fourth), from its `tangent_base`.
     pub tangents: wgpu::Buffer,
+    /// Every mesh's per-vertex measures, two vec4s a vertex, from its
+    /// `attribute_base`.
+    pub attributes: wgpu::Buffer,
     pub blases: Vec<Option<wgpu::Blas>>,
     pub tlas: wgpu::Tlas,
     /// What the records say, kept for tests and for the next upload.
@@ -191,6 +206,9 @@ impl GpuScene {
         let mut indices: Vec<u32> = Vec::new();
         let mut uvs: Vec<f32> = Vec::new();
         let mut tangents: Vec<f32> = Vec::new();
+        let mut attributes: Vec<f32> = Vec::new();
+        // The per-vertex measures only where a program reads them.
+        let measures = scene.programs.iter().flatten().any(|p| crate::program::reads_attributes(p));
         let mut mesh_records = Vec::with_capacity(scene.meshes.len());
         for mesh in &scene.meshes {
             let has_normals = mesh.normals.len() == mesh.positions.len() && !mesh.normals.is_empty();
@@ -199,6 +217,11 @@ impl GpuScene {
             let has_uvs = !mesh.uvs.is_empty() && mesh.uvs.len() == mesh.positions.len();
             let has_tangents = !mesh.tangents.is_empty() && mesh.tangents.len() == mesh.positions.len();
             let bounds = mesh.bounds();
+            let has = |len: usize, flag: u32| if measures && len == mesh.positions.len() && len > 0 { flag } else { 0 };
+            let attribute_flags = has(mesh.curvature.len(), HAS_CURVATURE)
+                | has(mesh.occlusion.len(), HAS_OCCLUSION)
+                | has(mesh.closeness.len(), HAS_CLOSENESS)
+                | has(mesh.colors.len(), HAS_COLORS);
             mesh_records.push(GpuMesh {
                 first_index: indices.len() as u32,
                 base_vertex: (positions.len() / 3) as u32,
@@ -206,7 +229,8 @@ impl GpuScene {
                 vertex_count: mesh.positions.len() as u32,
                 uv_base: if has_uvs { (uvs.len() / 2) as u32 } else { NO_DATA },
                 tangent_base: if has_tangents { (tangents.len() / 4) as u32 } else { NO_DATA },
-                _pad: [0; 2],
+                attribute_base: if attribute_flags != 0 { (attributes.len() / 8) as u32 } else { NO_DATA },
+                attribute_flags,
                 bounds_min: [bounds.min.x, bounds.min.y, bounds.min.z, 0.0],
                 bounds_max: [bounds.max.x, bounds.max.y, bounds.max.z, 0.0],
             });
@@ -218,6 +242,22 @@ impl GpuScene {
             if has_tangents {
                 for t in &mesh.tangents {
                     tangents.extend_from_slice(&[t.x, t.y, t.z, t.w]);
+                }
+            }
+            if attribute_flags != 0 {
+                let at = |values: &Vec<f32>, flag: u32, i: usize| if attribute_flags & flag != 0 { values[i] } else { 0.0 };
+                for i in 0..mesh.positions.len() {
+                    let c = if attribute_flags & HAS_COLORS != 0 { mesh.colors[i] } else { tequila_core::math::Vec4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 } };
+                    attributes.extend_from_slice(&[
+                        at(&mesh.curvature, HAS_CURVATURE, i),
+                        at(&mesh.occlusion, HAS_OCCLUSION, i),
+                        at(&mesh.closeness, HAS_CLOSENESS, i),
+                        0.0,
+                        c.x,
+                        c.y,
+                        c.z,
+                        c.w,
+                    ]);
                 }
             }
             for p in &mesh.positions {
@@ -238,6 +278,9 @@ impl GpuScene {
             if buffer.is_empty() {
                 buffer.extend_from_slice(&[0.0; 3]);
             }
+        }
+        if attributes.is_empty() {
+            attributes.extend_from_slice(&[0.0; 8]);
         }
         if indices.is_empty() {
             indices.extend_from_slice(&[0; 3]);
@@ -301,6 +344,7 @@ impl GpuScene {
         let catchers_buffer = init("catchers", bytemuck::cast_slice(&catcher_buffer_records), wgpu::BufferUsages::STORAGE);
         let uvs_buffer = init("uvs", bytemuck::cast_slice(&uvs), wgpu::BufferUsages::STORAGE);
         let tangents_buffer = init("tangents", bytemuck::cast_slice(&tangents), wgpu::BufferUsages::STORAGE);
+        let attributes_buffer = init("attributes", bytemuck::cast_slice(&attributes), wgpu::BufferUsages::STORAGE);
 
         let sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor> = scene
             .meshes
@@ -377,6 +421,7 @@ impl GpuScene {
             catchers: catchers_buffer,
             uvs: uvs_buffer,
             tangents: tangents_buffer,
+            attributes: attributes_buffer,
             blases,
             tlas,
             mesh_records,

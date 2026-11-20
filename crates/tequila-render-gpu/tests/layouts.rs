@@ -42,7 +42,7 @@ macro_rules! layout {
 fn records_have_one_layout_on_both_sides() {
     let source = shader::source("scene");
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
-    layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count, uv_base, tangent_base, _pad, bounds_min, bounds_max });
+    layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count, uv_base, tangent_base, attribute_base, attribute_flags, bounds_min, bounds_max });
     layout!(
         &module,
         GpuInstance {
