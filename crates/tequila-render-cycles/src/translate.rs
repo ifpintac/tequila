@@ -2208,8 +2208,8 @@ impl Builder<'_> {
         Ok(Slot::Link(node, "Value"))
     }
 
-    /// A metal's colours as they should reach Cycles' principled shader under
-    /// a clear coat of `weight` and index `ior`.
+    /// A base's colours as they should reach Cycles' principled shader under
+    /// a clear coat of `weight`, `darkening` and index `ior`.
     ///
     /// Light crosses a coat twice, down to the base and back up, and some of
     /// what the base returns is reflected down again by the coat's underside
@@ -2217,14 +2217,60 @@ impl Builder<'_> {
     /// reflectance where the surface is seen (`closure_layering_weight`);
     /// Tequila's renderer takes it both ways and sums the light trapped
     /// between (`lobes::openpbr`'s attenuation, `layered.rs`'s "forgetting
-    /// the outbound crossing"). A metal hands light back near the angle it
-    /// arrived by, so its second crossing is at the angle it is seen at: its
-    /// colours are darkened by a further `(1 - w F) / (1 - w F R)`, `F` the
-    /// coat's Fresnel there and `R` the metal's own reflectance, for the
-    /// metal's share of the base. A clear-coated grey metal (carbon fibre's
-    /// graphite) in a white world, seen straight on, read 0.206 where the
-    /// coat's two crossings make 0.200; now 0.201.
-    fn under_coat(&mut self, shader: Shader, base: Slot, edge: Slot, metalness: Slot, weight: Slot, ior: Slot) -> Result<(Slot, Slot), String> {
+    /// the outbound crossing").
+    ///
+    /// A metal hands light back near the angle it arrived by, so its second
+    /// crossing is at the angle it is seen at: its colours are darkened by a
+    /// further `(1 - w F) / (1 - w F R)`, `F` the coat's Fresnel there and
+    /// `R` the metal's own reflectance. A clear-coated grey metal (carbon
+    /// fibre's graphite) in a white world, seen straight on, read 0.206 where
+    /// the coat's two crossings make 0.200; now 0.201.
+    ///
+    /// What a matte base returns is spread over the hemisphere, and the coat
+    /// turns most of it back from inside (`lobes::openpbr::coat_escapes`):
+    /// its colour is darkened by OpenPBR's `(1 - K) / (1 - E_b K)`, channel
+    /// by channel (`lobes::openpbr::coat_darkening`), which Cycles has no
+    /// part of. A grey 0.5 under a clear coat read 0.52 where the coat makes
+    /// it 0.317.
+    ///
+    /// Principled has one base colour for its metal and its matte shares, so
+    /// a part of both gets the two darkenings blended by metalness: the
+    /// whole right where both shares are one colour, as a carbon weave's are,
+    /// the split between its sheen and its diffuse not quite.
+    fn under_coat(
+        &mut self,
+        shader: Shader,
+        m: &Material,
+        (base, edge): (Slot, Slot),
+        (metalness, metal): (Slot, bool),
+        (weight, darkening, ior): (Slot, Slot, Slot),
+    ) -> Result<(Slot, Slot), String> {
+        use tequila_materials::lobes::openpbr::{coat_darkening, coat_escapes};
+        // The coat's roughness and index as set: a map on either is rare,
+        // and the share the coat lets out changes little with them.
+        let escapes = coat_escapes(m.coat_roughness, m.coat_ior);
+        let amount = self.float_op(shader, "multiply", weight, darkening)?;
+        let matte = match (base, amount) {
+            (Slot::Value(colour), Slot::Value(amount)) => {
+                Slot::Value(Value::Color(coat_darkening(escapes, amount.as_float(), colour.as_color())))
+            }
+            _ => {
+                // 1 + (escapes / (1 - base (1 - escapes)) - 1) amount.
+                let below = self.session.node(shader, "vector_math")?;
+                self.session.set_string(below, "math_type", "multiply_add")?;
+                self.feed(shader, below, "Vector1", base, true)?;
+                self.feed(shader, below, "Vector2", Slot::Value(Value::Color(Spectrum::splat(escapes - 1.0))), true)?;
+                self.feed(shader, below, "Vector3", Slot::Value(Value::Color(Spectrum::ONE)), true)?;
+                let ratio = self.session.node(shader, "vector_math")?;
+                self.session.set_string(ratio, "math_type", "divide")?;
+                self.feed(shader, ratio, "Vector1", Slot::Value(Value::Color(Spectrum::splat(escapes))), true)?;
+                self.session.connect(shader, below, "Vector", ratio, "Vector2")?;
+                self.apply(shader, &NodeKind::Mix, &[Slot::Value(Value::Color(Spectrum::ONE)), Slot::Link(ratio, "Vector"), amount], 0)?
+            }
+        };
+        if !metal {
+            return Ok((self.apply(shader, &NodeKind::Multiply, &[base, matte], 0)?, edge));
+        }
         let fresnel = self.session.node(shader, "fresnel")?;
         self.feed(shader, fresnel, "IOR", ior, false)?;
         let reflected = self.float_op(shader, "multiply", weight, Slot::Link(fresnel, "Fac"))?;
@@ -2240,14 +2286,31 @@ impl Builder<'_> {
         let returned = self.float_op(shader, "multiply", reflected, own)?;
         let again = self.float_op(shader, "subtract", num(1.0), returned)?;
         let kept = self.float_op(shader, "divide", through, again)?;
-        // 1 - metalness (1 - kept): the metal's share darkened, the rest not.
-        let lost = self.float_op(shader, "subtract", num(1.0), kept)?;
-        let share = self.float_op(shader, "multiply", metalness, lost)?;
-        let factor = self.float_op(shader, "subtract", num(1.0), share)?;
+        // The metal's share darkened its way, the rest the matte way; the
+        // edge colour is the metal's alone.
+        let factor = self.apply(shader, &NodeKind::Mix, &[matte, kept, metalness], 0)?;
+        let edge_factor = self.float_mix(shader, num(1.0), kept, metalness)?;
         Ok((
             self.apply(shader, &NodeKind::Multiply, &[base, factor], 0)?,
-            self.apply(shader, &NodeKind::Multiply, &[edge, factor], 0)?,
+            self.apply(shader, &NodeKind::Multiply, &[edge, edge_factor], 0)?,
         ))
+    }
+
+    /// The index of the base's interface under a coat of `weight` and index
+    /// `coat`, as Tequila's renderer has it (`lobes::openpbr::base_ior`):
+    /// relative to the coat, so a lacquer of the plastic's own index leaves
+    /// nothing between them to reflect a second highlight.
+    fn base_ior(&mut self, shader: Shader, ior: Slot, coat: Slot, weight: Slot) -> Result<Slot, String> {
+        if let (Slot::Value(n_b), Slot::Value(n_c), Slot::Value(w)) = (ior, coat, weight) {
+            return Ok(num(tequila_materials::lobes::openpbr::base_ior(n_b.as_float(), n_c.as_float(), w.as_float())));
+        }
+        // n_b (1 + (1 / n_c - 1) w), turned over where below one.
+        let inverse = self.float_op(shader, "divide", num(1.0), coat)?;
+        let less = self.float_op(shader, "subtract", inverse, num(1.0))?;
+        let scale = self.float_op3(shader, "multiply_add", less, weight, num(1.0))?;
+        let eta = self.float_op(shader, "multiply", ior, scale)?;
+        let over = self.float_op(shader, "divide", num(1.0), eta)?;
+        self.float_op(shader, "maximum", eta, over)
     }
 
     /// Tequila's anisotropy as Cycles' principled shader takes it. Tequila
@@ -3677,18 +3740,25 @@ impl Builder<'_> {
             (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
         };
         let metal = !transmissive && (m.base_metalness > 0.0 || driven.contains_key(&Param::BaseMetalness));
-        let (base, edge) = if metal && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight)) {
-            let weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
-            let ior = value(Param::CoatIor, Value::Float(m.coat_ior));
-            self.under_coat(shader, base, edge, metalness, weight, ior)?
+        let coated = !transmissive && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight));
+        let coat_weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
+        let coat_ior = value(Param::CoatIor, Value::Float(m.coat_ior));
+        let (base, edge) = if coated {
+            let darkening = value(Param::CoatDarkening, Value::Float(m.coat_darkening));
+            self.under_coat(shader, m, (base, edge), (metalness, metal), (coat_weight, darkening, coat_ior))?
         } else {
             (base, edge)
         };
+        // Under a coat, an opaque base's interface is against the coat.
+        let opaque_under_coat =
+            coated && m.transmission_weight <= 1e-4 && !driven.contains_key(&Param::TransmissionWeight);
         self.feed(shader, bsdf, "base_color", base, true)?;
         self.feed(shader, bsdf, "metallic", metalness, false)?;
         self.feed(shader, bsdf, "diffuse_roughness", value(Param::DiffuseRoughness, Value::Float(m.base_diffuse_roughness)), false)?;
         self.feed(shader, bsdf, "roughness", value(Param::SpecularRoughness, Value::Float(m.specular_roughness)), false)?;
-        self.feed(shader, bsdf, "ior", value(Param::SpecularIor, Value::Float(m.specular_ior)), false)?;
+        let ior = value(Param::SpecularIor, Value::Float(m.specular_ior));
+        let ior = if opaque_under_coat { self.base_ior(shader, ior, coat_ior, coat_weight)? } else { ior };
+        self.feed(shader, bsdf, "ior", ior, false)?;
         let level = self.float_op(
             shader,
             "multiply",
@@ -3832,13 +3902,18 @@ impl Builder<'_> {
         } else {
             (base, value(Param::SpecularColor, Value::Color(m.specular_color)))
         };
-        let (base, edge) = if metal && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight)) {
-            let weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
-            let ior = value(Param::CoatIor, Value::Float(m.coat_ior));
-            self.under_coat(shader, base, edge, metalness, weight, ior)?
+        let coated = !transmissive && (m.coat_weight > 1e-4 || driven.contains_key(&Param::CoatWeight));
+        let coat_weight = value(Param::CoatWeight, Value::Float(m.coat_weight));
+        let coat_ior = value(Param::CoatIor, Value::Float(m.coat_ior));
+        let (base, edge) = if coated {
+            let darkening = value(Param::CoatDarkening, Value::Float(m.coat_darkening));
+            self.under_coat(shader, m, (base, edge), (metalness, metal), (coat_weight, darkening, coat_ior))?
         } else {
             (base, edge)
         };
+        // Under a coat, an opaque base's interface is against the coat.
+        let opaque_under_coat =
+            coated && m.transmission_weight <= 1e-4 && !driven.contains_key(&Param::TransmissionWeight);
         // A thin wall's subsurface is the light it scatters through to its
         // far side (`translucent_sheet`, below), not a solid's walk: the
         // principled shader keeps the rest of the base for its diffuse.
@@ -3857,7 +3932,13 @@ impl Builder<'_> {
         let ior = value(Param::SpecularIor, Value::Float(m.specular_ior));
         // A clear solid bends light against what is outside it: a liquid's
         // side meets its glass, not the air (`media`).
-        let ior = if transmissive { self.against_outside(shader, ior)? } else { ior };
+        let ior = if transmissive {
+            self.against_outside(shader, ior)?
+        } else if opaque_under_coat {
+            self.base_ior(shader, ior, coat_ior, coat_weight)?
+        } else {
+            ior
+        };
         self.feed(shader, bsdf, "ior", ior, false)?;
         // OpenPBR's specular weight scales F0; Principled's IOR level does the
         // same with 0.5 as "as the IOR says" - a map's weight as well as a

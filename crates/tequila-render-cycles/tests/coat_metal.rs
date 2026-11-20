@@ -76,7 +76,8 @@ fn a_clear_coat_takes_its_share_both_ways() {
         return;
     }
     let f = 0.04;
-    for (grey, metalness) in [(0.184, 0.9), (0.184, 1.0), (0.6, 1.0)] {
+    // A base partly matte darkens that share the matte way: `coat_darkening.rs`.
+    for (grey, metalness) in [(0.184, 1.0), (0.6, 1.0)] {
         let bare = middle(metal(grey, metalness, 0.0));
         let coated = middle(metal(grey, metalness, 1.0));
         let expected = f + (1.0 - f) * (1.0 - f) * bare / (1.0 - f * bare);
