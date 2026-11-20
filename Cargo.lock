@@ -4473,6 +4473,7 @@ dependencies = [
  "naga 30.0.1",
  "pollster 1.0.1",
  "tequila-core",
+ "tequila-materials",
  "tequila-render-core",
  "tequila-render-cpu",
  "tequila-scene",

@@ -16,6 +16,7 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "park
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "1"
 tequila-core = { path = "../tequila-core" }
+tequila-materials = { path = "../tequila-materials" }
 tequila-render-core = { path = "../tequila-render-core" }
 tequila-texture = { path = "../tequila-texture" }
 
