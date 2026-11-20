@@ -110,6 +110,9 @@ struct GpuMaterial {
     pane_coat_ior: f32,
     pane_depth: f32,
     _pad2: vec2<f32>,
+    // What the volume behind gives off (Material::emitted_over): the glow,
+    // and in w what it absorbs a metre before its colour. The integrator's.
+    volume_glow: vec4<f32>,
 };
 
 // Material::emission, in nits: the colour times the luminance.

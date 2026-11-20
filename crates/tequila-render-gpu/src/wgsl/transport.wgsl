@@ -414,6 +414,30 @@ fn transmittance_over(m: GpuMaterial, distance: f32) -> vec3<f32> {
     return beer_lambert(m.transmission_color.xyz, cy_div(distance * max(m.volume_density, 0.0), depth));
 }
 
+// Material::emitted_over: what `distance` of the volume gives off, less
+// what it absorbs of that on the way out, channel by channel - the glow
+// times the distance where it absorbs next to nothing, else
+// glow (1 - e^(-s d)) / s for an absorption of s a metre.
+fn glow_along(c: f32, glow: f32, per_metre: f32, distance: f32) -> f32 {
+    var absorbed = 0.0;
+    if (is_finite(c)) {
+        absorbed = -log(clamp(c, 1e-6, 1.0)) * per_metre;
+    }
+    if (absorbed * distance < 1e-5) {
+        return glow * distance;
+    }
+    return glow * (1.0 - exp(-absorbed * distance)) / absorbed;
+}
+
+fn emitted_over(m: GpuMaterial, distance: f32) -> vec3<f32> {
+    if (all(m.volume_glow.xyz == vec3<f32>(0.0)) || distance <= 0.0 || !is_finite(distance)) {
+        return vec3<f32>(0.0);
+    }
+    let c = m.transmission_color.xyz;
+    let g = m.volume_glow;
+    return vec3<f32>(glow_along(c.x, g.x, g.w, distance), glow_along(c.y, g.y, g.w, distance), glow_along(c.z, g.z, g.w, distance));
+}
+
 // enclosing_media (ic:240-286): the media a path starts inside, by counting
 // along its first ray, through everything - opaque surfaces too - up to 32
 // surfaces, the crossings of each medium's boundary: an odd count of one
@@ -2252,6 +2276,16 @@ fn path(x: u32, y: u32, sample_index: u32) -> PathOut {
                 if (top != NO_MEDIUM) {
                     let medium = scene_materials[st.media.media[top].material];
                     if ((medium.glass & GLASS_VOLUME) != 0u) {
+                        // What the medium gives off along the way, a lit
+                        // light guide's glow, before what it absorbs of the
+                        // rest; times the square of its index, as light born
+                        // inside a denser medium leaves it (ic:1527-1545).
+                        let ior = st.media.media[top].ior;
+                        let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);
+                        if (any(glow != vec3<f32>(0.0))) {
+                            let found_at = select(st.bounce - 1u, 0u, st.bounce == 0u);
+                            st.radiance += clamp_light(st.throughput * glow, light_ceiling(st.specular_chain, found_at));
+                        }
                         let t = st.throughput * transmittance_over(medium, hit.t);
                         st.throughput = t;
                         if (!(is_finite(t.x) && is_finite(t.y) && is_finite(t.z)) || all(t == vec3<f32>(0.0))) {

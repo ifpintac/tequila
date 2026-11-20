@@ -299,6 +299,30 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: cutout_grille,
     pictures: no_pictures,
+}, ParityScene {
+    name: "cut_glass",
+    covers: "R3 tier A/B, glass with a cutout's holes: glass_ball_floor's ball 0.55 opaque - the path crossing its \
+             holes without entering it, refracting where it meets the glass, no split at the first glass that is \
+             not plain; shadow rays through it taking its holes with its tint (Pane::crossing), the floor's shadow \
+             of it, the camera's coverage through it",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: cut_glass,
+    pictures: no_pictures,
+}, ParityScene {
+    name: "glowing_volume",
+    covers: "R3 tier B, a glowing volume: glass_ball's ball of solid glass, its volume glowing orange and absorbing \
+             - the glow given off along every stretch a path travels inside it, less what it absorbs on the way, \
+             times the square of its index, seen through the glass by the camera and lighting what is round it \
+             by the bounces that pass through",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: glowing_volume,
+    pictures: no_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -1094,6 +1118,37 @@ fn cutout_grille() -> SceneDocument {
     let checker = graph.add_node(Node::new(GraphKind::Node(tequila_materials::nodes::ShaderNode::Checker)));
     graph.connect(m, checker, Socket::Input(0));
     graph.connect_output(checker, 1, output, Socket::Param(Param::Opacity));
+    document
+}
+
+/// The Headphones' floor and glass_ball's ball on it, 0.55 opaque.
+fn cut_glass() -> SceneDocument {
+    let mut document = product_floor();
+    let mut bus = crate::command::CommandBus::new();
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.85, g: 0.95, b: 0.92 },
+        specular_ior: 1.5,
+        geometry_opacity: 0.55,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Cut Glass Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
+    document
+}
+
+/// `simple_product` on its modelled ground, a ball of solid glass on the
+/// ground in front of the body, its volume glowing orange.
+fn glowing_volume() -> SceneDocument {
+    let (mut document, mut bus) = simple_product_mapped(&|material| material);
+    let glass = Material {
+        transmission_depth: 0.3,
+        transmission_color: Spectrum { r: 0.95, g: 0.8, b: 0.6 },
+        specular_ior: 1.5,
+        volume_emission_color: Spectrum { r: 1.0, g: 0.55, b: 0.2 },
+        volume_emission_strength: 6.0,
+        ..MaterialType::GlassSolid.defaults()
+    };
+    add_parts(&mut document, &mut bus, vec![("Glowing Ball", ball(0.15), MaterialType::GlassSolid, glass, Transform::translation(vec3(0.3, 0.151, 0.85)))]);
     document
 }
 

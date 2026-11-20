@@ -230,8 +230,6 @@ struct GlassScene {
     film: bool,
     flakes: bool,
     scattering: bool,
-    glowing_volume: bool,
-    cut_glass: bool,
     volume_maps: bool,
     unseen_parts: bool,
     folded_glass: bool,
@@ -258,6 +256,8 @@ impl GlassScene {
                 || m.volume_density != own.volume_density
                 || m.medium_priority != own.medium_priority
                 || m.geometry_thin_walled != own.geometry_thin_walled
+                || m.volume_emission_color != own.volume_emission_color
+                || m.volume_emission_strength != own.volume_emission_strength
         });
         GlassScene {
             transmits: scene.has_transmissive(),
@@ -267,8 +267,6 @@ impl GlassScene {
             film: any(&|m| m.thin_film_weight > 1e-4),
             flakes: any(&|m| m.flake_weight > 1e-4 && m.flake_coverage > 0.0),
             scattering: any(&|m| m.transmission_weight > 0.0 && m.volume_scattering().is_some()),
-            glowing_volume: any(&|m| m.has_volume() && m.volume_emission_strength > 0.0),
-            cut_glass: any(&|m| m.transmission_weight > 0.0 && m.geometry_opacity < 0.999),
             volume_maps: (0..scene.instances.len()).any(|i| scene.density(tequila_core::ids::InstanceId(i as u32)).is_some()),
             unseen_parts: scene
                 .instances
@@ -313,17 +311,11 @@ impl GlassScene {
         if self.volume_maps {
             limits.push("a Volume Map is left out: its part is empty inside");
         }
-        if self.glowing_volume {
-            limits.push("a glowing volume does not glow");
-        }
         if self.film {
             limits.push("a thin film is left out");
         }
         if self.flakes {
             limits.push("metallic flakes are left out");
-        }
-        if self.cut_glass {
-            limits.push("glass with a cutout's holes in it renders whole");
         }
         if self.unseen_parts {
             limits.push("a part hidden from some rays, or held out, is seen by every ray");
@@ -539,7 +531,7 @@ impl GpuRenderer {
         let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!(
-                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  dispersion, glowing volume or holes in glass (docs/07 R3)"
+                "  {unsupported} material(s) render on the graphics card for now without their subsurface, thin film, flakes, scattering,                  or dispersion (docs/07 R3)"
             );
         }
         let records = if records.is_empty() { vec![crate::material::GpuMaterial::default()] } else { records };

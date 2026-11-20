@@ -173,6 +173,19 @@ fn a_cut_out_grille_is_the_processors_picture() {
     same_picture("cutout_grille");
 }
 
+/// Glass with a cutout's holes: crossed, refracted, cast through.
+#[test]
+fn cut_glass_is_the_processors_picture() {
+    same_picture("cut_glass");
+}
+
+/// A glowing volume: glass whose inside gives off light along every stretch
+/// a path travels in it.
+#[test]
+fn a_glowing_volume_is_the_processors_picture() {
+    same_picture("glowing_volume");
+}
+
 /// A picture to render on both: a scene, the camera it is seen from, and
 /// how it is rendered.
 struct Shot {
