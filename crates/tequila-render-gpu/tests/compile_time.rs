@@ -5,7 +5,8 @@
 //! under a generous ceiling that a kernel which had doubled would break.
 
 use tequila_render_gpu::device::{self, Needs};
-use tequila_render_gpu::transport::{cold_compile_time, cold_compile_time_edited, GpuRenderer};
+use tequila_render_gpu::transport::{cold_compile_time, cold_compile_time_edited, cold_compile_time_edited_of, cold_compile_time_of, compile_time_of, GpuRenderer};
+use tequila_render_gpu::variants::KernelFeatures;
 use tequila_scene::parity;
 use tequila_scene::snapshot::{snapshot, MeshCache};
 
@@ -98,8 +99,8 @@ fn what_glass_costs_to_compile() {
         ("everything", Box::new(|s| s)),
         ("no walk through glass", Box::new(replace("    if (glass == GLASS_SOLID) {\n        return Visibility(", "    if (true) {\n        return Visibility("))),
         ("no seen weight", Box::new(replace("        if (weigh) {", "        if (false) {"))),
-        ("no probe", Box::new(replace("    if ((frame.glass_flags & SCENE_TRANSMITS) == 0u) {\n        return md;", "    if (true) {\n        return md;"))),
-        ("no split", Box::new(replace("    if (bounce == 0u && !(*st).reflected && !(*st).in_floor", "    if (false && bounce == 0u && !(*st).reflected && !(*st).in_floor"))),
+        ("no probe", Box::new(replace("    if (!FEATURE_GLASS || (frame.glass_flags & SCENE_TRANSMITS) == 0u) {\n        return md;", "    if (true) {\n        return md;"))),
+        ("no split", Box::new(replace("    if (FEATURE_PANES && bounce == 0u && !(*st).reflected && !(*st).in_floor", "    if (false && bounce == 0u && !(*st).reflected && !(*st).in_floor"))),
         ("no whole sky", Box::new(replace("    if (!all(normal == vec3<f32>(0.0))) {\n        return env_sample_facing(normal, u);", "    if (true) {\n        return env_sample_facing(normal, u);"))),
         (
             "no transmission lobe",
@@ -199,8 +200,8 @@ fn what_emission_and_cutouts_cost_to_compile() {
     let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
         ("everything", Box::new(|s| s)),
         ("no light sample of the glowing triangles", Box::new(replace(&[("            if ((frame.glass_flags & SCENE_EMITTERS) == 0u) {\n                continue;", "            if (true) {\n                continue;")]))),
-        ("no glow at a hit", Box::new(replace(&[("if (material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
-        ("no cutout at a hit", Box::new(replace(&[("if ((frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
+        ("no glow at a hit", Box::new(replace(&[("if (FEATURE_GLOW && material_is_emissive(material.material) && dot(st.direction, raw.geometric) <= 0.0 && lit) {", "if (false) {")]))),
+        ("no cutout at a hit", Box::new(replace(&[("if (FEATURE_CUTOUTS && (frame.glass_flags & SCENE_CUTOUTS) != 0u && material.material.geometry_opacity < 0.999) {", "if (false) {")]))),
         (
             "no cutouts in the walks",
             Box::new(replace(&[
@@ -211,8 +212,8 @@ fn what_emission_and_cutouts_cost_to_compile() {
         (
             "no programs at crossings",
             Box::new(replace(&[
-                ("    if ((scene_programs[material].flags & PROGRAM_CUTS) == 0u) {", "    if (true) {"),
-                ("        let programs_cut = (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;", "        let programs_cut = false;"),
+                ("    if (!FEATURE_CUT_PROGRAMS || (scene_programs[material].flags & PROGRAM_CUTS) == 0u) {", "    if (true) {"),
+                ("        let programs_cut = FEATURE_CUT_PROGRAMS && (frame.glass_flags & SCENE_CUT_PROGRAMS) != 0u;", "        let programs_cut = false;"),
             ])),
         ),
         ("no glowing volume", Box::new(replace(&[("let glow = emitted_over(medium, hit.t) * max(ior * ior, 1.0);", "let glow = vec3<f32>(0.0);")]))),
@@ -289,5 +290,214 @@ fn what_driven_transmission_costs_to_compile() {
             let t = cold_compile_time_edited(&renderer, salt.wrapping_add((round * 2 + k as u32) * 7919), &edit);
             eprintln!("round {round}, {}: {:.2} s", if without { "the write-back as it was" } else { "the transmission's weight written back" }, t.as_secs_f64());
         }
+    }
+}
+
+/// The renderer for a scene of the parity set, or for the Headphones
+/// sample ("headphones"), with the whole kernel built.
+fn renderer_for(name: &str) -> Option<GpuRenderer> {
+    let gpu = device::for_test(Needs::RayQueries)?;
+    // A parity scene with the pictures it reads (its own cache).
+    let (document, mut cache) = if name == "headphones" {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
+        (tequila_format::load(&path).expect("the Headphones sample loads").document, MeshCache::new())
+    } else {
+        let scene = parity::scene(name).expect("the parity set has it");
+        (scene.document(), scene.cache())
+    };
+    let mut environments = tequila_scene::environment::EnvironmentCache::new();
+    let environment = environments.environment(&document.environment);
+    let (snapshot, _) = snapshot(&document, environment, &mut cache);
+    Some(GpuRenderer::with_kernel(gpu, &snapshot, Some(KernelFeatures::ALL)))
+}
+
+fn salt() -> u32 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
+}
+
+/// Whether the driver drops what a variant leaves out: the kernel with no
+/// part, through the pipeline constants and as constants in the source,
+/// against the whole kernel; interleaved. Run by hand:
+/// `cargo test --test compile_time -- --ignored --nocapture overrides`.
+#[test]
+#[ignore]
+fn the_driver_drops_what_the_overrides_leave_out() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let rounds: usize = std::env::var("TEQUILA_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let as_constants = |s: String| {
+        let mut s = s;
+        for (_, name) in KernelFeatures::NAMED {
+            let from = format!("override {name}: bool = true;");
+            assert!(s.contains(&from), "no {from:?}");
+            s = s.replace(&from, &format!("const {name}: bool = false;"));
+        }
+        s.replace("override FEATURE_OPS: u32 = 0xFFFFFFFFu;", "const FEATURE_OPS: u32 = 0u;")
+    };
+    let salt = salt();
+    for round in 0..rounds {
+        let k = round as u32 * 3 * 7919;
+        let all = cold_compile_time_of(&renderer, salt.wrapping_add(k), KernelFeatures::ALL);
+        eprintln!("round {round}: whole kernel {:.2} s", all.as_secs_f64());
+        let none = cold_compile_time_of(&renderer, salt.wrapping_add(k + 7919), KernelFeatures::NONE);
+        eprintln!("round {round}: no part, by overrides {:.2} s", none.as_secs_f64());
+        let constants = cold_compile_time_edited(&renderer, salt.wrapping_add(k + 2 * 7919), &as_constants);
+        eprintln!("round {round}: no part, as constants in the source {:.2} s", constants.as_secs_f64());
+    }
+}
+
+/// What each scene's own variant costs to compile cold against the whole
+/// kernel (`docs/07` G1.6), interleaved round by round; then each built
+/// again unsalted, as a second launch finds it in the driver's cache. Run
+/// by hand: `cargo test --test compile_time -- --ignored --nocapture
+/// variants`; `TEQUILA_ROUNDS` rounds (3), `TEQUILA_SCENES` a comma list.
+#[test]
+#[ignore]
+fn what_the_variants_cost_to_compile() {
+    let rounds: usize = std::env::var("TEQUILA_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let names = std::env::var("TEQUILA_SCENES").unwrap_or_else(|_| "grey_product,lamp_lit,headphones,liquid_in_glass".to_string());
+    let renderers: Vec<(String, GpuRenderer)> = names.split(',').filter_map(|n| renderer_for(n.trim()).map(|r| (n.trim().to_string(), r))).collect();
+    for (name, r) in &renderers {
+        eprintln!("{name}: its variant keeps {}", r.features.names());
+    }
+    let salt = salt();
+    for round in 0..rounds {
+        for (i, (name, r)) in renderers.iter().enumerate() {
+            let k = ((round * renderers.len() + i) * 2) as u32 * 7919;
+            // Alternate which goes first, so neither always has the card's
+            // other user to itself.
+            let (full, variant) = if (round + i) % 2 == 0 {
+                let f = cold_compile_time_of(r, salt.wrapping_add(k), KernelFeatures::ALL);
+                (f, cold_compile_time_of(r, salt.wrapping_add(k + 7919), r.features))
+            } else {
+                let v = cold_compile_time_of(r, salt.wrapping_add(k + 7919), r.features);
+                (cold_compile_time_of(r, salt.wrapping_add(k), KernelFeatures::ALL), v)
+            };
+            eprintln!("round {round} {name}: whole kernel {:.2} s, its variant {:.2} s", full.as_secs_f64(), variant.as_secs_f64());
+        }
+    }
+    for (name, r) in &renderers {
+        let full = compile_time_of(r, KernelFeatures::ALL);
+        let variant = compile_time_of(r, r.features);
+        eprintln!("{name} built again, unsalted: whole kernel {:.3} s, its variant {:.3} s", full.as_secs_f64(), variant.as_secs_f64());
+    }
+}
+
+/// What the parts every variant keeps cost the cold compile: the kernel
+/// with no part (a grey product's), and that with one more piece left out
+/// by editing its source. Run by hand: `cargo test --test compile_time --
+/// --ignored --nocapture what_every_variant`.
+#[test]
+#[ignore]
+fn what_every_variant_keeps_costs_to_compile() {
+    let Some(renderer) = renderer_for("grey_product") else { return };
+    let replace = |pairs: &'static [(&'static str, &'static str)]| {
+        move |s: String| {
+            let mut s = s;
+            for (from, to) in pairs {
+                assert!(s.contains(from), "no {from:?}");
+                s = s.replace(from, to);
+            }
+            s
+        }
+    };
+    let arms = |slot: &'static str| {
+        move |s: String| {
+            // Each `case N: { return ... }` arm of the stack's dispatch.
+            let mut out = String::new();
+            let mut dropped = 0;
+            for line in s.lines() {
+                if line.trim_start().starts_with(&format!("case {slot}: {{ return ")) && !line.contains("DEPTH_") {
+                    dropped += 1;
+                    continue;
+                }
+                out.push_str(line);
+                out.push('\n');
+            }
+            assert!(dropped >= 4, "only {dropped} arms of slot {slot}");
+            out
+        }
+    };
+    let cases: Vec<(&str, Box<dyn Fn(String) -> String>)> = vec![
+        ("no part", Box::new(|s| s)),
+        ("no transmission arms", Box::new(arms("4u"))),
+        ("no sheen arms", Box::new(arms("0u"))),
+        ("no coat arms", Box::new(arms("1u"))),
+        ("no metal arms", Box::new(arms("2u"))),
+        ("no sky sample", Box::new(replace(&[("            if (frame.env_intensity <= 0.0) {\n                continue;", "            if (true) {\n                continue;")]))),
+        ("no light sample at all", Box::new(replace(&[("        let direct = direct_light(s, bsdf, f, wo, surf, inst.instance, transmissive);", "        let direct = vec3<f32>(0.0);")]))),
+        ("no meeting and escaping", Box::new(replace(&[("                let sky = meet_and_escape(&st, hit);", "                let sky = vec3<f32>(0.0);")]))),
+        ("no Filter Glossy rebuild", Box::new(replace(&[("        if (roughness_floor == floor && blur > floor && openpbr_has_delta(bsdf)) {", "        if (false) {")]))),
+        ("no aiming", Box::new(replace(&[("        bsdf = openpbr_aim(openpbr_build(lobes, roughness_floor, true, from_inside), wo);", "        bsdf = openpbr_build(lobes, roughness_floor, false, from_inside);")]))),
+    ];
+    let salt = salt();
+    let rounds: usize = std::env::var("TEQUILA_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    for round in 0..rounds {
+        for (i, (name, edit)) in cases.iter().enumerate() {
+            let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add(((round * cases.len() + i) as u32) * 7919), edit.as_ref(), KernelFeatures::NONE);
+            eprintln!("round {round} {name}: {:.2} s", t.as_secs_f64());
+        }
+    }
+}
+
+/// What the parts of a programmed scene's variant cost: the Headphones'
+/// own (its floor, programs and their instructions), less one
+/// part or one instruction's arm, and with every arm. Run by hand:
+/// `cargo test --test compile_time -- --ignored --nocapture programmed`.
+#[test]
+#[ignore]
+fn what_a_programmed_variant_costs_to_compile() {
+    let Some(renderer) = renderer_for("headphones") else { return };
+    let own = renderer.features;
+    let without = |part: KernelFeatures| own.without(part);
+    let cases: Vec<(&str, KernelFeatures, Box<dyn Fn(String) -> String>)> = vec![
+        ("its own variant", own, Box::new(|s| s)),
+        ("no floor", without(KernelFeatures::FLOOR), Box::new(|s| s)),
+        ("no programs", KernelFeatures { ops: 0, ..without(KernelFeatures::PROGRAMS) }, Box::new(|s| s)),
+        ("no Noise", without(KernelFeatures::op(6)), Box::new(|s| s)),
+        ("no Voronoi", without(KernelFeatures::op(7)), Box::new(|s| s)),
+        ("no Math", without(KernelFeatures::op(2)), Box::new(|s| s)),
+        ("no Vector Math", without(KernelFeatures::op(3)), Box::new(|s| s)),
+        ("no Map Range", without(KernelFeatures::op(4)), Box::new(|s| s)),
+        ("no Mix", without(KernelFeatures::op(5)), Box::new(|s| s)),
+        ("no Mapping", without(KernelFeatures::op(9)), Box::new(|s| s)),
+        ("every arm, its own instructions or not", KernelFeatures { ops: u32::MAX, ..own }, Box::new(|s| s)),
+    ];
+    let salt = salt();
+    for (i, (name, kernel, edit)) in cases.iter().enumerate() {
+        let t = cold_compile_time_edited_of(&renderer, salt.wrapping_add(i as u32 * 7919), edit.as_ref(), *kernel);
+        eprintln!("{name}: {:.2} s", t.as_secs_f64());
+    }
+}
+
+/// What of a kernel's build is naga's, on the processor, before the driver
+/// sees it: joining the modules, parsing, validating, applying the
+/// constants and writing SPIR-V, which every build pays, warm or cold. Run
+/// by hand: `cargo test --test compile_time -- --ignored --nocapture naga`.
+#[test]
+#[ignore]
+fn what_naga_costs_of_a_build() {
+    for (label, kernel) in [("whole kernel", KernelFeatures::ALL), ("no part", KernelFeatures::NONE)] {
+        let started = std::time::Instant::now();
+        let source = tequila_render_gpu::shader::source("transport");
+        let joined = started.elapsed();
+        let module = naga::front::wgsl::parse_str(&source).expect("parses");
+        let parsed = started.elapsed();
+        let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).expect("validates");
+        let validated = started.elapsed();
+        let constants: naga::back::PipelineConstants = kernel.constants().into_iter().map(|(n, v)| (n.to_string(), v)).collect();
+        let (module, info) = naga::back::pipeline_constants::process_overrides(&module, &info, Some((naga::ShaderStage::Compute, "transport_main")), &constants).expect("takes its constants");
+        let overridden = started.elapsed();
+        let spirv = naga::back::spv::write_vec(&module, &info, &naga::back::spv::Options::default(), None).expect("writes");
+        let written = started.elapsed();
+        eprintln!(
+            "{label}: joined {:.3} s, parsed {:.3} s, validated {:.3} s, constants {:.3} s, SPIR-V {:.3} s ({} words): {:.3} s in all",
+            joined.as_secs_f64(),
+            (parsed - joined).as_secs_f64(),
+            (validated - parsed).as_secs_f64(),
+            (overridden - validated).as_secs_f64(),
+            (written - overridden).as_secs_f64(),
+            spirv.len(),
+            written.as_secs_f64()
+        );
     }
 }

@@ -72,6 +72,12 @@ impl GpuDevice {
         limits.max_storage_buffers_per_shader_stage = supported.max_storage_buffers_per_shader_stage;
         limits.max_compute_workgroups_per_dimension = supported.max_compute_workgroups_per_dimension;
         let mut features = wgpu::Features::empty();
+        // Where the driver keeps a pipeline cache wgpu can hand back
+        // (Vulkan), the kernels it builds are kept between runs
+        // (crate::variants::KernelCache).
+        if adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+            features |= wgpu::Features::PIPELINE_CACHE;
+        }
         let mut experimental = wgpu::ExperimentalFeatures::disabled();
         if needs == Needs::RayQueries {
             features |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;

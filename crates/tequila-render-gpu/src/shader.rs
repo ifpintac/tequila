@@ -10,6 +10,7 @@
 /// Every module, by name.
 pub const MODULES: &[(&str, &str)] = &[
     ("rng", include_str!("wgsl/rng.wgsl")),
+    ("features", include_str!("wgsl/features.wgsl")),
     ("sobol", include_str!("wgsl/sobol.wgsl")),
     ("sampler", include_str!("wgsl/sampler.wgsl")),
     ("scene", include_str!("wgsl/scene.wgsl")),

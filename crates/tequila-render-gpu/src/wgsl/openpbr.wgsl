@@ -31,6 +31,7 @@
 // attenuation and its trapped-light series, eval, eval_selective, pdf,
 // pdf_reflection, sample and sample_reflection, albedo, and of the flags
 // whether there is a delta lobe and whether the stack transmits.
+//#include features
 //#include sheen
 
 // Which layer of §2.1's stack a lobe belongs to (openpbr.rs's Depth), in
@@ -404,7 +405,7 @@ fn openpbr_build(m: GpuMaterial, roughness_floor: f32, to_aim: bool, from_inside
                 specular_scale = specular_weight;
                 openpbr_push(&b, LOBE_SPECULAR, base_scale, dielectric * specular_weight, occlusion);
             }
-            if (transmission_weight > 1e-4) {
+            if (FEATURE_GLASS && transmission_weight > 1e-4) {
                 // Isotropic whatever the anisotropy; its tint the square
                 // root of what the surface wears, worked out on the
                 // processor (material.rs).
