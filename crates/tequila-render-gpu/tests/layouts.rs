@@ -6,6 +6,7 @@
 
 use std::mem::{offset_of, size_of};
 use tequila_render_gpu::scene::{GpuInstance, GpuMesh};
+use tequila_render_gpu::transport::FrameParams;
 use tequila_render_gpu::shader;
 
 /// `name`'s size and its members' (name, offset), as naga lays it out.
@@ -40,4 +41,15 @@ fn records_have_one_layout_on_both_sides() {
     let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
     layout!(&module, GpuMesh { first_index, base_vertex, has_normals, vertex_count });
     layout!(&module, GpuInstance { object_to_world, world_to_object, mesh, material, instance, _pad });
+    let source = shader::source("frame");
+    let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+    layout!(
+        &module,
+        FrameParams {
+            camera_to_world, half_height, half_width, width, height, sample_base, samples, scene_seed, max_bounces,
+            rr_start, clamp_direct, clamp_indirect, shadow_far, env_rotation, env_inverse_rotation, env_width,
+            env_height, env_tiles_x, env_tiles_y, env_intensity, env_weighted_sum, env_infinite, _pad0,
+            off_luminance, off_cdf, off_power, off_rows, off_choice, off_tile_column, off_tile_row, off_row_start,
+        }
+    );
 }
