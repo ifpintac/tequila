@@ -513,6 +513,12 @@ fn new_preset_wall(variant: usize) {
                 && m.emission_luminance <= 0.0
                 && m.geometry_opacity >= 0.999
                 && m.fuzz_density <= 0.0
+                // Nor glowing or cut out where its program says, as the
+                // older walls: the card took those after these nodes.
+                && !program.driven.iter().any(|(param, _)| {
+                    use tequila_materials::material_type::Param;
+                    matches!(param, Param::Opacity | Param::EmissionColor | Param::EmissionLuminance)
+                })
         })
         .collect();
     assert!(!runnable.is_empty(), "no preset is newly on the card");

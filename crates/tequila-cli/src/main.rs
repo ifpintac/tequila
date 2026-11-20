@@ -1401,7 +1401,7 @@ fn render_one(options: &Options, document: &tequila_scene::SceneDocument, output
         let gpu = tequila_render_gpu::GpuDevice::new(tequila_render_gpu::Needs::RayQueries)
             .map_err(|why| format!("--device GPU: {why}"))?;
         println!(
-            "  on the graphics card, {}: materials, glass among them, and their procedural patterns and bumps, the floor and the lamps; image textures, subsurface, thin film, flakes, dispersion and caustics are still to come (docs/07 R3)",
+            "  on the graphics card, {}: materials, glass among them, their patterns, pictures and bumps, glowing parts and cut-outs, the floor and the lamps; subsurface, thin film, flakes, dispersion and caustics are still to come (docs/07 R3)",
             gpu.describe()
         );
         let settings = tequila_render_gpu::transport::FrameSettings {
