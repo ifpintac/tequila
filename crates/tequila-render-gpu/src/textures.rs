@@ -13,6 +13,10 @@
 //! - `[256, 512)`: `b / 255` for an eight-bit number;
 //! - `[512, 544)`: `log2(1 + k / 16)` for `k` in `0..16`, high and low
 //!   halves, and `[544, 546)` `2 / ln 2` so, for the level's logarithm;
+//! - `[548, 582)`: `atan(k / 16)` for `k` in `0..=16`, `[582, 584)`
+//!   pi / 2 and `[584, 586)` pi, high and low halves, for the arctangent;
+//! - `[588, 622)`: `2^(j / 16)` for `j` in `-8..=8` and `[622, 624)`
+//!   ln 2, high and low halves, for powf;
 //! - from [`PYRAMIDS`]: per pyramid [`PYRAMID_WORDS`] words, its first
 //!   level's record (a word index into the header), its level count, its
 //!   resolution (`max(width, height) as f32`, bits) and nought;
@@ -38,7 +42,7 @@ pub const ENCODING_HALF: u32 = 3;
 pub const ENCODING_FLOAT: u32 = 4;
 
 /// Where the per-pyramid records start in the header.
-pub const PYRAMIDS: usize = 548;
+pub const PYRAMIDS: usize = 624;
 pub const PYRAMID_WORDS: usize = 4;
 pub const LEVEL_WORDS: usize = 4;
 /// The most pyramids an instruction can name (`program.rs`'s settings word).
@@ -92,9 +96,22 @@ pub fn header_tables() -> Vec<u32> {
         let low = (exact - high as f64) as f32;
         words.extend_from_slice(&[high.to_bits(), low.to_bits()]);
     }
-    let k = 2.0 / std::f64::consts::LN_2;
-    let high = k as f32;
-    words.extend_from_slice(&[high.to_bits(), ((k - high as f64) as f32).to_bits()]);
+    let split = |v: f64| {
+        let high = v as f32;
+        [high.to_bits(), ((v - high as f64) as f32).to_bits()]
+    };
+    words.extend_from_slice(&split(2.0 / std::f64::consts::LN_2));
+    words.resize(548, 0);
+    for k in 0..=16 {
+        words.extend_from_slice(&split((k as f64 / 16.0).atan()));
+    }
+    words.extend_from_slice(&split(std::f64::consts::FRAC_PI_2));
+    words.extend_from_slice(&split(std::f64::consts::PI));
+    words.resize(588, 0);
+    for j in -8..=8 {
+        words.extend_from_slice(&split((j as f64 / 16.0).exp2()));
+    }
+    words.extend_from_slice(&split(std::f64::consts::LN_2));
     words.resize(PYRAMIDS, 0);
     words
 }
@@ -263,6 +280,11 @@ mod tests {
             ("TEX_TABLE_UNORM8", "256u"),
             ("TEX_TABLE_LOG2", "512u"),
             ("TEX_LOG2_K", "544u"),
+            ("TEX_TABLE_ATAN", "548u"),
+            ("TEX_HALF_PI", "582u"),
+            ("TEX_PI", "584u"),
+            ("TEX_TABLE_EXP2", "588u"),
+            ("TEX_LN2", "622u"),
             ("TEX_PYRAMIDS", &format!("{PYRAMIDS}u")),
             ("TEX_MODE_COLOUR", &format!("{TEXTURE_COLOUR}u")),
             ("TEX_MODE_ALPHA", &format!("{TEXTURE_ALPHA}u")),

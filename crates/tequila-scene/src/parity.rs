@@ -233,6 +233,20 @@ pub const SET: &[ParityScene] = &[ParityScene {
     seed: 7,
     build: projected_product,
     pictures: parity_pictures,
+}, ParityScene {
+    name: "bumped_product",
+    covers: "R3 tier A, bump and normal maps from pictures: the product on its modelled ground, its body bumped by a \
+             height map of bytes through a Bump node (the bump's program, a picture lookup in it, run twice more a \
+             tenth of a footprint along the surface), the ground by a tangent-space normal map through its UVs \
+             (decoded in the frame the UVs run in), the bezel by the normal map laid down tri-planar in real-world \
+             units and the buttons by it planar from above (each contribution decoded in its projection's own \
+             frame, read off the projection a step along each axis)",
+    width: 320,
+    height: 180,
+    samples: 256,
+    seed: 7,
+    build: bumped_product,
+    pictures: parity_pictures,
 }];
 
 /// The scene of the set by `name`.
@@ -923,5 +937,30 @@ fn projected_product() -> SceneDocument {
         graph.connect(scale, image, Socket::Input(0));
         graph.connect(image, output, Socket::Param(Param::BaseColor));
     }
+    document
+}
+
+/// `simple_product` on its modelled ground, bumped by pictures every way:
+/// a height map, a normal map through the UVs, and the normal map laid
+/// down by projections.
+fn bumped_product() -> SceneDocument {
+    let (mut document, _) = simple_product_mapped(&|material| material);
+    store_pictures(&mut document);
+    {
+        let key = document.materials.iter().find(|(_, m)| m.name == "Body").map(|(k, _)| k).expect("the body");
+        let graph = &mut document.materials.get_mut(key).expect("the body").graph;
+        let output = graph.output();
+        let image = graph.add_node(Node::new(GraphKind::ImageTexture { texture: TextureId(5), fallback: Value::Float(0.0) }));
+        let m = graph.add_node(Node::new(GraphKind::Mapping2d { mapping: uv_repeats(4.0, 4.0) }));
+        let bump = graph.add_node(Node::new(GraphKind::Bump { depth: 0.004 }));
+        graph.connect(m, image, Socket::Input(0));
+        graph.connect(image, bump, Socket::Input(0));
+        graph.connect(bump, output, Socket::Param(Param::Bump));
+    }
+    texture_material(&mut document, "Ground", &[wire(6, Some(uv_repeats(30.0, 30.0)), Param::Bump)]);
+    let tri_planar = Mapping { projection: Projection::TriPlanar, real_world_units: true, scale: vec3(0.15, 0.15, 1.0), ..Mapping::default() };
+    texture_material(&mut document, "Bezel", &[wire(6, Some(tri_planar), Param::Bump)]);
+    let from_above = Mapping { projection: Projection::Planar, axis: Axis::Y, scale: vec3(12.0, 12.0, 1.0), ..Mapping::default() };
+    texture_material(&mut document, "Button", &[wire(6, Some(from_above), Param::Bump)]);
     document
 }

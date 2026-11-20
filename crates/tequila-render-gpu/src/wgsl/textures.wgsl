@@ -11,10 +11,11 @@
 //
 // Rust adds every product it rounds; the card fuses a product into the add
 // after it unless the product goes through cy_exact first, so every
-// product an add reads does. Divisions the processor rounds as IEEE are
-// cy_div, square roots cy_sqrt. Trigonometry and powf (cylindrical and
-// spherical coordinates, tri-planar weights) are the card's to an ulp or
-// two, not the processor's bits.
+// product an add reads does. Divisions are tex_div's, rounded as IEEE
+// division rounds; square roots cy_sqrt's. The arctangent is correctly
+// rounded, as the processor's atan2f is all but a few times in a million,
+// and so is powf (the tri-planar weights); acos (spherical v) is the
+// card's, within an ulp or two of the processor's.
 //#include nodes
 
 @group(0) @binding(16) var<storage, read> texture_texels: array<u32>;
@@ -24,7 +25,12 @@
 const TEX_TABLE_UNORM8: u32 = 256u;
 const TEX_TABLE_LOG2: u32 = 512u;
 const TEX_LOG2_K: u32 = 544u;
-const TEX_PYRAMIDS: u32 = 548u;
+const TEX_TABLE_ATAN: u32 = 548u;
+const TEX_HALF_PI: u32 = 582u;
+const TEX_PI: u32 = 584u;
+const TEX_TABLE_EXP2: u32 = 588u;
+const TEX_LN2: u32 = 622u;
+const TEX_PYRAMIDS: u32 = 624u;
 
 // program.rs's settings word.
 const TEX_MODE_COLOUR: u32 = 0u;
@@ -42,6 +48,79 @@ const TEX_MANAGED: u32 = 0x20000u;
 const TEX_WRAP_REPEAT: u32 = 0u;
 const TEX_WRAP_CLAMP: u32 = 1u;
 const TEX_WRAP_MIRROR: u32 = 2u;
+
+// a / b rounded as IEEE division rounds it: the card's reciprocal sharpened
+// by a Newton step, the quotient corrected once by its exact remainder
+// (Markstein); for the finite, normal operands a lookup divides by.
+fn tex_div(a: f32, b: f32) -> f32 {
+    var y = 1.0 / b;
+    let e = fma(-b, y, 1.0);
+    y = fma(e, y, y);
+    let q = cy_exact(a * y);
+    let r = fma(-q, b, a);
+    return select(fma(r, y, q), a / b, a == 0.0 || !(abs(b) <= 3.4e38) || b == 0.0 || !(abs(a) <= 3.4e38));
+}
+
+// a + b exactly, as (sum, error) (Knuth's TwoSum), each step through
+// cy_exact: the card's compiler otherwise sees that (a + b) - a is b, and
+// reassociates the error's two halves until it is nought.
+fn tex_two_sum(a: f32, b: f32) -> vec2<f32> {
+    let s = cy_exact(a + b);
+    let bb = cy_exact(s - a);
+    return vec2<f32>(s, cy_exact(a - cy_exact(s - bb)) + cy_exact(b - bb));
+}
+
+// atan2f, correctly rounded (the processor's is, all but a few times in a
+// million): the angle of the smaller over the larger, t in [0, 1], as
+// atan(c) + atan((t - c) / (1 + t c)) with c = k/16 nearest t and atan(c)
+// from the header's table, each part in two floats; then a quarter turn
+// less where the axes were swapped, a half turn less for x below nought,
+// the sign of y. Zeros as atan2f has them.
+fn tex_atan2(y: f32, x: f32) -> f32 {
+    let negative_x = (bitcast<u32>(x) & 0x80000000u) != 0u;
+    let negative_y = (bitcast<u32>(y) & 0x80000000u) != 0u;
+    let ax = abs(x);
+    let ay = abs(y);
+    if (ay == 0.0) {
+        let pi = bitcast<f32>(texture_header[TEX_PI]);
+        return select(select(0.0, pi, negative_x), select(-0.0, -pi, negative_x), negative_y);
+    }
+    let swap = ay > ax;
+    let num = select(ay, ax, swap);
+    let den = select(ax, ay, swap);
+    // t = num / den in two parts.
+    let t = tex_div(num, den);
+    let t_low = tex_div(fma(-t, den, num), den);
+    let k = u32(t * 16.0 + 0.5);
+    let c = f32(k) * 0.0625;
+    // (t - c) in two parts; t - c itself is exact.
+    let n = tex_two_sum(t - c, t_low);
+    // 1 + t c in two parts.
+    let p = cy_exact(t * c);
+    let p_err = fma(t, c, -p) + t_low * c;
+    let d = cy_exact(1.0 + p);
+    let d_low = (p - cy_exact(d - 1.0)) + p_err;
+    // r = n / d in two parts.
+    let r = tex_div(n.x, d);
+    let rem = fma(-r, d, n.x) + n.y - r * d_low;
+    let r_low = tex_div(rem, d);
+    let r2 = r * r;
+    let corr = r * r2 * (-0.33333334 + r2 * (0.2 - r2 * 0.14285715));
+    let th = bitcast<f32>(texture_header[TEX_TABLE_ATAN + 2u * k]);
+    let tl = bitcast<f32>(texture_header[TEX_TABLE_ATAN + 2u * k + 1u]);
+    var a = tex_two_sum(th, r);
+    a.y = a.y + (tl + (r_low + corr));
+    if (swap) {
+        let h = tex_two_sum(bitcast<f32>(texture_header[TEX_HALF_PI]), -a.x);
+        a = vec2<f32>(h.x, h.y + (bitcast<f32>(texture_header[TEX_HALF_PI + 1u]) - a.y));
+    }
+    if (negative_x) {
+        let h = tex_two_sum(bitcast<f32>(texture_header[TEX_PI]), -a.x);
+        a = vec2<f32>(h.x, h.y + (bitcast<f32>(texture_header[TEX_PI + 1u]) - a.y));
+    }
+    let angle = a.x + a.y;
+    return select(angle, -angle, negative_y);
+}
 
 // Wrap::apply: Repeat t - floor(t); Clamp to [0, 1], a NaN kept; Mirror
 // folding alternate tiles, its fract Rust's (x - trunc(x)).
@@ -168,6 +247,13 @@ fn tex_log2(x: f32) -> f32 {
     if (!(x >= 1.0)) {
         return -1.0;
     }
+    let parts = tex_log2_parts(x);
+    return parts.x + parts.y;
+}
+
+// log2 of a positive normal x in two floats, their sum within 2^-40 of it
+// (tex_log2's working).
+fn tex_log2_parts(x: f32) -> vec2<f32> {
     let bits = bitcast<u32>(x);
     let e = f32(i32(bits >> 23u) - 127);
     let m = bitcast<f32>((bits & 0x007FFFFFu) | 0x3F800000u);
@@ -175,7 +261,8 @@ fn tex_log2(x: f32) -> f32 {
     let c = 1.0 + f32(k) * 0.0625;
     // m - c exactly; m + c in two parts (Fast2Sum, m >= c).
     // Every step of the two-part sums through cy_exact: the card's compiler
-    // otherwise sees that (a + b) - a is b and leaves the error out.
+    // otherwise sees that (a + b) - a is b and leaves the error out
+    // (tex_two_sum).
     let f = m - c;
     let d = cy_exact(m + c);
     let d_low = c - cy_exact(d - m);
@@ -197,11 +284,48 @@ fn tex_log2(x: f32) -> f32 {
     // e + th + p, exactly in two parts (TwoSum twice), then the rest.
     let s1 = cy_exact(e + th);
     let b1 = cy_exact(s1 - e);
-    let l1 = (e - cy_exact(s1 - b1)) + (th - b1);
+    let l1 = cy_exact(e - cy_exact(s1 - b1)) + cy_exact(th - b1);
     let s3 = cy_exact(s1 + p);
     let b3 = cy_exact(s3 - s1);
-    let l3 = (s1 - cy_exact(s3 - b3)) + (p - b3);
-    return s3 + (((l1 + l3) + tl) + p_low);
+    let l3 = cy_exact(s1 - cy_exact(s3 - b3)) + cy_exact(p - b3);
+    return vec2<f32>(s3, ((l1 + l3) + tl) + p_low);
+}
+
+// x^k for x in [0, 1] and k >= 1, correctly rounded, as the processor's
+// powf is all but about once in ten thousand: 2^(k log2 x), the logarithm
+// and the product in two floats, 2^f as 2^(j/16) from the header's table
+// times e^(g) for |g| under ln 2 / 32, the rest of a series in one float.
+fn tex_powf(x: f32, k: f32) -> f32 {
+    if (x == 1.0) {
+        return 1.0;
+    }
+    if (!(x >= 1.17549435e-38)) {
+        return 0.0;
+    }
+    let l = tex_log2_parts(x);
+    let yh = cy_exact(k * l.x);
+    let yl = fma(k, l.x, -yh) + k * l.y;
+    if (yh < -160.0) {
+        return 0.0;
+    }
+    let n = floor(yh + 0.5);
+    let f0 = yh - n;
+    let j = floor(f0 * 16.0 + 0.5);
+    let ff = tex_two_sum(f0 - j * 0.0625, yl);
+    let ln2h = bitcast<f32>(texture_header[TEX_LN2]);
+    let ln2l = bitcast<f32>(texture_header[TEX_LN2 + 1u]);
+    let gh = cy_exact(ff.x * ln2h);
+    let gl = fma(ff.x, ln2h, -gh) + (ff.x * ln2l + ff.y * ln2h);
+    let poly = gh * gh * (0.5 + gh * (0.16666667 + gh * (0.041666668 + gh * 0.008333334)));
+    let rest = gl + poly;
+    let at = TEX_TABLE_EXP2 + 2u * u32(j + 8.0);
+    let th = bitcast<f32>(texture_header[at]);
+    let tl = bitcast<f32>(texture_header[at + 1u]);
+    let a = cy_exact(th * gh);
+    let a_err = fma(th, gh, -a);
+    let sum = tex_two_sum(th, a);
+    let r = sum.x + (sum.y + (a_err + (th * rest + tl * (1.0 + gh))));
+    return ldexp(r, i32(n));
 }
 
 // MipPyramid::sample: the level whose texels match the footprint `width`
@@ -265,8 +389,8 @@ fn tex_finish(settings: u32, scale_offset: vec4<f32>, turn: vec4<f32>, u_in: f32
         let pu = u - turn.z;
         let pv = v - turn.w;
         if ((settings & TEX_RIGID) != 0u) {
-            let du = cy_div(pu, tex_safe(su));
-            let dv = cy_div(pv, tex_safe(sv));
+            let du = tex_div(pu, tex_safe(su));
+            let dv = tex_div(pv, tex_safe(sv));
             u = cy_exact((cy_exact(du * cs) - cy_exact(dv * sn)) * su) + turn.z;
             v = cy_exact((cy_exact(du * sn) + cy_exact(dv * cs)) * sv) + turn.w;
         } else {
@@ -330,44 +454,63 @@ fn tex_project(settings: u32, scale_offset: vec4<f32>, turn: vec4<f32>, sharpnes
     var raw: array<vec4<f32>, 3>;
     var weights = vec3<f32>(1.0, 0.0, 0.0);
     var count = 1u;
+    // The angles the angular projections read, from one arctangent: the
+    // cylinder's turn; the sphere's turn and its angle from the pole.
+    let q = tex_across((settings >> 5u) & 3u, p);
+    let sphere = cy_sqrt(cy_exact(cy_exact(p.x * p.x) + cy_exact(p.y * p.y)) + cy_exact(p.z * p.z));
+    let d = p * tex_div(1.0, sphere);
+    let pole = clamp(d.y, -1.0, 1.0);
+    var towards: array<vec2<f32>, 2>;
+    var angles = 0u;
+    if (projection == 2u) {
+        towards[0] = q.yx;
+        angles = 1u;
+    } else if (projection == 3u && !(sphere < 1e-6)) {
+        towards[0] = d.zx;
+        towards[1] = vec2<f32>(cy_sqrt(cy_exact((1.0 - pole) * (1.0 + pole))), pole);
+        angles = 2u;
+    }
+    var angle = array<f32, 2>(0.0, 0.0);
+    for (var k = 0u; k < angles; k++) {
+        angle[k] = tex_atan2(towards[k].x, towards[k].y);
+    }
     switch projection {
         case 0u: {
             let f = select(vec2<f32>(fp), pt.uv_footprint, pt.has_uv_footprint);
             raw[0] = vec4<f32>(pt.uv, f);
         }
         case 1u: {
-            let q = tex_across((settings >> 5u) & 3u, p);
             raw[0] = vec4<f32>(q.x, q.y, fp, fp);
         }
         case 2u: {
-            let q = tex_across((settings >> 5u) & 3u, p);
-            let u = cy_div(cy_atan2(q.y, q.x), CY_TAU) + 0.5;
+            let u = tex_div(angle[0], CY_TAU) + 0.5;
             let radius = max(cy_sqrt(cy_exact(q.x * q.x) + cy_exact(q.y * q.y)), 1e-6);
-            let angular = cy_div(fp, radius * CY_TAU);
+            let angular = tex_div(fp, radius * CY_TAU);
             raw[0] = vec4<f32>(u, q.z, angular, fp);
         }
         case 3u: {
-            let radius = cy_sqrt(cy_exact(cy_exact(p.x * p.x) + cy_exact(p.y * p.y)) + cy_exact(p.z * p.z));
-            if (radius < 1e-6) {
+            if (sphere < 1e-6) {
                 raw[0] = vec4<f32>(0.0, 0.5, fp, fp);
             } else {
-                let d = p * cy_div(1.0, radius);
-                let u = cy_div(cy_atan2(d.z, d.x), CY_TAU) + 0.5;
-                let y = clamp(d.y, -1.0, 1.0);
-                let across = cy_sqrt(cy_exact((1.0 - y) * (1.0 + y)));
-                let v = cy_div(cy_atan2(across, y), CY_PI);
-                let angular = cy_div(fp, radius * CY_TAU);
+                let u = tex_div(angle[0], CY_TAU) + 0.5;
+                let v = tex_div(angle[1], CY_PI);
+                let angular = tex_div(fp, sphere * CY_TAU);
                 raw[0] = vec4<f32>(u, v, angular, angular * 2.0);
             }
         }
         default: {
             let n = abs(pt.normal);
-            var w = vec3<f32>(cy_powf(n.x, sharpness), cy_powf(n.y, sharpness), cy_powf(n.z, sharpness));
+            let along = array<f32, 3>(n.x, n.y, n.z);
+            var powered: array<f32, 3>;
+            for (var k = 0u; k < 3u; k++) {
+                powered[k] = tex_powf(along[k], sharpness);
+            }
+            var w = vec3<f32>(powered[0], powered[1], powered[2]);
             let total = (w.x + w.y) + w.z;
             if (total <= 1e-12) {
                 w = vec3<f32>(1.0 / 3.0);
             } else {
-                w = vec3<f32>(cy_div(w.x, total), cy_div(w.y, total), cy_div(w.z, total));
+                w = vec3<f32>(tex_div(w.x, total), tex_div(w.y, total), tex_div(w.z, total));
             }
             let planes = array<vec2<f32>, 3>(vec2<f32>(p.z, p.y), vec2<f32>(p.x, p.z), vec2<f32>(p.x, p.y));
             let all = array<f32, 3>(w.x, w.y, w.z);
@@ -393,6 +536,73 @@ fn tex_project(settings: u32, scale_offset: vec4<f32>, turn: vec4<f32>, sharpnes
     return out;
 }
 
+// Vec3::dot, left to right as Rust adds it.
+fn tex_dot(a: vec3<f32>, b: vec3<f32>) -> f32 {
+    return cy_exact(cy_exact(a.x * b.x) + cy_exact(a.y * b.y)) + cy_exact(a.z * b.z);
+}
+
+// Vec3::cross.
+fn tex_cross(a: vec3<f32>, b: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        cy_exact(a.y * b.z) - cy_exact(a.z * b.y),
+        cy_exact(a.z * b.x) - cy_exact(a.x * b.z),
+        cy_exact(a.x * b.y) - cy_exact(a.y * b.x),
+    );
+}
+
+// Vec3::try_normalize: (the unit vector, 1), or (0, 0) for a zero or
+// non-finite one.
+fn tex_normalized(v: vec3<f32>) -> vec4<f32> {
+    let l2 = tex_dot(v, v);
+    if (l2 > 0.0 && l2 <= CY_F32_MAX) {
+        return vec4<f32>(v * tex_div(1.0, cy_sqrt(l2)), 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+
+// `v` square to `n`, made a unit vector (try_normalize(v - n n.v)).
+fn tex_square_to(n: vec3<f32>, v: vec3<f32>) -> vec4<f32> {
+    return tex_normalized(v - cy_exact3(n * tex_dot(n, v)));
+}
+
+// TangentFrame::decode_normal_map at strength 1: the texel a direction in
+// the frame (tangent, bitangent, n), its blue kept above the surface.
+fn tex_decode_normal(texel: vec3<f32>, n: vec3<f32>, tangent: vec3<f32>, bitangent: vec3<f32>) -> vec3<f32> {
+    let x = texel.x * 2.0 - 1.0;
+    let y = texel.y * 2.0 - 1.0;
+    let zz = texel.z * 2.0 - 1.0;
+    let z = select(1e-4, zz, zz > 1e-4);
+    let world = cy_exact3(cy_exact3(tangent * x) + cy_exact3(bitangent * y)) + cy_exact3(n * z);
+    let unit = tex_normalized(world);
+    return select(n, unit.xyz, unit.w != 0.0);
+}
+
+// A normal map through the UVs (surface_bump.rs bumped_normal's NormalMap
+// branch): the texel decoded in the frame the UVs run in - the mesh's own
+// tangent where it has one (`mesh_tangent`: world space, its handedness in
+// w, nought for none), else the UVs' u and up the image; `n` where there
+// are no UVs or no frame.
+fn tex_uv_normal(texel: vec3<f32>, n: vec3<f32>, has_derivatives: bool, dpdu: vec3<f32>, dpdv: vec3<f32>, mesh_tangent: vec4<f32>) -> vec3<f32> {
+    if (!has_derivatives) {
+        return n;
+    }
+    let tangent = tex_square_to(n, dpdu);
+    let down = tex_square_to(n, dpdv);
+    if (tangent.w == 0.0 || down.w == 0.0) {
+        return n;
+    }
+    var t = tangent.xyz;
+    var b = -down.xyz;
+    if (mesh_tangent.w != 0.0) {
+        let along = tex_square_to(n, mesh_tangent.xyz);
+        if (along.w != 0.0) {
+            t = along.xyz;
+            b = tex_cross(n, t) * mesh_tangent.w;
+        }
+    }
+    return tex_decode_normal(texel, n, t, b);
+}
+
 // srgb_to_acescg, left to right as Rust adds it.
 fn tex_acescg(v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(
@@ -407,14 +617,21 @@ fn tex_acescg(v: vec3<f32>) -> vec3<f32> {
 // mapping_constants). A colour (Sample: the lookup through the mapping
 // after sample_pyramid's skip, weigh and renormalize, or sample_at's at the
 // graph's place; colour_of), a number (SampleAlpha: the alpha's levels,
-// clamped) or the coordinates (Project: the first contribution's u, v and
-// width).
+// clamped), the coordinates (Project: the first contribution's u, v and
+// width), or a normal map laid down by the projection
+// (Texture::sample_normal_with: each contribution decoded in the frame the
+// projection's coordinates run in, read off the projection a step along
+// each axis; the normal in the part's space and 1, or nought where none
+// lands).
 fn tex_instruction(settings: u32, place: vec4<f32>, scale_offset: vec4<f32>, turn: vec4<f32>, extra: vec4<f32>, pt: TexPoint) -> vec4<f32> {
     let mode = settings & 3u;
     var coords: array<vec4<f32>, 3>;
     var count = 1u;
     var wrap_u = (settings >> 7u) & 3u;
     var wrap_v = (settings >> 9u) & 3u;
+    // A normal map's: the projection a step along X, Y and Z.
+    var moved: array<array<vec4<f32>, 3>, 3>;
+    var step = 1.0;
     if ((settings & TEX_AT) != 0u) {
         // sample_at: x across, y up from the bottom left, repeating, at the
         // sharpest level.
@@ -422,28 +639,67 @@ fn tex_instruction(settings: u32, place: vec4<f32>, scale_offset: vec4<f32>, tur
         wrap_u = TEX_WRAP_REPEAT;
         wrap_v = TEX_WRAP_REPEAT;
     } else {
-        let projected = tex_project(settings, scale_offset, turn, extra.x, pt);
-        coords = projected.c;
-        count = projected.count;
+        let passes = select(1u, 4u, mode == TEX_MODE_NORMAL);
+        let p = pt.position;
+        let reach = (cy_sqrt(tex_dot(p, p)) + 1.0) * 1e-4;
+        step = select(reach, pt.footprint, pt.footprint > reach);
+        for (var k = 0u; k < passes; k++) {
+            var q = pt;
+            if (k > 0u) {
+                q.position = p + select(vec3<f32>(0.0), vec3<f32>(step), vec3<u32>(0u, 1u, 2u) == vec3<u32>(k - 1u));
+            }
+            let projected = tex_project(settings, scale_offset, turn, extra.x, q);
+            if (k == 0u) {
+                coords = projected.c;
+                count = projected.count;
+            } else {
+                moved[k - 1u] = projected.c;
+            }
+        }
     }
     if (mode == TEX_MODE_PROJECT) {
         return vec4<f32>(coords[0].xyz, 0.0);
     }
     let pyramid = settings >> 18u;
+    let n = pt.normal;
     var total = vec3<f32>(0.0);
     var weight = 0.0;
+    var any = false;
     for (var k = 0u; k < count; k++) {
         let c = coords[k];
         if (!tex_inside(wrap_u, c.x) || !tex_inside(wrap_v, c.y)) {
             continue;
         }
+        var tangent = vec4<f32>(0.0);
+        var down = vec4<f32>(0.0);
+        if (mode == TEX_MODE_NORMAL) {
+            let s0 = moved[0][k];
+            let s1 = moved[1][k];
+            let s2 = moved[2][k];
+            let across = vec3<f32>(tex_div(s0.x - c.x, step), tex_div(s1.x - c.x, step), tex_div(s2.x - c.x, step));
+            let up = vec3<f32>(tex_div(s0.y - c.y, step), tex_div(s1.y - c.y, step), tex_div(s2.y - c.y, step));
+            tangent = tex_square_to(n, across);
+            down = tex_square_to(n, up);
+            if (tangent.w == 0.0 || down.w == 0.0) {
+                continue;
+            }
+        }
         let value = tex_lookup(pyramid, c.x, c.y, c.z, wrap_u, wrap_v);
-        total = total + cy_exact3(value * c.w);
-        weight = weight + c.w;
+        if (mode == TEX_MODE_NORMAL) {
+            // Green is up the image, and v runs down it.
+            total = total + cy_exact3(tex_decode_normal(value, n, tangent.xyz, -down.xyz) * c.w);
+            any = true;
+        } else {
+            total = total + cy_exact3(value * c.w);
+            weight = weight + c.w;
+        }
+    }
+    if (mode == TEX_MODE_NORMAL) {
+        return select(vec4<f32>(0.0), tex_normalized(total), any);
     }
     var result = vec3<f32>(0.0);
     if (weight > 1e-6) {
-        result = total * cy_div(1.0, weight);
+        result = total * tex_div(1.0, weight);
     }
     if (mode == TEX_MODE_ALPHA) {
         let a = result.x;

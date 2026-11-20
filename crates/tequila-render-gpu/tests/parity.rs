@@ -95,6 +95,13 @@ fn the_projected_product_is_the_processors_picture() {
     same_picture("projected_product");
 }
 
+/// Bumps from pictures: a height map through a Bump node, a normal map
+/// through the UVs, the normal map laid down tri-planar and planar.
+#[test]
+fn the_bumped_product_is_the_processors_picture() {
+    same_picture("bumped_product");
+}
+
 /// Lamps the camera sees: a softbox's stand-in glowing as it lights, and
 /// mirrored by the lamp itself; a disc's stand-in seen from behind.
 #[test]

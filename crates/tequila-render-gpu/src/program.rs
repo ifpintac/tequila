@@ -391,6 +391,9 @@ pub struct CardProgram {
     pub tangent: u32,
     /// The most registers either program holds at once.
     pub registers: usize,
+    /// [`PROGRAM_NORMAL_UV`] or [`PROGRAM_NORMAL_PROJECTED`] for a normal
+    /// map, its operand `bump_here`; 0 for none.
+    pub normal_map: u32,
 }
 
 impl CardProgram {
@@ -425,6 +428,11 @@ pub struct GpuProgram {
 
 pub const PROGRAM_RUNS: u32 = 1;
 pub const PROGRAM_BUMPS: u32 = 2;
+/// A normal map through the UVs: its texel in `bump_here`.
+pub const PROGRAM_NORMAL_UV: u32 = 4;
+/// A normal map laid down by a projection: the normal it gives, in the
+/// part's space, in `bump_here`.
+pub const PROGRAM_NORMAL_PROJECTED: u32 = 8;
 
 impl GpuProgram {
     pub const EMPTY: GpuProgram = GpuProgram {
@@ -481,7 +489,7 @@ impl ProgramTable {
                 bump_here: p.bump_here,
                 bump_height: p.bump_height,
                 tangent: p.tangent,
-                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 },
+                flags: PROGRAM_RUNS | if p.has_bump() { PROGRAM_BUMPS } else { 0 } | p.normal_map,
                 _pad: 0,
             });
         }
@@ -972,30 +980,44 @@ pub fn material_slot(param: Param) -> Option<(u32, bool)> {
     })
 }
 
-/// The parameter whose height bumps the surface, as `BumpSource::of` picks
-/// it: the Bump, else a Displacement with no detail to displace by. A Bump
+/// How a material's surface is bumped, as `BumpSource::of` decides.
+enum Bump {
+    None,
+    /// By the height in this parameter.
+    Height(Param),
+    /// By a normal map through the UVs: its texel the Bump's register.
+    NormalUv,
+    /// By a normal map laid down by a projection of its own.
+    NormalProjected { pyramid: u32, mapping: Mapping },
+}
+
+/// How `program` bumps its surface, as `BumpSource::of` decides: the Bump's
+/// height, else a Displacement's with no detail to displace by; but a Bump
 /// a picture drives is a normal map where the picture is one, and bumps
 /// nothing where it is not loaded.
-fn bump_param(program: &CompiledGraph, pictures: Pictures) -> Result<Option<Param>, Refusal> {
+fn bump_of(program: &CompiledGraph, pictures: Pictures) -> Bump {
     let register = |wanted: Param| program.driven.iter().find(|(p, _)| *p == wanted).map(|(_, r)| *r);
     if let Some(register) = register(Param::Bump) {
         // The last instruction to write the register is what reaches the
         // socket; none, and nothing does.
         let Some(writer) = program.instructions.iter().rev().find(|i| i.destination() == register) else {
-            return Ok(None);
+            return Bump::None;
         };
-        if let (Instruction::Sample { texture, .. }, Pictures::On(pictures)) = (writer, pictures) {
+        if let (Instruction::Sample { texture, mapping, .. }, Pictures::On(pictures)) = (writer, pictures) {
             match pictures.texture(*texture) {
-                Some(card) if card.normal => return Err(Refusal::Instruction("a normal map")),
+                Some(card) if card.normal && mapping.projection != Projection::Uv => {
+                    return Bump::NormalProjected { pyramid: card.colour, mapping: **mapping };
+                }
+                Some(card) if card.normal => return Bump::NormalUv,
                 Some(_) => {}
-                None => return Ok(None),
+                None => return Bump::None,
             }
         }
-        Ok(Some(Param::Bump))
+        Bump::Height(Param::Bump)
     } else if register(Param::Displacement).is_some() && program.constants.displacement_detail <= 0.0 {
-        Ok(Some(Param::Displacement))
+        Bump::Height(Param::Displacement)
     } else {
-        Ok(None)
+        Bump::None
     }
 }
 
@@ -1018,7 +1040,11 @@ pub fn lower_with(program: &CompiledGraph, pictures: Pictures) -> Result<Option<
     if program.instructions.is_empty() || program.driven.is_empty() {
         return Ok(None);
     }
-    let bump = bump_param(program, pictures)?;
+    let shape = bump_of(program, pictures);
+    let bump = match shape {
+        Bump::Height(param) => Some(param),
+        _ => None,
+    };
     for (param, _) in &program.driven {
         let read = material_slot(*param).is_some()
             || *param == Param::Tangent
@@ -1049,6 +1075,12 @@ pub fn lower_with(program: &CompiledGraph, pictures: Pictures) -> Result<Option<
             let operand = held.read_as(Ty::Float);
             here = Some(operand);
             ends.push(operand);
+        } else if *param == Param::Bump {
+            // A normal map's texel, as the colour it is.
+            if let Bump::NormalUv = shape {
+                here = Some(held.operand);
+                ends.push(held.operand);
+            }
         } else if *param == Param::Tangent {
             tangent = Some(held.operand);
             ends.push(held.operand);
@@ -1057,6 +1089,15 @@ pub fn lower_with(program: &CompiledGraph, pictures: Pictures) -> Result<Option<
             writes.push((offset | (colour as u32) << 8, operand));
             ends.push(operand);
         }
+    }
+    // A normal map laid down by a projection: the normal it gives, one more
+    // instruction after the program.
+    if let Bump::NormalProjected { pyramid, mapping } = &shape {
+        let zero = builder.constant([0.0; 4]);
+        let (d, _) = builder.texture(TEXTURE_NORMAL, mapping, zero, false, false, *pyramid)?;
+        let operand = Operand { source: Source::Virtual(d), mode: MODE_AS_IS };
+        here = Some(operand);
+        ends.push(operand);
     }
     let main_ops = std::mem::take(&mut builder.ops);
     let (main_words, main_registers, map) = encode(&main_ops, builder.virtuals, &ends)?;
@@ -1069,6 +1110,11 @@ pub fn lower_with(program: &CompiledGraph, pictures: Pictures) -> Result<Option<
         bump_height: NONE,
         tangent: tangent.map_or(NONE, |o| resolve(o, &map)),
         registers: main_registers,
+        normal_map: match shape {
+            Bump::NormalUv => PROGRAM_NORMAL_UV,
+            Bump::NormalProjected { .. } => PROGRAM_NORMAL_PROJECTED,
+            _ => 0,
+        },
         ..CardProgram::default()
     };
 

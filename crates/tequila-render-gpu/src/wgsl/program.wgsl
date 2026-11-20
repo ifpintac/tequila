@@ -30,6 +30,11 @@ struct GpuProgram {
 
 const PROGRAM_RUNS: u32 = 1u;
 const PROGRAM_BUMPS: u32 = 2u;
+// A normal map through the UVs, its texel in the register `bump_here`
+// names; one laid down by a projection, the normal it gives in the part's
+// space there (OP_TEXTURE's normal mode).
+const PROGRAM_NORMAL_UV: u32 = 4u;
+const PROGRAM_NORMAL_PROJECTED: u32 = 8u;
 const PROGRAM_NONE: u32 = 0xFFFFFFFFu;
 
 const OP_INPUT: u32 = 1u;
@@ -408,6 +413,9 @@ struct ProgSurface {
     dpdv: vec3<f32>,
     object_to_world: array<vec4<f32>, 3>,
     world_to_object: array<vec4<f32>, 3>,
+    // The mesh's own tangent (world space) and its handedness, nought for
+    // a mesh with none: what a normal map through the UVs is decoded by.
+    mesh_tangent: vec4<f32>,
 };
 
 // What a material's program makes of a point: its parameters, the shading
@@ -482,6 +490,23 @@ fn prog_shade(p: GpuProgram, pt: ProgPoint, base: GpuMaterial, s: ProgSurface) -
         }
     }
     shaded.heights = heights;
+    if ((p.flags & (PROGRAM_NORMAL_UV | PROGRAM_NORMAL_PROJECTED)) != 0u) {
+        let v = prog_value(p.bump_here);
+        var bumped = n;
+        if ((p.flags & PROGRAM_NORMAL_UV) != 0u) {
+            bumped = tex_uv_normal(v.xyz, n, s.has_derivatives, s.dpdu, s.dpdv, s.mesh_tangent);
+        } else if (v.w != 0.0) {
+            // Transform::normal: through the inverse's transpose.
+            let w = s.world_to_object;
+            let world = cy_exact3(cy_exact3(w[0].xyz * v.x) + cy_exact3(w[1].xyz * v.y)) + cy_exact3(w[2].xyz * v.z);
+            let unit = tex_normalized(world);
+            bumped = select(n, unit.xyz, unit.w != 0.0);
+        }
+        if (tex_dot(bumped, s.geometric) <= 1e-4) {
+            bumped = n;
+        }
+        shaded.normal = bumped;
+    }
     if (runs == 3u) {
         let along_t = (heights.x - shaded.here) / step;
         let along_b = (heights.y - shaded.here) / step;

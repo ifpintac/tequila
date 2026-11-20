@@ -12,22 +12,23 @@
 //!   `sample_alpha`, `alpha_at`; and `colour_of`.
 //! - `Mapping::project`'s coordinates and the lookups through each
 //!   projection (planar, cylindrical, spherical, tri-planar), in real-world
-//!   units and not, rigid and not.
+//!   units and not, rigid and not; and `sample_normal_with`, a normal map
+//!   laid down by each.
 //!
 //! The bound: 1e-6 absolute and 1e-5 relative, and at most one item in a
 //! thousand outside it. The UV lookups are the processor's to the bit but
 //! where the level's logarithm differs in its last bit (the processor's
 //! log2f is not correctly rounded about once in a thousand): how many items
-//! are the processor's bits is printed. Cylindrical and spherical
-//! coordinates and tri-planar weights go through the card's trigonometry and
-//! powf, an ulp or two from the processor's; their bound is printed with
-//! them.
+//! are the processor's bits is printed. The card's division, arctangent and
+//! powf are correctly rounded, as the processor's are all but now and then;
+//! spherical v goes through the card's own acos, an ulp or two from the
+//! processor's, and its bound is printed with it.
 
 use tequila_core::math::{vec2, vec3, Vec3};
 use tequila_core::rng::Pcg32;
 use tequila_core::spectrum::Spectrum;
 use tequila_render_gpu::harness::Harness;
-use tequila_render_gpu::program::{self, TEXTURE_ALPHA, TEXTURE_COLOUR, TEXTURE_PROJECT};
+use tequila_render_gpu::program::{self, TEXTURE_ALPHA, TEXTURE_COLOUR, TEXTURE_NORMAL, TEXTURE_PROJECT};
 use tequila_render_gpu::textures::CardPictures;
 use tequila_texture::image::{ColorSpace, Image};
 use tequila_texture::mip::{MipPyramid, Precision, Wrap};
@@ -597,12 +598,10 @@ fn projected_coordinates_are_the_processors() {
                 }
             })
             .collect();
-        // The angular projections' coordinates go through the card's
-        // arctangent and the tri-planar weights through its powf.
+        // Spherical v goes through the card's own acos.
         let bound = match projection {
-            Projection::Uv | Projection::Planar => TIGHT,
-            Projection::TriPlanar => TIGHT,
-            _ => Bound { absolute: 2e-6, relative: 2e-5 },
+            Projection::Spherical => Bound { absolute: 2e-6, relative: 2e-5 },
+            _ => TIGHT,
         };
         let name = format!("{projection:?} coordinates");
         let (_, outside) = check(&h, &card, &name, &items, bound);
@@ -636,16 +635,140 @@ fn lookups_through_every_projection_are_the_processors() {
                 });
             }
         }
-        // An ulp of an angle (or of a tri-planar weight) is a part in ten
-        // million; scaled to a few hundred repeats across a picture a few
-        // hundred texels wide it moves a lookup a hundredth of a texel, which
-        // on noise from black to white is a hundredth of its range.
+        // An ulp of spherical v (the card's acos) is a part in ten million;
+        // scaled to a few hundred repeats across a picture a few hundred
+        // texels wide it moves a lookup a hundredth of a texel, which on
+        // noise from black to white is a hundredth of its range.
         let bound = match projection {
-            Projection::Uv | Projection::Planar => TIGHT,
-            _ => Bound { absolute: 2e-3, relative: 2e-3 },
+            Projection::Spherical => Bound { absolute: 2e-3, relative: 2e-3 },
+            _ => TIGHT,
         };
         let name = format!("{projection:?} lookups");
         let (_, outside) = check(&h, &pictures.card, &name, &items, bound);
         within_budget(&name, outside, items.len());
     }
+}
+
+/// A normal map laid down by a projection (`Texture::sample_normal_with`):
+/// the normal it gives in the part's space, or none. Its frames are the
+/// projection's coordinates differenced a step apart, so an ulp of an angle
+/// is a part in a thousand of a cylindrical or spherical frame: those are
+/// held to 1e-2, planar and tri-planar to 1e-4.
+#[test]
+fn projected_normal_maps_are_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let pictures = on_card();
+    for projection in [Projection::Planar, Projection::TriPlanar, Projection::Cylindrical, Projection::Spherical] {
+        let mut rng = Pcg32::new(29, projection as u64);
+        let mut items = Vec::new();
+        for (t, (name, texture)) in pictures.textures.iter().enumerate() {
+            for _ in 0..2_000 {
+                let mapping = projected_mapping(&mut rng, projection);
+                let p = projected_point(&mut rng);
+                let want = match texture.sample_normal_with(&mapping, &p) {
+                    Some(n) => vec![n.x, n.y, n.z, 1.0],
+                    None => vec![0.0; 4],
+                };
+                items.push(Item {
+                    settings: program::settings::texture(TEXTURE_NORMAL, &mapping, false, false, pictures.colour[t]),
+                    place: [0.0, 0.0],
+                    mapping,
+                    point: p,
+                    want,
+                    label: format!("{name} {projection:?} normal at {:?} n {:?} {mapping:?}", p.position, p.normal),
+                });
+            }
+        }
+        let bound = match projection {
+            Projection::Planar | Projection::TriPlanar => Bound { absolute: 1e-4, relative: 0.0 },
+            _ => Bound { absolute: 1e-2, relative: 0.0 },
+        };
+        let name = format!("{projection:?} normal maps");
+        let (_, outside) = check(&h, &pictures.card, &name, &items, bound);
+        within_budget(&name, outside, items.len());
+    }
+}
+
+/// The card's division and arctangent are the processor's to the bit: its
+/// division is IEEE's; its arctangent is correctly rounded, which the
+/// processor's atan2f is all but now and then where the angle is small
+/// (where they differ, which is right is printed).
+#[test]
+fn division_and_the_arctangent_are_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(43, 1);
+    let mut pairs: Vec<(f32, f32)> = (0..300_000)
+        .map(|_| {
+            let sign = |rng: &mut Pcg32| if rng.next_f32() < 0.5 { -1.0 } else { 1.0 };
+            (sign(&mut rng) * log_uniform(&mut rng, 1e-6, 1e6), sign(&mut rng) * log_uniform(&mut rng, 1e-6, 1e6))
+        })
+        .collect();
+    pairs.extend((0..=65535u32).map(|v| (v as f32, 65535.0)));
+    pairs.extend((0..100_000).map(|_| (uniform(&mut rng, -20.0, 20.0), uniform(&mut rng, -20.0, 20.0))));
+    pairs.extend([(0.0, 1.0), (-0.0, 1.0), (0.0, -1.0), (-0.0, -1.0), (1.0, 0.0), (-1.0, 0.0), (1.0, -0.0), (0.0, 0.0), (-0.0, -0.0), (3.0, 3.0), (-2.0, 2.0)]);
+    let inputs: Vec<u32> = pairs.iter().flat_map(|(a, b)| [a.to_bits(), b.to_bits(), 0]).collect();
+    let got = h.run_wgsl_with(
+        &["textures"],
+        "cy_zero = inp(2u); outf(0u, tex_div(inf(0u), inf(1u))); outf(1u, tex_atan2(inf(0u), inf(1u)));",
+        &inputs,
+        3,
+        2,
+        &[(16, &[0u32]), (17, &tequila_render_gpu::textures::header_tables())],
+    );
+    let (mut division, mut arctangent, mut processor_misrounds) = (Vec::new(), Vec::new(), 0usize);
+    for (i, (a, b)) in pairs.iter().enumerate() {
+        let (d, t) = (f32::from_bits(got[2 * i]), f32::from_bits(got[2 * i + 1]));
+        if d.to_bits() != (a / b).to_bits() && !(d.is_nan() && (a / b).is_nan()) {
+            division.push(format!("  {a:e} / {b:e}: card {d:e}, processor {:e}", a / b));
+        }
+        if t.to_bits() != a.atan2(*b).to_bits() {
+            let correct = (*a as f64).atan2(*b as f64) as f32;
+            if t.to_bits() == correct.to_bits() {
+                processor_misrounds += 1;
+            }
+            arctangent.push(format!("  atan2({a:e}, {b:e}): card {t:e}, processor {:e}, correctly rounded {correct:e}", a.atan2(*b)));
+        }
+    }
+    eprintln!(
+        "division: {} of {} unlike the processor's; atan2: {} unlike, of which the processor's is the one not correctly rounded {processor_misrounds} times",
+        division.len(),
+        pairs.len(),
+        arctangent.len()
+    );
+    for line in division.iter().take(6).chain(arctangent.iter().take(16)) {
+        eprintln!("{line}");
+    }
+    assert!(division.is_empty(), "the card's division is not IEEE's");
+    assert!(arctangent.len() * 1000 <= pairs.len(), "{} arctangents unlike the processor's", arctangent.len());
+}
+
+/// The tri-planar weights' powf is the processor's to the bit, all but
+/// about once in ten thousand (its own rounding, a hair from a midpoint).
+#[test]
+fn the_tri_planar_power_is_the_processors() {
+    let Some(h) = Harness::for_test() else { return };
+    let mut rng = Pcg32::new(47, 1);
+    let mut pairs: Vec<(f32, f32)> = (0..300_000)
+        .map(|_| {
+            let x = if rng.next_f32() < 0.1 { log_uniform(&mut rng, 1e-12, 1.0) } else { rng.next_f32() };
+            let k = if rng.next_f32() < 0.4 { [1.0, 2.0, 4.0, 6.0, 8.0][(rng.next_u32() % 5) as usize] } else { uniform(&mut rng, 1.0, 9.0) };
+            (x, k)
+        })
+        .collect();
+    pairs.extend([(0.0, 6.0), (1.0, 6.0), (0.5, 1.0), (1e-30, 4.0), (0.70710677, 6.0)]);
+    let inputs: Vec<u32> = pairs.iter().flat_map(|(x, k)| [x.to_bits(), k.to_bits(), 0]).collect();
+    let got = h.run_wgsl_with(&["textures"], "cy_zero = inp(2u); outf(0u, tex_powf(inf(0u), inf(1u)));", &inputs, 3, 1, &[(16, &[0u32]), (17, &tequila_render_gpu::textures::header_tables())]);
+    let mut unlike = Vec::new();
+    for ((x, k), g) in pairs.iter().zip(&got) {
+        let (g, want) = (f32::from_bits(*g), x.powf(*k));
+        // Below the smallest normal float the weight is nought on the card.
+        if g.to_bits() != want.to_bits() && !(want < 1.2e-38 && g == 0.0) {
+            unlike.push(format!("  {x:e}^{k}: card {g:e}, processor {want:e}"));
+        }
+    }
+    eprintln!("powf: {} of {} unlike the processor's", unlike.len(), pairs.len());
+    for line in unlike.iter().take(8) {
+        eprintln!("{line}");
+    }
+    assert!(unlike.len() * 1000 <= pairs.len(), "{} powers unlike the processor's", unlike.len());
 }
