@@ -65,6 +65,7 @@ const OP_TEXTURE: u32 = 24u;
 const OP_PROCEDURAL: u32 = 25u;
 const OP_WAVE: u32 = 26u;
 const OP_ATTRIBUTE: u32 = 27u;
+const OP_GABOR: u32 = 28u;
 
 // RayKind, as the Light Path node reads it.
 const RAY_CAMERA: u32 = 0u;
@@ -345,6 +346,7 @@ fn prog_run(start: u32, end: u32, pt: ProgPoint) {
             case 25u: { out = tq_instruction(settings, a); }
             case 26u: { out = cy_wave(settings, a[0].xyz, a[1].x, a[2].x, a[3].x); }
             case 27u: { out = prog_attribute(settings, a[0], pt); }
+            case 28u: { out = cy_gabor(settings, a[0].xyz, a[1].x, a[2].x, a[3].x, a[4].x, a[5].xyz, a[6].x); }
             default: {}
         }
         prog_regs[(head >> 8u) & 0xFFu] = out;

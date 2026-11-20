@@ -449,8 +449,8 @@ fn newly_on_the_card(program: &tequila_materials::graph::CompiledGraph) -> bool 
 /// A wall of the presets the card has run since R3's procedural nodes
 /// (`newly_on_the_card`: Tequila's procedurals, Wave, Gabor, the curvature
 /// and the baked occlusion), the Headphones' parts and camera as the preset
-/// walls have them, opaque and glowing nowhere, spread over those presets by
-/// `variant`.
+/// walls have them, opaque and glowing nowhere: wall `variant` of
+/// [`NEW_WALLS`], which between them wear every one of those presets.
 fn new_preset_wall(variant: usize) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/samples/Headphones.tequila");
     let mut document = tequila_format::load(&path).expect("the Headphones sample loads").document;
@@ -472,12 +472,13 @@ fn new_preset_wall(variant: usize) {
     let keys: Vec<_> = document.materials.keys().collect();
     let mut names = Vec::new();
     for (j, key) in keys.iter().enumerate() {
-        let entry = &runnable[(2 * j + variant) % runnable.len()];
+        let entry = &runnable[(NEW_WALLS * j + variant) % runnable.len()];
         let mut definition = entry.definition();
         definition.graph.material_mut().edge_radius = 0.0;
         names.push(entry.name.clone());
         document.materials.insert_with_key(*key, definition);
     }
+    assert!(NEW_WALLS * keys.len() >= runnable.len(), "{} presets newly on the card, more than {NEW_WALLS} walls of {} wear", runnable.len(), keys.len());
     eprintln!("new preset wall {variant} (of {} newly on the card): {}", runnable.len(), names.join(", "));
     let camera = document.cameras.active().camera;
     same_shot(Shot { name: format!("new_preset_wall_{variant}"), document, camera, width: 320, height: 180, samples: 256, seed: 7, cache: MeshCache::new() });
@@ -492,6 +493,14 @@ fn a_wall_of_the_new_presets_is_the_processors_picture() {
 fn another_wall_of_the_new_presets_is_the_processors_picture() {
     new_preset_wall(1);
 }
+
+#[test]
+fn a_third_wall_of_the_new_presets_is_the_processors_picture() {
+    new_preset_wall(2);
+}
+
+/// How many walls the presets newly on the card are spread over.
+const NEW_WALLS: usize = 3;
 
 /// What the snapshot measures at the mesh's corners, read by programs on the
 /// card (R3: the curvature, the baked occlusion, the distance to other parts,

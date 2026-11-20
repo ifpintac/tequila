@@ -34,7 +34,7 @@ use tequila_materials::material_type::Param;
 use tequila_materials::nodes::{MixData, PointInput, ShaderNode};
 use tequila_texture::cycles::noise::FractalKind;
 use tequila_texture::cycles::ops::{BlendMode, ColorModel, MapRangeKind, MappingKind, MathOp, VectorMathOp};
-use tequila_texture::cycles::textures::{GradientKind, WaveDirection, WaveKind, WaveProfile};
+use tequila_texture::cycles::textures::{GaborKind, GradientKind, WaveDirection, WaveKind, WaveProfile};
 use tequila_texture::cycles::voronoi::{VoronoiFeature, VoronoiMetric};
 use tequila_texture::gradient::Interpolation;
 use tequila_texture::mip::Wrap;
@@ -105,6 +105,9 @@ pub const OP_WAVE: u32 = 26;
 /// occlusion shaped, the distance to other parts, the vertex colour; the
 /// settings word's [`ATTRIBUTE_WHICH`].
 pub const OP_ATTRIBUTE: u32 = 27;
+/// The Gabor Texture (`procedural.wgsl`'s `cy_gabor`): bit 0 of the
+/// settings word for space rather than a plane.
+pub const OP_GABOR: u32 = 28;
 
 /// Every opcode by its WGSL name, for the test that holds the two sides to
 /// one numbering.
@@ -136,7 +139,19 @@ pub const OPCODES: &[(&str, u32)] = &[
     ("OP_PROCEDURAL", OP_PROCEDURAL),
     ("OP_WAVE", OP_WAVE),
     ("OP_ATTRIBUTE", OP_ATTRIBUTE),
+    ("OP_GABOR", OP_GABOR),
 ];
+
+/// The Gabor Texture's normalization, six of its deviations, worked out as
+/// `textures.rs`'s `gabor` works it out.
+pub fn gabor_normalization(kind: GaborKind) -> f32 {
+    const IMPULSES: f32 = 8.0;
+    let deviation = match kind {
+        GaborKind::Plane => (IMPULSES * 0.5 * 0.25).sqrt(),
+        GaborKind::Space => (IMPULSES * 0.5 * (1.0 / (4.0 * std::f32::consts::SQRT_2))).sqrt(),
+    };
+    6.0 * deviation
+}
 
 /// `OP_ATTRIBUTE`'s settings word: bits 0-1 which, bits 2-3 the curvature's
 /// mode (convex, concave, both).
@@ -1149,6 +1164,22 @@ impl Builder<'_> {
                 for (register, output) in outputs {
                     let ty = if *output == 0 { Ty::Color } else { Ty::Float };
                     self.define(*register, Self::virtual_held(d, ty, MODE_AS_IS))?;
+                }
+                Ok(())
+            }
+            // Value, Phase and Intensity in the first three lanes.
+            ShaderNode::Gabor { kind } => {
+                // Stage 1's lowering ran no Gabor.
+                if matches!(self.pictures, Pictures::Unknown) {
+                    return Err(Refusal::Node(node.label()));
+                }
+                let mut operands = operands;
+                operands.truncate(6);
+                let normalization = self.constant([gabor_normalization(kind); 4]);
+                operands.push(normalization);
+                let (d, _) = self.push(OP_GABOR, (kind == GaborKind::Space) as u32, operands, false)?;
+                for (register, output) in outputs {
+                    self.define(*register, Self::virtual_held(d, Ty::Float, MODE_LANE0 + (*output).min(2) as u32))?;
                 }
                 Ok(())
             }

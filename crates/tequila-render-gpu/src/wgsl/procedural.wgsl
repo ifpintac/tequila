@@ -367,3 +367,131 @@ fn cy_wave(settings: u32, a: vec3<f32>, b: f32, distortion: f32, phase: f32) -> 
     }
     return vec4<f32>(v);
 }
+
+// ---- Cycles' Gabor texture (cycles/textures.rs's gabor) -------------------
+
+// The Gabor Texture (gabor): its coordinates, scale, frequency, anisotropy,
+// the plane's orientation (an angle) and space's (a direction), and the
+// normalization (six deviations, worked out on the processor); bit 0 of the
+// settings word for space. Sparse convolution noise: the impulses of the
+// 3 x 3 (or 3 x 3 x 3) cells round the point, eight to a cell, each a
+// windowed kernel added as a phasor, each cell's sum added to the total in
+// Cycles' order. An impulse's sines and cosines - its direction's (space's
+// turned inclination and azimuth, or the plane's angle), its window's and
+// its kernel's - come from one call, in a loop over the steps that need
+// them. (value, phase, intensity, 0).
+fn cy_gabor(settings: u32, coordinates: vec3<f32>, scale: f32, frequency_in: f32, anisotropy: f32, angle: f32, direction: vec3<f32>, normalization: f32) -> vec4<f32> {
+    let space = (settings & 1u) != 0u;
+    let dims = select(3u, 4u, space);
+    let p = coordinates * scale;
+    let isotropy = 1.0 - clamp(anisotropy, 0.0, 1.0);
+    let frequency = max(frequency_in, 0.001);
+    // Space's direction made a unit vector, and its spherical angles (the
+    // same for every impulse, so worked out once).
+    var base = direction;
+    var inclination0 = 0.0;
+    var azimuth0 = 0.0;
+    if (space) {
+        let length = cy_sqrt(cy_exact(cy_exact(direction.x * direction.x) + cy_exact(direction.y * direction.y)) + cy_exact(direction.z * direction.z));
+        base = vec3<f32>(tex_div(direction.x, length), tex_div(direction.y, length), tex_div(direction.z, length));
+        inclination0 = acos(base.z);
+        let across = cy_sqrt(cy_exact(base.x * base.x) + cy_exact(base.y * base.y));
+        azimuth0 = select(1.0, -1.0, base.y < 0.0) * acos(tex_div(base.x, across));
+    }
+    let at = select(vec3<f32>(p.xy, 0.0), p, space);
+    let cellf = floor(at);
+    let local = at - cellf;
+    let cells = select(9u, 27u, space);
+    var sum = vec2<f32>(0.0);
+    for (var c = 0u; c < cells; c++) {
+        let offset = vec3<f32>(f32(c % 3u) - 1.0, f32((c / 3u) % 3u) - 1.0, select(0.0, f32(c / 9u) - 1.0, space));
+        let cell = cellf + offset;
+        let position = local - offset;
+        var noise = vec2<f32>(0.0);
+        for (var i = 0u; i < 8u; i++) {
+            let key = f32(i * 3u);
+            // seed(k): the cell and i * 3 + k.
+            let s0 = select(vec4<f32>(cell.xy, key, 0.0), vec4<f32>(cell, key), space);
+            let s1 = select(vec4<f32>(cell.xy, key + 1.0, 0.0), vec4<f32>(cell, key + 1.0), space);
+            let s2 = select(vec4<f32>(cell.xy, key + 2.0, 0.0), vec4<f32>(cell, key + 2.0), space);
+            // hash_floatN_to_float2 and _to_float3: the key turned.
+            var centre: vec3<f32>;
+            if (space) {
+                centre = vec3<f32>(cy_hashf(s1, 4u), cy_hashf(vec4<f32>(s1.z, s1.x, s1.w, s1.y), 4u), cy_hashf(vec4<f32>(s1.w, s1.z, s1.y, s1.x), 4u));
+            } else {
+                centre = vec3<f32>(cy_hashf(s1, 3u), cy_hashf(vec4<f32>(s1.z, s1.x, s1.y, 0.0), 3u), 0.0);
+            }
+            let q = position - centre;
+            var d2 = cy_exact(q.x * q.x) + cy_exact(q.y * q.y);
+            if (space) {
+                d2 = d2 + cy_exact(q.z * q.z);
+            }
+            // Windowed to nothing beyond a unit radius.
+            if (d2 >= 1.0) {
+                continue;
+            }
+            let weight = select(1.0, -1.0, cy_hashf(s2, dims) < 0.5);
+            var o = base;
+            var f = vec2<f32>(0.0);
+            var inclination = inclination0;
+            var azimuth = azimuth0;
+            var orientation = 0.0;
+            var step = 0u;
+            if (space) {
+                if (isotropy == 0.0) {
+                    step = 2u;
+                } else {
+                    let r0 = cy_hashf(s0, 4u);
+                    let r1 = cy_hashf(vec4<f32>(s0.z, s0.x, s0.w, s0.y), 4u);
+                    inclination = inclination0 + cy_exact(cy_exact(r0 * CY_PI) * isotropy);
+                    azimuth = azimuth0 + cy_exact(cy_exact(r1 * CY_PI) * isotropy);
+                }
+            } else {
+                orientation = angle + cy_exact(((cy_hashf(s0, 3u) - 0.5) * CY_PI) * isotropy);
+                step = 1u;
+            }
+            var turned = vec2<f32>(0.0);
+            var envelope = 0.0;
+            var k = vec2<f32>(0.0);
+            loop {
+                var x: f32;
+                switch step {
+                    case 0u: { x = inclination; }
+                    case 1u: { x = select(orientation, azimuth, space); }
+                    case 2u: { x = cy_exact(CY_PI * d2); }
+                    default: {
+                        if (space) {
+                            let along = cy_exact(cy_exact(q.x * o.x) + cy_exact(q.y * o.y)) + cy_exact(q.z * o.z);
+                            x = cy_exact(cy_exact(CY_TAU * frequency) * along);
+                        } else {
+                            x = cy_exact(CY_TAU * (cy_exact(q.x * f.x) + cy_exact(q.y * f.y)));
+                        }
+                    }
+                }
+                let sc = cy_sincos(x);
+                switch step {
+                    case 0u: { turned = sc; }
+                    case 1u: {
+                        if (space) {
+                            o = vec3<f32>(turned.x * sc.y, turned.x * sc.x, turned.y);
+                        } else {
+                            f = vec2<f32>(frequency * sc.y, frequency * sc.x);
+                        }
+                    }
+                    case 2u: { envelope = exp(-CY_PI * d2) * (0.5 + 0.5 * sc.y); }
+                    default: { k = vec2<f32>(envelope * sc.y, envelope * sc.x); }
+                }
+                step += 1u;
+                if (step == 4u) {
+                    break;
+                }
+            }
+            noise = noise + weight * k;
+        }
+        sum = sum + noise;
+    }
+    let value = tex_div(sum.y, normalization) * 0.5 + 0.5;
+    let phase = tex_div(tex_atan2(sum.y, sum.x) + CY_PI, CY_TAU);
+    let intensity = tex_div(cy_sqrt(cy_exact(sum.x * sum.x) + cy_exact(sum.y * sum.y)), normalization);
+    return vec4<f32>(value, phase, intensity, 0.0);
+}

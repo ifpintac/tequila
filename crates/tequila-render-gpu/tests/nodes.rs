@@ -1004,3 +1004,46 @@ fn the_measures_are_refused_only_by_stage_1() {
         assert!(program::reads_attributes(&program));
     }
 }
+
+// ---- Cycles' Gabor texture ------------------------------------------------
+
+/// The Gabor Texture in a plane and in space, at random inputs over their
+/// ranges, every output.
+#[test]
+fn gabor_is_the_processors() {
+    use tequila_materials::graph::Value;
+    use tequila_materials::nodes::ShaderNode;
+    use tequila_texture::cycles::textures::GaborKind;
+    let Some(h) = harness() else { return };
+    let mut rng = Pcg32::new(27, 1);
+    let mut cases = Vec::new();
+    for kind in [GaborKind::Plane, GaborKind::Space] {
+        for outputs in [&[0u8][..], &[1], &[2], &[0, 1, 2]] {
+            for _ in 0..1500 {
+                let node = ShaderNode::Gabor { kind };
+                let scale = if rng.next_f32() < 0.3 { uniform(&mut rng, 0.0, 100.0) } else { uniform(&mut rng, 0.0, 20.0) };
+                let reach = 20.0 / scale.max(0.5);
+                let vector = vec3(uniform(&mut rng, -reach, reach), uniform(&mut rng, -reach, reach), uniform(&mut rng, -reach, reach));
+                let anisotropy = match rng.next_u32() % 5 {
+                    0 => 0.0,
+                    1 => 1.0,
+                    _ => uniform(&mut rng, -0.1, 1.1),
+                };
+                let inputs = vec![
+                    Value::Vector(vector),
+                    Value::Float(scale),
+                    Value::Float(uniform(&mut rng, 0.0, 20.0)),
+                    Value::Float(anisotropy),
+                    Value::Float(uniform(&mut rng, -3.2, 3.2)),
+                    Value::Vector(unit(&mut rng) * uniform(&mut rng, 0.2, 3.0)),
+                ];
+                let point = random_point(&mut rng, 1.0);
+                cases.push(Case { label: format!("{node:?} {outputs:?} at {inputs:?}"), program: single_node(node, &inputs, outputs), surface: flat_surface(&point), point, normal: None, heights: None, slack: None });
+            }
+        }
+    }
+    compare_all(&h, "Gabor", &cases, NOISE);
+    // Stage 1's lowering refuses it as it did.
+    let any = single_node(ShaderNode::Gabor { kind: GaborKind::Space }, &[Value::Vector(Vec3::ONE), Value::Float(5.0), Value::Float(2.0), Value::Float(1.0), Value::Float(0.5), Value::Vector(Vec3::X)], &[0]);
+    assert_eq!(program::lower(&any), Err(Refusal::Node("Gabor Texture")));
+}
