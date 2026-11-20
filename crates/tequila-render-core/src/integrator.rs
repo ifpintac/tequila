@@ -984,7 +984,7 @@ fn trace<C: PathColour>(
                 let (sigma, albedo) = walk_medium_cached(colour, &walk, recipe.as_ref(), &mut walk_spectra);
                 let guiding = guide.as_ref().filter(|g| g.instance == instance);
                 let draws = (sampler.next_unstructured(), sampler.next_unstructured());
-                let (chance, depth) = walk_flight(throughput, sigma, guiding.map_or(1.0, WalkGuide::stretch), draws);
+                let (chance, depth) = walk_flight(throughput, albedo, sigma, guiding.map_or(1.0, WalkGuide::stretch), draws);
                 // The walk's first flight looks further, for the surface
                 // opposite the one it came in by.
                 let reach = match guiding {
@@ -1134,7 +1134,7 @@ fn trace<C: PathColour>(
             loop {
                 let (chance, depth) = match drawn.take() {
                     Some(d) => (d.chance, d.depth),
-                    None => walk_flight(throughput, sigma, stretch, (sampler.next_unstructured(), sampler.next_unstructured())),
+                    None => walk_flight(throughput, albedo, sigma, stretch, (sampler.next_unstructured(), sampler.next_unstructured())),
                 };
                 let (t, bound) = match fly(field.as_deref(), &ray, travelled, surface_at, depth) {
                     Flight::Collided { t, bound } => (t, bound),
@@ -4034,18 +4034,32 @@ impl GuidedTurn {
 }
 
 /// A walk's next flight from two uniform draws: the chance of each channel
-/// it may be sampled in, in proportion to the path's `throughput`, and the
-/// optical depth it flies in the one chosen, in density times distance -
-/// plain distance in a uniform medium, and through a Volume Map each
-/// majorant block's bound times the length crossed - with the extinction
-/// multiplied by `stretch` (1 but on a guided walk, `WalkGuide`).
-fn walk_flight<V: Carried>(throughput: V, sigma: V, stretch: f32, (pick, along): (f32, f32)) -> (V, f32) {
+/// it may be sampled in, and the optical depth it flies in the one chosen,
+/// in density times distance - plain distance in a uniform medium, and
+/// through a Volume Map each majorant block's bound times the length
+/// crossed - with the extinction multiplied by `stretch` (1 but on a guided
+/// walk, `WalkGuide`).
+///
+/// Each channel's chance is in proportion to the path's `throughput` in it
+/// times the medium's single-scattering `albedo` there, as Cycles' walks
+/// choose (after Chiang, Kutz and Burley 2016): a channel the medium mostly
+/// absorbs collides soon and carries little past the collision, so flights
+/// drawn in it bend paths that the other channels would have carried on.
+/// palma P8's lime shell absorbs blue eighty times faster than green, and
+/// drawn by throughput alone a third of the flights through it were blue's,
+/// nearly all of them stopping inside the shell; its body was 1.4 times as
+/// noisy as Cycles' for it. A medium that only absorbs (a Volume Map's, with
+/// no albedo) is drawn by throughput as before. Any chances are unbiased,
+/// the flight's density being the mixture of every channel's (`density`).
+fn walk_flight<V: Carried>(throughput: V, albedo: V, sigma: V, stretch: f32, (pick, along): (f32, f32)) -> (V, f32) {
     let channels = V::CHANNELS;
-    let weights = V::from_channels(|c| throughput.channel(c).max(0.0));
-    let mut total = weights.channel(0);
-    for c in 1..channels {
-        total += weights.channel(c);
-    }
+    let sum = |v: &V| (1..channels).fold(v.channel(0), |total, c| total + v.channel(c));
+    let scattered = V::from_channels(|c| (throughput.channel(c) * albedo.channel(c)).max(0.0));
+    let carried = V::from_channels(|c| throughput.channel(c).max(0.0));
+    let (weights, total) = match (sum(&scattered), sum(&carried)) {
+        (total, _) if total > 0.0 => (scattered, total),
+        (_, total) => (carried, total),
+    };
     let chance = if total > 0.0 {
         V::from_channels(|c| weights.channel(c) / total)
     } else {

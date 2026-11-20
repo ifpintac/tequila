@@ -229,6 +229,12 @@ Measure first. Profile `Headphones` and whichever scenes R0.1 shows slowest agai
   - Samples a second on `lamp_lit` 2.68 to 3.1 million with the PC busy, 3.7 to 3.8 with it quiet (Cycles 3.9 to 4.1); the same noise, the same picture (mean 0.48902 before and after). The cuts are in what every scene does, so every scene gains some.
   - Time to clean against Cycles, all eight measured on 2026-11-19 on the RTX 2060 PC once it was quiet, with #169 added for palma's sake and #176 in Cycles for `subsurface_product` (Tequila / Cycles seconds; where the two are close, the median of three runs of each): `cad_assembly` 4.7 / 12.2 (0.39), Perfume bottle 11.8 / 26.7 (0.44), `simple_product` 9.1 / 13.9 (0.65), `fibre_product` 17.5 / 21.6 (0.81), `lamp_lit` 8.1 / 9.0 (0.90, was 1.09), Headphones 7.7 / 8.0 (0.96), `subsurface_product` 34.9 / 35.3 (0.99), palma P8 83.4 / 84.2 (0.99). With other builds running, `lamp_lit` read 0.91. No scene now takes longer to clean in Tequila than in Cycles on this PC; `subsurface_product` and palma are level with it.
 
+- *Then palma P8's shell (2026-11-19, `r1-walk-albedo`):* palma's gap was noise alone: Tequila's samples cost half Cycles', and it needed 336 of them to Cycles' 136. 97% of its noise was in the device, 1.4 times Cycles' variance there and the same mean; with the shell's scatter turned off the two were level (1.04), so it was the walk through the shell. The lime shell absorbs blue eighty times faster than green, and a walk drew each flight in a channel chosen by the path's throughput alone: a third of the flights through the shell were blue's, nearly all of them stopping inside it and bending paths the other channels would have carried straight on. Now the channel is chosen by throughput times the medium's albedo, as Cycles' walks choose it (after Chiang, Kutz and Burley 2016); a medium that only absorbs is drawn by throughput as before.
+  - Unbiased: with firefly rejection off the device's light is the same to 0.02%, within two seeds' spread. With it on, it is 1.6% brighter, being clamped less.
+  - `subsurface_product`, the Headphones and the Perfume bottle are unchanged, to the noise and the mean: their media scatter much the same in every channel.
+  - palma P8, with #169 added, Tequila / Cycles median of three: 46.6 / 82.5 seconds (0.56, was 0.99); 152 samples where it needed 336.
+  - Found on the way: with firefly rejection off, the device seen through the shell was 16% brighter in Tequila than in Cycles (display mean 0.415 against 0.356). Half of that was Cycles' (#182: the split shell's tint stayed on past its back half; 0.356 to 0.389). The rest was on the circuit board seen through the shell, which neither engine had right: with every limit and blur lifted the two agree there to 0.4%, and over the device to 0.6% (0.430 against 0.428). Tequila lost light because a pass through glass was counted against the general bounce limit as well as the transmission one, against `docs/01` §11: #183, which brings the device to 0.431 and the Perfume bottle's glass level with Cycles'. Cycles loses it to Filter Glossy at 1 (Blender's default, which Tequila sends), which makes the shell rough after the first bounce off the board and takes 44% of the board's light; left as it is, as the look Cycles projects were made in, for R6.1 to map onto Tequila's regularisation.
+
 *Exit:* G1.2 on both machines, or a per-scene account of the remaining gap that the owner accepts.
 
 ### R2 — The first picture from the card (M)
@@ -239,6 +245,22 @@ On the RTX 2060 (Vulkan) and an Apple-silicon Mac (Metal, macOS 15 or later): ma
 *Pass:* the picture is right on both machines; rays per second are at least 5× Embree's on the RTX 2060; the cold pipeline compile is under 5 s.
 *If Metal's ray queries misbehave* (wgpu issues #9215, #9100 are open or recently closed): do R5.1 first and run the Mac on the processor-built tree; carry on.
 *If Vulkan's do:* stop and ask the owner. The alternative is Vulkan and Metal directly (`ash`, `metal`), which is a different plan.
+
+*Measured, November 20, the RTX 2060 half* (branch `r2-spike`, `cargo run --release -p tequila-render-gpu --example r2_spike -- PROJECT 1920 1080 OUT`; driver 610.88, against Embree on the Ryzen 7 2700X's 16 threads through the renderer's own `Intersector`, AO radius 5% of the scene's diagonal):
+
+| Scene | Triangles | Card, M rays/s | Processor, M rays/s | Card ÷ processor |
+|---|---|---|---|---|
+| Headphones | 102,408 | 2,498 | 72.7 | 34× |
+| Perfume bottle | 75,129 | 2,775 | 87.4 | 32× |
+| palma P8 | 193,531 | 2,792 | 83.9 | 33× |
+
+- The pictures are the same: hit or miss differs at 0, 1 and 0 pixels of 2 million, and the mean occlusion agrees to four decimals (both draw the same hashed directions).
+- Acceleration structures in 0.025 s on the card (one BLAS per mesh, 8 to 151 instances), 0.07–0.19 s in Embree. Card memory 13–34 MiB.
+- Cold pipeline compile 0.16 s, for a shader of 100 lines; the megakernel will be far larger, so R2.5 measures it again.
+- The processor's figure includes `Hit`'s full bookkeeping (shading normal, UVs, magnitude), which bare traversal does not, so the margin for traversal alone is smaller; it is still several times the 5× the pass asks.
+- wgpu 30 details that cost a try each: device creation needs `experimental_features: unsafe { ExperimentalFeatures::enabled() }`; the shader needs `enable wgpu_ray_query;`; the opaque flag is `RAY_FLAG_FORCE_OPAQUE`; `required_limits` must raise the acceleration-structure limits, which default to zero (the spike passes `adapter.limits()`).
+
+*Pass on the RTX 2060.* The Mac half is still to run.
 
 **R2.1 The crate.**
 In `crates/tequila-render-gpu` (workspace `rust-version` rises to what wgpu 30 needs; wgpu 22 is already in `Cargo.lock` through another dependency, so pin this crate's version explicitly):
