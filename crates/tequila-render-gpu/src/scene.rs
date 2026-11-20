@@ -24,7 +24,20 @@ pub struct GpuMesh {
     /// the normal buffer; 0 for faceted geometry.
     pub has_normals: u32,
     pub vertex_count: u32,
+    /// The mesh's first UV in the UV buffer, [`NO_DATA`] for a mesh with
+    /// none: a hit's UV is then its barycentrics, as Embree's resolve has it.
+    pub uv_base: u32,
+    /// Its first tangent in the tangent buffer, [`NO_DATA`] for none.
+    pub tangent_base: u32,
+    pub _pad: [u32; 2],
+    /// Its bounds in its own space (`Mesh::bounds`), which the Generated
+    /// texture coordinate is normalized to.
+    pub bounds_min: [f32; 4],
+    pub bounds_max: [f32; 4],
 }
+
+/// [`GpuMesh::uv_base`] or [`GpuMesh::tangent_base`] of a mesh without.
+pub const NO_DATA: u32 = u32::MAX;
 
 /// One placed instance, at its slot in the top-level structure (the slot is
 /// the instance's custom data, which a hit hands back).
@@ -48,6 +61,16 @@ pub struct GpuInstance {
     /// [`INSTANCE_STAND_IN`] for a lamp's stand-in (`Instance::light_proxy`).
     pub flags: u32,
     pub _pad: [u32; 2],
+    /// What Object Info reads: the colour set on the part (the fourth float
+    /// unused).
+    pub object_color: [f32; 4],
+    /// `Transform::inv_length_scale`, and the scene units per unit of the
+    /// part's own space (its inverse, as the shading point holds it).
+    pub inv_length_scale: f32,
+    pub scale: f32,
+    /// `SceneSnapshot::object_random` of the instance, and its number.
+    pub object_random: f32,
+    pub object_number: f32,
 }
 
 /// [`GpuInstance::catcher`] of an instance that is no shadow catcher.
@@ -133,6 +156,11 @@ pub struct GpuScene {
     pub instances: wgpu::Buffer,
     /// The shadow catchers' records, by [`GpuInstance::catcher`].
     pub catchers: wgpu::Buffer,
+    /// Every mesh's UVs, two floats a vertex, from its `uv_base`.
+    pub uvs: wgpu::Buffer,
+    /// Every mesh's tangents, four floats a vertex (the handedness in the
+    /// fourth), from its `tangent_base`.
+    pub tangents: wgpu::Buffer,
     pub blases: Vec<Option<wgpu::Blas>>,
     pub tlas: wgpu::Tlas,
     /// What the records say, kept for tests and for the next upload.
@@ -152,15 +180,37 @@ impl GpuScene {
         let mut positions: Vec<f32> = Vec::new();
         let mut normals: Vec<f32> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
+        let mut uvs: Vec<f32> = Vec::new();
+        let mut tangents: Vec<f32> = Vec::new();
         let mut mesh_records = Vec::with_capacity(scene.meshes.len());
         for mesh in &scene.meshes {
             let has_normals = mesh.normals.len() == mesh.positions.len() && !mesh.normals.is_empty();
+            // As `uv_derivatives` and Embree's resolve read them: a UV, or a
+            // tangent, for every vertex or none at all.
+            let has_uvs = !mesh.uvs.is_empty() && mesh.uvs.len() == mesh.positions.len();
+            let has_tangents = !mesh.tangents.is_empty() && mesh.tangents.len() == mesh.positions.len();
+            let bounds = mesh.bounds();
             mesh_records.push(GpuMesh {
                 first_index: indices.len() as u32,
                 base_vertex: (positions.len() / 3) as u32,
                 has_normals: has_normals as u32,
                 vertex_count: mesh.positions.len() as u32,
+                uv_base: if has_uvs { (uvs.len() / 2) as u32 } else { NO_DATA },
+                tangent_base: if has_tangents { (tangents.len() / 4) as u32 } else { NO_DATA },
+                _pad: [0; 2],
+                bounds_min: [bounds.min.x, bounds.min.y, bounds.min.z, 0.0],
+                bounds_max: [bounds.max.x, bounds.max.y, bounds.max.z, 0.0],
             });
+            if has_uvs {
+                for t in &mesh.uvs {
+                    uvs.extend_from_slice(&[t.x, t.y]);
+                }
+            }
+            if has_tangents {
+                for t in &mesh.tangents {
+                    tangents.extend_from_slice(&[t.x, t.y, t.z, t.w]);
+                }
+            }
             for p in &mesh.positions {
                 positions.extend_from_slice(&[p.x, p.y, p.z]);
             }
@@ -175,7 +225,7 @@ impl GpuScene {
             indices.extend_from_slice(&mesh.indices);
         }
         // A buffer may not be empty.
-        for buffer in [&mut positions, &mut normals] {
+        for buffer in [&mut positions, &mut normals, &mut uvs, &mut tangents] {
             if buffer.is_empty() {
                 buffer.extend_from_slice(&[0.0; 3]);
             }
@@ -213,6 +263,11 @@ impl GpuScene {
                     light: inst.light.unwrap_or(NO_LIGHT),
                     flags: if inst.light_proxy { INSTANCE_STAND_IN } else { 0 },
                     _pad: [0; 2],
+                    object_color: [inst.colour.r, inst.colour.g, inst.colour.b, 0.0],
+                    inv_length_scale: inst.transform.inv_length_scale(),
+                    scale: 1.0 / inst.transform.inv_length_scale(),
+                    object_random: SceneSnapshot::object_random(n),
+                    object_number: inst.number,
                 }
             })
             .collect();
@@ -234,6 +289,8 @@ impl GpuScene {
         let meshes_buffer = init("meshes", bytemuck::cast_slice(&mesh_records), wgpu::BufferUsages::STORAGE);
         let instances_buffer = init("instances", bytemuck::cast_slice(&instance_records), wgpu::BufferUsages::STORAGE);
         let catchers_buffer = init("catchers", bytemuck::cast_slice(&catcher_buffer_records), wgpu::BufferUsages::STORAGE);
+        let uvs_buffer = init("uvs", bytemuck::cast_slice(&uvs), wgpu::BufferUsages::STORAGE);
+        let tangents_buffer = init("tangents", bytemuck::cast_slice(&tangents), wgpu::BufferUsages::STORAGE);
 
         let sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor> = scene
             .meshes
@@ -308,6 +365,8 @@ impl GpuScene {
             meshes: meshes_buffer,
             instances: instances_buffer,
             catchers: catchers_buffer,
+            uvs: uvs_buffer,
+            tangents: tangents_buffer,
             blases,
             tlas,
             mesh_records,

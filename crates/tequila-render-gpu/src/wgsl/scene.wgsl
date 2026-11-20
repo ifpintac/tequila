@@ -7,7 +7,16 @@ struct GpuMesh {
     base_vertex: u32,
     has_normals: u32,
     vertex_count: u32,
+    // Its first UV and first tangent, NO_DATA for a mesh without.
+    uv_base: u32,
+    tangent_base: u32,
+    _pad: array<u32, 2>,
+    // Its bounds in its own space, for the Generated coordinate.
+    bounds_min: vec4<f32>,
+    bounds_max: vec4<f32>,
 };
+
+const NO_DATA: u32 = 0xFFFFFFFFu;
 
 struct GpuInstance {
     // Row-major 3 x 4, as Transform::matrix and Transform::inverse.
@@ -25,6 +34,13 @@ struct GpuInstance {
     // INSTANCE_STAND_IN for a lamp's stand-in.
     flags: u32,
     _pad: vec2<u32>,
+    // What Object Info reads, and the part's scale as the shading point
+    // holds it (scene.rs's GpuInstance).
+    object_color: vec4<f32>,
+    inv_length_scale: f32,
+    scale: f32,
+    object_random: f32,
+    object_number: f32,
 };
 
 const NO_CATCHER: u32 = 0xFFFFFFFFu;
@@ -63,6 +79,10 @@ struct GpuCatcher {
 @group(0) @binding(3) var<storage, read> scene_indices: array<u32>;
 @group(0) @binding(4) var<storage, read> scene_meshes: array<GpuMesh>;
 @group(0) @binding(5) var<storage, read> scene_instances: array<GpuInstance>;
+// Every mesh's UVs (two floats a vertex) and tangents (four), from its
+// uv_base and tangent_base.
+@group(0) @binding(14) var<storage, read> scene_uvs: array<f32>;
+@group(0) @binding(15) var<storage, read> scene_tangents: array<vec4<f32>>;
 // The scene's materials (material.rs's GpuMaterial, declared in
 // openpbr.wgsl), by an instance's `material`. A kernel that reads them
 // includes openpbr; this module only names the binding.

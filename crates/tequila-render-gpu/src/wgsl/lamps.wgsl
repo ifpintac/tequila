@@ -77,12 +77,14 @@ fn lamps_select(count: u32, u: f32) -> LampChoice {
 // flip where neither has any (or it is not finite).
 fn lamps_left_share(node: GpuLightNode, point: vec3<f32>, normal: vec3<f32>, two_sided: bool) -> f32 {
     // The two children by one call site, for the code's size.
-    var importance = vec2<f32>(0.0);
+    // An array, not a vector: a vector's lane written by a run-time index in
+    // a loop has gone to the wrong lane on this driver.
+    var importance: array<f32, 2>;
     for (var side = 0u; side < 2u; side++) {
         importance[side] = light_node_importance(scene_light_nodes[select(node.left, node.right, side == 1u)], point, normal, two_sided);
     }
-    let left = importance.x;
-    let right = importance.y;
+    let left = importance[0];
+    let right = importance[1];
     let total = left + right;
     if (total > 0.0 && lt_finite(total)) {
         return left / total;

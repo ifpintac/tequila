@@ -27,6 +27,18 @@ use crate::lights::{GpuLights, LampScene, LightRecords};
 use crate::scene::GpuScene;
 use crate::tables::Tables;
 
+/// Every material's program lowered for the card (`crate::program::lower`),
+/// by material: `Ok(None)` for a material that is its constants, `Err` with
+/// the reason for one the card cannot run.
+pub fn lower_programs(scene: &SceneSnapshot) -> Vec<Result<Option<crate::program::CardProgram>, crate::program::Refusal>> {
+    (0..scene.materials.len())
+        .map(|i| match scene.program(tequila_core::ids::MaterialId(i as u32)) {
+            Some(program) => crate::program::lower(program),
+            None => Ok(None),
+        })
+        .collect()
+}
+
 /// What a dispatch of `transport.wgsl` is told; `frame.wgsl` is its twin.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
@@ -78,7 +90,9 @@ pub struct FrameParams {
     pub light_hierarchy: u32,
     /// [`crate::lights::lamp_flags`].
     pub lamp_flags: u32,
-    pub _pad1: u32,
+    /// `IntegratorConfig::pixel_spread`: the radians a pixel spans, which a
+    /// hit's footprint is its distance times (a material's program, its bump).
+    pub pixel_spread: f32,
     pub _pad2: u32,
 }
 
@@ -159,7 +173,11 @@ pub struct GpuRenderer {
     shadow_far: f32,
     /// The scene's materials, which the scene's bind group reads.
     pub materials: wgpu::Buffer,
+    /// The materials' programs: their words, their constants and where
+    /// each material's are (`crate::program`).
+    pub programs: [wgpu::Buffer; 3],
     pipeline: wgpu::ComputePipeline,
+    layout: wgpu::PipelineLayout,
     scene_group: wgpu::BindGroup,
     environment_group: wgpu::BindGroup,
     frame_layout: wgpu::BindGroupLayout,
@@ -231,6 +249,54 @@ impl FloorScene {
     }
 }
 
+/// The transport kernel's pipeline. `salt`, when given, makes the kernel a
+/// different one to the driver without changing what it does, so its shader
+/// cache cannot answer for it: how long a cold compile takes is measured so.
+fn transport_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>) -> wgpu::ComputePipeline {
+    transport_pipeline_of(device, layout, salt, crate::shader::source("transport"))
+}
+
+fn transport_pipeline_of(device: &wgpu::Device, layout: &wgpu::PipelineLayout, salt: Option<u32>, mut source: String) -> wgpu::ComputePipeline {
+    if let Some(salt) = salt {
+        source = source.replace(
+            "if (id.x >= frame.width || id.y >= frame.height) {",
+            &format!("if (id.x >= frame.width || id.y >= frame.height || frame.width == {}u) {{", salt | 0x8000_0000),
+        );
+    }
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("transport"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("transport"),
+        layout: Some(layout),
+        module: &module,
+        entry_point: Some("transport_main"),
+        compilation_options: Default::default(),
+        cache: None,
+    })
+}
+
+/// How long the transport kernel takes to compile on the renderer's card
+/// with nothing cached: its source salted (see `transport_pipeline`), built
+/// against the renderer's own layout. For keeping the kernel's size in check.
+pub fn cold_compile_time(renderer: &GpuRenderer, salt: u32) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    let _pipeline = transport_pipeline(&renderer.gpu.device, &renderer.layout, Some(salt));
+    renderer.gpu.wait();
+    started.elapsed()
+}
+
+/// [`cold_compile_time`] of the kernel's source as `edit` leaves it: what a
+/// part of the kernel costs to compile, measured by leaving it out.
+pub fn cold_compile_time_edited(renderer: &GpuRenderer, salt: u32, edit: &dyn Fn(String) -> String) -> std::time::Duration {
+    let source = edit(crate::shader::source("transport"));
+    let started = std::time::Instant::now();
+    let _pipeline = transport_pipeline_of(&renderer.gpu.device, &renderer.layout, Some(salt), source);
+    renderer.gpu.wait();
+    started.elapsed()
+}
+
 fn entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None }
 }
@@ -251,10 +317,25 @@ impl GpuRenderer {
         let uploaded = GpuScene::upload(device, &gpu.queue, scene);
         let environment = GpuEnvironment::upload(device, &scene.environment);
         let shadow_far = scene.bounds().bounding_radius().max(1.0) * 1e4;
-        // The materials as data. One the card's stack cannot render yet
-        // (glass, skin, film, flakes) renders as its opaque part, and says so.
-        let records: Vec<crate::material::GpuMaterial> = scene.materials.iter().map(crate::material::GpuMaterial::from_material).collect();
-        let unsupported = scene.materials.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
+        // The materials as data: a material with a program has the constants
+        // its graph folded to (`CompiledGraph::constants`), which the
+        // program's driven parameters are written over at each point. One
+        // the card's stack cannot render yet (glass, skin, film, flakes)
+        // renders as its opaque part, and says so; one whose program the
+        // card cannot run renders as its constants, and says why.
+        let lowered = lower_programs(scene);
+        for (index, refusal) in lowered.iter().enumerate().filter_map(|(i, l)| l.as_ref().err().map(|r| (i, r))) {
+            eprintln!("  material {index} renders as its constants on the graphics card for now: {refusal} (docs/07 R3)");
+        }
+        let programs = crate::program::ProgramTable::new(&lowered.iter().map(|l| l.clone().ok().flatten()).collect::<Vec<_>>());
+        let bases: Vec<&tequila_materials::openpbr::Material> = (0..scene.materials.len())
+            .map(|i| match scene.program(tequila_core::ids::MaterialId(i as u32)) {
+                Some(program) => &program.constants,
+                None => &scene.materials[i],
+            })
+            .collect();
+        let records: Vec<crate::material::GpuMaterial> = bases.iter().map(|m| crate::material::GpuMaterial::from_material(m)).collect();
+        let unsupported = bases.iter().filter(|m| !crate::material::GpuMaterial::supports(m)).count();
         if unsupported > 0 {
             eprintln!("  {unsupported} material(s) render as their opaque part on the graphics card for now (docs/07 R3)");
         }
@@ -268,6 +349,12 @@ impl GpuRenderer {
                 usage: wgpu::BufferUsages::STORAGE,
             },
         );
+        let init = |label: &str, contents: &[u8]| {
+            wgpu::util::DeviceExt::create_buffer_init(device, &wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::STORAGE })
+        };
+        let program_words = init("program words", bytemuck::cast_slice(&programs.words));
+        let program_constants = init("program constants", bytemuck::cast_slice(&programs.constants));
+        let program_headers = init("programs", bytemuck::cast_slice(&programs.headers));
 
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene"),
@@ -283,6 +370,11 @@ impl GpuRenderer {
                 entry(8, storage(true)),
                 entry(9, storage(true)),
                 entry(10, storage(true)),
+                entry(11, storage(true)),
+                entry(12, storage(true)),
+                entry(13, storage(true)),
+                entry(14, storage(true)),
+                entry(15, storage(true)),
             ],
         });
         let environment_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -305,18 +397,7 @@ impl GpuRenderer {
             bind_group_layouts: &[Some(&scene_layout), Some(&tables.layout), Some(&environment_layout), Some(&frame_layout)],
             immediate_size: 0,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("transport"),
-            source: wgpu::ShaderSource::Wgsl(crate::shader::source("transport").into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("transport"),
-            layout: Some(&layout),
-            module: &module,
-            entry_point: Some("transport_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let pipeline = transport_pipeline(device, &layout, None);
         let scene_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scene"),
             layout: &scene_layout,
@@ -332,6 +413,11 @@ impl GpuRenderer {
                 wgpu::BindGroupEntry { binding: 8, resource: lights.lights.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 9, resource: lights.nodes.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 10, resource: lights.links.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 11, resource: program_words.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 12, resource: program_constants.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 13, resource: program_headers.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 14, resource: uploaded.uvs.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: uploaded.tangents.as_entire_binding() },
             ],
         });
         let environment_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -352,7 +438,9 @@ impl GpuRenderer {
             environment,
             shadow_far,
             materials,
+            programs: [program_words, program_constants, program_headers],
             pipeline,
+            layout,
             scene_group,
             environment_group,
             frame_layout,
@@ -421,7 +509,14 @@ impl GpuRenderer {
             light_count: self.lights.count,
             light_hierarchy: self.lights.hierarchy as u32,
             lamp_flags: self.lamp_scene.flags(&settings.config),
-            _pad1: 0,
+            // As tequila-render-cpu's render_pass sets it: the pixel's angle
+            // for this camera at this resolution, the default for a camera
+            // with none.
+            pixel_spread: if settings.camera.vertical_fov(aspect) > 0.0 {
+                settings.camera.vertical_fov(aspect) / height as f32
+            } else {
+                tequila_render_core::settings::DEFAULT_PIXEL_SPREAD
+            },
             _pad2: 0,
         }
     }

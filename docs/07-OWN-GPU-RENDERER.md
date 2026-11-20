@@ -296,6 +296,11 @@ Camera (perspective, thin lens), instanced triangles, one grey diffuse surface f
   - power-heuristic MIS, Russian roulette from bounce 3, the bounce limit, and firefly rejection's indirect clamp at 10.
   The card hands back each sample's radiance and background, and the processor's `Framebuffer` accumulates them (D8).
 - **R2.6.** `grey_product` at 320×180, 256 samples, seed 7: mean absolute difference **0.000007** (the bar is 0.002), no pixel more than 0.02 apart, worst 0.004; mean 0.62551 on both. 0.58 s on the card, upload and readback included, against 3.1 s on the processor.
+- **The card on the bench** (R0.1's row, `tequila --bench NAME --engine tequila --device GPU`), 2026-11-21, the RTX 2060 PC quiet, medians of three, at #194 (opaque materials and their programs, the floor, the lamps; no glass yet). Time to clean, Tequila on the card / Cycles on the card (OptiX): `simple_product` 1.29 / 1.16 s (1.11), `cad_assembly` 0.78 / 1.21 s (0.65), `lamp_lit` 1.24 / 0.70 s (1.76), Headphones 1.10 / 0.63 s (1.74). G1.1's 1.25 holds on two of the four.
+  - Tequila's samples a second hardly change from scene to scene (23-25 million, `cad_assembly` 43), where Cycles' range from 23 to 50 million. What limits the kernel is its own size, not the scenes. That is D5's work at R3's exit, as planned: profile the kernels, compact, regenerate, shrink the kernel.
+  - Headphones also takes 72 samples where Cycles takes 48. Tequila's floor reflection is traced inside the path; Cycles' is laid over afterwards and left out of its row.
+  - A first reading taken while other tests shared the card made Cycles look 1.7 times slower than this. Measure with the card to itself.
+- **The cold compile, and G1.6.** The transport kernel takes 15-25 s to compile cold on the RTX 2060 (the lamps added about 30%, the programs about 4 s); the driver keeps the result after that. A machine's first Rendered view would wait that long for the card, where G1.6 asks for 5 s. R4.4 shows the processor's picture meanwhile, but the kernel must still get smaller, be split (which D5's wavefront would do), or be compiled at install.
 - Still to do for the exit: the Mac half, `--device GPU` in the command line, R0.1's row.
 
 ### R3 — Everything the processor renderer does (L)
