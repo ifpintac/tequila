@@ -92,7 +92,7 @@ fn kernel_body() -> String {
     s.dpdv = {};
     s.object_to_world = array<vec4<f32>, 3>({}, {}, {});
     s.world_to_object = array<vec4<f32>, 3>({}, {}, {});
-    var b: array<f32, 44>;
+    var b: array<f32, 48>;
     for (var k = 0u; k < 40u; k++) {{
         b[k] = inf(83u + k);
     }}
