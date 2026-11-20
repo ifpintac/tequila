@@ -5,6 +5,7 @@
 //! not, fails here rather than as a picture that is subtly wrong.
 
 use std::mem::{offset_of, size_of};
+use tequila_render_gpu::material::GpuMaterial;
 use tequila_render_gpu::scene::{GpuInstance, GpuMesh};
 use tequila_render_gpu::transport::{FrameParams, PixelSums};
 use tequila_render_gpu::shader;
@@ -53,4 +54,14 @@ fn records_have_one_layout_on_both_sides() {
         }
     );
     layout!(&module, PixelSums { sum, background, squares_high, squares_low, samples, _pad });
+    let source = shader::source("openpbr");
+    let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+    layout!(
+        &module,
+        GpuMaterial {
+            base_color, metal_n, metal_k, specular_color, coat_color, fuzz_color, base_weight, base_metalness,
+            base_diffuse_roughness, specular_weight, specular_roughness, specular_roughness_anisotropy, specular_ior,
+            coat_weight, coat_roughness, coat_ior, coat_darkening, fuzz_weight, fuzz_roughness, geometry_occlusion, _pad,
+        }
+    );
 }

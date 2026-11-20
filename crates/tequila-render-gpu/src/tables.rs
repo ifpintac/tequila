@@ -2,10 +2,11 @@
 //!
 //! A kernel's own data is `@group(0)`; the tables are the same for every
 //! kernel and every frame, uploaded once per device: the Sobol′ sampler's
-//! byte tables (`tequila_core::sobol::byte_tables`) and the GGX energy
-//! tables (`tequila_materials::energy::GgxEnergyTable::raw`), the very
-//! numbers the processor reads, so the two draw the same samples and
-//! compensate their lobes alike.
+//! byte tables (`tequila_core::sobol::byte_tables`), the GGX energy tables
+//! (`tequila_materials::energy::GgxEnergyTable::raw`) and the sheen's
+//! (`tequila_materials::lobes::sheen::raw_tables`), the very numbers the
+//! processor reads, so the two draw the same samples and compensate and
+//! fuzz their lobes alike.
 
 use wgpu::util::DeviceExt;
 
@@ -14,14 +15,21 @@ pub const SOBOL_BINDING: u32 = 0;
 /// `@group(1) @binding(1)`: the energy tables end to end, in
 /// `ENERGY_TABLE_LAYOUT`'s order.
 pub const ENERGY_BINDING: u32 = 1;
+/// `@group(1) @binding(2)`: the sheen's three fitted tables end to end,
+/// then its average albedo per roughness row.
+pub const SHEEN_BINDING: u32 = 2;
 
 /// Where `energy.wgsl` expects each energy table to start.
 pub const ENERGY_OFFSETS: [usize; 8] = [0, 1024, 2048, 2080, 2112, 2144, 18528, 19040];
+/// Where `sheen.wgsl` expects the fitted tables and the averages to start,
+/// and where the averages end.
+pub const SHEEN_OFFSETS: [usize; 3] = [0, 3072, 3104];
 
 /// The tables, on one device.
 pub struct Tables {
     pub sobol: wgpu::Buffer,
     pub energy: wgpu::Buffer,
+    pub sheen: wgpu::Buffer,
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
 }
@@ -49,6 +57,18 @@ impl Tables {
             contents: bytemuck::cast_slice(&energy_values),
             usage: wgpu::BufferUsages::STORAGE,
         });
+        let (fitted, averages) = tequila_materials::lobes::sheen::raw_tables();
+        let mut sheen_values: Vec<f32> = Vec::new();
+        for (i, (name, values)) in [("the fitted tables", fitted), ("the average albedos", averages)].into_iter().enumerate() {
+            assert_eq!(sheen_values.len(), SHEEN_OFFSETS[i], "sheen.wgsl expects {name} elsewhere");
+            assert_eq!(values.len(), SHEEN_OFFSETS[i + 1] - SHEEN_OFFSETS[i], "sheen.wgsl expects {name} to be another length");
+            sheen_values.extend_from_slice(values);
+        }
+        let sheen = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sheen tables"),
+            contents: bytemuck::cast_slice(&sheen_values),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
         let read_only = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -61,7 +81,7 @@ impl Tables {
         };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tables"),
-            entries: &[read_only(SOBOL_BINDING), read_only(ENERGY_BINDING)],
+            entries: &[read_only(SOBOL_BINDING), read_only(ENERGY_BINDING), read_only(SHEEN_BINDING)],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tables"),
@@ -69,8 +89,9 @@ impl Tables {
             entries: &[
                 wgpu::BindGroupEntry { binding: SOBOL_BINDING, resource: sobol.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: ENERGY_BINDING, resource: energy.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: SHEEN_BINDING, resource: sheen.as_entire_binding() },
             ],
         });
-        Tables { sobol, energy, layout, bind_group }
+        Tables { sobol, energy, sheen, layout, bind_group }
     }
 }
